@@ -9,7 +9,7 @@ import 'local_key_value_store.dart';
 /// The file contains credentials and E2EE key material. Its parent directory
 /// is private to the current user and every file created here is mode 0600 on
 /// POSIX platforms. Values are never logged.
-class HarnessFileStore implements LocalKeyValueStore {
+class HarnessFileStore implements BatchLocalKeyValueStore {
   static const schemaVersion = 1;
   // Separate from production; the CLI still owns shared authentication and links.
   static const directoryName = 'desktop-app-v2';
@@ -51,6 +51,20 @@ class HarnessFileStore implements LocalKeyValueStore {
   @override
   Future<String?> read(String key) =>
       _serialized(() async => (await _readDocument())[key]);
+
+  /// One lock and document read for related preferences. The snapshot is scoped
+  /// to this call: later reads still observe intervening writes, including
+  /// writes from another store or process. Unrequested credentials never leave
+  /// this operation.
+  @override
+  Future<Map<String, String?>> readMany(Iterable<String> keys) {
+    final requested = keys.toSet();
+    if (requested.isEmpty) return Future.value(const <String, String?>{});
+    return _serialized(() async {
+      final values = await _readDocument();
+      return {for (final key in requested) key: values[key]};
+    });
+  }
 
   @override
   Future<void> write(String key, String value) => _serialized(() async {

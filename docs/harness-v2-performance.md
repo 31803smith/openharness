@@ -10,6 +10,29 @@ flutter test --no-pub --reporter expanded test/benchmarks/swarm_benchmark.dart
 
 It prints `SWARM_BENCH` JSON records. Its filename deliberately does not end in `_test.dart`, so ordinary correctness runs do not include timing measurements.
 
+## Persisted settings initialization (2026-09-13)
+
+The font and appearance stores previously restored five keys with five separate file-lock, permission-check and JSON-read cycles. Each group now uses one requested-key snapshot, reducing that work to two cycles. File locking, private permissions, corrupt-file quarantine and future-schema protection remain in the same storage path. Snapshots are not cached; an intervening write is visible to the next read, including writes through another store instance. No unrelated credential keys are returned to the preference stores.
+
+The independent stats file loads alongside these groups, and `main()` starts the keyboard file/watch setup at the same time. The window still waits for all settings and keyboard configuration before becoming usable. Counters finish loading before any agent events can increment them.
+
+Run the explicit isolated benchmark from `desktop/`:
+
+```bash
+flutter test --no-pub --reporter expanded test/benchmarks/startup_benchmark.dart
+```
+
+One before/after run used 20 warmups and 100 samples for each workload. Each sample creates fresh store objects over temporary files containing five synthetic preferences, counters and, for the combined workload, a valid keyboard override with its real directory watches. Object construction is outside the timer. Filesystem caches are warm; this runs in the headless debug test runner.
+
+| Initialization workload | Before median / p95 | After median / p95 |
+| --- | ---: | ---: |
+| Font, appearance and counters | 29.505 / 32.234 ms | 12.149 / 13.468 ms |
+| Settings plus keyboard read, validation and watches | 31.877 / 34.919 ms | 13.042 / 14.295 ms |
+
+This measures one initialization step, not a cold process launch, native first-frame presentation, agent connection or input latency. No production settings were read. Logs: `/private/tmp/harness-v2-startup-benchmark-{before,after}.log`.
+
+All 58 focused startup, file-store, appearance, font, counter, palette and keyboard checks passed (`/private/tmp/harness-v2-startup-tests.log`). Startup regressions now inject every store instead of allowing appearance and stats to reach their global defaults. They cover complete restoration, empty storage, overlapping delayed loads, the readiness barrier and failed appearance reads while counters are still pending. Batch-store checks cover selected keys, an intervening write/delete, empty requests, corruption and newer schemas; existing private-file permission checks still pass.
+
 ## Native search field updates (2026-09-13)
 
 The production bridge was sending the same placeholder hint back to AppKit for every native query edit. A regression observed five reverse-channel `searchState` messages for the five-query burst `w`, `wo`, `wor`, `work`, `work 木`, including interleaved catalog updates. The revised bridge sends zero for that burst and one changed hint when entering command mode. It still sends an intentional query replacement when the user invokes Search commands.

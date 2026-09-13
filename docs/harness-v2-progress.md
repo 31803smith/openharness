@@ -2,6 +2,15 @@
 
 Updated 2026-09-13 with coordinated palettes, Models, combined closed-work History and faster unified search. This is a working preview, not a release.
 
+## Startup settings checkpoint
+
+- Five per-key appearance reads now use two grouped snapshots through the existing serialized file store. Each snapshot returns only requested keys and is discarded after the read. Locking, private permissions, corruption recovery and future-schema protection remain intact; later reads see intervening writes.
+- Independent counters and keyboard configuration load concurrently with appearance. All still finish before the window becomes usable, so saved styling and shortcuts are present at arrival and a late stats load cannot overwrite new agent events.
+- In one isolated debug benchmark run with warm temporary files, settings-plus-keyboard initialization went from **31.877 ms median / 34.919 ms p95** to **13.042 / 14.295 ms**. This is one initialization step, not full app launch or native display latency. The explicit benchmark is `desktop/test/benchmarks/startup_benchmark.dart`; [performance notes](harness-v2-performance.md) record the setup and limits.
+- **58 focused tests passed**, covering complete preference/counter restoration, all-store readiness under delayed/failed reads, temporary-store isolation, selected-key batches, intervening writes/deletes and existing permission/schema protections. Artifacts: `/private/tmp/harness-v2-startup-tests.log` and `/private/tmp/harness-v2-startup-benchmark-{before,after}.log`.
+- Analyzer has zero errors/warnings and the existing 12 vendored infos (`/private/tmp/harness-v2-startup-analyze.log`). The explicit benchmark is excluded from ordinary test discovery and does not collect user settings.
+- Startup tests now inject all three stores; none falls through to the user's global appearance or stats store. No real agent, credential or keyboard configuration was used in validation. Public-origin push approval remains pending; preserve unrelated naming edits, the collaboration draft and native benchmark tooling.
+
 ## Search arrival and typing checkpoint
 
 - An isolated full-screen probe reproduced inconsistent arrival: initial launch focused the shell, while New swarm after work and close-last-swarm immediately opened suggestions over the welcome choices. All three now focus the inline field with results closed. Clicking, typing or a configured picker navigation/accept key opens results in place. The opening key never activates an unseen result. Escape keeps the query and caret; returning from the native search or a dialog does not reopen inline suggestions automatically.
@@ -10,7 +19,7 @@ Updated 2026-09-13 with coordinated palettes, Models, combined closed-work Histo
 - Visual review at 880×560 covered fresh welcome, the prefilled New agent form, New swarm after work and inline results. It also caught singular machine/project labels; they now reuse the swarm agent-count formatter. These images use the Flutter fallback titlebar, not a live native capture.
 - Validation: both arrival regressions and the redundant-message regression failed before their fixes. **48 focused Flutter tests plus the isolated render passed**; the final count-label reuse then passed nine search checks plus the rerender. **51 native decoder and 363 AppKit checks passed**. Analyzer has zero errors/warnings and the existing 12 vendored infos. Artifacts: `/private/tmp/harness-v2-search-arrival-{before,tests,final-tests,native,analyze,copy-render}.log`, `/private/tmp/harness-v2-search-echo-before.log`, and `/private/tmp/harness-v2-search-arrival-{welcome,form,new-swarm,search}.png`.
 - Saved as local commit `72355d9`. Release build succeeded (`/private/tmp/harness-v2-search-arrival-build.log`), and the exact preview reopened as PID 26548 after PID 11785 was normally quit and confirmed exited. No real agent input, provider installation or foreground latency measurement was used. Public-origin push approval is still pending.
-- Next independent audit: startup reads before the first frame (`main.dart`, `core/startup.dart`, persisted setting stores and the keyboard config). Inspect shared-store behavior and measure isolated initialization before changing ordering. Native foreground calibration and automatic key-view traversal remain unverified; do not retry them without new access evidence.
+- The subsequent startup audit and measurements are recorded above. Native foreground calibration and automatic key-view traversal remain unverified; do not retry them without new access evidence.
 
 ## Native tab interaction checkpoint
 

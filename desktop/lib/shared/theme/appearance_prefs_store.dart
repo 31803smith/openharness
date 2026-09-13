@@ -96,13 +96,15 @@ class AppearancePrefsStore extends ValueNotifier<AppearancePrefs> {
   /// should get a plain-looking app, not an app that refuses to start.
   Future<void> load() async {
     try {
-      final family = await _storage.read(_familyKey);
-      final size = await _storage.read(_sizeKey);
-      final palette = await _storage.read(_paletteKey);
+      final saved = await _storage.readMany([
+        _familyKey,
+        _sizeKey,
+        _paletteKey,
+      ]);
       value = AppearancePrefs(
-        uiFamily: _familyFrom(family),
-        uiSize: _sizeFrom(size),
-        palette: HarnessPalette.fromId(palette),
+        uiFamily: _familyFrom(saved[_familyKey]),
+        uiSize: _sizeFrom(saved[_sizeKey]),
+        palette: HarnessPalette.fromId(saved[_paletteKey]),
       );
     } catch (_) {
       value = const AppearancePrefs();

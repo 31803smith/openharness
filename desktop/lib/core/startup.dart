@@ -19,15 +19,16 @@ Future<void> loadPersistedSettings({
   AppearancePrefsStore? appearance,
   HarnessStats? stats,
 }) async {
-  await (terminalFont ?? terminalFontStore).load();
-  // Not optional. Every control box in the app is sized from
-  // `AppControl.heightScaled`/`paddingScaled`, so a UI size that arrived after
-  // the first frame would relayout the whole window one frame in — a worse
-  // flicker than a late theme, because the geometry moves and not just the ink.
-  await (appearance ?? appearancePrefsStore).load();
-  // Not for the first frame — nothing paints these counters until Settings ▸
-  // Usage is opened. It is loaded here anyway because the counters START moving
-  // as soon as an agent does, and a load that landed after the first
-  // `onAgentSpawned` would overwrite it with the number from disk.
-  await (stats ?? harnessStats).load();
+  // Independent stores may load together, but all must finish before runApp.
+  // Font and appearance share a serialized file store; each reads its related
+  // preferences as one snapshot. Stats uses a separate file and can overlap.
+  await Future.wait([
+    (terminalFont ?? terminalFontStore).load(),
+    // Every control box uses these values. A late load would move the whole
+    // window's geometry after its first frame, as well as changing its palette.
+    (appearance ?? appearancePrefsStore).load(),
+    // Counters begin moving with the first agent event. Loading them later
+    // could overwrite a new event with the old count from disk.
+    (stats ?? harnessStats).load(),
+  ]);
 }
