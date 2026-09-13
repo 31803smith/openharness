@@ -16,15 +16,18 @@ class KeymapStore extends ChangeNotifier {
     required Iterable<KeyBinding> defaults,
     required Set<String> commands,
     this.watchFiles = true,
+    this.validate,
   }) : _defaults = List.unmodifiable(defaults),
        _commands = Set.unmodifiable(commands) {
     current = ResolvedKeymap(_defaults, const KeymapConfig.empty());
+    validate?.call(current);
     _signature = _describe(current);
   }
 
   static const maximumBytes = 128 * 1024;
   final File file;
   final bool watchFiles;
+  final void Function(ResolvedKeymap)? validate;
   final List<KeyBinding> _defaults;
   final Set<String> _commands;
   late ResolvedKeymap current;
@@ -87,6 +90,7 @@ class KeymapStore extends ChangeNotifier {
         _defaults,
         KeymapConfig.parse(source, commands: _commands),
       );
+      validate?.call(next);
       if (_disposed || generation != _generation) return;
       final signature = _describe(next);
       if (_signature != signature) {

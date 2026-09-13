@@ -266,11 +266,11 @@ class ResolvedKeymap {
         }
       }
 
-      if (context == KeymapContext.terminal) {
+      if (context != KeymapContext.workspace) {
         apply(defaults, KeymapContext.workspace);
       }
       apply(defaults, context);
-      if (context == KeymapContext.terminal) {
+      if (context != KeymapContext.workspace) {
         apply(config.bindings, KeymapContext.workspace);
       }
       apply(config.bindings, context);
@@ -299,6 +299,16 @@ class ResolvedKeymap {
       );
 
   List<KeyBinding> bindingsFor(KeymapContext context) => _bindings[context]!;
+
+  Iterable<KeyBinding> continuations(
+    KeymapContext context,
+    List<KeyStroke> prefix,
+  ) => _bindings[context]!.where(
+    (binding) =>
+        binding.keys.length > prefix.length &&
+        Iterable.generate(prefix.length)
+            .every((i) => binding.keys[i] == prefix[i]),
+  );
 
   KeymapMatch match(KeymapContext context, Iterable<KeyStroke> keys) {
     var node = _roots[context]!;

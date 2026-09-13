@@ -91,7 +91,10 @@ void main() {
       match(map, 'cmd+p', KeymapContext.workspace).command,
       'navigation.quick_open',
     );
-    expect(match(map, 'cmd+p', KeymapContext.picker).matched, false);
+    expect(
+      match(map, 'cmd+p', KeymapContext.picker).command,
+      'navigation.quick_open',
+    );
     expect(match(map, 'ctrl+n', KeymapContext.picker).command, 'picker.next');
     expect(match(map, 'ctrl+n', KeymapContext.terminal).matched, false);
   });
