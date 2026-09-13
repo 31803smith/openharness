@@ -20,12 +20,14 @@ class SwarmWelcome extends StatelessWidget {
     required this.onLinkMachine,
     required this.onMachine,
     required this.onProject,
+    this.onChooseFirstFolder,
     this.onAgent,
     this.onProjectAgents,
   });
   final AppNotifier notifier;
   final List<SavedSwarmProject> projects;
   final VoidCallback onNewAgent;
+  final VoidCallback? onChooseFirstFolder;
   final Widget searchField;
   final VoidCallback onAddProject;
   final VoidCallback onLinkMachine;
@@ -53,6 +55,7 @@ class SwarmWelcome extends StatelessWidget {
             AgentLoadStatus.loaded &&
         app.machineStates.values.first.nodeOnline != false &&
         !app.machineStates.values.first.needsLink;
+    final chooseFirstFolder = noAgents && onChooseFirstFolder != null;
     final readyAgents =
         agents
             .where(
@@ -113,9 +116,20 @@ class SwarmWelcome extends StatelessWidget {
                           Expanded(child: searchField),
                           const SizedBox(width: 12),
                           FilledButton.icon(
-                            onPressed: onNewAgent,
-                            icon: const Icon(Icons.add, size: 17),
-                            label: const Text('New agent'),
+                            onPressed: chooseFirstFolder
+                                ? onChooseFirstFolder
+                                : onNewAgent,
+                            icon: Icon(
+                              chooseFirstFolder
+                                  ? Icons.folder_open_outlined
+                                  : Icons.add,
+                              size: 17,
+                            ),
+                            label: Text(
+                              chooseFirstFolder
+                                  ? 'Choose folder…'
+                                  : 'New agent',
+                            ),
                             style: FilledButton.styleFrom(
                               minimumSize: const Size(126, 44),
                               backgroundColor: grid.AppPalette.swarmAccent,

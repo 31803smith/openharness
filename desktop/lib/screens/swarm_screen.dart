@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show Platform;
 
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -490,6 +491,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
     String? folder,
     String? swarmId,
     PaneSplitRequest? split,
+    bool chooseFolderFirst = false,
   }) => _dialog(() async {
     final local = app.machineStates.values
         .where((m) => m.isLocalMachine)
@@ -502,13 +504,44 @@ class _SwarmScreenState extends State<SwarmScreen> {
       await showSwarmLinkDialog(context, app);
       return;
     }
+    final targetId = swarmId ?? app.activeSwarmId;
+    final machine = app.machineStates[id];
+    var selectedFolder = folder;
+    Future<void>? initialEngineProbe;
+    if (chooseFolderFirst && machine != null && machine.isLocalMachine) {
+      // Read availability while the user chooses a folder, so the form can
+      // prefer an installed agent without adding a second probe or wait.
+      initialEngineProbe = app.probeEngines(id, force: true);
+      try {
+        selectedFolder = await getDirectoryPath(
+          confirmButtonText: 'Use folder',
+        );
+      } catch (error) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Could not open the folder picker: $error')),
+          );
+        }
+        return;
+      }
+      if (!mounted ||
+          selectedFolder == null ||
+          app.activeSwarmId != targetId ||
+          app.machineStates[id] != machine ||
+          !machine.isLocalMachine ||
+          machine.nodeOnline == false ||
+          machine.needsLink) {
+        return;
+      }
+    }
     await showNewAgentDialog(
       context,
       app,
       id,
-      source: 'swarm',
-      initialFolder: folder,
-      swarmId: swarmId,
+      source: chooseFolderFirst ? 'first_folder' : 'swarm',
+      initialFolder: selectedFolder,
+      initialEngineProbe: initialEngineProbe,
+      swarmId: targetId,
       split: split,
     );
   });
@@ -1150,6 +1183,8 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                     notifier: app,
                                     projects: _projects.projects,
                                     onNewAgent: _newAgent,
+                                    onChooseFirstFolder: () =>
+                                        _newAgent(chooseFolderFirst: true),
                                     onAgent: (entry) => _activateSearch(
                                       SwarmSearchSelection(
                                         SwarmDestination(

@@ -43,6 +43,7 @@ Future<void> showNewAgentDialog(
   String? initialFolder,
   String? swarmId,
   PaneSplitRequest? split,
+  Future<void>? initialEngineProbe,
 }) {
   // Reported here rather than at each call site: the doors are four and
   // growing, and one that forgets to track is a hole in the funnel that only
@@ -59,6 +60,7 @@ Future<void> showNewAgentDialog(
       initialFolder: initialFolder,
       swarmId: swarmId ?? notifier.activeSwarmId,
       split: split,
+      initialEngineProbe: initialEngineProbe,
     ),
   );
 }
@@ -69,6 +71,7 @@ class _NewAgentDialog extends StatefulWidget {
   final String? initialFolder;
   final String swarmId;
   final PaneSplitRequest? split;
+  final Future<void>? initialEngineProbe;
 
   const _NewAgentDialog({
     required this.notifier,
@@ -76,6 +79,7 @@ class _NewAgentDialog extends StatefulWidget {
     this.initialFolder,
     required this.swarmId,
     this.split,
+    this.initialEngineProbe,
   });
 
   @override
@@ -123,7 +127,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     // answer lands, so nothing blanks.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
-        unawaited(_probeEngines());
+        unawaited(_probeEngines(initialProbe: widget.initialEngineProbe));
       }
     });
   }
@@ -140,10 +144,11 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
         _engine;
   }
 
-  Future<void> _probeEngines() async {
+  Future<void> _probeEngines({Future<void>? initialProbe}) async {
     final machineId = _machineId;
     final revision = _machineRevision;
-    await widget.notifier.probeEngines(machineId, force: true);
+    await (initialProbe ??
+        widget.notifier.probeEngines(machineId, force: true));
     if (!mounted ||
         revision != _machineRevision ||
         _submitting ||

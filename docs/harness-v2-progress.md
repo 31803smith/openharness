@@ -2,6 +2,15 @@
 
 Updated 2026-09-13 with coordinated palettes, Models, combined closed-work History and faster unified search. This is a working preview, not a release.
 
+## First-folder checkpoint
+
+- A genuinely empty, discovered local workspace now offers **Choose folder…**. That action opens the native folder chooser directly, then the ordinary New agent form with the selected folder. Installed-agent discovery overlaps folder selection, and the form reuses that request. The returning-user button and Cmd-N still open New agent normally.
+- Repeated activation cannot stack native choosers. Cancellation, a changed swarm/machine, loss of local identity, disconnection or a newly required link discards the late result. No agent starts until Create agent is selected; no task is sent automatically.
+- Validation: **65 focused onboarding, engine/profile, split and inline-search checks passed**, followed by an isolated visual render of the welcome and prefilled form at 880×560. Analyzer has zero errors/warnings and the existing 12 vendored infos. Artifacts: `/private/tmp/harness-v2-first-folder-{tests,render,analyze}.log` and `/private/tmp/harness-v2-first-folder-{welcome,form}.png`.
+- The preceding search-highlighting and first-agent-recovery changes were rebuilt successfully (`/private/tmp/harness-v2-search-onboarding-build.log`). The first-folder change is awaiting its own rebuild. Live capture is still unavailable; visual evidence here is from isolated renders.
+- Native latency calibration is paused: the disposable Release benchmark window was visible, but macOS reported it inactive and not key. No timings were accepted. See [performance notes](harness-v2-performance.md) for the failed calibration artifacts and restart condition. The real preview was reopened after the fixture exited.
+- Continue local commits. Public-origin approval remains pending; do not retry pushing or include the unrelated naming edits, collaboration draft or native benchmark directory in this checkpoint.
+
 ## First-agent recovery checkpoint
 
 - A reproduced Escape/backdrop dismissal during agent creation now keeps the form and its result visible. Pending creation has a readable progress label; controls return after a response. Failures preserve the user's choices, and a new folder/engine choice clears the obsolete error.
@@ -410,12 +419,12 @@ Earlier logs contain superseded failures. Temporary logs and toolchains are loca
 
 ## Remaining work
 
-1. Measure native terminal input and tab-switch responsiveness under output load, including p50/p95/p99 and cold/warm paths. Live Cmd+P destination focus/quick return, branch headers, project associations, New swarm cleanup and native History are verified. Keep typing/transport measurements in disposable fixtures; the user's real agent terminals are not test inputs.
+1. Measure native terminal input and tab-switch responsiveness under output load, including p50/p95/p99 and cold/warm paths. Calibration is paused until there is new evidence that the isolated window can become active/key; do not bypass its focus guard. Earlier live Cmd+P destination focus/quick return, branch headers, project associations, New swarm cleanup and native History were verified. Keep typing/transport measurements in disposable fixtures; the user's real agent terminals are not test inputs.
 2. Audit native drag/reorder, overflow, close-last-tab, renaming and accessibility without changing the user's saved agent memberships. Keep any integration runner separate and out of the foreground review app.
 3. Verify real remote reconnect, agent input, paste, selection and IME against disposable local/remote processes. The AppNotifier/keyframe and stale completion regressions now pass; they do not prove every network or native editing condition. Preserve immediate first-input flush and shared retained renderers.
 4. Visually confirm app-menu modal behavior and overflow accessibility in AppKit; route/shortcut behavior is covered by passing Flutter tests.
 5. Build/review Linux and Windows when their toolchains are available. Remote full project/branch metadata requires daemons running the new wire format; do not upgrade them automatically.
-6. Follow the bounded prototype recommendation: optional retained-context preview/highlights in Cmd+P, then deliberate right/down splits with compatible layout persistence. Integrate remappable keys and existing-command search; ordinary-shell creation is outside the current agent-workspace scope. Keep the rejected shelf/hierarchy/dashboard/manager surfaces absent.
+6. Optional retained-context preview/highlights, deliberate right/down splits, controlled resizing, file-based keyboard customization and existing-command search are implemented and regression checked. Continue targeted real-workflow verification; ordinary-shell creation is outside the current agent-workspace scope. Keep the rejected shelf/hierarchy/dashboard/manager surfaces absent.
 7. Audit local Git watch failure/removal and relocated-worktree invalidation before broadening that compatibility path. It deliberately reads a small subset of Git metadata; prefer richer daemon metadata as available. Continue the active goal using the current research status list, distinguishing shipped reductions from proposed follow-ups.
 
 ## Toolchain and workflow

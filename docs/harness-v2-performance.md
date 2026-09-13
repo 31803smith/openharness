@@ -10,6 +10,14 @@ flutter test --no-pub --reporter expanded test/benchmarks/swarm_benchmark.dart
 
 It prints `SWARM_BENCH` JSON records. Its filename deliberately does not end in `_test.dart`, so ordinary correctness runs do not include timing measurements.
 
+## Native calibration remains unmeasured (2026-09-13)
+
+A fresh disposable Release copy of the existing native benchmark built at `/private/tmp/harness-native-benchmark-4t74nfhn`. Its separate bundle identity, temporary store, blocked networking and synthetic retained terminals isolate it from real agents. AppKit events are posted only to that fixture's own queue. The planned metric joins each observed input to Flutter's matching frame number and raster-finish timestamp; it excludes network and physical display latency. [Flutter's FrameTiming reference](https://api.flutter.dev/flutter/dart-ui/FrameTiming-class.html) describes those fields and recommends profile/release performance collection. The distinction between input latency under load and throughput follows the measurement discussion in [Dan Luu's terminal study](https://danluu.com/term-latency/); its old terminal rankings are not treated as current comparisons.
+
+The first calibration stopped before samples because content focus could not be established. Inspection found that its driver requested focus on the wrapper view; the production titlebar correctly uses the Flutter view controller. Only the disposable copy was corrected to match that responder and to report active/key state separately. The rebuilt calibration then stopped with **key=false, active=false, visible=true**. Both runs exited without accepted timings. The guards were retained, the original untracked benchmark source was left unchanged, and the real preview reopened after the fixture exited.
+
+Artifacts: `/private/tmp/harness-v2-native-prepare-current.log`, `/private/tmp/harness-native-benchmark-4t74nfhn/{build,rebuild-controller}.log`, `/private/tmp/harness-v2-native-calibration-20260913{.json,.log,-run.log}` and `/private/tmp/harness-v2-native-calibration-controller{.json,.log,-run.log}`. Do not retry the calibration until new evidence establishes that the disposable native window can become active/key. These failures provide no p50/p95/p99 or input-to-display result.
+
 ## Search match emphasis (2026-09-13)
 
 Highlighting runs only for built result rows, sharing ranking's field scores and rune-based subsequence matching. The visible labels preserve grapheme boundaries and do not change ranking. A label longer than 1,024 UTF-16 units stays plain; up to twelve distinct terms from the first twelve query terms are considered, each at most 128 units, against fields at most 4,096 units. Empty queries stay on the plain-text path.
