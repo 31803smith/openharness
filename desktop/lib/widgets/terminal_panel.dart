@@ -769,6 +769,7 @@ class _TerminalPanelState extends State<TerminalPanel>
                         key: _terminalViewKey,
                         controller: _controller,
                         autoResize: widget.visible,
+                        renderingEnabled: widget.visible,
                         scrollController: _scrollController,
                         focusNode: _focusNode,
                         autofocus: widget.focused && !showComposer,

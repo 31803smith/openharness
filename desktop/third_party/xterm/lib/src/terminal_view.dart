@@ -33,6 +33,7 @@ class TerminalView extends StatefulWidget {
     this.padding,
     this.scrollController,
     this.autoResize = true,
+    this.renderingEnabled = true,
     this.backgroundOpacity = 1,
     this.focusNode,
     this.autofocus = false,
@@ -76,6 +77,12 @@ class TerminalView extends StatefulWidget {
   /// Should this widget automatically notify the underlying terminal when its
   /// size changes. [true] by default.
   final bool autoResize;
+
+  /// Whether output should schedule renderer layout/paint work. Disable while
+  /// retaining a hidden view; the terminal buffer continues receiving output.
+  /// Re-enabling reconciles geometry and scroll position on the next layout.
+  /// An enclosing disabled [TickerMode] also suspends rendering updates.
+  final bool renderingEnabled;
 
   /// Opacity of the terminal background. Set to 0 to make the terminal
   /// background transparent.
@@ -260,6 +267,7 @@ class TerminalViewState extends State<TerminalView> {
           offset: offset,
           padding: MediaQuery.of(context).padding,
           autoResize: widget.autoResize,
+          renderingEnabled: widget.renderingEnabled,
           textStyle: widget.textStyle,
           textScaler: widget.textScaler ?? MediaQuery.textScalerOf(context),
           theme: widget.theme,
@@ -631,6 +639,7 @@ class _TerminalView extends LeafRenderObjectWidget {
     required this.offset,
     required this.padding,
     required this.autoResize,
+    required this.renderingEnabled,
     required this.textStyle,
     required this.textScaler,
     required this.theme,
@@ -651,6 +660,8 @@ class _TerminalView extends LeafRenderObjectWidget {
   final EdgeInsets padding;
 
   final bool autoResize;
+
+  final bool renderingEnabled;
 
   final TerminalStyle textStyle;
 
@@ -678,6 +689,8 @@ class _TerminalView extends LeafRenderObjectWidget {
       offset: offset,
       padding: padding,
       autoResize: autoResize,
+      renderingEnabled:
+          renderingEnabled && TickerMode.valuesOf(context).enabled,
       textStyle: textStyle,
       textScaler: textScaler,
       theme: theme,
@@ -693,6 +706,8 @@ class _TerminalView extends LeafRenderObjectWidget {
   @override
   void updateRenderObject(BuildContext context, RenderTerminal renderObject) {
     renderObject
+      ..renderingEnabled =
+          renderingEnabled && TickerMode.valuesOf(context).enabled
       ..terminal = terminal
       ..controller = controller
       ..offset = offset

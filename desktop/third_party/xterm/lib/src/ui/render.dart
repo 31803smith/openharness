@@ -1,5 +1,6 @@
 import 'dart:math' show max;
 import 'package:flutter/rendering.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 import 'package:xterm/src/core/buffer/cell_offset.dart';
 import 'package:xterm/src/core/buffer/range.dart';
@@ -24,6 +25,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     required ViewportOffset offset,
     required EdgeInsets padding,
     required bool autoResize,
+    bool renderingEnabled = true,
     required TerminalStyle textStyle,
     required TextScaler textScaler,
     required TerminalTheme theme,
@@ -38,6 +40,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
         _offset = offset,
         _padding = padding,
         _autoResize = autoResize,
+        _renderingEnabled = renderingEnabled,
         _focusNode = focusNode,
         _cursorType = cursorType,
         _alwaysShowCursor = alwaysShowCursor,
@@ -53,9 +56,11 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   Terminal _terminal;
   set terminal(Terminal terminal) {
     if (_terminal == terminal) return;
-    if (attached) _terminal.removeListener(_onTerminalChange);
+    if (attached && _renderingEnabled) {
+      _terminal.removeListener(_onTerminalChange);
+    }
     _terminal = terminal;
-    if (attached) _terminal.addListener(_onTerminalChange);
+    if (attached && _renderingEnabled) _terminal.addListener(_onTerminalChange);
     _resizeTerminalIfNeeded();
     markNeedsLayout();
   }
@@ -90,6 +95,22 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     if (value == _autoResize) return;
     _autoResize = value;
     markNeedsLayout();
+  }
+
+  bool _renderingEnabled;
+  set renderingEnabled(bool value) {
+    if (value == _renderingEnabled) return;
+    _renderingEnabled = value;
+    if (attached) {
+      if (value) {
+        _terminal.addListener(_onTerminalChange);
+      } else {
+        _terminal.removeListener(_onTerminalChange);
+      }
+    }
+    // Catch up from the live buffer once, preserving follow-tail or the user's
+    // scroll offset. Hidden output never queues a renderer layout or paint.
+    if (value) markNeedsLayout();
   }
 
   set textStyle(TerminalStyle value) {
@@ -159,24 +180,27 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   final TerminalPainter _painter;
 
   var _stickToBottom = true;
+  bool _editableRectPending = false;
 
   void _onScroll() {
     _stickToBottom = _scrollOffset >= _maxScrollExtent;
+    if (!_renderingEnabled) return;
     markNeedsLayout();
-    _notifyEditableRect();
+    _scheduleEditableRect();
   }
 
   void _onFocusChange() {
     markNeedsPaint();
+    _scheduleEditableRect();
   }
 
   void _onTerminalChange() {
     markNeedsLayout();
-    _notifyEditableRect();
+    _scheduleEditableRect();
   }
 
   void _onControllerUpdate() {
-    markNeedsLayout();
+    if (_renderingEnabled) markNeedsLayout();
   }
 
   @override
@@ -186,7 +210,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   void attach(PipelineOwner owner) {
     super.attach(owner);
     _offset.addListener(_onScroll);
-    _terminal.addListener(_onTerminalChange);
+    if (_renderingEnabled) _terminal.addListener(_onTerminalChange);
     _controller.addListener(_onControllerUpdate);
     _focusNode.addListener(_onFocusChange);
   }
@@ -214,6 +238,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   @override
   void performLayout() {
     size = constraints.biggest;
+    if (!_renderingEnabled) return;
 
     _updateViewportSize();
 
@@ -222,6 +247,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     if (_stickToBottom) {
       _offset.correctBy(_maxScrollExtent - _scrollOffset);
     }
+    _scheduleEditableRect();
   }
 
   /// Total height of the terminal in pixels. Includes scrollback buffer.
@@ -315,6 +341,27 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     return _terminal.mouseInput(button, buttonState, position);
   }
 
+  /// Layout can change the scroll offset and ancestors can move this view.
+  /// Report the final caret once per frame, including when a retained view
+  /// returns without fresh output. Unfocused terminals have no native caret.
+  void _scheduleEditableRect() {
+    if (_editableRectPending ||
+        !attached ||
+        !_renderingEnabled ||
+        !_focusNode.hasFocus ||
+        _onEditableRect == null) {
+      return;
+    }
+    _editableRectPending = true;
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      _editableRectPending = false;
+      if (!attached || !_renderingEnabled || !_focusNode.hasFocus || !hasSize) {
+        return;
+      }
+      _notifyEditableRect();
+    });
+  }
+
   void _notifyEditableRect() {
     final cursor = localToGlobal(cursorOffset);
 
@@ -344,13 +391,19 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
 
     if (_viewportSize != viewportSize) {
       _viewportSize = viewportSize;
-      _resizeTerminalIfNeeded();
     }
+    // A retained view may have received a replacement screen while hidden,
+    // even when its own pixel dimensions did not change.
+    _resizeTerminalIfNeeded();
   }
 
   /// Notify the underlying terminal that the viewport size has changed.
   void _resizeTerminalIfNeeded() {
-    if (_autoResize && _viewportSize != null) {
+    if (_renderingEnabled &&
+        _autoResize &&
+        _viewportSize != null &&
+        (_terminal.viewWidth != _viewportSize!.width ||
+            _terminal.viewHeight != _viewportSize!.height)) {
       _terminal.resize(
         _viewportSize!.width,
         _viewportSize!.height,

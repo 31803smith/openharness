@@ -1,6 +1,6 @@
 # Harness V2 performance checks
 
-Measured on 2026-09-12, with retained-canvas and idle-work continuations on 2026-09-13, using Apple M2 Max, macOS 26.6.2, Flutter 3.47.2 and Dart 3.13.2.
+Measured on 2026-09-12, with retained-canvas, idle-work and background-output continuations on 2026-09-13, using Apple M2 Max, macOS 26.6.2, Flutter 3.47.2 and Dart 3.13.2.
 
 The explicit benchmark runs in the headless Flutter test runner with isolated synthetic sessions. It never opens a sample-data app or connects to a real agent. Run it from `desktop/`:
 
@@ -81,7 +81,32 @@ The empty Swarm's remaining timer belongs to its focused search field caret. The
 flutter test test/benchmarks/terminal_idle_benchmark.dart --no-pub --reporter expanded
 ```
 
-Global link-modifier handlers are now registered only while a visible link is under the pointer, removing the per-retained-terminal listener from ordinary keyboard input. Hidden views clear hover state and skip link refresh callbacks. Tests cover focus/tab/zoom changes, covered routes, window inactivity and resumption, session replacement, read-only/connection ownership, and a stationary link pointer across session replacement and modifier release. The complete Flutter suite passes with 1,010 tests and one skip.
+Global link-modifier handlers are now registered only while a visible link is under the pointer, removing the per-retained-terminal listener from ordinary keyboard input. Hidden views clear hover state and skip link refresh callbacks. Tests cover focus/tab/zoom changes, covered routes, window inactivity and resumption, session replacement, read-only/connection ownership, and a stationary link pointer across session replacement and modifier release. That continuation's full suite passed 1,010 tests with one skip.
+
+## Rendering background output
+
+Offstage had stopped hidden panes from painting, but their renderers still listened to every terminal write, requested layout and calculated native caret coordinates. The new `TerminalView.renderingEnabled` flag defaults to true; `TerminalPanel` supplies its visibility, and a disabled enclosing ticker mode also suspends the leaf renderer. A suspended renderer detaches its output listener and skips viewport/scroll reconciliation. The session continues parsing incoming output into its existing buffer.
+
+Showing the view requests one layout against the current buffer. It preserves a manually chosen scroll offset or follows the new tail, and reconciles changed terminal dimensions even when the pane's pixel size is unchanged. Matching dimensions skip emulator resize, preserving a TUI's scrolling margins. Session/keyframe changes still update retained views as needed.
+
+The paired headless workload starts with 1,000 history lines per terminal and four visible panes in a 1280×800 window. Each sample writes four short ANSI updates to one existing row in every selected terminal, then pumps Flutter. It uses 20 warmups and 60 measured samples, excluding sockets, binary decoding and physical display timing:
+
+| Retained terminals | Output destinations | Before median / p95 | Final median / p95 | Hidden renderers needing layout before → after |
+| ---: | --- | ---: | ---: | ---: |
+| 16 | 12 hidden terminals | 0.901 / 1.366 ms | 0.110 / 0.169 ms | 12 → 0 |
+| 16 | All 16 terminals | 1.117 / 2.027 ms | 0.757 / 0.921 ms | 12 → 0 |
+| 48 | 44 hidden terminals | 1.255 / 1.641 ms | 0.206 / 0.227 ms | 44 → 0 |
+| 48 | All 48 terminals | 1.574 / 1.836 ms | 0.766 / 0.945 ms | 44 → 0 |
+
+Hidden-only bursts no longer schedule a Flutter frame in this workload. Their median CPU cost fell by 88% and 84%; the mixed visible/hidden workloads fell by 32% and 51%. These are headless debug CPU observations with host-load/JIT variability, not native latency or total app CPU reductions. Logs: `/private/tmp/harness-v2-background-before.log` and `/private/tmp/harness-v2-background-measured.log`.
+
+```bash
+flutter test test/benchmarks/terminal_background_benchmark.dart --no-pub --reporter expanded
+```
+
+Native caret coordinates now coalesce into one callback after the frame, using final scroll offsets and ancestor positions. Only a focused, enabled renderer schedules the update. Focus and restored layout refresh the caret even without new output. A test sends 30 cursor-changing writes before a frame and verifies one final native caret message; the terminal input dispatch path remains unchanged.
+
+Four new checks cover real `TerminalSession.handleBinary` output while hidden, selection/manual-scroll/follow-tail preservation, first-frame raster pixels, changed terminal dimensions, unchanged TUI scroll margins, covered routes with a retained widget, and native caret coordinates on restoration. The final full suite passes 1,014 tests with one skip.
 
 ## Terminal output allocations
 
