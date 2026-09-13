@@ -595,23 +595,27 @@ void main() {
       );
       await tester.pump();
 
-      expect(find.text('Finish the secure Terminal step'), findsOneWidget);
+      expect(find.text('Finish setup in Terminal'), findsOneWidget);
       expect(find.text('Managed Node 20+ & Harness CLI'), findsOneWidget);
       expect(find.text('Recheck now'), findsOneWidget);
       expect(find.text('Harness cannot see your password'), findsOneWidget);
     },
   );
 
-  testWidgets('environment wizard exposes automatic and manual setup paths', (
+  testWidgets('setup review exposes the install action and a manual path', (
     tester,
   ) async {
     final app = makeNotifier(AppStatus.preparingEnvironment);
     app.environmentReadiness = EnvironmentReadiness(
       steps: {
+        EnvironmentStep.clipboard: EnvironmentStepStatus.notApplicable,
         EnvironmentStep.harness: EnvironmentStepStatus.failed,
         EnvironmentStep.tmux: EnvironmentStepStatus.ready,
       },
       phase: EnvironmentSetupPhase.review,
+      systemReady: true,
+      homebrewReady: true,
+      tmuxBinaryReady: true,
     );
     await tester.pumpWidget(
       ProviderScope(
@@ -621,23 +625,70 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.text('Here is exactly what is required'), findsOneWidget);
-    expect(find.text('HOST DEPENDENCIES'), findsOneWidget);
-    expect(find.text('HARNESS COMPONENTS'), findsOneWidget);
-    expect(find.text('Final verification'), findsNothing);
+    expect(find.text('Get this computer ready'), findsOneWidget);
+    expect(find.text('Install 1 tool'), findsOneWidget);
+    expect(find.text('Continue'), findsNothing);
+    expect(find.text('tmux'), findsNothing);
     expect(find.text('Apple developer tools'), findsNothing);
-    await tester.tap(find.text('Continue'));
-    await tester.pump();
 
-    expect(find.text('Automatic'), findsOneWidget);
-    expect(find.text('Manual'), findsOneWidget);
-    expect(find.text('Admin prompts stay in Terminal'), findsOneWidget);
-    await tester.tap(find.text('Manual'));
+    expect(find.text('Use automatic setup'), findsNothing);
+    expect(find.text('Manual setup'), findsOneWidget);
+    expect(find.text('Admin prompts stay in Terminal'), findsNothing);
+    await tester.tap(find.text('Manual setup'));
     await tester.pump();
 
     expect(find.textContaining('/bin/sh -s -- --desktop'), findsOneWidget);
     expect(find.text('I ran these · Recheck'), findsOneWidget);
   });
+
+  testWidgets(
+    'one explicit install action reaches sign-in without an extra review',
+    (tester) async {
+      final provisioner = _ScriptedEnvironmentProvisioner([
+        EnvironmentReadiness(
+          steps: {
+            for (final step in EnvironmentStep.values)
+              step: EnvironmentStepStatus.ready,
+          },
+          phase: EnvironmentSetupPhase.ready,
+          systemReady: true,
+        ),
+      ]);
+      final app = AppNotifier(
+        config: AppConfig.dev,
+        authSession: AuthSession(),
+        configStore: null,
+        cliLogin: _FakeCliLogin(),
+        environmentProvisioner: provisioner,
+      )..status = AppStatus.preparingEnvironment;
+      app.environmentReadiness = const EnvironmentReadiness(
+        steps: {
+          EnvironmentStep.clipboard: EnvironmentStepStatus.notApplicable,
+          EnvironmentStep.harness: EnvironmentStepStatus.failed,
+          EnvironmentStep.tmux: EnvironmentStepStatus.ready,
+        },
+        phase: EnvironmentSetupPhase.review,
+        systemReady: true,
+        homebrewReady: true,
+        tmuxBinaryReady: true,
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [appStateProvider.overrideWithValue(app)],
+          child: const DesktopApp(),
+        ),
+      );
+      await tester.pump();
+      expect(provisioner.installCalls, isEmpty);
+      await tester.tap(find.text('Install 1 tool'));
+      await tester.pump();
+      expect(provisioner.installCalls, [true]);
+      expect(app.status, AppStatus.unauthenticated);
+      expect(find.text('Sign in'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+    },
+  );
 
   testWidgets('install plan and manual commands show only missing tools', (
     tester,
@@ -669,7 +720,7 @@ void main() {
     expect(find.text('Install 2 tools'), findsOneWidget);
     expect(find.text('Admin prompts stay in Terminal'), findsOneWidget);
 
-    await tester.tap(find.text('Manual'));
+    await tester.tap(find.text('Manual setup'));
     await tester.pump();
 
     expect(find.text('1 · Homebrew'), findsOneWidget);
@@ -733,8 +784,9 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.text('System tools & writable home'), findsOneWidget);
-    expect(find.text('Missing'), findsOneWidget);
+    expect(find.text('Apple developer tools'), findsOneWidget);
+    expect(find.text('Install 1 tool'), findsOneWidget);
+    expect(find.text('tmux'), findsNothing);
   });
 
   testWidgets('RootShell rebuilds to LoginScreen when status flips after boot', (

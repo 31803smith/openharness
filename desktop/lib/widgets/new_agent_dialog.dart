@@ -76,6 +76,7 @@ class _NewAgentDialog extends StatefulWidget {
 
 class _NewAgentDialogState extends State<_NewAgentDialog> {
   late String _engine = allEngines.first.id;
+  bool _engineChosenByUser = false;
   late String _machineId = widget.machineId;
   int _machineRevision = 0;
   late String? _folder = widget.initialFolder;
@@ -92,6 +93,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   @override
   void initState() {
     super.initState();
+    _engine = _preferredInstalledEngine();
     // Which engines this machine actually has. Asked here rather than at
     // connect because the answer costs the far side one interactive shell per
     // engine and is only ever read on this screen. Deferred a frame so the
@@ -106,8 +108,39 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     // answer lands, so nothing blanks.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
-        unawaited(widget.notifier.probeEngines(_machineId, force: true));
+        unawaited(_probeEngines());
       }
+    });
+  }
+
+  String _preferredInstalledEngine() {
+    final engines = widget.notifier.stateOf(_machineId)?.engines;
+    if (engines?.loaded != true || engines?[_engine]?.installed == true) {
+      return _engine;
+    }
+    return allEngines
+            .where((identity) => engines?[identity.id]?.installed == true)
+            .firstOrNull
+            ?.id ??
+        _engine;
+  }
+
+  Future<void> _probeEngines() async {
+    final machineId = _machineId;
+    final revision = _machineRevision;
+    await widget.notifier.probeEngines(machineId, force: true);
+    if (!mounted ||
+        revision != _machineRevision ||
+        _submitting ||
+        _engineChosenByUser) {
+      return;
+    }
+    final preferred = _preferredInstalledEngine();
+    if (preferred == _engine) return;
+    setState(() {
+      _engine = preferred;
+      _codexProfile = null;
+      _codexProfilesBusy = true;
     });
   }
 
@@ -401,7 +434,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
               SelectOption(
                 value: machine.machine.machineId,
                 label: machine.isLocalMachine
-                    ? 'Local'
+                    ? 'This computer'
                     : machine.machine.displayName,
                 note: machine.nodeOnline == false
                     ? 'Offline'
@@ -419,11 +452,22 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
               _codexProfilesBusy = true;
               _error = null;
             });
-            unawaited(widget.notifier.probeEngines(id, force: true));
+            unawaited(_probeEngines());
           },
         ),
         const SizedBox(height: _gapField),
-        const FieldLabel('Engine'),
+        const FieldLabel('Project folder'),
+        _FolderControl(
+          folder: _folder,
+          machineName: _machineName,
+          machineIsThisComputer: _machineIsThisComputer,
+          picking: _picking,
+          hovered: _folderHovered,
+          onHover: (value) => setState(() => _folderHovered = value),
+          onPressed: _browse,
+        ),
+        const SizedBox(height: _gapField),
+        const FieldLabel('Coding agent'),
         // The app's own picker, not `DropdownButtonFormField`.
         //
         // Material's dropdown renders its own popup, anchors it OVER the field
@@ -452,6 +496,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
               ),
           ],
           onChanged: (value) => setState(() {
+            _engineChosenByUser = true;
             _engine = value;
             _codexProfile = null;
             _codexProfilesBusy = true;
@@ -500,17 +545,6 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
             ),
           ),
         ],
-        const SizedBox(height: _gapField),
-        const FieldLabel('Working folder'),
-        _FolderControl(
-          folder: _folder,
-          machineName: _machineName,
-          machineIsThisComputer: _machineIsThisComputer,
-          picking: _picking,
-          hovered: _folderHovered,
-          onHover: (value) => setState(() => _folderHovered = value),
-          onPressed: _browse,
-        ),
         // THE FOLD. What is behind it is what most people never touch: a Codex
         // home to run under, and the flag that turns the approvals off. Leaving
         // them in the main column made this a four-question dialog to do a

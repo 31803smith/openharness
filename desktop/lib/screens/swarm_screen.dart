@@ -913,6 +913,25 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                   notifier: app,
                                   projects: _projects.projects,
                                   onNewAgent: _newAgent,
+                                  onAgent: (entry) => _activateSearch(
+                                    SwarmSearchSelection(
+                                      SwarmDestination(
+                                        id: agentDestinationId(
+                                          entry.machineId,
+                                          entry.agent.id,
+                                        ),
+                                        title: entry.agent.name,
+                                        detail:
+                                            entry.machine.machine.displayName,
+                                        swarmId: null,
+                                        current: false,
+                                        machineId: entry.machineId,
+                                        agentId: entry.agent.id,
+                                        engine: entry.agent.engine,
+                                      ),
+                                    ),
+                                    app.activeSwarmId,
+                                  ),
                                   searchField: SwarmInlineSearch(
                                     key: ValueKey(
                                       'welcome-search:${app.activeSwarmId}',
@@ -983,6 +1002,12 @@ class _SwarmScreenState extends State<SwarmScreen> {
                         Expanded(
                           child: TextButton(
                             onPressed: () => app.selectSwarm(swarm.id),
+                            style: TextButton.styleFrom(
+                              animationDuration: Duration.zero,
+                              foregroundColor: app.activeSwarmId == swarm.id
+                                  ? Colors.white
+                                  : Colors.white70,
+                            ),
                             child: Text(
                               swarm.name,
                               maxLines: 1,

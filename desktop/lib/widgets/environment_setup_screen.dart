@@ -8,8 +8,8 @@ import '../shared/widgets/command_row.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
 
-/// Transparent three-step setup. Launch probes are read-only; changes require
-/// an explicit method choice and confirmation on this screen.
+/// One setup review with a direct install action. Launch probes stay read-only;
+/// installation starts only after the user chooses the visible install action.
 class EnvironmentSetupScreen extends StatefulWidget {
   final AppNotifier notifier;
 
@@ -31,39 +31,27 @@ class _EnvironmentSetupScreenState extends State<EnvironmentSetupScreen> {
     });
   }
 
-  int _stage(EnvironmentSetupPhase phase) => switch (phase) {
-    EnvironmentSetupPhase.preflight => 0,
-    EnvironmentSetupPhase.review => 1,
-    _ => 2,
-  };
-
   @override
   Widget build(BuildContext context) {
     final state = widget.notifier.environmentReadiness;
     return Scaffold(
       backgroundColor: AppColors.background,
-      body: LayoutBuilder(
-        builder: (context, constraints) => Row(
-          children: [
-            if (constraints.maxWidth >= 820)
-              SizedBox(width: 260, child: _Rail(stage: _stage(state.phase))),
-            Expanded(
-              child: Column(
-                children: [
-                  Expanded(
-                    child: SingleChildScrollView(
-                      padding: const EdgeInsets.fromLTRB(44, 38, 44, 28),
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 780),
-                        child: _body(state),
-                      ),
-                    ),
-                  ),
-                  _footer(state),
-                ],
-              ),
+      body: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 760),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(32, 28, 32, 24),
+                  child: _body(state),
+                ),
+                _footer(state),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -71,7 +59,7 @@ class _EnvironmentSetupScreenState extends State<EnvironmentSetupScreen> {
 
   Widget _body(EnvironmentReadiness state) => switch (state.phase) {
     EnvironmentSetupPhase.preflight => _preflight(state),
-    EnvironmentSetupPhase.review => _review(state),
+    EnvironmentSetupPhase.review ||
     EnvironmentSetupPhase.chooseMethod => _choose(state),
     EnvironmentSetupPhase.installing ||
     EnvironmentSetupPhase.waitingForTerminal ||
@@ -107,7 +95,7 @@ class _EnvironmentSetupScreenState extends State<EnvironmentSetupScreen> {
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
       _heading(
-        'Step 1 of 3 · Pre-flight check',
+        'Getting started',
         'Checking this computer',
         'This check is read-only. Harness verifies every tool it needs before proposing any changes.',
       ),
@@ -118,18 +106,6 @@ class _EnvironmentSetupScreenState extends State<EnvironmentSetupScreen> {
       ),
       const SizedBox(height: 18),
       _checkList(state, checking: true),
-    ],
-  );
-
-  Widget _review(EnvironmentReadiness state) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      _heading(
-        'Step 2 of 3 · Review setup',
-        'Here is exactly what is required',
-        'Ready items stay untouched. Only missing items continue to setup.',
-      ),
-      _checkList(state),
     ],
   );
 
@@ -144,30 +120,37 @@ class _EnvironmentSetupScreenState extends State<EnvironmentSetupScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _heading(
-          'Step 3 of 3 · Choose & install',
-          'Choose how to prepare this computer',
+          'Getting started',
+          'Get this computer ready',
           count == 0
               ? 'Nothing is left to install. Harness will run one final verification.'
-              : 'Only the $countLabel below will be installed. Ready items stay untouched.',
+              : 'Harness brings your coding agents together in one workspace. '
+                    'Set up the $countLabel below, then sign in to get started.',
         ),
-        SegmentedButton<EnvironmentSetupMode>(
-          segments: const [
-            ButtonSegment(
-              value: EnvironmentSetupMode.automatic,
-              icon: Icon(Icons.auto_fix_high, size: 17),
-              label: Text('Automatic'),
+        Row(
+          children: [
+            const Expanded(
+              child: Text(
+                'Required tools',
+                style: TextStyle(fontWeight: FontWeight.w500),
+              ),
             ),
-            ButtonSegment(
-              value: EnvironmentSetupMode.manual,
-              icon: Icon(Icons.terminal, size: 17),
-              label: Text('Manual'),
+            TextButton(
+              style: TextButton.styleFrom(foregroundColor: AppColors.textSoft),
+              onPressed: () => widget.notifier.selectEnvironmentSetupMode(
+                mode == EnvironmentSetupMode.automatic
+                    ? EnvironmentSetupMode.manual
+                    : EnvironmentSetupMode.automatic,
+              ),
+              child: Text(
+                mode == EnvironmentSetupMode.automatic
+                    ? 'Manual setup'
+                    : 'Use automatic setup',
+              ),
             ),
           ],
-          selected: {mode},
-          onSelectionChanged: (value) =>
-              widget.notifier.selectEnvironmentSetupMode(value.first),
         ),
-        const SizedBox(height: 18),
+        const SizedBox(height: 8),
         if (mode == EnvironmentSetupMode.automatic) ...[
           if (needsTerminal) ...[
             _notice(
@@ -191,9 +174,9 @@ class _EnvironmentSetupScreenState extends State<EnvironmentSetupScreen> {
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
       _heading(
-        'Step 3 of 3 · Installation',
+        'Getting started',
         state.phase == EnvironmentSetupPhase.waitingForTerminal
-            ? 'Finish the secure Terminal step'
+            ? 'Finish setup in Terminal'
             : state.phase == EnvironmentSetupPhase.verifying
             ? 'Running final verification'
             : 'Preparing this computer',
@@ -622,24 +605,15 @@ class _EnvironmentSetupScreenState extends State<EnvironmentSetupScreen> {
         children: [
           Expanded(
             child: Text(
-              'No password is collected by Harness.',
+              'Next: sign in and start an agent.',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(color: AppColors.muted, fontSize: 11),
             ),
           ),
           const SizedBox(width: 12),
-          if (state.phase == EnvironmentSetupPhase.review)
-            FilledButton(
-              onPressed: widget.notifier.showEnvironmentMethodChoice,
-              child: const Text('Continue'),
-            )
-          else if (state.phase == EnvironmentSetupPhase.chooseMethod) ...[
-            TextButton(
-              onPressed: widget.notifier.showEnvironmentReview,
-              child: const Text('Back'),
-            ),
-            const SizedBox(width: 8),
+          if (state.phase == EnvironmentSetupPhase.review ||
+              state.phase == EnvironmentSetupPhase.chooseMethod) ...[
             FilledButton.icon(
               onPressed: busy
                   ? null
@@ -717,120 +691,6 @@ class _InstallItem {
     required this.command,
     this.requiresTerminal = false,
   });
-}
-
-class _Rail extends StatelessWidget {
-  final int stage;
-  const _Rail({required this.stage});
-
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.fromLTRB(25, 36, 25, 24),
-    decoration: BoxDecoration(
-      color: AppColors.sidebar,
-      border: Border(right: BorderSide(color: AppColors.border)),
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'ENVIRONMENT SETUP',
-          style: TextStyle(
-            color: AppColors.muted,
-            fontSize: 10,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 1.3,
-          ),
-        ),
-        const SizedBox(height: 8),
-        const Text(
-          'Prepare Harness\nfor this computer',
-          style: TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.w600,
-            height: 1.25,
-          ),
-        ),
-        const SizedBox(height: 30),
-        for (var index = 0; index < 3; index++)
-          _RailStep(index: index, stage: stage),
-        const Spacer(),
-        Text(
-          'Required: tmux · managed Node 20+ · Harness CLI',
-          style: TextStyle(color: AppColors.muted, fontSize: 11, height: 1.5),
-        ),
-      ],
-    ),
-  );
-}
-
-class _RailStep extends StatelessWidget {
-  final int index;
-  final int stage;
-  const _RailStep({required this.index, required this.stage});
-
-  @override
-  Widget build(BuildContext context) {
-    const labels = [
-      ('Pre-flight check', 'Read-only inspection'),
-      ('Review setup', 'See every change'),
-      ('Choose & install', 'Automatic or manual'),
-    ];
-    final done = index < stage;
-    final active = index == stage;
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: active ? AppColors.selected : Colors.transparent,
-        borderRadius: BorderRadius.circular(9),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 28,
-            height: 28,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: active ? AppColors.accent : AppColors.surface,
-              border: Border.all(color: AppColors.borderStrong),
-            ),
-            child: done
-                ? Icon(Icons.check, size: 14, color: AppColors.success)
-                : Text(
-                    '${index + 1}',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: active ? Colors.white : AppColors.textSoft,
-                    ),
-                  ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  labels[index].$1,
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: active ? AppColors.text : AppColors.textSoft,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  labels[index].$2,
-                  style: TextStyle(fontSize: 10, color: AppColors.muted),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 class _Panel extends StatelessWidget {

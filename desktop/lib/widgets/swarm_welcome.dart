@@ -7,6 +7,7 @@ import '../shared/theme/app_theme.dart' as grid;
 import '../shared/widgets/skeleton.dart';
 import '../state/app_state.dart';
 import '../state/swarm_catalog.dart';
+import 'engine_identity.dart';
 
 class SwarmWelcome extends StatelessWidget {
   const SwarmWelcome({
@@ -19,6 +20,7 @@ class SwarmWelcome extends StatelessWidget {
     required this.onLinkMachine,
     required this.onMachine,
     required this.onProject,
+    this.onAgent,
     this.onProjectAgents,
   });
   final AppNotifier notifier;
@@ -29,12 +31,45 @@ class SwarmWelcome extends StatelessWidget {
   final VoidCallback onLinkMachine;
   final ValueChanged<MachineState> onMachine;
   final ValueChanged<SwarmProjectGroup> onProject;
+  final ValueChanged<SwarmAgentRef>? onAgent;
   final ValueChanged<SwarmProjectGroup>? onProjectAgents;
   @override
   Widget build(BuildContext context) {
     grid.AppTheme.watch(context);
     final app = notifier;
     final groups = swarmProjects(app, projects);
+    final firstWorkspace =
+        app.swarms.every((swarm) => swarm.panes.isEmpty) &&
+        app.closedHistory.isEmpty;
+    final agents = firstWorkspace ? swarmAgents(app) : const <SwarmAgentRef>[];
+    final noAgents =
+        firstWorkspace &&
+        !app.machinesLoading &&
+        agents.isEmpty &&
+        groups.isEmpty &&
+        app.machineStates.length == 1 &&
+        app.machineStates.values.first.isLocalMachine &&
+        app.machineStates.values.first.agentLoadStatus ==
+            AgentLoadStatus.loaded &&
+        app.machineStates.values.first.nodeOnline != false &&
+        !app.machineStates.values.first.needsLink;
+    final readyAgents =
+        agents
+            .where(
+              (entry) =>
+                  !entry.machine.needsLink &&
+                  entry.machine.nodeOnline != false &&
+                  entry.agent.terminalAvailable,
+            )
+            .toList()
+          ..sort((a, b) {
+            if (a.machine.isLocalMachine != b.machine.isLocalMachine) {
+              return a.machine.isLocalMachine ? -1 : 1;
+            }
+            return a.agent.name.toLowerCase().compareTo(
+              b.agent.name.toLowerCase(),
+            );
+          });
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -50,9 +85,9 @@ class SwarmWelcome extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        'Start a swarm',
-                        style: TextStyle(
+                      Text(
+                        noAgents ? 'Start with one agent' : 'Start a swarm',
+                        style: const TextStyle(
                           fontSize: 32,
                           fontWeight: FontWeight.w500,
                           letterSpacing: -0.7,
@@ -63,9 +98,11 @@ class SwarmWelcome extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(height: 10),
-                      const Text(
-                        'Choose a machine or project, or add agents individually.',
-                        style: TextStyle(
+                      Text(
+                        noAgents
+                            ? 'Choose a project folder and an agent. Add more whenever you want to work side by side.'
+                            : 'A swarm keeps related agents together. Open a machine or project to bring its agents into this tab.',
+                        style: const TextStyle(
                           fontSize: 13,
                           color: Color(0xffe0dce3),
                         ),
@@ -88,89 +125,150 @@ class SwarmWelcome extends StatelessWidget {
                         ],
                       ),
                       const SizedBox(height: 34),
-                      _Glass(
-                        child: LayoutBuilder(
-                          builder: (context, size) {
-                            final machines = _section(
-                              'Machines',
-                              'Link machine',
-                              onLinkMachine,
-                              [
-                                if (app.machinesLoading &&
-                                    app.machineStates.isEmpty)
-                                  const SkeletonList(rows: 3),
-                                for (final machine in app.machineStates.values)
-                                  _StarterRow(
-                                    icon: Icons.computer_outlined,
-                                    name: machine.machine.displayName,
-                                    note: machine.needsLink
-                                        ? 'Link required'
-                                        : machine.nodeOnline == false
-                                        ? 'Offline'
-                                        : machine.isLocalMachine
-                                        ? 'Local'
-                                        : null,
-                                    count: machine.agents.length,
-                                    onTap: () => onMachine(machine),
+                      if (noAgents)
+                        _Glass(
+                          child: _FirstAgentGuide(onLinkMachine: onLinkMachine),
+                        )
+                      else ...[
+                        if (onAgent != null && readyAgents.isNotEmpty) ...[
+                          _Glass(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'Go to an agent',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
                                   ),
-                                if (!app.machinesLoading &&
-                                    app.machineStates.isEmpty)
-                                  const Padding(
-                                    padding: EdgeInsets.symmetric(vertical: 18),
-                                    child: Text(
-                                      'Link a machine to find its agents.',
+                                ),
+                                const SizedBox(height: 8),
+                                for (final entry in readyAgents.take(3))
+                                  ListTile(
+                                    key: ValueKey(
+                                      'welcome-agent:${entry.machineId}:${entry.agent.id}',
                                     ),
-                                  ),
-                              ],
-                            );
-                            final projects = _section(
-                              'Projects',
-                              'Add project',
-                              onAddProject,
-                              [
-                                for (final group in groups)
-                                  _StarterRow(
-                                    icon: Icons.folder_outlined,
-                                    name: group.name,
-                                    count: group.agents.length,
-                                    onTap: () => onProject(group),
-                                    onManage: onProjectAgents == null
-                                        ? null
-                                        : () => onProjectAgents!(group),
-                                  ),
-                                if (groups.isEmpty)
-                                  const Padding(
-                                    padding: EdgeInsets.symmetric(vertical: 18),
-                                    child: Text(
-                                      'Add a working folder to start a project.',
-                                      style: TextStyle(
-                                        color: Color(0xffc5bece),
+                                    contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 4,
+                                    ),
+                                    leading: EngineMark(
+                                      engine: entry.agent.engine,
+                                      size: 22,
+                                    ),
+                                    title: Text(
+                                      entry.agent.name,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(fontSize: 13),
+                                    ),
+                                    subtitle: Text(
+                                      [
+                                        entry.machine.machine.displayName,
+                                        entry.project?.name,
+                                      ].whereType<String>().join(' · '),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
                                         fontSize: 12,
+                                        color: Colors.white70,
                                       ),
                                     ),
+                                    onTap: () => onAgent!(entry),
                                   ),
                               ],
-                            );
-                            return size.maxWidth < 570
-                                ? Column(
-                                    children: [
-                                      machines,
-                                      const SizedBox(height: 24),
-                                      projects,
-                                    ],
-                                  )
-                                : Row(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Expanded(child: machines),
-                                      const SizedBox(width: 36),
-                                      Expanded(child: projects),
-                                    ],
-                                  );
-                          },
+                            ),
+                          ),
+                          const SizedBox(height: 18),
+                        ],
+                        _Glass(
+                          child: LayoutBuilder(
+                            builder: (context, size) {
+                              final machines = _section(
+                                'Machines',
+                                'Link machine',
+                                onLinkMachine,
+                                [
+                                  if (app.machinesLoading &&
+                                      app.machineStates.isEmpty)
+                                    const SkeletonList(rows: 3),
+                                  for (final machine
+                                      in app.machineStates.values)
+                                    _StarterRow(
+                                      icon: Icons.computer_outlined,
+                                      name: machine.machine.displayName,
+                                      note: machine.needsLink
+                                          ? 'Link required'
+                                          : machine.nodeOnline == false
+                                          ? 'Offline'
+                                          : machine.isLocalMachine
+                                          ? 'Local'
+                                          : null,
+                                      count: machine.agents.length,
+                                      onTap: () => onMachine(machine),
+                                    ),
+                                  if (!app.machinesLoading &&
+                                      app.machineStates.isEmpty)
+                                    const Padding(
+                                      padding: EdgeInsets.symmetric(
+                                        vertical: 18,
+                                      ),
+                                      child: Text(
+                                        'Link a machine to find its agents.',
+                                      ),
+                                    ),
+                                ],
+                              );
+                              final projects = _section(
+                                'Projects',
+                                'Add project',
+                                onAddProject,
+                                [
+                                  for (final group in groups)
+                                    _StarterRow(
+                                      icon: Icons.folder_outlined,
+                                      name: group.name,
+                                      count: group.agents.length,
+                                      onTap: () => onProject(group),
+                                      onManage: onProjectAgents == null
+                                          ? null
+                                          : () => onProjectAgents!(group),
+                                    ),
+                                  if (groups.isEmpty)
+                                    const Padding(
+                                      padding: EdgeInsets.symmetric(
+                                        vertical: 18,
+                                      ),
+                                      child: Text(
+                                        'Add a working folder to start a project.',
+                                        style: TextStyle(
+                                          color: Color(0xffc5bece),
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              );
+                              return size.maxWidth < 570
+                                  ? Column(
+                                      children: [
+                                        machines,
+                                        const SizedBox(height: 24),
+                                        projects,
+                                      ],
+                                    )
+                                  : Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Expanded(child: machines),
+                                        const SizedBox(width: 36),
+                                        Expanded(child: projects),
+                                      ],
+                                    );
+                            },
+                          ),
                         ),
-                      ),
+                      ],
                     ],
                   ),
                 ),
@@ -199,12 +297,93 @@ class SwarmWelcome extends StatelessWidget {
           const Spacer(),
           TextButton(
             onPressed: onAction,
+            style: TextButton.styleFrom(foregroundColor: Colors.white70),
             child: Text(action, style: const TextStyle(fontSize: 11)),
           ),
         ],
       ),
       const SizedBox(height: 8),
       ...children,
+    ],
+  );
+}
+
+class _FirstAgentGuide extends StatelessWidget {
+  const _FirstAgentGuide({required this.onLinkMachine});
+  final VoidCallback onLinkMachine;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      const Text(
+        'Your first workspace',
+        style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+      ),
+      const SizedBox(height: 16),
+      for (final (number, title, detail) in const [
+        ('1', 'Choose a folder', 'Use a project you already work on.'),
+        (
+          '2',
+          'Pick your agent',
+          'Claude Code, Codex, or another coding agent.',
+        ),
+        (
+          '3',
+          'Start working',
+          'Your agent opens here. Sign in if needed, then give it a task.',
+        ),
+      ])
+        Padding(
+          padding: const EdgeInsets.only(bottom: 14),
+          child: Row(
+            children: [
+              Container(
+                width: 28,
+                height: 28,
+                alignment: Alignment.center,
+                decoration: const BoxDecoration(
+                  color: Colors.white10,
+                  shape: BoxShape.circle,
+                ),
+                child: Text(
+                  number,
+                  style: const TextStyle(fontSize: 12, color: Colors.white70),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      detail,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Colors.white70,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      TextButton(
+        onPressed: onLinkMachine,
+        child: const Text(
+          'Link another machine',
+          style: TextStyle(color: Colors.white70),
+        ),
+      ),
     ],
   );
 }
