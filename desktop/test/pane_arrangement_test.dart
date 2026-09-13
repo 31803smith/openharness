@@ -1,10 +1,45 @@
 import 'dart:ui';
+import 'dart:math';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/state/pane_arrangement.dart';
 import 'package:harness/state/pane_preset.dart';
 
 void main() {
+  test('nested splits and local close repairs retain complete nonoverlapping coverage', () {
+    final random = Random(17);
+    for (var trial = 0; trial < 30; trial++) {
+      var arrangement = PaneArrangement(const [Rect.fromLTRB(0, 0, 1, 1)]);
+      for (var count = 1; count < 16; count++) {
+        arrangement = arrangement.split(
+          random.nextInt(count),
+          PaneResizeAxis.values[random.nextInt(2)],
+          minimum: Size.zero,
+        )!;
+      }
+      while (arrangement.tiles.length > 1) {
+        expect(PaneArrangement.fromJson(arrangement.toJson()), isNotNull);
+        expect(
+          arrangement.tiles.fold<double>(
+            0,
+            (sum, tile) => sum + tile.width * tile.height,
+          ),
+          closeTo(1, .000001),
+        );
+        final next = arrangement.remove(
+          random.nextInt(arrangement.tiles.length),
+        );
+        // Interlocking cuts may have no complete edge that can fill the hole.
+        // A null repair explicitly asks the caller to return to its preset.
+        if (next == null) break;
+        arrangement = next;
+      }
+      if (arrangement.tiles.length == 1) {
+        expect(arrangement.tiles.single, const Rect.fromLTRB(0, 0, 1, 1));
+      }
+    }
+  });
+
   test(
     'all preset dividers preserve coverage and avoid overlaps at either limit',
     () {

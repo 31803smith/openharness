@@ -14,6 +14,7 @@ import 'package:harness/auth/auth_session.dart';
 import 'package:harness/core/config.dart';
 import 'package:harness/core/models.dart';
 import 'package:harness/state/app_state.dart';
+import 'package:harness/state/pane_arrangement.dart';
 import 'package:harness/widgets/new_agent_dialog.dart';
 
 /// Keeps every tracked event, so a test can assert on the name AND the params
@@ -60,6 +61,7 @@ class FakeCreateAgentNotifier extends AppNotifier {
     bool bypassPermission = false,
     String? codexHome,
     String? swarmId,
+    PaneSplitRequest? split,
   }) async => null;
 }
 

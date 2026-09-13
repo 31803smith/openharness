@@ -1,3 +1,5 @@
+import 'dart:ui' show Size;
+
 import 'pane_preset.dart';
 import 'pane_arrangement.dart';
 import 'terminal_pane.dart';
@@ -15,16 +17,40 @@ class Swarm {
   final Map<String, PaneArrangement> paneSizes = {};
   PaneArrangement? arranged;
   String? arrangedKey;
+  Size? arrangedMinimum;
   int? focusedPaneId;
   int? zoomedPaneId;
   int? previousPaneId;
   int? gridColumns;
   final Map<int, int> pinnedSlots = {};
 
+  PaneArrangement? get manualLayout => paneSizes['${panes.length}:manual'];
+
+  void savePaneSizes(String key, PaneArrangement arrangement) {
+    paneSizes[key] = arrangement;
+    while (paneSizes.length > 64) {
+      paneSizes.remove(paneSizes.keys.first);
+    }
+  }
+
   void remove(TerminalPane pane) {
     final index = panes.indexOf(pane);
     if (index < 0) return;
+    final manual = manualLayout;
     panes.removeAt(index);
+    if (manual != null && panes.length > 1) {
+      final next = manual.remove(index);
+      if (next == null) {
+        paneSizes.remove('${panes.length}:manual');
+      } else {
+        savePaneSizes('${panes.length}:manual', next);
+      }
+    }
+    if (manual != null) {
+      pinnedSlots.updateAll((_, slot) => slot > index ? slot - 1 : slot);
+    }
+    arranged = null;
+    arrangedKey = null;
     pinnedSlots.remove(pane.id);
     if (focusedPaneId == pane.id) {
       focusedPaneId = panes.isEmpty
@@ -84,6 +110,11 @@ class ClosedAgent extends ClosedWork {
        agentId = pane.agentId!,
        composerVisible = pane.composerVisible,
        pinnedSlot = swarm.pinnedSlots[pane.id],
+       manualLayout = swarm.manualLayout,
+       remainingAgents = List.unmodifiable([
+         for (final other in swarm.panes)
+           if (other != pane) (other.machineId, other.agentId),
+       ]),
        zoomed = swarm.zoomedPaneId == pane.id;
 
   final String swarmId, swarmName, machineId, machineName, agentId, name;
@@ -91,6 +122,8 @@ class ClosedAgent extends ClosedWork {
   final int index;
   final bool composerVisible, zoomed;
   final int? pinnedSlot;
+  final PaneArrangement? manualLayout;
+  final List<(String, String?)> remainingAgents;
 }
 
 /// Terminal buffers and controllers are released normally; a reopened view

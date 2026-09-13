@@ -386,6 +386,11 @@ class _SwarmCanvasState extends State<_SwarmCanvas> {
       if (app.zoomedPaneId == null) {
         app.activeSwarm.arranged = layout.arrangement;
         app.activeSwarm.arrangedKey = layout.key;
+        final minimum = _MinTile.of();
+        app.activeSwarm.arrangedMinimum = Size(
+          (minimum.width + kPaneGap) / (constraints.maxWidth + kPaneGap),
+          (minimum.height + kPaneGap) / (layout.height + kPaneGap),
+        );
       }
       if (layout.columns != null) app.gridColumns = layout.columns;
       final rectangles = {
@@ -429,7 +434,8 @@ class _SwarmCanvasState extends State<_SwarmCanvas> {
                       ),
                     ),
                   ),
-              if (app.zoomedPaneId == null && layout.arrangement != null)
+              if (app.zoomedPaneId == null &&
+                  layout.arrangement?.dividers.isNotEmpty == true)
                 Positioned.fill(
                   child: _resizeLayer(layout, constraints.biggest),
                 ),
@@ -545,13 +551,17 @@ class _SwarmGeometry {
     if (count == 0) return;
     if (count == 1) {
       rectangles = [Offset.zero & viewport];
+      arrangement = PaneArrangement(const [Rect.fromLTRB(0, 0, 1, 1)]);
+      key = '1:single';
       return;
     }
     var shape = preset ?? PanePreset.defaultFor(count)!;
     if (shape == PanePreset.splitLong && viewport.height > viewport.width) {
       shape = PanePreset.rows;
     }
-    if (shape == PanePreset.auto || shape.statedColumns != null) {
+    final manual = sizes['$count:manual'];
+    if (manual == null &&
+        (shape == PanePreset.auto || shape.statedColumns != null)) {
       columns =
           (shape.statedColumns ?? (viewport.width / minimum.width).floor())
               .clamp(1, count);
@@ -561,8 +571,9 @@ class _SwarmGeometry {
         double.infinity,
       );
     }
-    key =
-        '$count:${(preset ?? PanePreset.defaultFor(count))!.id}:${columns ?? 0}:${shape.id}';
+    key = manual != null
+        ? '$count:manual'
+        : '$count:${(preset ?? PanePreset.defaultFor(count))!.id}:${columns ?? 0}:${shape.id}';
     arrangement =
         sizes[key] ?? PaneArrangement(shape.tilesFor(count, columns: columns));
     for (final tile in arrangement!.tiles) {

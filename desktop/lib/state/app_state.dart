@@ -606,7 +606,31 @@ class AppNotifier extends ChangeNotifier {
           agentId: agent.agentId,
         )..composerVisible = agent.composerVisible);
     if (!target.panes.contains(pane)) {
+      final restoreManual =
+          agent.manualLayout != null &&
+          listEquals(
+            target.panes.map((p) => (p.machineId, p.agentId)).toList(),
+            agent.remainingAgents,
+          ) &&
+          (target.panes.length == 1 ||
+              listEquals(
+                target.manualLayout?.tiles,
+                agent.manualLayout!.remove(agent.index)?.tiles,
+              ));
+      if (restoreManual) {
+        target.pinnedSlots.updateAll(
+          (_, slot) => slot >= agent.index ? slot + 1 : slot,
+        );
+      }
       target.panes.insert(agent.index.clamp(0, target.panes.length), pane);
+      if (restoreManual) {
+        target.savePaneSizes(
+          '${target.panes.length}:manual',
+          agent.manualLayout!,
+        );
+      } else if (agent.manualLayout != null) {
+        target.paneSizes.remove('${target.panes.length}:manual');
+      }
       if (agent.pinnedSlot != null &&
           !target.pinnedSlots.containsValue(agent.pinnedSlot)) {
         target.pinnedSlots[pane.id] = agent.pinnedSlot!;
@@ -697,6 +721,47 @@ class AppNotifier extends ChangeNotifier {
     notifyListeners();
   }
 
+  PaneSplitRequest? preparePaneSplit(PaneResizeAxis axis) {
+    if (zoomedPaneId != null || panes.length >= maxPanes) return null;
+    final before = activeSwarm.arranged;
+    final minimum = activeSwarm.arrangedMinimum;
+    final index = panes.indexWhere(
+      (p) => p.id == focusedPaneId && p.agentId != null,
+    );
+    if (before == null ||
+        minimum == null ||
+        before.tiles.length != panes.length) {
+      return null;
+    }
+    final after = before.split(index, axis, minimum: minimum);
+    if (after == null || focusedPaneId == null) return null;
+    return PaneSplitRequest(
+      swarmId: activeSwarmId,
+      paneId: focusedPaneId!,
+      axis: axis,
+      paneIds: panes.map((p) => p.id),
+      before: before,
+      after: after,
+    );
+  }
+
+  bool isPaneSplitCurrent(PaneSplitRequest split) {
+    final target = swarms.where((s) => s.id == split.swarmId).firstOrNull;
+    final minimum = target?.arrangedMinimum;
+    return !_disposed &&
+        target != null &&
+        target.zoomedPaneId == null &&
+        minimum != null &&
+        listEquals(target.panes.map((p) => p.id).toList(), split.paneIds) &&
+        listEquals(target.arranged?.tiles, split.before.tiles) &&
+        split.before.split(
+              split.paneIds.indexOf(split.paneId),
+              split.axis,
+              minimum: minimum,
+            ) !=
+            null;
+  }
+
   /// Drag frames only update in-memory intent. The completed gesture performs
   /// one ordinary coalesced layout save; terminal sessions remain untouched.
   bool resizePanes(
@@ -715,10 +780,7 @@ class AppNotifier extends ChangeNotifier {
       if (persist) _persistLayout();
       return true;
     }
-    activeSwarm.paneSizes[layoutKey] = arrangement;
-    while (activeSwarm.paneSizes.length > 64) {
-      activeSwarm.paneSizes.remove(activeSwarm.paneSizes.keys.first);
-    }
+    activeSwarm.savePaneSizes(layoutKey, arrangement);
     activeSwarm.arranged = arrangement;
     notifyListeners();
     if (persist) _persistLayout();
@@ -3314,8 +3376,12 @@ class AppNotifier extends ChangeNotifier {
     bool bypassPermission = false,
     String? codexHome,
     String? swarmId,
+    PaneSplitRequest? split,
   }) async {
-    final targetId = swarmId ?? activeSwarmId;
+    if (split != null && !isPaneSplitCurrent(split)) {
+      return 'The layout changed. Close this dialog and split the agent again.';
+    }
+    final targetId = split?.swarmId ?? swarmId ?? activeSwarmId;
     if (!swarms.any((s) => s.id == targetId)) return 'This swarm was closed';
     final target = swarms.firstWhere((s) => s.id == targetId);
     if (target.panes.length >= maxPanes) {
@@ -3367,7 +3433,19 @@ class AppNotifier extends ChangeNotifier {
     // count of what this app launched.
     harnessStats.onAgentSpawned();
     notifyListeners();
-    await addAgentToSwarm(machineId, agent.id, swarmId: targetId);
+    if (split != null && !isPaneSplitCurrent(split)) {
+      _lastError = 'The agent was created, but the original layout changed. Find it in Search.';
+      _lastErrorRetryable = false;
+      notifyListeners();
+      return null;
+    }
+    await assignAgentToPane(
+      null,
+      machineId,
+      agent.id,
+      swarmId: targetId,
+      split: split,
+    );
     return null;
   }
 
@@ -3717,11 +3795,18 @@ class AppNotifier extends ChangeNotifier {
     String machineId,
     String agentId, {
     String? swarmId,
+    PaneSplitRequest? split,
   }) async {
     final target = swarms
         .where((s) => s.id == (swarmId ?? activeSwarmId))
         .firstOrNull;
     if (target == null || _disposed) return;
+    if (split != null &&
+        (split.swarmId != target.id ||
+            paneId != null ||
+            !isPaneSplitCurrent(split))) {
+      return;
+    }
     final targetPanes = target.panes;
     final machine = machineStates[machineId];
     if (machine == null) return;
@@ -3760,7 +3845,9 @@ class AppNotifier extends ChangeNotifier {
       return;
     }
     final insertion = replaced == null
-        ? targetPanes.length
+        ? split == null
+              ? targetPanes.length
+              : split.paneIds.indexOf(split.paneId) + 1
         : targetPanes.indexOf(replaced);
     if (existing != null) target.remove(existing);
     if (replaced != null) target.remove(replaced);
@@ -3768,6 +3855,15 @@ class AppNotifier extends ChangeNotifier {
         shared ??
         TerminalPane(id: _nextPaneId++, machineId: machineId, agentId: agentId);
     targetPanes.insert(insertion.clamp(0, targetPanes.length), pane);
+    if (split != null) {
+      target.pinnedSlots.updateAll(
+        (_, slot) => slot >= insertion ? slot + 1 : slot,
+      );
+      final key = '${targetPanes.length}:manual';
+      target.savePaneSizes(key, split.after);
+      target.arranged = split.after;
+      target.arrangedKey = key;
+    }
     if (replaced != null && !allPanes.contains(replaced)) {
       // Release just the desktop stream. The CLI agent process keeps running.
       unawaited(_detachSession(replaced, sendClose: true));
@@ -3800,7 +3896,10 @@ class AppNotifier extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    if (!machine.terminalCapabilityAvailable) return;
+    if (!machine.terminalCapabilityAvailable) {
+      notifyListeners();
+      return;
+    }
     machine.pendingOfflineAgentId = null;
     _stopOfflineRetry(machineId);
     notifyListeners();

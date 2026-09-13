@@ -8,6 +8,7 @@ import 'package:harness/core/config.dart';
 import 'package:harness/core/engine_availability.dart';
 import 'package:harness/core/models.dart';
 import 'package:harness/state/app_state.dart';
+import 'package:harness/state/pane_arrangement.dart';
 import 'package:harness/widgets/new_agent_dialog.dart';
 
 class _Folders extends FileSelectorPlatform {
@@ -98,6 +99,7 @@ class _Notifier extends AppNotifier {
     bool bypassPermission = false,
     String? codexHome,
     String? swarmId,
+    PaneSplitRequest? split,
   }) async {
     calls.add({'engine': engine, 'codexHome': codexHome, 'folder': folder});
     return null;

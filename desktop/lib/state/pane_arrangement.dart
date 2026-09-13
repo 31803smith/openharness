@@ -12,6 +12,88 @@ class PaneArrangement {
 
   late final List<PaneDivider> dividers = _findDividers();
 
+  PaneArrangement? split(
+    int index,
+    PaneResizeAxis axis, {
+    required Size minimum,
+  }) {
+    if (index < 0 || index >= tiles.length || tiles.length >= 64) return null;
+    final tile = tiles[index];
+    final x = axis == PaneResizeAxis.x;
+    if (x ? tile.width / 2 < minimum.width : tile.height / 2 < minimum.height) {
+      return null;
+    }
+    final first = x
+        ? Rect.fromLTRB(tile.left, tile.top, tile.center.dx, tile.bottom)
+        : Rect.fromLTRB(tile.left, tile.top, tile.right, tile.center.dy);
+    final second = x
+        ? Rect.fromLTRB(tile.center.dx, tile.top, tile.right, tile.bottom)
+        : Rect.fromLTRB(tile.left, tile.center.dy, tile.right, tile.bottom);
+    return PaneArrangement([
+      ...tiles.take(index),
+      first,
+      second,
+      ...tiles.skip(index + 1),
+    ]);
+  }
+
+  /// Expand a complete neighboring edge into a removed slot. This preserves
+  /// the other cuts, including nested splits. An unsupported shape falls back
+  /// to the count's preset instead of leaving a hole or overlapping terminals.
+  PaneArrangement? remove(int index) {
+    if (index < 0 || index >= tiles.length || tiles.length < 2) return null;
+    final removed = tiles[index];
+    for (final axis in PaneResizeAxis.values) {
+      final x = axis == PaneResizeAxis.x;
+      final start = x ? removed.top : removed.left;
+      final end = x ? removed.bottom : removed.right;
+      for (final before in [true, false]) {
+        final at = x
+            ? (before ? removed.left : removed.right)
+            : (before ? removed.top : removed.bottom);
+        final neighbors = [
+          for (var i = 0; i < tiles.length; i++)
+            if (i != index &&
+                _touches(tiles[i], axis, at, start, end, before: before))
+              i,
+        ];
+        neighbors.sort(
+          (a, b) => (x ? tiles[a].top : tiles[a].left).compareTo(
+            x ? tiles[b].top : tiles[b].left,
+          ),
+        );
+        var cursor = start;
+        var covers = neighbors.isNotEmpty;
+        for (final i in neighbors) {
+          final tile = tiles[i];
+          final from = x ? tile.top : tile.left;
+          final to = x ? tile.bottom : tile.right;
+          if ((from - cursor).abs() > _epsilon || to > end + _epsilon) {
+            covers = false;
+            break;
+          }
+          cursor = to;
+        }
+        if (!covers || (cursor - end).abs() > _epsilon) continue;
+        final moving = neighbors.toSet();
+        return PaneArrangement([
+          for (var i = 0; i < tiles.length; i++)
+            if (i != index)
+              if (!moving.contains(i))
+                tiles[i]
+              else
+                Rect.fromLTRB(
+                  x && !before ? removed.left : tiles[i].left,
+                  !x && !before ? removed.top : tiles[i].top,
+                  x && before ? removed.right : tiles[i].right,
+                  !x && before ? removed.bottom : tiles[i].bottom,
+                ),
+        ]);
+      }
+    }
+    return null;
+  }
+
   List<PaneDivider> _findDividers() {
     final segments =
         <({PaneResizeAxis axis, double at, double start, double end})>[];
@@ -222,6 +304,24 @@ class PaneArrangement {
     }
     return result;
   }
+}
+
+/// Captured before a creation dialog/network request. Completion must still
+/// match these slots; it can never split whichever agent is focused later.
+class PaneSplitRequest {
+  PaneSplitRequest({
+    required this.swarmId,
+    required this.paneId,
+    required this.axis,
+    required Iterable<int> paneIds,
+    required this.before,
+    required this.after,
+  }) : paneIds = List.unmodifiable(paneIds);
+  final String swarmId;
+  final int paneId;
+  final PaneResizeAxis axis;
+  final List<int> paneIds;
+  final PaneArrangement before, after;
 }
 
 class PaneDivider {

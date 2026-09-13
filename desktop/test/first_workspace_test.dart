@@ -9,6 +9,7 @@ import 'package:harness/core/engine_availability.dart';
 import 'package:harness/core/models.dart';
 import 'package:harness/shared/widgets/app_select_field.dart';
 import 'package:harness/state/app_state.dart';
+import 'package:harness/state/pane_arrangement.dart';
 import 'package:harness/terminal/terminal_binary.dart';
 import 'package:xterm/xterm.dart';
 
@@ -52,6 +53,7 @@ class _FirstUseApp extends AppNotifier {
     bool bypassPermission = false,
     String? codexHome,
     String? swarmId,
+    PaneSplitRequest? split,
   }) async {
     launches.add((
       machine: machineId,

@@ -237,6 +237,8 @@ final harnessCommands = <HarnessCommand>[
     nativeAction: 'layout',
   ),
   const HarnessCommand('pane.resize', 'Resize panes', ShortcutGroup.panes),
+  const HarnessCommand('pane.split_right', 'Split right…', ShortcutGroup.panes),
+  const HarnessCommand('pane.split_down', 'Split down…', ShortcutGroup.panes),
   const HarnessCommand(
     'pane.reset_sizes',
     'Reset pane sizes',

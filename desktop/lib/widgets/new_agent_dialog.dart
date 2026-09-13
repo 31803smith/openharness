@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../analytics/analytics.dart';
+import '../state/pane_arrangement.dart';
 import '../core/engine_availability.dart';
 import '../core/codex_profiles.dart';
 import '../shared/theme/app_theme.dart' as grid;
@@ -41,6 +42,7 @@ Future<void> showNewAgentDialog(
   required String source,
   String? initialFolder,
   String? swarmId,
+  PaneSplitRequest? split,
 }) {
   // Reported here rather than at each call site: the doors are four and
   // growing, and one that forgets to track is a hole in the funnel that only
@@ -53,6 +55,7 @@ Future<void> showNewAgentDialog(
       machineId: machineId,
       initialFolder: initialFolder,
       swarmId: swarmId ?? notifier.activeSwarmId,
+      split: split,
     ),
   );
 }
@@ -62,12 +65,14 @@ class _NewAgentDialog extends StatefulWidget {
   final String machineId;
   final String? initialFolder;
   final String swarmId;
+  final PaneSplitRequest? split;
 
   const _NewAgentDialog({
     required this.notifier,
     required this.machineId,
     this.initialFolder,
     required this.swarmId,
+    this.split,
   });
 
   @override
@@ -322,6 +327,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
       engine: engine,
       folder: folder,
       swarmId: widget.swarmId,
+      split: widget.split,
       bypassPermission: bypassPermission,
       // Keep the explicit choice even if machine discovery changes mid-submit.
       // The notifier must reject a now-remote target, never use its default login.
@@ -357,11 +363,11 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
         _folder != null && !_submitting && !_waitingForCodexProfile;
 
     return AlertDialog(
-      // JUST "New agent". The machine used to be named here, and it was telling
-      // somebody what they had already done: this dialog is opened FROM a
-      // machine — its row, its `+`, its empty pane — so there is no other one it
-      // could be for.
-      title: const Text('New agent'),
+      title: Text(switch (widget.split?.axis) {
+        PaneResizeAxis.x => 'New agent to the right',
+        PaneResizeAxis.y => 'New agent below',
+        null => 'New agent',
+      }),
       titleTextStyle: Theme.of(context).textTheme.titleMedium,
       content: SizedBox(
         width: _dialogWidth,

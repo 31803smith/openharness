@@ -2,7 +2,17 @@
 
 Updated 2026-09-13 with coordinated palettes, Models, combined closed-work History and faster unified search. This is a working preview, not a release.
 
-## Active follow-up: controlled resizing
+## Active follow-up: deliberate splits
+
+- `> Split right` and `> Split down` open New agent with the focused agent's machine and known folder preselected. Creation remains explicit. The new agent takes half that agent's rectangle; neighboring agents retain their rectangles, terminal elements and pins. These commands are available only when both resulting agents meet the measured minimum size. No existing key was reassigned.
+- The captured split is checked before creation and again after its asynchronous reply. It remains tied to the original Swarm and pane order, even after tab navigation. If the original layout closes, changes or becomes too small while creation is in flight, the agent remains in Search and an honest notice explains why it was not inserted; no second creation or destructive cleanup occurs.
+- Manual shapes persist through offline restoration and closed-Swarm recovery. Closing an agent expands a complete neighboring edge into its space. If interlocking cuts prevent that local repair, that pane count returns to its selected preset. Reopening restores the original manual shape only if the intervening membership and sizing still match; newer sizing is retained. Cmd-S resets to the chosen preset.
+- Visual review exposed an existing assignment edge case: a machine without a terminal-capability report could receive new membership without notifying the screen. That path now publishes its change immediately; the new split renders with retained output or the existing unavailable state.
+- Validation: **1,138 Flutter tests passed, one existing skip** in the final full run after the notification correction (`/private/tmp/harness-v2-split-full-tests.log`). Focused split checks and the isolated render also passed. Analyzer has no errors/warnings and 12 existing vendored infos. Other artifacts: `/private/tmp/harness-v2-split-{tests,final-checks,analyze,render,build}.log` and `/private/tmp/harness-v2-split-{placed,form}.png`. The rendered form and actual five-agent split were reviewed with system fonts; this remains isolated UI evidence.
+- The Release build succeeded and was relaunched. The verified preview PID 820 was normally quit and confirmed exited before rebuilding. Re-observe the relaunched preview before later native interaction. No real agent received test input.
+- Next: optional bounded search preview, file-remapping ownership across AppKit and Flutter, and a small onboarding copy pass. The New agent form's unavailable-engine explanation is too wordy; shorten it while preserving the distinction between unavailable checks and a known missing engine.
+
+## Controlled resizing checkpoint
 
 - The existing Swarm gaps now resize adjacent agents. Connected divider segments stay aligned; disconnected side stacks can resize independently. Limits derive from the existing 40-column/12-row terminal floor. A deliberately dense preset cannot shrink further below its existing size. Double-click balances the neighboring space.
 - Proportions persist per Swarm, pane count, preset and responsive orientation/column count. Drag frames stay in memory, with an ordinary coalesced layout save when the drag finishes. Saved data is bounded and rejects malformed/overlapping rectangles. Offline restoration and closed-Swarm reopening retain sizes. Selecting any layout through Cmd-S, including the current one, resets custom proportions for that pane count.

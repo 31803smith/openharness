@@ -14,6 +14,7 @@ import '../shared/theme/app_theme.dart' as grid;
 import '../shortcuts/app_shortcuts.dart';
 import '../shortcuts/keymap_commands.dart';
 import '../state/app_state.dart';
+import '../state/pane_arrangement.dart';
 import '../terminal/terminal_viewport.dart';
 import '../usage/models_menu_controller.dart';
 import '../state/swarm_catalog.dart';
@@ -393,6 +394,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
     String? machineId,
     String? folder,
     String? swarmId,
+    PaneSplitRequest? split,
   }) => _dialog(() async {
     final local = app.machineStates.values
         .where((m) => m.isLocalMachine)
@@ -412,8 +414,26 @@ class _SwarmScreenState extends State<SwarmScreen> {
       source: 'swarm',
       initialFolder: folder,
       swarmId: swarmId,
+      split: split,
     );
   });
+
+  Future<void> _splitAgent(PaneResizeAxis axis) async {
+    final split = app.preparePaneSplit(axis);
+    final pane = app.focusedPane;
+    if (split == null || pane == null) return;
+    final machine = app.machineStates[pane.machineId];
+    final agent = machine?.agents
+        .where((a) => a.id == pane.agentId)
+        .firstOrNull;
+    await _newAgent(
+      machineId: pane.machineId,
+      folder: agent == null ? null : machine?.projectOf(agent)?.cwd,
+      swarmId: split.swarmId,
+      split: split,
+    );
+  }
+
   Future<void> _jump({bool historyOnly = false}) async {
     if (!historyOnly) {
       _openSearch();
@@ -845,6 +865,8 @@ class _SwarmScreenState extends State<SwarmScreen> {
     'project.add': _addProject,
     'pane.resize': app.beginPaneResize,
     'pane.reset_sizes': app.resetPaneSizes,
+    'pane.split_right': () => _splitAgent(PaneResizeAxis.x),
+    'pane.split_down': () => _splitAgent(PaneResizeAxis.y),
   };
 
   bool _canExecuteCommand(String id) {
@@ -867,6 +889,12 @@ class _SwarmScreenState extends State<SwarmScreen> {
     if (id.startsWith('terminal.')) return _canFindTerminal;
     if (id == 'pane.resize') {
       return app.panes.length > 1 && app.zoomedPaneId == null;
+    }
+    if (id == 'pane.split_right') {
+      return app.preparePaneSplit(PaneResizeAxis.x) != null;
+    }
+    if (id == 'pane.split_down') {
+      return app.preparePaneSplit(PaneResizeAxis.y) != null;
     }
     if (id == 'pane.reset_sizes') {
       return app.activeSwarm.paneSizes.keys.any(
