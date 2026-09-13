@@ -99,13 +99,40 @@ private extension SwarmTabStrip {
     try checkTitlebar(tabs.count == 1 && tabs[0] === original, "Closing tabs retains the surviving control")
     try original.checkAccessibility(expectedName: "Renamed tab", active: true)
     try checkTitlebar(newButton.isEnabled, "New tab returns below capacity")
-    try checkTitlebar(searchButton.accessibilityLabel() == "Search agents, swarms, machines and projects", "Search has a readable accessible label")
-    try checkTitlebar(searchButton.toolTip?.contains("⌘P") == true, "Search tooltip advertises its keyboard shortcut")
-    try checkTitlebar(subviews.compactMap { $0 as? NSButton }.count == 2, "Titlebar keeps New swarm and Search; Settings belongs to the app menu")
-    try checkTitlebar(newButton.frame.maxX + 12 <= searchButton.frame.minX, "New swarm leaves balanced space before Search")
-    try checkTitlebar(searchButton.frame.height == 28 && searchButton.frame.maxX == bounds.width - 8, "Search has an aligned 28-point target and eight-point trailing inset")
-    searchButton.performClick(nil)
-    try checkTitlebar(events == ["jump"], "Search dispatches the shared picker exactly once")
+    try checkTitlebar(searchField.accessibilityLabel() == "Search agents, swarms, machines and projects", "Search has a readable accessible label")
+    try checkTitlebar(searchField.toolTip?.contains("⌘P") == true, "Search tooltip advertises its keyboard shortcut")
+    try checkTitlebar(searchField.isEditable && searchField.maximumRecents == 0, "Search is an editable field without a separate AppKit recents menu")
+    try checkTitlebar(newButton.frame.maxX + 12 <= searchField.frame.minX, "New swarm leaves balanced space before Search")
+    focusSearch()
+    try checkTitlebar(events.filter { $0 == "searchBegin" }.count == 1, "Focusing search opens one attached result list")
+    focusSearch()
+    try checkTitlebar(events.filter { $0 == "searchBegin" }.count == 1, "Refocusing search keeps the same search session")
+    setSearchState(["query": "Workshop", "hint": "Search agents in Workshop…"])
+    try checkTitlebar(searchField.stringValue == "Workshop", "Group navigation updates the original editable input")
+    closeSearch()
+    try checkTitlebar(searchField.stringValue.isEmpty && !searchField.searching, "Closing search clears and collapses its original input")
+    func key(_ characters: String, _ flags: NSEvent.ModifierFlags = []) -> NSEvent {
+      NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags,
+        timestamp: 0, windowNumber: 0, context: nil, characters: characters,
+        charactersIgnoringModifiers: characters, isARepeat: false, keyCode: 0)!
+    }
+    for (selector, event, expected) in [
+      ("moveDown:", key(""), "next"), ("moveUp:", key(""), "previous"),
+      ("insertNewline:", key("j", .control), "next"),
+      ("moveUp:", key("k", .control), "previous"),
+      ("insertNewline:", key("\r"), "submit"),
+      ("insertNewline:", key("\r", .command), "add"),
+      ("cancelOperation:", key("g", .control), "close")
+    ] {
+      try checkTitlebar(SwarmSearchField.resultCommand(selector, event: event, composing: false) == expected,
+        "Native search dispatches result command \(expected)")
+      try checkTitlebar(SwarmSearchField.resultCommand(selector, event: event, composing: true) == nil,
+        "IME keeps \(expected) while marked text is active")
+    }
+    try checkTitlebar(SwarmSearchField.resultCommand("selectAll:", event: key("a", .command), composing: false) == nil,
+      "Native select-all remains text editing")
+    try checkTitlebar(SwarmSearchField.resultCommand("moveLeft:", event: key(""), composing: false) == nil,
+      "Ordinary arrow movement keeps the caret in the query")
     events.removeAll()
     try original.checkEnabled(true)
     original.clickBothActions()
@@ -114,11 +141,27 @@ private extension SwarmTabStrip {
     events.removeAll()
     update(state([["id": "swarm-0", "name": "Renamed tab"]], active: "swarm-0", enabled: false))
     try original.checkEnabled(false)
-    try checkTitlebar(!newButton.isEnabled && !searchButton.isEnabled, "Titlebar actions disable with a modal")
+    try checkTitlebar(!newButton.isEnabled && !searchField.isEnabled, "Titlebar actions disable with a modal")
     original.clickBothActions()
     newButton.performClick(nil)
-    searchButton.performClick(nil)
+    focusSearch()
     try checkTitlebar(events.isEmpty, "Disabled controls emit no actions")
+  }
+}
+
+private extension SwarmTabStrip {
+  func checkSearchEditing(_ window: NSWindow) throws {
+    focusSearch()
+    try checkTitlebar(searchField.currentEditor() is NSTextView, "The actual search bar owns a native field editor")
+    setSearchState(["query": "feature/木", "hint": "Search agents…"])
+    try checkTitlebar((searchField.currentEditor() as? NSTextView)?.string == "feature/木",
+      "Unicode query stays in the original native input")
+    focusSearch(selectAll: true)
+    try checkTitlebar((searchField.currentEditor() as? NSTextView)?.selectedRange().length == ("feature/木" as NSString).length,
+      "Command-P selects the current query for replacement")
+    closeSearch()
+    try checkTitlebar(window.firstResponder === window.contentViewController,
+      "Closing native search returns keyboard events to the content controller")
   }
 }
 
@@ -251,8 +294,13 @@ private extension SwarmTitlebar {
       strip.layoutSubtreeIfNeeded()
       try strip.checkWindowGeometry(window)
     }
+    try strip.checkSearchEditing(window)
     try checkTitlebar(!window.isVisible, "Native layout check never displays its window")
   }
+}
+
+private final class TitlebarCheckContentController: NSViewController {
+  override var acceptsFirstResponder: Bool { true }
 }
 
 let titlebarCheckApp = NSApplication.shared
@@ -266,6 +314,9 @@ do {
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 700),
       styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
     window.isReleasedWhenClosed = false
+    let content = TitlebarCheckContentController()
+    content.view = NSView(frame: NSRect(x: 0, y: 0, width: 1280, height: 700))
+    window.contentViewController = content
     let titlebar = SwarmTitlebar(window: window, messenger: TitlebarCheckMessenger())
     try titlebar.checkNativeContainer()
     window.close()

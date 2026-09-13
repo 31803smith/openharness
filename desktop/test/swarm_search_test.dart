@@ -14,6 +14,43 @@ import 'swarm_state_test.dart' show createApp;
 import 'swarm_switcher_test.dart' show jumpField;
 
 void main() {
+  testWidgets(
+    'clicking the real bar and cancelling restores terminal focus without sending the query',
+    (tester) async {
+      final app = createApp();
+      app.machineStates['m']!.nodeOnline = true;
+      final inputs = <TerminalBinaryFrame>[];
+      final session = terminal('a0', inputs);
+      app.adoptSessionForTest(session);
+      await mount(tester, app);
+      final input = find.byKey(const ValueKey('swarm-search-input'));
+      final originalController = tester.widget<TextField>(input).controller;
+      await tester.tap(input);
+      await tester.pump();
+      await tester.enterText(input, 'a query only');
+      await tester.pump();
+      expect(
+        tester.widget<TextField>(input).controller,
+        same(originalController),
+      );
+      expect(tester.widget<TextField>(input).focusNode!.hasFocus, isTrue);
+      expect(inputs, isEmpty);
+      await tester.tapAt(const Offset(20, 600));
+      await tester.pump();
+      expect(find.byKey(const ValueKey('swarm-search-results')), findsNothing);
+      expect(originalController!.text, isEmpty);
+      final terminalView = tester.widget<TerminalView>(
+        find.byType(TerminalView),
+      );
+      expect(terminalView.focusNode!.hasFocus, isTrue);
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+      await tester.pump(const Duration(milliseconds: 10));
+      expect(inputs.single.bytes, [27, 91, 68]);
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+    },
+  );
+
   test('one cached catalog searches all four objects and explicit remote project members', () {
     final app = createApp();
     addTearDown(app.dispose);
@@ -198,7 +235,7 @@ void main() {
     (tester) async {
       final app = createApp();
       await mount(tester, app);
-      await tester.tap(find.text('Search…'));
+      await tester.tap(find.byKey(const ValueKey('swarm-search-input')));
       await tester.pump();
       await tester.enterText(jumpField, 'Test host');
       await tester.pump();
@@ -282,7 +319,11 @@ void main() {
       );
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pump();
-      expect(find.byType(Dialog), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('swarm-search-results')),
+        findsOneWidget,
+      );
+      expect(find.byType(Dialog), findsNothing);
       expect(app.panes, isEmpty);
       controller.clearComposing();
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);

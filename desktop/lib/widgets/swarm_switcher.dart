@@ -3,125 +3,229 @@ import 'package:flutter/services.dart';
 
 import '../shared/widgets/app_dialog.dart';
 import '../state/app_state.dart';
-import '../state/swarm_catalog.dart';
 import '../state/swarm_navigation.dart';
+import '../state/swarm_search.dart';
 import 'engine_identity.dart';
 import 'swarm_welcome.dart';
 
-Future<SwarmSearchSelection?> showSwarmSwitcher(
+Future<SwarmSearchSelection?> showSwarmHistory(
   BuildContext context,
   AppNotifier app,
-  SwarmNavigationHistory history, {
-  bool historyOnly = false,
-  SwarmProjectStore? projects,
-}) => showAppDialog<SwarmSearchSelection>(
-  context: context,
-  transitionDuration: Duration.zero,
-  veilBlur: 0,
-  veilTint: const Color(0x66000000),
-  builder: (_) => _SwarmSwitcher(
-    app: app,
-    recent: history.recent,
-    history: historyOnly ? history : null,
-    projects: projects,
-  ),
-);
-
-class _SwarmSwitcher extends StatefulWidget {
-  const _SwarmSwitcher({
-    required this.app,
-    required this.recent,
-    this.history,
-    this.projects,
-  });
-  final AppNotifier app;
-  final List<String> recent;
-  final SwarmNavigationHistory? history;
-  final SwarmProjectStore? projects;
-  @override
-  State<_SwarmSwitcher> createState() => _SwarmSwitcherState();
+  SwarmNavigationHistory history,
+) async {
+  final search = SwarmSearchController(app, history.recent, history: history);
+  try {
+    return await showAppDialog<SwarmSearchSelection>(
+      context: context,
+      transitionDuration: Duration.zero,
+      veilBlur: 0,
+      veilTint: const Color(0x66000000),
+      builder: (_) => _SwarmHistory(search: search),
+    );
+  } finally {
+    search.dispose();
+  }
 }
 
-class _SwarmSwitcherState extends State<_SwarmSwitcher> {
-  final _scroll = ScrollController();
+class _SwarmHistory extends StatefulWidget {
+  const _SwarmHistory({required this.search});
+  final SwarmSearchController search;
+  @override
+  State<_SwarmHistory> createState() => _SwarmHistoryState();
+}
+
+class _SwarmHistoryState extends State<_SwarmHistory> {
   final _query = TextEditingController();
-  final _searchFocus = FocusNode(debugLabel: 'Unified search query');
-  final _searchCatalog = SwarmSearchCatalog();
-  List<SwarmDestination> _catalog = const [];
-  List<SwarmDestination> _rows = [];
-  String? _scopeId, _selectedId;
-  String _rootQuery = '';
-  int _cursor = 0;
+  final _focus = FocusNode(debugLabel: 'History search');
+  void _choose(SwarmSearchSelection choice) => Navigator.pop(context, choice);
+  @override
+  void dispose() {
+    _query.dispose();
+    _focus.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Dialog(
+    alignment: const Alignment(0, -0.5),
+    insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 48),
+    child: SizedBox(
+      width: 680,
+      height: 480,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            const Row(
+              children: [
+                Text(
+                  'History',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w500),
+                ),
+                Spacer(),
+                Text(
+                  'This session',
+                  style: TextStyle(fontSize: 11, color: Colors.white54),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            SwarmSearchKeys(
+              search: widget.search,
+              editing: _query,
+              onChoose: _choose,
+              onClose: () => Navigator.pop(context),
+              child: SwarmSearchField(
+                controller: _query,
+                focusNode: _focus,
+                autofocus: true,
+                hintText: 'Search history…',
+                onChanged: widget.search.setQuery,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: SwarmSearchResults(
+                search: widget.search,
+                onChoose: _choose,
+                onRefocus: _focus.requestFocus,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+/// The Flutter field and History use the same keys. The native field sends
+/// these commands to the same controller after AppKit has handled composition.
+class SwarmSearchKeys extends StatelessWidget {
+  const SwarmSearchKeys({
+    super.key,
+    required this.search,
+    required this.editing,
+    required this.onChoose,
+    required this.onClose,
+    required this.child,
+  });
+  final SwarmSearchController? search;
+  final TextEditingController editing;
+  final ValueChanged<SwarmSearchSelection> onChoose;
+  final VoidCallback onClose;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final search = this.search;
+    bool composing() =>
+        editing.value.composing.isValid && !editing.value.composing.isCollapsed;
+    void run(VoidCallback action) {
+      if (!composing()) action();
+    }
+
+    void choose(bool add) => run(() {
+      final choice = add ? search?.addHere() : search?.submit();
+      if (choice != null) onChoose(choice);
+    });
+    return CallbackShortcuts(
+      bindings: search == null
+          ? {}
+          : {
+              const SingleActivator(
+                LogicalKeyboardKey.enter,
+                includeRepeats: false,
+              ): () =>
+                  choose(false),
+              const SingleActivator(
+                LogicalKeyboardKey.numpadEnter,
+                includeRepeats: false,
+              ): () =>
+                  choose(false),
+              const SingleActivator(
+                LogicalKeyboardKey.enter,
+                meta: true,
+                includeRepeats: false,
+              ): () =>
+                  choose(true),
+              const SingleActivator(
+                LogicalKeyboardKey.numpadEnter,
+                meta: true,
+                includeRepeats: false,
+              ): () =>
+                  choose(true),
+              const SingleActivator(LogicalKeyboardKey.arrowDown): () =>
+                  run(() => search.move(1)),
+              const SingleActivator(LogicalKeyboardKey.arrowUp): () =>
+                  run(() => search.move(-1)),
+              const SingleActivator(
+                LogicalKeyboardKey.keyN,
+                control: true,
+              ): () =>
+                  run(() => search.move(1)),
+              const SingleActivator(
+                LogicalKeyboardKey.keyP,
+                control: true,
+              ): () =>
+                  run(() => search.move(-1)),
+              const SingleActivator(
+                LogicalKeyboardKey.keyJ,
+                control: true,
+              ): () =>
+                  run(() => search.move(1)),
+              const SingleActivator(
+                LogicalKeyboardKey.keyK,
+                control: true,
+              ): () =>
+                  run(() => search.move(-1)),
+              const SingleActivator(LogicalKeyboardKey.escape): () =>
+                  run(onClose),
+              const SingleActivator(
+                LogicalKeyboardKey.keyG,
+                control: true,
+              ): () =>
+                  run(onClose),
+              if (search.scoped)
+                const SingleActivator(
+                  LogicalKeyboardKey.arrowLeft,
+                  alt: true,
+                ): () =>
+                    run(search.back),
+            },
+      child: child,
+    );
+  }
+}
+
+/// Results only: global search keeps its one editable input in the title bar.
+class SwarmSearchResults extends StatefulWidget {
+  const SwarmSearchResults({
+    super.key,
+    required this.search,
+    required this.onChoose,
+    required this.onRefocus,
+  });
+  final SwarmSearchController search;
+  final ValueChanged<SwarmSearchSelection> onChoose;
+  final VoidCallback onRefocus;
+  @override
+  State<SwarmSearchResults> createState() => _SwarmSearchResultsState();
+}
+
+class _SwarmSearchResultsState extends State<SwarmSearchResults> {
+  final _scroll = ScrollController();
   double _rowHeight = 56;
   bool _revealScheduled = false;
-  late final String _targetId, _targetName;
-  SwarmDestination? get _selected => _rows.isEmpty ? null : _rows[_cursor];
-  SwarmDestination? get _scope =>
-      _catalog.where((row) => row.id == _scopeId).firstOrNull;
-  bool get _composing =>
-      _query.value.composing.isValid && !_query.value.composing.isCollapsed;
-
+  SwarmSearchController get search => widget.search;
   @override
   void initState() {
     super.initState();
-    _targetId = widget.app.activeSwarmId;
-    _targetName = widget.app.activeSwarm.name;
-    _refreshCatalog();
-    widget.app.addListener(_onAppChanged);
-    widget.projects?.addListener(_onAppChanged);
+    search.addListener(_changed);
   }
 
-  void _onAppChanged() {
-    final previous = _catalog;
-    _refreshCatalog();
-    if (!identical(previous, _catalog)) setState(() {});
-  }
-
-  void _refreshCatalog() {
-    final next = widget.history == null
-        ? _searchCatalog.read(
-            widget.app,
-            widget.projects?.projects ?? const [],
-            recent: widget.recent,
-          )
-        : [
-            ...widget.history!.menuDestinations(widget.app),
-            ...closedSwarmDestinations(widget.app),
-          ];
-    if (identical(next, _catalog)) return;
-    _catalog = next;
-    _filter();
-  }
-
-  void _filter() {
-    final scope = _scope;
-    final source = _scopeId == null
-        ? _catalog
-        : [
-            for (final row in _catalog)
-              if (scope?.members.contains(row.id) == true) row,
-          ];
-    _rows = rankSwarmDestinations(source, _query.text, recent: widget.recent);
-    final index = _rows.indexWhere((row) => row.id == _selectedId);
-    _cursor = _rows.isEmpty
-        ? 0
-        : index >= 0
-        ? index
-        : _cursor.clamp(0, _rows.length - 1);
-    _selectedId = _selected?.id;
-    _revealSelection();
-  }
-
-  void _move(int delta) {
-    if (_rows.isEmpty || _composing) return;
-    setState(() {
-      _cursor = (_cursor + delta) % _rows.length;
-      _selectedId = _rows[_cursor].id;
-    });
+  void _changed() {
+    setState(() {});
     _scrollToSelection();
-  }
-
-  void _revealSelection() {
     if (_revealScheduled) return;
     _revealScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -131,8 +235,8 @@ class _SwarmSwitcherState extends State<_SwarmSwitcher> {
   }
 
   void _scrollToSelection() {
-    if (!_scroll.hasClients || _rows.isEmpty) return;
-    final top = _cursor * _rowHeight;
+    if (!_scroll.hasClients || search.rows.isEmpty) return;
+    final top = search.cursor * _rowHeight;
     final bottom = top + _rowHeight;
     final position = _scroll.position;
     final offset = top < position.pixels
@@ -145,76 +249,18 @@ class _SwarmSwitcherState extends State<_SwarmSwitcher> {
   }
 
   void _submit([SwarmDestination? row]) {
-    if (_composing) return;
-    final selected = row ?? _selected;
-    if (selected == null) return;
-    if (selected.isGroup) {
-      setState(() {
-        _rootQuery = _query.text;
-        _scopeId = selected.id;
-        _query.clear();
-        _cursor = 0;
-        _selectedId = null;
-        _filter();
-      });
-      _searchFocus.requestFocus();
+    final choice = search.submit(row);
+    if (choice != null) {
+      widget.onChoose(choice);
     } else {
-      Navigator.pop(context, SwarmSearchSelection(selected));
+      widget.onRefocus();
     }
   }
-
-  bool _canAdd(SwarmDestination? row) =>
-      widget.history == null &&
-      row?.agentId != null &&
-      row!.hasView &&
-      widget.app.swarms.any(
-        (swarm) =>
-            swarm.id == _targetId &&
-            swarm.panes.length < AppNotifier.maxPanes &&
-            !swarm.panes.any(
-              (pane) =>
-                  pane.machineId == row.machineId &&
-                  pane.agentId == row.agentId,
-            ),
-      );
-
-  void _addHere() {
-    if (!_composing && _canAdd(_selected)) {
-      Navigator.pop(
-        context,
-        SwarmSearchSelection(_selected!, SwarmSearchAction.addHere),
-      );
-    }
-  }
-
-  void _back() {
-    setState(() {
-      _selectedId = _scopeId;
-      _scopeId = null;
-      _query.text = _rootQuery;
-      _query.selection = TextSelection.collapsed(offset: _query.text.length);
-      _filter();
-    });
-    _searchFocus.requestFocus();
-  }
-
-  String _action(SwarmDestination row) => row.closedId != null
-      ? 'Reopen'
-      : row.isGroup
-      ? 'Browse agents'
-      : row.isSwarm
-      ? 'Switch swarm'
-      : row.hasView
-      ? 'Focus pane'
-      : 'Open here';
 
   @override
   void dispose() {
-    widget.app.removeListener(_onAppChanged);
-    widget.projects?.removeListener(_onAppChanged);
+    search.removeListener(_changed);
     _scroll.dispose();
-    _query.dispose();
-    _searchFocus.dispose();
     super.dispose();
   }
 
@@ -225,227 +271,152 @@ class _SwarmSwitcherState extends State<_SwarmSwitcher> {
       56,
       double.infinity,
     );
-    final selected = _selected;
-    final scope = _scope;
-    return CallbackShortcuts(
-      bindings: {
-        const SingleActivator(LogicalKeyboardKey.enter, meta: true): _addHere,
-        const SingleActivator(LogicalKeyboardKey.numpadEnter, meta: true):
-            _addHere,
-        const SingleActivator(LogicalKeyboardKey.keyG, control: true): () {
-          if (!_composing) Navigator.pop(context);
-        },
-        if (_scopeId != null)
-          const SingleActivator(LogicalKeyboardKey.arrowLeft, alt: true): _back,
-      },
-      child: Dialog(
-        alignment: const Alignment(0, -0.5),
-        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 48),
-        child: SizedBox(
-          width: 680,
-          height: 480,
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
+    final scope = search.scope;
+    final selected = search.selected;
+    return Semantics(
+      container: true,
+      label: 'Search results',
+      child: Column(
+        children: [
+          if (search.scoped)
+            Row(
               children: [
-                if (widget.history != null) ...[
-                  const Row(
-                    children: [
-                      Text(
-                        'History',
-                        style: TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                      Spacer(),
-                      Text(
-                        'This session',
-                        style: TextStyle(fontSize: 11, color: Colors.white54),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                ],
-                Row(
-                  children: [
-                    Expanded(
-                      child: SwarmSearchField(
-                        controller: _query,
-                        focusNode: _searchFocus,
-                        autofocus: true,
-                        hintText: widget.history != null
-                            ? 'Search history…'
-                            : _scopeId != null
-                            ? 'Search agents in ${scope?.title ?? 'this group'}…'
-                            : 'Search agents, swarms, machines, projects…',
-                        onChanged: (_) => setState(() {
-                          _cursor = 0;
-                          _selectedId = null;
-                          _filter();
-                        }),
-                        onMove: _move,
-                        onSubmitted: _submit,
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                    IconButton(
-                      tooltip: 'Close search',
-                      onPressed: () => Navigator.pop(context),
-                      icon: const Icon(Icons.close, size: 18),
-                    ),
-                  ],
+                IconButton(
+                  tooltip: 'All results',
+                  onPressed: () {
+                    search.back();
+                    widget.onRefocus();
+                  },
+                  icon: const Icon(Icons.arrow_back, size: 16),
                 ),
-                if (_scopeId != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Row(
-                      children: [
-                        IconButton(
-                          tooltip: 'All results',
-                          onPressed: _back,
-                          icon: const Icon(Icons.arrow_back, size: 16),
-                        ),
-                        Expanded(
-                          child: Text(
-                            scope?.title ?? 'Group no longer available',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 12),
-                          ),
-                        ),
-                        TextButton(
-                          onPressed:
-                              scope == null ||
-                                  scope.members.isEmpty ||
-                                  scope.members.length > AppNotifier.maxPanes ||
-                                  widget.app.swarms.length >=
-                                      AppNotifier.maxSwarms
-                              ? null
-                              : () => Navigator.pop(
-                                  context,
-                                  SwarmSearchSelection(
-                                    scope,
-                                    SwarmSearchAction.openGroup,
-                                  ),
-                                ),
-                          child: Text(
-                            'Open ${scope?.members.length ?? 0} agents as swarm',
-                            style: const TextStyle(fontSize: 11),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                const SizedBox(height: 12),
                 Expanded(
-                  child: _rows.isEmpty
-                      ? Center(
-                          child: Text(
-                            _scopeId != null && _query.text.isEmpty
-                                ? 'No available agent views in this group'
-                                : 'No matching results',
-                            style: const TextStyle(
-                              fontSize: 13,
-                              color: Colors.white60,
-                            ),
-                          ),
-                        )
-                      : ListView.builder(
-                          controller: _scroll,
-                          itemCount: _rows.length,
-                          itemExtent: _rowHeight,
-                          itemBuilder: (context, index) {
-                            final row = _rows[index];
-                            return ListTile(
-                              key: ValueKey(row.id),
-                              selected: index == _cursor,
-                              selectedColor: Colors.white,
-                              selectedTileColor: Colors.white10,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                              ),
-                              leading: row.agentId != null
-                                  ? EngineMark(engine: row.engine, size: 20)
-                                  : Icon(
-                                      row.isMachine
-                                          ? Icons.computer_outlined
-                                          : row.isProject
-                                          ? Icons.folder_outlined
-                                          : Icons.tab,
-                                      size: 19,
-                                      color: Colors.white60,
-                                    ),
-                              title: Text(
-                                row.title,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(fontSize: 13),
-                              ),
-                              subtitle: Text(
-                                row.detail,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 11,
-                                  color: Colors.white54,
-                                ),
-                              ),
-                              trailing: Text(
-                                row.current ? 'Current' : _action(row),
-                                style: const TextStyle(
-                                  fontSize: 11,
-                                  color: Colors.white54,
-                                ),
-                              ),
-                              onTap: () => _submit(row),
-                            );
-                          },
-                        ),
+                  child: Text(
+                    scope?.title ?? 'Group no longer available',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12),
+                  ),
                 ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        selected != null &&
-                                selected.agentId != null &&
-                                !selected.hasView
-                            ? 'Open view in $_targetName'
-                            : '↑↓ choose · Esc close',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 11,
-                          color: Colors.white54,
+                TextButton(
+                  onPressed: !search.canOpenGroup
+                      ? null
+                      : () => widget.onChoose(
+                          SwarmSearchSelection(
+                            scope!,
+                            SwarmSearchAction.openGroup,
+                          ),
                         ),
-                      ),
-                    ),
-                    if (_canAdd(selected))
-                      TextButton(
-                        onPressed: _addHere,
-                        child: const Text(
-                          'Add to this swarm  ⌘↵',
-                          style: TextStyle(fontSize: 11),
-                        ),
-                      ),
-                    const SizedBox(width: 8),
-                    FilledButton(
-                      onPressed: selected == null ? null : _submit,
-                      child: Text(
-                        '${selected == null ? 'Open' : _action(selected)}  ↵',
-                        style: const TextStyle(fontSize: 12),
-                      ),
-                    ),
-                  ],
+                  child: Text(
+                    'Open ${scope?.members.length ?? 0} agents as swarm',
+                    style: const TextStyle(fontSize: 11),
+                  ),
                 ),
               ],
             ),
+          Expanded(
+            child: search.rows.isEmpty
+                ? Center(
+                    child: Text(
+                      search.scoped && search.query.isEmpty
+                          ? 'No available agent views in this group'
+                          : 'No matching results',
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: Colors.white60,
+                      ),
+                    ),
+                  )
+                : ListView.builder(
+                    controller: _scroll,
+                    itemCount: search.rows.length,
+                    itemExtent: _rowHeight,
+                    itemBuilder: (context, index) {
+                      final row = search.rows[index];
+                      return ListTile(
+                        key: ValueKey(row.id),
+                        selected: index == search.cursor,
+                        selectedColor: Colors.white,
+                        selectedTileColor: Colors.white10,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                        ),
+                        leading: row.agentId != null
+                            ? EngineMark(engine: row.engine, size: 20)
+                            : Icon(
+                                row.isMachine
+                                    ? Icons.computer_outlined
+                                    : row.isProject
+                                    ? Icons.folder_outlined
+                                    : Icons.tab,
+                                size: 19,
+                                color: Colors.white60,
+                              ),
+                        title: Text(
+                          row.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 13),
+                        ),
+                        subtitle: Text(
+                          row.detail,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: Colors.white54,
+                          ),
+                        ),
+                        trailing: Text(
+                          row.current
+                              ? 'Current'
+                              : SwarmSearchController.action(row),
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: Colors.white54,
+                          ),
+                        ),
+                        onTap: () => _submit(row),
+                      );
+                    },
+                  ),
           ),
-        ),
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  child: Text(
+                    selected?.agentId != null && !selected!.hasView
+                        ? 'Open view in ${search.targetName}'
+                        : '↑↓ choose · Esc close',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 11, color: Colors.white54),
+                  ),
+                ),
+              ),
+              if (search.canAdd(selected))
+                TextButton(
+                  onPressed: () => widget.onChoose(search.addHere()!),
+                  child: const Text(
+                    'Add to this swarm  ⌘↵',
+                    style: TextStyle(fontSize: 11),
+                  ),
+                ),
+              TextButton(
+                onPressed: selected == null ? null : _submit,
+                child: Text(
+                  '${selected == null ? 'Open' : SwarmSearchController.action(selected)}  ↵',
+                  style: const TextStyle(fontSize: 11),
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }

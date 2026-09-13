@@ -137,6 +137,9 @@ void main() {
       app.adoptSessionForTest(terminal('a0', []));
       await mount(tester, app);
       final membership = [...app.panes];
+      final input = find.byKey(const ValueKey('swarm-search-input'));
+      final controller = tester.widget<TextField>(input).controller;
+      final route = ModalRoute.of(tester.element(input));
       await tester.sendKeyDownEvent(LogicalKeyboardKey.meta);
       await tester.sendKeyEvent(LogicalKeyboardKey.keyP);
       await tester.sendKeyUpEvent(LogicalKeyboardKey.meta);
@@ -144,15 +147,22 @@ void main() {
       expect(jumpField, findsOneWidget);
       final field = tester.widget<TextField>(jumpField);
       expect(field.focusNode!.hasFocus, isTrue);
-      expect(
-        (ModalRoute.of(
-          tester.element(jumpField),
-        ) as TransitionRoute).transitionDuration,
-        Duration.zero,
+      expect(field.controller, same(controller));
+      expect(ModalRoute.of(tester.element(input)), same(route));
+      final results = tester.getRect(
+        find.byKey(const ValueKey('swarm-search-results')),
       );
+      final bar = tester.getRect(input);
+      expect(results.top, inInclusiveRange(bar.bottom, bar.bottom + 12));
+      expect(results.right, closeTo(bar.right, 0.1));
+      expect(find.byType(TextField), findsOneWidget);
       expect(find.byType(BackdropFilter), findsNothing);
       await chord(tester, LogicalKeyboardKey.keyP);
-      expect(find.byType(Dialog), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('swarm-search-results')),
+        findsOneWidget,
+      );
+      expect(find.byType(Dialog), findsNothing);
       await tester.enterText(jumpField, 'missing');
       await tester.pump();
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
@@ -164,7 +174,7 @@ void main() {
       expect(app.panes, membership);
       await chord(tester, LogicalKeyboardKey.keyF, shift: true);
       expect(find.byType(Dialog), findsNothing);
-      await tester.tap(find.text('Search…'));
+      await tester.tap(find.byKey(const ValueKey('swarm-search-input')));
       await tester.pump();
       expect(jumpField, findsOneWidget);
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);

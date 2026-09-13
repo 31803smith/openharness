@@ -112,8 +112,12 @@ void main() {
       const channel = MethodChannel('harness/swarm_tabs');
       final messenger = tester.binding.defaultBinaryMessenger;
       final updates = <Map>[];
+      final fieldUpdates = <Map>[];
       messenger.setMockMethodCallHandler(channel, (call) async {
         if (call.method == 'update') updates.add(call.arguments as Map);
+        if (call.method == 'searchState') {
+          fieldUpdates.add(call.arguments as Map);
+        }
         return true;
       });
       addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
@@ -194,13 +198,30 @@ void main() {
       await tester.pump();
       await settings;
 
-      // Native Command-P reaches the same picker even when the terminal owns focus.
+      // Native Command-P focuses the native input; Flutter only paints its results.
       final jumping = native('jump');
       await tester.pump();
-      expect(jumpField, findsOneWidget);
-      await tester.enterText(jumpField, 'Agent 1');
+      expect(
+        find.byKey(const ValueKey('swarm-search-results')),
+        findsOneWidget,
+      );
+      expect(find.byType(TextField), findsNothing);
+      await native('searchChanged', {'query': 'A'});
+      await native('searchChanged', {'query': 'Agent 1'});
+      expect(
+        fieldUpdates.every((state) => !state.containsKey('query')),
+        isTrue,
+        reason: 'Native edits must never be echoed back over newer typing',
+      );
+      await native('searchGeometry', {'width': 480});
       await tester.pump();
-      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      expect(
+        tester
+            .getSize(find.byKey(const ValueKey('swarm-search-results')))
+            .width,
+        480,
+      );
+      await native('searchCommand', {'command': 'submit'});
       await tester.pump();
       await jumping;
       expect(app.focusedPaneId, second.id);
