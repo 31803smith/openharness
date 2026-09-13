@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:file_selector_platform_interface/file_selector_platform_interface.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/auth/auth_session.dart';
 import 'package:harness/core/config.dart';
@@ -69,17 +70,100 @@ class _FirstUseApp extends AppNotifier {
 
 class _FolderPicker extends FileSelectorPlatform {
   var opened = 0;
+  Completer<String?>? pending;
   @override
   Future<String?> getDirectoryPath({
     String? initialDirectory,
     String? confirmButtonText,
   }) async {
     opened++;
+    if (pending != null) return pending!.future;
     return '/work/my-project';
   }
 }
 
 void main() {
+  testWidgets(
+    'new agent is keyboard accessible without hidden focus stops',
+    (tester) async {
+      final app = _FirstUseApp();
+      app.machineStates['m']!.engines.replace(const [
+        EngineAvailability(engine: 'codex', installed: true),
+      ]);
+      final oldPicker = FileSelectorPlatform.instance;
+      final picker = _FolderPicker()..pending = Completer<String?>();
+      FileSelectorPlatform.instance = picker;
+      addTearDown(() => FileSelectorPlatform.instance = oldPicker);
+      await mount(tester, app);
+      await tester.tap(find.text('New agent'));
+      await tester.pump();
+
+      bool fieldFocused(String key) => tester
+          .widget<InkWell>(
+            find.descendant(
+              of: find.byKey(Key(key)),
+              matching: find.byType(InkWell),
+            ),
+          )
+          .focusNode!
+          .hasPrimaryFocus;
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      expect(fieldFocused('new-agent-machine-field'), isTrue);
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      final folder = tester.widget<InkWell>(
+        find.byKey(const Key('new-agent-folder')),
+      );
+      expect(folder.focusNode!.hasPrimaryFocus, isTrue);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      expect(picker.opened, 1);
+      expect(find.text('Waiting for the folder picker…'), findsOneWidget);
+      picker.pending!.complete('/work/my-project');
+      await tester.pump();
+      await tester.pump();
+      expect(folder.focusNode!.hasPrimaryFocus, isTrue);
+      expect(find.text('/work/my-project'), findsOneWidget);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      expect(fieldFocused('new-agent-engine-field'), isTrue);
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      expect(
+        Focus.of(tester.element(find.text('Advanced'))).hasPrimaryFocus,
+        isTrue,
+      );
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      expect(
+        Focus.of(tester.element(find.text('Cancel'))).hasPrimaryFocus,
+        isTrue,
+      );
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      expect(
+        Focus.of(tester.element(find.text('Create agent'))).hasPrimaryFocus,
+        isTrue,
+      );
+      expect(app.launches, isEmpty);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      expect(app.launches.single.folder, '/work/my-project');
+      expect(app.input, isEmpty);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+    },
+    variant: const TargetPlatformVariant({
+      TargetPlatform.macOS,
+      TargetPlatform.linux,
+      TargetPlatform.windows,
+    }),
+  );
+
   testWidgets('fresh workspace reaches an agent with an installed default', (
     tester,
   ) async {

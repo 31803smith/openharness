@@ -2,7 +2,16 @@
 
 Updated 2026-09-13 with coordinated palettes, Models, combined closed-work History and faster unified search. This is a working preview, not a release.
 
-## Active follow-up: deliberate splits
+## Active follow-up: keyboard-accessible first use
+
+- New agent opens immediately with a simple dimmed backdrop. The failed engine-check explanation is brief and readable; conditional CLI troubleshooting lives in Advanced. Cancel uses neutral secondary text. Explicit installation and creation behavior is unchanged.
+- Machine, project folder and coding-agent controls now participate in Tab traversal. The shared select field supports Enter/Space, arrow navigation, Escape and return to the field after selection. Focus is visible without a thick glow. Folder selection restores keyboard focus after the native or remote picker completes.
+- Collapsed Advanced content remains mounted for profile discovery, but cannot receive invisible keyboard focus. Submitting also excludes the choices from keyboard focus while the explicit operation is running.
+- Validation: **1,144 Flutter tests passed, one existing skip** (`/private/tmp/harness-v2-form-full-tests.log`), including keyboard-only first-agent creation and picker selection on macOS, Windows and Linux test variants. Analyzer has no errors/warnings and 12 existing vendored infos. Isolated renders of the form and focused folder were reviewed (`/private/tmp/harness-v2-form-{form,keyboard}.png`); the render test also passed. These are fixture results, not real first-install conversion measurements.
+- Next: optional bounded search preview and file-remapping ownership across AppKit and Flutter. Keep the approved simple shortcuts unchanged.
+- Release build succeeded (`/private/tmp/harness-v2-form-build.log`) and the exact development preview was reopened. Preview PID 14152 was normally quit and confirmed exited before writing its bundle; no real agent received test input. Re-observe the next preview PID before any native interaction.
+
+## Deliberate splits checkpoint
 
 - `> Split right` and `> Split down` open New agent with the focused agent's machine and known folder preselected. Creation remains explicit. The new agent takes half that agent's rectangle; neighboring agents retain their rectangles, terminal elements and pins. These commands are available only when both resulting agents meet the measured minimum size. No existing key was reassigned.
 - The captured split is checked before creation and again after its asynchronous reply. It remains tied to the original Swarm and pane order, even after tab navigation. If the original layout closes, changes or becomes too small while creation is in flight, the agent remains in Search and an honest notice explains why it was not inserted; no second creation or destructive cleanup occurs.
@@ -10,7 +19,7 @@ Updated 2026-09-13 with coordinated palettes, Models, combined closed-work Histo
 - Visual review exposed an existing assignment edge case: a machine without a terminal-capability report could receive new membership without notifying the screen. That path now publishes its change immediately; the new split renders with retained output or the existing unavailable state.
 - Validation: **1,138 Flutter tests passed, one existing skip** in the final full run after the notification correction (`/private/tmp/harness-v2-split-full-tests.log`). Focused split checks and the isolated render also passed. Analyzer has no errors/warnings and 12 existing vendored infos. Other artifacts: `/private/tmp/harness-v2-split-{tests,final-checks,analyze,render,build}.log` and `/private/tmp/harness-v2-split-{placed,form}.png`. The rendered form and actual five-agent split were reviewed with system fonts; this remains isolated UI evidence.
 - The Release build succeeded and was relaunched. The verified preview PID 820 was normally quit and confirmed exited before rebuilding. Re-observe the relaunched preview before later native interaction. No real agent received test input.
-- Next: optional bounded search preview, file-remapping ownership across AppKit and Flutter, and a small onboarding copy pass. The New agent form's unavailable-engine explanation is too wordy; shorten it while preserving the distinction between unavailable checks and a known missing engine.
+- The subsequent onboarding copy and keyboard pass is recorded above. Optional bounded search preview and file-remapping ownership across AppKit and Flutter remain next.
 
 ## Controlled resizing checkpoint
 

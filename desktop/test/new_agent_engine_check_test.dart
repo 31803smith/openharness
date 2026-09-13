@@ -79,25 +79,18 @@ void main() {
       (engines) => engines.error = 'This machine could not report its engines',
     );
 
-    // "Ready to launch" is gone with the summary card, and so is the promise it
-    // was making. What survives is the half that could not be said anywhere
-    // else: that this machine was never reached.
+    // Failed checks remain distinct from a missing engine; creation can still
+    // be attempted and troubleshooting stays in the optional details.
+    expect(find.textContaining('Couldn’t check whether'), findsOneWidget);
     expect(
-      find.textContaining('did not say which engines it has'),
+      find.textContaining('You can still try creating an agent.'),
       findsOneWidget,
     );
-    // The way out is named, and so is what happens if it is ignored — the
-    // create still runs, and a missing engine surfaces only as its failure.
+    expect(find.textContaining('uses an older Harness CLI'), findsNothing);
+    await tester.tap(find.byKey(const Key('new-agent-advanced')));
+    await tester.pump();
     expect(
-      find.textContaining('did not say which engines it has'),
-      findsOneWidget,
-    );
-    expect(
-      find.textContaining('will only show up when it fails'),
-      findsOneWidget,
-    );
-    expect(
-      find.textContaining('Updating the Harness CLI on harness-remote-box'),
+      find.textContaining('If harness-remote-box uses an older Harness CLI'),
       findsOneWidget,
     );
   });
@@ -117,7 +110,7 @@ void main() {
     // somebody the default is the default; the line below only appears when
     // there is something to say.
     expect(
-      find.textContaining('did not say which engines it has'),
+      find.textContaining('Couldn’t check whether'),
       findsNothing,
       reason: 'a probe that landed is not a probe that failed',
     );

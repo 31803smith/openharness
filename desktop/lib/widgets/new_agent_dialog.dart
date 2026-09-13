@@ -50,6 +50,9 @@ Future<void> showNewAgentDialog(
   analytics.newAgentOpened(source: source);
   return showAppDialog<void>(
     context: context,
+    transitionDuration: Duration.zero,
+    veilBlur: 0,
+    veilTint: const Color(0x66000000),
     builder: (context) => _NewAgentDialog(
       notifier: notifier,
       machineId: machineId,
@@ -80,6 +83,7 @@ class _NewAgentDialog extends StatefulWidget {
 }
 
 class _NewAgentDialogState extends State<_NewAgentDialog> {
+  final _folderFocus = FocusNode(debugLabel: 'Project folder');
   late String _engine = allEngines.first.id;
   bool _engineChosenByUser = false;
   late String _machineId = widget.machineId;
@@ -94,6 +98,12 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   /// being open is a drawer that is open for somebody who never asked.
   bool _advancedOpen = false;
   bool _submitting = false;
+
+  @override
+  void dispose() {
+    _folderFocus.dispose();
+    super.dispose();
+  }
 
   @override
   void initState() {
@@ -240,6 +250,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
 
   bool _picking = false;
   bool _folderHovered = false;
+  bool _folderFocused = false;
   bool _bypassHovered = false;
   String? _error;
 
@@ -266,6 +277,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
 
   Future<void> _browse() async {
     if (_picking) return;
+    final restoreFocus = _folderFocus.hasFocus;
     // The agent runs on the MACHINE, so the folder has to exist on the machine
     // — which is the whole reason this branches.
     //
@@ -308,6 +320,14 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
           _error = 'Could not open the folder picker: $error';
         }
       });
+    } finally {
+      if (mounted && restoreFocus) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && !_submitting && pickingRevision == _machineRevision) {
+            _folderFocus.requestFocus();
+          }
+        });
+      }
     }
   }
 
@@ -392,7 +412,10 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
               // everybody who never turns it on.
               AbsorbPointer(
                 absorbing: _submitting,
-                child: _choices(bypassFlag),
+                child: ExcludeFocus(
+                  excluding: _submitting,
+                  child: _choices(bypassFlag),
+                ),
               ),
               if (_error != null) ...[
                 const SizedBox(height: _gapBlock),
@@ -409,6 +432,9 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
       actions: [
         TextButton(
           onPressed: _submitting ? null : () => Navigator.of(context).pop(),
+          style: TextButton.styleFrom(
+            foregroundColor: grid.AppPalette.textSecondary,
+          ),
           child: const Text('Cancel'),
         ),
         FilledButton(
@@ -468,8 +494,11 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
           machineName: _machineName,
           machineIsThisComputer: _machineIsThisComputer,
           picking: _picking,
+          focusNode: _folderFocus,
           hovered: _folderHovered,
+          focused: _folderFocused,
           onHover: (value) => setState(() => _folderHovered = value),
+          onFocusChange: (value) => setState(() => _folderFocused = value),
           onPressed: _browse,
         ),
         const SizedBox(height: _gapField),
@@ -525,29 +554,13 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
           const SizedBox(height: 6),
           Text(
             _willInstall
-                ? 'Not here yet — Harness will install '
-                      '${engineIdentity(_engine).label} first.'
-                // Faint and phrased as an absence, not a fault: nothing is
-                // wrong with the launch, we simply could not look, and painting
-                // that as a problem would cry wolf on every older remote box.
-                //
-                // THE WHOLE PARAGRAPH, not a headline. It was tempting to leave
-                // this at "Could not check this machine" — the dialog is being
-                // made smaller, after all — but the sentence that got cut was
-                // the one naming the way out. This line only appears when the
-                // check actually failed, so its length costs nothing on the
-                // launches that work.
-                : '$_machineName did not say which engines it has, so Harness '
-                      'could not check for '
-                      '${engineIdentity(_engine).label} before offering to '
-                      'launch it. The create will still run — if the engine is '
-                      'missing there, that will only show up when it fails. '
-                      'Updating the Harness CLI on $_machineName lets this be '
-                      'checked first.',
+                ? 'Harness will install ${engineIdentity(_engine).label} before starting.'
+                : 'Couldn’t check whether ${engineIdentity(_engine).label} is installed. '
+                      'You can still try creating an agent.',
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
               color: _willInstall
                   ? grid.AppPalette.accentOnSurface
-                  : grid.AppPalette.textFaint,
+                  : grid.AppPalette.textSecondary,
             ),
           ),
         ],
@@ -565,6 +578,14 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
           state: _advancedState(),
           onToggle: () => setState(() => _advancedOpen = !_advancedOpen),
           children: [
+            if (_engineCheckFailed) ...[
+              Text(
+                'If $_machineName uses an older Harness CLI, update it to enable engine checks.',
+                style: Theme.of(context).textTheme.bodySmall
+                    ?.copyWith(color: grid.AppPalette.textSecondary),
+              ),
+              const SizedBox(height: 10),
+            ],
             if (_engine == 'codex') ...[
               if (_availability('codex')?.supportsCodexHome == true)
                 CodexProfileField(
@@ -810,12 +831,15 @@ class _Advanced extends StatelessWidget {
         // Offstage builds and runs it, and merely declines to paint it.
         Offstage(
           offstage: !open,
-          child: Padding(
-            padding: const EdgeInsets.only(top: 4, bottom: 2),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              mainAxisSize: MainAxisSize.min,
-              children: children,
+          child: ExcludeFocus(
+            excluding: !open,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 4, bottom: 2),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
+                children: children,
+              ),
             ),
           ),
         ),
@@ -830,8 +854,11 @@ class _FolderControl extends StatelessWidget {
     required this.machineName,
     required this.machineIsThisComputer,
     required this.picking,
+    required this.focusNode,
     required this.hovered,
+    required this.focused,
     required this.onHover,
+    required this.onFocusChange,
     required this.onPressed,
   });
 
@@ -839,8 +866,11 @@ class _FolderControl extends StatelessWidget {
   final String machineName;
   final bool machineIsThisComputer;
   final bool picking;
+  final FocusNode focusNode;
   final bool hovered;
+  final bool focused;
   final ValueChanged<bool> onHover;
+  final ValueChanged<bool> onFocusChange;
   final VoidCallback onPressed;
 
   @override
@@ -852,18 +882,22 @@ class _FolderControl extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        // [MouseRegion] + [AnimatedContainer], the shape every hoverable control
-        // in this app takes — not `InkWell`, whose ripple is a phone idiom and
-        // whose hover is instant where the app's is [AppMotion.hover].
         MouseRegion(
           cursor: picking
               ? SystemMouseCursors.progress
               : SystemMouseCursors.click,
           onEnter: (_) => onHover(true),
           onExit: (_) => onHover(false),
-          child: GestureDetector(
+          child: InkWell(
+            key: const Key('new-agent-folder'),
+            focusNode: focusNode,
             onTap: picking ? null : onPressed,
-            behavior: HitTestBehavior.opaque,
+            canRequestFocus: !picking,
+            onFocusChange: onFocusChange,
+            splashFactory: NoSplash.splashFactory,
+            hoverColor: Colors.transparent,
+            focusColor: Colors.transparent,
+            borderRadius: BorderRadius.circular(grid.AppControl.radius),
             child: AnimatedContainer(
               duration: grid.AppMotion.hover,
               curve: grid.AppMotion.curve,
@@ -874,13 +908,15 @@ class _FolderControl extends StatelessWidget {
               // this column share one left edge and one right edge.
               padding: const EdgeInsets.only(left: 10, right: 8),
               decoration: BoxDecoration(
-                // §1: depth from fill, never a rim. [AppSurface.recess] is the
-                // same well [AppSelectField] sits in — a folder is picked the
-                // same way an engine is, so it looks the same at rest.
-                color: hovered && !picking
+                color: (hovered || focused) && !picking
                     ? grid.AppSurface.recessHover
                     : grid.AppSurface.recess,
                 borderRadius: BorderRadius.circular(grid.AppControl.radius),
+                border: Border.all(
+                  color: focused
+                      ? grid.AppPalette.accentOnSurface
+                      : Colors.transparent,
+                ),
               ),
               child: Row(
                 children: [
