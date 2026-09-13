@@ -48,11 +48,9 @@ class _SwarmInlineSearchState extends State<SwarmInlineSearch> {
   }
 
   void _focusChanged() {
-    if (_focus.hasFocus) {
-      _begin();
-    } else {
-      _close();
-    }
+    // New swarm gives the field its caret immediately, but the welcome
+    // choices stay visible until a click, edit or result-navigation key.
+    if (!_focus.hasFocus) _close();
   }
 
   @override
@@ -88,7 +86,6 @@ class _SwarmInlineSearchState extends State<SwarmInlineSearch> {
     _search!.removeListener(_changed);
     _search!.dispose();
     _search = null;
-    _focus.unfocus();
     setState(() {});
   }
 
@@ -172,6 +169,7 @@ class _SwarmInlineSearchState extends State<SwarmInlineSearch> {
         editing: _text,
         onChoose: _choose,
         onClose: _close,
+        onOpen: _begin,
         child: TextField(
           key: const ValueKey('swarm-welcome-search-input'),
           groupId: _tapGroup,

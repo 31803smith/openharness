@@ -75,7 +75,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
   OverlayEntry? _searchOverlay;
   FocusNode? _searchReturnFocus;
   double _nativeSearchWidth = 600;
-  String? _searchFieldState;
+  ({String query, String hint})? _nativeSearchFieldState;
   bool _nativeQueryChange = false;
   bool _spokenPaletteOpen = false;
   bool _dialogOpen = false;
@@ -668,21 +668,25 @@ class _SwarmScreenState extends State<SwarmScreen> {
   void _syncSearch() {
     final search = _search;
     if (search == null) return;
-    if (_searchText.text != search.query) {
+    if (!_native && _searchText.text != search.query) {
       _searchText.value = TextEditingValue(
         text: search.query,
         selection: TextSelection.collapsed(offset: search.query.length),
       );
     }
-    final state = {'query': search.query, 'hint': search.hint};
-    final encoded = jsonEncode(state);
-    if (_searchFieldState != encoded) {
-      _searchFieldState = encoded;
-      if (_native) {
+    if (_native) {
+      final state = (query: search.query, hint: search.hint);
+      final updateQuery =
+          !_nativeQueryChange && state.query != _nativeSearchFieldState?.query;
+      final updateHint = state.hint != _nativeSearchFieldState?.hint;
+      // Remember native edits even when no message is needed. A later catalog
+      // refresh must not echo this query over a newer edit or marked text.
+      _nativeSearchFieldState = state;
+      if (updateQuery || updateHint) {
         unawaited(
           _channel.invokeMethod<void>('searchState', {
-            if (!_nativeQueryChange) 'query': search.query,
-            'hint': search.hint,
+            if (updateQuery) 'query': state.query,
+            'hint': state.hint,
           }),
         );
       }
@@ -705,7 +709,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
     _search!.removeListener(_syncSearch);
     _search!.dispose();
     _search = null;
-    _searchFieldState = null;
+    _nativeSearchFieldState = null;
     _searchText.clear();
     _searchFocus.unfocus();
     if (_native) unawaited(_channel.invokeMethod<void>('closeSearch'));
@@ -1088,7 +1092,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
           onPending: (keys) => setState(() => _pendingKeys = keys),
           child: Focus(
             focusNode: _shellFocus,
-            autofocus: true,
+            autofocus: app.panes.isNotEmpty,
             child: Scaffold(
               backgroundColor: grid.AppPalette.swarmField,
               body: Column(

@@ -254,7 +254,22 @@ void main() {
     expect(find.text('Machines'), findsNothing);
     expect(find.text('Projects'), findsNothing);
     expect(app.launches, isEmpty);
-    await tester.tap(find.text('Choose folder…'));
+    expect(
+      tester
+          .widget<TextField>(
+            find.byKey(const ValueKey('swarm-welcome-search-input')),
+          )
+          .focusNode!
+          .hasPrimaryFocus,
+      isTrue,
+    );
+    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+    await tester.pump();
+    expect(
+      Focus.of(tester.element(find.text('Choose folder…'))).hasPrimaryFocus,
+      isTrue,
+    );
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pump();
     final engine = tester.widget<AppSelectField<String>>(
       find.byKey(const Key('new-agent-engine-field')),

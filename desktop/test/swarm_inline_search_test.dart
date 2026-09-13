@@ -15,6 +15,132 @@ final _input = find.byKey(const ValueKey('swarm-welcome-search-input'));
 final _results = find.byKey(const ValueKey('swarm-welcome-search-results'));
 
 void main() {
+  for (final native in [false, true]) {
+    testWidgets(
+      'New swarm arrives ready to type without opening results (native=$native)',
+      (tester) async {
+        const channel = MethodChannel('harness/swarm_tabs');
+        final messages = <MethodCall>[];
+        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          channel,
+          (call) async {
+            messages.add(call);
+            return true;
+          },
+        );
+        addTearDown(
+          () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+            channel,
+            null,
+          ),
+        );
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = const Size(1280, 800);
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final app = createApp();
+        app.machineStates['m']!.nodeOnline = true;
+        final frames = <TerminalBinaryFrame>[];
+        final projects = SwarmProjectStore();
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: grid.buildAppTheme(brightness: Brightness.dark),
+            home: SwarmScreen(
+              notifier: app,
+              nativeTabs: native,
+              projectStore: projects,
+            ),
+          ),
+        );
+        await tester.pump();
+        void ready() {
+          expect(
+            _results,
+            findsNothing,
+            reason: 'Arriving must leave the welcome choices visible',
+          );
+          expect(
+            tester.widget<TextField>(_input).focusNode!.hasPrimaryFocus,
+            isTrue,
+          );
+        }
+
+        ready();
+        messages.clear();
+        tester.testTextInput.enterText('Agent 12');
+        await tester.pump();
+        expect(_results, findsOneWidget);
+        expect(find.widgetWithText(ListTile, 'Agent 12'), findsOneWidget);
+        final text = tester.widget<TextField>(_input).controller!;
+        final composing = text.value.copyWith(
+          selection: const TextSelection.collapsed(offset: 7),
+          composing: const TextRange(start: 6, end: 8),
+        );
+        text.value = composing;
+        app.renameSwarm(app.activeSwarmId, 'Updated in the background');
+        await tester.pump();
+        expect(text.value, composing);
+        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+        await tester.pump();
+        expect(_results, findsOneWidget, reason: 'Composition owns Escape');
+        text.clearComposing();
+        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+        await tester.pump();
+        ready();
+        expect(text.text, 'Agent 12');
+        tester.testTextInput.enterText('Agent 3');
+        await tester.pump();
+        expect(_results, findsOneWidget);
+        expect(find.widgetWithText(ListTile, 'Agent 3'), findsOneWidget);
+        expect(
+          messages.where(
+            (c) => c.method == 'searchState' || c.method == 'focusSearch',
+          ),
+          isEmpty,
+        );
+        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+        await tester.pump();
+
+        app.adoptSessionForTest(terminal('a0', frames));
+        app.selectSwarm(app.activeSwarmId);
+        await tester.pump();
+        await tester.pump();
+        app.newSwarm();
+        await tester.pump();
+        await tester.pump();
+        ready();
+        final newId = app.activeSwarmId;
+        await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+        await tester.pump();
+        expect(_results, findsOneWidget);
+        expect(
+          app.activeSwarmId,
+          newId,
+          reason: 'Opening suggestions cannot activate an unseen result',
+        );
+        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+        await tester.pump();
+        ready();
+        await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+        await tester.pump();
+        expect(_results, findsOneWidget);
+        expect(app.activeSwarmId, newId);
+        await app.closeSwarm(app.activeSwarmId);
+        await tester.pump();
+        await app.closeSwarm(app.activeSwarmId);
+        await tester.pump();
+        await tester.pump();
+        ready();
+        expect(app.swarms, hasLength(1));
+        expect(frames, isEmpty);
+        await tester.pumpWidget(const SizedBox());
+        app.dispose();
+        projects.dispose();
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
   testWidgets(
     'New swarm keeps editing and results at the field that was clicked',
     (tester) async {

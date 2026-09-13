@@ -113,12 +113,17 @@ class SwarmSearchKeys extends StatelessWidget {
     required this.editing,
     required this.onChoose,
     required this.onClose,
+    this.onOpen,
     required this.child,
   });
   final SwarmSearchController? search;
   final TextEditingController editing;
   final ValueChanged<SwarmSearchSelection> onChoose;
   final VoidCallback onClose;
+
+  /// A focused field may be ready for typing while its suggestions are closed.
+  /// The first navigation/accept key reveals them without choosing unseen work.
+  final VoidCallback? onOpen;
   final Widget child;
 
   @override
@@ -131,28 +136,43 @@ class SwarmSearchKeys extends StatelessWidget {
     }
 
     void choose(bool add) => run(() {
-      final choice = add ? search?.addHere() : search?.submit();
+      if (search == null) {
+        onOpen?.call();
+        return;
+      }
+      final choice = add ? search.addHere() : search.submit();
       if (choice != null) onChoose(choice);
+    });
+    void move(int delta) => run(() {
+      if (search == null) {
+        onOpen?.call();
+      } else {
+        search.move(delta);
+      }
     });
     if (KeymapTheme.of(context) != null) {
       return KeymapRegion(
         contextKind: KeymapContext.picker,
         composing: composing,
         actions: {
-          if (search != null) ...{
+          if (search != null || onOpen != null) ...{
             'picker.accept': () => choose(false),
             'picker.add_here': () => choose(true),
-            'picker.next': () => search.move(1),
-            'picker.previous': () => search.move(-1),
-            'picker.preview': search.togglePreview,
+            'picker.next': () => move(1),
+            'picker.previous': () => move(-1),
+            if (search != null) 'picker.preview': search.togglePreview,
             'picker.cancel': onClose,
-            if (search.history == null)
+            if (search?.history == null)
               'navigation.commands': () {
                 editing.value = const TextEditingValue(
                   text: '> ',
                   selection: TextSelection.collapsed(offset: 2),
                 );
-                search.setQuery('> ');
+                if (search == null) {
+                  onOpen?.call();
+                } else {
+                  search.setQuery('> ');
+                }
               },
           },
         },
@@ -160,7 +180,7 @@ class SwarmSearchKeys extends StatelessWidget {
       );
     }
     return CallbackShortcuts(
-      bindings: search == null
+      bindings: search == null && onOpen == null
           ? {}
           : {
               const SingleActivator(
@@ -186,35 +206,35 @@ class SwarmSearchKeys extends StatelessWidget {
               ): () =>
                   choose(true),
               const SingleActivator(LogicalKeyboardKey.arrowDown): () =>
-                  run(() => search.move(1)),
-              const SingleActivator(LogicalKeyboardKey.arrowUp): () =>
-                  run(() => search.move(-1)),
-              const SingleActivator(
-                LogicalKeyboardKey.keyI,
-                meta: true,
-                includeRepeats: false,
-              ): () =>
-                  run(search.togglePreview),
+                  move(1),
+              const SingleActivator(LogicalKeyboardKey.arrowUp): () => move(-1),
+              if (search != null)
+                const SingleActivator(
+                  LogicalKeyboardKey.keyI,
+                  meta: true,
+                  includeRepeats: false,
+                ): () =>
+                    run(search.togglePreview),
               const SingleActivator(
                 LogicalKeyboardKey.keyN,
                 control: true,
               ): () =>
-                  run(() => search.move(1)),
+                  move(1),
               const SingleActivator(
                 LogicalKeyboardKey.keyP,
                 control: true,
               ): () =>
-                  run(() => search.move(-1)),
+                  move(-1),
               const SingleActivator(
                 LogicalKeyboardKey.keyJ,
                 control: true,
               ): () =>
-                  run(() => search.move(1)),
+                  move(1),
               const SingleActivator(
                 LogicalKeyboardKey.keyK,
                 control: true,
               ): () =>
-                  run(() => search.move(-1)),
+                  move(-1),
               const SingleActivator(LogicalKeyboardKey.escape): () =>
                   run(onClose),
               const SingleActivator(

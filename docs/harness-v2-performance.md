@@ -10,6 +10,14 @@ flutter test --no-pub --reporter expanded test/benchmarks/swarm_benchmark.dart
 
 It prints `SWARM_BENCH` JSON records. Its filename deliberately does not end in `_test.dart`, so ordinary correctness runs do not include timing measurements.
 
+## Native search field updates (2026-09-13)
+
+The production bridge was sending the same placeholder hint back to AppKit for every native query edit. A regression observed five reverse-channel `searchState` messages for the five-query burst `w`, `wo`, `wor`, `work`, `work 木`, including interleaved catalog updates. The revised bridge sends zero for that burst and one changed hint when entering command mode. It still sends an intentional query replacement when the user invokes Search commands.
+
+The bridge remembers the latest native query even when it sends nothing, so a later catalog refresh cannot echo that older query over a newer native edit or composition. A typed query/hint snapshot replaces JSON encoding on each edit. Native search also stops maintaining the unmounted Flutter text controller. Result filtering and rendering still occur as needed; this does not establish a measured latency reduction or eliminate the cost of opening the search catalog.
+
+The redundant-message check failed before the change (`/private/tmp/harness-v2-search-echo-before.log`). Final focused behavior/render checks passed (`/private/tmp/harness-v2-search-arrival-final-tests.log`); the hidden AppKit field separately preserved its editor, marked text and caret through attention/palette updates (`/private/tmp/harness-v2-search-arrival-native.log`). Real native input-to-display calibration remains paused as described below.
+
 ## Local Git context recovery (2026-09-13)
 
 [Dart's filesystem watch documentation](https://api.dart.dev/dart-io/FileSystemEntity/watch.html) warns that events can coalesce or arrive out of order, and that watches end when their target disappears or the watcher stops. [Git's repository layout](https://git-scm.com/docs/gitrepository-layout) distinguishes the working tree's `.git` pointer, worktree-specific HEAD and shared configuration through `commondir`. The compatibility reader now observes those relationships and treats a subscription as fallible.

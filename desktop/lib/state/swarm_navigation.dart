@@ -228,7 +228,7 @@ class SwarmSearchCatalog {
           title: machine.machine.displayName,
           detail: [
             'Machine',
-            '${members.length} agents',
+            _agentCountLabel(members),
             if (machine.needsLink)
               'Link required'
             else if (machine.nodeOnline == false)
@@ -254,7 +254,7 @@ class SwarmSearchCatalog {
           id: 'project:${group.id}',
           projectId: group.id,
           title: group.name,
-          detail: 'Project · ${members.length} agents',
+          detail: 'Project · ${_agentCountLabel(members)}',
           swarmId: null,
           current: false,
           members: Set.unmodifiable(members),

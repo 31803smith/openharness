@@ -2,6 +2,15 @@
 
 Updated 2026-09-13 with coordinated palettes, Models, combined closed-work History and faster unified search. This is a working preview, not a release.
 
+## Search arrival and typing checkpoint
+
+- An isolated full-screen probe reproduced inconsistent arrival: initial launch focused the shell, while New swarm after work and close-last-swarm immediately opened suggestions over the welcome choices. All three now focus the inline field with results closed. Clicking, typing or a configured picker navigation/accept key opens results in place. The opening key never activates an unseen result. Escape keeps the query and caret; returning from the native search or a dialog does not reopen inline suggestions automatically.
+- The first-workspace path now verifies Tab from the focused field to **Choose folder…**, then Enter to open the existing folder flow. Closed-field navigation honors keymap overrides and command mode. Background changes preserve inline composition and selection. Native-field checks preserve its editor, marked range and caret during attention/palette changes and refocusing.
+- A reproduced native bridge regression sent five unchanged placeholder messages for five query edits. The same burst now sends none. A mode change sends its new hint; deliberate command navigation still changes the query. A small typed snapshot replaces per-edit JSON encoding, and native search no longer updates its unmounted Flutter text controller. This removes work, not a measured amount of input/display latency.
+- Visual review at 880×560 covered fresh welcome, the prefilled New agent form, New swarm after work and inline results. It also caught singular machine/project labels; they now reuse the swarm agent-count formatter. These images use the Flutter fallback titlebar, not a live native capture.
+- Validation: both arrival regressions and the redundant-message regression failed before their fixes. **48 focused Flutter tests plus the isolated render passed**; the final count-label reuse then passed nine search checks plus the rerender. **51 native decoder and 363 AppKit checks passed**. Analyzer has zero errors/warnings and the existing 12 vendored infos. Artifacts: `/private/tmp/harness-v2-search-arrival-{before,tests,final-tests,native,analyze,copy-render}.log`, `/private/tmp/harness-v2-search-echo-before.log`, and `/private/tmp/harness-v2-search-arrival-{welcome,form,new-swarm,search}.png`.
+- No real agent input, provider installation or foreground latency measurement was used. Release rebuild follows this checkpoint; public-origin push approval is still pending.
+
 ## Native tab interaction checkpoint
 
 - A reproduced overflow regression let background name/status/palette updates snap the strip back to the active tab. The strip now preserves manual scrolling during those updates, reveals a newly selected tab, and keeps a previously visible active tab in view when the strip's geometry or order changes.

@@ -180,6 +180,149 @@ void main() {
   }
 
   testWidgets(
+    'closed New swarm search honors remapped opening keys and command mode',
+    (tester) async {
+      final map = MemoryKeymap()
+        ..apply('''{"bindings":[
+        {"keys":"down","command":null,"when":"picker"},
+        {"keys":"enter","command":null,"when":"picker"},
+        {"keys":"ctrl+g","command":"picker.next","when":"picker"},
+        {"keys":"alt+enter","command":"picker.accept","when":"picker"},
+        {"keys":"cmd+d","command":"navigation.commands","when":"picker"}
+      ]}''');
+      final app = createApp();
+      await mount(tester, app, map);
+      final initialId = app.activeSwarmId;
+      final field = find.byKey(const ValueKey('swarm-welcome-search-input'));
+      expect(
+        tester.widget<TextField>(field).focusNode!.hasPrimaryFocus,
+        isTrue,
+      );
+      expect(find.byType(SwarmSearchResults), findsNothing);
+      await key(tester, LogicalKeyboardKey.arrowDown);
+      await key(tester, LogicalKeyboardKey.enter);
+      expect(find.byType(SwarmSearchResults), findsNothing);
+      await key(tester, LogicalKeyboardKey.keyG, ctrl: true);
+      expect(
+        tester
+            .widget<SwarmSearchResults>(find.byType(SwarmSearchResults))
+            .search
+            .cursor,
+        0,
+      );
+      expect(app.activeSwarmId, initialId);
+      await key(tester, LogicalKeyboardKey.escape);
+      await key(tester, LogicalKeyboardKey.enter, alt: true);
+      expect(find.byType(SwarmSearchResults), findsOneWidget);
+      expect(app.activeSwarmId, initialId);
+      await key(tester, LogicalKeyboardKey.escape);
+      await key(tester, LogicalKeyboardKey.keyD, cmd: true);
+      final search = tester
+          .widget<SwarmSearchResults>(find.byType(SwarmSearchResults))
+          .search;
+      expect(search.isCommandMode, isTrue);
+      expect(tester.widget<TextField>(field).controller!.text, '> ');
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const ValueKey('swarm-search-input')))
+            .controller!
+            .text,
+        isEmpty,
+      );
+      expect(app.panes, isEmpty);
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+      map.dispose();
+    },
+  );
+
+  testWidgets(
+    'native typing sends only changed hints and never echoes a query during refresh',
+    (tester) async {
+      final calls = <MethodCall>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        nativeChannel,
+        (call) async {
+          calls.add(call);
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          nativeChannel,
+          null,
+        ),
+      );
+      final map = MemoryKeymap();
+      final app = createApp();
+      await mount(tester, app, map, native: true);
+      await native(tester, 'keymapCommand', {
+        'command': 'navigation.quick_open',
+      });
+      await tester.pump();
+      calls.clear();
+      for (final query in ['w', 'wo', 'wor', 'work', 'work 木']) {
+        await native(tester, 'searchChanged', {'query': query});
+        app.renameSwarm(app.activeSwarmId, 'Background $query');
+      }
+      await tester.pump();
+      expect(
+        calls.where((c) => c.method == 'searchState'),
+        isEmpty,
+        reason:
+            'Typing and discovery do not need a reverse-channel field update',
+      );
+      for (final query in ['>', '> s', '> se', '> set']) {
+        await native(tester, 'searchChanged', {'query': query});
+        app.renameSwarm(app.activeSwarmId, 'Background $query');
+      }
+      map.apply(
+        '{"bindings":[{"keys":"down","command":null,"when":"picker"}]}',
+      );
+      await tester.pump();
+      expect(
+        calls
+            .where((c) => c.method == 'searchState')
+            .map((c) => c.arguments)
+            .toList(),
+        [
+          {'hint': 'Search commands…'},
+        ],
+      );
+      await native(tester, 'searchChanged', {'query': 'Agent'});
+      await tester.pump();
+      calls.clear();
+      await native(tester, 'keymapCommand', {'command': 'navigation.commands'});
+      await tester.pump();
+      expect(
+        calls
+            .where((c) => c.method == 'searchState')
+            .map((c) => c.arguments)
+            .toList(),
+        [
+          {'query': '> ', 'hint': 'Search commands…'},
+        ],
+        reason: 'Deliberate commands still update the native query and hint',
+      );
+      await native(tester, 'keymapCommand', {'command': 'picker.cancel'});
+      await tester.pump();
+      expect(find.byType(SwarmSearchResults), findsNothing);
+      expect(
+        tester
+            .widget<TextField>(
+              find.byKey(const ValueKey('swarm-welcome-search-input')),
+            )
+            .focusNode!
+            .hasPrimaryFocus,
+        isTrue,
+      );
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+      map.dispose();
+    },
+  );
+
+  testWidgets(
     'terminal IME composition keeps its keys before workspace dispatch',
     (tester) async {
       final map = MemoryKeymap();

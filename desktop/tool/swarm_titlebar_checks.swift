@@ -185,6 +185,21 @@ private extension SwarmTabStrip {
     focusSearch(selectAll: true)
     try checkTitlebar((searchField.currentEditor() as? NSTextView)?.selectedRange().length == ("feature/木" as NSString).length,
       "Command-P selects the current query for replacement")
+    let fieldEditor = searchField.currentEditor() as! NSTextView
+    fieldEditor.setMarkedText("も", selectedRange: NSRange(location: 1, length: 0),
+      replacementRange: NSRange(location: 3, length: 0))
+    let draft = fieldEditor.string, marked = fieldEditor.markedRange(), caret = fieldEditor.selectedRange()
+    update(["enabled": true, "activeId": activeId,
+      "tabs": tabs.map { ["id": $0.swarmId, "name": $0.name, "attention": 1] as [String: Any] },
+      "palette": ["workspace": Int64(0xff252d43), "search": Int64(0xff262f46)]])
+    setSearchState(["hint": "Search agents…"])
+    focusSearch(selectAll: true)
+    try checkTitlebar(window.firstResponder === fieldEditor && fieldEditor.string == draft,
+      "Background attention and palette changes preserve the current search editor and draft")
+    try checkTitlebar(fieldEditor.markedRange() == marked && fieldEditor.selectedRange() == caret,
+      "Background updates and refocusing preserve marked text and its caret")
+    fieldEditor.unmarkText()
+    setSearchState(["query": "feature/木", "hint": "Search agents…"])
     var cancelled = false
     let originalEmit = emit
     emit = { method, args in
