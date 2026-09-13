@@ -40,7 +40,7 @@ class SwarmSearchController extends ChangeNotifier {
   void _refresh() {
     final next = history == null
         ? _cache.read(app, projects?.projects ?? const [], recent: recent)
-        : [...history!.menuDestinations(app), ...closedSwarmDestinations(app)];
+        : [...history!.menuDestinations(app), ...closedWorkDestinations(app)];
     if (identical(next, _catalog)) return;
     _catalog = next;
     _filter();
@@ -86,7 +86,7 @@ class SwarmSearchController extends ChangeNotifier {
 
   SwarmSearchSelection? submit([SwarmDestination? row]) {
     final destination = row ?? selected;
-    if (destination == null) return null;
+    if (destination == null || !canSubmit(destination)) return null;
     if (!destination.isGroup) return SwarmSearchSelection(destination);
     _rootQuery = query;
     _scopeId = destination.id;
@@ -97,6 +97,10 @@ class SwarmSearchController extends ChangeNotifier {
     notifyListeners();
     return null;
   }
+
+  bool canSubmit(SwarmDestination? row) =>
+      row != null &&
+      (row.closedId == null || app.canReopenClosed(row.closedId!));
 
   void back() {
     if (!scoped) return;

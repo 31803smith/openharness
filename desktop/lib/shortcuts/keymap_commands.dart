@@ -58,7 +58,7 @@ final harnessCommands = <HarnessCommand>[
   ),
   const HarnessCommand(
     'swarm.reopen',
-    'Reopen closed swarm',
+    'Reopen last closed agent or swarm',
     ShortcutGroup.navigate,
     keys: ['cmd+shift+t'],
     action: ShortcutAction.reopenClosedSwarm,

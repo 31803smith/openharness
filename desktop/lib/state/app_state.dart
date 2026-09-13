@@ -350,12 +350,42 @@ class AppNotifier extends ChangeNotifier {
   int _nextSwarmId = 2;
   static const maxSwarms = 24;
   static const maxClosedSwarms = 24;
-  final List<ClosedSwarm> _closedSwarms = [];
-  int _nextClosedSwarmId = 1;
+  final List<ClosedWork> _closedHistory = [];
+  int _nextClosedHistoryId = 1;
+  List<ClosedWork> get closedHistory =>
+      List.unmodifiable(_closedHistory.reversed);
   List<ClosedSwarm> get closedSwarms =>
-      List.unmodifiable(_closedSwarms.reversed);
+      List.unmodifiable(_closedHistory.reversed.whereType<ClosedSwarm>());
   bool get canReopenClosedSwarm =>
-      _closedSwarms.isNotEmpty && swarms.length < maxSwarms;
+      _closedHistory.any((entry) => entry is ClosedSwarm) &&
+      swarms.length < maxSwarms;
+  bool get canReopenLastClosed =>
+      _closedHistory.isNotEmpty &&
+      canReopenClosed(_closedHistory.last.historyId);
+
+  bool canReopenClosed(String historyId) {
+    if (_disposed) return false;
+    final entry = _closedHistory
+        .where((entry) => entry.historyId == historyId)
+        .firstOrNull;
+    if (entry is ClosedSwarm) return swarms.length < maxSwarms;
+    if (entry is! ClosedAgent) return false;
+    final target = swarms.where((s) => s.id == entry.swarmId).firstOrNull;
+    return target == null
+        ? swarms.length < maxSwarms
+        : target.panes.length < maxPanes ||
+              target.panes.any(
+                (p) =>
+                    p.machineId == entry.machineId &&
+                    p.agentId == entry.agentId,
+              );
+  }
+
+  void _rememberClosed(ClosedWork entry) {
+    _closedHistory.add(entry);
+    if (_closedHistory.length > maxClosedSwarms) _closedHistory.removeAt(0);
+  }
+
   Swarm get activeSwarm => swarms.firstWhere(
     (s) => s.id == _activeSwarmId,
     orElse: () => swarms.first,
@@ -472,15 +502,14 @@ class AppNotifier extends ChangeNotifier {
       replacement = Swarm(id: 'swarm-${_nextSwarmId++}');
       swarms.add(replacement);
     }
-    _closedSwarms.add(
+    _rememberClosed(
       ClosedSwarm(
         removed,
-        historyId: 'closed-${_nextClosedSwarmId++}',
+        historyId: 'closed-${_nextClosedHistoryId++}',
         index: index,
         replacement: replacement,
       ),
     );
-    if (_closedSwarms.length > maxClosedSwarms) _closedSwarms.removeAt(0);
     if (_activeSwarmId == id) {
       _activeSwarmId = swarms[index.clamp(0, swarms.length - 1)].id;
     }
@@ -498,11 +527,13 @@ class AppNotifier extends ChangeNotifier {
 
   void reopenClosedSwarm({String? historyId}) {
     if (_disposed || !canReopenClosedSwarm) return;
-    final index = historyId == null
-        ? _closedSwarms.length - 1
-        : _closedSwarms.indexWhere((entry) => entry.historyId == historyId);
+    final index = _closedHistory.lastIndexWhere(
+      (entry) =>
+          entry is ClosedSwarm &&
+          (historyId == null || entry.historyId == historyId),
+    );
     if (index < 0) return;
-    final saved = _closedSwarms.removeAt(index);
+    final saved = _closedHistory.removeAt(index) as ClosedSwarm;
     if (swarms.length == 1 && saved.replacesUntouchedWelcome(swarms.single)) {
       swarms.clear();
     }
@@ -539,6 +570,58 @@ class AppNotifier extends ChangeNotifier {
     restored.zoomedPaneId = paneAt(saved.zoom);
     swarms.insert(saved.index.clamp(0, swarms.length), restored);
     selectSwarm(restored.id);
+  }
+
+  /// Reopen the chosen closure, or the newest closure for Cmd-Shift-T.
+  /// Membership is restored synchronously; a slow detach cannot resurrect an
+  /// old controller or redirect the destination after a network wait.
+  bool reopenClosed({String? historyId}) {
+    final id = historyId ?? _closedHistory.lastOrNull?.historyId;
+    if (id == null || !canReopenClosed(id)) return false;
+    final index = _closedHistory.indexWhere((entry) => entry.historyId == id);
+    final saved = _closedHistory[index];
+    if (saved is ClosedSwarm) {
+      reopenClosedSwarm(historyId: id);
+      return true;
+    }
+    final agent = saved as ClosedAgent;
+    _closedHistory.removeAt(index);
+    var target = swarms.where((s) => s.id == agent.swarmId).firstOrNull;
+    if (target == null) {
+      target = Swarm(id: agent.swarmId, name: agent.swarmName);
+      swarms.add(target);
+    }
+    final pane =
+        allPanes
+            .where(
+              (p) =>
+                  p.machineId == agent.machineId && p.agentId == agent.agentId,
+            )
+            .firstOrNull ??
+        (TerminalPane(
+          id: _nextPaneId++,
+          machineId: agent.machineId,
+          agentId: agent.agentId,
+        )..composerVisible = agent.composerVisible);
+    if (!target.panes.contains(pane)) {
+      target.panes.insert(agent.index.clamp(0, target.panes.length), pane);
+      if (agent.pinnedSlot != null &&
+          !target.pinnedSlots.containsValue(agent.pinnedSlot)) {
+        target.pinnedSlots[pane.id] = agent.pinnedSlot!;
+      }
+    }
+    if (target.focusedPaneId != pane.id) {
+      target.previousPaneId = target.focusedPaneId;
+    }
+    target.focusedPaneId = pane.id;
+    if (agent.zoomed || target.zoomedPaneId != null) {
+      target.zoomedPaneId = pane.id;
+    }
+    _activeSwarmId = target.id;
+    _settlePins();
+    _paneFocusRequest++;
+    selectSwarm(target.id);
+    return true;
   }
 
   /// Capture the destination before any network wait or tab change.
@@ -1795,7 +1878,7 @@ class AppNotifier extends ChangeNotifier {
   }
 
   Future<void> login() async {
-    _closedSwarms.clear();
+    _closedHistory.clear();
     _lastError = null;
     status = AppStatus.bootstrapping;
     signingIn = true;
@@ -1845,7 +1928,7 @@ class AppNotifier extends ChangeNotifier {
   void cancelLogin() => cliLogin.cancel();
 
   Future<void> logout() async {
-    _closedSwarms.clear();
+    _closedHistory.clear();
     // Best-effort and fire-and-forget: local state is cleared below regardless of whether the CLI
     // process could be reached, but a real `harness logout` clears its saved session so the NEXT
     // launch doesn't silently sign back in without ever showing the login screen.
@@ -1856,7 +1939,7 @@ class AppNotifier extends ChangeNotifier {
     // Tiles go, the saved layout stays: signing out and back in is the same
     // person at the same desk, and the file is only read once machines exist.
     await _closeAllPanes(persist: false);
-    _closedSwarms.clear();
+    _closedHistory.clear();
     await _pool?.closeAll();
     _pool = null;
     _cliEndpoint = null;
@@ -4068,6 +4151,22 @@ class AppNotifier extends ChangeNotifier {
   Future<void> closePane(int paneId, {bool persist = true}) async {
     final pane = panes.where((p) => p.id == paneId).firstOrNull;
     if (pane == null) return;
+    if (pane.agentId != null) {
+      final machine = stateOf(pane.machineId);
+      final agent = machine?.agents
+          .where((a) => a.id == pane.agentId)
+          .firstOrNull;
+      _rememberClosed(
+        ClosedAgent(
+          pane,
+          activeSwarm,
+          historyId: 'closed-${_nextClosedHistoryId++}',
+          name: agent?.name ?? pane.session?.agentName ?? pane.agentId!,
+          machineName: machine?.machine.displayName ?? pane.machineId,
+          engine: agent?.engine ?? pane.session?.engineId,
+        ),
+      );
+    }
     activeSwarm.remove(pane);
     _settlePins();
     if (persist) _persistLayout();
@@ -4636,7 +4735,7 @@ class AppNotifier extends ChangeNotifier {
   void dispose() {
     _localGitProjects.dispose();
     _disposed = true;
-    _closedSwarms.clear();
+    _closedHistory.clear();
     _daemonSupervisionTimer?.cancel();
     _updateCheckTimer?.cancel();
     _environmentRecheckTimer?.cancel();

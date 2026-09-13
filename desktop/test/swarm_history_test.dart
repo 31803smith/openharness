@@ -16,6 +16,73 @@ import 'swarm_state_test.dart' show createApp;
 import 'swarm_switcher_test.dart' show jumpField;
 
 void main() {
+  testWidgets(
+    'native History restores closed agents and sends their engine icons',
+    (tester) async {
+      const channel = MethodChannel('harness/swarm_tabs');
+      final messenger = tester.binding.defaultBinaryMessenger;
+      final updates = <Map>[];
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'update') updates.add(call.arguments as Map);
+        return true;
+      });
+      addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+      final app = createApp();
+      app.machineStates['m']!.agents = [
+        const Agent(
+          id: 'a0',
+          name: 'Planning',
+          engine: 'claude',
+          terminalAvailable: true,
+        ),
+      ];
+      final pane = app.adoptSessionForTest(terminal('a0', []));
+      final origin = app.activeSwarm;
+      final projects = SwarmProjectStore();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SwarmScreen(
+            notifier: app,
+            nativeTabs: true,
+            projectStore: projects,
+          ),
+        ),
+      );
+      await tester.pump();
+      final recent = (updates.last['history'] as List).cast<Map>().first;
+      expect(recent['engine'], 'claude');
+      await app.closePane(pane.id);
+      await tester.pump();
+      final closed = (updates.last['closedHistory'] as List).cast<Map>().single;
+      expect(closed['swarm'], isFalse);
+      expect(closed['engine'], 'claude');
+      expect(closed['title'], 'Planning');
+      expect(closed['canReopen'], isTrue);
+      final reply = Completer<void>();
+      messenger.handlePlatformMessage(
+        channel.name,
+        const StandardMethodCodec().encodeMethodCall(
+          MethodCall('reopenHistory', {'id': closed['id']}),
+        ),
+        (_) => reply.complete(),
+      );
+      await reply.future;
+      await tester.pump();
+      expect(app.activeSwarm, same(origin));
+      expect(app.panes.single.agentId, 'a0');
+      expect(app.closedHistory, isEmpty);
+      await app.closeSwarm(origin.id);
+      await tester.pump();
+      expect(
+        (updates.last['closedHistory'] as List).cast<Map>().single['swarm'],
+        isTrue,
+      );
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+      projects.dispose();
+    },
+  );
+
   test('Back and Forward retain exact pane locations and discard a branched future', () async {
     final app = createApp();
     addTearDown(app.dispose);
@@ -159,6 +226,8 @@ void main() {
         (row) => row['id'] == id,
       );
       expect(row['title'], 'Agent 0 — Test host');
+      expect(row['engine'], 'codex');
+      expect(row['iconAsset'], 'assets/engine-icons/codex.png');
       final before = updates.length;
       for (var i = 0; i < 20; i++) {
         app.dismissError();

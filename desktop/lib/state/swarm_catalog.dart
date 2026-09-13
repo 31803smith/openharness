@@ -28,10 +28,16 @@ List<SwarmAgentRef> swarmAgents(AppNotifier app, [String query = '']) {
       .toLowerCase()
       .split(RegExp(r'\s+'))
       .where((t) => t.isNotEmpty);
-  return [
+  final agents = [
     for (final machine in app.machineStates.values)
       for (final agent in machine.agents) SwarmAgentRef(machine, agent),
-  ].where((entry) => terms.every(entry.searchText.contains)).toList();
+  ];
+  // Catalog/group construction needs identities, not searchable strings.
+  // Avoid formatting every agent's metadata just to accept an empty query.
+  if (terms.isEmpty) return agents;
+  return agents
+      .where((entry) => terms.every(entry.searchText.contains))
+      .toList();
 }
 
 class SavedSwarmProject {

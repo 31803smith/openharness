@@ -14,11 +14,13 @@ import '../shared/theme/app_theme.dart' as grid;
 import '../shortcuts/app_shortcuts.dart';
 import '../state/app_state.dart';
 import '../terminal/terminal_viewport.dart';
+import '../usage/models_menu_controller.dart';
 import '../state/swarm_catalog.dart';
 import '../state/swarm_attention.dart';
 import '../state/swarm_navigation.dart';
 import '../state/swarm_search.dart';
 import '../widgets/layout_palette.dart';
+import '../widgets/engine_identity.dart';
 import '../widgets/link_machine_screen.dart';
 import '../widgets/new_agent_dialog.dart';
 import '../widgets/pane_grid.dart';
@@ -37,10 +39,12 @@ class SwarmScreen extends StatefulWidget {
     required this.notifier,
     this.nativeTabs,
     this.projectStore,
+    this.modelsMenu,
   });
   final AppNotifier notifier;
   final bool? nativeTabs;
   final SwarmProjectStore? projectStore;
+  final ModelsMenuController? modelsMenu;
   @override
   State<SwarmScreen> createState() => _SwarmScreenState();
 }
@@ -69,6 +73,8 @@ class _SwarmScreenState extends State<SwarmScreen> {
   bool _routeIsCurrent = true;
   String? _linkDialogMachineId;
   String? _nativeState;
+  ModelsMenuController? _modelsMenu;
+  String? _modelsState;
   AppNotifier get app => widget.notifier;
 
   @override
@@ -83,9 +89,14 @@ class _SwarmScreenState extends State<SwarmScreen> {
     unawaited(_projects.load());
     _spokenTasks = app.spokenTasks.listen(_openSpokenTask);
     if (_native) {
+      _modelsMenu =
+          widget.modelsMenu ??
+          ModelsMenuController(remote: app.readRemoteUsage);
+      _modelsMenu!.addListener(_syncModels);
       _channel.setMethodCallHandler(_onNative);
       app.addListener(_syncNative);
       _syncNative();
+      _syncModels();
     }
   }
 
@@ -115,6 +126,11 @@ class _SwarmScreenState extends State<SwarmScreen> {
     _shellFocus.dispose();
     unawaited(_spokenTasks?.cancel());
     if (_native) {
+      _modelsMenu?.removeListener(_syncModels);
+      if (widget.modelsMenu == null) _modelsMenu?.dispose();
+      unawaited(
+        _channel.invokeMethod<void>('modelsState', {'subscriptions': []}),
+      );
       app.removeListener(_syncNative);
       _channel.setMethodCallHandler(null);
       unawaited(
@@ -160,18 +176,21 @@ class _SwarmScreenState extends State<SwarmScreen> {
     final payload = {
       'enabled': _routeIsCurrent && !_dialogOpen && !_spokenPaletteOpen,
       'activeId': app.activeSwarmId,
-      'canReopen': app.canReopenClosedSwarm,
+      'canReopen': app.canReopenLastClosed,
       'canFind': _canFindTerminal,
       'canClosePane': app.focusedPane != null,
       'canGoBack': _navigation.canGoBack(app),
       'canGoForward': _navigation.canGoForward(app),
       'closedHistory': [
-        for (final entry in closedSwarmDestinations(app))
+        for (final entry in closedWorkDestinations(app))
           {
             'id': entry.id,
             'title': entry.title,
             'detail': entry.detail,
-            'swarm': true,
+            'swarm': entry.isSwarm,
+            'engine': entry.engine,
+            'iconAsset': engineIdentity(entry.engine).asset,
+            'canReopen': app.canReopenClosed(entry.id),
           },
       ],
       'attention': _attention,
@@ -184,6 +203,8 @@ class _SwarmScreenState extends State<SwarmScreen> {
                 : '${entry.title} — ${app.stateOf(entry.machineId!)?.machine.displayName ?? entry.machineId}',
             'detail': entry.detail,
             'swarm': entry.isSwarm,
+            'engine': entry.engine,
+            'iconAsset': engineIdentity(entry.engine).asset,
             'current': entry.current,
           },
       ],
@@ -208,6 +229,14 @@ class _SwarmScreenState extends State<SwarmScreen> {
     unawaited(_channel.invokeMethod<void>('update', payload));
   }
 
+  void _syncModels() {
+    final payload = {'subscriptions': _modelsMenu?.rows ?? []};
+    final encoded = jsonEncode(payload);
+    if (encoded == _modelsState) return;
+    _modelsState = encoded;
+    unawaited(_channel.invokeMethod<void>('modelsState', payload));
+  }
+
   Future<void> _onNative(MethodCall call) async {
     if (!mounted ||
         _dialogOpen ||
@@ -216,6 +245,10 @@ class _SwarmScreenState extends State<SwarmScreen> {
       return;
     }
     final args = call.arguments is Map ? call.arguments as Map : const {};
+    if (call.method == 'modelsOpened') {
+      await _modelsMenu?.refresh();
+      return;
+    }
     if (call.method == 'searchBegin') {
       _openSearch();
       _updateSearchGeometry(args);
@@ -262,9 +295,9 @@ class _SwarmScreenState extends State<SwarmScreen> {
       case 'new':
         app.newSwarm();
       case 'reopen':
-        app.reopenClosedSwarm();
+        app.reopenClosed();
       case 'reopenHistory':
-        if (args['id'] is String) app.reopenClosedSwarm(historyId: args['id']);
+        if (args['id'] is String) app.reopenClosed(historyId: args['id']);
       case 'historyBack':
         _stepHistory(-1);
       case 'historyForward':
@@ -750,7 +783,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
           ...buildShortcutBindings(
             handlers: {
               ShortcutAction.newSwarm: app.newSwarm,
-              ShortcutAction.reopenClosedSwarm: app.reopenClosedSwarm,
+              ShortcutAction.reopenClosedSwarm: app.reopenClosed,
               ShortcutAction.closeSwarm: () =>
                   app.closeSwarm(app.activeSwarmId),
               ShortcutAction.renameSwarm: () => _rename(app.activeSwarmId),

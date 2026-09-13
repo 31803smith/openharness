@@ -205,17 +205,18 @@ class SwarmSearchCatalog {
     if (listEquals(_presentation, presentation)) return _entries;
     _presentation = presentation;
     final entries = swarmDestinations(app, recent: recent);
-    final available = {
+    final agentsById = {
       for (final entry in entries)
-        if (entry.agentId != null) entry.id,
+        if (entry.agentId != null) entry.id: entry,
     };
+    final machineMembers = <String, Set<String>>{};
+    for (final entry in agentsById.values) {
+      (machineMembers[entry.machineId!] ??= {}).add(entry.id);
+    }
     final groups = swarmProjects(app, projects);
     for (final machine in app.machineStates.values) {
       final id = machine.machine.machineId;
-      final members = {
-        for (final entry in entries)
-          if (entry.machineId == id && entry.agentId != null) entry.id,
-      };
+      final members = machineMembers[id] ?? const <String>{};
       entries.add(
         SwarmDestination(
           id: 'machine:$id',
@@ -238,7 +239,7 @@ class SwarmSearchCatalog {
     for (final group in groups) {
       final members = {
         for (final entry in group.agents)
-          if (available.contains(
+          if (agentsById.containsKey(
             agentDestinationId(entry.machineId, entry.agent.id),
           ))
             agentDestinationId(entry.machineId, entry.agent.id),
@@ -252,21 +253,20 @@ class SwarmSearchCatalog {
           swarmId: null,
           current: false,
           members: Set.unmodifiable(members),
-          searchFields: [
+          searchFields: {
             group.saved?.path,
             for (final entry in group.agents) ...[
               entry.machine.machine.displayName,
               entry.project?.cwd,
               entry.project?.branch,
             ],
-          ],
+          },
         ),
       );
       // Explicit project associations from older daemons are searchable too.
-      for (final entry in entries.where(
-        (entry) => members.contains(entry.id),
-      )) {
-        final name = group.name.toLowerCase();
+      final name = group.name.toLowerCase();
+      for (final id in members) {
+        final entry = agentsById[id]!;
         if (!entry.fields.contains(name)) entry.fields.add(name);
       }
     }
@@ -352,17 +352,31 @@ String _agentCountLabel(Iterable<String?> ids) {
   return '$count ${count == 1 ? 'agent' : 'agents'}';
 }
 
-List<SwarmDestination> closedSwarmDestinations(AppNotifier app) => [
-  for (final entry in app.closedSwarms)
-    SwarmDestination(
-      id: entry.historyId,
-      closedId: entry.historyId,
-      title: entry.name,
-      detail:
-          '${_agentCountLabel(entry.panes.map((pane) => pane.agentId))} · Recently closed',
-      swarmId: null,
-      current: false,
-    ),
+List<SwarmDestination> closedWorkDestinations(AppNotifier app) => [
+  for (final entry in app.closedHistory)
+    if (entry is ClosedSwarm)
+      SwarmDestination(
+        id: entry.historyId,
+        closedId: entry.historyId,
+        title: entry.name,
+        detail:
+            '${_agentCountLabel(entry.panes.map((pane) => pane.agentId))} · Recently closed',
+        swarmId: null,
+        current: false,
+      )
+    else if (entry is ClosedAgent)
+      SwarmDestination(
+        id: entry.historyId,
+        closedId: entry.historyId,
+        title: entry.name,
+        detail: '${entry.machineName} · ${entry.swarmName} · Recently closed',
+        swarmId: null,
+        machineId: entry.machineId,
+        agentId: entry.agentId,
+        engine: entry.engine,
+        current: false,
+        searchFields: [entry.machineName, entry.swarmName, entry.engine],
+      ),
 ];
 
 List<SwarmDestination> swarmDestinations(
@@ -404,7 +418,7 @@ List<SwarmDestination> swarmDestinations(
         detail: _agentCountLabel(swarm.panes.map((pane) => pane.agentId)),
         swarmId: swarm.id,
         current: swarm.id == app.activeSwarmId,
-        searchFields: context,
+        searchFields: context.toSet(),
       ),
     );
   }
@@ -481,6 +495,10 @@ List<SwarmDestination> rankSwarmDestinations(
   final recency = {for (var i = 0; i < recent.length; i++) recent[i]: i};
   final ranked = <({SwarmDestination entry, int score})>[];
   for (final entry in all) {
+    if (entry.fields.first == needle) {
+      ranked.add((entry: entry, score: -1));
+      continue;
+    }
     var total = 0;
     for (final term in terms) {
       int? best;
@@ -499,6 +517,10 @@ List<SwarmDestination> rankSwarmDestinations(
                 ? 16
                 : 128 + spread);
         if (best == null || score < best) best = score;
+        // Every remaining field is metadata, whose best possible score is 64.
+        // An exact/prefix/substring title match already beats that; an exact
+        // metadata match ties it. Neither needs further field scans.
+        if (best <= 64) break;
       }
       if (best == null) {
         total = -1;
@@ -507,10 +529,7 @@ List<SwarmDestination> rankSwarmDestinations(
       total += best;
     }
     if (total >= 0) {
-      ranked.add((
-        entry: entry,
-        score: entry.fields.first == needle ? -1 : total,
-      ));
+      ranked.add((entry: entry, score: total));
     }
   }
   int tier(SwarmDestination e) => !e.hasView
@@ -544,12 +563,7 @@ Future<bool> activateSwarmDestination(
   required String destinationSwarmId,
 }) async {
   if (destination.closedId != null) {
-    if (!app.canReopenClosedSwarm ||
-        !app.closedSwarms.any((s) => s.historyId == destination.closedId)) {
-      return false;
-    }
-    app.reopenClosedSwarm(historyId: destination.closedId);
-    return true;
+    return app.reopenClosed(historyId: destination.closedId);
   }
   if (destination.isSwarm) {
     if (!app.swarms.any((s) => s.id == destination.swarmId)) return false;

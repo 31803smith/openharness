@@ -10,6 +10,7 @@ import 'package:harness/core/models.dart';
 import 'package:harness/state/app_state.dart';
 import 'package:harness/state/swarm_catalog.dart';
 import 'package:harness/state/swarm_navigation.dart';
+import 'package:harness/state/swarm_search.dart';
 import 'package:harness/terminal/terminal_binary.dart';
 import 'package:harness/terminal/terminal_session.dart';
 import 'package:harness/widgets/terminal_panel.dart';
@@ -23,15 +24,18 @@ Map<String, num> distribution(List<int> microseconds) {
     'samples': microseconds.length,
     'medianMs': microseconds[microseconds.length ~/ 2] / 1000,
     'p95Ms': microseconds[(microseconds.length * 0.95).ceil() - 1] / 1000,
+    'p99Ms': microseconds[(microseconds.length * 0.99).ceil() - 1] / 1000,
   };
 }
 
-Map<String, num> measure(void Function() operation) {
+Map<String, num> measure(void Function() operation, {void Function()? setup}) {
   for (var i = 0; i < 20; i++) {
+    setup?.call();
     operation();
   }
   final times = <int>[];
   for (var i = 0; i < 100; i++) {
+    setup?.call();
     final watch = Stopwatch()..start();
     operation();
     times.add(watch.elapsedMicroseconds);
@@ -140,6 +144,43 @@ void main() {
       }), 'projectGrouping': measure(() {
         swarmProjects(app, const []);
       })})}',
+    );
+    // Exercise the current unified bar, including project/machine metadata,
+    // instead of using the older agent-only catalog as its performance proxy.
+    final cache = SwarmSearchCatalog();
+    final entries = cache.read(app, const []);
+    expect(entries, hasLength(2059));
+    final controller = SwarmSearchController(app, const []);
+    addTearDown(controller.dispose);
+    final queries = <String, Object>{};
+    for (final query in [
+      'agent',
+      'agent 12 machine 3',
+      'agn12',
+      'project 12 main',
+      'no-such-agent',
+    ]) {
+      final timing = measure(
+        () => controller.setQuery(query),
+        setup: () => controller.setQuery(''),
+      );
+      queries[query] = {...timing, 'results': controller.rows.length};
+    }
+    controller.setQuery('');
+    controller.submit(entries.singleWhere((e) => e.id == 'machine:machine-3'));
+    expect(controller.rows, hasLength(250));
+    final scoped = measure(
+      () => controller.setQuery('agn12'),
+      setup: () => controller.setQuery(''),
+    );
+    debugPrint(
+      'SWARM_BENCH ${jsonEncode({'kind': 'headless_debug_cpu', 'operation': 'unified_search', 'agents': 2000, 'machines': 8, 'projects': 50, 'entries': entries.length, 'coldCatalog': measure(() {
+        SwarmSearchCatalog().read(app, const []);
+      }), 'unchangedCatalog': measure(() {
+        cache.read(app, const []);
+      }), 'openAndDisposeController': measure(() {
+        SwarmSearchController(app, const []).dispose();
+      }), 'queries': queries, 'scopedQuery': scoped})}',
     );
   });
 

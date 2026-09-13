@@ -1,9 +1,10 @@
 import Cocoa
 import FlutterMacOS
+import ImageIO
 
 /// Real AppKit controls in the title bar, beside the system traffic lights.
 /// https://developer.apple.com/documentation/appkit/nstitlebaraccessoryviewcontroller/layoutattribute
-final class SwarmTitlebar: NSObject, NSMenuItemValidation {
+final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
   private weak var window: NSWindow?
   private let channel: FlutterMethodChannel
   private let accessory = NSTitlebarAccessoryViewController()
@@ -20,6 +21,9 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation {
   private var canGoForward = false
   private var history: [SwarmHistoryEntry] = []
   private var closedHistory: [SwarmHistoryEntry] = []
+  private let historyIcons = SwarmHistoryIcons()
+  private let modelsMenu = NSMenu(title: "Models")
+  private var subscriptions: [SwarmSubscriptionEntry] = []
 
   init(window: NSWindow, messenger: FlutterBinaryMessenger) {
     self.window = window
@@ -34,7 +38,9 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation {
         result(true)
       case "update":
         let state = call.arguments as? [String: Any] ?? [:]
+        let wasEnabled = self.actionsEnabled
         self.actionsEnabled = state["enabled"] as? Bool == true
+        if wasEnabled != self.actionsEnabled { self.updateModelsAvailability() }
         self.canReopen = state["canReopen"] as? Bool == true
         self.canFind = state["canFind"] as? Bool == true
         self.canClosePane = state["canClosePane"] as? Bool == true
@@ -52,6 +58,10 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation {
         result(nil)
       case "closeSearch":
         self.strip.closeSearch()
+        result(nil)
+      case "modelsState":
+        let state = call.arguments as? [String: Any] ?? [:]
+        self.updateModels(state["subscriptions"] as? [[String: Any]] ?? [])
         result(nil)
       default: result(FlutterMethodNotImplemented)
       }
@@ -91,7 +101,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation {
     accessory.view = strip
     window.addTitlebarAccessoryViewController(accessory)
     resize()
-    installSwarmMenu()
+    installWorkspaceMenus()
     // An editable accessory must not become the window's initial input owner.
     window.makeFirstResponder(window.contentViewController)
   }
@@ -103,8 +113,8 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation {
     strip.needsLayout = true
   }
 
-  private func installSwarmMenu() {
-    guard let main = NSApp.mainMenu, main.item(withTitle: "Swarm") == nil else { return }
+  private func installWorkspaceMenus() {
+    guard let main = NSApp.mainMenu, main.item(withTitle: "Models") == nil else { return }
     // The stock Flutter nib includes a disabled Preferences placeholder. Make
     // the app-menu command work, and give ⌘, a single native owner.
     if let appMenu = main.item(at: 0)?.submenu {
@@ -132,11 +142,12 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation {
     let file = NSMenu(title: "File")
     add(file, "New Swarm", "t", "new")
     add(file, "New Agent…", "", "newAgent")
-    add(file, "Reopen Closed Swarm", "t", "reopen", [.command, .shift])
+    add(file, "Reopen Last Closed", "t", "reopen", [.command, .shift])
     file.addItem(.separator())
     add(file, "Link Machine…", "", "linkMachine")
     add(file, "Add Project…", "", "addProject")
     file.addItem(.separator())
+    add(file, "Rename Swarm…", "r", "renameActive", [.command, .shift])
     add(file, "Remove Agent from Swarm", "w", "closePane", [.command, .shift])
     add(file, "Close Swarm", "w", "closeActive")
     install(file, at: 1)
@@ -145,16 +156,82 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation {
     let windowIndex = main.items.firstIndex(where: { $0.title == "Window" }) ?? main.numberOfItems
     install(historyMenu, at: windowIndex)
 
-    let swarm = NSMenu(title: "Swarm")
-    add(swarm, "Search Agents, Swarms, Machines and Projects…", "p", "jump")
-    add(swarm, "Rename Swarm…", "r", "renameActive", [.command, .shift])
-    swarm.addItem(.separator())
-    add(swarm, "Next Swarm", "]", "next", [.command, .shift])
-    add(swarm, "Previous Swarm", "[", "previous", [.command, .shift])
-    swarm.addItem(.separator())
-    add(swarm, "Agents Needing Input…", "i", "notifications", [.command, .shift])
-    install(swarm, at: windowIndex + 1)
+    // Navigation chords remain in Flutter's terminal-safe shortcut table.
+    // Search still needs a native owner when the titlebar field has focus.
+    if let edit = main.item(withTitle: "Edit")?.submenu {
+      edit.addItem(.separator())
+      add(edit, "Search Agents, Swarms, Machines and Projects…", "p", "jump")
+    }
+    if let view = main.item(withTitle: "View")?.submenu {
+      view.addItem(.separator())
+      add(view, "Agents Needing Input…", "i", "notifications", [.command, .shift])
+    }
+    modelsMenu.autoenablesItems = false
+    modelsMenu.delegate = self
+    rebuildModelsMenu()
+    install(modelsMenu, at: windowIndex + 1)
     installTerminalFindMenu(main)
+  }
+
+  func menuWillOpen(_ menu: NSMenu) {
+    guard menu === modelsMenu, actionsEnabled else { return }
+    // The native menu opens from its cache. Network/credential reads happen
+    // asynchronously in Dart and never hold up AppKit's menu tracking.
+    channel.invokeMethod("modelsOpened", arguments: nil)
+  }
+
+  private func updateModels(_ rows: [[String: Any]]) {
+    let entries = rows.prefix(32).compactMap(SwarmSubscriptionEntry.init)
+    guard entries != subscriptions else { return }
+    subscriptions = entries
+    rebuildModelsMenu()
+  }
+
+  private func rebuildModelsMenu() {
+    modelsMenu.removeAllItems()
+    func label(_ title: String, in menu: NSMenu) {
+      let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+      item.isEnabled = false
+      menu.addItem(item)
+    }
+    func section(_ title: String) {
+      if #available(macOS 14.0, *) {
+        modelsMenu.addItem(NSMenuItem.sectionHeader(title: title))
+      } else {
+        label(title, in: modelsMenu)
+      }
+    }
+    section("Subscription")
+    for entry in subscriptions {
+      let item = NSMenuItem(title: entry.title + " — " + entry.status, action: nil, keyEquivalent: "")
+      item.image = historyIcons.image(engine: entry.engine, asset: entry.iconAsset)
+      item.toolTip = entry.details.joined(separator: "\n")
+      let detail = NSMenu(title: entry.title)
+      detail.autoenablesItems = false
+      for line in entry.details { label(line, in: detail) }
+      item.submenu = detail
+      item.isEnabled = actionsEnabled
+      modelsMenu.addItem(item)
+    }
+    if subscriptions.isEmpty {
+      label("Anthropic", in: modelsMenu)
+      label("OpenAI", in: modelsMenu)
+    }
+    modelsMenu.addItem(.separator())
+    section("API")
+    label("OpenRouter API", in: modelsMenu)
+    label("fal.ai API", in: modelsMenu)
+    modelsMenu.addItem(.separator())
+    section("Local")
+    label("Local models", in: modelsMenu)
+    modelsMenu.addItem(.separator())
+    label("Add Model", in: modelsMenu)
+  }
+
+  private func updateModelsAvailability() {
+    for item in modelsMenu.items where item.submenu != nil {
+      item.isEnabled = actionsEnabled
+    }
   }
 
   private func updateHistory(_ rows: [[String: Any]], closed: [[String: Any]] = []) {
@@ -200,12 +277,13 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation {
       item.representedObject = entry.id
       item.toolTip = entry.title + "\n" + entry.detail
       item.state = entry.current ? .on : .off
-      item.image = NSImage(systemSymbolName: entry.swarm ? "rectangle.split.2x2" : "terminal",
-        accessibilityDescription: nil)
+      item.image = entry.swarm
+        ? NSImage(systemSymbolName: "rectangle.split.2x2", accessibilityDescription: nil)
+        : historyIcons.image(engine: entry.engine, asset: entry.iconAsset)
       historyMenu.addItem(item)
     }
     if entries.isEmpty {
-      let item = NSMenuItem(title: closed ? "No Recently Closed Swarms" : "No Recent Visits", action: nil, keyEquivalent: "")
+      let item = NSMenuItem(title: closed ? "No Recently Closed Agents or Swarms" : "No Recent Visits", action: nil, keyEquivalent: "")
       item.isEnabled = false
       historyMenu.addItem(item)
     }
@@ -237,7 +315,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation {
       return actionsEnabled && history.contains(where: { $0.id == action })
     }
     if menuItem.action == #selector(closedHistoryAction(_:)) {
-      return actionsEnabled && canReopen && closedHistory.contains(where: { $0.id == action })
+      return actionsEnabled && closedHistory.contains(where: { $0.id == action && $0.canReopen })
     }
     return actionsEnabled && (action != "reopen" || canReopen) &&
       (action != "historyBack" || canGoBack) && (action != "historyForward" || canGoForward) &&
@@ -261,12 +339,33 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation {
   }
 }
 
+private struct SwarmSubscriptionEntry: Equatable {
+  let title: String
+  let status: String
+  let details: [String]
+  let engine: String?
+  let iconAsset: String?
+
+  init?(_ row: [String: Any]) {
+    guard let title = row["title"] as? String, !title.isEmpty,
+          let status = row["status"] as? String else { return nil }
+    self.title = title
+    self.status = status
+    details = Array((row["details"] as? [String] ?? [status]).prefix(16))
+    engine = row["engine"] as? String
+    iconAsset = row["iconAsset"] as? String
+  }
+}
+
 private struct SwarmHistoryEntry: Equatable {
   let id: String
   let title: String
   let detail: String
   let swarm: Bool
   let current: Bool
+  let engine: String?
+  let iconAsset: String?
+  let canReopen: Bool
   init?(_ row: [String: Any]) {
     guard let id = row["id"] as? String, let title = row["title"] as? String else { return nil }
     self.id = id
@@ -274,6 +373,83 @@ private struct SwarmHistoryEntry: Equatable {
     detail = row["detail"] as? String ?? ""
     swarm = row["swarm"] as? Bool == true
     current = row["current"] as? Bool == true
+    engine = (row["engine"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    iconAsset = row["iconAsset"] as? String
+    canReopen = row["canReopen"] as? Bool == true
+  }
+}
+
+/// Reuse the same bundled engine artwork as pane headers. Each menu mark is
+/// decoded once to at most 32 pixels, rather than retaining a full-size bitmap
+/// or reopening assets on every history/focus update.
+private final class SwarmHistoryIcons {
+  private let cache = NSCache<NSString, NSImage>()
+  private let assetURL: (String) -> URL?
+
+  init(assetURL: @escaping (String) -> URL? = { asset in
+    let bundle = Bundle(identifier: "io.flutter.flutter.app") ?? Bundle.main
+    let key = FlutterDartProject.lookupKey(forAsset: asset, from: bundle)
+    return bundle.url(forResource: key, withExtension: nil)
+  }) {
+    self.assetURL = assetURL
+    cache.countLimit = 32
+  }
+
+  func image(engine: String?, asset: String?) -> NSImage {
+    let id = engine?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+    let key = "\(id):\(asset ?? "")" as NSString
+    if let image = cache.object(forKey: key) { return image }
+    let size = NSSize(width: 16, height: 16)
+    let image: NSImage
+    if let asset, asset.hasPrefix("assets/engine-icons/"),
+       asset.hasSuffix(".png"), !asset.contains(".."),
+       let url = assetURL(asset),
+       let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+       let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+         kCGImageSourceCreateThumbnailFromImageAlways: true,
+         kCGImageSourceCreateThumbnailWithTransform: true,
+         kCGImageSourceThumbnailMaxPixelSize: 32,
+         kCGImageSourceShouldCacheImmediately: true,
+       ] as CFDictionary) {
+      let bitmap = NSImage(cgImage: thumbnail, size: .zero)
+      let scale = 16 / CGFloat(max(thumbnail.width, thumbnail.height))
+      let width = CGFloat(thumbnail.width) * scale
+      let height = CGFloat(thumbnail.height) * scale
+      image = NSImage(size: size, flipped: false) { _ in
+        bitmap.draw(in: NSRect(x: (16 - width) / 2, y: (16 - height) / 2, width: width, height: height))
+        return true
+      }
+    } else if id == "claude" {
+      // Same four round strokes, proportions and orange as EngineMark.
+      image = NSImage(size: size, flipped: false) { _ in
+        NSColor(srgbRed: 204.0 / 255, green: 124.0 / 255, blue: 94.0 / 255, alpha: 1).setStroke()
+        let path = NSBezierPath()
+        path.lineWidth = 16 * 0.098
+        path.lineCapStyle = .round
+        for i in 0..<4 {
+          let angle = CGFloat(i) * .pi / 4
+          let dx = 16 * 0.39 * cos(angle), dy = 16 * 0.39 * sin(angle)
+          path.move(to: NSPoint(x: 8 - dx, y: 8 - dy))
+          path.line(to: NSPoint(x: 8 + dx, y: 8 + dy))
+        }
+        path.stroke()
+        return true
+      }
+    } else {
+      image = NSImage(size: size, flipped: false) { _ in
+        let initial = String(id.first ?? "A").uppercased() as NSString
+        let attributes: [NSAttributedString.Key: Any] = [
+          .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .bold),
+          .foregroundColor: NSColor.black,
+        ]
+        let bounds = initial.size(withAttributes: attributes)
+        initial.draw(at: NSPoint(x: (16 - bounds.width) / 2, y: (16 - bounds.height) / 2), withAttributes: attributes)
+        return true
+      }
+      image.isTemplate = true
+    }
+    cache.setObject(image, forKey: key)
+    return image
   }
 }
 

@@ -11,7 +11,7 @@ import 'package:harness/state/pane_preset.dart';
 import 'package:harness/terminal/terminal_session.dart';
 
 import 'swarm_interactions_test.dart' show chord;
-import 'swarm_screen_test.dart' show mount;
+import 'swarm_screen_test.dart' show mount, terminal;
 import 'swarm_state_test.dart' show createApp, MemoryStore;
 
 class _NoopLogin extends CliLogin {
@@ -23,7 +23,7 @@ class _NoopLogin extends CliLogin {
 }
 
 void main() {
-  test('recently closed swarms do not survive sign-out', () async {
+  test('recently closed agents and swarms do not survive sign-out', () async {
     final login = _NoopLogin();
     final app = AppNotifier(
       config: AppConfig.dev,
@@ -33,11 +33,16 @@ void main() {
     );
     addTearDown(app.dispose);
     app.renameSwarm(app.activeSwarmId, 'Private work');
+    final pane = app.adoptSessionForTest(terminal('private', []));
+    await app.closePane(pane.id);
     await app.closeSwarm(app.activeSwarmId);
+    expect(app.closedHistory, hasLength(2));
     expect(app.canReopenClosedSwarm, isTrue);
     await app.logout();
     expect(login.logoutCalls, 1);
     expect(app.canReopenClosedSwarm, isFalse);
+    expect(app.closedHistory, isEmpty);
+    expect(app.reopenClosed(), isFalse);
     app.reopenClosedSwarm();
     expect(app.swarms.every((s) => s.name != 'Private work'), isTrue);
   });

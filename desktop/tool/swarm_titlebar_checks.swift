@@ -211,13 +211,13 @@ private extension SwarmTitlebar {
     configure()
     try checkTitlebar(window.firstResponder === window.contentViewController,
       "Adding the search field does not take initial keyboard focus from the workspace")
-    try checkTitlebar(main.items.map(\.title) == ["Harness V2", "File", "Edit", "View", "History", "Swarm", "Window", "Help"], "Menus follow the familiar macOS order")
+    try checkTitlebar(main.items.map(\.title) == ["Harness V2", "File", "Edit", "View", "History", "Models", "Window", "Help"], "Models replaces the redundant Swarm menu")
     let settings = appItem.submenu!.items[0]
     try checkTitlebar(settings.title == "Settings…" && settings.representedObject as? String == "settings", "Settings stays in the application menu")
     let file = main.item(withTitle: "File")!.submenu!
     let historyMenu = main.item(withTitle: "History")!.submenu!
-    try checkTitlebar(file.items.compactMap { $0.representedObject as? String } == ["new", "newAgent", "reopen", "linkMachine", "addProject", "closePane", "closeActive"], "File exposes creation, connection and view-closing actions")
-    let jump = main.item(withTitle: "Swarm")!.submenu!.items.first(where: { $0.representedObject as? String == "jump" })!
+    try checkTitlebar(file.items.compactMap { $0.representedObject as? String } == ["new", "newAgent", "reopen", "linkMachine", "addProject", "renameActive", "closePane", "closeActive"], "File exposes creation, connection, renaming and closing actions")
+    let jump = edit.submenu!.items.first(where: { $0.representedObject as? String == "jump" })!
     try checkTitlebar(jump.keyEquivalent == "p" && jump.keyEquivalentModifierMask == [.command], "Command-P has a native menu owner while a terminal has focus")
     let reopen = file.items.first(where: { $0.representedObject as? String == "reopen" })!
     actionsEnabled = true
@@ -236,10 +236,10 @@ private extension SwarmTitlebar {
     canCreateSwarm = true
     try checkTitlebar(validateMenuItem(create), "Native New Swarm returns below capacity")
     let recentRows: [[String: Any]] = (0..<20).map {
-      ["id": "agent:\($0)", "title": "Agent \($0) — Machine", "detail": "Project \($0)", "current": $0 == 0]
+      ["id": "agent:\($0)", "title": "Agent \($0) — Machine", "detail": "Project \($0)", "current": $0 == 0, "engine": $0 == 0 ? "claude" : "codex"]
     } + [["id": "swarm:recent", "title": "Recent Swarm", "swarm": true]]
     let closedRows: [[String: Any]] = (0..<14).map {
-      ["id": "closed-\($0)", "title": "Closed Swarm \($0)", "detail": "3 agents", "swarm": true]
+      ["id": "closed-\($0)", "title": "Closed Swarm \($0)", "detail": "3 agents", "swarm": true, "canReopen": true]
     }
     updateHistory(recentRows, closed: closedRows)
     let recentItems = historyMenu.items.filter { $0.action == #selector(historyAction(_:)) }
@@ -250,12 +250,19 @@ private extension SwarmTitlebar {
     try checkTitlebar(historyMenu.items.allSatisfy { $0.submenu == nil }, "Recent work is available without nested menus")
     let recent = recentItems[0]
     let closed = closedItems[0]
+    try checkTitlebar(recent.image?.size == NSSize(width: 16, height: 16) && recent.image?.isTemplate == false,
+      "History uses the colored Claude mark at native menu size")
     try checkTitlebar(recent.state == .on && recent.toolTip == "Agent 0 — Machine\nProject 0", "Recent work includes its complete title and project context")
     updateHistory(recentRows, closed: closedRows)
     try checkTitlebar(historyMenu.items.contains(where: { $0 === recent }), "Unchanged history retains native menu items")
     try checkTitlebar(validateMenuItem(closed), "A specific closed Swarm can be restored")
     canReopen = false
-    try checkTitlebar(!validateMenuItem(closed), "Specific restore respects the open-tab capacity")
+    try checkTitlebar(validateMenuItem(closed), "A chosen closure uses its own capacity, independently of the latest closure")
+    var unavailableRows = closedRows
+    unavailableRows[0]["canReopen"] = false
+    updateHistory(recentRows, closed: unavailableRows)
+    try checkTitlebar(!validateMenuItem(closed), "Specific restore respects its destination capacity")
+    updateHistory(recentRows, closed: closedRows)
     canReopen = true
     let back = historyMenu.items[0]
     let forward = historyMenu.items[1]
@@ -273,9 +280,9 @@ private extension SwarmTitlebar {
     try checkTitlebar(!validateMenuItem(recent), "A stale recent menu item cannot dispatch after its view disappears")
     try checkTitlebar(!validateMenuItem(closed), "A stale closed entry cannot restore another Swarm")
     try checkTitlebar(historyMenu.items.first(where: { $0.title == "No Recent Visits" })?.isEnabled == false, "An empty history is an inert placeholder")
-    guard let menu = main.items.first(where: { $0.title == "Swarm" })?.submenu,
+    guard let menu = main.items.first(where: { $0.title == "View" })?.submenu,
           let attention = menu.items.first(where: { $0.representedObject as? String == "notifications" }) else {
-      throw TitlebarCheckFailure(message: "Swarm menu exposes agents needing input")
+      throw TitlebarCheckFailure(message: "View menu exposes agents needing input")
     }
     try checkTitlebar(attention.title == "Agents Needing Input…", "Native command names its destination")
     try checkTitlebar(attention.keyEquivalent == "i" && attention.keyEquivalentModifierMask == [.command, .shift], "Native attention shortcut matches Flutter")
@@ -284,6 +291,46 @@ private extension SwarmTitlebar {
     try checkTitlebar(!validateMenuItem(attention), "Native attention shortcut is disabled behind a modal")
     actionsEnabled = true
     try checkTitlebar(validateMenuItem(attention), "Native attention shortcut returns when the modal closes")
+    try checkTitlebar(main.items.compactMap(\.submenu).flatMap(\.items).allSatisfy {
+      !["Next Swarm", "Previous Swarm"].contains($0.title)
+    }, "Next and Previous Swarm have no redundant menu rows")
+    let modelRows: [[String: Any]] = [
+      ["title": "Anthropic", "status": "12% remaining", "engine": "claude",
+       "details": ["Limiting window: Session", "Session — 12% remaining · resets in 2h"]],
+      ["title": "OpenAI", "status": "Not signed in", "engine": "codex",
+       "details": ["Sign in to Codex to see usage"]],
+    ]
+    updateModels(modelRows)
+    let models = main.item(withTitle: "Models")!.submenu!
+    try checkTitlebar(models.items.filter { !$0.isSeparatorItem }.map(\.title) == [
+      "Subscription", "Anthropic — 12% remaining", "OpenAI — Not signed in",
+      "API", "OpenRouter API", "fal.ai API", "Local", "Local models", "Add Model"
+    ], "Models has the three requested sections and Add Model last")
+    try checkTitlebar(models.items.filter(\.isSeparatorItem).count == 3,
+      "Native separators distinguish the sections and future Add Model action")
+    for title in ["OpenRouter API", "fal.ai API", "Local models", "Add Model"] {
+      let item = models.item(withTitle: title)!
+      try checkTitlebar(!item.isEnabled && item.action == nil && item.target == nil && item.submenu == nil,
+        "\(title) is greyed out and cannot dispatch or open anything")
+    }
+    let subscription = models.items.first(where: { $0.submenu != nil })!
+    try checkTitlebar(subscription.isEnabled && subscription.image?.isTemplate == false,
+      "Subscription rows have colored provider marks and accessible details")
+    try checkTitlebar(subscription.submenu?.items.last?.title == modelRows[0]["details"].flatMap { ($0 as? [String])?.last },
+      "The native submenu exposes the measured window and reset time")
+    updateModels(modelRows)
+    try checkTitlebar(models.items.contains(where: { $0 === subscription }),
+      "Unchanged subscription data reuses native menu items")
+    actionsEnabled = false
+    updateModelsAvailability()
+    try checkTitlebar(!subscription.isEnabled, "Subscription details respect a covered workspace")
+    actionsEnabled = true
+    updateModelsAvailability()
+    try checkTitlebar(subscription.isEnabled && models.item(withTitle: "Add Model")?.isEnabled == false,
+      "Only implemented subscription details become available again")
+    updateModels([])
+    try checkTitlebar(models.items.allSatisfy { !$0.title.contains("12%") && $0.submenu == nil },
+      "Signing out clears cached native account readings")
     let findItems = find.submenu?.items ?? []
     try checkTitlebar(findItems.map(\.title) == ["Find in Terminal…", "Find Next", "Find Previous"], "Find replaces the unused editor actions with terminal commands")
     try checkTitlebar(findItems.map(\.keyEquivalent) == ["f", "g", "g"], "Native find shortcuts match Flutter")
@@ -323,6 +370,21 @@ let titlebarCheckApp = NSApplication.shared
 titlebarCheckApp.setActivationPolicy(.prohibited)
 titlebarCheckApp.appearance = NSAppearance(named: .darkAqua)
 do {
+  var assetReads = 0
+  let icons = SwarmHistoryIcons(assetURL: { asset in
+    assetReads += 1
+    guard let root = ProcessInfo.processInfo.environment["HARNESS_TITLEBAR_ASSETS"] else { return nil }
+    return URL(fileURLWithPath: root).appendingPathComponent(String(asset.dropFirst("assets/".count)))
+  })
+  for engine in ["codex", "grok", "cursor", "opencode"] {
+    let asset = "assets/engine-icons/\(engine).png"
+    let icon = icons.image(engine: engine, asset: asset)
+    try checkTitlebar(icon.size == NSSize(width: 16, height: 16) && !icon.isTemplate, "\(engine) uses its colored bundled mark")
+    try checkTitlebar(icons.image(engine: engine, asset: asset) === icon, "Repeated \(engine) history reuses its decoded icon")
+  }
+  try checkTitlebar(assetReads == 4, "Native history loads each bundled mark only once")
+  let unknown = icons.image(engine: "custom", asset: nil)
+  try checkTitlebar(unknown.isTemplate && unknown.size == NSSize(width: 16, height: 16), "Unknown engines have a native-size adaptive initial")
   let strip = SwarmTabStrip(frame: NSRect(x: 0, y: 0, width: 900, height: 40))
   try strip.runChecks()
   try checkTitlebar(titlebarCheckApp.windows.isEmpty, "Checks never open an application window")

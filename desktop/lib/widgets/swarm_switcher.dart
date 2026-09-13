@@ -334,6 +334,7 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                       final row = search.rows[index];
                       return ListTile(
                         key: ValueKey(row.id),
+                        enabled: search.canSubmit(row),
                         selected: index == search.cursor,
                         selectedColor: Colors.white,
                         selectedTileColor: Colors.white10,
@@ -344,7 +345,11 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                           horizontal: 12,
                         ),
                         leading: row.agentId != null
-                            ? EngineMark(engine: row.engine, size: 20)
+                            ? EngineMark(
+                                engine: row.engine,
+                                size: 20,
+                                enabled: search.canSubmit(row),
+                              )
                             : Icon(
                                 row.isMachine
                                     ? Icons.computer_outlined
@@ -378,7 +383,9 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                             color: Colors.white54,
                           ),
                         ),
-                        onTap: () => _submit(row),
+                        onTap: search.canSubmit(row)
+                            ? () => _submit(row)
+                            : null,
                       );
                     },
                   ),
@@ -390,7 +397,11 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 10),
                   child: Text(
-                    selected?.agentId != null && !selected!.hasView
+                    selected?.closedId != null
+                        ? search.canSubmit(selected)
+                              ? 'Reopen ${selected!.isSwarm ? 'swarm' : 'agent'}'
+                              : 'No room to reopen'
+                        : selected?.agentId != null && !selected!.hasView
                         ? 'Open agent in ${search.targetName}'
                         : '↑↓ choose · Esc close',
                     maxLines: 1,

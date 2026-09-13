@@ -7,6 +7,70 @@ import 'swarm_screen_test.dart' show terminal;
 import 'swarm_state_test.dart' show createApp;
 
 void main() {
+  test('search prioritizes title matches without losing better metadata matches', () {
+    SwarmDestination row(String id, String title, List<String?> fields) =>
+        SwarmDestination(
+          id: id,
+          title: title,
+          detail: '',
+          swarmId: null,
+          current: false,
+          searchFields: fields,
+        );
+    final catalog = [
+      row('metadata-fuzzy', 'Payments', ['a_u_t_h']),
+      row('title-fuzzy', 'a_u_t_h', []),
+      row('metadata-substring', 'Billing', ['my auth project']),
+      row('metadata-prefix', 'Checkout', ['auth service']),
+      // A later exact metadata field must still beat the fuzzy title and
+      // earlier prefix metadata. Repeated and empty context cannot alter rank.
+      row('metadata-exact', 'a useful thing here', [
+        'auth service',
+        '',
+        null,
+        'AUTH',
+        'auth',
+        'a useful thing here',
+      ]),
+      row('title-substring', 'Fix auth', ['Auth']),
+      row('title-prefix', 'Auth server', ['Auth']),
+      row('title-exact', 'Auth', ['auth service']),
+    ];
+    expect(rankSwarmDestinations(catalog, 'AUTH').map((e) => e.id), [
+      'title-exact',
+      'title-prefix',
+      'title-substring',
+      'metadata-exact',
+      'metadata-prefix',
+      'metadata-substring',
+      'title-fuzzy',
+      'metadata-fuzzy',
+    ]);
+  });
+
+  test('search keeps Unicode subsequences and separate field boundaries', () {
+    final catalog = [
+      SwarmDestination(
+        id: 'unicode',
+        title: '🧑‍💻 Auth 東京',
+        detail: '',
+        swarmId: null,
+        current: false,
+        searchFields: ['Mac mini', '東京', 'MAC MINI', '', null],
+      ),
+    ];
+    for (final query in [
+      '🧑‍💻 ath',
+      '東 mac',
+      '  東京\tAUTH  ',
+      '🧑‍💻 auth 東京',
+    ]) {
+      expect(rankSwarmDestinations(catalog, query).single.id, 'unicode');
+    }
+    expect(rankSwarmDestinations(catalog, '東京mac'), isEmpty);
+    expect(rankSwarmDestinations(catalog, '京東'), isEmpty);
+  });
+
   test(
     'search matches project, branch, folder and machine in either word order',
     () {

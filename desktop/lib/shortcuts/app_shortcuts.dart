@@ -495,7 +495,7 @@ const kSwarmShortcuts = [
       meta: true,
       shift: true,
     ),
-    label: 'Reopen closed swarm',
+    label: 'Reopen last closed agent or swarm',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(

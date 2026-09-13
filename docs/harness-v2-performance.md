@@ -10,6 +10,54 @@ flutter test --no-pub --reporter expanded test/benchmarks/swarm_benchmark.dart
 
 It prints `SWARM_BENCH` JSON records. Its filename deliberately does not end in `_test.dart`, so ordinary correctness runs do not include timing measurements.
 
+## Unified search catalog and typing (2026-09-13)
+
+The catalog benchmark now also exercises the production `SwarmSearchController`:
+2,000 agents across eight machines and 50 projects, producing 2,059 searchable
+destinations. It measures opening/disposing the controller, changing queries,
+and searching inside one machine. Each operation uses 20 warmups and 100 samples;
+resetting the query happens outside the measured interval. No widgets, sockets,
+real agents, disk discovery, native field editor or display are involved.
+
+Catalog construction now indexes machine membership and agent identities once,
+instead of scanning all destinations again for every machine and project.
+Aggregate project/Swarm metadata excludes repeated fields. Building an unfiltered
+agent list no longer formats searchable text for every agent. Ranking stops
+checking metadata after a title match that already outranks it, while continuing
+past fuzzy title matches that better metadata can outrank. Exact whole-title
+matches retain their first-place priority; recency and deterministic ties remain.
+
+Sequential headless debug measurements on the same workstation:
+
+| Operation | Before median / p95 / p99 (ms) | After median / p95 / p99 (ms) |
+| --- | ---: | ---: |
+| Build unified catalog | 6.776 / 7.482 / 7.810 | 3.405 / 3.846 / 4.238 |
+| Open and dispose search controller | 8.212 / 9.121 / 9.469 | 4.637 / 4.980 / 5.357 |
+| Query `agent` | 1.696 / 1.854 / 1.904 | 1.067 / 1.160 / 1.302 |
+| Query `agent 12 machine 3` | 1.425 / 1.621 / 1.655 | 0.743 / 0.856 / 0.912 |
+| Fuzzy query `agn12` | 0.915 / 1.068 / 1.141 | 0.676 / 0.789 / 0.866 |
+| Query `project 12 main` | 1.525 / 1.659 / 1.746 | 1.019 / 1.204 / 1.332 |
+| Query with no matches | 0.638 / 0.786 / 0.804 | 0.446 / 0.608 / 0.685 |
+| Fuzzy query inside one machine | 0.115 / 0.135 / 0.171 | 0.122 / 0.147 / 0.260 |
+
+Median catalog construction fell by 50%, and the controller open/dispose cycle
+by 44%. Result counts stayed identical for every measured query. The scoped query
+did not improve; its unchanged filtering path and higher tail observation are
+retained here. Welcome text filtering was also effectively unchanged (median
+1.210 → 1.217 ms), while project grouping fell from 1.457 to 0.615 ms by avoiding
+unused search strings. An unchanged catalog still reuses the same snapshot.
+
+These are shared-workstation debug CPU observations, not native keystroke or
+physical-display latency. Host load and JIT affect them; 100 samples provide only
+a limited tail estimate. This change makes no tab-switch latency claim. The
+baseline and final logs are `/private/tmp/harness-v2-search-perf-before.log` and
+`/private/tmp/harness-v2-search-perf-final.log`; the intermediate measurement is
+preserved in `/private/tmp/harness-v2-search-perf-after.log`.
+
+```bash
+flutter test --no-pub --concurrency=1 --reporter expanded test/benchmarks/swarm_benchmark.dart --plain-name 'large live catalog CPU benchmark'
+```
+
 ## Recorded measurements
 
 | Operation | Earlier median / p95 | After native/canvas polish median / p95 |

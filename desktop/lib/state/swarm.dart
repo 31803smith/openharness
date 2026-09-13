@@ -55,12 +55,42 @@ class Swarm {
   }
 }
 
-/// Session-free history for an accidental tab close. Terminal buffers and
-/// controllers are released normally; a reopened view reuses any live peer.
-class ClosedSwarm {
+/// Session-free history: closing a view never owns the agent's lifetime.
+sealed class ClosedWork {
+  const ClosedWork({required this.historyId});
+  final String historyId;
+}
+
+class ClosedAgent extends ClosedWork {
+  ClosedAgent(
+    TerminalPane pane,
+    Swarm swarm, {
+    required super.historyId,
+    required this.name,
+    required this.machineName,
+    required this.engine,
+  }) : swarmId = swarm.id,
+       swarmName = swarm.name,
+       index = swarm.panes.indexOf(pane),
+       machineId = pane.machineId,
+       agentId = pane.agentId!,
+       composerVisible = pane.composerVisible,
+       pinnedSlot = swarm.pinnedSlots[pane.id],
+       zoomed = swarm.zoomedPaneId == pane.id;
+
+  final String swarmId, swarmName, machineId, machineName, agentId, name;
+  final String? engine;
+  final int index;
+  final bool composerVisible, zoomed;
+  final int? pinnedSlot;
+}
+
+/// Terminal buffers and controllers are released normally; a reopened view
+/// reuses any live peer.
+class ClosedSwarm extends ClosedWork {
   ClosedSwarm(
     Swarm swarm, {
-    required this.historyId,
+    required super.historyId,
     required this.index,
     Swarm? replacement,
   }) : id = swarm.id,
@@ -96,7 +126,6 @@ class ClosedSwarm {
   >
   panes;
   final String? replacementId;
-  final String historyId;
 
   bool replacesUntouchedWelcome(Swarm swarm) =>
       swarm.id == replacementId &&

@@ -24,4 +24,4 @@ xcrun swiftc -swift-version 5 -module-cache-path "$check_dir/module-cache" \
   "$check_dir/main.swift" -o "$check_dir/check-titlebar"
 # Optional native-container checks create a hidden NSWindow. They never show
 # the window, boot Flutter, connect to agents or read saved app data.
-"$check_dir/check-titlebar" "${2:-}"
+HARNESS_TITLEBAR_ASSETS="$desktop_dir/assets" "$check_dir/check-titlebar" "${2:-}"
