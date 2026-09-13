@@ -254,8 +254,6 @@ class _SwarmScreenState extends State<SwarmScreen> {
           if (choice != null) await _chooseSearch(choice);
         case 'close':
           _closeSearch();
-        case 'dismiss':
-          _closeSearch();
       }
       return;
     }
@@ -553,11 +551,11 @@ class _SwarmScreenState extends State<SwarmScreen> {
           height: height.toDouble(),
           child: Material(
             key: const ValueKey('swarm-search-results'),
-            elevation: 12,
-            color: grid.AppPalette.panelBg,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(10),
-              side: const BorderSide(color: Colors.white12),
+            elevation: 8,
+            shadowColor: Colors.black54,
+            color: grid.AppPalette.swarmSearchSurface,
+            shape: const RoundedRectangleBorder(
+              borderRadius: BorderRadius.vertical(bottom: Radius.circular(10)),
             ),
             clipBehavior: Clip.antiAlias,
             child: Padding(
@@ -583,7 +581,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
               ),
             ),
             if (_native)
-              Positioned(top: 6, right: 8, child: results)
+              Positioned(top: 0, right: 8, child: results)
             else
               Positioned(
                 left: 0,
@@ -593,7 +591,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
                   showWhenUnlinked: false,
                   targetAnchor: Alignment.bottomRight,
                   followerAnchor: Alignment.topRight,
-                  offset: const Offset(0, 6),
+                  offset: Offset.zero,
                   child: results,
                 ),
               ),
@@ -947,7 +945,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
                               swarm.name,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontSize: 12),
+                              style: const TextStyle(fontSize: 13),
                             ),
                           ),
                         ),
@@ -977,60 +975,102 @@ class _SwarmScreenState extends State<SwarmScreen> {
           icon: const Icon(Icons.add, size: 18),
         ),
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8),
+          padding: const EdgeInsets.only(left: 8, right: 8, top: 6),
           child: CompositedTransformTarget(
             link: _searchAnchor,
             child: SizedBox(
               width: _searchWidth(MediaQuery.sizeOf(context).width),
-              height: 28,
-              child: ListenableBuilder(
-                listenable: _search ?? _searchText,
-                builder: (context, _) => SwarmSearchKeys(
-                  search: _search,
-                  editing: _searchText,
-                  onChoose: _chooseSearch,
-                  onClose: _closeSearch,
-                  child: Listener(
-                    onPointerDown: (_) => _openSearch(),
-                    child: TextField(
-                      key: const ValueKey('swarm-search-input'),
-                      controller: _searchText,
-                      focusNode: _searchFocus,
-                      onChanged: (query) => _search?.setQuery(query),
-                      style: const TextStyle(fontSize: 12),
-                      textAlignVertical: TextAlignVertical.center,
-                      decoration: InputDecoration(
-                        hintText: _search?.hint ?? 'Search…',
-                        isDense: true,
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                        ),
-                        prefixIcon: const Icon(Icons.search, size: 14),
-                        prefixIconConstraints: const BoxConstraints.tightFor(
-                          width: 30,
-                          height: 28,
-                        ),
-                        suffixIcon: _search == null
-                            ? const Padding(
-                                padding: EdgeInsets.only(right: 10),
-                                child: Text(
-                                  '⌘P',
-                                  style: TextStyle(fontSize: 11),
+              height: 38,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: _search == null
+                      ? null
+                      : grid.AppPalette.swarmSearchSurface,
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(10),
+                  ),
+                ),
+                child: Align(
+                  alignment: Alignment.topCenter,
+                  child: SizedBox(
+                    height: 32,
+                    child: ListenableBuilder(
+                      listenable: _search ?? _searchText,
+                      builder: (context, _) => SwarmSearchKeys(
+                        search: _search,
+                        editing: _searchText,
+                        onChoose: _chooseSearch,
+                        onClose: _closeSearch,
+                        child: Listener(
+                          onPointerDown: (_) => _openSearch(),
+                          child: TextField(
+                            key: const ValueKey('swarm-search-input'),
+                            controller: _searchText,
+                            focusNode: _searchFocus,
+                            onChanged: (query) => _search?.setQuery(query),
+                            style: const TextStyle(
+                              fontSize: 13,
+                              color: Color(0xffebebeb),
+                            ),
+                            textAlignVertical: TextAlignVertical.center,
+                            decoration: InputDecoration(
+                              hintText: _search?.hint ?? 'Search…',
+                              isDense: true,
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                              ),
+                              prefixIcon: const Icon(
+                                Icons.search,
+                                size: 16,
+                                color: Colors.white60,
+                              ),
+                              prefixIconConstraints:
+                                  const BoxConstraints.tightFor(
+                                    width: 36,
+                                    height: 32,
+                                  ),
+                              suffixIcon: _search == null
+                                  ? const Padding(
+                                      padding: EdgeInsets.only(right: 12),
+                                      child: Text(
+                                        '⌘P',
+                                        style: TextStyle(fontSize: 11),
+                                      ),
+                                    )
+                                  : null,
+                              suffixIconConstraints: const BoxConstraints(
+                                minWidth: 24,
+                              ),
+                              filled: true,
+                              fillColor: grid.AppPalette.swarmSearchSurface,
+                              hintStyle: const TextStyle(color: Colors.white60),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(16),
+                                borderSide: const BorderSide(
+                                  color: Color(0x29ffffff),
                                 ),
-                              )
-                            : null,
-                        suffixIconConstraints: const BoxConstraints(
-                          minWidth: 24,
-                        ),
-                        filled: true,
-                        fillColor: grid.AppPalette.swarmField,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                          borderSide: const BorderSide(color: Colors.white12),
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                          borderSide: const BorderSide(color: Colors.white12),
+                              ),
+                              enabledBorder: _search != null
+                                  ? const OutlineInputBorder(
+                                      borderRadius: BorderRadius.vertical(
+                                        top: Radius.circular(10),
+                                      ),
+                                      borderSide: BorderSide.none,
+                                    )
+                                  : OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(16),
+                                      borderSide: const BorderSide(
+                                        color: Color(0x29ffffff),
+                                      ),
+                                    ),
+                              focusedBorder: const OutlineInputBorder(
+                                borderRadius: BorderRadius.vertical(
+                                  top: Radius.circular(10),
+                                ),
+                                borderSide: BorderSide.none,
+                              ),
+                            ),
+                          ),
                         ),
                       ),
                     ),

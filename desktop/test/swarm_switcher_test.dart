@@ -270,7 +270,7 @@ void main() {
       await tester.pump();
       await tester.pump();
       expect(tester.widget<ListTile>(selectedRow).key, ValueKey(selectedId));
-      expect(find.textContaining('Open view in'), findsOneWidget);
+      expect(find.textContaining('Open agent in'), findsOneWidget);
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pump();
       expect(app.panes, hasLength(2));

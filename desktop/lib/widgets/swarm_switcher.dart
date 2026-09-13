@@ -318,7 +318,7 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                 ? Center(
                     child: Text(
                       search.scoped && search.query.isEmpty
-                          ? 'No available agent views in this group'
+                          ? 'No available agents in this group'
                           : 'No matching results',
                       style: const TextStyle(
                         fontSize: 13,
@@ -391,7 +391,7 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                   padding: const EdgeInsets.symmetric(horizontal: 10),
                   child: Text(
                     selected?.agentId != null && !selected!.hasView
-                        ? 'Open view in ${search.targetName}'
+                        ? 'Open agent in ${search.targetName}'
                         : '↑↓ choose · Esc close',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,

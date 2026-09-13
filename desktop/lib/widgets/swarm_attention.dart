@@ -237,7 +237,7 @@ class _SwarmAttentionState extends State<_SwarmAttention> {
                                   ? 'Unavailable'
                                   : destination.hasView
                                   ? 'Jump'
-                                  : 'Open view',
+                                  : 'Open agent',
                               style: const TextStyle(
                                 fontSize: 11,
                                 color: Colors.white54,
@@ -257,7 +257,7 @@ class _SwarmAttentionState extends State<_SwarmAttention> {
                   selected != null && !selected.available
                       ? 'This agent’s terminal is unavailable · Esc to close'
                       : selected != null && !selected.destination.hasView
-                      ? '↵ Open view in $_targetName · Esc to close'
+                      ? '↵ Open agent in $_targetName · Esc to close'
                       : '↑↓ or ⌃N ⌃P to choose · Return to jump · Esc to close',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,

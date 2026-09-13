@@ -62,9 +62,8 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation {
         [weak self] _ in self?.resize()
       })
     }
-    observers.append(NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: window, queue: .main) {
-      [weak self] _ in self?.strip.dismissSearch()
-    })
+    // Keep an in-progress search and its native input owner across app switches.
+    // Cancelling on window blur would return the next typed key to an agent.
   }
 
   deinit { observers.forEach(NotificationCenter.default.removeObserver) }
@@ -93,6 +92,8 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation {
     window.addTitlebarAccessoryViewController(accessory)
     resize()
     installSwarmMenu()
+    // An editable accessory must not become the window's initial input owner.
+    window.makeFirstResponder(window.contentViewController)
   }
 
   private func resize() {
@@ -136,7 +137,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation {
     add(file, "Link Machine…", "", "linkMachine")
     add(file, "Add Project…", "", "addProject")
     file.addItem(.separator())
-    add(file, "Close Agent View", "w", "closePane", [.command, .shift])
+    add(file, "Remove Agent from Swarm", "w", "closePane", [.command, .shift])
     add(file, "Close Swarm", "w", "closeActive")
     install(file, at: 1)
 
@@ -279,9 +280,34 @@ private struct SwarmHistoryEntry: Equatable {
 private let swarmPasteboardType = NSPasteboard.PasteboardType("ai.autonomous.harness.v2.swarm")
 // Matches AppPalette.swarmField exactly, joining the tab to the terminal canvas.
 private let swarmSelectedTabColor = NSColor(srgbRed: 70.0 / 255, green: 55.0 / 255, blue: 70.0 / 255, alpha: 1)
+// Matches AppPalette.swarmSearchSurface so the input joins its results below.
+private let swarmSearchSurface = NSColor(srgbRed: 61.0 / 255, green: 51.0 / 255, blue: 63.0 / 255, alpha: 1)
 
-/// A compact launcher for the shared picker; no second editable field or search
-/// state lives in AppKit. Native keyboard focus and button activation still work.
+private final class SwarmSearchCell: NSSearchFieldCell {
+  override func select(withFrame rect: NSRect, in controlView: NSView, editor: NSText,
+                       delegate: Any?, start: Int, length: Int) {
+    super.select(withFrame: searchTextRect(forBounds: rect), in: controlView,
+      editor: editor, delegate: delegate, start: start, length: length)
+  }
+  override func edit(withFrame rect: NSRect, in controlView: NSView, editor: NSText,
+                     delegate: Any?, event: NSEvent?) {
+    super.edit(withFrame: searchTextRect(forBounds: rect), in: controlView,
+      editor: editor, delegate: delegate, event: event)
+  }
+  override func searchButtonRect(forBounds rect: NSRect) -> NSRect {
+    NSRect(x: rect.minX + 12, y: rect.midY - 8, width: 16, height: 16)
+  }
+  override func cancelButtonRect(forBounds rect: NSRect) -> NSRect {
+    NSRect(x: rect.maxX - 28, y: rect.midY - 8, width: 16, height: 16)
+  }
+  override func searchTextRect(forBounds rect: NSRect) -> NSRect {
+    let font = font ?? NSFont.systemFont(ofSize: 13)
+    let height = ceil(font.ascender - font.descender + font.leading)
+    return NSRect(x: rect.minX + 36, y: rect.midY - height / 2,
+      width: max(0, rect.width - 68), height: height)
+  }
+}
+
 /// AppKit owns editing, selection, paste and IME. Only result-navigation keys
 /// leave the field editor; ordinary terminal input never passes through here.
 private final class SwarmSearchField: NSSearchField {
@@ -291,15 +317,27 @@ private final class SwarmSearchField: NSSearchField {
   var searching = false { didSet { needsDisplay = true } }
   override init(frame: NSRect) {
     super.init(frame: frame)
-    font = NSFont.systemFont(ofSize: 12)
-    controlSize = .small
+    cell = SwarmSearchCell(textCell: "")
+    font = NSFont.systemFont(ofSize: 13)
+    controlSize = .regular
     appearance = NSAppearance(named: .darkAqua)
+    isEditable = true
+    isSelectable = true
+    isBordered = false
+    drawsBackground = false
+    textColor = NSColor(white: 0.92, alpha: 1)
     placeholderString = "Search…"
     sendsSearchStringImmediately = true
     sendsWholeSearchString = false
     maximumRecents = 0
     searchMenuTemplate = nil
-    focusRingType = .exterior
+    focusRingType = .none
+    if let search = cell as? NSSearchFieldCell {
+      search.focusRingType = .none
+      search.isScrollable = true
+      search.searchButtonCell?.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil)?
+        .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 14, weight: .regular))
+    }
   }
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
   override var mouseDownCanMoveWindow: Bool { false }
@@ -347,13 +385,26 @@ private final class SwarmSearchField: NSSearchField {
     }
   }
   override func draw(_ dirtyRect: NSRect) {
+    let shape = NSBezierPath(roundedRect: bounds, xRadius: searching ? 10 : 16, yRadius: searching ? 10 : 16)
+    swarmSearchSurface.setFill()
+    shape.fill()
+    if searching {
+      // The strip continues the square bottom edge down to the result list.
+      NSRect(x: 0, y: isFlipped ? bounds.midY : 0,
+        width: bounds.width, height: bounds.height / 2).fill()
+    } else {
+      NSColor(white: 1, alpha: 0.16).setStroke()
+      let rim = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 16, yRadius: 16)
+      rim.lineWidth = 1
+      rim.stroke()
+    }
     super.draw(dirtyRect)
     if !searching && stringValue.isEmpty && bounds.width >= 140 {
       let shortcut = "⌘P" as NSString
       let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 11),
         .foregroundColor: NSColor.secondaryLabelColor]
       let size = shortcut.size(withAttributes: attrs)
-      shortcut.draw(at: NSPoint(x: bounds.width - size.width - 10,
+      shortcut.draw(at: NSPoint(x: bounds.width - size.width - 12,
         y: (bounds.height - size.height) / 2), withAttributes: attrs)
     }
   }
@@ -392,6 +443,7 @@ private final class SwarmTabStrip: NSView, NSSearchFieldDelegate {
     }
     button(newButton, "plus", "New swarm (⌘T)", #selector(newSwarm))
     searchField.delegate = self
+    searchField.isEnabled = false
     searchField.begin = { [weak self] in self?.beginSearch() }
     searchField.command = { [weak self] action in self?.emit?("searchCommand", ["command": action]) }
     searchField.toolTip = "Search agents, swarms, machines and projects (⌘P)"
@@ -459,7 +511,7 @@ private final class SwarmTabStrip: NSView, NSSearchFieldDelegate {
     }
     let buttonY = (bounds.height - 28) / 2
     newButton.frame = NSRect(x: occupied + 4, y: buttonY, width: 28, height: 28)
-    searchField.frame = NSRect(x: bounds.width - searchWidth - 8, y: buttonY, width: searchWidth, height: 28)
+    searchField.frame = NSRect(x: bounds.width - searchWidth - 8, y: (bounds.height - 32) / 2, width: searchWidth, height: 32)
     if searchField.searching && searchWidth != lastSearchWidth {
       lastSearchWidth = searchWidth
       emit?("searchGeometry", ["width": searchWidth])
@@ -473,6 +525,11 @@ private final class SwarmTabStrip: NSView, NSSearchFieldDelegate {
     // rather than the rounded bottom of a separate pill.
     swarmSelectedTabColor.setFill()
     NSRect(x: 0, y: 0, width: bounds.width, height: 1).fill()
+    if searchField.searching {
+      swarmSearchSurface.setFill()
+      NSRect(x: searchField.frame.minX, y: 0, width: searchField.frame.width,
+        height: searchField.frame.minY + 1).fill()
+    }
   }
   override func mouseDown(with event: NSEvent) {
     if event.clickCount == 2 { window?.performZoom(nil) }
@@ -482,6 +539,7 @@ private final class SwarmTabStrip: NSView, NSSearchFieldDelegate {
   private func beginSearch() {
     guard actionsEnabled, !searchField.searching else { return }
     searchField.searching = true
+    needsDisplay = true
     needsLayout = true
     layoutSubtreeIfNeeded()
     emit?("searchBegin", ["width": searchField.frame.width])
@@ -506,6 +564,7 @@ private final class SwarmTabStrip: NSView, NSSearchFieldDelegate {
   func closeSearch() {
     guard searchField.searching else { return }
     searchField.searching = false
+    needsDisplay = true
     if searchField.currentEditor() != nil {
       // Flutter's wrapper NSView does not accept first responder. Its public
       // view controller does, and routes the next event to Flutter's keyboard.
@@ -516,9 +575,6 @@ private final class SwarmTabStrip: NSView, NSSearchFieldDelegate {
     searchField.placeholderString = "Search…"
     lastSearchWidth = 0
     needsLayout = true
-  }
-  func dismissSearch() {
-    if searchField.searching { emit?("searchCommand", ["command": "dismiss"]) }
   }
   func controlTextDidChange(_ notification: Notification) {
     guard searchField.searching else { return }

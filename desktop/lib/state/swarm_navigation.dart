@@ -347,6 +347,11 @@ Future<bool> activateSwarmSearchSelection(
   return true;
 }
 
+String _agentCountLabel(Iterable<String?> ids) {
+  final count = ids.whereType<String>().length;
+  return '$count ${count == 1 ? 'agent' : 'agents'}';
+}
+
 List<SwarmDestination> closedSwarmDestinations(AppNotifier app) => [
   for (final entry in app.closedSwarms)
     SwarmDestination(
@@ -354,7 +359,7 @@ List<SwarmDestination> closedSwarmDestinations(AppNotifier app) => [
       closedId: entry.historyId,
       title: entry.name,
       detail:
-          '${entry.panes.length} ${entry.panes.length == 1 ? 'view' : 'views'} · Recently closed',
+          '${_agentCountLabel(entry.panes.map((pane) => pane.agentId))} · Recently closed',
       swarmId: null,
       current: false,
     ),
@@ -396,8 +401,7 @@ List<SwarmDestination> swarmDestinations(
       SwarmDestination(
         id: swarmDestinationId(swarm.id),
         title: swarm.name,
-        detail:
-            '${swarm.panes.length} ${swarm.panes.length == 1 ? 'view' : 'views'}',
+        detail: _agentCountLabel(swarm.panes.map((pane) => pane.agentId)),
         swarmId: swarm.id,
         current: swarm.id == app.activeSwarmId,
         searchFields: context,

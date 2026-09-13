@@ -180,6 +180,8 @@ abstract final class AppPalette {
   static Color get swarmField => const Color(0xff463746);
   static Color get swarmTabBar => const Color(0xff332936);
   static Color get swarmAccent => const Color(0xffd8cce1);
+  // Shared with the native search field for a continuous input/results surface.
+  static Color get swarmSearchSurface => const Color(0xff3d333f);
 
   // the conversation / content area — pure white in light, like Codex.
   //

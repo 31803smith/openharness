@@ -159,6 +159,20 @@ private extension SwarmTabStrip {
     focusSearch(selectAll: true)
     try checkTitlebar((searchField.currentEditor() as? NSTextView)?.selectedRange().length == ("feature/木" as NSString).length,
       "Command-P selects the current query for replacement")
+    var cancelled = false
+    let originalEmit = emit
+    emit = { method, args in
+      if method == "searchCommand", let command = (args as? [String: Any])?["command"] as? String,
+         command == "dismiss" || command == "close" { cancelled = true }
+      originalEmit?(method, args)
+    }
+    defer { emit = originalEmit }
+    let editor = window.firstResponder
+    NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: window)
+    NotificationCenter.default.post(name: NSWindow.didBecomeKeyNotification, object: window)
+    try checkTitlebar(!cancelled, "Switching applications does not cancel search or restore terminal input")
+    try checkTitlebar(searchField.stringValue == "feature/木" && window.firstResponder === editor,
+      "Returning to the window retains the native search query and its input owner")
     closeSearch()
     try checkTitlebar(window.firstResponder === window.contentViewController,
       "Closing native search returns keyboard events to the content controller")
@@ -195,6 +209,8 @@ private extension SwarmTitlebar {
     }
     NSApp.mainMenu = main
     configure()
+    try checkTitlebar(window.firstResponder === window.contentViewController,
+      "Adding the search field does not take initial keyboard focus from the workspace")
     try checkTitlebar(main.items.map(\.title) == ["Harness V2", "File", "Edit", "View", "History", "Swarm", "Window", "Help"], "Menus follow the familiar macOS order")
     let settings = appItem.submenu!.items[0]
     try checkTitlebar(settings.title == "Settings…" && settings.representedObject as? String == "settings", "Settings stays in the application menu")
@@ -211,9 +227,9 @@ private extension SwarmTitlebar {
     try checkTitlebar(validateMenuItem(reopen), "Closed-Swarm recovery becomes available")
     let closePane = file.items.first(where: { $0.representedObject as? String == "closePane" })!
     canClosePane = false
-    try checkTitlebar(!validateMenuItem(closePane), "Close Agent View is disabled in New swarm")
+    try checkTitlebar(!validateMenuItem(closePane), "Remove Agent is disabled in New swarm")
     canClosePane = true
-    try checkTitlebar(validateMenuItem(closePane), "Close Agent View is enabled for a focused pane")
+    try checkTitlebar(validateMenuItem(closePane), "Remove Agent is enabled for a focused pane")
     let create = file.items.first(where: { $0.representedObject as? String == "new" })!
     canCreateSwarm = false
     try checkTitlebar(!validateMenuItem(create), "Native New Swarm respects the tab capacity")
@@ -223,7 +239,7 @@ private extension SwarmTitlebar {
       ["id": "agent:\($0)", "title": "Agent \($0) — Machine", "detail": "Project \($0)", "current": $0 == 0]
     } + [["id": "swarm:recent", "title": "Recent Swarm", "swarm": true]]
     let closedRows: [[String: Any]] = (0..<14).map {
-      ["id": "closed-\($0)", "title": "Closed Swarm \($0)", "detail": "3 views", "swarm": true]
+      ["id": "closed-\($0)", "title": "Closed Swarm \($0)", "detail": "3 agents", "swarm": true]
     }
     updateHistory(recentRows, closed: closedRows)
     let recentItems = historyMenu.items.filter { $0.action == #selector(historyAction(_:)) }

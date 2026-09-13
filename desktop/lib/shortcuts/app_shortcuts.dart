@@ -573,7 +573,7 @@ const kSwarmShortcuts = [
       meta: true,
       shift: true,
     ),
-    label: 'Close the focused agent view',
+    label: 'Remove the focused agent from this swarm',
     group: ShortcutGroup.panes,
   ),
   AppShortcut(
