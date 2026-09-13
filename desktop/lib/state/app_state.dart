@@ -302,6 +302,20 @@ class AppNotifier extends ChangeNotifier {
   final Set<String> _offlineRecoveryInFlight = {};
   bool _disposed = false;
 
+  // Account and inventory replies belong to the session that requested them.
+  // Signing out invalidates them before asynchronous connection cleanup.
+  int _authRevision = 0;
+  Future<void>? _profileInFlight;
+
+  bool _authWorkCurrent(int revision) => !_disposed && revision == _authRevision;
+
+  int _invalidateAuthWork() {
+    _profileInFlight = null;
+    _retryInFlight = null;
+    machinesLoading = false;
+    return ++_authRevision;
+  }
+
   WsPool? _pool;
   late String _autonomousEnv;
   String? _lastError;
@@ -1472,6 +1486,8 @@ class AppNotifier extends ChangeNotifier {
   /// [recheckEnvironmentStep] can reach the same destination without repeating `bootstrap()`'s config
   /// load and update-check startup, which already ran on the launch that got stuck here.
   Future<void> _continueAfterEnvironmentReady() async {
+    final revision = _authRevision;
+    if (!_authWorkCurrent(revision)) return;
     _cancelEnvironmentRecheckTimer();
     status = AppStatus.checkingEnvironment;
     notifyListeners();
@@ -1480,6 +1496,7 @@ class AppNotifier extends ChangeNotifier {
     // asks the CLI whether this computer is currently signed in.
     try {
       final authStatus = await cliLogin.checkStatus();
+      if (!_authWorkCurrent(revision)) return;
       if (!authStatus.loggedIn) {
         currentUser = null;
         status = AppStatus.unauthenticated;
@@ -1490,6 +1507,7 @@ class AppNotifier extends ChangeNotifier {
       notifyListeners();
       await _finishBootstrapSignedIn();
     } catch (error, stack) {
+      if (!_authWorkCurrent(revision)) return;
       debugPrint(
         'continueAfterEnvironmentReady: fallback to login after error: '
         '$error\n$stack',
@@ -1698,8 +1716,10 @@ class AppNotifier extends ChangeNotifier {
   /// Both `bootstrap()` (already signed in) and `login()` (just finished signing in) land here once
   /// the CLI confirms a session exists — ensure the local daemon is actually up first (it does not
   /// start on its own, and every call below is a local-CLI-proxied request that needs it), then fetch
-  /// the profile and load the machine list over it.
+  /// the profile and machine list independently over it.
   Future<void> _finishBootstrapSignedIn() async {
+    final revision = _authRevision;
+    if (!_authWorkCurrent(revision)) return;
     // Stays on the pre-navigation `bootstrapping` screen (main.dart) until the daemon is
     // confirmed reachable — flipping to `authenticated` any earlier is what let the home UI
     // race `harness start`'s own backend handshake and surface a bogus 30s "Could not load
@@ -1713,11 +1733,14 @@ class AppNotifier extends ChangeNotifier {
     // for as long as the slowest one takes, and would hand the first-run
     // auto-pick a window in which the grid still looks empty.
     await _restorePaneLayout();
+    if (!_authWorkCurrent(revision)) return;
     await dial.restore();
+    if (!_authWorkCurrent(revision)) return;
     _ensurePool();
     try {
       await ensureCliDaemonReady();
     } catch (error) {
+      if (!_authWorkCurrent(revision)) return;
       _bootStatusMessage = null;
       status = AppStatus.authenticated;
       _lastError = '$error';
@@ -1725,19 +1748,24 @@ class AppNotifier extends ChangeNotifier {
       notifyListeners();
       return;
     }
+    if (!_authWorkCurrent(revision)) return;
     _bootStatusMessage = null;
     // `ensureCliDaemonReady` may have signed the app out instead of succeeding (daemon absent AND
     // the saved session gone) — that already routed to the login screen, so don't clobber it.
     if (status == AppStatus.unauthenticated) return;
     status = AppStatus.authenticated;
-    await _loadProfile();
+    notifyListeners();
+    // The CLI has confirmed sign-in and daemon readiness. Display-name/avatar
+    // metadata is independent of machine discovery and must not delay work.
+    unawaited(_loadProfile());
     try {
       await refreshMachines();
     } catch (error) {
+      if (!_authWorkCurrent(revision)) return;
       _lastError = 'Could not load machines: $error';
       _lastErrorRetryable = true;
     }
-    notifyListeners();
+    if (_authWorkCurrent(revision)) notifyListeners();
   }
 
   /// The local daemon (`harness start`) must be up before any local REST/WS call can work — unlike
@@ -1748,9 +1776,24 @@ class AppNotifier extends ChangeNotifier {
   /// retry path, because a boot that found the daemon still connecting now
   /// finishes THROUGH the retry path — and a session that never learns its
   /// own account has an empty footer and unattributed analytics.
-  Future<void> _loadProfile() async {
+  Future<void> _loadProfile() {
+    final pending = _profileInFlight;
+    if (pending != null) return pending;
+    final revision = _authRevision;
+    late final Future<void> load;
+    load = _readProfile(revision).whenComplete(() {
+      if (identical(_profileInFlight, load)) _profileInFlight = null;
+    });
+    _profileInFlight = load;
+    return load;
+  }
+
+  Future<void> _readProfile(int revision) async {
     try {
       final me = await api.me();
+      if (!_authWorkCurrent(revision) || status != AppStatus.authenticated) {
+        return;
+      }
       if (me != null) {
         final profile = CurrentUserProfile.fromMe(me);
         currentUser = profile;
@@ -1758,15 +1801,20 @@ class AppNotifier extends ChangeNotifier {
         // queued while this call was still in flight — the queue reads the
         // account per event, not per launch.
         analyticsAccount.set(id: profile.id, email: profile.email);
+        notifyListeners();
       }
     } catch (error) {
-      debugPrint('bootstrap: profile unavailable: $error');
+      if (_authWorkCurrent(revision)) {
+        debugPrint('bootstrap: profile unavailable: $error');
+      }
     }
   }
 
   Future<void> ensureCliDaemonReady() async {
+    final revision = _authRevision;
     final discovery = _discovery;
     final probe = await discovery.ensureRunning();
+    if (!_authWorkCurrent(revision)) return;
     switch (probe.state) {
       case LocalCliProbeState.ready:
         _cliEndpoint = probe.endpoint;
@@ -1789,7 +1837,9 @@ class AppNotifier extends ChangeNotifier {
         // out. "Try running `harness start` yourself" is advice that cannot work in that case — the
         // session file is gone, so every start exits again — and it is the advice this branch used to
         // give unconditionally.
-        if (!(await cliLogin.checkStatus()).loggedIn) {
+        final authStatus = await cliLogin.checkStatus();
+        if (!_authWorkCurrent(revision)) return;
+        if (!authStatus.loggedIn) {
           _signedOutAtRuntime(_signedOutMessage);
           return;
         }
@@ -1880,6 +1930,12 @@ class AppNotifier extends ChangeNotifier {
     if (status == AppStatus.unauthenticated) {
       return; // idempotent: several sources can race here
     }
+    _invalidateAuthWork();
+    currentUser = null;
+    signingIn = false;
+    pendingAuthorizeUrl = null;
+    _awaitingFirstMessage = null;
+    analyticsAccount.clear();
     _daemonSupervisionTimer?.cancel();
     _daemonSupervisionTimer = null;
     _cliEndpoint = null;
@@ -1985,6 +2041,8 @@ class AppNotifier extends ChangeNotifier {
   }
 
   Future<void> login() async {
+    if (_disposed || signingIn) return;
+    final revision = _invalidateAuthWork();
     _closedHistory.clear();
     _lastError = null;
     status = AppStatus.bootstrapping;
@@ -1994,6 +2052,7 @@ class AppNotifier extends ChangeNotifier {
     try {
       await cliLogin.login(
         onAuthorizeUrl: (url) {
+          if (!_authWorkCurrent(revision)) return;
           pendingAuthorizeUrl = url;
           notifyListeners();
           // Must be the system browser, not an embedded webview: this SSO page's Google button uses
@@ -2004,13 +2063,16 @@ class AppNotifier extends ChangeNotifier {
           );
         },
       );
+      if (!_authWorkCurrent(revision)) return;
       await _finishBootstrapSignedIn();
+      if (!_authWorkCurrent(revision) || status != AppStatus.authenticated) return;
       analytics.signedIn();
       // Restarts the clock even if `_trackAppOpened` already started one: this
       // person met the login screen, so their wait begins where the launch's
       // did not.
       _armFirstMessage('sign_in');
     } catch (error) {
+      if (!_authWorkCurrent(revision)) return;
       status = AppStatus.unauthenticated;
       _lastError = error.toString();
       _lastErrorRetryable = true;
@@ -2023,18 +2085,23 @@ class AppNotifier extends ChangeNotifier {
         error is CliNotAvailableException ? 'cli_missing' : 'failed',
       );
     } finally {
-      pendingAuthorizeUrl = null;
       // Cleared last, and only here: everything above may still be running when the URL goes, and
       // dropping the flag any earlier is what put a bare spinner over the user's own screen.
-      signingIn = false;
+      if (_authWorkCurrent(revision)) {
+        pendingAuthorizeUrl = null;
+        signingIn = false;
+      }
     }
-    notifyListeners();
+    if (_authWorkCurrent(revision)) notifyListeners();
   }
 
   /// Aborts an in-flight [login] — the embedded sign-in webview's close button calls this.
   void cancelLogin() => cliLogin.cancel();
 
   Future<void> logout() async {
+    final revision = _invalidateAuthWork();
+    signingIn = false;
+    pendingAuthorizeUrl = null;
     _closedHistory.clear();
     // Best-effort and fire-and-forget: local state is cleared below regardless of whether the CLI
     // process could be reached, but a real `harness logout` clears its saved session so the NEXT
@@ -2046,8 +2113,10 @@ class AppNotifier extends ChangeNotifier {
     // Tiles go, the saved layout stays: signing out and back in is the same
     // person at the same desk, and the file is only read once machines exist.
     await _closeAllPanes(persist: false);
+    if (!_authWorkCurrent(revision)) return;
     _closedHistory.clear();
     await _pool?.closeAll();
+    if (!_authWorkCurrent(revision)) return;
     _pool = null;
     _cliEndpoint = null;
     // Nothing to supervise for a signed-out app — and a daemon started by hand
@@ -2184,6 +2253,8 @@ class AppNotifier extends ChangeNotifier {
   bool machinesLoading = false;
 
   Future<void> refreshMachines() async {
+    final revision = _authRevision;
+    if (!_authWorkCurrent(revision)) return;
     if (localManualFixture != null) {
       notifyListeners();
       return;
@@ -2193,25 +2264,27 @@ class AppNotifier extends ChangeNotifier {
       notifyListeners();
     }
     try {
-      await _refreshMachines();
+      await _refreshMachines(revision);
     } finally {
       // Said out loud: the list's own notify fires before this, so a flag
       // dropped silently here would leave the rail on its placeholders.
-      if (machinesLoading) {
+      if (_authWorkCurrent(revision) && machinesLoading) {
         machinesLoading = false;
         notifyListeners();
       }
     }
   }
 
-  Future<void> _refreshMachines() async {
+  Future<void> _refreshMachines(int revision) async {
     final discovery = _discovery;
     // The CLI computer id is the local identity source of truth. The loopback
     // status endpoint is trusted only when it advertises that same identity.
     final localComputerId = await discovery.computerId();
+    if (!_authWorkCurrent(revision)) return;
     final localFuture = discovery.discover(expectedComputerId: localComputerId);
     final list = await _fetchMachines();
     final localEndpoint = await localFuture;
+    if (!_authWorkCurrent(revision)) return;
     machines = list
         .where((machine) => machine.authMode == MachineAuthMode.remote)
         .toList();
@@ -2576,13 +2649,14 @@ class AppNotifier extends ChangeNotifier {
   Future<void>? _retryInFlight;
 
   Future<void> retryMachines() {
+    if (_disposed) return Future<void>.value();
     final inFlight = _retryInFlight;
     if (inFlight != null) return inFlight;
     late final Future<void> run;
     run = _performRetryMachines().whenComplete(() {
       if (identical(_retryInFlight, run)) {
         _retryInFlight = null;
-        notifyListeners();
+        if (!_disposed) notifyListeners();
       }
     });
     _retryInFlight = run;
@@ -2591,29 +2665,34 @@ class AppNotifier extends ChangeNotifier {
   }
 
   Future<void> _performRetryMachines() async {
+    final revision = _authRevision;
+    if (!_authWorkCurrent(revision)) return;
     // Re-verify the daemon first: a retry that skips straight to `refreshMachines()` can hit
     // the exact same "daemon not connected yet" timeout the button was pressed to escape.
     try {
       await ensureCliDaemonReady();
     } catch (error) {
+      if (!_authWorkCurrent(revision)) return;
       _lastError = '$error';
       _lastErrorRetryable = true;
       notifyListeners();
       return;
     }
-    if (status == AppStatus.unauthenticated) return;
-    if (currentUser == null) await _loadProfile();
+    if (!_authWorkCurrent(revision) || status == AppStatus.unauthenticated) return;
+    if (currentUser == null) unawaited(_loadProfile());
     try {
       await refreshMachines();
+      if (!_authWorkCurrent(revision)) return;
       _lastError = null;
     } catch (error) {
+      if (!_authWorkCurrent(revision)) return;
       _lastError = 'Could not load machines: $error';
       _lastErrorRetryable = true;
       notifyListeners();
       return;
     }
     await Future.wait(expandedMachines.toList().map(reloadMachineData));
-    notifyListeners();
+    if (_authWorkCurrent(revision)) notifyListeners();
   }
 
   void toggleExpand(String machineId) {
@@ -2744,6 +2823,7 @@ class AppNotifier extends ChangeNotifier {
     MachineState machine, {
     bool force = false,
   }) async {
+    if (!_machineWorkCurrent(machine, _authRevision)) return;
     if (machine.agentLoadStatus == AgentLoadStatus.loaded && !force) return;
     if (machine.isLocalMachine && !machine.usesLocalTransport) {
       machine.transportMode = MachineTransportMode.localOffline;
@@ -2769,6 +2849,7 @@ class AppNotifier extends ChangeNotifier {
   }
 
   Future<void> _performMachineDataLoad(MachineState machine) async {
+    final revision = _authRevision;
     final hadAgents = machine.agents.isNotEmpty;
     machine.agentsRefreshing = hadAgents;
     if (!hadAgents) machine.agentLoadStatus = AgentLoadStatus.loading;
@@ -2781,6 +2862,7 @@ class AppNotifier extends ChangeNotifier {
         'agents_list',
         timeout: const Duration(seconds: 10),
       );
+      if (!_machineWorkCurrent(machine, revision)) return;
       final agents = (response['agents'] as List<dynamic>? ?? [])
           .map((item) => Agent.fromJson(item as Map<String, dynamic>))
           .toList();
@@ -2792,8 +2874,9 @@ class AppNotifier extends ChangeNotifier {
         'agents_list success: ${machine.machine.machineId} '
         '(${machine.agents.length} agents)',
       );
-      await _loadTerminalCapabilities(machine, connection);
+      await _loadTerminalCapabilities(machine, connection, revision);
     } catch (error) {
+      if (!_machineWorkCurrent(machine, revision)) return;
       machine.agentsRefreshing = false;
       // A request timing out while the local relay session still nominally reports "connected" means
       // the remote node itself has stopped answering — exactly what a REST-status flip to offline
@@ -2824,12 +2907,17 @@ class AppNotifier extends ChangeNotifier {
       }
       debugPrint('agents_list failed: ${machine.machine.machineId}: $error');
     }
+    if (!_machineWorkCurrent(machine, revision)) return;
     // Order matters: a restored tile for THIS machine claims its agent before
     // the first-run convenience gets to look, so the two can never both open.
     _attachPendingPanes(machine);
     _autoPickFirstAgent();
     notifyListeners();
   }
+
+  bool _machineWorkCurrent(MachineState machine, int revision) =>
+      _authWorkCurrent(revision) &&
+      identical(machineStates[machine.machine.machineId], machine);
 
   /// Whether the app has already opened a terminal on its own.
   ///
@@ -2920,6 +3008,7 @@ class AppNotifier extends ChangeNotifier {
   Future<void> _loadTerminalCapabilities(
     MachineState machine,
     WsConn connection,
+    int revision,
   ) async {
     try {
       final result = await connection.request(
@@ -2927,6 +3016,7 @@ class AppNotifier extends ChangeNotifier {
         payload: {'protocolVersion': TerminalSession.protocolVersion},
         timeout: const Duration(seconds: 8),
       );
+      if (!_machineWorkCurrent(machine, revision)) return;
       machine.terminalCapabilityLoaded = true;
       machine.terminalCapabilityAvailable =
           result['protocolVersion'] == TerminalSession.protocolVersion &&
@@ -2945,6 +3035,7 @@ class AppNotifier extends ChangeNotifier {
       machine.mediaPreviewAvailable =
           features is Map && features['mediaPreview'] == true;
     } catch (_) {
+      if (!_machineWorkCurrent(machine, revision)) return;
       machine.terminalCapabilityLoaded = true;
       machine.terminalCapabilityAvailable = false;
       machine.terminalCapabilityError = 'Could not negotiate terminal protocol';

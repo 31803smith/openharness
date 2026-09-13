@@ -2,6 +2,15 @@
 
 Updated 2026-09-13 with coordinated palettes, Models, combined closed-work History and faster unified search. This is a working preview, not a release.
 
+## Workspace startup and profile checkpoint
+
+- Launch, sign-in and Cmd-R recovery now load machines independently of account display metadata. The CLI still confirms authentication and daemon readiness first. A pending profile no longer holds the workspace or refresh future; a successful profile publishes its account details when it arrives.
+- Concurrent refreshes reuse one pending profile request. Profile failure leaves machine loading/recovery available, and a subsequent refresh can retry missing account details. No extra polling or automatic agent input was added.
+- Signing out invalidates pending account and inventory work before asynchronous cleanup. Late sign-in, profile, machine and terminal-capability replies cannot restore the old account, open old agents, clear a newer session's loading state or notify a disposed app. Runtime sign-out clears displayed account identity as well.
+- The original four profile/startup regressions failed before the fix (`/private/tmp/harness-v2-profile-startup-before.log`). A separate refresh-after-close check reproduced a disposed-notifier error (`/private/tmp/harness-v2-profile-refresh-close-before.log`). **118 focused tests now pass**, including 14 profile/startup lifecycle checks and existing daemon, environment, login, first-workspace, machine refresh and closed-work restoration coverage (`/private/tmp/harness-v2-profile-startup-tests.log`).
+- Analyzer has zero errors/warnings and the existing 12 vendored infos (`/private/tmp/harness-v2-profile-startup-analyze.log`). Fixtures use pending scripted responses, synthetic accounts and an isolated transport. This verifies removal of a dependency, not a measured reduction in cold launch or first-agent latency. No provider sign-in or real agent input was used.
+- Public-origin approval is still pending. Preserve the unrelated first-agent naming edits, collaboration draft and native benchmark directory. Native foreground/capture validation still needs new access evidence; do not retry the same failed calibration.
+
 ## Native startup appearance checkpoint
 
 - The loaded palette now reaches native titlebar configuration before the explicit show request, including startup and sign-in where no Swarm screen exists yet. Native New swarm and Search controls begin disabled; a palette update neither creates tabs nor enables workspace actions.

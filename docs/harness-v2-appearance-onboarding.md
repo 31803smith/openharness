@@ -28,6 +28,14 @@ New swarm and Search remain disabled until the workspace enables them. Repeated 
 
 The window setup future now awaits configure, show and focus requests directly. The installed window library's callback is synchronous and previously allowed that future to report completion before its async native work finished. Delayed-reply checks reproduced the issue; error responses now reach the awaited setup call. These checks exercise actual Dart request ordering and a hidden AppKit window. Live first-frame presentation and macOS foreground activation remain unmeasured.
 
+## Reaching the workspace while account details load
+
+The startup audit found that both sign-in and refresh waited for `/api/auth/me` before requesting machines. That profile supplies display identity; CLI authentication and daemon readiness are already confirmed separately. Account details now load alongside machine discovery. The workspace can show available agents and their terminal capability state while the profile remains pending, and the account updates when its response arrives.
+
+Repeated refreshes share a pending profile request, and a failed profile can be retried without holding up machine recovery. Session ownership checks discard late responses after sign-out, replacement sign-in or disposal. They also cover downstream agent and capability loading, so an old request cannot reattach an agent after its workspace has gone.
+
+Fourteen isolated profile/startup lifecycle checks and the existing first-run/machine suites pass: 118 focused tests in total. These establish request independence, notification and recovery behavior with synthetic data. They do not measure real sign-in duration, network latency or user activation.
+
 ## Onboarding evidence and direction
 
 | Primary source | Observed behavior | Harness adaptation |

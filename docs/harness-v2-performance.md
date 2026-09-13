@@ -10,6 +10,14 @@ flutter test --no-pub --reporter expanded test/benchmarks/swarm_benchmark.dart
 
 It prints `SWARM_BENCH` JSON records. Its filename deliberately does not end in `_test.dart`, so ordinary correctness runs do not include timing measurements.
 
+## Workspace discovery without a profile dependency (2026-09-13)
+
+After CLI sign-in and daemon readiness, machine discovery used to wait for the account profile. Refresh recovery repeated that dependency whenever no profile was known. The requests now run independently; only one profile request is kept in flight, and a completed response updates the account separately. A failed profile does not delay machine error recovery or require another sign-in.
+
+The regression fixture leaves the profile unresolved and verifies that launch/sign-in finish, machine inventory and agent capabilities arrive, and refresh completes. It also verifies late account notification, a subsequent profile retry and discarded responses after sign-out/disposal. The initial four regressions failed against the previous code; all 118 affected startup and workspace checks now pass. Logs: `/private/tmp/harness-v2-profile-startup-{before,tests}.log`.
+
+This removes a serial dependency; it is not a timed benchmark or a claim of a fixed amount saved. The production API's existing receive timeout is 30 seconds, but the fixture does not simulate that as an observed user delay. Real native launch, provider sign-in and time to first useful agent remain separate measurements.
+
 ## Persisted settings initialization (2026-09-13)
 
 The font and appearance stores previously restored five keys with five separate file-lock, permission-check and JSON-read cycles. Each group now uses one requested-key snapshot, reducing that work to two cycles. File locking, private permissions, corrupt-file quarantine and future-schema protection remain in the same storage path. Snapshots are not cached; an intervening write is visible to the next read, including writes through another store instance. No unrelated credential keys are returned to the preference stores.
