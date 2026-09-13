@@ -101,6 +101,8 @@ private extension SwarmTabStrip {
     try checkTitlebar(newButton.isEnabled, "New tab returns below capacity")
     try checkTitlebar(notifications.accessibilityLabel() == "2 agents need input", "Attention has a readable accessible label")
     try checkTitlebar(notifications.toolTip == "2 agents need input (⇧⌘I)", "Attention tooltip advertises its keyboard shortcut")
+    try checkTitlebar(subviews.compactMap { $0 as? NSButton }.count == 2, "Titlebar keeps only New swarm and Needs input; Settings belongs to the app menu")
+    try checkTitlebar(newButton.frame.maxX + 12 <= notifications.frame.minX, "New swarm leaves balanced space before Needs input")
     try original.checkEnabled(true)
     original.clickBothActions()
     try checkTitlebar(events == ["select", "close"], "Native selection and close dispatch once each")
@@ -108,11 +110,10 @@ private extension SwarmTabStrip {
     events.removeAll()
     update(state([["id": "swarm-0", "name": "Renamed tab"]], active: "swarm-0", enabled: false))
     try original.checkEnabled(false)
-    try checkTitlebar(!newButton.isEnabled && !notifications.isEnabled && !settings.isEnabled, "Titlebar actions disable with a modal")
+    try checkTitlebar(!newButton.isEnabled && !notifications.isEnabled, "Titlebar actions disable with a modal")
     original.clickBothActions()
     newButton.performClick(nil)
     notifications.performClick(nil)
-    settings.performClick(nil)
     try checkTitlebar(events.isEmpty, "Disabled controls emit no actions")
   }
 }
@@ -129,7 +130,10 @@ private extension SwarmTitlebar {
   func checkNativeContainer() throws {
     guard let window else { throw TitlebarCheckFailure(message: "Native test window exists") }
     let main = NSMenu()
-    main.addItem(NSMenuItem(title: "Harness V2", action: nil, keyEquivalent: ""))
+    let appItem = NSMenuItem(title: "Harness V2", action: nil, keyEquivalent: "")
+    appItem.submenu = NSMenu(title: "Harness V2")
+    appItem.submenu?.addItem(NSMenuItem(title: "Preferences…", action: nil, keyEquivalent: ","))
+    main.addItem(appItem)
     let edit = NSMenuItem(title: "Edit", action: nil, keyEquivalent: "")
     edit.submenu = NSMenu(title: "Edit")
     let find = NSMenuItem(title: "Find", action: nil, keyEquivalent: "")
@@ -137,8 +141,56 @@ private extension SwarmTitlebar {
     find.submenu?.addItem(NSMenuItem(title: "Find and Replace…", action: nil, keyEquivalent: "f"))
     edit.submenu?.addItem(find)
     main.addItem(edit)
+    for title in ["View", "Window", "Help"] {
+      let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+      item.submenu = NSMenu(title: title)
+      main.addItem(item)
+    }
     NSApp.mainMenu = main
     configure()
+    try checkTitlebar(main.items.map(\.title) == ["Harness V2", "File", "Edit", "View", "History", "Swarm", "Window", "Help"], "Menus follow the familiar macOS order")
+    let settings = appItem.submenu!.items[0]
+    try checkTitlebar(settings.title == "Settings…" && settings.representedObject as? String == "settings", "Settings stays in the application menu")
+    let file = main.item(withTitle: "File")!.submenu!
+    let historyMenu = main.item(withTitle: "History")!.submenu!
+    try checkTitlebar(file.items.compactMap { $0.representedObject as? String } == ["new", "newAgent", "addAgent", "linkMachine", "addProject", "closePane", "closeActive"], "File exposes creation, connection and view-closing actions")
+    let jump = historyMenu.items.first(where: { $0.representedObject as? String == "jump" })!
+    try checkTitlebar(jump.keyEquivalent == "p" && jump.keyEquivalentModifierMask == [.command], "Command-P has a native menu owner while a terminal has focus")
+    let reopen = historyMenu.items.first(where: { $0.representedObject as? String == "reopen" })!
+    actionsEnabled = true
+    canReopen = false
+    try checkTitlebar(!validateMenuItem(reopen), "Closed-Swarm recovery is disabled with an empty history")
+    canReopen = true
+    try checkTitlebar(validateMenuItem(reopen), "Closed-Swarm recovery becomes available")
+    let closePane = file.items.first(where: { $0.representedObject as? String == "closePane" })!
+    canClosePane = false
+    try checkTitlebar(!validateMenuItem(closePane), "Close Agent View is disabled in New swarm")
+    canClosePane = true
+    try checkTitlebar(validateMenuItem(closePane), "Close Agent View is enabled for a focused pane")
+    let create = file.items.first(where: { $0.representedObject as? String == "new" })!
+    canCreateSwarm = false
+    try checkTitlebar(!validateMenuItem(create), "Native New Swarm respects the tab capacity")
+    canCreateSwarm = true
+    try checkTitlebar(validateMenuItem(create), "Native New Swarm returns below capacity")
+    let recentRows: [[String: Any]] = (0..<20).map {
+      ["id": "agent:\($0)", "title": "Agent \($0) — Machine", "detail": "Project \($0)", "current": $0 == 0]
+    } + [["id": "swarm:recent", "title": "Recent Swarm", "swarm": true]]
+    updateHistory(recentRows)
+    try checkTitlebar(recentAgentsMenu.numberOfItems == 12 && recentSwarmsMenu.numberOfItems == 1, "Recent menus stay bounded and separate agents from Swarms")
+    let recent = recentAgentsMenu.items[0]
+    try checkTitlebar(recent.state == .on && recent.toolTip == "Project 0", "Recent work includes current selection and project context")
+    updateHistory(recentRows)
+    try checkTitlebar(recentAgentsMenu.items[0] === recent, "Unchanged history retains native menu items")
+    try checkTitlebar(validateMenuItem(recent), "Recent navigation is available in the shell")
+    actionsEnabled = false
+    try checkTitlebar(!validateMenuItem(recent) && !validateMenuItem(jump) && !validateMenuItem(settings), "History, jump and Settings cannot act behind a modal")
+    for item in file.items where !item.isSeparatorItem {
+      try checkTitlebar(!validateMenuItem(item), "File commands cannot change a covered Swarm")
+    }
+    actionsEnabled = true
+    updateHistory([])
+    try checkTitlebar(!validateMenuItem(recent), "A stale recent menu item cannot dispatch after its view disappears")
+    try checkTitlebar(recentAgentsMenu.items[0].action == nil && !recentAgentsMenu.items[0].isEnabled, "An empty recent menu is an inert placeholder")
     guard let menu = main.items.first(where: { $0.title == "Swarm" })?.submenu,
           let attention = menu.items.first(where: { $0.representedObject as? String == "notifications" }) else {
       throw TitlebarCheckFailure(message: "Swarm menu exposes agents needing input")

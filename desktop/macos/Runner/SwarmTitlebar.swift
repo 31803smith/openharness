@@ -13,6 +13,11 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation {
   private var actionsEnabled = false
   private var canReopen = false
   private var canFind = false
+  private var canClosePane = false
+  private var canCreateSwarm = false
+  private let recentAgentsMenu = NSMenu(title: "Recent Agents")
+  private let recentSwarmsMenu = NSMenu(title: "Recent Swarms")
+  private var history: [SwarmHistoryEntry] = []
 
   init(window: NSWindow, messenger: FlutterBinaryMessenger) {
     self.window = window
@@ -30,6 +35,9 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation {
         self.actionsEnabled = state["enabled"] as? Bool == true
         self.canReopen = state["canReopen"] as? Bool == true
         self.canFind = state["canFind"] as? Bool == true
+        self.canClosePane = state["canClosePane"] as? Bool == true
+        self.canCreateSwarm = (state["tabs"] as? [Any] ?? []).count < 24
+        self.updateHistory(state["history"] as? [[String: Any]] ?? [])
         self.strip.update(state)
         result(nil)
       default: result(FlutterMethodNotImplemented)
@@ -82,40 +90,91 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation {
     guard let main = NSApp.mainMenu, main.item(withTitle: "Swarm") == nil else { return }
     // The stock Flutter nib includes a disabled Preferences placeholder. Make
     // the app-menu command work, and give ⌘, a single native owner.
-    var settingsInAppMenu = false
-    if let appMenu = main.item(at: 0)?.submenu,
-       let settings = appMenu.items.first(where: { $0.keyEquivalent == "," && $0.action == nil }) {
+    if let appMenu = main.item(at: 0)?.submenu {
+      let settings = appMenu.items.first(where: { $0.keyEquivalent == "," }) ??
+        NSMenuItem(title: "Settings…", action: nil, keyEquivalent: ",")
       settings.title = "Settings…"
       settings.target = self
       settings.action = #selector(menuAction(_:))
       settings.representedObject = "settings"
       settings.keyEquivalentModifierMask = [.command]
-      settingsInAppMenu = true
+      if settings.menu == nil { appMenu.insertItem(settings, at: min(2, appMenu.numberOfItems)) }
     }
-    let menu = NSMenu(title: "Swarm")
-    func add(_ title: String, _ key: String, _ action: String, _ modifiers: NSEvent.ModifierFlags = [.command]) {
+    func add(_ menu: NSMenu, _ title: String, _ key: String, _ action: String, _ modifiers: NSEvent.ModifierFlags = [.command]) {
       let item = NSMenuItem(title: title, action: #selector(menuAction(_:)), keyEquivalent: key)
       item.keyEquivalentModifierMask = modifiers
       item.target = self
       item.representedObject = action
       menu.addItem(item)
     }
-    add("New Swarm", "t", "new")
-    add("Reopen Closed Swarm", "t", "reopen", [.command, .shift])
-    add("Close Swarm", "w", "closeActive")
-    add("Rename Swarm…", "r", "renameActive", [.command, .shift])
-    menu.addItem(.separator())
-    add("Next Swarm", "]", "next", [.command, .shift])
-    add("Previous Swarm", "[", "previous", [.command, .shift])
-    menu.addItem(.separator())
-    add("Add Agent…", "f", "addAgent", [.command, .shift])
-    add("Close Agent View", "w", "closePane", [.command, .shift])
-    add("Agents Needing Input…", "i", "notifications", [.command, .shift])
-    if !settingsInAppMenu { add("Settings…", ",", "settings") }
-    let item = NSMenuItem(title: "Swarm", action: nil, keyEquivalent: "")
-    item.submenu = menu
-    main.insertItem(item, at: min(2, main.numberOfItems))
+    func install(_ menu: NSMenu, at index: Int) {
+      let item = NSMenuItem(title: menu.title, action: nil, keyEquivalent: "")
+      item.submenu = menu
+      main.insertItem(item, at: index)
+    }
+    let file = NSMenu(title: "File")
+    add(file, "New Swarm", "t", "new")
+    add(file, "New Agent…", "", "newAgent")
+    add(file, "Add Agent to Swarm…", "f", "addAgent", [.command, .shift])
+    file.addItem(.separator())
+    add(file, "Link Machine…", "", "linkMachine")
+    add(file, "Add Project…", "", "addProject")
+    file.addItem(.separator())
+    add(file, "Close Agent View", "w", "closePane", [.command, .shift])
+    add(file, "Close Swarm", "w", "closeActive")
+    install(file, at: 1)
+
+    let historyMenu = NSMenu(title: "History")
+    add(historyMenu, "Jump to Agent or Swarm…", "p", "jump")
+    historyMenu.addItem(.separator())
+    for menu in [recentAgentsMenu, recentSwarmsMenu] {
+      let item = NSMenuItem(title: menu.title, action: nil, keyEquivalent: "")
+      item.submenu = menu
+      historyMenu.addItem(item)
+    }
+    populateHistoryMenu(recentAgentsMenu, entries: history.filter { !$0.swarm }, empty: "No Recent Agents")
+    populateHistoryMenu(recentSwarmsMenu, entries: history.filter(\.swarm), empty: "No Recent Swarms")
+    historyMenu.addItem(.separator())
+    add(historyMenu, "Reopen Closed Swarm", "t", "reopen", [.command, .shift])
+    let windowIndex = main.items.firstIndex(where: { $0.title == "Window" }) ?? main.numberOfItems
+    install(historyMenu, at: windowIndex)
+
+    let swarm = NSMenu(title: "Swarm")
+    add(swarm, "Rename Swarm…", "r", "renameActive", [.command, .shift])
+    swarm.addItem(.separator())
+    add(swarm, "Next Swarm", "]", "next", [.command, .shift])
+    add(swarm, "Previous Swarm", "[", "previous", [.command, .shift])
+    swarm.addItem(.separator())
+    add(swarm, "Agents Needing Input…", "i", "notifications", [.command, .shift])
+    install(swarm, at: windowIndex + 1)
     installTerminalFindMenu(main)
+  }
+
+  private func updateHistory(_ rows: [[String: Any]]) {
+    let entries = rows.prefix(64).compactMap(SwarmHistoryEntry.init)
+    guard entries != history else { return }
+    history = entries
+    populateHistoryMenu(recentAgentsMenu, entries: entries.filter { !$0.swarm }, empty: "No Recent Agents")
+    populateHistoryMenu(recentSwarmsMenu, entries: entries.filter(\.swarm), empty: "No Recent Swarms")
+  }
+
+  private func populateHistoryMenu(_ menu: NSMenu, entries: [SwarmHistoryEntry], empty: String) {
+    menu.removeAllItems()
+    for entry in entries.prefix(12) {
+      let item = NSMenuItem(title: entry.title, action: #selector(historyAction(_:)), keyEquivalent: "")
+      item.target = self
+      item.representedObject = entry.id
+      item.toolTip = entry.detail
+      item.state = entry.current ? .on : .off
+      item.image = NSImage(systemSymbolName: entry.swarm ? "rectangle.split.2x2" : "terminal",
+        accessibilityDescription: nil)
+      menu.addItem(item)
+    }
+    if menu.items.isEmpty {
+      let item = NSMenuItem(title: empty, action: nil, keyEquivalent: "")
+      item.isEnabled = false
+      menu.addItem(item)
+    }
   }
 
   private func installTerminalFindMenu(_ main: NSMenu) {
@@ -140,13 +199,38 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation {
 
   func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
     let action = menuItem.representedObject as? String ?? ""
+    if menuItem.action == #selector(historyAction(_:)) {
+      return actionsEnabled && history.contains(where: { $0.id == action })
+    }
     return actionsEnabled && (action != "reopen" || canReopen) &&
+      (action != "new" || canCreateSwarm) && (action != "closePane" || canClosePane) &&
       (!["findTerminal", "findNext", "findPrevious"].contains(action) || canFind)
   }
 
   @objc private func menuAction(_ sender: NSMenuItem) {
     guard validateMenuItem(sender), let action = sender.representedObject as? String else { return }
     channel.invokeMethod(action, arguments: nil)
+  }
+
+  @objc private func historyAction(_ sender: NSMenuItem) {
+    guard validateMenuItem(sender), let id = sender.representedObject as? String else { return }
+    channel.invokeMethod("historyDestination", arguments: ["id": id])
+  }
+}
+
+private struct SwarmHistoryEntry: Equatable {
+  let id: String
+  let title: String
+  let detail: String
+  let swarm: Bool
+  let current: Bool
+  init?(_ row: [String: Any]) {
+    guard let id = row["id"] as? String, let title = row["title"] as? String else { return nil }
+    self.id = id
+    self.title = title
+    detail = row["detail"] as? String ?? ""
+    swarm = row["swarm"] as? Bool == true
+    current = row["current"] as? Bool == true
   }
 }
 
@@ -160,7 +244,6 @@ private final class SwarmTabStrip: NSView {
   private let document = NSView()
   private let newButton = NSButton()
   private let notifications = NSButton()
-  private let settings = NSButton()
   private var tabs: [SwarmTabButton] = []
   private var activeId = ""
   private var actionsEnabled = false
@@ -187,7 +270,6 @@ private final class SwarmTabStrip: NSView {
     }
     button(newButton, "plus", "New swarm (⌘T)", #selector(newSwarm))
     button(notifications, "bell", "Needs input", #selector(showNotifications))
-    button(settings, "gearshape", "Settings (⌘,)", #selector(showSettings))
     registerForDraggedTypes([swarmPasteboardType])
   }
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -218,7 +300,6 @@ private final class SwarmTabStrip: NSView {
     document.setAccessibilityChildren(tabs)
     newButton.isEnabled = actionsEnabled && tabs.count < 24
     notifications.isEnabled = actionsEnabled
-    settings.isEnabled = actionsEnabled
     let count = state["attention"] as? Int ?? 0
     let attentionLabel = count > 0 ? "\(count) agents need input" : "Needs input"
     notifications.image = NSImage(systemSymbolName: count > 0 ? "bell.badge" : "bell",
@@ -242,7 +323,7 @@ private final class SwarmTabStrip: NSView {
 
   override func layout() {
     super.layout()
-    let available = max(120, bounds.width - 112)
+    let available = max(120, bounds.width - 78)
     let width = min(220, max(132, available / CGFloat(max(1, tabs.count))))
     let occupied = min(available, CGFloat(tabs.count) * width)
     scroll.frame = NSRect(x: 0, y: 0, width: occupied, height: bounds.height)
@@ -253,8 +334,7 @@ private final class SwarmTabStrip: NSView {
     }
     let buttonY = (bounds.height - 28) / 2
     newButton.frame = NSRect(x: occupied + 4, y: buttonY, width: 28, height: 28)
-    notifications.frame = NSRect(x: bounds.width - 68, y: buttonY, width: 28, height: 28)
-    settings.frame = NSRect(x: bounds.width - 34, y: buttonY, width: 28, height: 28)
+    notifications.frame = NSRect(x: bounds.width - 34, y: buttonY, width: 28, height: 28)
     if let active = tabs.first(where: { $0.swarmId == activeId }) {
       document.scrollToVisible(active.frame)
     }
@@ -271,7 +351,6 @@ private final class SwarmTabStrip: NSView {
   }
   @objc private func newSwarm() { emit?("new", nil) }
   @objc private func showNotifications() { emit?("notifications", nil) }
-  @objc private func showSettings() { emit?("settings", nil) }
   override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation { actionsEnabled ? .move : [] }
   override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation { actionsEnabled ? .move : [] }
   override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {

@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart' show listEquals;
+
 import '../core/fuzzy_match.dart';
 import '../core/models.dart';
 import 'app_state.dart';
@@ -13,11 +15,15 @@ class SwarmNavigationHistory {
   static const capacity = 64;
   final _recent = <String>[];
   (String, int?)? _location;
+  int _revision = 0;
+  List<Object?>? _menuPresentation;
+  List<SwarmDestination> _menuDestinations = const [];
   List<String> get recent => List.unmodifiable(_recent);
 
   void record(AppNotifier app) {
     final location = (app.activeSwarmId, app.focusedPaneId);
     if (_location == location) return;
+    _revision++;
     if (_location?.$1 != location.$1) {
       _remember(swarmDestinationId(location.$1));
     }
@@ -32,6 +38,39 @@ class SwarmNavigationHistory {
     _recent.remove(id);
     _recent.insert(0, id);
     if (_recent.length > capacity) _recent.removeLast();
+  }
+
+  /// Native menus are ready before opening. Ordinary terminal output reuses
+  /// this snapshot; navigation, membership and discovery invalidate it.
+  List<SwarmDestination> menuDestinations(AppNotifier app) {
+    final presentation = <Object?>[
+      _revision,
+      app.activeSwarmId,
+      app.focusedPaneId,
+      for (final swarm in app.swarms) ...[
+        swarm.id,
+        swarm.name,
+        for (final pane in swarm.panes)
+          (pane.id, pane.machineId, pane.agentId, pane.session?.agentName),
+      ],
+      for (final machine in app.machineStates.values)
+        (
+          machine.machine,
+          machine.nodeOnline,
+          machine.agents,
+          machine.agents.length,
+          machine.localEndpoint?.agentProjects,
+        ),
+    ];
+    if (listEquals(_menuPresentation, presentation)) return _menuDestinations;
+    _menuPresentation = presentation;
+    final catalog = {
+      for (final entry in swarmDestinations(app, recent: _recent))
+        if (entry.hasView) entry.id: entry,
+    };
+    return _menuDestinations = List.unmodifiable([
+      for (final id in _recent) ?catalog[id],
+    ]);
   }
 }
 

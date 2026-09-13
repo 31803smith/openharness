@@ -6,6 +6,19 @@ Harness should make three things excellent: **keep work alive, reach any work in
 
 This is a qualitative sample of firsthand accounts and tool authors' documentation, not a survey of all exceptional developers. “World-class” has no objective tool list. Publication dates matter: several authors have changed their workflows. Product documentation establishes advertised behavior; it does not independently establish performance, reliability or developer affection.
 
+## Current implementation queue
+
+Updated 2026-09-13. This is the working list; [the progress log](harness-v2-progress.md) records checks and remaining gaps.
+
+| Status | Work |
+| --- | --- |
+| In the preview | Real machine/project data; native Swarm tabs; wallpaper only in New swarm; Cmd+P jump, Needs input and terminal Find. |
+| Fixed and rebuilt | Cmd+P stale focus/offscreen targets; retained offline output and composer drafts; blocking frozen overlays removed. |
+| In the rebuilt preview | Settings gear removed on macOS; native File/History menus; recent agents and Swarms; native Cmd+P routing. Menus and picker typing verified live; focus/input regression tests pass. |
+| Next | Preserve Find, scroll and draft context through the actual reconnect/keyframe handoff. |
+| Next | Live keyboard/tab/drag review and native input-to-display measurements under output load. |
+| Keep deferred | Workflow canvases, autonomous manager layers, a full IDE/Git client and a marketplace. |
+
 ## What people actually describe using
 
 | Developer / primary evidence | Tools and behavior in the account | What Harness can learn |
@@ -54,13 +67,20 @@ The opportunity for Harness is to make movement among real agents across real ma
 | **Removed blocking chrome** | Full-pane frozen and reconnect overlays | Read-only status and explicit Reconnect/Take control actions live in the header. Retained output, selection, search and unsent composer text survive unavailable-machine presentation. Ordinary tab navigation never retries a dead stream. |
 | **Preserve compatibility** | Real agent terminals and user shell environments | Verify selection, multiline/image paste, scrollback, nested tmux/Vim and escape/control keys. Before promising a full terminal replacement, verify a straightforward ordinary-shell workflow too; the current New agent UI centers on detected agent engines. |
 | **Remove from active work — implemented** | Wallpaper behind populated Swarms | Use `#463746`, matching the selected native tab. Wallpaper fills only an empty New swarm canvas and its decoded cache entry is evicted when that view is disposed. |
-| **Reduce prominence** | “Next wallpaper” button, repeated metadata, permanent Settings gear | Keep appearance choices in a secondary location. Keep machine identity legible where needed to distinguish remote work. Settings already has `Cmd+,` and the app menu; consider reclaiming the extra toolbar control. These are proposals, not removed features. |
+| **Implemented in the preview** | Native File/History menus; redundant Settings gear removed | Settings stays in the macOS app menu with `Cmd+,`. File groups creation, linking and closing views. History exposes Cmd+P, recent agents/Swarms and closed-Swarm recovery. Recent lists are bounded, session-local and contain open views only; selecting a stale item cannot recreate a closed view. The non-macOS toolbar retains Settings access. |
+| **Reduce prominence** | “Next wallpaper” button and repeated metadata | Keep appearance choices in a secondary location and machine identity legible where needed to distinguish remote work. These remaining reductions are proposals. |
 | **Removed avoidable waiting** | Settings route transitions and section cross-fades | Implemented: Settings now opens/closes and switches sections immediately. Removed the 170/120 ms route and 200/90 ms section fades; existing route/modal checks pass. Reserve animation for feedback that helps understanding. |
 | **Keep optional; stop expanding** | Usage ledger and hardware/dial settings | Usage can answer a real cost question; hardware supports existing users. Keep these away from the main work loop. Do not delete capabilities or data merely because they were absent from this small research sample. |
 | **Keep absent** | Models/Grid dashboard, permanent workspace sidebar, pane footers | The authenticated V2 shell already removed these. Avoid introducing equivalent clutter through new agent-management panels. |
 | **Defer** | Workflow canvases, autonomous manager-of-managers, social features, a plugin marketplace, a full IDE or a new Git client | None is required to prove the first three promises. Add only after repeated daily-use evidence identifies a concrete need. |
 
 Source inspection: `desktop/lib/screens/swarm_screen.dart`, `widgets/swarm_dialogs.dart`, `state/swarm_catalog.dart`, `shortcuts/app_shortcuts.dart`, `settings/settings_screen.dart`, `settings/settings_section.dart`, `widgets/new_agent_dialog.dart`, and `macos/Runner/SwarmTitlebar.swift`. Existing checks and implementation details are recorded in [the handoff](harness-v2-progress.md) and [performance notes](harness-v2-performance.md).
+
+## Native menu convention
+
+Apple's [native menu documentation](https://developer.apple.com/documentation/swiftui/building-and-customizing-the-menu-bar-with-swiftui) shows File handling New Message, Close and opening a conversation in a window. File represents creating/opening/closing the app's work, beyond documents on disk. For Harness, the corresponding work is a Swarm or agent view. Keep Edit's standard text actions, View's layout/font controls, and the system Window menu.
+
+Safari places recent visits and closed-tab recovery in [History](https://support.apple.com/en-mide/guide/safari/ibrw1009/mac). Harness applies that navigation pattern to existing agent views and Swarms. It does not collect terminal commands, prompts or output as navigation history. Current history is limited to this app session: at most 64 identities, with 12 recent agents and 12 recent Swarms shown in the native menus. Closed-Swarm recovery uses the existing in-memory recovery list for this app session.
 
 ## The next small product milestone
 

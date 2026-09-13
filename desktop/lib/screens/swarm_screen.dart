@@ -134,7 +134,20 @@ class _SwarmScreenState extends State<SwarmScreen> {
       'activeId': app.activeSwarmId,
       'canReopen': app.canReopenClosedSwarm,
       'canFind': _canFindTerminal,
+      'canClosePane': app.focusedPane != null,
       'attention': _attention,
+      'history': [
+        for (final entry in _navigation.menuDestinations(app))
+          {
+            'id': entry.id,
+            'title': entry.isSwarm
+                ? entry.title
+                : '${entry.title} — ${app.stateOf(entry.machineId!)?.machine.displayName ?? entry.machineId}',
+            'detail': entry.detail,
+            'swarm': entry.isSwarm,
+            'current': entry.current,
+          },
+      ],
       'tabs': [
         for (final swarm in app.swarms)
           {
@@ -189,6 +202,27 @@ class _SwarmScreenState extends State<SwarmScreen> {
         }
       case 'addAgent':
         await _addAgent();
+      case 'newAgent':
+        await _newAgent(swarmId: app.activeSwarmId);
+      case 'addProject':
+        await _addProject();
+      case 'linkMachine':
+        await _dialog(() => showSwarmLinkDialog(context, app));
+      case 'jump':
+        await _jump();
+      case 'historyDestination':
+        final entry = _navigation
+            .menuDestinations(app)
+            .where((entry) => entry.id == args['id'])
+            .firstOrNull;
+        if (entry != null) {
+          _preparePaneFocus();
+          await activateSwarmDestination(
+            app,
+            entry,
+            destinationSwarmId: app.activeSwarmId,
+          );
+        }
       case 'closePane':
         if (app.focusedPaneId != null) await app.closePane(app.focusedPaneId!);
       case 'findTerminal':
