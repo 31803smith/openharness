@@ -2,7 +2,14 @@
 
 Updated 2026-09-13 with coordinated palettes, Models, combined closed-work History and faster unified search. This is a working preview, not a release.
 
-## Active follow-up: optional search preview
+## Active follow-up: shortcut customization
+
+- The inactive keymap foundation now includes a native decoder/dispatcher and Dart adapter. `bash tool/check_keymap_native.sh /private/tmp/harness-v2-flutter` exports the actual Dart-resolved defaults and custom bindings, then exercises that exact payload in Swift. **51 native checks passed** without opening windows or agents. Input parsing/lookup is synchronous; snapshots are validated as a whole and bounded. The current Cmd-I preview key is now in the picker command catalog.
+- Runtime enablement remains next. Flutter must own workspace keys, including unbound keys, while AppKit's search editor owns its own resolved picker bindings. Menus and help must show the same active configuration. No existing default or running shortcut behavior changes at this foundation checkpoint.
+- The 35 focused Flutter keymap/command checks pass; analyzer has no errors/warnings and the usual 12 vendored infos. The Xcode project file validates. Artifacts: `/private/tmp/harness-v2-keymap-{native-checks,bridge-tests,bridge-analyze}.log`. The running preview remains the previously built search-preview version; do not claim live remapping yet.
+- Push status: `364f1fb` is on `origin/app-v2`. Search preview is committed locally as `f04f6d3`. Automatic approval review rejected its push twice, even after `gh repo view` verified `autonomous-ai/autonomous-harness` as the existing public origin with ADMIN access. Explicit approval naming that public destination has been requested asynchronously; **do not retry pushes until it arrives**. Continue local work and commits. No code from the rejected command was pushed.
+
+## Optional search preview checkpoint
 
 - The eye control in open search, or **Cmd-I** while editing its query, toggles a short output preview. It starts hidden for each search session. Both the titlebar and New swarm field keep their own query, caret, selected result and Enter action. Commands, groups and closed History entries do not show an agent-output preview.
 - The preview snapshots only an already-retained matching machine/agent session. It scans at most 160 rows and 192 cells per row, keeps at most 12 nonblank lines, and retains only the current excerpt. Repeated query edits on the same selection reuse that excerpt; changing selection or toggling off/on captures again. Missing output gets an honest empty state. No network request, terminal attachment, input, resize or viewport mutation occurs.

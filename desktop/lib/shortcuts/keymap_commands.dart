@@ -357,6 +357,13 @@ final harnessCommands = <HarnessCommand>[
     context: KeymapContext.picker,
   ),
   const HarnessCommand(
+    'picker.preview',
+    'Toggle agent output preview',
+    ShortcutGroup.navigate,
+    extraKeys: ['cmd+i'],
+    context: KeymapContext.picker,
+  ),
+  const HarnessCommand(
     'picker.cancel',
     'Close search',
     ShortcutGroup.navigate,
