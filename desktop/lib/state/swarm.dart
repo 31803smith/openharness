@@ -5,11 +5,10 @@ import 'terminal_pane.dart';
 /// Shared agents reuse the same pane/session across swarms, so the daemon has
 /// exactly one controller and switching tabs cannot take over our own stream.
 class Swarm {
-  Swarm({required this.id, this.name = 'New swarm', this.wallpaper = 0});
+  Swarm({required this.id, this.name = 'New swarm'});
 
   final String id;
   String name;
-  int wallpaper;
   final List<TerminalPane> panes = [];
   final Map<int, PanePreset> presets = {};
   int? focusedPaneId;
@@ -39,7 +38,6 @@ class Swarm {
     return {
       'id': id,
       'name': name,
-      'wallpaper': wallpaper,
       'focus': agents.indexWhere((p) => p.id == focusedPaneId),
       'previousFocus': agents.indexWhere((p) => p.id == previousPaneId),
       'zoom': agents.indexWhere((p) => p.id == zoomedPaneId),
@@ -67,7 +65,6 @@ class ClosedSwarm {
     Swarm? replacement,
   }) : id = swarm.id,
        name = swarm.name,
-       wallpaper = swarm.wallpaper,
        gridColumns = swarm.gridColumns,
        focus = swarm.panes.indexWhere((p) => p.id == swarm.focusedPaneId),
        previousFocus = swarm.panes.indexWhere(
@@ -84,13 +81,11 @@ class ClosedSwarm {
              pinnedSlot: swarm.pinnedSlots[pane.id],
            ),
        ]),
-       replacementId = replacement?.id,
-       replacementWallpaper = replacement?.wallpaper;
+       replacementId = replacement?.id;
 
   final String id;
   final String name;
   final int index;
-  final int wallpaper;
   final int? gridColumns;
   final int focus;
   final int previousFocus;
@@ -102,21 +97,10 @@ class ClosedSwarm {
   panes;
   final String? replacementId;
   final String historyId;
-  final int? replacementWallpaper;
 
   bool replacesUntouchedWelcome(Swarm swarm) =>
       swarm.id == replacementId &&
       swarm.name == 'New swarm' &&
-      swarm.wallpaper == replacementWallpaper &&
       swarm.panes.isEmpty &&
       swarm.presets.isEmpty;
 }
-
-const swarmWallpapers = [
-  'dusk',
-  'abstract',
-  'ai',
-  'robots',
-  'ant-colony',
-  'associative-memory',
-];

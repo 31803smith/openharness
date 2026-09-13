@@ -2,39 +2,24 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../state/swarm.dart';
-
 /// Wallpaper belongs only to the empty new-swarm canvas.
 class SwarmWallpaper extends StatefulWidget {
-  const SwarmWallpaper({super.key, required this.index});
-
-  final int index;
+  const SwarmWallpaper({super.key});
 
   @override
   State<SwarmWallpaper> createState() => _SwarmWallpaperState();
 }
 
 class _SwarmWallpaperState extends State<SwarmWallpaper> {
-  late AssetImage _image = _wallpaper(widget.index);
-  ImageConfiguration _configuration = ImageConfiguration.empty;
-
-  static AssetImage _wallpaper(int index) => AssetImage(
-    'assets/swarm-wallpapers/swarm-welcome-${swarmWallpapers[index % swarmWallpapers.length]}.jpg',
+  static const _image = AssetImage(
+    'assets/swarm-wallpapers/swarm-welcome-dusk.jpg',
   );
+  ImageConfiguration _configuration = ImageConfiguration.empty;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     _configuration = createLocalImageConfiguration(context);
-  }
-
-  @override
-  void didUpdateWidget(SwarmWallpaper oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    final next = _wallpaper(widget.index);
-    if (next == _image) return;
-    unawaited(_image.evict(configuration: _configuration));
-    _image = next;
   }
 
   @override

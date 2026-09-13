@@ -148,40 +148,40 @@ void main() {
     },
   );
 
-  test('all swarm intent, focus, zoom, wallpaper and shared identity restore offline', () async {
-    final storage = MemoryStore();
-    final app = createApp(store: storage);
-    await app.addAgentToSwarm('m', 'a0');
-    await app.addAgentToSwarm('m', 'a1');
-    app.focusPane(app.panes.first.id);
-    app.toggleZoomPane();
-    app.setPreset(2, PanePreset.rows);
-    app.togglePinPane(app.panes.first.id);
-    app.renameSwarm(app.activeSwarmId, 'First');
-    final first = app.activeSwarm;
-    app.newSwarm(name: 'Second');
-    await app.addAgentToSwarm('m', 'a0');
-    app.nextSwarmWallpaper();
-    final wallpaper = app.activeSwarm.wallpaper;
-    await Future<void>.delayed(Duration.zero);
-    final restored = createApp(store: storage);
-    await restored.restorePaneLayoutForTest();
-    expect(restored.swarms.map((s) => s.name), ['First', 'Second']);
-    expect(restored.activeSwarm.wallpaper, wallpaper);
-    expect(
-      restored.swarms.first.panes.first,
-      same(restored.swarms.last.panes.single),
-    );
-    expect(restored.allPanes.every((p) => p.session == null), isTrue);
-    expect(restored.isPanePinned(restored.panes.single), isFalse);
-    restored.selectSwarm(first.id);
-    expect(restored.zoomedPaneId, restored.focusedPaneId);
-    expect(restored.activeSwarm.previousPaneId, restored.panes.last.id);
-    expect(restored.presetFor(2), PanePreset.rows);
-    expect(restored.isPanePinned(restored.panes.first), isTrue);
-    app.dispose();
-    restored.dispose();
-  });
+  test(
+    'all swarm intent, focus, zoom and shared identity restore offline',
+    () async {
+      final storage = MemoryStore();
+      final app = createApp(store: storage);
+      await app.addAgentToSwarm('m', 'a0');
+      await app.addAgentToSwarm('m', 'a1');
+      app.focusPane(app.panes.first.id);
+      app.toggleZoomPane();
+      app.setPreset(2, PanePreset.rows);
+      app.togglePinPane(app.panes.first.id);
+      app.renameSwarm(app.activeSwarmId, 'First');
+      final first = app.activeSwarm;
+      app.newSwarm(name: 'Second');
+      await app.addAgentToSwarm('m', 'a0');
+      await Future<void>.delayed(Duration.zero);
+      final restored = createApp(store: storage);
+      await restored.restorePaneLayoutForTest();
+      expect(restored.swarms.map((s) => s.name), ['First', 'Second']);
+      expect(
+        restored.swarms.first.panes.first,
+        same(restored.swarms.last.panes.single),
+      );
+      expect(restored.allPanes.every((p) => p.session == null), isTrue);
+      expect(restored.isPanePinned(restored.panes.single), isFalse);
+      restored.selectSwarm(first.id);
+      expect(restored.zoomedPaneId, restored.focusedPaneId);
+      expect(restored.activeSwarm.previousPaneId, restored.panes.last.id);
+      expect(restored.presetFor(2), PanePreset.rows);
+      expect(restored.isPanePinned(restored.panes.first), isTrue);
+      app.dispose();
+      restored.dispose();
+    },
+  );
 
   test(
     'new tab ids cannot collide after reorder and gaps in saved ids',

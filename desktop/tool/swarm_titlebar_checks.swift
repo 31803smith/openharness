@@ -99,10 +99,14 @@ private extension SwarmTabStrip {
     try checkTitlebar(tabs.count == 1 && tabs[0] === original, "Closing tabs retains the surviving control")
     try original.checkAccessibility(expectedName: "Renamed tab", active: true)
     try checkTitlebar(newButton.isEnabled, "New tab returns below capacity")
-    try checkTitlebar(notifications.accessibilityLabel() == "2 agents need input", "Attention has a readable accessible label")
-    try checkTitlebar(notifications.toolTip == "2 agents need input (⇧⌘I)", "Attention tooltip advertises its keyboard shortcut")
-    try checkTitlebar(subviews.compactMap { $0 as? NSButton }.count == 2, "Titlebar keeps only New swarm and Needs input; Settings belongs to the app menu")
-    try checkTitlebar(newButton.frame.maxX + 12 <= notifications.frame.minX, "New swarm leaves balanced space before Needs input")
+    try checkTitlebar(searchButton.accessibilityLabel() == "Search agents, swarms, machines and projects", "Search has a readable accessible label")
+    try checkTitlebar(searchButton.toolTip?.contains("⌘P") == true, "Search tooltip advertises its keyboard shortcut")
+    try checkTitlebar(subviews.compactMap { $0 as? NSButton }.count == 2, "Titlebar keeps New swarm and Search; Settings belongs to the app menu")
+    try checkTitlebar(newButton.frame.maxX + 12 <= searchButton.frame.minX, "New swarm leaves balanced space before Search")
+    try checkTitlebar(searchButton.frame.height == 28 && searchButton.frame.maxX == bounds.width - 8, "Search has an aligned 28-point target and eight-point trailing inset")
+    searchButton.performClick(nil)
+    try checkTitlebar(events == ["jump"], "Search dispatches the shared picker exactly once")
+    events.removeAll()
     try original.checkEnabled(true)
     original.clickBothActions()
     try checkTitlebar(events == ["select", "close"], "Native selection and close dispatch once each")
@@ -110,10 +114,10 @@ private extension SwarmTabStrip {
     events.removeAll()
     update(state([["id": "swarm-0", "name": "Renamed tab"]], active: "swarm-0", enabled: false))
     try original.checkEnabled(false)
-    try checkTitlebar(!newButton.isEnabled && !notifications.isEnabled, "Titlebar actions disable with a modal")
+    try checkTitlebar(!newButton.isEnabled && !searchButton.isEnabled, "Titlebar actions disable with a modal")
     original.clickBothActions()
     newButton.performClick(nil)
-    notifications.performClick(nil)
+    searchButton.performClick(nil)
     try checkTitlebar(events.isEmpty, "Disabled controls emit no actions")
   }
 }
@@ -153,7 +157,7 @@ private extension SwarmTitlebar {
     try checkTitlebar(settings.title == "Settings…" && settings.representedObject as? String == "settings", "Settings stays in the application menu")
     let file = main.item(withTitle: "File")!.submenu!
     let historyMenu = main.item(withTitle: "History")!.submenu!
-    try checkTitlebar(file.items.compactMap { $0.representedObject as? String } == ["new", "newAgent", "reopen", "addAgent", "linkMachine", "addProject", "closePane", "closeActive"], "File exposes creation, connection and view-closing actions")
+    try checkTitlebar(file.items.compactMap { $0.representedObject as? String } == ["new", "newAgent", "reopen", "linkMachine", "addProject", "closePane", "closeActive"], "File exposes creation, connection and view-closing actions")
     let jump = main.item(withTitle: "Swarm")!.submenu!.items.first(where: { $0.representedObject as? String == "jump" })!
     try checkTitlebar(jump.keyEquivalent == "p" && jump.keyEquivalentModifierMask == [.command], "Command-P has a native menu owner while a terminal has focus")
     let reopen = file.items.first(where: { $0.representedObject as? String == "reopen" })!

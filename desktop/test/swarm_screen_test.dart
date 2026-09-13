@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/core/models.dart';
 import 'package:harness/screens/swarm_screen.dart';
@@ -15,6 +16,7 @@ import 'package:harness/ws/local_cli_discovery.dart';
 import 'package:xterm/xterm.dart';
 
 import 'swarm_state_test.dart' show createApp;
+import 'swarm_interactions_test.dart' show chord;
 
 Future<void> mount(WidgetTester tester, AppNotifier app) async {
   tester.view.devicePixelRatio = 1;
@@ -66,12 +68,14 @@ void main() {
       );
       await mount(tester, app);
       expect(find.text('Existing project'), findsOneWidget);
+      await tester.tap(find.text('Search agents, swarms, machines, projects…'));
+      await tester.pump();
       await tester.enterText(find.byType(TextField), '/work/existing');
       await tester.pump();
       expect(find.text('Agent 0'), findsOneWidget);
       expect(find.text('Agent 1'), findsOneWidget);
       expect(find.text('Agent 2'), findsNothing);
-      await tester.enterText(find.byType(TextField), '');
+      await tester.tap(find.byTooltip('Close search'));
       await tester.pump();
       await tester.tap(find.text('Existing project'));
       await tester.pump(const Duration(milliseconds: 100));
@@ -90,6 +94,8 @@ void main() {
       expect(find.text('Start a swarm'), findsOneWidget);
       expect(find.text('Models'), findsNothing);
       expect(find.text('Machines'), findsOneWidget);
+      await tester.tap(find.text('Search agents, swarms, machines, projects…'));
+      await tester.pump();
       await tester.enterText(find.byType(TextField), 'Agent 1');
       await tester.pump();
       expect(find.text('Agent 1').last, findsOneWidget);
@@ -100,13 +106,13 @@ void main() {
       await tester.pump();
       final zoom = app.zoomedPaneId;
       final before = tester.getSize(find.byType(PaneGrid));
-      await tester.tap(find.byTooltip('Add agent  ⇧⌘F'));
+      await tester.tap(find.text('Search…'));
       await tester.pump(const Duration(milliseconds: 300));
-      expect(find.text('Add agent'), findsOneWidget);
+      expect(find.byType(Dialog), findsOneWidget);
       expect(app.panes.length, 2);
       expect(app.zoomedPaneId, zoom);
       expect(tester.getSize(find.byType(PaneGrid)), before);
-      await tester.tap(find.byTooltip('Close agent picker'));
+      await tester.tap(find.byTooltip('Close search'));
       await tester.pump(const Duration(milliseconds: 300));
       expect(app.zoomedPaneId, zoom);
       expect(app.panes.length, 2);
@@ -306,9 +312,7 @@ void main() {
         },
       });
       await mount(tester, app);
-      await tester.tap(
-        find.widgetWithIcon(IconButton, Icons.notifications_none),
-      );
+      await chord(tester, LogicalKeyboardKey.keyI, shift: true);
       await tester.pump(const Duration(milliseconds: 300));
       expect(find.text('Which folder?'), findsOneWidget);
       await tester.tap(find.text('Which folder?'));
@@ -319,9 +323,7 @@ void main() {
         'type': 'commander_question_close',
         'payload': {'agentId': 'a0', 'requestId': 'question'},
       });
-      await tester.tap(
-        find.widgetWithIcon(IconButton, Icons.notifications_none),
-      );
+      await chord(tester, LogicalKeyboardKey.keyI, shift: true);
       await tester.pump(const Duration(milliseconds: 300));
       expect(find.text('No agents need your input'), findsOneWidget);
       await tester.pumpWidget(const SizedBox());

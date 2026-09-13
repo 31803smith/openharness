@@ -348,7 +348,6 @@ class AppNotifier extends ChangeNotifier {
   final List<Swarm> swarms = [Swarm(id: 'swarm-1')];
   String _activeSwarmId = 'swarm-1';
   int _nextSwarmId = 2;
-  int _nextWallpaper = 1;
   static const maxSwarms = 24;
   static const maxClosedSwarms = 24;
   final List<ClosedSwarm> _closedSwarms = [];
@@ -370,11 +369,7 @@ class AppNotifier extends ChangeNotifier {
     while (swarms.any((s) => s.id == 'swarm-$_nextSwarmId')) {
       _nextSwarmId++;
     }
-    final swarm = Swarm(
-      id: 'swarm-${_nextSwarmId++}',
-      name: name,
-      wallpaper: _nextWallpaper++ % swarmWallpapers.length,
-    );
+    final swarm = Swarm(id: 'swarm-${_nextSwarmId++}', name: name);
     swarms.add(swarm);
     selectSwarm(swarm.id);
   }
@@ -460,13 +455,6 @@ class AppNotifier extends ChangeNotifier {
     notifyListeners();
   }
 
-  void nextSwarmWallpaper() {
-    activeSwarm.wallpaper =
-        (activeSwarm.wallpaper + 1) % swarmWallpapers.length;
-    _persistLayout();
-    notifyListeners();
-  }
-
   Future<void> closeSwarm(String id) async {
     final index = swarms.indexWhere((s) => s.id == id);
     if (index < 0) return;
@@ -481,10 +469,7 @@ class AppNotifier extends ChangeNotifier {
     final removed = swarms.removeAt(index);
     Swarm? replacement;
     if (swarms.isEmpty) {
-      replacement = Swarm(
-        id: 'swarm-${_nextSwarmId++}',
-        wallpaper: _nextWallpaper++ % swarmWallpapers.length,
-      );
+      replacement = Swarm(id: 'swarm-${_nextSwarmId++}');
       swarms.add(replacement);
     }
     _closedSwarms.add(
@@ -528,7 +513,7 @@ class AppNotifier extends ChangeNotifier {
     while (swarms.any((swarm) => swarm.id == id)) {
       id = 'swarm-${_nextSwarmId++}';
     }
-    final restored = Swarm(id: id, name: saved.name, wallpaper: saved.wallpaper)
+    final restored = Swarm(id: id, name: saved.name)
       ..gridColumns = saved.gridColumns
       ..presets.addAll(saved.presets);
     for (final entry in saved.panes) {
@@ -4113,7 +4098,7 @@ class AppNotifier extends ChangeNotifier {
   void _persistLayout() {
     _layoutRevision++;
     _announceOpenPanesToDial();
-    unawaited(_paneLayout?.saveSwarms(swarms, activeSwarmId, _nextWallpaper));
+    unawaited(_paneLayout?.saveSwarms(swarms, activeSwarmId));
   }
 
   /// Rebuild the grid from disk as INTENT only — the tiles appear immediately,
@@ -4151,9 +4136,6 @@ class AppNotifier extends ChangeNotifier {
                   (raw['name'] as String).length.clamp(0, 80),
                 )
               : 'New swarm',
-          wallpaper: raw['wallpaper'] is int
-              ? (raw['wallpaper'] as int) % swarmWallpapers.length
-              : 0,
         );
         for (final item in (raw['panes'] as List).take(maxPanes)) {
           final entry = PaneLayoutEntry.fromJson(item);
@@ -4210,9 +4192,6 @@ class AppNotifier extends ChangeNotifier {
         while (swarms.any((s) => s.id == 'swarm-$_nextSwarmId')) {
           _nextSwarmId++;
         }
-        _nextWallpaper = saved['nextWallpaper'] is int
-            ? saved['nextWallpaper'] as int
-            : swarms.length;
         _autoPickedAgent = true;
         notifyListeners();
         return;

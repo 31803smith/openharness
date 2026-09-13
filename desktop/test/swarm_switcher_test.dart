@@ -14,7 +14,8 @@ import 'swarm_state_test.dart' show createApp;
 
 Finder get jumpField => find.byWidgetPredicate(
   (w) =>
-      w is TextField && w.decoration?.hintText == 'Jump to an agent or swarm…',
+      w is TextField &&
+      w.decoration?.hintText == 'Search agents, swarms, machines, projects…',
 );
 Finder get selectedRow =>
     find.byWidgetPredicate((w) => w is ListTile && w.selected);
@@ -130,7 +131,7 @@ void main() {
   });
 
   testWidgets(
-    'jump opens in one frame, owns typing, cancels, and leaves Add separate',
+    'search opens in one frame, owns typing, cancels, and replaces the separate Add picker',
     (tester) async {
       final app = createApp();
       app.adoptSessionForTest(terminal('a0', []));
@@ -162,8 +163,10 @@ void main() {
       expect(jumpField, findsNothing);
       expect(app.panes, membership);
       await chord(tester, LogicalKeyboardKey.keyF, shift: true);
-      expect(find.text('Add agent'), findsOneWidget);
-      expect(jumpField, findsNothing);
+      expect(find.byType(Dialog), findsNothing);
+      await tester.tap(find.text('Search…'));
+      await tester.pump();
+      expect(jumpField, findsOneWidget);
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
       await tester.pump(const Duration(milliseconds: 200));
       await tester.pumpWidget(const SizedBox());

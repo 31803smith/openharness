@@ -553,7 +553,7 @@ const kSwarmShortcuts = [
   AppShortcut(
     action: ShortcutAction.switchAgent,
     activator: SingleActivator(LogicalKeyboardKey.keyP, meta: true),
-    label: 'Jump to an agent or swarm',
+    label: 'Search agents, swarms, machines and projects',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
@@ -565,16 +565,6 @@ const kSwarmShortcuts = [
     ),
     label: 'Show agents needing input',
     group: ShortcutGroup.navigate,
-  ),
-  AppShortcut(
-    action: ShortcutAction.addAgent,
-    activator: SingleActivator(
-      LogicalKeyboardKey.keyF,
-      meta: true,
-      shift: true,
-    ),
-    label: 'Add an agent to this swarm',
-    group: ShortcutGroup.actions,
   ),
   AppShortcut(
     action: ShortcutAction.closePane,

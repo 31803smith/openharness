@@ -64,54 +64,11 @@ Future<void> chord(
 
 void main() {
   testWidgets(
-    'the picker walks and scrolls by keyboard and keeps its agent through live refreshes',
+    'welcome opens the shared search and supports readline selection',
     (tester) async {
       final app = createApp();
       await mount(tester, app);
-      await chord(tester, LogicalKeyboardKey.keyF, shift: true);
-      await tester.pump(const Duration(milliseconds: 200));
-      for (var i = 0; i < 12; i++) {
-        await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
-        await tester.pump();
-      }
-      await tester.pump();
-      final selected = find.byWidgetPredicate(
-        (w) => w is ListTile && w.selected,
-      );
-      expect(
-        find.descendant(of: selected, matching: find.text('Agent 12')),
-        findsOneWidget,
-      );
-      final row = tester.getRect(find.text('Agent 12'));
-      final list = tester.getRect(find.byType(ListView));
-      expect(row.top, greaterThanOrEqualTo(list.top));
-      expect(row.bottom, lessThanOrEqualTo(list.bottom));
-      final machine = app.machineStates['m']!;
-      machine.agents = [
-        const Agent(id: 'new', name: 'Discovered'),
-        ...machine.agents,
-      ];
-      app.dismissError();
-      await tester.pump();
-      await tester.pump();
-      expect(
-        find.descendant(of: selected, matching: find.text('Agent 12')),
-        findsOneWidget,
-      );
-      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-      await tester.pump(const Duration(milliseconds: 200));
-      expect(app.panes.single.agentId, 'a12');
-      await tester.pumpWidget(const SizedBox());
-      app.dispose();
-    },
-  );
-
-  testWidgets(
-    'welcome search supports readline selection and ignores an empty Return',
-    (tester) async {
-      final app = createApp();
-      await mount(tester, app);
-      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.tap(find.text('Search agents, swarms, machines, projects…'));
       await tester.pump();
       expect(app.panes, isEmpty);
       await tester.enterText(find.byType(TextField), 'Agent 1');

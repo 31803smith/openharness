@@ -4,6 +4,7 @@ import '../core/fuzzy_match.dart';
 import '../core/models.dart';
 import 'app_state.dart';
 import 'swarm.dart';
+import 'swarm_catalog.dart';
 
 String swarmDestinationId(String id) => 'swarm:$id';
 String agentDestinationId(String machineId, String agentId) =>
@@ -134,6 +135,8 @@ class SwarmDestination {
     this.agentId,
     this.engine,
     this.closedId,
+    this.projectId,
+    this.members = const {},
     Iterable<String?> searchFields = const [],
   }) : fields = [
          title.toLowerCase(),
@@ -143,10 +146,205 @@ class SwarmDestination {
   final String id, title, detail;
   final String? swarmId, machineId, agentId, engine;
   final String? closedId;
+  final String? projectId;
+  final Set<String> members;
   final bool current;
   final List<String> fields;
-  bool get isSwarm => agentId == null;
+  bool get isProject => projectId != null;
+  bool get isMachine => agentId == null && machineId != null && !isProject;
+  bool get isGroup => isProject || isMachine;
+  bool get isSwarm => agentId == null && !isGroup;
   bool get hasView => swarmId != null;
+}
+
+enum SwarmSearchAction { open, addHere, openGroup }
+
+class SwarmSearchSelection {
+  const SwarmSearchSelection(
+    this.destination, [
+    this.action = SwarmSearchAction.open,
+  ]);
+  final SwarmDestination destination;
+  final SwarmSearchAction action;
+}
+
+/// One catalog for all search entry points. Terminal output leaves these
+/// normalized snapshots intact; only discovery, membership or metadata changes
+/// rebuild them. Typing never reads a folder or asks a machine for data.
+class SwarmSearchCatalog {
+  List<Object?>? _presentation;
+  List<SwarmDestination> _entries = const [];
+
+  List<SwarmDestination> read(
+    AppNotifier app,
+    List<SavedSwarmProject> projects, {
+    List<String> recent = const [],
+  }) {
+    final presentation = <Object?>[
+      app.activeSwarmId,
+      app.focusedPaneId,
+      ...recent,
+      ...projects,
+      for (final swarm in app.swarms) ...[
+        swarm.id,
+        swarm.name,
+        for (final pane in swarm.panes)
+          (pane.id, pane.machineId, pane.agentId, pane.session?.agentName),
+      ],
+      for (final machine in app.machineStates.values)
+        (
+          machine.machine,
+          machine.nodeOnline,
+          machine.needsLink,
+          machine.agents,
+          machine.agents.length,
+          machine.localEndpoint?.agentProjects,
+          machine.localProjects,
+        ),
+    ];
+    if (listEquals(_presentation, presentation)) return _entries;
+    _presentation = presentation;
+    final entries = swarmDestinations(app, recent: recent);
+    final available = {
+      for (final entry in entries)
+        if (entry.agentId != null) entry.id,
+    };
+    final groups = swarmProjects(app, projects);
+    for (final machine in app.machineStates.values) {
+      final id = machine.machine.machineId;
+      final members = {
+        for (final entry in entries)
+          if (entry.machineId == id && entry.agentId != null) entry.id,
+      };
+      entries.add(
+        SwarmDestination(
+          id: 'machine:$id',
+          title: machine.machine.displayName,
+          detail: [
+            'Machine',
+            '${members.length} agents',
+            if (machine.needsLink)
+              'Link required'
+            else if (machine.nodeOnline == false)
+              'Offline',
+          ].join(' · '),
+          machineId: id,
+          swarmId: null,
+          current: false,
+          members: Set.unmodifiable(members),
+        ),
+      );
+    }
+    for (final group in groups) {
+      final members = {
+        for (final entry in group.agents)
+          if (available.contains(
+            agentDestinationId(entry.machineId, entry.agent.id),
+          ))
+            agentDestinationId(entry.machineId, entry.agent.id),
+      };
+      entries.add(
+        SwarmDestination(
+          id: 'project:${group.id}',
+          projectId: group.id,
+          title: group.name,
+          detail: 'Project · ${members.length} agents',
+          swarmId: null,
+          current: false,
+          members: Set.unmodifiable(members),
+          searchFields: [
+            group.saved?.path,
+            for (final entry in group.agents) ...[
+              entry.machine.machine.displayName,
+              entry.project?.cwd,
+              entry.project?.branch,
+            ],
+          ],
+        ),
+      );
+      // Explicit project associations from older daemons are searchable too.
+      for (final entry in entries.where(
+        (entry) => members.contains(entry.id),
+      )) {
+        final name = group.name.toLowerCase();
+        if (!entry.fields.contains(name)) entry.fields.add(name);
+      }
+    }
+    return _entries = List.unmodifiable(entries);
+  }
+}
+
+Future<bool> activateSwarmSearchSelection(
+  AppNotifier app,
+  SwarmSearchSelection selection, {
+  required String destinationSwarmId,
+  List<SavedSwarmProject> projects = const [],
+}) async {
+  final destination = selection.destination;
+  if (selection.action == SwarmSearchAction.open) {
+    if (destination.isGroup) {
+      return false; // Groups are browsed inside the picker.
+    }
+    return activateSwarmDestination(
+      app,
+      destination,
+      destinationSwarmId: destinationSwarmId,
+    );
+  }
+  if (selection.action == SwarmSearchAction.addHere) {
+    if (destination.agentId == null ||
+        !app.swarms.any((s) => s.id == destinationSwarmId)) {
+      return false;
+    }
+    final live = swarmDestinations(app)
+        .where((e) => e.id == destination.id)
+        .firstOrNull;
+    if (live == null) return false;
+    await app.addAgentToSwarm(
+      destination.machineId!,
+      destination.agentId!,
+      swarmId: destinationSwarmId,
+    );
+    if (app.activeSwarmId == destinationSwarmId) {
+      app.revealAgentView(
+        destination.machineId!,
+        destination.agentId!,
+        preferredSwarmId: destinationSwarmId,
+      );
+    }
+    return app.swarms.any(
+      (s) =>
+          s.id == destinationSwarmId &&
+          s.panes.any(
+            (p) =>
+                p.machineId == destination.machineId &&
+                p.agentId == destination.agentId,
+          ),
+    );
+  }
+  if (!destination.isGroup ||
+      destination.members.isEmpty ||
+      destination.members.length > AppNotifier.maxPanes ||
+      app.swarms.length >= AppNotifier.maxSwarms) {
+    return false;
+  }
+  final entries = SwarmSearchCatalog().read(app, projects);
+  final group = entries
+      .where((entry) => entry.id == destination.id)
+      .firstOrNull;
+  // Open exactly the reviewed set, never silently include newly discovered work.
+  if (group == null || !group.members.containsAll(destination.members)) {
+    return false;
+  }
+  final agents = [
+    for (final entry in entries)
+      if (entry.agentId != null && destination.members.contains(entry.id))
+        (machineId: entry.machineId!, agentId: entry.agentId!),
+  ];
+  if (agents.length != destination.members.length) return false;
+  app.newSwarm(name: group.title);
+  await app.seedSwarm(group.title, agents);
+  return true;
 }
 
 List<SwarmDestination> closedSwarmDestinations(AppNotifier app) => [
@@ -244,7 +442,7 @@ List<SwarmDestination> swarmDestinations(
           project?.branch,
           owner?.name,
           if (machine?.nodeOnline == false) 'Offline',
-        ].whereType<String>().where((s) => s.isNotEmpty).join(' · '),
+        ].whereType<String>().where((s) => s.isNotEmpty).toSet().join(' · '),
         swarmId: owner?.id,
         machineId: machineId,
         agentId: agentId,

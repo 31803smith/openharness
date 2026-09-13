@@ -18,7 +18,6 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation {
   private let historyMenu = NSMenu(title: "History")
   private var canGoBack = false
   private var canGoForward = false
-  private var canChangeWallpaper = false
   private var history: [SwarmHistoryEntry] = []
   private var closedHistory: [SwarmHistoryEntry] = []
 
@@ -41,7 +40,6 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation {
         self.canClosePane = state["canClosePane"] as? Bool == true
         self.canGoBack = state["canGoBack"] as? Bool == true
         self.canGoForward = state["canGoForward"] as? Bool == true
-        self.canChangeWallpaper = state["canChangeWallpaper"] as? Bool == true
         self.canCreateSwarm = (state["tabs"] as? [Any] ?? []).count < 24
         self.updateHistory(state["history"] as? [[String: Any]] ?? [], closed: state["closedHistory"] as? [[String: Any]] ?? [])
         self.strip.update(state)
@@ -122,7 +120,6 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation {
     add(file, "New Swarm", "t", "new")
     add(file, "New Agent…", "", "newAgent")
     add(file, "Reopen Closed Swarm", "t", "reopen", [.command, .shift])
-    add(file, "Add Agent to Swarm…", "f", "addAgent", [.command, .shift])
     file.addItem(.separator())
     add(file, "Link Machine…", "", "linkMachine")
     add(file, "Add Project…", "", "addProject")
@@ -136,7 +133,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation {
     install(historyMenu, at: windowIndex)
 
     let swarm = NSMenu(title: "Swarm")
-    add(swarm, "Jump to Agent or Swarm…", "p", "jump")
+    add(swarm, "Search Agents, Swarms, Machines and Projects…", "p", "jump")
     add(swarm, "Rename Swarm…", "r", "renameActive", [.command, .shift])
     swarm.addItem(.separator())
     add(swarm, "Next Swarm", "]", "next", [.command, .shift])
@@ -144,10 +141,6 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation {
     swarm.addItem(.separator())
     add(swarm, "Agents Needing Input…", "i", "notifications", [.command, .shift])
     install(swarm, at: windowIndex + 1)
-    if let view = main.item(withTitle: "View")?.submenu {
-      view.addItem(.separator())
-      add(view, "Next Wallpaper", "", "nextWallpaper")
-    }
     installTerminalFindMenu(main)
   }
 
@@ -234,7 +227,6 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation {
       return actionsEnabled && canReopen && closedHistory.contains(where: { $0.id == action })
     }
     return actionsEnabled && (action != "reopen" || canReopen) &&
-      (action != "nextWallpaper" || canChangeWallpaper) &&
       (action != "historyBack" || canGoBack) && (action != "historyForward" || canGoForward) &&
       (action != "new" || canCreateSwarm) && (action != "closePane" || canClosePane) &&
       (!["findTerminal", "findNext", "findPrevious"].contains(action) || canFind)
@@ -276,12 +268,62 @@ private let swarmPasteboardType = NSPasteboard.PasteboardType("ai.autonomous.har
 // Matches AppPalette.swarmField exactly, joining the tab to the terminal canvas.
 private let swarmSelectedTabColor = NSColor(srgbRed: 70.0 / 255, green: 55.0 / 255, blue: 70.0 / 255, alpha: 1)
 
+/// A compact launcher for the shared picker; no second editable field or search
+/// state lives in AppKit. Native keyboard focus and button activation still work.
+private final class SwarmSearchButton: NSButton {
+  private var hovered = false
+  private var tracking: NSTrackingArea?
+  private let symbol = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil)
+
+  override init(frame: NSRect) {
+    super.init(frame: frame)
+    title = ""
+    isBordered = false
+    setButtonType(.momentaryChange)
+  }
+  required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+  override var mouseDownCanMoveWindow: Bool { false }
+  override func updateTrackingAreas() {
+    if let tracking { removeTrackingArea(tracking) }
+    tracking = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self)
+    addTrackingArea(tracking!)
+    super.updateTrackingAreas()
+  }
+  override func mouseEntered(with event: NSEvent) { hovered = true; needsDisplay = true }
+  override func mouseExited(with event: NSEvent) { hovered = false; needsDisplay = true }
+  override func draw(_ dirtyRect: NSRect) {
+    let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 8, yRadius: 8)
+    NSColor.white.withAlphaComponent(isHighlighted ? 0.16 : hovered ? 0.11 : 0.06).setFill()
+    shape.fill()
+    NSColor.white.withAlphaComponent(hovered ? 0.16 : 0.08).setStroke()
+    shape.stroke()
+    let tint = NSColor(srgbRed: 0.84, green: 0.80, blue: 0.87, alpha: isEnabled ? 1 : 0.4)
+    let iconX: CGFloat = bounds.width < 100 ? (bounds.width - 14) / 2 : 10
+    symbol?.withSymbolConfiguration(NSImage.SymbolConfiguration(paletteColors: [tint]))?
+      .draw(in: NSRect(x: iconX, y: (bounds.height - 14) / 2, width: 14, height: 14))
+    if bounds.width >= 100 {
+      let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: tint]
+      let label = "Search…" as NSString
+      label.draw(at: NSPoint(x: 32, y: (bounds.height - label.size(withAttributes: attrs).height) / 2), withAttributes: attrs)
+      let shortcut = "⌘P" as NSString
+      let shortcutAttrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: tint.withAlphaComponent(isEnabled ? 0.65 : 0.3)]
+      let size = shortcut.size(withAttributes: shortcutAttrs)
+      shortcut.draw(at: NSPoint(x: bounds.width - size.width - 10, y: (bounds.height - size.height) / 2), withAttributes: shortcutAttrs)
+    }
+    if window?.firstResponder === self {
+      NSColor.keyboardFocusIndicatorColor.setStroke()
+      shape.lineWidth = 2
+      shape.stroke()
+    }
+  }
+}
+
 private final class SwarmTabStrip: NSView {
   var emit: ((String, Any?) -> Void)?
   private let scroll = NSScrollView()
   private let document = NSView()
   private let newButton = NSButton()
-  private let notifications = NSButton()
+  private let searchButton = SwarmSearchButton()
   private var tabs: [SwarmTabButton] = []
   private var activeId = ""
   private var actionsEnabled = false
@@ -307,7 +349,11 @@ private final class SwarmTabStrip: NSView {
       addSubview(button)
     }
     button(newButton, "plus", "New swarm (⌘T)", #selector(newSwarm))
-    button(notifications, "bell", "Needs input", #selector(showNotifications))
+    searchButton.target = self
+    searchButton.action = #selector(showSearch)
+    searchButton.toolTip = "Search agents, swarms, machines and projects (⌘P)"
+    searchButton.setAccessibilityLabel("Search agents, swarms, machines and projects")
+    addSubview(searchButton)
     registerForDraggedTypes([swarmPasteboardType])
   }
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -337,13 +383,7 @@ private final class SwarmTabStrip: NSView {
     // Moving frames alone leaves AppKit's child traversal in insertion order.
     document.setAccessibilityChildren(tabs)
     newButton.isEnabled = actionsEnabled && tabs.count < 24
-    notifications.isEnabled = actionsEnabled
-    let count = state["attention"] as? Int ?? 0
-    let attentionLabel = count > 0 ? "\(count) agents need input" : "Needs input"
-    notifications.image = NSImage(systemSymbolName: count > 0 ? "bell.badge" : "bell",
-      accessibilityDescription: attentionLabel)
-    notifications.toolTip = "\(attentionLabel) (⇧⌘I)"
-    notifications.setAccessibilityLabel(attentionLabel)
+    searchButton.isEnabled = actionsEnabled
     needsLayout = true
     layoutSubtreeIfNeeded()
     if ids != previousOrder {
@@ -361,7 +401,8 @@ private final class SwarmTabStrip: NSView {
 
   override func layout() {
     super.layout()
-    let available = max(120, bounds.width - 78)
+    let searchWidth: CGFloat = bounds.width < 480 ? 28 : bounds.width < 720 ? 156 : 200
+    let available = max(120, bounds.width - searchWidth - 56)
     let width = min(220, max(132, available / CGFloat(max(1, tabs.count))))
     let occupied = min(available, CGFloat(tabs.count) * width)
     scroll.frame = NSRect(x: 0, y: 0, width: occupied, height: bounds.height)
@@ -372,7 +413,7 @@ private final class SwarmTabStrip: NSView {
     }
     let buttonY = (bounds.height - 28) / 2
     newButton.frame = NSRect(x: occupied + 4, y: buttonY, width: 28, height: 28)
-    notifications.frame = NSRect(x: bounds.width - 34, y: buttonY, width: 28, height: 28)
+    searchButton.frame = NSRect(x: bounds.width - searchWidth - 8, y: buttonY, width: searchWidth, height: 28)
     if let active = tabs.first(where: { $0.swarmId == activeId }) {
       document.scrollToVisible(active.frame)
     }
@@ -388,7 +429,7 @@ private final class SwarmTabStrip: NSView {
     else { window?.performDrag(with: event) }
   }
   @objc private func newSwarm() { emit?("new", nil) }
-  @objc private func showNotifications() { emit?("notifications", nil) }
+  @objc private func showSearch() { emit?("jump", nil) }
   override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation { actionsEnabled ? .move : [] }
   override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation { actionsEnabled ? .move : [] }
   override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {

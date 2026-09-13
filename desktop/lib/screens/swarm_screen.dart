@@ -136,7 +136,6 @@ class _SwarmScreenState extends State<SwarmScreen> {
       'canReopen': app.canReopenClosedSwarm,
       'canFind': _canFindTerminal,
       'canClosePane': app.focusedPane != null,
-      'canChangeWallpaper': app.panes.isEmpty,
       'canGoBack': _navigation.canGoBack(app),
       'canGoForward': _navigation.canGoForward(app),
       'closedHistory': [
@@ -203,8 +202,6 @@ class _SwarmScreenState extends State<SwarmScreen> {
         _stepHistory(1);
       case 'showHistory':
         await _jump(historyOnly: true);
-      case 'nextWallpaper':
-        if (app.panes.isEmpty) app.nextSwarmWallpaper();
       case 'select':
         if (args['id'] is String) app.selectSwarm(args['id']);
       case 'close':
@@ -308,18 +305,31 @@ class _SwarmScreenState extends State<SwarmScreen> {
   });
   Future<void> _jump({bool historyOnly = false}) async {
     final target = app.activeSwarmId;
-    SwarmDestination? selected;
+    SwarmSearchSelection? selected;
     await _dialog(() async {
       selected = await showSwarmSwitcher(
         context,
         app,
         _navigation,
         historyOnly: historyOnly,
+        projects: _projects,
       );
     });
     if (!mounted || selected == null) return;
     _preparePaneFocus();
-    await activateSwarmDestination(app, selected!, destinationSwarmId: target);
+    final opened = await activateSwarmSearchSelection(
+      app,
+      selected!,
+      destinationSwarmId: target,
+      projects: _projects.projects,
+    );
+    if (!opened && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('That result is no longer available. Search again.'),
+        ),
+      );
+    }
   }
 
   void _stepHistory(int direction) {
@@ -340,22 +350,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
   }
 
   Future<void> _addAgent() async {
-    final target = app.activeSwarmId;
-    bool create = false;
-    SwarmAgentRef? selected;
-    await _dialog(() async {
-      selected = await showSwarmAgentPicker(context, app, () => create = true);
-    });
-    if (!mounted) return;
-    if (create) {
-      await _newAgent(swarmId: target);
-    } else if (selected != null) {
-      await app.addAgentToSwarm(
-        selected!.machineId,
-        selected!.agent.id,
-        swarmId: target,
-      );
-    }
+    await _jump();
   }
 
   Future<void> _addProject() => _dialog(() async {
@@ -597,11 +592,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
                     fit: StackFit.expand,
                     children: [
                       if (app.panes.isEmpty)
-                        RepaintBoundary(
-                          child: SwarmWallpaper(
-                            index: app.activeSwarm.wallpaper,
-                          ),
-                        ),
+                        const RepaintBoundary(child: SwarmWallpaper()),
                       Padding(
                         padding: app.panes.isEmpty
                             ? EdgeInsets.zero
@@ -617,6 +608,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                   notifier: app,
                                   projects: _projects.projects,
                                   onNewAgent: _newAgent,
+                                  onSearch: _jump,
                                   onAddProject: _addProject,
                                   onLinkMachine: () => _dialog(
                                     () => showSwarmLinkDialog(context, app),
@@ -624,40 +616,9 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                   onMachine: _machine,
                                   onProject: _project,
                                   onProjectAgents: _projectAgents,
-                                  onAgent: (entry) => app.addAgentToSwarm(
-                                    entry.machineId,
-                                    entry.agent.id,
-                                  ),
                                 ),
                               ),
                             ),
-                            if (app.panes.isNotEmpty)
-                              Positioned(
-                                right: 10,
-                                bottom: 10,
-                                child: Material(
-                                  color: grid.AppPalette.swarmTabBar,
-                                  elevation: 6,
-                                  borderRadius: BorderRadius.circular(8),
-                                  child: IconButton(
-                                    tooltip: withShortcutHint(
-                                      'Add agent',
-                                      ShortcutAction.addAgent,
-                                    ),
-                                    onPressed: _addAgent,
-                                    constraints: const BoxConstraints.tightFor(
-                                      width: 34,
-                                      height: 34,
-                                    ),
-                                    padding: EdgeInsets.zero,
-                                    icon: Icon(
-                                      Icons.add,
-                                      size: 21,
-                                      color: grid.AppPalette.swarmAccent,
-                                    ),
-                                  ),
-                                ),
-                              ),
                           ],
                         ),
                       ),
@@ -743,16 +704,32 @@ class _SwarmScreenState extends State<SwarmScreen> {
           icon: const Icon(Icons.add, size: 18),
         ),
         const Spacer(),
-        IconButton(
-          tooltip: withShortcutHint(
-            _attention == 0 ? 'Needs input' : '$_attention agents need input',
-            ShortcutAction.showAttention,
-          ),
-          onPressed: _notifications,
-          icon: Badge(
-            isLabelVisible: _attention > 0,
-            label: Text('$_attention'),
-            child: const Icon(Icons.notifications_none, size: 19),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: SizedBox(
+            width: 192,
+            height: 28,
+            child: OutlinedButton(
+              onPressed: _jump,
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                foregroundColor: grid.AppPalette.swarmAccent,
+                backgroundColor: grid.AppPalette.swarmField,
+                side: const BorderSide(color: Colors.white10),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.search, size: 14),
+                  SizedBox(width: 8),
+                  Text('Search…', style: TextStyle(fontSize: 12)),
+                  Spacer(),
+                  Text('⌘P', style: TextStyle(fontSize: 11)),
+                ],
+              ),
+            ),
           ),
         ),
         IconButton(

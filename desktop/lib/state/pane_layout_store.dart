@@ -138,11 +138,7 @@ class PaneLayoutStore {
     }
   }
 
-  Future<void> saveSwarms(
-    List<Swarm> swarms,
-    String activeId,
-    int nextWallpaper,
-  ) {
+  Future<void> saveSwarms(List<Swarm> swarms, String activeId) {
     // Capture each request before yielding, but keep only the latest snapshot
     // while a write is pending. Holding a navigation key must not queue a full
     // state-file rewrite for every intermediate focus or tab selection.
@@ -150,7 +146,6 @@ class PaneLayoutStore {
       _pendingSwarmSnapshot = jsonEncode({
         'version': 1,
         'activeId': activeId,
-        'nextWallpaper': nextWallpaper,
         'swarms': swarms.map((s) => s.toJson()).toList(),
       });
     } catch (_) {

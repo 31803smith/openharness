@@ -75,7 +75,6 @@ void main() {
       app.togglePinPane(shared.id);
       app.setPreset(2, PanePreset.rows);
       app.toggleZoomPane();
-      final wallpaper = original.wallpaper;
       app.newSwarm(name: 'Keep working');
       final other = app.activeSwarm;
       await app.addAgentToSwarm('m', 'a0');
@@ -88,7 +87,6 @@ void main() {
       expect(app.panes.map((p) => p.agentId), ['a0', 'a1']);
       expect(app.panes.first, same(shared));
       expect(shared.composerVisible, isTrue);
-      expect(app.activeSwarm.wallpaper, wallpaper);
       expect(app.presetFor(2), PanePreset.rows);
       expect(app.focusedPaneId, shared.id);
       expect(app.zoomedPaneId, shared.id);
