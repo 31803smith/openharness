@@ -3,46 +3,15 @@ import 'package:flutter/widgets.dart';
 
 import '../logging/debug_surface.dart';
 
-/// Every keyboard shortcut in the app, declared once.
+/// Harness uses Command as a direct prefix for frequent workspace actions.
+/// H/J/K/L and arrows focus panes, B routes a task, S changes layout and R
+/// refreshes discovery. The same definitions feed live keys, help and search.
 ///
-/// One list feeds both the live bindings and the ⌘/ sheet, so a shortcut can
-/// never work without being documented or be documented without working.
-///
-/// ## Why every one of these is ⌘, and none is Ctrl
-///
-/// The main pane is a real terminal running a real TUI, and three layers below
-/// this app are already holding keys:
-///
-/// * **The engine's TUI** — `Esc` interrupts, `⇧Tab` cycles permission modes,
-///   `⌥⏎` inserts a newline.
-/// * **tmux** — agents are attached to tmux panes, whose default prefix is
-///   `Ctrl+B`.
-/// * **The shell** — `Ctrl+C`, `Ctrl+D`, `Ctrl+R`, `Ctrl+A`, `Ctrl+E`, `Ctrl+L`.
-///
-/// On macOS the Command key never reaches the pty, so it is the only modifier
-/// this app can spend. `⌥` is NOT available: terminals send it as a Meta/ESC
-/// prefix, which is why `⌥⏎` reaches the engine at all. `⌘⌥` together is safe.
-///
-/// Claude Code Desktop binds `Ctrl+Tab`, ``Ctrl+` `` and `Ctrl+O`. It can — its
-/// main pane is a chat. Copying that here would break the terminal, so this
-/// list deliberately diverges.
-///
-/// Three more keys are spoken for by `package:xterm` itself on macOS — `⌘C`,
-/// `⌘V`, `⌘A` (copy, paste, select all) — and must stay with it.
-///
-/// ⚠️ THAT ONLY BECAME TRUE ONCE THE MENU LET GO OF THEM. Flutter's macOS
-/// template ships `MainMenu.xib` with a full Edit menu, and `Cut`/`Copy`/
-/// `Paste`/`Select All` carried `keyEquivalent` — so AppKit matched ⌘X/⌘C/⌘V/⌘A
-/// in `performKeyEquivalent:`, which runs BEFORE keyDown reaches the responder
-/// chain, and dispatched `cut:`/`copy:`/`paste:`/`selectAll:` up it instead.
-/// xterm's paste is a Shortcuts→Actions binding driven by a KEY EVENT, so it
-/// never saw the keystroke: ⌘V did nothing in a terminal pane and the only way
-/// to paste was whatever the engine's own TUI happened to bind.
-///
-/// Those four `keyEquivalent`s are now stripped from the xib. The menu items
-/// stay — clicked, they still work through the responder chain — and text
-/// fields keep their shortcuts from Flutter's own `DefaultTextEditingShortcuts`,
-/// which binds the same four on macOS. Do not put them back.
+/// Unclaimed input stays with the focused agent or text field. Composition,
+/// copy/paste and the coding agent's own prompt editing must keep working.
+/// AppKit's Edit menu has no competing equivalents for C/V/X/A, and Hide has
+/// no H equivalent: Flutter owns editing and Harness owns Command-H movement.
+/// Menu clicks still use their usual responder-chain actions.
 
 enum ShortcutAction {
   newSwarm,
@@ -81,7 +50,7 @@ enum ShortcutAction {
   findNext,
   findPrevious,
 
-  /// Add a view to the current Swarm, independently of navigation.
+  /// Add an agent to the current swarm, independently of navigation.
   addAgent,
 
   closePane,
@@ -143,28 +112,8 @@ const List<AppShortcut> kAppShortcuts = [
   ),
   // --- navigate -------------------------------------------------------------
   //
-  // ONE MOTION, TWO SPELLINGS. Every direction is bound as both `⌘`+arrow and
-  // `⌘`+hjkl, live at the same time and with no mode to switch between them —
-  // which is what zellij does with Alt, and for the same reason: a person who
-  // reaches for hjkl and a person who reaches for the arrows are not two
-  // populations to be asked about, they are two hands on the same keyboard.
-  //
-  // ⌘, NOT Ctrl, and that is forced. `vim-tmux-navigator` — the thing vim users
-  // actually have in their fingers — binds Ctrl+hjkl, and it works there because
-  // tmux ASKS whether the focused pane is running vim and forwards the key only
-  // then. Nothing here can ask: the pane is always a terminal running a TUI, and
-  // Ctrl-h/j/k/l are backspace, newline, kill-line and clear — keys the agent
-  // needs. Taking them would break the terminal for everyone to please one half
-  // of the room. See this file's header for why ⌥ is out too.
-  //
-  // ⌘H WAS MACOS'S. `MainMenu.xib` carried `keyEquivalent="h"` on Hide, matched
-  // in `performKeyEquivalent:` before Flutter ever sees the key — the same trap
-  // the header describes for ⌘C/⌘V/⌘A, and answered the same way: the
-  // keyEquivalent is stripped, the menu item stays and still works when clicked.
-  // ⌘J (Jump to Selection) and ⌘; (Check Document Now) went with it; this app
-  // uses those keys for pane navigation. Terminal Find owns ⌘F/G separately.
-  // The cost is real and worth saying:
-  // Hide is no longer a keystroke in this app.
+  // Both letter and arrow directions are available without a mode switch.
+  // The macOS Hide menu keeps its click action but releases Command-H.
   AppShortcut(
     action: ShortcutAction.focusPaneLeft,
     activator: SingleActivator(LogicalKeyboardKey.keyH, meta: true),
@@ -691,13 +640,12 @@ class TerminalKey {
 /// "why is there no shortcut for X" is answered by seeing that X already
 /// belongs to something.
 const List<TerminalKey> kTerminalOwnedKeys = [
-  TerminalKey(['⌘', 'C'], 'Copy — xterm\'s own'),
+  TerminalKey(['⌘', 'C'], 'Copy'),
   TerminalKey(['⌘', 'V'], 'Paste'),
   TerminalKey(['⌘', 'A'], 'Select all'),
   TerminalKey(['esc'], 'Interrupt the engine'),
   TerminalKey(['⌥', '⏎'], "Newline in the engine's prompt"),
-  TerminalKey(['⌃', 'B'], 'tmux prefix'),
-  TerminalKey(['⌃', 'C'], "The shell's own keys"),
+  TerminalKey(['⌃', 'C'], 'Cancel / interrupt in the agent'),
 ];
 
 /// Turns the declared shortcuts into the map [CallbackShortcuts] wants.

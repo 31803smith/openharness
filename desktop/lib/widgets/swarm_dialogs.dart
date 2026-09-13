@@ -11,40 +11,68 @@ import 'link_machine_dialog.dart';
 import 'link_machine_screen.dart';
 import 'remote_folder_picker.dart';
 
-Future<String?> showSwarmRenameDialog(BuildContext context, String name) async {
-  final controller = TextEditingController(text: name)
-    ..selection = TextSelection(baseOffset: 0, extentOffset: name.length);
-  try {
-    return await showAppDialog<String>(
+Future<String?> showSwarmRenameDialog(BuildContext context, String name) =>
+    showAppDialog<String>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Rename swarm'),
-        content: SizedBox(
-          width: 360,
-          child: TextField(
-            controller: controller,
-            autofocus: true,
-            maxLength: 80,
-            decoration: const InputDecoration(labelText: 'Name'),
-            onSubmitted: (value) => Navigator.pop(context, value),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, controller.text),
-            child: const Text('Save'),
-          ),
-        ],
-      ),
+      transitionDuration: Duration.zero,
+      builder: (_) => _RenameSwarmDialog(name: name),
     );
-  } finally {
-    // The route's reverse transition may still be rendering the field.
-    Future<void>.delayed(const Duration(milliseconds: 200), controller.dispose);
+
+class _RenameSwarmDialog extends StatefulWidget {
+  const _RenameSwarmDialog({required this.name});
+  final String name;
+  @override
+  State<_RenameSwarmDialog> createState() => _RenameSwarmDialogState();
+}
+
+class _RenameSwarmDialogState extends State<_RenameSwarmDialog> {
+  late final _text = TextEditingController(
+    text: widget.name,
+  )..selection = TextSelection(baseOffset: 0, extentOffset: widget.name.length);
+  final _focus = FocusNode(debugLabel: 'Rename swarm name');
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && ModalRoute.isCurrentOf(context) != false) {
+        _focus.requestFocus();
+      }
+    });
   }
+
+  @override
+  void dispose() {
+    _focus.dispose();
+    _text.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Rename swarm'),
+    content: SizedBox(
+      width: 360,
+      child: TextField(
+        controller: _text,
+        focusNode: _focus,
+        autofocus: true,
+        maxLength: 80,
+        decoration: const InputDecoration(labelText: 'Name'),
+        onSubmitted: (value) => Navigator.pop(context, value),
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Cancel'),
+      ),
+      FilledButton(
+        onPressed: () => Navigator.pop(context, _text.text),
+        child: const Text('Save'),
+      ),
+    ],
+  );
 }
 
 Future<SavedSwarmProject?> showSwarmProjectDialog(

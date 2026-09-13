@@ -12,6 +12,7 @@ import '../settings/settings_screen.dart';
 import '../settings/settings_section.dart';
 import '../shared/theme/app_theme.dart' as grid;
 import '../shortcuts/app_shortcuts.dart';
+import '../shortcuts/keymap_commands.dart';
 import '../state/app_state.dart';
 import '../terminal/terminal_viewport.dart';
 import '../usage/models_menu_controller.dart';
@@ -432,6 +433,14 @@ class _SwarmScreenState extends State<SwarmScreen> {
     SwarmSearchSelection selected,
     String target,
   ) async {
+    final command = selected.destination.commandId;
+    if (command != null) {
+      // The result list is gone before a dialog or focus-changing command runs.
+      // Recheck availability: a machine or pane may have changed while typing.
+      FocusManager.instance.applyFocusChangesIfNeeded();
+      if (_canExecuteCommand(command)) _commands[command]?.call();
+      return;
+    }
     _preparePaneFocus();
     final opened = await activateSwarmSearchSelection(
       app,
@@ -468,6 +477,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
       app,
       _navigation.recent,
       projects: _projects,
+      commands: _searchCommands,
     );
     _search!.addListener(_syncSearch);
     _searchOverlay = OverlayEntry(builder: _buildSearchOverlay);
@@ -557,7 +567,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
   Future<void> _chooseSearch(SwarmSearchSelection choice) async {
     final target = _search?.targetId;
     if (target == null) return;
-    _closeSearch(restoreFocus: false);
+    _closeSearch(restoreFocus: choice.destination.isCommand);
     await _activateSearch(choice, target);
   }
 
@@ -572,9 +582,9 @@ class _SwarmScreenState extends State<SwarmScreen> {
             (_native ? _nativeSearchWidth : _searchWidth(constraints.maxWidth))
                 .clamp(128.0, constraints.maxWidth - 16);
         final scale = MediaQuery.textScalerOf(context);
-        final rowHeight = (scale.scale(13) + scale.scale(11) + 32).clamp(
-          56,
-          double.infinity,
+        final rowHeight = swarmSearchRowHeight(
+          scale,
+          commands: search.isCommandMode,
         );
         final height = (search.rows.length.clamp(1, 7) * rowHeight + 64).clamp(
           140.0,
@@ -768,6 +778,118 @@ class _SwarmScreenState extends State<SwarmScreen> {
     });
   }
 
+  // Keyboard actions and search commands execute the same callbacks.
+  late final Map<ShortcutAction, VoidCallback> _actionHandlers = {
+    ShortcutAction.newSwarm: app.newSwarm,
+    ShortcutAction.reopenClosedSwarm: app.reopenClosed,
+    ShortcutAction.closeSwarm: () => app.closeSwarm(app.activeSwarmId),
+    ShortcutAction.renameSwarm: () => _rename(app.activeSwarmId),
+    ShortcutAction.nextSwarm: () => app.stepSwarm(1),
+    ShortcutAction.previousSwarm: () => app.stepSwarm(-1),
+    ShortcutAction.showSettings: _settings,
+    ShortcutAction.focusPaneLeft: () => app.focusPaneHorizontally(-1),
+    ShortcutAction.focusPaneRight: () => app.focusPaneHorizontally(1),
+    ShortcutAction.focusPaneAbove: () => app.focusPaneVertically(-1),
+    ShortcutAction.focusPaneBelow: () => app.focusPaneVertically(1),
+    ShortcutAction.movePaneLeft: () => app.movePaneDirection(dx: -1, dy: 0),
+    ShortcutAction.movePaneRight: () => app.movePaneDirection(dx: 1, dy: 0),
+    ShortcutAction.movePaneUp: () => app.movePaneDirection(dx: 0, dy: -1),
+    ShortcutAction.movePaneDown: () => app.movePaneDirection(dx: 0, dy: 1),
+    ShortcutAction.nextAgent: () => _stepHistory(1),
+    ShortcutAction.previousAgent: () => _stepHistory(-1),
+    ShortcutAction.showHistory: () => _jump(historyOnly: true),
+    ShortcutAction.findTerminal: () =>
+        app.focusedPane?.session?.find(TerminalFindAction.open),
+    ShortcutAction.findNext: () =>
+        app.focusedPane?.session?.find(TerminalFindAction.next),
+    ShortcutAction.findPrevious: () =>
+        app.focusedPane?.session?.find(TerminalFindAction.previous),
+    ShortcutAction.lastPane: app.focusLastPane,
+    ShortcutAction.zoomPane: app.toggleZoomPane,
+    ShortcutAction.switchAgent: _jump,
+    ShortcutAction.showAttention: _notifications,
+    ShortcutAction.addAgent: _addAgent,
+    ShortcutAction.closePane: () {
+      if (app.focusedPaneId != null) {
+        app.closePane(app.focusedPaneId!);
+      }
+    },
+    ShortcutAction.newAgent: _newAgent,
+    ShortcutAction.routeTask: () =>
+        _dialog(() => showTaskPalette(context, app)),
+    ShortcutAction.reload: app.retryMachines,
+    ShortcutAction.showLayout: () =>
+        _dialog(() => showLayoutPalette(context, app)),
+    ShortcutAction.pinPane: () {
+      if (app.focusedPaneId != null) {
+        app.togglePinPane(app.focusedPaneId!);
+      }
+    },
+    ShortcutAction.showShortcuts: () =>
+        _dialog(() => showShortcutsSheet(context)),
+    ShortcutAction.showDebug: () => _dialog(
+      () => showSettingsScreen(
+        context,
+        app,
+        source: 'shortcut',
+        initialSection: SettingsSection.debug,
+      ),
+    ),
+  };
+
+  late final Map<String, VoidCallback> _commands = {
+    for (final command in harnessCommands)
+      if (command.action != null && _actionHandlers.containsKey(command.action))
+        command.id: _actionHandlers[command.action]!,
+    'machine.link': () => _dialog(() => showSwarmLinkDialog(context, app)),
+    'project.add': _addProject,
+  };
+
+  bool _canExecuteCommand(String id) {
+    if (!_commands.containsKey(id) ||
+        !_routeIsCurrent ||
+        _dialogOpen ||
+        _spokenPaletteOpen) {
+      return false;
+    }
+    if (id == 'navigation.quick_open') {
+      return false;
+    }
+    if (id == 'swarm.new') return app.swarms.length < AppNotifier.maxSwarms;
+    if (id == 'swarm.reopen') return app.canReopenLastClosed;
+    if (id == 'swarm.next' || id == 'swarm.previous') {
+      return app.swarms.length > 1;
+    }
+    if (id == 'navigation.back') return _navigation.canGoBack(app);
+    if (id == 'navigation.forward') return _navigation.canGoForward(app);
+    if (id.startsWith('terminal.')) return _canFindTerminal;
+    if (id.startsWith('pane.') || id == 'task.route') {
+      return app.focusedPane != null;
+    }
+    return true;
+  }
+
+  List<SwarmDestination> _searchCommands() => [
+    for (final command in harnessCommands)
+      if (_canExecuteCommand(command.id))
+        SwarmDestination(
+          id: 'command:${command.id}',
+          title: command.label,
+          detail: command.group.label,
+          swarmId: null,
+          current: false,
+          commandId: command.id,
+          shortcut: command.keys.isEmpty
+              ? null
+              : describeKeyBinding(
+                  harnessDefaultBindings.firstWhere(
+                    (binding) => binding.command == command.id,
+                  ),
+                ),
+          searchFields: [command.id],
+        ),
+  ];
+
   @override
   Widget build(BuildContext context) => ListenableBuilder(
     listenable: Listenable.merge([app, _projects]),
@@ -782,68 +904,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
       return CallbackShortcuts(
         bindings: {
           ...buildShortcutBindings(
-            handlers: {
-              ShortcutAction.newSwarm: app.newSwarm,
-              ShortcutAction.reopenClosedSwarm: app.reopenClosed,
-              ShortcutAction.closeSwarm: () =>
-                  app.closeSwarm(app.activeSwarmId),
-              ShortcutAction.renameSwarm: () => _rename(app.activeSwarmId),
-              ShortcutAction.nextSwarm: () => app.stepSwarm(1),
-              ShortcutAction.previousSwarm: () => app.stepSwarm(-1),
-              ShortcutAction.showSettings: _settings,
-              ShortcutAction.focusPaneLeft: () => app.focusPaneHorizontally(-1),
-              ShortcutAction.focusPaneRight: () => app.focusPaneHorizontally(1),
-              ShortcutAction.focusPaneAbove: () => app.focusPaneVertically(-1),
-              ShortcutAction.focusPaneBelow: () => app.focusPaneVertically(1),
-              ShortcutAction.movePaneLeft: () =>
-                  app.movePaneDirection(dx: -1, dy: 0),
-              ShortcutAction.movePaneRight: () =>
-                  app.movePaneDirection(dx: 1, dy: 0),
-              ShortcutAction.movePaneUp: () =>
-                  app.movePaneDirection(dx: 0, dy: -1),
-              ShortcutAction.movePaneDown: () =>
-                  app.movePaneDirection(dx: 0, dy: 1),
-              ShortcutAction.nextAgent: () => _stepHistory(1),
-              ShortcutAction.previousAgent: () => _stepHistory(-1),
-              ShortcutAction.showHistory: () => _jump(historyOnly: true),
-              ShortcutAction.findTerminal: () =>
-                  app.focusedPane?.session?.find(TerminalFindAction.open),
-              ShortcutAction.findNext: () =>
-                  app.focusedPane?.session?.find(TerminalFindAction.next),
-              ShortcutAction.findPrevious: () =>
-                  app.focusedPane?.session?.find(TerminalFindAction.previous),
-              ShortcutAction.lastPane: app.focusLastPane,
-              ShortcutAction.zoomPane: app.toggleZoomPane,
-              ShortcutAction.switchAgent: _jump,
-              ShortcutAction.showAttention: _notifications,
-              ShortcutAction.addAgent: _addAgent,
-              ShortcutAction.closePane: () {
-                if (app.focusedPaneId != null) {
-                  app.closePane(app.focusedPaneId!);
-                }
-              },
-              ShortcutAction.newAgent: _newAgent,
-              ShortcutAction.routeTask: () =>
-                  _dialog(() => showTaskPalette(context, app)),
-              ShortcutAction.reload: app.retryMachines,
-              ShortcutAction.showLayout: () =>
-                  _dialog(() => showLayoutPalette(context, app)),
-              ShortcutAction.pinPane: () {
-                if (app.focusedPaneId != null) {
-                  app.togglePinPane(app.focusedPaneId!);
-                }
-              },
-              ShortcutAction.showShortcuts: () =>
-                  _dialog(() => showShortcutsSheet(context)),
-              ShortcutAction.showDebug: () => _dialog(
-                () => showSettingsScreen(
-                  context,
-                  app,
-                  source: 'shortcut',
-                  initialSection: SettingsSection.debug,
-                ),
-              ),
-            },
+            handlers: _actionHandlers,
             onSelectPaneIndex: app.focusPaneByIndex,
           ),
         },
@@ -939,6 +1000,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                     app: app,
                                     projects: _projects,
                                     recent: _navigation.recent,
+                                    commands: _searchCommands,
                                     onChoose: _activateSearch,
                                   ),
                                   onAddProject: _addProject,

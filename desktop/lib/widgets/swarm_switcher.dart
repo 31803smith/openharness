@@ -192,6 +192,11 @@ class SwarmSearchKeys extends StatelessWidget {
   }
 }
 
+double swarmSearchRowHeight(TextScaler scale, {required bool commands}) =>
+    commands
+    ? (scale.scale(13) + 20).clamp(40, double.infinity)
+    : (scale.scale(13) + scale.scale(11) + 32).clamp(56, double.infinity);
+
 /// Shared results for the title bar, New swarm field and History.
 class SwarmSearchResults extends StatefulWidget {
   const SwarmSearchResults({
@@ -262,10 +267,7 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
   @override
   Widget build(BuildContext context) {
     final scale = MediaQuery.textScalerOf(context);
-    _rowHeight = (scale.scale(13) + scale.scale(11) + 32).clamp(
-      56,
-      double.infinity,
-    );
+    _rowHeight = swarmSearchRowHeight(scale, commands: search.isCommandMode);
     final selected = search.selected;
     return Semantics(
       container: true,
@@ -276,7 +278,9 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
             child: search.rows.isEmpty
                 ? Center(
                     child: Text(
-                      'No matching results',
+                      search.isCommandMode
+                          ? 'No matching commands'
+                          : 'No matching results',
                       style: const TextStyle(
                         fontSize: 13,
                         color: Colors.white60,
@@ -291,6 +295,7 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                       final row = search.rows[index];
                       return ListTile(
                         key: ValueKey(row.id),
+                        minTileHeight: _rowHeight,
                         enabled: search.canSubmit(row),
                         selected: index == search.cursor,
                         selectedColor: Colors.white,
@@ -301,7 +306,13 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                         contentPadding: const EdgeInsets.symmetric(
                           horizontal: 12,
                         ),
-                        leading: row.agentId != null
+                        leading: row.isCommand
+                            ? const Icon(
+                                Icons.keyboard_command_key,
+                                size: 19,
+                                color: Colors.white60,
+                              )
+                            : row.agentId != null
                             ? EngineMark(
                                 engine: row.engine,
                                 size: 20,
@@ -322,15 +333,26 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(fontSize: 13),
                         ),
-                        subtitle: Text(
-                          row.detail,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 11,
-                            color: Colors.white70,
-                          ),
-                        ),
+                        subtitle: row.isCommand
+                            ? null
+                            : Text(
+                                row.detail,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  color: Colors.white70,
+                                ),
+                              ),
+                        trailing: row.shortcut == null
+                            ? null
+                            : Text(
+                                row.shortcut!,
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  color: Colors.white70,
+                                ),
+                              ),
                         onTap: search.canSubmit(row)
                             ? () => _submit(row)
                             : null,
@@ -356,6 +378,8 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                               : 'No room to reopen'
                         : selected?.agentId != null && !selected!.hasView
                         ? 'Opens in ${search.targetName}'
+                        : search.query.isEmpty && search.commands != null
+                        ? 'Type > for commands'
                         : '↑↓ choose · Esc close',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -375,10 +399,19 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
               TextButton(
                 onPressed: search.canSubmit(selected) ? _submit : null,
                 style: TextButton.styleFrom(foregroundColor: Colors.white),
-                child: Text(
-                  '${selected == null ? 'Go to' : SwarmSearchController.action(selected)}  ↵',
-                  style: const TextStyle(fontSize: 11),
-                ),
+                child: search.isCommandMode
+                    ? const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text('Run command', style: TextStyle(fontSize: 11)),
+                          SizedBox(width: 8),
+                          Icon(Icons.keyboard_return, size: 14),
+                        ],
+                      )
+                    : Text(
+                        '${selected == null ? 'Go to' : SwarmSearchController.action(selected)}  ↵',
+                        style: const TextStyle(fontSize: 11),
+                      ),
               ),
             ],
           ),

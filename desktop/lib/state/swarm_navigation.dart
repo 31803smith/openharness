@@ -136,6 +136,8 @@ class SwarmDestination {
     this.agentId,
     this.engine,
     this.closedId,
+    this.commandId,
+    this.shortcut,
     this.projectId,
     this.members = const {},
     Iterable<String?> searchFields = const [],
@@ -147,6 +149,8 @@ class SwarmDestination {
   final String id, title, detail, machineLabel;
   final String? swarmId, machineId, agentId, engine;
   final String? closedId;
+  final String? commandId, shortcut;
+  bool get isCommand => commandId != null;
   final String? projectId;
   final Set<String> members;
   final bool current;
@@ -154,7 +158,7 @@ class SwarmDestination {
   bool get isProject => projectId != null;
   bool get isMachine => agentId == null && machineId != null && !isProject;
   bool get isGroup => isProject || isMachine;
-  bool get isSwarm => agentId == null && !isGroup;
+  bool get isSwarm => agentId == null && !isGroup && !isCommand;
   bool get hasView => swarmId != null;
 }
 
@@ -628,6 +632,8 @@ Future<bool> activateSwarmDestination(
   SwarmDestination destination, {
   required String destinationSwarmId,
 }) async {
+  // Workspace commands are owned by the screen, never resolved as an agent.
+  if (destination.isCommand) return false;
   if (destination.closedId != null) {
     return app.reopenClosed(historyId: destination.closedId);
   }

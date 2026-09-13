@@ -195,7 +195,7 @@ class _TerminalCard extends StatelessWidget {
         children: [
           const Padding(
             padding: EdgeInsets.fromLTRB(12, 0, 12, 6),
-            child: _CardTitle('The terminal keeps'),
+            child: _CardTitle('Agent input'),
           ),
           for (final key in kTerminalOwnedKeys)
             Padding(
@@ -260,9 +260,9 @@ class ShortcutsNote extends StatelessWidget {
   Widget build(BuildContext context) {
     grid.AppTheme.watch(context);
     final text = Text(
-      'Everything else belongs to the agent. Ctrl keys, Esc, Tab and ⌥⏎ go '
-      'straight to the terminal, so the engine and tmux keep the keys they '
-      'already use.',
+      'Harness shortcuts control your workspace. Other input goes to the '
+      'focused agent, where prompt editing and cancellation follow that '
+      'coding agent’s behavior.',
       style: TextStyle(
         color: grid.AppPalette.textSecondary,
         fontSize: 11.5,

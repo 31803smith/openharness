@@ -53,7 +53,7 @@ Parse and resolve when configuration changes, never on each keystroke. A lookup 
 ## Implementation status and next steps
 
 1. **Built and tested in isolation:** parser, resolver, validation, overrides/unbinding, sequences and file reload core. These are not yet connected to production dispatch.
-2. **Needs revision:** the unused draft command catalog still contains the withdrawn defaults. Reconcile it with the current `app_shortcuts.dart` bindings before enabling it. The preserved runtime integration patch also needs rebasing onto the two search fields and direct group opening.
-3. **Next implementation:** one runtime binding system for the agent workspace, search, native menus, help and tooltips, retaining the agreed defaults above. Audit native owners for conflicts with those defaults instead of assuming system conventions win.
+2. **Corrected and connected to search:** the command catalog derives its workspace keys from the live `app_shortcuts.dart` table. Both search fields accept `>` commands, show their current default shortcut, and invoke the existing workspace callbacks. Enter rechecks availability; command queries never become agent input. The previous draft defaults are gone.
+3. **Next implementation:** finish one runtime binding system for the agent workspace, search, native menus, help and tooltips, retaining the agreed defaults above. Audit native owners for conflicts with those defaults instead of assuming system conventions win.
 4. **Validation:** exact action and focus destinations, custom remaps, unbinding, repeated movement, sequences, cancellation, modal/IME behavior, and live config reload in isolated agent fixtures. Do not type tests into real agents.
 5. **Delivery:** rebuild and inspect the preview only after integration passes. The broader [working queue](harness-v2-developer-tools-research.md) tracks product proposals separately from authorized fixes.

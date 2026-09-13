@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/shortcuts/app_keymap.dart';
+import 'package:harness/shortcuts/app_shortcuts.dart';
 import 'package:harness/shortcuts/keymap.dart';
 import 'package:harness/shortcuts/keymap_commands.dart';
 import 'package:harness/shortcuts/keymap_host.dart';
@@ -46,44 +47,56 @@ Future<void> key(
 }
 
 void main() {
-  test(
-    'new defaults separate swarm selection, pane focus and terminal input',
-    () {
-      String? command(
-        String keys, [
-        KeymapContext context = KeymapContext.terminal,
-      ]) => harnessDefaultKeymap
-          .match(context, keys.split(' ').map(KeyStroke.parse))
-          .command;
-      expect(command('cmd+1'), 'swarm.select_1');
-      expect(command('cmd+9'), 'swarm.select_9');
-      expect(command('cmd+alt+1'), 'pane.focus_1');
-      expect(command('cmd+alt+left'), 'pane.focus_left');
-      expect(command('cmd+shift+enter'), 'pane.zoom');
-      expect(command('cmd+shift+p'), 'navigation.commands');
-      for (final chord in [
-        'ctrl+tab',
-        'ctrl+b',
-        'alt+c',
-        'cmd+h',
-        'cmd+s',
-        'cmd+b',
-        'cmd+d',
-        'cmd+shift+w',
-      ]) {
-        expect(command(chord), isNull, reason: chord);
-      }
-      expect(command('ctrl+n', KeymapContext.picker), 'picker.next');
-      expect(command('cmd+p', KeymapContext.picker), 'navigation.quick_open');
-      expect(command('cmd+['), 'navigation.back');
-      expect(command('cmd+[', KeymapContext.picker), 'picker.back');
-    },
-  );
+  test('the command catalog retains the current direct workspace keys', () {
+    String? command(
+      String keys, [
+      KeymapContext context = KeymapContext.terminal,
+    ]) => harnessDefaultKeymap
+        .match(context, keys.split(' ').map(KeyStroke.parse))
+        .command;
+    for (final (keys, expected) in [
+      ('cmd+1', 'pane.focus_1'),
+      ('cmd+9', 'pane.focus_9'),
+      ('cmd+h', 'pane.focus_left'),
+      ('cmd+j', 'pane.focus_below'),
+      ('cmd+k', 'pane.focus_above'),
+      ('cmd+l', 'pane.focus_right'),
+      ('cmd+left', 'pane.focus_left'),
+      ('cmd+enter', 'pane.zoom'),
+      ('cmd+shift+p', 'pane.pin'),
+      ('cmd+s', 'pane.layout'),
+      ('cmd+b', 'task.route'),
+      ('cmd+r', 'machines.refresh'),
+      ('cmd+shift+w', 'pane.close'),
+      ('cmd+w', 'swarm.close'),
+      ('ctrl+tab', 'swarm.next'),
+    ]) {
+      expect(command(keys), expected, reason: keys);
+    }
+    // Parity with the table that handles real workspace input, including all
+    // alternate directions and tab/history keys.
+    for (final shortcut in appShortcuts()) {
+      final stroke = keyStrokeFor(
+        shortcut.activator.trigger,
+        command: shortcut.activator.meta,
+        control: shortcut.activator.control,
+        alt: shortcut.activator.alt,
+        shift: shortcut.activator.shift,
+      )!;
+      final id = command(stroke.toString());
+      expect(harnessCommandById[id]?.action, shortcut.action);
+    }
+    expect(command('cmd+alt+left'), isNull);
+    expect(command('cmd+shift+enter'), isNull);
+    expect(command('ctrl+n', KeymapContext.picker), 'picker.next');
+    expect(command('cmd+p', KeymapContext.picker), 'navigation.quick_open');
+    expect(command('cmd+['), 'navigation.back');
+  });
 
   test(
     'Mac native editing and window conflicts are rejected before activation',
     () {
-      for (final keys in ['cmd+h', 'cmd+q', 'cmd+c', 'cmd+alt+h']) {
+      for (final keys in ['cmd+q', 'cmd+c', 'cmd+alt+h']) {
         final map = ResolvedKeymap(
           harnessDefaultBindings,
           KeymapConfig.parse(
@@ -100,7 +113,7 @@ void main() {
       final map = ResolvedKeymap(
         harnessDefaultBindings,
         KeymapConfig.parse(
-          '{"bindings":[{"keys":"cmd+k cmd+c","command":"pane.focus_left"}]}',
+          '{"bindings":[{"keys":"cmd+h","command":"pane.focus_left"},{"keys":"cmd+k","command":null},{"keys":"cmd+k cmd+c","command":"pane.focus_right"}]}',
           commands: harnessCommandById.keys.toSet(),
         ),
       );
@@ -149,7 +162,7 @@ void main() {
       await key(tester, LogicalKeyboardKey.keyB, ctrl: true);
       await key(tester, LogicalKeyboardKey.keyC, alt: true);
       await key(tester, LogicalKeyboardKey.tab, ctrl: true);
-      expect(delivered, ['ctrl+b', 'alt+c', 'ctrl+tab']);
+      expect(delivered, ['ctrl+b', 'alt+c']);
       map.apply(
         '{"bindings":[{"keys":"cmd+p","command":null},{"keys":"ctrl+o","command":"navigation.quick_open","when":"terminal"}]}',
       );

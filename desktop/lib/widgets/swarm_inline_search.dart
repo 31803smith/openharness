@@ -18,11 +18,13 @@ class SwarmInlineSearch extends StatefulWidget {
     required this.projects,
     required this.recent,
     required this.onChoose,
+    this.commands,
   });
 
   final AppNotifier app;
   final SwarmProjectStore projects;
   final List<String> recent;
+  final List<SwarmDestination> Function()? commands;
   final void Function(SwarmSearchSelection choice, String target) onChoose;
 
   @override
@@ -52,6 +54,7 @@ class _SwarmInlineSearchState extends State<SwarmInlineSearch> {
       widget.app,
       widget.recent,
       projects: widget.projects,
+      commands: widget.commands,
     )..setQuery(_text.text);
     _search!.addListener(_changed);
     _overlay.show();
@@ -106,9 +109,9 @@ class _SwarmInlineSearchState extends State<SwarmInlineSearch> {
           Offset.zero & info.childSize,
         );
         final scale = MediaQuery.textScalerOf(context);
-        final rowHeight = math.max(
-          56.0,
-          scale.scale(13) + scale.scale(11) + 32,
+        final rowHeight = swarmSearchRowHeight(
+          scale,
+          commands: search.isCommandMode,
         );
         final available = math.max(
           0.0,

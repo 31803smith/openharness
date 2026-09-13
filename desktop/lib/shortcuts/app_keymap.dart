@@ -56,7 +56,6 @@ class AppKeymap extends ChangeNotifier {
       for (final chord in [
         'cmd+q',
         'cmd+m',
-        'cmd+h',
         'cmd+alt+h',
         'cmd+ctrl+f',
         'cmd+c',

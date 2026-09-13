@@ -2,13 +2,22 @@
 
 Updated 2026-09-13 with coordinated palettes, Models, combined closed-work History and faster unified search. This is a working preview, not a release.
 
-## Active follow-up: first use and keyboard integration
+## Active follow-up: commands and keyboard integration
+
+- Both real search fields now accept `>` for existing workspace commands. Command results use compact rows and show the actual default shortcut. Commands stay out of ordinary agent/swarm search and History; clearing `>` returns to regular navigation. A small hint appears only in open, empty search. No new permanent button or conflicting shortcut was added.
+- Search and keyboard actions share the same callbacks. The command catalog derives workspace bindings directly from the current live table, including Cmd-H/J/K/L and arrows, Cmd-B, Cmd-S, Cmd-R, Cmd-number pane selection, Cmd-Enter zoom, Cmd-Shift-P pin and current tab/history keys. The withdrawn modifier-heavy defaults are removed. **File remapping remains unconnected until native menus, Flutter input, help and native search can agree on its effective bindings.**
+- Availability is checked again at selection and execution. A command cannot add an agent or be resolved as an agent destination. Queries never reach a session. Fixed return focus after non-navigation commands and made Rename focus its selected name immediately; the Rename controller now follows the dialog lifecycle instead of a delayed disposal timer.
+- **1,125 Flutter tests passed, with one existing skip.** Analyzer: no errors or warnings, 12 existing vendored infos. After making command rows compact, all 15 focused command/search checks passed. Final visual fixtures for both inputs were rendered and reviewed; their helper initially failed its cleanup invariant after enabling real shadows, then was corrected to restore that test-only flag. Logs: `/private/tmp/harness-v2-command-{full-tests,focus,final-checks,analyze,render,build}.log`; images: `/private/tmp/harness-v2-commands-{top,inline}.png`.
+- Release build succeeded. Before rebuilding, normally quit verified preview PID 71858 and verified it exited. Re-observe the relaunched preview process/window before later interaction. No real agent received test input and no real session was closed for testing.
+- Next: complete file-remapping ownership across AppKit and Flutter, then controlled splits/resizing and optional cached preview. Do not reapply `/private/tmp/harness-v2-keyboard-wiring-before-inline-search.patch` blindly; its search paths and assumptions are obsolete.
+
+## Previous checkpoint: first use
+
 
 - The onboarding implementation is in the rebuilt preview. Setup now has one visible installation plan and a direct Install action; manual setup remains secondary. It keeps read-only probing, explicit installation consent, terminal handoff, verification and recovery. Sign-in shows the value and a static two-agent swarm example; the action remains visible at 880×560. The fresh local empty workspace explains folder → agent → work. Existing available agents can be opened directly. The full machine list stays available for linking/offline/multiple-machine states and discovery.
 - New agent preselects a known installed coding agent, uses This computer for the local target, and puts Project folder before Coding agent. Late engine discovery cannot replace a deliberate user choice or a submitted launch. Both real search fields and returning-user workflows remain in place. No test task is submitted to real agents, and the example is static.
 - **65 focused checks and the full 1,122-test Flutter suite passed, with one existing skip.** Analyzer has no errors/warnings and 12 existing vendored infos. The full run initially caught an implicit non-macOS tab-label color animation; that animation was removed and the complete suite rerun successfully. First-use render fixtures were visually inspected, including the minimum sign-in window and fresh setup/workspace states. Release build succeeded. Logs: `/private/tmp/harness-v2-onboarding-{tests,focus-tests,full-tests,analyze,render,build}.log`; images: `/private/tmp/harness-v2-onboarding-{login,setup,empty,existing}.png`.
 - Normally quit verified preview PID 56329 before rebuilding and relaunched the resulting app. Re-observe the process/window before later interaction. CUA previously returned `cgWindowNotFound`; current first-use evidence is isolated rendering and behavior checks, not live onboarding through the user's account. No sign-out, new provider install or live-agent input was used for validation.
-- Continue the accepted keyboard plan: keep Cmd-H/J/K/L and Cmd-arrows, Cmd-B, Cmd-S and Cmd-R; reconcile the unused draft catalog with those actual defaults before activation. Then finish commands in search, controlled resizing and optional cached preview. Do not apply the old runtime patch blindly across the new palette/search/onboarding changes.
 
 ## Previous checkpoint: coordinated palettes
 

@@ -97,7 +97,7 @@ void main() {
     );
 
     // And the keys the app deliberately leaves alone are named too.
-    expect(find.text('The terminal keeps'.toUpperCase()), findsOneWidget);
+    expect(find.text('Agent input'.toUpperCase()), findsOneWidget);
     expect(find.text(kTerminalOwnedKeys.first.label), findsOneWidget);
   });
 
