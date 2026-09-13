@@ -132,6 +132,7 @@ class SwarmDestination {
     required this.swarmId,
     required this.current,
     this.machineId,
+    this.machineLabel = '',
     this.agentId,
     this.engine,
     this.closedId,
@@ -143,7 +144,7 @@ class SwarmDestination {
          ...searchFields.whereType<String>().map((s) => s.toLowerCase()),
        ];
 
-  final String id, title, detail;
+  final String id, title, detail, machineLabel;
   final String? swarmId, machineId, agentId, engine;
   final String? closedId;
   final String? projectId;
@@ -157,7 +158,7 @@ class SwarmDestination {
   bool get hasView => swarmId != null;
 }
 
-enum SwarmSearchAction { open, addHere, openGroup }
+enum SwarmSearchAction { open, addHere }
 
 class SwarmSearchSelection {
   const SwarmSearchSelection(
@@ -281,10 +282,7 @@ Future<bool> activateSwarmSearchSelection(
   List<SavedSwarmProject> projects = const [],
 }) async {
   final destination = selection.destination;
-  if (selection.action == SwarmSearchAction.open) {
-    if (destination.isGroup) {
-      return false; // Groups are browsed inside the picker.
-    }
+  if (selection.action == SwarmSearchAction.open && !destination.isGroup) {
     return activateSwarmDestination(
       app,
       destination,
@@ -322,17 +320,19 @@ Future<bool> activateSwarmSearchSelection(
           ),
     );
   }
-  if (!destination.isGroup ||
-      destination.members.isEmpty ||
-      destination.members.length > AppNotifier.maxPanes ||
-      app.swarms.length >= AppNotifier.maxSwarms) {
+  if (!canOpenSwarmGroup(
+    app,
+    destination,
+    destinationSwarmId: destinationSwarmId,
+  )) {
     return false;
   }
   final entries = SwarmSearchCatalog().read(app, projects);
   final group = entries
       .where((entry) => entry.id == destination.id)
       .firstOrNull;
-  // Open exactly the reviewed set, never silently include newly discovered work.
+  // Keep the membership represented by the selected result. Discovery may
+  // change while this action is waiting to run.
   if (group == null || !group.members.containsAll(destination.members)) {
     return false;
   }
@@ -342,14 +342,68 @@ Future<bool> activateSwarmSearchSelection(
         (machineId: entry.machineId!, agentId: entry.agentId!),
   ];
   if (agents.length != destination.members.length) return false;
-  app.newSwarm(name: group.title);
+  final existing = _matchingGroupSwarm(app, destination);
+  if (existing != null) {
+    app.selectSwarm(existing.id);
+    final focus = existing.focusedPaneId;
+    if (focus != null) app.focusPane(focus);
+    return true;
+  }
+  final target = app.swarms
+      .where((swarm) => swarm.id == destinationSwarmId)
+      .firstOrNull;
+  if (target != null && target.panes.isEmpty) {
+    app.selectSwarm(target.id);
+  } else {
+    app.newSwarm(name: group.title);
+  }
   await app.seedSwarm(group.title, agents);
   return true;
+}
+
+bool canOpenSwarmGroup(
+  AppNotifier app,
+  SwarmDestination destination, {
+  required String destinationSwarmId,
+}) =>
+    destination.isGroup &&
+    destination.members.length <= AppNotifier.maxPanes &&
+    (_matchingGroupSwarm(app, destination) != null ||
+        app.swarms.any(
+          (swarm) => swarm.id == destinationSwarmId && swarm.panes.isEmpty,
+        ) ||
+        app.swarms.length < AppNotifier.maxSwarms);
+
+Swarm? _matchingGroupSwarm(AppNotifier app, SwarmDestination destination) {
+  bool matches(Swarm swarm) =>
+      // Empty tabs only match their name; two empty projects are distinct.
+      (destination.members.isNotEmpty || swarm.name == destination.title) &&
+      swarm.panes.length == destination.members.length &&
+      swarm.panes.every(
+        (pane) =>
+            pane.agentId != null &&
+            destination.members.contains(
+              agentDestinationId(pane.machineId, pane.agentId!),
+            ),
+      );
+  return app.swarms
+          .where((swarm) => swarm.name == destination.title && matches(swarm))
+          .firstOrNull ??
+      (matches(app.activeSwarm) ? app.activeSwarm : null) ??
+      app.swarms.where(matches).firstOrNull;
 }
 
 String _agentCountLabel(Iterable<String?> ids) {
   final count = ids.whereType<String>().length;
   return '$count ${count == 1 ? 'agent' : 'agents'}';
+}
+
+String _swarmMachineLabel(AppNotifier app, Iterable<String> machineIds) {
+  final ids = machineIds.toSet();
+  if (ids.isEmpty) return '';
+  if (ids.length > 1) return '${ids.length} machines';
+  final id = ids.single;
+  return app.stateOf(id)?.machine.displayName ?? id;
 }
 
 List<SwarmDestination> closedWorkDestinations(AppNotifier app) => [
@@ -359,6 +413,10 @@ List<SwarmDestination> closedWorkDestinations(AppNotifier app) => [
         id: entry.historyId,
         closedId: entry.historyId,
         title: entry.name,
+        machineLabel: _swarmMachineLabel(app, [
+          for (final pane in entry.panes)
+            if (pane.agentId != null) pane.machineId,
+        ]),
         detail:
             '${_agentCountLabel(entry.panes.map((pane) => pane.agentId))} · Recently closed',
         swarmId: null,
@@ -372,6 +430,9 @@ List<SwarmDestination> closedWorkDestinations(AppNotifier app) => [
         detail: '${entry.machineName} · ${entry.swarmName} · Recently closed',
         swarmId: null,
         machineId: entry.machineId,
+        machineLabel:
+            app.stateOf(entry.machineId)?.machine.displayName ??
+            entry.machineName,
         agentId: entry.agentId,
         engine: entry.engine,
         current: false,
@@ -415,6 +476,10 @@ List<SwarmDestination> swarmDestinations(
       SwarmDestination(
         id: swarmDestinationId(swarm.id),
         title: swarm.name,
+        machineLabel: _swarmMachineLabel(app, [
+          for (final pane in swarm.panes)
+            if (pane.agentId != null) pane.machineId,
+        ]),
         detail: _agentCountLabel(swarm.panes.map((pane) => pane.agentId)),
         swarmId: swarm.id,
         current: swarm.id == app.activeSwarmId,
@@ -463,6 +528,7 @@ List<SwarmDestination> swarmDestinations(
         ].whereType<String>().where((s) => s.isNotEmpty).toSet().join(' · '),
         swarmId: owner?.id,
         machineId: machineId,
+        machineLabel: machineName,
         agentId: agentId,
         engine: engine,
         current:

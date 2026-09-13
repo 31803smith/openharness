@@ -295,7 +295,7 @@ private extension SwarmTitlebar {
       !["Next Swarm", "Previous Swarm"].contains($0.title)
     }, "Next and Previous Swarm have no redundant menu rows")
     let modelRows: [[String: Any]] = [
-      ["title": "Anthropic", "status": "12% remaining", "engine": "claude",
+      ["title": "Anthropic", "account": "Account aabbcc", "status": "12% remaining", "engine": "claude",
        "details": ["Limiting window: Session", "Session — 12% remaining · resets in 2h"]],
       ["title": "OpenAI", "status": "Not signed in", "engine": "codex",
        "details": ["Sign in to Codex to see usage"]],
@@ -303,31 +303,41 @@ private extension SwarmTitlebar {
     updateModels(modelRows)
     let models = main.item(withTitle: "Models")!.submenu!
     try checkTitlebar(models.items.filter { !$0.isSeparatorItem }.map(\.title) == [
-      "Subscription", "Anthropic — 12% remaining", "OpenAI — Not signed in",
-      "API", "OpenRouter API", "fal.ai API", "Local", "Local models", "Add Model"
+      "Subscription", "Anthropic, Account aabbcc, 12% remaining", "OpenAI, Not signed in",
+      "API", "OpenRouter", "fal.ai", "Local", "DeepSeek V4 Flash", "Qwen3.8-27B", "Add Model"
     ], "Models has the three requested sections and Add Model last")
     try checkTitlebar(models.items.filter(\.isSeparatorItem).count == 3,
       "Native separators distinguish the sections and future Add Model action")
-    for title in ["OpenRouter API", "fal.ai API", "Local models", "Add Model"] {
+    for title in ["OpenRouter", "fal.ai", "DeepSeek V4 Flash", "Qwen3.8-27B", "Add Model"] {
       let item = models.item(withTitle: title)!
       try checkTitlebar(!item.isEnabled && item.action == nil && item.target == nil && item.submenu == nil,
         "\(title) is greyed out and cannot dispatch or open anything")
     }
-    let subscription = models.items.first(where: { $0.submenu != nil })!
-    try checkTitlebar(subscription.isEnabled && subscription.image?.isTemplate == false,
-      "Subscription rows have colored provider marks and accessible details")
-    try checkTitlebar(subscription.submenu?.items.last?.title == modelRows[0]["details"].flatMap { ($0 as? [String])?.last },
-      "The native submenu exposes the measured window and reset time")
+    let subscription = models.items.first(where: { $0.view is SwarmSubscriptionView })!
+    let row = subscription.view as! SwarmSubscriptionView
+    try checkTitlebar(subscription.submenu == nil && subscription.action == nil && !subscription.isEnabled,
+      "Subscription balances have no arrow or fake action")
+    try checkTitlebar(row.identity.stringValue == "Anthropic  Account aabbcc" && row.balance.stringValue == "12% remaining",
+      "Provider and account are on the left; usage is a separate right column")
+    try checkTitlebar(row.identity.frame.maxX + 24 <= row.balance.frame.minX && row.balance.frame.maxX == row.bounds.width - 18,
+      "Account and balance have a clear gap and a consistent trailing inset")
+    try checkTitlebar(row.identity.frame.midY == row.balance.frame.midY,
+      "Both columns share a vertical center")
+    try checkTitlebar(row.accessibilityLabel() == subscription.title,
+      "VoiceOver can read the provider, account and remaining usage together")
+    let secondRow = models.items.compactMap { $0.view as? SwarmSubscriptionView }.last!
+    for view in [row, secondRow] {
+      let cell = view.balance.cell!
+      let drawing = cell.drawingRect(forBounds: view.balance.bounds)
+      let glyphWidth = (view.balance.stringValue as NSString).size(withAttributes: [.font: view.balance.font!]).width
+      try checkTitlebar(view.bounds.width >= 440 && drawing.width >= glyphWidth,
+        "Remaining usage and sign-in status have enough actual text-cell width to display in full")
+    }
+    try checkTitlebar(secondRow.balance.frame.maxX == row.balance.frame.maxX,
+      "Different balances align on their right edges")
     updateModels(modelRows)
     try checkTitlebar(models.items.contains(where: { $0 === subscription }),
       "Unchanged subscription data reuses native menu items")
-    actionsEnabled = false
-    updateModelsAvailability()
-    try checkTitlebar(!subscription.isEnabled, "Subscription details respect a covered workspace")
-    actionsEnabled = true
-    updateModelsAvailability()
-    try checkTitlebar(subscription.isEnabled && models.item(withTitle: "Add Model")?.isEnabled == false,
-      "Only implemented subscription details become available again")
     updateModels([])
     try checkTitlebar(models.items.allSatisfy { !$0.title.contains("12%") && $0.submenu == nil },
       "Signing out clears cached native account readings")
@@ -370,6 +380,20 @@ let titlebarCheckApp = NSApplication.shared
 titlebarCheckApp.setActivationPolicy(.prohibited)
 titlebarCheckApp.appearance = NSAppearance(named: .darkAqua)
 do {
+  let historyRow = SwarmHistoryEntry([
+    "id": "agent", "title": "Build a toy", "machineName": "MacBook Pro M2", "engine": "codex",
+  ])!
+  let label = historyRow.menuTitle
+  try checkTitlebar(label.string == "Build a toy\tMacBook Pro M2", "Agent and machine occupy separate native menu columns")
+  let paragraph = label.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as! NSParagraphStyle
+  try checkTitlebar(paragraph.tabStops.count == 1 && paragraph.tabStops[0].alignment == .right && paragraph.tabStops[0].location == 660,
+    "Machine labels share a right-aligned column")
+  let longRow = SwarmHistoryEntry(["id": "long", "title": String(repeating: "Long title ", count: 100), "machineName": "Mac"])!
+  try checkTitlebar(longRow.menuTitle.string.contains("…\tMac"), "Long titles truncate before the machine column")
+  let swarmRow = SwarmHistoryEntry(["id": "swarm", "title": "My swarm", "swarm": true])!
+  try checkTitlebar(swarmRow.menuTitle.string == "My swarm", "Empty swarm rows have no invented machine label")
+  let sharedSwarm = SwarmHistoryEntry(["id": "shared", "title": "Workshop", "swarm": true, "machineName": "2 machines"])!
+  try checkTitlebar(sharedSwarm.menuTitle.string == "Workshop\t2 machines", "Swarm machine counts use the same trailing column as agent machines")
   var assetReads = 0
   let icons = SwarmHistoryIcons(assetURL: { asset in
     assetReads += 1

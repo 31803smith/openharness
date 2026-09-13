@@ -6,6 +6,7 @@ import '../state/app_state.dart';
 import '../state/swarm_navigation.dart';
 import '../state/swarm_search.dart';
 import 'engine_identity.dart';
+import 'swarm_icon.dart';
 import 'swarm_welcome.dart';
 
 Future<SwarmSearchSelection?> showSwarmHistory(
@@ -185,19 +186,13 @@ class SwarmSearchKeys extends StatelessWidget {
                 control: true,
               ): () =>
                   run(onClose),
-              if (search.scoped)
-                const SingleActivator(
-                  LogicalKeyboardKey.arrowLeft,
-                  alt: true,
-                ): () =>
-                    run(search.back),
             },
       child: child,
     );
   }
 }
 
-/// Results only: global search keeps its one editable input in the title bar.
+/// Shared results for the title bar, New swarm field and History.
 class SwarmSearchResults extends StatefulWidget {
   const SwarmSearchResults({
     super.key,
@@ -271,55 +266,17 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
       56,
       double.infinity,
     );
-    final scope = search.scope;
     final selected = search.selected;
     return Semantics(
       container: true,
       label: 'Search results',
       child: Column(
         children: [
-          if (search.scoped)
-            Row(
-              children: [
-                IconButton(
-                  tooltip: 'All results',
-                  onPressed: () {
-                    search.back();
-                    widget.onRefocus();
-                  },
-                  icon: const Icon(Icons.arrow_back, size: 16),
-                ),
-                Expanded(
-                  child: Text(
-                    scope?.title ?? 'Group no longer available',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 12),
-                  ),
-                ),
-                TextButton(
-                  onPressed: !search.canOpenGroup
-                      ? null
-                      : () => widget.onChoose(
-                          SwarmSearchSelection(
-                            scope!,
-                            SwarmSearchAction.openGroup,
-                          ),
-                        ),
-                  child: Text(
-                    'Open ${scope?.members.length ?? 0} agents as swarm',
-                    style: const TextStyle(fontSize: 11),
-                  ),
-                ),
-              ],
-            ),
           Expanded(
             child: search.rows.isEmpty
                 ? Center(
                     child: Text(
-                      search.scoped && search.query.isEmpty
-                          ? 'No available agents in this group'
-                          : 'No matching results',
+                      'No matching results',
                       style: const TextStyle(
                         fontSize: 13,
                         color: Colors.white60,
@@ -350,12 +307,12 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                                 size: 20,
                                 enabled: search.canSubmit(row),
                               )
+                            : row.isSwarm
+                            ? const SwarmIcon(color: Colors.white60)
                             : Icon(
                                 row.isMachine
                                     ? Icons.computer_outlined
-                                    : row.isProject
-                                    ? Icons.folder_outlined
-                                    : Icons.tab,
+                                    : Icons.folder_outlined,
                                 size: 19,
                                 color: Colors.white60,
                               ),
@@ -369,15 +326,6 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                           row.detail,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 11,
-                            color: Colors.white54,
-                          ),
-                        ),
-                        trailing: Text(
-                          row.current
-                              ? 'Current'
-                              : SwarmSearchController.action(row),
                           style: const TextStyle(
                             fontSize: 11,
                             color: Colors.white54,
@@ -397,12 +345,17 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 10),
                   child: Text(
-                    selected?.closedId != null
+                    selected != null && !search.canSubmit(selected)
+                        ? selected.isGroup &&
+                                  selected.members.length > AppNotifier.maxPanes
+                              ? 'A swarm supports up to ${AppNotifier.maxPanes} agents'
+                              : 'No room to open this ${selected.isSwarm || selected.isGroup ? 'swarm' : 'agent'}'
+                        : selected?.closedId != null
                         ? search.canSubmit(selected)
                               ? 'Reopen ${selected!.isSwarm ? 'swarm' : 'agent'}'
                               : 'No room to reopen'
                         : selected?.agentId != null && !selected!.hasView
-                        ? 'Open agent in ${search.targetName}'
+                        ? 'Opens in ${search.targetName}'
                         : '↑↓ choose · Esc close',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -413,15 +366,17 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
               if (search.canAdd(selected))
                 TextButton(
                   onPressed: () => widget.onChoose(search.addHere()!),
+                  style: TextButton.styleFrom(foregroundColor: Colors.white70),
                   child: const Text(
                     'Add to this swarm  ⌘↵',
                     style: TextStyle(fontSize: 11),
                   ),
                 ),
               TextButton(
-                onPressed: selected == null ? null : _submit,
+                onPressed: search.canSubmit(selected) ? _submit : null,
+                style: TextButton.styleFrom(foregroundColor: Colors.white),
                 child: Text(
-                  '${selected == null ? 'Open' : SwarmSearchController.action(selected)}  ↵',
+                  '${selected == null ? 'Go to' : SwarmSearchController.action(selected)}  ↵',
                   style: const TextStyle(fontSize: 11),
                 ),
               ),

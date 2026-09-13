@@ -14,7 +14,7 @@ class SwarmWelcome extends StatelessWidget {
     required this.notifier,
     required this.projects,
     required this.onNewAgent,
-    required this.onSearch,
+    required this.searchField,
     required this.onAddProject,
     required this.onLinkMachine,
     required this.onMachine,
@@ -24,7 +24,7 @@ class SwarmWelcome extends StatelessWidget {
   final AppNotifier notifier;
   final List<SavedSwarmProject> projects;
   final VoidCallback onNewAgent;
-  final VoidCallback onSearch;
+  final Widget searchField;
   final VoidCallback onAddProject;
   final VoidCallback onLinkMachine;
   final ValueChanged<MachineState> onMachine;
@@ -73,39 +73,7 @@ class SwarmWelcome extends StatelessWidget {
                       const SizedBox(height: 28),
                       Row(
                         children: [
-                          Expanded(
-                            child: OutlinedButton.icon(
-                              autofocus: true,
-                              onPressed: onSearch,
-                              icon: const Icon(Icons.search, size: 18),
-                              label: const Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      'Search agents, swarms, machines, projects…',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                  SizedBox(width: 12),
-                                  Text('⌘P'),
-                                ],
-                              ),
-                              style: OutlinedButton.styleFrom(
-                                alignment: Alignment.centerLeft,
-                                minimumSize: const Size(0, 44),
-                                foregroundColor: const Color(0xffc5bece),
-                                backgroundColor: const Color(0xa6111521),
-                                side: const BorderSide(color: Colors.white24),
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 14,
-                                ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                              ),
-                            ),
-                          ),
+                          Expanded(child: searchField),
                           const SizedBox(width: 12),
                           FilledButton.icon(
                             onPressed: onNewAgent,

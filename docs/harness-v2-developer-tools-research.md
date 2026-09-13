@@ -2,13 +2,13 @@
 
 Research and source audit: 2026-09-12. Recommendation for the existing `app-v2` build.
 
-Harness should make three things excellent: **keep work alive, reach any work instantly, and steer agents without losing concentration.** A developer should be able to spend a whole day here, using their existing agents, shell, editor and commands.
+Harness should make three things excellent: **keep work alive, reach any work instantly, and steer agents without losing concentration.** A developer should be able to spend a whole day here directing their existing agents.
 
 This is a qualitative sample of firsthand accounts and tool authors' documentation, not a survey of all exceptional developers. “World-class” has no objective tool list. Publication dates matter: several authors have changed their workflows. Product documentation establishes advertised behavior; it does not independently establish performance, reliability or developer affection.
 
 ## Current implementation queue
 
-Updated 2026-09-13. This is the working list; [the progress log](harness-v2-progress.md) records checks and remaining gaps.
+Updated 2026-09-13 after user review. Keep the existing simple Command shortcuts: H/J/K/L and arrows for movement, S for layout, B for Boss mode. The modifier-heavy proposal and general-purpose-terminal assumption are withdrawn. This is the working list; [the progress log](harness-v2-progress.md) records checks and remaining gaps.
 
 | Status | Work |
 | --- | --- |
@@ -18,12 +18,28 @@ Updated 2026-09-13. This is the working list; [the progress log](harness-v2-prog
 | Rebuilt; native menu reviewed live | Models replaces Swarm; Subscription shows existing account limits, while API, Local and Add Model are disabled placeholders. History uses provider icons and restores both closed agents and closed Swarms. Recovery is covered with isolated sessions; live agents were not closed to test it. |
 | Rebuilt and reviewed live | Chrome-style Back/Forward, Recently Closed/Visited and full session History; compact branch-aware headers; Workshop includes its requested iMac Home agent. |
 | In the rebuilt preview; regression verified | Preserve the session, terminal view, Find, viewport, selection and draft context through reconnect/keyframe replacement. Stale output/input/upload completions cannot affect the replacement stream. A real remote interruption remains to be validated. |
-| Rebuilt; live search/project review passed | One top-right Cmd-P search for agents, Swarms, machines and projects, with Focus/Open and explicit Add here actions; machine/project browsing and explicit group opening. Separate Add picker, floating pane + and titlebar bell removed. New swarm uses only the selected mountain/lake wallpaper; rotation and other assets removed. Native typing, Cmd-P select-all and Escape were verified from an existing empty New swarm after the focus correction. |
+| Rebuilt; live search/project review passed | One top-right Cmd-P search for agents, Swarms, machines and projects, with Open and explicit Add here actions. Follow-up in validation: New swarm searches in place, and machine/project results open their swarm directly. Separate Add picker, floating pane + and titlebar bell removed. New swarm uses only the selected mountain/lake wallpaper; rotation and other assets removed. Native typing, Cmd-P select-all and Escape were verified from an existing empty New swarm after the focus correction. |
 | Implemented; measured in isolation | Unified search construction and ranking avoid repeated scans/metadata work. Median catalog construction fell 50% in the 2,059-destination debug fixture; native input-to-display measurement remains separate. |
-| In progress | [Audit all shortcuts and implement a coherent terminal-friendly key system with file-first remapping](harness-v2-keyboard-system.md). Config parser/resolver and live reload core pass isolated tests. Apart from the unified search change, new defaults remain proposed until dispatch, native menus and help are integrated and verified. |
+| In progress | [Audit all shortcuts and implement a coherent terminal-friendly key system with file-first remapping](harness-v2-keyboard-system.md). Config parser/resolver and live reload core pass isolated tests. Revise the unused draft catalog and integrate runtime dispatch, native menus and help while retaining the user-approved existing defaults. Remapping is not yet enabled. |
 | Calibration in progress; foreground runs paused | Native Release input/navigation fixture with synthetic terminals. No validated latency result yet; resume after the keyboard work stabilizes. Live keyboard/tab/drag and real remote interruption checks remain. |
-| Next small addition | Optional cached preview and match highlighting in the existing Cmd+P picker. [The six-prototype review](harness-v2-prototype-review.md) records what to borrow and what stays out. |
+| Approved; queued | Manual splits/resizing, optional cached search preview, and `>` commands in search. The user accepted these after reviewing primary-source precedents; no permanent clutter or slowing the fast path. Match highlighting is the smaller search refinement. [The six-prototype review](harness-v2-prototype-review.md) records what to borrow and what stays out. |
 | Keep deferred | Workflow canvases, autonomous manager layers, a full IDE/Git client and a marketplace. |
+
+## Remaining ideas for review
+
+No additional product confirmation blocks the approved milestone. These are the remaining research ideas, with a recommendation to **defer all five**:
+
+| Idea | Why defer |
+| --- | --- |
+| Open an agent's changes in an external editor/diff tool | Useful later; first establish accurate checkout/change context across machines. |
+| Jump between prompts, answers, errors and changes | Requires reliable agent markers; guessing from text would make navigation unpredictable. |
+| Swarm CLI/API for scripts | Stabilize the app's operations first, then expose those same operations through the existing CLI. |
+| Structured agent-to-agent handoff | Improve the existing Boss mode before adding another coordination workflow. |
+| Visual shortcut editor | Deliver the approved file config first; a later editor should edit that same file. |
+
+API/local-model connections and Add Model remain disabled by explicit user instruction. The dashboard, permanent shelf/sidebar, workflow canvas, manager layers and marketplace stay out. Usage ledger and hardware features remain available away from the main work loop; this is not a proposal to delete them.
+
+Newly authorized follow-ups: consistent Models account IDs and complete status labels; swarm machine context in History; one four-pane swarm icon; readable search actions without repeated row labels; research terminal palette selection and add a small coordinated Appearance palette chooser.
 
 ## What people actually describe using
 
@@ -71,7 +87,7 @@ The opportunity for Harness is to make movement among real agents across real ma
 | **Implemented; verify in daily use** | **Needs input** replaces the notifications list; `Cmd+Shift+I` opens it | Search live questions and agent/project/machine context; jump without changing ownership or chosen membership. `Cmd+P`, Return goes back to prior work. Resolved/replaced questions cannot trigger stale navigation. Unavailable terminals remain explicit. Opens on request with no fade, blur or polling. |
 | **Implemented; verify in daily use** | Terminal Find with `Cmd+F`, `Cmd+G` and `Cmd+Shift+G` | Search retained output and move between literal matches without sending input. Escape restores the previous scroll position and prompt focus. The compact field uses the existing header, then disappears. These familiar bindings are documented by [Apple Terminal](https://support.apple.com/en-euro/guide/terminal/trmlshtcts/mac) and [Chrome](https://support.google.com/chrome/answer/157179?co=GENIE.Platform%3DDesktop&hl=en). Retained offline panes now remain searchable; never-attached panes retain setup guidance. |
 | **Removed blocking chrome** | Full-pane frozen and reconnect overlays | Read-only status and explicit Reconnect/Take control actions live in the header. Retained output, selection, search and unsent composer text survive unavailable-machine presentation. Ordinary tab navigation never retries a dead stream. |
-| **Preserve compatibility** | Real agent terminals and user shell environments | Verify selection, multiline/image paste, scrollback, nested tmux/Vim and escape/control keys. Before promising a full terminal replacement, verify a straightforward ordinary-shell workflow too; the current New agent UI centers on detected agent engines. |
+| **Preserve input correctness** | Real agent CLIs | Verify selection, multiline/image paste, scrollback and composition in Claude Code, Codex and other supported agents. Ordinary-shell creation and nested editor compatibility are outside this milestone. |
 | **Remove from active work — implemented** | Wallpaper behind populated Swarms | Use `#463746`, matching the selected native tab. Wallpaper fills only an empty New swarm canvas and its decoded cache entry is evicted when that view is disposed. |
 | **In the rebuilt preview** | Chrome-style History, Models menu and Settings in the app menu | Settings stays in the macOS app menu with `Cmd+,`. File groups creation, linking, renaming, closing and Reopen Last Closed. History includes closed agents and Swarms, with provider icons for agents. Cmd+P lives in Edit, Needs Input in View. Models has live Subscription usage and explicitly disabled API/Local/Add Model placeholders. Lists are bounded and session-local. The non-macOS toolbar retains Settings access. |
 | **In the rebuilt preview** | Wallpaper rotation and repeated metadata removed | The selected mountain/lake image is the only wallpaper; rotation button, menu actions and other assets are removed. Headers show one agent title, available branch, machine and controls. Repeated project-name text is removed; full folder/branch context remains on demand. Narrow panes use a machine icon with its full-name tooltip. |
@@ -90,9 +106,9 @@ Chrome is the user's primary interaction reference. Chromium's [menu definition]
 
 ## Reductions and prototype follow-up
 
-[The prototype review](harness-v2-prototype-review.md) covers all six variants in `harness-new-ui` at `19ced37`. Keep the terminal canvas and chosen Swarms; borrow optional contextual preview, explicit splits and exact return selectively. Leave out V3's primary/supporting hierarchy, persistent shelf, extra status/footer/context rows, model dashboard, and V4's default replacement of the active pane. Do not copy its Ctrl+B prefix over a real tmux session.
+[The prototype review](harness-v2-prototype-review.md) covers all six variants in `harness-new-ui` at `19ced37`. Keep the terminal canvas and chosen Swarms; borrow optional contextual preview, explicit splits and exact return selectively. Leave out V3's primary/supporting hierarchy, persistent shelf, extra status/footer/context rows, model dashboard, and V4's default replacement of the active pane. Use the current easy Command prefix instead of copying Ctrl+B.
 
-The fzf follow-up is one improvement to Cmd+P: match highlights, a bounded preview of already-retained context, and precise filters where names are ambiguous. It must perform no network work or terminal attachment while navigating results. Ordinary-shell creation, remappable keys/passthrough, editor/diff handoff, and structured prompt/output navigation remain important gaps to verify. They are not all new features to build at once; reliability and measured interaction performance come first.
+The fzf follow-up is one improvement to Cmd+P: match highlights, a bounded preview of already-retained context, and precise filters where names are ambiguous. It must perform no network work or terminal attachment while navigating results. Remappable keys remain authorized work. Editor/diff handoff and structured prompt/output navigation are parked research ideas; ordinary-shell creation is outside the current product direction. They are not all new features to build at once; reliability and measured interaction performance come first.
 
 ## The next small product milestone
 

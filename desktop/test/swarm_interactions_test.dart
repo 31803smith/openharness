@@ -68,10 +68,15 @@ void main() {
     (tester) async {
       final app = createApp();
       await mount(tester, app);
-      await tester.tap(find.text('Search agents, swarms, machines, projects…'));
+      await tester.tap(
+        find.byKey(const ValueKey('swarm-welcome-search-input')),
+      );
       await tester.pump();
       expect(app.panes, isEmpty);
-      await tester.enterText(find.byType(TextField), 'Agent 1');
+      await tester.enterText(
+        find.byKey(const ValueKey('swarm-welcome-search-input')),
+        'Agent 1',
+      );
       await tester.pump();
       await tester.sendKeyDownEvent(LogicalKeyboardKey.control);
       await tester.sendKeyEvent(LogicalKeyboardKey.keyN);

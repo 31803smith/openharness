@@ -6,8 +6,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/core/models.dart';
 import 'package:harness/screens/swarm_screen.dart';
 import 'package:harness/settings/settings_screen.dart';
+import 'package:harness/state/app_state.dart';
 import 'package:harness/state/swarm_catalog.dart';
 import 'package:harness/state/swarm_navigation.dart';
+import 'package:harness/state/terminal_pane.dart';
 import 'package:harness/terminal/terminal_binary.dart';
 import 'package:xterm/xterm.dart';
 
@@ -16,6 +18,41 @@ import 'swarm_state_test.dart' show createApp;
 import 'swarm_switcher_test.dart' show jumpField;
 
 void main() {
+  test(
+    'swarm History counts distinct machines, including offline and closed work',
+    () async {
+      final app = createApp();
+      addTearDown(app.dispose);
+      final history = SwarmNavigationHistory();
+      history.record(app);
+      String machines() => history
+          .menuDestinations(app)
+          .firstWhere((entry) => entry.isSwarm)
+          .machineLabel;
+      expect(machines(), '');
+      app.adoptSessionForTest(terminal('a0', []));
+      app.adoptSessionForTest(terminal('a1', []));
+      expect(machines(), 'Test host');
+      const remote = Machine(
+        machineId: 'remote',
+        authMode: MachineAuthMode.remote,
+        name: 'Test host',
+      );
+      app.machineStates['remote'] = MachineState(remote)..nodeOnline = false;
+      app.activeSwarm.panes.addAll([
+        TerminalPane(id: 900, machineId: 'remote', agentId: 'remote-agent'),
+        TerminalPane(id: 901, machineId: 'setup-only'),
+      ]);
+      expect(
+        machines(),
+        '2 machines',
+        reason: 'Count machine identities, not names, agents or setup panes',
+      );
+      await app.closeSwarm(app.activeSwarmId);
+      expect(closedWorkDestinations(app).single.machineLabel, '2 machines');
+    },
+  );
+
   testWidgets(
     'native History restores closed agents and sends their engine icons',
     (tester) async {
@@ -51,6 +88,12 @@ void main() {
       await tester.pump();
       final recent = (updates.last['history'] as List).cast<Map>().first;
       expect(recent['engine'], 'claude');
+      expect(
+        (updates.last['history'] as List).cast<Map>().firstWhere(
+          (row) => row['swarm'] == true,
+        )['machineName'],
+        'Test host',
+      );
       await app.closePane(pane.id);
       await tester.pump();
       final closed = (updates.last['closedHistory'] as List).cast<Map>().single;
@@ -76,6 +119,12 @@ void main() {
       expect(
         (updates.last['closedHistory'] as List).cast<Map>().single['swarm'],
         isTrue,
+      );
+      expect(
+        (updates.last['closedHistory'] as List)
+            .cast<Map>()
+            .single['machineName'],
+        'Test host',
       );
       await tester.pumpWidget(const SizedBox());
       app.dispose();
@@ -225,7 +274,8 @@ void main() {
       final row = (updates.last['history'] as List).cast<Map>().firstWhere(
         (row) => row['id'] == id,
       );
-      expect(row['title'], 'Agent 0 — Test host');
+      expect(row['title'], 'Agent 0');
+      expect(row['machineName'], 'Test host');
       expect(row['engine'], 'codex');
       expect(row['iconAsset'], 'assets/engine-icons/codex.png');
       final before = updates.length;

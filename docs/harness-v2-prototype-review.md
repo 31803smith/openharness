@@ -2,6 +2,8 @@
 
 Reviewed 2026-09-13. The source is the clean local checkout of [autonomous-ai/harness-new-ui](https://github.com/autonomous-ai/harness-new-ui) at `19ced37`, with its matching origin. The public GitHub page could not be fetched by the web tool; the source and running `http://127.0.0.1:5173/` were inspected directly.
 
+**Current direction after user review:** this is an agent workspace, not a general-purpose terminal. The user has approved manual splits/resizing, optional lightweight search preview, and commands in search. They must add no permanent clutter or latency to the existing fast path. The earlier nested-shell compatibility rationale is withdrawn. Keep Cmd-H/J/K/L, Cmd-arrows, Cmd-S layout and Cmd-B Boss mode.
+
 **Keep the scope small: durable terminals, immediate navigation, and a dependable way to handle an interruption and return.** The prototypes provide useful interaction experiments. They do not establish native terminal correctness, measured performance, or what exceptional developers universally prefer.
 
 ## What was reviewed
@@ -18,6 +20,18 @@ Source review covered `App.tsx`, `SwarmsV4Workspace.tsx`, `data/swarmsV4.ts`, `H
 | Swarms v3 | A large readable terminal helps; temporary inspection can preserve the originating workspace. Primary/supporting/shelf roles introduce extra arrangement decisions. | Keep zoom and exact return. Do not adopt the role hierarchy, two-supporting-pane limit, promotion controls, or persistent shelf. |
 | Swarms v4 | Stable sessions, explicit right/down splits, contextual search preview, draft/caret recovery, and an attention round trip address daily friction. | Borrow these behaviors selectively. Do not inherit its permanent session strip, footer, second metadata row, or default replacement of the focused pane. |
 | Swarms + Models | Model/account details can be inspected on demand, but per-pane model controls and a top-level library compete with the work. | Keep the dashboard absent. Existing usage and hardware capabilities stay secondary; they do not justify a new daily navigation surface. |
+
+## Evidence for the three approved additions
+
+Checked primary documentation again on 2026-09-13 at the user's request. These are established behaviors, not evidence that every exceptional developer wants the same feature set in Harness.
+
+| Proposal | Concrete precedents | Harness judgment |
+| --- | --- | --- |
+| Manual splits/resizing | [tmux](https://github.com/tmux/tmux/wiki/Getting-Started#resizing-and-zooming-panes) has manual resizing alongside preset layouts. [iTerm2](https://iterm2.com/documentation-one-page.html#shell--split-verticallyhorizontally) supports vertical/horizontal splits and draggable dividers. | Strong fit for giving one active agent more room while keeping others visible. Preserve quick Cmd-S relayout. |
+| Optional search preview | [fzf](https://github.com/junegunn/fzf#preview-window) and [Telescope](https://github.com/nvim-telescope/telescope.nvim#previewers) preview a selected candidate. [tmux tree mode](https://github.com/tmux/tmux/wiki/Getting-Started#choosing-sessions-windows-and-panes) previews actual session/window/pane content before switching. | The tmux behavior is the closest precedent. Use bounded already-retained agent output; make preview optional and verify that it reduces wrong destinations without slowing search. |
+| Commands in search | [VS Code](https://code.visualstudio.com/docs/editing/getting-started/userinterface#command-palette) shares an interactive window between commands and navigation. [JetBrains Search Everywhere](https://www.jetbrains.com/help/idea/searching-everywhere.html) searches files, actions and settings from one entry point. | Strong fit for discovering occasional actions. Reuse the existing command catalog, show actual remapped shortcuts, and add no permanent panel. |
+
+After reviewing this evidence, the user accepted the recommendation to build these three additions. Keep preview optional and lightweight; preserve existing fast navigation, simple shortcuts and quick relayout. Implement after the current search/menu corrections and alongside the coherent remapping work.
 
 ## The three promises, with concrete changes
 
@@ -41,7 +55,7 @@ Carry the following into one bounded follow-up:
 
 This follows [fzf's incremental narrowing and preview design](https://github.com/junegunn/fzf). `git ls-files | fzf` illustrates its small composable contract: receive candidates, narrow them, return the chosen value. Harness should reuse that interaction model, not run shell preview commands on every search keystroke. V4's own scorer is a small custom fuzzy matcher, not an embedded fzf runtime.
 
-The prototype's `>` command mode could eventually expose the existing app command catalog in the same picker. Defer a second registry or a large command system; first verify that people cannot already find the relevant command through native menus and the shortcut sheet.
+The prototype's `>` command mode is now approved for the existing app command catalog in the same picker. Share commands with menus and remapping; no second registry or conflicting new shortcut is needed.
 
 ### 3. Handle a decision and return to the same place
 
@@ -54,15 +68,15 @@ V4's editable handoff is an interesting later idea. A production version needs a
 ## What stays out, or becomes smaller
 
 - **No mandatory primary/supporting hierarchy, session shelf, extra footer, duplicate project tree or permanent context row.** Use the terminal area for output; disclose context in the compact header, picker, tooltip and menu.
-- **No copied Ctrl+B prefix by default.** A real nested tmux session already uses it. Configurable keymaps and deliberate passthrough need runtime tests; the browser's prefix simulation cannot prove compatibility.
+- **Use Command as Harness's easy prefix.** Keep the current two-key movement, layout and Boss mode shortcuts. Borrow tmux's useful operations, not its Ctrl-B prefix.
 - **No model/compute dashboard, marketplace, autonomous manager, full IDE/Git client or generic handoff system in this milestone.** Existing agents, shells and editors already perform much of this work.
 - **No backdrop blur, artificial transition delay, replaying output animation or repeated healthy-state spinner.** A quiet working surface and measured response are more valuable than constant signs of activity.
 - **Wallpaper remains in empty New swarm only.** Appearance controls belong in View/context menus. Active Swarms keep one flat color continuous with the selected tab.
 
 ## Remaining foundations the prototypes cannot prove
 
-An ordinary local/remote shell must be easy to open in the correct directory. Remappable commands must coexist with Vim, zsh, tmux, IME and accessibility keys. [Ghostty's shell integration](https://ghostty.org/docs/features/shell-integration) offers useful examples of directory inheritance, prompt navigation and output selection; these should use real terminal signals rather than guessed screen text. CLI/API operations should use the same stable session identities as the UI.
+Remappable commands must preserve correct editing in the actual agent CLI and in Harness search/dialogs, including IME and accessibility. General-purpose shell creation is outside the current product direction. Prompt/output navigation and editor/diff handoff remain research ideas; they require actual agent signals rather than guessed screen text. Any later CLI/API should use the same stable agent identities as the UI.
 
-Those are gaps to verify and prioritize, not a checklist to implement all at once. Current order: finish the reliability/menu/header/project work; measure real input and navigation under output load; then add the bounded Cmd+P preview/highlight improvement. Explicit splits and keymap/shell compatibility follow with their own focused validation. The [working queue](harness-v2-developer-tools-research.md) remains the single status list.
+Those are gaps to verify and prioritize, not a checklist to implement all at once. Current order: finish the approved search/menu corrections, integrate remapping with the agreed simple defaults, then add commands in search, controlled splits/resizing and optional bounded preview. Measure real input and navigation under output load. General-purpose shell/editor compatibility is outside this milestone. The [working queue](harness-v2-developer-tools-research.md) remains the single status list.
 
 Success means fewer wrong destinations, no surprise layout changes, no lost editing or reading context, and less effort to resume work. Real daily use with local and remote agents must establish that result; attractive sample screens and simulated reviewers cannot.

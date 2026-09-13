@@ -23,18 +23,13 @@ class SwarmSearchController extends ChangeNotifier {
   final _cache = SwarmSearchCatalog();
   List<SwarmDestination> _catalog = const [];
   List<SwarmDestination> rows = const [];
-  String query = '', _rootQuery = '';
-  String? _scopeId, _selectedId;
+  String query = '';
+  String? _selectedId;
   int cursor = 0;
 
   SwarmDestination? get selected => rows.isEmpty ? null : rows[cursor];
-  bool get scoped => _scopeId != null;
-  SwarmDestination? get scope =>
-      _catalog.where((row) => row.id == _scopeId).firstOrNull;
   String get hint => history != null
       ? 'Search history…'
-      : scoped
-      ? 'Search agents in ${scope?.title ?? 'this group'}…'
       : 'Search agents, swarms, machines, projects…';
 
   void _refresh() {
@@ -48,17 +43,7 @@ class SwarmSearchController extends ChangeNotifier {
   }
 
   void _filter() {
-    final group = scope;
-    rows = rankSwarmDestinations(
-      !scoped
-          ? _catalog
-          : [
-              for (final row in _catalog)
-                if (group?.members.contains(row.id) == true) row,
-            ],
-      query,
-      recent: recent,
-    );
+    rows = rankSwarmDestinations(_catalog, query, recent: recent);
     final index = rows.indexWhere((row) => row.id == _selectedId);
     cursor = rows.isEmpty
         ? 0
@@ -87,29 +72,14 @@ class SwarmSearchController extends ChangeNotifier {
   SwarmSearchSelection? submit([SwarmDestination? row]) {
     final destination = row ?? selected;
     if (destination == null || !canSubmit(destination)) return null;
-    if (!destination.isGroup) return SwarmSearchSelection(destination);
-    _rootQuery = query;
-    _scopeId = destination.id;
-    query = '';
-    cursor = 0;
-    _selectedId = null;
-    _filter();
-    notifyListeners();
-    return null;
+    return SwarmSearchSelection(destination);
   }
 
   bool canSubmit(SwarmDestination? row) =>
       row != null &&
+      (!row.isGroup ||
+          canOpenSwarmGroup(app, row, destinationSwarmId: targetId)) &&
       (row.closedId == null || app.canReopenClosed(row.closedId!));
-
-  void back() {
-    if (!scoped) return;
-    _selectedId = _scopeId;
-    _scopeId = null;
-    query = _rootQuery;
-    _filter();
-    notifyListeners();
-  }
 
   bool canAdd(SwarmDestination? row) =>
       history == null &&
@@ -130,21 +100,11 @@ class SwarmSearchController extends ChangeNotifier {
       ? SwarmSearchSelection(selected!, SwarmSearchAction.addHere)
       : null;
 
-  bool get canOpenGroup =>
-      scope != null &&
-      scope!.members.isNotEmpty &&
-      scope!.members.length <= AppNotifier.maxPanes &&
-      app.swarms.length < AppNotifier.maxSwarms;
-
   static String action(SwarmDestination row) => row.closedId != null
       ? 'Reopen'
-      : row.isGroup
-      ? 'Browse agents'
-      : row.isSwarm
-      ? 'Switch swarm'
-      : row.hasView
-      ? 'Focus pane'
-      : 'Open here';
+      : row.isGroup || row.isSwarm
+      ? 'Go to swarm'
+      : 'Go to agent';
 
   @override
   void dispose() {

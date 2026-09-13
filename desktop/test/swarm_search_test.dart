@@ -5,6 +5,7 @@ import 'package:harness/core/models.dart';
 import 'package:harness/state/app_state.dart';
 import 'package:harness/state/swarm_catalog.dart';
 import 'package:harness/state/swarm_navigation.dart';
+import 'package:harness/state/swarm_search.dart';
 import 'package:harness/terminal/terminal_binary.dart';
 import 'package:xterm/xterm.dart';
 
@@ -158,42 +159,76 @@ void main() {
     },
   );
 
-  test('opening a group is explicit, uses a new swarm and opens only reviewed members', () async {
-    final app = createApp();
-    addTearDown(app.dispose);
-    final machine = app.machineStates['m']!;
-    machine.agents = machine.agents.take(2).toList();
-    final original = app.activeSwarm;
-    final group = SwarmSearchCatalog()
-        .read(app, [])
-        .singleWhere((e) => e.isMachine);
-    expect(
-      await activateSwarmSearchSelection(
-        app,
-        SwarmSearchSelection(group),
-        destinationSwarmId: original.id,
-      ),
-      isFalse,
-    );
-    expect(app.swarms, [original]);
-    machine.agents = [
-      ...machine.agents,
-      const Agent(id: 'late', name: 'Late arrival', terminalAvailable: true),
-    ];
-    expect(
-      await activateSwarmSearchSelection(
-        app,
-        SwarmSearchSelection(group, SwarmSearchAction.openGroup),
-        destinationSwarmId: original.id,
-      ),
-      isTrue,
-    );
-    expect(app.swarms.length, 2);
-    expect(original.panes, isEmpty);
-    expect(app.activeSwarm.name, 'Test host');
-    expect(app.panes.map((pane) => pane.agentId), ['a0', 'a1']);
-    expect(app.allPanes.any((pane) => pane.agentId == 'late'), isFalse);
-  });
+  test(
+    'a machine result opens its agents in the empty swarm and reuses it',
+    () async {
+      final app = createApp();
+      addTearDown(app.dispose);
+      final machine = app.machineStates['m']!;
+      machine.agents = machine.agents.take(2).toList();
+      final original = app.activeSwarm;
+      final search = SwarmSearchController(app, []);
+      addTearDown(search.dispose);
+      search.setQuery('Test host');
+      final choice = search.submit();
+      expect(choice?.destination.isMachine, isTrue);
+      expect(SwarmSearchController.action(choice!.destination), 'Go to swarm');
+      expect(
+        await activateSwarmSearchSelection(
+          app,
+          choice,
+          destinationSwarmId: original.id,
+        ),
+        isTrue,
+      );
+      expect(app.activeSwarm, same(original));
+      expect(app.activeSwarm.name, 'Test host');
+      expect(app.panes.map((pane) => pane.agentId), ['a0', 'a1']);
+      final panes = [...app.panes];
+      app.newSwarm();
+      final empty = app.activeSwarm;
+      expect(
+        await activateSwarmSearchSelection(
+          app,
+          choice,
+          destinationSwarmId: empty.id,
+        ),
+        isTrue,
+      );
+      expect(app.swarms.length, 2);
+      expect(app.activeSwarm, same(original));
+      expect(app.panes, panes);
+      expect(empty.panes, isEmpty);
+    },
+  );
+
+  test(
+    'opening a group from an occupied swarm keeps its work intact',
+    () async {
+      final app = createApp();
+      addTearDown(app.dispose);
+      final machine = app.machineStates['m']!;
+      machine.agents = machine.agents.take(3).toList();
+      await app.addAgentToSwarm('m', 'a2');
+      final original = app.activeSwarm;
+      final retained = app.panes.single;
+      final group = SwarmSearchCatalog()
+          .read(app, [])
+          .singleWhere((e) => e.isMachine);
+      expect(
+        await activateSwarmSearchSelection(
+          app,
+          SwarmSearchSelection(group),
+          destinationSwarmId: original.id,
+        ),
+        isTrue,
+      );
+      expect(app.swarms.length, 2);
+      expect(original.panes, [retained]);
+      expect(app.panes.map((pane) => pane.agentId).toSet(), {'a0', 'a1', 'a2'});
+      expect(app.panes.contains(retained), isTrue);
+    },
+  );
 
   test(
     'removed group members and oversized groups cannot create a partial swarm',
@@ -207,7 +242,7 @@ void main() {
       expect(
         await activateSwarmSearchSelection(
           app,
-          SwarmSearchSelection(oversized, SwarmSearchAction.openGroup),
+          SwarmSearchSelection(oversized),
           destinationSwarmId: app.activeSwarmId,
         ),
         isFalse,
@@ -220,7 +255,7 @@ void main() {
       expect(
         await activateSwarmSearchSelection(
           app,
-          SwarmSearchSelection(group, SwarmSearchAction.openGroup),
+          SwarmSearchSelection(group),
           destinationSwarmId: app.activeSwarmId,
         ),
         isFalse,
@@ -230,41 +265,28 @@ void main() {
     },
   );
 
-  testWidgets(
-    'browse, filter and return from a machine without opening any views',
-    (tester) async {
-      final app = createApp();
-      await mount(tester, app);
-      await tester.tap(find.byKey(const ValueKey('swarm-search-input')));
-      await tester.pump();
-      await tester.enterText(jumpField, 'Test host');
-      await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('machine:m')));
-      await tester.pump();
-      expect(app.panes, isEmpty);
-      expect(app.swarms.length, 1);
-      final scopedField = find.byType(TextField);
-      expect(
-        tester.widget<TextField>(scopedField).focusNode!.hasFocus,
-        isTrue,
-        reason: 'Clicking a group must return the next key to its search field',
-      );
-      await tester.enterText(scopedField, 'Agent 19');
-      await tester.pump();
-      expect(find.widgetWithText(ListTile, 'Agent 19'), findsOneWidget);
-      expect(find.text('Agent 0'), findsNothing);
-      await tester.tap(find.byTooltip('All results'));
-      await tester.pump();
-      expect(tester.widget<TextField>(jumpField).controller!.text, 'Test host');
-      expect(tester.widget<TextField>(jumpField).focusNode!.hasFocus, isTrue);
-      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-      await tester.pump();
-      expect(app.panes, isEmpty);
-      expect(find.byType(Dialog), findsNothing);
-      await tester.pumpWidget(const SizedBox());
-      app.dispose();
-    },
-  );
+  testWidgets('clicking a machine result directly opens all agents', (
+    tester,
+  ) async {
+    final app = createApp();
+    app.machineStates['m']!.agents = app.machineStates['m']!.agents
+        .take(3)
+        .toList();
+    await mount(tester, app);
+    await tester.tap(find.byKey(const ValueKey('swarm-search-input')));
+    await tester.pump();
+    await tester.enterText(jumpField, 'Test host');
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('machine:m')));
+    await tester.pump();
+    expect(app.activeSwarm.name, 'Test host');
+    expect(app.panes.map((pane) => pane.agentId), ['a0', 'a1', 'a2']);
+    expect(app.swarms.length, 1);
+    expect(find.byKey(const ValueKey('swarm-search-results')), findsNothing);
+    expect(find.text('Browse agents'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+    app.dispose();
+  });
 
   testWidgets(
     'the secondary action adds a shared view here and the first key reaches it',

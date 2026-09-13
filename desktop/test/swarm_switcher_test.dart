@@ -15,6 +15,7 @@ import 'swarm_state_test.dart' show createApp;
 Finder get jumpField => find.byWidgetPredicate(
   (w) =>
       w is TextField &&
+      w.key == const ValueKey('swarm-search-input') &&
       w.decoration?.hintText == 'Search agents, swarms, machines, projects…',
 );
 Finder get selectedRow =>
@@ -270,7 +271,7 @@ void main() {
       await tester.pump();
       await tester.pump();
       expect(tester.widget<ListTile>(selectedRow).key, ValueKey(selectedId));
-      expect(find.textContaining('Open agent in'), findsOneWidget);
+      expect(find.textContaining('Opens in'), findsOneWidget);
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pump();
       expect(app.panes, hasLength(2));

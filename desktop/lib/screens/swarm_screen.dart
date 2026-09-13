@@ -26,6 +26,7 @@ import '../widgets/new_agent_dialog.dart';
 import '../widgets/pane_grid.dart';
 import '../widgets/shortcuts_sheet.dart';
 import '../widgets/swarm_dialogs.dart';
+import '../widgets/swarm_inline_search.dart';
 import '../widgets/swarm_project_agents.dart';
 import '../widgets/swarm_attention.dart';
 import '../widgets/swarm_switcher.dart';
@@ -186,6 +187,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
           {
             'id': entry.id,
             'title': entry.title,
+            'machineName': entry.machineLabel,
             'detail': entry.detail,
             'swarm': entry.isSwarm,
             'engine': entry.engine,
@@ -198,9 +200,8 @@ class _SwarmScreenState extends State<SwarmScreen> {
         for (final entry in _navigation.menuDestinations(app))
           {
             'id': entry.id,
-            'title': entry.isSwarm
-                ? entry.title
-                : '${entry.title} — ${app.stateOf(entry.machineId!)?.machine.displayName ?? entry.machineId}',
+            'title': entry.title,
+            'machineName': entry.machineLabel,
             'detail': entry.detail,
             'swarm': entry.isSwarm,
             'engine': entry.engine,
@@ -277,8 +278,6 @@ class _SwarmScreenState extends State<SwarmScreen> {
           search.move(1);
         case 'previous':
           search.move(-1);
-        case 'back':
-          search.back();
         case 'submit':
           final choice = search.submit();
           if (choice != null) await _chooseSearch(choice);
@@ -500,11 +499,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
         selection: TextSelection.collapsed(offset: search.query.length),
       );
     }
-    final state = {
-      'query': search.query,
-      'hint': search.hint,
-      'scoped': search.scoped,
-    };
+    final state = {'query': search.query, 'hint': search.hint};
     final encoded = jsonEncode(state);
     if (_searchFieldState != encoded) {
       _searchFieldState = encoded;
@@ -513,7 +508,6 @@ class _SwarmScreenState extends State<SwarmScreen> {
           _channel.invokeMethod<void>('searchState', {
             if (!_nativeQueryChange) 'query': search.query,
             'hint': search.hint,
-            'scoped': search.scoped,
           }),
         );
       }
@@ -574,11 +568,10 @@ class _SwarmScreenState extends State<SwarmScreen> {
           56,
           double.infinity,
         );
-        final height =
-            (search.rows.length.clamp(1, 7) * rowHeight +
-                    64 +
-                    (search.scoped ? 48 : 0))
-                .clamp(140.0, constraints.maxHeight - (_native ? 12 : 56));
+        final height = (search.rows.length.clamp(1, 7) * rowHeight + 64).clamp(
+          140.0,
+          constraints.maxHeight - (_native ? 12 : 56),
+        );
         final results = SizedBox(
           width: width,
           height: height.toDouble(),
@@ -912,7 +905,15 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                   notifier: app,
                                   projects: _projects.projects,
                                   onNewAgent: _newAgent,
-                                  onSearch: _jump,
+                                  searchField: SwarmInlineSearch(
+                                    key: ValueKey(
+                                      'welcome-search:${app.activeSwarmId}',
+                                    ),
+                                    app: app,
+                                    projects: _projects,
+                                    recent: _navigation.recent,
+                                    onChoose: _activateSearch,
+                                  ),
                                   onAddProject: _addProject,
                                   onLinkMachine: () => _dialog(
                                     () => showSwarmLinkDialog(context, app),

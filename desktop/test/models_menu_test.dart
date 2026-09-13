@@ -33,7 +33,7 @@ void main() {
     double weekly = 30,
     DateTime? reset,
     DateTime? fetched,
-    String? account = 'same-account',
+    String? account = 'aabbccddeeff0011',
   }) => ProviderUsage(
     provider: UsageProvider.claude,
     status: UsageStatus.ok,
@@ -56,7 +56,7 @@ void main() {
           MachineUsage(machineName: 'Shared Mac', readings: [reading()]),
           MachineUsage(
             machineName: 'Other Mac',
-            readings: [reading(account: 'different-account', session: 50)],
+            readings: [reading(account: '1122334455667788', session: 50)],
           ),
         ],
       );
@@ -68,10 +68,12 @@ void main() {
       expect(menu.rows.first['title'], 'Anthropic');
       expect(menu.rows.first['status'], '15% remaining');
       expect(menu.rows.first['details'], contains('Weekly — 70% remaining'));
-      expect(menu.rows.first['details'], contains('Shared with Shared Mac'));
-      expect(menu.rows.last['title'], 'Anthropic · Other Mac');
+      expect(menu.rows.first['account'], 'Account aabbcc');
+      expect(menu.rows.toString(), isNot(contains('Shared Mac')));
+      expect(menu.rows.last['title'], 'Anthropic');
+      expect(menu.rows.last['account'], 'Account 112233');
       expect(menu.rows.last['status'], '50% remaining');
-      expect(menu.rows.toString(), isNot(contains('same-account')));
+      expect(menu.rows.toString(), isNot(contains('aabbccddeeff0011')));
     },
   );
 
@@ -101,6 +103,20 @@ void main() {
       await second;
     },
   );
+
+  test('unidentified accounts do not invent an account label', () async {
+    final source = _Source(
+      UsageProvider.claude,
+      () async => reading(account: null),
+    );
+    final usage = UsageController(sources: [source], autoStart: false);
+    final menu = ModelsMenuController(usage: usage, now: () => instant);
+    addTearDown(usage.dispose);
+    addTearDown(menu.dispose);
+    await menu.refresh();
+    expect(menu.rows.single['title'], 'Anthropic');
+    expect(menu.rows.single['account'], '');
+  });
 
   test(
     'unknown, expired and invalid readings never become made-up percentages',

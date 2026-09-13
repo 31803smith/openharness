@@ -83,8 +83,6 @@ class ModelsMenuController extends ChangeNotifier {
       UsageProvider.claude => 'Anthropic',
       UsageProvider.codex => 'OpenAI',
     };
-    final scope = account.isLocal ? '' : account.machines.join(', ');
-    final title = scope.isEmpty ? provider : '$provider · $scope';
     final windows = reading.windows;
     final expired =
         (reading.fetchedAt != null &&
@@ -124,20 +122,24 @@ class ModelsMenuController extends ChangeNotifier {
             : reading.message ?? status,
       );
     }
-    if (account.machines.isNotEmpty) {
-      details.add(
-        account.isLocal
-            ? 'Shared with ${account.machines.join(', ')}'
-            : 'On ${account.machines.join(', ')}',
-      );
-    }
     return {
-      'title': title,
+      'title': provider,
+      'account': _accountLabel(reading),
       'status': status,
       'details': details,
       'engine': reading.provider.engineId,
       'iconAsset': engineIdentity(reading.provider.engineId).asset,
     };
+  }
+
+  static String _accountLabel(ProviderUsage reading) {
+    // The same opaque identity is available locally and across machines.
+    // Use it consistently instead of mixing emails with fallback IDs.
+    final key = reading.account;
+    if (key != null && RegExp(r'^[0-9a-f]{16}$').hasMatch(key)) {
+      return 'Account ${key.substring(0, 6)}';
+    }
+    return '';
   }
 
   static String _remaining(UsageWindow window) {

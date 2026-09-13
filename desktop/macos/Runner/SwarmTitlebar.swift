@@ -38,9 +38,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
         result(true)
       case "update":
         let state = call.arguments as? [String: Any] ?? [:]
-        let wasEnabled = self.actionsEnabled
         self.actionsEnabled = state["enabled"] as? Bool == true
-        if wasEnabled != self.actionsEnabled { self.updateModelsAvailability() }
         self.canReopen = state["canReopen"] as? Bool == true
         self.canFind = state["canFind"] as? Bool == true
         self.canClosePane = state["canClosePane"] as? Bool == true
@@ -202,15 +200,13 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
       }
     }
     section("Subscription")
+    let rowWidth = subscriptions.map(SwarmSubscriptionView.preferredWidth).max() ?? 440
     for entry in subscriptions {
-      let item = NSMenuItem(title: entry.title + " — " + entry.status, action: nil, keyEquivalent: "")
-      item.image = historyIcons.image(engine: entry.engine, asset: entry.iconAsset)
+      let item = NSMenuItem(title: entry.accessibilityLabel, action: nil, keyEquivalent: "")
+      let icon = historyIcons.image(engine: entry.engine, asset: entry.iconAsset)
+      item.view = SwarmSubscriptionView(entry: entry, icon: icon, width: rowWidth)
       item.toolTip = entry.details.joined(separator: "\n")
-      let detail = NSMenu(title: entry.title)
-      detail.autoenablesItems = false
-      for line in entry.details { label(line, in: detail) }
-      item.submenu = detail
-      item.isEnabled = actionsEnabled
+      item.isEnabled = false
       modelsMenu.addItem(item)
     }
     if subscriptions.isEmpty {
@@ -219,19 +215,14 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     }
     modelsMenu.addItem(.separator())
     section("API")
-    label("OpenRouter API", in: modelsMenu)
-    label("fal.ai API", in: modelsMenu)
+    label("OpenRouter", in: modelsMenu)
+    label("fal.ai", in: modelsMenu)
     modelsMenu.addItem(.separator())
     section("Local")
-    label("Local models", in: modelsMenu)
+    label("DeepSeek V4 Flash", in: modelsMenu)
+    label("Qwen3.8-27B", in: modelsMenu)
     modelsMenu.addItem(.separator())
     label("Add Model", in: modelsMenu)
-  }
-
-  private func updateModelsAvailability() {
-    for item in modelsMenu.items where item.submenu != nil {
-      item.isEnabled = actionsEnabled
-    }
   }
 
   private func updateHistory(_ rows: [[String: Any]], closed: [[String: Any]] = []) {
@@ -273,12 +264,13 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     for entry in entries {
       let title = entry.title.count > 76 ? String(entry.title.prefix(48)) + "…" + String(entry.title.suffix(24)) : entry.title
       let item = NSMenuItem(title: title, action: closed ? #selector(closedHistoryAction(_:)) : #selector(historyAction(_:)), keyEquivalent: "")
+      item.attributedTitle = entry.menuTitle
       item.target = self
       item.representedObject = entry.id
-      item.toolTip = entry.title + "\n" + entry.detail
+      item.toolTip = [entry.title, entry.machineName, entry.detail].filter { !$0.isEmpty }.joined(separator: "\n")
       item.state = entry.current ? .on : .off
       item.image = entry.swarm
-        ? NSImage(systemSymbolName: "rectangle.split.2x2", accessibilityDescription: nil)
+        ? SwarmIdentity.menuIcon
         : historyIcons.image(engine: entry.engine, asset: entry.iconAsset)
       historyMenu.addItem(item)
     }
@@ -339,8 +331,14 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
   }
 }
 
+private enum SwarmIdentity {
+  // Same four-pane symbol as widgets/swarm_icon.dart.
+  static let menuIcon = NSImage(systemSymbolName: "square.split.2x2", accessibilityDescription: nil)
+}
+
 private struct SwarmSubscriptionEntry: Equatable {
   let title: String
+  let account: String
   let status: String
   let details: [String]
   let engine: String?
@@ -350,10 +348,80 @@ private struct SwarmSubscriptionEntry: Equatable {
     guard let title = row["title"] as? String, !title.isEmpty,
           let status = row["status"] as? String else { return nil }
     self.title = title
+    account = row["account"] as? String ?? ""
     self.status = status
     details = Array((row["details"] as? [String] ?? [status]).prefix(16))
     engine = row["engine"] as? String
     iconAsset = row["iconAsset"] as? String
+  }
+
+  var accessibilityLabel: String {
+    [title, account, status].filter { !$0.isEmpty }.joined(separator: ", ")
+  }
+}
+
+/// Read-only account information, with aligned trailing balances. There is no
+/// action or submenu to suggest another step just to read the remaining usage.
+private final class SwarmSubscriptionView: NSView {
+  private static let rowFont = NSFont.menuFont(ofSize: 0)
+  let identity = NSTextField(labelWithString: "")
+  let balance = NSTextField(labelWithString: "")
+  private let icon = NSImageView()
+
+  private static func textWidth(_ text: String) -> CGFloat {
+    // Include the native text cell's horizontal drawing insets. Measuring only
+    // glyphs or a label already constrained by its frame can clip the status.
+    ceil((text as NSString).size(withAttributes: [.font: rowFont]).width) + 8
+  }
+
+  static func preferredWidth(_ entry: SwarmSubscriptionEntry) -> CGFloat {
+    let identityWidth = textWidth(entry.title + "  " + entry.account)
+    let balanceWidth = textWidth(entry.status)
+    return min(720, max(440, identityWidth + balanceWidth + 88))
+  }
+
+  init(entry: SwarmSubscriptionEntry, icon: NSImage, width: CGFloat) {
+    super.init(frame: NSRect(x: 0, y: 0, width: width, height: 26))
+    autoresizingMask = [.width]
+    self.icon.image = icon
+    self.icon.imageScaling = .scaleProportionallyDown
+    let title = NSMutableAttributedString(string: entry.title,
+      attributes: [.font: Self.rowFont, .foregroundColor: NSColor.labelColor])
+    if !entry.account.isEmpty {
+      title.append(NSAttributedString(string: "  " + entry.account,
+        attributes: [.font: Self.rowFont, .foregroundColor: NSColor.secondaryLabelColor]))
+    }
+    identity.attributedStringValue = title
+    identity.usesSingleLineMode = true
+    identity.lineBreakMode = .byTruncatingMiddle
+    balance.stringValue = entry.status
+    balance.font = Self.rowFont
+    balance.textColor = .secondaryLabelColor
+    balance.alignment = .right
+    balance.usesSingleLineMode = true
+    balance.lineBreakMode = .byClipping
+    for view in [self.icon, identity, balance] {
+      addSubview(view)
+      view.setAccessibilityElement(false)
+    }
+    setAccessibilityElement(true)
+    setAccessibilityRole(.staticText)
+    setAccessibilityLabel(entry.accessibilityLabel)
+    toolTip = entry.details.joined(separator: "\n")
+    layout()
+  }
+
+  required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+  override func layout() {
+    super.layout()
+    icon.frame = NSRect(x: 16, y: (bounds.height - 16) / 2, width: 16, height: 16)
+    let height = ceil(Self.rowFont.ascender - Self.rowFont.descender + Self.rowFont.leading)
+    let balanceWidth = Self.textWidth(balance.stringValue)
+    balance.frame = NSRect(x: bounds.width - 18 - balanceWidth,
+      y: (bounds.height - height) / 2, width: balanceWidth, height: height)
+    identity.frame = NSRect(x: 40, y: balance.frame.minY,
+      width: max(0, balance.frame.minX - 24 - 40), height: height)
   }
 }
 
@@ -361,16 +429,34 @@ private struct SwarmHistoryEntry: Equatable {
   let id: String
   let title: String
   let detail: String
+  let machineName: String
   let swarm: Bool
   let current: Bool
   let engine: String?
   let iconAsset: String?
   let canReopen: Bool
+  var menuTitle: NSAttributedString {
+    let font = NSFont.menuFont(ofSize: 0)
+    func fitted(_ text: String, width: CGFloat) -> String {
+      var value = text.replacingOccurrences(of: "\t", with: " ").replacingOccurrences(of: "\n", with: " ")
+      if (value as NSString).size(withAttributes: [.font: font]).width <= width { return value }
+      while !value.isEmpty && ((value + "…") as NSString).size(withAttributes: [.font: font]).width > width { value.removeLast() }
+      return value + "…"
+    }
+    let paragraph = NSMutableParagraphStyle()
+    paragraph.tabStops = [NSTextTab(textAlignment: .right, location: 660)]
+    let name = fitted(title, width: machineName.isEmpty ? 660 : 430)
+    let machine = fitted(machineName, width: 206)
+    return NSAttributedString(string: machine.isEmpty ? name : name + "\t" + machine,
+      attributes: [.font: font, .paragraphStyle: paragraph])
+  }
+
   init?(_ row: [String: Any]) {
     guard let id = row["id"] as? String, let title = row["title"] as? String else { return nil }
     self.id = id
     self.title = title
     detail = row["detail"] as? String ?? ""
+    machineName = row["machineName"] as? String ?? ""
     swarm = row["swarm"] as? Bool == true
     current = row["current"] as? Bool == true
     engine = (row["engine"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -387,9 +473,12 @@ private final class SwarmHistoryIcons {
   private let assetURL: (String) -> URL?
 
   init(assetURL: @escaping (String) -> URL? = { asset in
-    let bundle = Bundle(identifier: "io.flutter.flutter.app") ?? Bundle.main
-    let key = FlutterDartProject.lookupKey(forAsset: asset, from: bundle)
-    return bundle.url(forResource: key, withExtension: nil)
+    // Flutter ships desktop assets inside App.framework, not the runner bundle.
+    let framework = Bundle.main.privateFrameworksURL?.appendingPathComponent("App.framework")
+    let bundle = framework.flatMap { Bundle(url: $0) }
+      ?? Bundle(identifier: "io.flutter.flutter.app")
+      ?? Bundle.main
+    return bundle.resourceURL?.appendingPathComponent("flutter_assets").appendingPathComponent(asset)
   }) {
     self.assetURL = assetURL
     cache.countLimit = 32
@@ -489,7 +578,6 @@ private final class SwarmSearchCell: NSSearchFieldCell {
 private final class SwarmSearchField: NSSearchField {
   var begin: (() -> Void)?
   var command: ((String) -> Void)?
-  var scoped = false
   var searching = false { didSet { needsDisplay = true } }
   override init(frame: NSRect) {
     super.init(frame: frame)
@@ -540,7 +628,7 @@ private final class SwarmSearchField: NSSearchField {
     }
     return super.performKeyEquivalent(with: event)
   }
-  static func resultCommand(_ selector: String, event: NSEvent?, composing: Bool, scoped: Bool = false) -> String? {
+  static func resultCommand(_ selector: String, event: NSEvent?, composing: Bool) -> String? {
     guard !composing else { return nil }
     let modifiers = event?.modifierFlags.intersection([.command, .option, .control, .shift]) ?? []
     if modifiers == .control {
@@ -551,7 +639,6 @@ private final class SwarmSearchField: NSSearchField {
       default: break
       }
     }
-    if scoped && modifiers == .option && selector == "moveWordLeft:" { return "back" }
     switch selector {
     case "moveDown:": return "next"
     case "moveUp:": return "previous"
@@ -735,7 +822,6 @@ private final class SwarmTabStrip: NSView, NSSearchFieldDelegate {
       }
     }
     searchField.placeholderString = state["hint"] as? String ?? "Search…"
-    searchField.scoped = state["scoped"] as? Bool == true
   }
   func closeSearch() {
     guard searchField.searching else { return }
@@ -759,7 +845,7 @@ private final class SwarmTabStrip: NSView, NSSearchFieldDelegate {
   func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
     let event = NSApp.currentEvent
     guard let action = SwarmSearchField.resultCommand(NSStringFromSelector(selector), event: event,
-      composing: textView.hasMarkedText(), scoped: searchField.scoped) else { return false }
+      composing: textView.hasMarkedText()) else { return false }
     if event?.isARepeat != true || !["submit", "add", "close"].contains(action) {
       emit?("searchCommand", ["command": action])
     }

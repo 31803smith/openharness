@@ -68,9 +68,14 @@ void main() {
       );
       await mount(tester, app);
       expect(find.text('Existing project'), findsOneWidget);
-      await tester.tap(find.text('Search agents, swarms, machines, projects…'));
+      await tester.tap(
+        find.byKey(const ValueKey('swarm-welcome-search-input')),
+      );
       await tester.pump();
-      await tester.enterText(find.byType(TextField), '/work/existing');
+      await tester.enterText(
+        find.byKey(const ValueKey('swarm-welcome-search-input')),
+        '/work/existing',
+      );
       await tester.pump();
       expect(find.text('Agent 0'), findsOneWidget);
       expect(find.text('Agent 1'), findsOneWidget);
@@ -94,9 +99,14 @@ void main() {
       expect(find.text('Start a swarm'), findsOneWidget);
       expect(find.text('Models'), findsNothing);
       expect(find.text('Machines'), findsOneWidget);
-      await tester.tap(find.text('Search agents, swarms, machines, projects…'));
+      await tester.tap(
+        find.byKey(const ValueKey('swarm-welcome-search-input')),
+      );
       await tester.pump();
-      await tester.enterText(find.byType(TextField), 'Agent 1');
+      await tester.enterText(
+        find.byKey(const ValueKey('swarm-welcome-search-input')),
+        'Agent 1',
+      );
       await tester.pump();
       expect(find.text('Agent 1').last, findsOneWidget);
       await tester.tap(find.text('Agent 1').last);
