@@ -2,13 +2,23 @@
 
 Updated 2026-09-13 with coordinated palettes, Models, combined closed-work History and faster unified search. This is a working preview, not a release.
 
-## Active follow-up: keyboard-accessible first use
+## Active follow-up: optional search preview
+
+- The eye control in open search, or **Cmd-I** while editing its query, toggles a short output preview. It starts hidden for each search session. Both the titlebar and New swarm field keep their own query, caret, selected result and Enter action. Commands, groups and closed History entries do not show an agent-output preview.
+- The preview snapshots only an already-retained matching machine/agent session. It scans at most 160 rows and 192 cells per row, keeps at most 12 nonblank lines, and retains only the current excerpt. Repeated query edits on the same selection reuse that excerpt; changing selection or toggling off/on captures again. Missing output gets an honest empty state. No network request, terminal attachment, input, resize or viewport mutation occurs.
+- The excerpt takes a compact bounded area below results and can scroll independently. The input stays in place. The final visual pass corrected excess footer space and replaced the Return text glyph with the same icon used for command actions. The native Cmd-I path and Flutter path both respect IME composition and ignore repeated toggles.
+- Validation: **1,148 Flutter tests passed, one existing skip** and **297 AppKit checks passed**. Analyzer has no errors/warnings and 12 existing vendored infos. Isolated renders covered titlebar, New swarm and an 880×560 window; no real agents received test input. Artifacts: `/private/tmp/harness-v2-search-preview-{tests,full-tests,analyze,native,final-render}.log` and `/private/tmp/harness-v2-search-preview-{top,inline,narrow}.png`.
+- The debug extraction fixture measured 0.033 ms p95 for 12 output rows and 0.084 ms p95 for 160 blank rows with 4,000+ retained rows. This is extraction CPU time, not native input-to-display latency; details are in [performance notes](harness-v2-performance.md).
+- Next: file-remapping ownership across AppKit and Flutter, keeping the approved defaults unchanged. Match highlighting remains a small search follow-up.
+- Release build succeeded (`/private/tmp/harness-v2-search-preview-build.log`) and the exact development preview was reopened. PID 23328 was normally quit and confirmed exited before rebuilding; re-observe the current preview before later interaction.
+
+## Keyboard-accessible first use checkpoint
 
 - New agent opens immediately with a simple dimmed backdrop. The failed engine-check explanation is brief and readable; conditional CLI troubleshooting lives in Advanced. Cancel uses neutral secondary text. Explicit installation and creation behavior is unchanged.
 - Machine, project folder and coding-agent controls now participate in Tab traversal. The shared select field supports Enter/Space, arrow navigation, Escape and return to the field after selection. Focus is visible without a thick glow. Folder selection restores keyboard focus after the native or remote picker completes.
 - Collapsed Advanced content remains mounted for profile discovery, but cannot receive invisible keyboard focus. Submitting also excludes the choices from keyboard focus while the explicit operation is running.
 - Validation: **1,144 Flutter tests passed, one existing skip** (`/private/tmp/harness-v2-form-full-tests.log`), including keyboard-only first-agent creation and picker selection on macOS, Windows and Linux test variants. Analyzer has no errors/warnings and 12 existing vendored infos. Isolated renders of the form and focused folder were reviewed (`/private/tmp/harness-v2-form-{form,keyboard}.png`); the render test also passed. These are fixture results, not real first-install conversion measurements.
-- Next: optional bounded search preview and file-remapping ownership across AppKit and Flutter. Keep the approved simple shortcuts unchanged.
+- The optional preview is now recorded above. File-remapping ownership across AppKit and Flutter remains next; keep the approved simple shortcuts unchanged.
 - Release build succeeded (`/private/tmp/harness-v2-form-build.log`) and the exact development preview was reopened. Preview PID 14152 was normally quit and confirmed exited before writing its bundle; no real agent received test input. Re-observe the next preview PID before any native interaction.
 
 ## Deliberate splits checkpoint

@@ -288,6 +288,8 @@ class _SwarmScreenState extends State<SwarmScreen> {
           search.move(1);
         case 'previous':
           search.move(-1);
+        case 'preview':
+          search.togglePreview();
         case 'submit':
           final choice = search.submit();
           if (choice != null) await _chooseSearch(choice);
@@ -602,14 +604,10 @@ class _SwarmScreenState extends State<SwarmScreen> {
             (_native ? _nativeSearchWidth : _searchWidth(constraints.maxWidth))
                 .clamp(128.0, constraints.maxWidth - 16);
         final scale = MediaQuery.textScalerOf(context);
-        final rowHeight = swarmSearchRowHeight(
+        final height = swarmSearchResultsHeight(
+          search,
           scale,
-          commands: search.isCommandMode,
-        );
-        final height = (search.rows.length.clamp(1, 7) * rowHeight + 64).clamp(
-          140.0,
-          constraints.maxHeight - (_native ? 12 : 56),
-        );
+        ).clamp(140.0, constraints.maxHeight - (_native ? 12 : 56));
         final results = SizedBox(
           width: width,
           height: height.toDouble(),

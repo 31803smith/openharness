@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../shared/theme/app_theme.dart' as grid;
 import '../shared/widgets/app_dialog.dart';
 import '../state/app_state.dart';
 import '../state/swarm_navigation.dart';
@@ -160,6 +161,12 @@ class SwarmSearchKeys extends StatelessWidget {
               const SingleActivator(LogicalKeyboardKey.arrowUp): () =>
                   run(() => search.move(-1)),
               const SingleActivator(
+                LogicalKeyboardKey.keyI,
+                meta: true,
+                includeRepeats: false,
+              ): () =>
+                  run(search.togglePreview),
+              const SingleActivator(
                 LogicalKeyboardKey.keyN,
                 control: true,
               ): () =>
@@ -196,6 +203,15 @@ double swarmSearchRowHeight(TextScaler scale, {required bool commands}) =>
     commands
     ? (scale.scale(13) + 20).clamp(40, double.infinity)
     : (scale.scale(13) + scale.scale(11) + 32).clamp(56, double.infinity);
+
+double swarmSearchResultsHeight(
+  SwarmSearchController search,
+  TextScaler scale,
+) =>
+    search.rows.length.clamp(1, search.previewVisible ? 4 : 7) *
+        swarmSearchRowHeight(scale, commands: search.isCommandMode) +
+    64 +
+    (search.previewVisible ? scale.scale(11) * 10 + 24 : 0);
 
 /// Shared results for the title bar, New swarm field and History.
 class SwarmSearchResults extends StatefulWidget {
@@ -269,154 +285,257 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
     final scale = MediaQuery.textScalerOf(context);
     _rowHeight = swarmSearchRowHeight(scale, commands: search.isCommandMode);
     final selected = search.selected;
-    return Semantics(
-      container: true,
-      label: 'Search results',
-      child: Column(
-        children: [
-          Expanded(
-            child: search.rows.isEmpty
-                ? Center(
-                    child: Text(
-                      search.isCommandMode
-                          ? 'No matching commands'
-                          : 'No matching results',
-                      style: const TextStyle(
-                        fontSize: 13,
-                        color: Colors.white60,
-                      ),
-                    ),
-                  )
-                : ListView.builder(
-                    controller: _scroll,
-                    itemCount: search.rows.length,
-                    itemExtent: _rowHeight,
-                    itemBuilder: (context, index) {
-                      final row = search.rows[index];
-                      return ListTile(
-                        key: ValueKey(row.id),
-                        minTileHeight: _rowHeight,
-                        enabled: search.canSubmit(row),
-                        selected: index == search.cursor,
-                        selectedColor: Colors.white,
-                        selectedTileColor: Colors.white10,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                        ),
-                        leading: row.isCommand
-                            ? const Icon(
-                                Icons.keyboard_command_key,
-                                size: 19,
-                                color: Colors.white60,
-                              )
-                            : row.agentId != null
-                            ? EngineMark(
-                                engine: row.engine,
-                                size: 20,
-                                enabled: search.canSubmit(row),
-                              )
-                            : row.isSwarm
-                            ? const SwarmIcon(color: Colors.white60)
-                            : Icon(
-                                row.isMachine
-                                    ? Icons.computer_outlined
-                                    : Icons.folder_outlined,
-                                size: 19,
-                                color: Colors.white60,
-                              ),
-                        title: Text(
-                          row.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontSize: 13),
-                        ),
-                        subtitle: row.isCommand
-                            ? null
-                            : Text(
-                                row.detail,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 11,
-                                  color: Colors.white70,
-                                ),
-                              ),
-                        trailing: row.shortcut == null
-                            ? null
-                            : Text(
-                                row.shortcut!,
-                                style: const TextStyle(
-                                  fontSize: 11,
-                                  color: Colors.white70,
-                                ),
-                              ),
-                        onTap: search.canSubmit(row)
-                            ? () => _submit(row)
-                            : null,
-                      );
-                    },
-                  ),
-          ),
-          const SizedBox(height: 4),
-          Row(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final previewHeight = (constraints.maxHeight - _rowHeight - 48).clamp(
+          0.0,
+          scale.scale(11) * 10 + 24,
+        );
+        return Semantics(
+          container: true,
+          label: 'Search results',
+          child: Column(
             children: [
               Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                  child: Text(
-                    selected != null && !search.canSubmit(selected)
-                        ? selected.isGroup &&
-                                  selected.members.length > AppNotifier.maxPanes
-                              ? 'A swarm supports up to ${AppNotifier.maxPanes} agents'
-                              : 'No room to open this ${selected.isSwarm || selected.isGroup ? 'swarm' : 'agent'}'
-                        : selected?.closedId != null
-                        ? search.canSubmit(selected)
-                              ? 'Reopen ${selected!.isSwarm ? 'swarm' : 'agent'}'
-                              : 'No room to reopen'
-                        : selected?.agentId != null && !selected!.hasView
-                        ? 'Opens in ${search.targetName}'
-                        : search.query.isEmpty && search.commands != null
-                        ? 'Type > for commands'
-                        : '↑↓ choose · Esc close',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 11, color: Colors.white70),
-                  ),
-                ),
-              ),
-              if (search.canAdd(selected))
-                TextButton(
-                  onPressed: () => widget.onChoose(search.addHere()!),
-                  style: TextButton.styleFrom(foregroundColor: Colors.white70),
-                  child: const Text(
-                    'Add to this swarm  ⌘↵',
-                    style: TextStyle(fontSize: 11),
-                  ),
-                ),
-              TextButton(
-                onPressed: search.canSubmit(selected) ? _submit : null,
-                style: TextButton.styleFrom(foregroundColor: Colors.white),
-                child: search.isCommandMode
-                    ? const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text('Run command', style: TextStyle(fontSize: 11)),
-                          SizedBox(width: 8),
-                          Icon(Icons.keyboard_return, size: 14),
-                        ],
+                child: search.rows.isEmpty
+                    ? Center(
+                        child: Text(
+                          search.isCommandMode
+                              ? 'No matching commands'
+                              : 'No matching results',
+                          style: const TextStyle(
+                            fontSize: 13,
+                            color: Colors.white60,
+                          ),
+                        ),
                       )
-                    : Text(
-                        '${selected == null ? 'Go to' : SwarmSearchController.action(selected)}  ↵',
-                        style: const TextStyle(fontSize: 11),
+                    : ListView.builder(
+                        controller: _scroll,
+                        itemCount: search.rows.length,
+                        itemExtent: _rowHeight,
+                        itemBuilder: (context, index) {
+                          final row = search.rows[index];
+                          return ListTile(
+                            key: ValueKey(row.id),
+                            minTileHeight: _rowHeight,
+                            enabled: search.canSubmit(row),
+                            selected: index == search.cursor,
+                            selectedColor: Colors.white,
+                            selectedTileColor: Colors.white10,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                            ),
+                            leading: row.isCommand
+                                ? const Icon(
+                                    Icons.keyboard_command_key,
+                                    size: 19,
+                                    color: Colors.white60,
+                                  )
+                                : row.agentId != null
+                                ? EngineMark(
+                                    engine: row.engine,
+                                    size: 20,
+                                    enabled: search.canSubmit(row),
+                                  )
+                                : row.isSwarm
+                                ? const SwarmIcon(color: Colors.white60)
+                                : Icon(
+                                    row.isMachine
+                                        ? Icons.computer_outlined
+                                        : Icons.folder_outlined,
+                                    size: 19,
+                                    color: Colors.white60,
+                                  ),
+                            title: Text(
+                              row.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 13),
+                            ),
+                            subtitle: row.isCommand
+                                ? null
+                                : Text(
+                                    row.detail,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 11,
+                                      color: Colors.white70,
+                                    ),
+                                  ),
+                            trailing: row.shortcut == null
+                                ? null
+                                : Text(
+                                    row.shortcut!,
+                                    style: const TextStyle(
+                                      fontSize: 11,
+                                      color: Colors.white70,
+                                    ),
+                                  ),
+                            onTap: search.canSubmit(row)
+                                ? () => _submit(row)
+                                : null,
+                          );
+                        },
                       ),
+              ),
+              if (search.previewVisible && previewHeight >= 64)
+                SizedBox(
+                  height: previewHeight,
+                  child: _OutputPreview(text: search.preview?.text ?? ''),
+                ),
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      child: Text(
+                        selected != null && !search.canSubmit(selected)
+                            ? selected.isGroup &&
+                                      selected.members.length >
+                                          AppNotifier.maxPanes
+                                  ? 'A swarm supports up to ${AppNotifier.maxPanes} agents'
+                                  : 'No room to open this ${selected.isSwarm || selected.isGroup ? 'swarm' : 'agent'}'
+                            : selected?.closedId != null
+                            ? search.canSubmit(selected)
+                                  ? 'Reopen ${selected!.isSwarm ? 'swarm' : 'agent'}'
+                                  : 'No room to reopen'
+                            : selected?.agentId != null && !selected!.hasView
+                            ? 'Opens in ${search.targetName}'
+                            : search.query.isEmpty && search.commands != null
+                            ? 'Type > for commands'
+                            : '↑↓ choose · Esc close',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Colors.white70,
+                        ),
+                      ),
+                    ),
+                  ),
+                  if (search.canPreview ||
+                      search.previewEnabled && !search.isCommandMode)
+                    Tooltip(
+                      message: search.previewEnabled
+                          ? 'Hide preview (⌘I)'
+                          : 'Preview recent output (⌘I)',
+                      child: IconButton(
+                        key: const ValueKey('swarm-search-preview-toggle'),
+                        onPressed: () {
+                          search.togglePreview();
+                          widget.onRefocus();
+                        },
+                        icon: Icon(
+                          search.previewEnabled
+                              ? Icons.visibility
+                              : Icons.visibility_outlined,
+                          size: 18,
+                          color: search.previewEnabled
+                              ? Colors.white
+                              : Colors.white70,
+                        ),
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    ),
+                  if (search.canAdd(selected))
+                    TextButton(
+                      onPressed: () => widget.onChoose(search.addHere()!),
+                      style: TextButton.styleFrom(
+                        foregroundColor: Colors.white70,
+                      ),
+                      child: const _SearchActionLabel(
+                        'Add to this swarm',
+                        command: true,
+                      ),
+                    ),
+                  TextButton(
+                    onPressed: search.canSubmit(selected) ? _submit : null,
+                    style: TextButton.styleFrom(foregroundColor: Colors.white),
+                    child: _SearchActionLabel(
+                      selected == null
+                          ? 'Go to'
+                          : SwarmSearchController.action(selected),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
+}
+
+class _SearchActionLabel extends StatelessWidget {
+  const _SearchActionLabel(this.label, {this.command = false});
+  final String label;
+  final bool command;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Text(label, style: const TextStyle(fontSize: 11)),
+      const SizedBox(width: 8),
+      if (command) const Text('⌘', style: TextStyle(fontSize: 11)),
+      const Icon(Icons.keyboard_return, size: 14),
+    ],
+  );
+}
+
+class _OutputPreview extends StatelessWidget {
+  const _OutputPreview({required this.text});
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    key: const ValueKey('swarm-search-preview'),
+    width: double.infinity,
+    margin: const EdgeInsets.fromLTRB(8, 8, 8, 4),
+    padding: const EdgeInsets.all(10),
+    decoration: BoxDecoration(
+      color: Colors.black.withValues(alpha: 0.16),
+      borderRadius: BorderRadius.circular(6),
+    ),
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Tooltip(
+          message: 'A snapshot of available output. Turn preview off and on to refresh.',
+          child: Text(
+            'Output preview',
+            style: TextStyle(fontSize: 11, color: Colors.white70),
+          ),
+        ),
+        const SizedBox(height: 6),
+        Flexible(
+          child: SingleChildScrollView(
+            primary: false,
+            reverse: true,
+            child: Text(
+              text.isEmpty ? 'No output available for preview.' : text,
+              style: TextStyle(
+                fontFamily: text.isEmpty
+                    ? grid.AppFont.sans
+                    : grid.AppFont.mono,
+                fontFamilyFallback: text.isEmpty
+                    ? grid.AppFont.sansFallback
+                    : grid.AppFont.monoFallback,
+                fontSize: 11,
+                height: 1.45,
+                color: text.isEmpty ? Colors.white70 : Colors.white,
+              ),
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
 }

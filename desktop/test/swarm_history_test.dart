@@ -340,6 +340,17 @@ void main() {
             .width,
         480,
       );
+      await native('searchCommand', {'command': 'preview'});
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('swarm-search-preview')),
+        findsOneWidget,
+      );
+      expect(
+        fieldUpdates.every((state) => !state.containsKey('query')),
+        isTrue,
+      );
+      expect(otherInput, isEmpty);
       await native('searchCommand', {'command': 'submit'});
       await tester.pump();
       await jumping;

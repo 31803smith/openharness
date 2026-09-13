@@ -109,17 +109,13 @@ class _SwarmInlineSearchState extends State<SwarmInlineSearch> {
           Offset.zero & info.childSize,
         );
         final scale = MediaQuery.textScalerOf(context);
-        final rowHeight = swarmSearchRowHeight(
-          scale,
-          commands: search.isCommandMode,
-        );
         final available = math.max(
           0.0,
           info.overlaySize.height - anchor.bottom - 16,
         );
         final height = math.min(
           available,
-          search.rows.length.clamp(1, 7) * rowHeight + 64,
+          swarmSearchResultsHeight(search, scale),
         );
         return Positioned(
           top: anchor.bottom,

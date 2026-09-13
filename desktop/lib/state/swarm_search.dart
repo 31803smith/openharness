@@ -1,4 +1,7 @@
 import 'package:flutter/foundation.dart';
+import 'package:xterm/xterm.dart';
+
+import '../terminal/search_output_preview.dart';
 
 import 'app_state.dart';
 import 'swarm_catalog.dart';
@@ -37,6 +40,43 @@ class SwarmSearchController extends ChangeNotifier {
   String query = '';
   String? _selectedId;
   int cursor = 0;
+  bool previewEnabled = false;
+  SearchOutputPreview? preview;
+  String? _previewId;
+
+  bool get canPreview =>
+      !isCommandMode && selected?.agentId != null && selected?.closedId == null;
+  bool get previewVisible => previewEnabled && canPreview;
+
+  void togglePreview() {
+    if (!previewEnabled && !canPreview) return;
+    previewEnabled = !previewEnabled;
+    _updatePreview();
+    notifyListeners();
+  }
+
+  void _updatePreview() {
+    if (!previewVisible) {
+      preview = null;
+      _previewId = null;
+      return;
+    }
+    final row = selected!;
+    // Keep a snapshot while this selection stays put. Query edits and output
+    // traffic do not read the buffers again. A new selection or re-enabling
+    // preview captures fresh context, including any replacement session.
+    if (_previewId == row.id) return;
+    final terminal = app.allPanes
+        .where(
+          (pane) =>
+              pane.machineId == row.machineId && pane.agentId == row.agentId,
+        )
+        .map((pane) => pane.session?.terminal)
+        .whereType<Terminal>()
+        .firstOrNull;
+    _previewId = row.id;
+    preview = SearchOutputPreview.capture(terminal);
+  }
 
   SwarmDestination? get selected => rows.isEmpty ? null : rows[cursor];
   String get hint => isCommandMode
@@ -73,6 +113,7 @@ class SwarmSearchController extends ChangeNotifier {
         ? index
         : cursor.clamp(0, rows.length - 1);
     _selectedId = selected?.id;
+    _updatePreview();
   }
 
   void setQuery(String value) {
@@ -88,6 +129,7 @@ class SwarmSearchController extends ChangeNotifier {
     if (rows.isEmpty) return;
     cursor = (cursor + delta) % rows.length;
     _selectedId = selected!.id;
+    _updatePreview();
     notifyListeners();
   }
 

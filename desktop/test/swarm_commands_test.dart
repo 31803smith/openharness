@@ -74,7 +74,7 @@ void main() {
       await tester.pump();
       expect(find.text('⌘⇧P'), findsNothing);
       expect(find.text('⇧⌘P'), findsOneWidget);
-      expect(find.text('Add to this swarm  ⌘↵'), findsNothing);
+      expect(find.text('Add to this swarm'), findsNothing);
       expect(find.byKey(const ValueKey('command:pane.pin')), findsOneWidget);
       expect(app.isPanePinned(pane), isFalse);
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);

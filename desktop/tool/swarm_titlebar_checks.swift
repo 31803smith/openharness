@@ -130,6 +130,7 @@ private extension SwarmTabStrip {
       ("moveUp:", key("k", .control), "previous"),
       ("insertNewline:", key("\r"), "submit"),
       ("insertNewline:", key("\r", .command), "add"),
+      ("showInfo:", key("i", .command), "preview"),
       ("cancelOperation:", key("g", .control), "close")
     ] {
       try checkTitlebar(SwarmSearchField.resultCommand(selector, event: event, composing: false) == expected,

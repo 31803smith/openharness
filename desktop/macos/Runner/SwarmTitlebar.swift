@@ -640,6 +640,10 @@ private final class SwarmSearchField: NSSearchField {
         editor.selectAll(nil)
         return true
       }
+      if event.charactersIgnoringModifiers == "i" && !editor.hasMarkedText() {
+        if !event.isARepeat { command?("preview") }
+        return true
+      }
       if let action = Self.resultCommand("insertNewline:", event: event, composing: editor.hasMarkedText()),
          event.charactersIgnoringModifiers == "\r" || event.charactersIgnoringModifiers == "\u{3}" {
         if !event.isARepeat { command?(action) }
@@ -651,6 +655,7 @@ private final class SwarmSearchField: NSSearchField {
   static func resultCommand(_ selector: String, event: NSEvent?, composing: Bool) -> String? {
     guard !composing else { return nil }
     let modifiers = event?.modifierFlags.intersection([.command, .option, .control, .shift]) ?? []
+    if modifiers == .command && event?.charactersIgnoringModifiers == "i" { return "preview" }
     if modifiers == .control {
       switch event?.charactersIgnoringModifiers?.lowercased() {
       case "n", "j": return "next"
@@ -875,7 +880,7 @@ private final class SwarmTabStrip: NSView, NSSearchFieldDelegate {
     let event = NSApp.currentEvent
     guard let action = SwarmSearchField.resultCommand(NSStringFromSelector(selector), event: event,
       composing: textView.hasMarkedText()) else { return false }
-    if event?.isARepeat != true || !["submit", "add", "close"].contains(action) {
+    if event?.isARepeat != true || !["submit", "add", "close", "preview"].contains(action) {
       emit?("searchCommand", ["command": action])
     }
     return true

@@ -10,6 +10,14 @@ flutter test --no-pub --reporter expanded test/benchmarks/swarm_benchmark.dart
 
 It prints `SWARM_BENCH` JSON records. Its filename deliberately does not end in `_test.dart`, so ordinary correctness runs do not include timing measurements.
 
+## Optional search output preview (2026-09-13)
+
+Preview is off by default. With preview enabled, changing the selected agent reads at most 160 retained rows × 192 cells, stopping after 12 nonblank lines. Query edits that keep the same selection reuse the snapshot without reading the buffer or scanning open panes again. There are no output listeners, periodic refreshes, network calls or terminal attachments. The tooltip explains that toggling preview off/on refreshes its snapshot.
+
+An isolated debug-Dart fixture used a 300-column, 120-row terminal with 4,000+ retained rows, 200 warmups and 1,000 samples. Extraction of 12 output rows took **24 µs median / 33 µs p95 / 479 µs max**. Scanning 160 blank rows took **69 µs median / 84 µs p95 / 347 µs max**. Artifacts: `/private/tmp/harness-v2-preview-benchmark.dart` and `/private/tmp/harness-v2-search-preview-final-render.log`.
+
+These measurements cover only extraction CPU time on the shared workstation. They do not measure result ranking, Flutter layout/paint, AppKit event handling, display latency or network round trips. Separate correctness checks cover Unicode, bounds, snapshot caching and unchanged query/input/terminal ownership.
+
 ## Unified search catalog and typing (2026-09-13)
 
 The catalog benchmark now also exercises the production `SwarmSearchController`:

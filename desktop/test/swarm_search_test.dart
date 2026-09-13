@@ -305,7 +305,7 @@ void main() {
       await chord(tester, LogicalKeyboardKey.keyP);
       await tester.enterText(jumpField, 'Agent 0');
       await tester.pump();
-      expect(find.text('Add to this swarm  ⌘↵'), findsOneWidget);
+      expect(find.text('Add to this swarm'), findsOneWidget);
       await chord(tester, LogicalKeyboardKey.enter);
       expect(find.byType(Dialog), findsNothing);
       expect(app.activeSwarm, same(target));
