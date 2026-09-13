@@ -153,10 +153,10 @@ private extension SwarmTitlebar {
     try checkTitlebar(settings.title == "Settings…" && settings.representedObject as? String == "settings", "Settings stays in the application menu")
     let file = main.item(withTitle: "File")!.submenu!
     let historyMenu = main.item(withTitle: "History")!.submenu!
-    try checkTitlebar(file.items.compactMap { $0.representedObject as? String } == ["new", "newAgent", "addAgent", "linkMachine", "addProject", "closePane", "closeActive"], "File exposes creation, connection and view-closing actions")
-    let jump = historyMenu.items.first(where: { $0.representedObject as? String == "jump" })!
+    try checkTitlebar(file.items.compactMap { $0.representedObject as? String } == ["new", "newAgent", "reopen", "addAgent", "linkMachine", "addProject", "closePane", "closeActive"], "File exposes creation, connection and view-closing actions")
+    let jump = main.item(withTitle: "Swarm")!.submenu!.items.first(where: { $0.representedObject as? String == "jump" })!
     try checkTitlebar(jump.keyEquivalent == "p" && jump.keyEquivalentModifierMask == [.command], "Command-P has a native menu owner while a terminal has focus")
-    let reopen = historyMenu.items.first(where: { $0.representedObject as? String == "reopen" })!
+    let reopen = file.items.first(where: { $0.representedObject as? String == "reopen" })!
     actionsEnabled = true
     canReopen = false
     try checkTitlebar(!validateMenuItem(reopen), "Closed-Swarm recovery is disabled with an empty history")
@@ -175,12 +175,30 @@ private extension SwarmTitlebar {
     let recentRows: [[String: Any]] = (0..<20).map {
       ["id": "agent:\($0)", "title": "Agent \($0) — Machine", "detail": "Project \($0)", "current": $0 == 0]
     } + [["id": "swarm:recent", "title": "Recent Swarm", "swarm": true]]
-    updateHistory(recentRows)
-    try checkTitlebar(recentAgentsMenu.numberOfItems == 12 && recentSwarmsMenu.numberOfItems == 1, "Recent menus stay bounded and separate agents from Swarms")
-    let recent = recentAgentsMenu.items[0]
-    try checkTitlebar(recent.state == .on && recent.toolTip == "Project 0", "Recent work includes current selection and project context")
-    updateHistory(recentRows)
-    try checkTitlebar(recentAgentsMenu.items[0] === recent, "Unchanged history retains native menu items")
+    let closedRows: [[String: Any]] = (0..<14).map {
+      ["id": "closed-\($0)", "title": "Closed Swarm \($0)", "detail": "3 views", "swarm": true]
+    }
+    updateHistory(recentRows, closed: closedRows)
+    let recentItems = historyMenu.items.filter { $0.action == #selector(historyAction(_:)) }
+    let closedItems = historyMenu.items.filter { $0.action == #selector(closedHistoryAction(_:)) }
+    try checkTitlebar(recentItems.count == 15 && closedItems.count == 10, "Chrome-style direct History sections remain bounded")
+    try checkTitlebar(historyMenu.items.filter { !$0.isSeparatorItem }.prefix(2).map(\.title) == ["Back", "Forward"], "History begins with Back and Forward")
+    try checkTitlebar(historyMenu.items.last?.title == "Show Full History" && historyMenu.items.last?.keyEquivalent == "y", "Full History uses Command-Y")
+    try checkTitlebar(historyMenu.items.allSatisfy { $0.submenu == nil }, "Recent work is available without nested menus")
+    let recent = recentItems[0]
+    let closed = closedItems[0]
+    try checkTitlebar(recent.state == .on && recent.toolTip == "Agent 0 — Machine\nProject 0", "Recent work includes its complete title and project context")
+    updateHistory(recentRows, closed: closedRows)
+    try checkTitlebar(historyMenu.items.contains(where: { $0 === recent }), "Unchanged history retains native menu items")
+    try checkTitlebar(validateMenuItem(closed), "A specific closed Swarm can be restored")
+    canReopen = false
+    try checkTitlebar(!validateMenuItem(closed), "Specific restore respects the open-tab capacity")
+    canReopen = true
+    let back = historyMenu.items[0]
+    let forward = historyMenu.items[1]
+    canGoBack = false
+    canGoForward = true
+    try checkTitlebar(!validateMenuItem(back) && validateMenuItem(forward), "Back and Forward have independent navigation availability")
     try checkTitlebar(validateMenuItem(recent), "Recent navigation is available in the shell")
     actionsEnabled = false
     try checkTitlebar(!validateMenuItem(recent) && !validateMenuItem(jump) && !validateMenuItem(settings), "History, jump and Settings cannot act behind a modal")
@@ -190,7 +208,8 @@ private extension SwarmTitlebar {
     actionsEnabled = true
     updateHistory([])
     try checkTitlebar(!validateMenuItem(recent), "A stale recent menu item cannot dispatch after its view disappears")
-    try checkTitlebar(recentAgentsMenu.items[0].action == nil && !recentAgentsMenu.items[0].isEnabled, "An empty recent menu is an inert placeholder")
+    try checkTitlebar(!validateMenuItem(closed), "A stale closed entry cannot restore another Swarm")
+    try checkTitlebar(historyMenu.items.first(where: { $0.title == "No Recent Visits" })?.isEnabled == false, "An empty history is an inert placeholder")
     guard let menu = main.items.first(where: { $0.title == "Swarm" })?.submenu,
           let attention = menu.items.first(where: { $0.representedObject as? String == "notifications" }) else {
       throw TitlebarCheckFailure(message: "Swarm menu exposes agents needing input")

@@ -15,9 +15,12 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation {
   private var canFind = false
   private var canClosePane = false
   private var canCreateSwarm = false
-  private let recentAgentsMenu = NSMenu(title: "Recent Agents")
-  private let recentSwarmsMenu = NSMenu(title: "Recent Swarms")
+  private let historyMenu = NSMenu(title: "History")
+  private var canGoBack = false
+  private var canGoForward = false
+  private var canChangeWallpaper = false
   private var history: [SwarmHistoryEntry] = []
+  private var closedHistory: [SwarmHistoryEntry] = []
 
   init(window: NSWindow, messenger: FlutterBinaryMessenger) {
     self.window = window
@@ -36,8 +39,11 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation {
         self.canReopen = state["canReopen"] as? Bool == true
         self.canFind = state["canFind"] as? Bool == true
         self.canClosePane = state["canClosePane"] as? Bool == true
+        self.canGoBack = state["canGoBack"] as? Bool == true
+        self.canGoForward = state["canGoForward"] as? Bool == true
+        self.canChangeWallpaper = state["canChangeWallpaper"] as? Bool == true
         self.canCreateSwarm = (state["tabs"] as? [Any] ?? []).count < 24
-        self.updateHistory(state["history"] as? [[String: Any]] ?? [])
+        self.updateHistory(state["history"] as? [[String: Any]] ?? [], closed: state["closedHistory"] as? [[String: Any]] ?? [])
         self.strip.update(state)
         result(nil)
       default: result(FlutterMethodNotImplemented)
@@ -115,6 +121,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation {
     let file = NSMenu(title: "File")
     add(file, "New Swarm", "t", "new")
     add(file, "New Agent…", "", "newAgent")
+    add(file, "Reopen Closed Swarm", "t", "reopen", [.command, .shift])
     add(file, "Add Agent to Swarm…", "f", "addAgent", [.command, .shift])
     file.addItem(.separator())
     add(file, "Link Machine…", "", "linkMachine")
@@ -124,22 +131,12 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation {
     add(file, "Close Swarm", "w", "closeActive")
     install(file, at: 1)
 
-    let historyMenu = NSMenu(title: "History")
-    add(historyMenu, "Jump to Agent or Swarm…", "p", "jump")
-    historyMenu.addItem(.separator())
-    for menu in [recentAgentsMenu, recentSwarmsMenu] {
-      let item = NSMenuItem(title: menu.title, action: nil, keyEquivalent: "")
-      item.submenu = menu
-      historyMenu.addItem(item)
-    }
-    populateHistoryMenu(recentAgentsMenu, entries: history.filter { !$0.swarm }, empty: "No Recent Agents")
-    populateHistoryMenu(recentSwarmsMenu, entries: history.filter(\.swarm), empty: "No Recent Swarms")
-    historyMenu.addItem(.separator())
-    add(historyMenu, "Reopen Closed Swarm", "t", "reopen", [.command, .shift])
+    rebuildHistoryMenu()
     let windowIndex = main.items.firstIndex(where: { $0.title == "Window" }) ?? main.numberOfItems
     install(historyMenu, at: windowIndex)
 
     let swarm = NSMenu(title: "Swarm")
+    add(swarm, "Jump to Agent or Swarm…", "p", "jump")
     add(swarm, "Rename Swarm…", "r", "renameActive", [.command, .shift])
     swarm.addItem(.separator())
     add(swarm, "Next Swarm", "]", "next", [.command, .shift])
@@ -147,33 +144,64 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation {
     swarm.addItem(.separator())
     add(swarm, "Agents Needing Input…", "i", "notifications", [.command, .shift])
     install(swarm, at: windowIndex + 1)
+    if let view = main.item(withTitle: "View")?.submenu {
+      view.addItem(.separator())
+      add(view, "Next Wallpaper", "", "nextWallpaper")
+    }
     installTerminalFindMenu(main)
   }
 
-  private func updateHistory(_ rows: [[String: Any]]) {
+  private func updateHistory(_ rows: [[String: Any]], closed: [[String: Any]] = []) {
     let entries = rows.prefix(64).compactMap(SwarmHistoryEntry.init)
-    guard entries != history else { return }
+    let closedEntries = closed.prefix(24).compactMap(SwarmHistoryEntry.init)
+    guard entries != history || closedEntries != closedHistory else { return }
     history = entries
-    populateHistoryMenu(recentAgentsMenu, entries: entries.filter { !$0.swarm }, empty: "No Recent Agents")
-    populateHistoryMenu(recentSwarmsMenu, entries: entries.filter(\.swarm), empty: "No Recent Swarms")
+    closedHistory = closedEntries
+    rebuildHistoryMenu()
   }
 
-  private func populateHistoryMenu(_ menu: NSMenu, entries: [SwarmHistoryEntry], empty: String) {
-    menu.removeAllItems()
-    for entry in entries.prefix(12) {
-      let item = NSMenuItem(title: entry.title, action: #selector(historyAction(_:)), keyEquivalent: "")
+  private func rebuildHistoryMenu() {
+    historyMenu.removeAllItems()
+    func command(_ title: String, _ key: String, _ action: String) {
+      let item = NSMenuItem(title: title, action: #selector(menuAction(_:)), keyEquivalent: key)
+      item.target = self
+      item.representedObject = action
+      item.keyEquivalentModifierMask = [.command]
+      historyMenu.addItem(item)
+    }
+    command("Back", "[", "historyBack")
+    command("Forward", "]", "historyForward")
+    historyMenu.addItem(.separator())
+    appendHistorySection("Recently Closed", entries: Array(closedHistory.prefix(10)), closed: true)
+    historyMenu.addItem(.separator())
+    appendHistorySection("Recently Visited", entries: Array(history.prefix(15)), closed: false)
+    historyMenu.addItem(.separator())
+    command("Show Full History", "y", "showHistory")
+  }
+
+  private func appendHistorySection(_ title: String, entries: [SwarmHistoryEntry], closed: Bool) {
+    if #available(macOS 14.0, *) {
+      historyMenu.addItem(NSMenuItem.sectionHeader(title: title))
+    } else {
+      let label = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+      label.isEnabled = false
+      historyMenu.addItem(label)
+    }
+    for entry in entries {
+      let title = entry.title.count > 76 ? String(entry.title.prefix(48)) + "…" + String(entry.title.suffix(24)) : entry.title
+      let item = NSMenuItem(title: title, action: closed ? #selector(closedHistoryAction(_:)) : #selector(historyAction(_:)), keyEquivalent: "")
       item.target = self
       item.representedObject = entry.id
-      item.toolTip = entry.detail
+      item.toolTip = entry.title + "\n" + entry.detail
       item.state = entry.current ? .on : .off
       item.image = NSImage(systemSymbolName: entry.swarm ? "rectangle.split.2x2" : "terminal",
         accessibilityDescription: nil)
-      menu.addItem(item)
+      historyMenu.addItem(item)
     }
-    if menu.items.isEmpty {
-      let item = NSMenuItem(title: empty, action: nil, keyEquivalent: "")
+    if entries.isEmpty {
+      let item = NSMenuItem(title: closed ? "No Recently Closed Swarms" : "No Recent Visits", action: nil, keyEquivalent: "")
       item.isEnabled = false
-      menu.addItem(item)
+      historyMenu.addItem(item)
     }
   }
 
@@ -202,7 +230,12 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation {
     if menuItem.action == #selector(historyAction(_:)) {
       return actionsEnabled && history.contains(where: { $0.id == action })
     }
+    if menuItem.action == #selector(closedHistoryAction(_:)) {
+      return actionsEnabled && canReopen && closedHistory.contains(where: { $0.id == action })
+    }
     return actionsEnabled && (action != "reopen" || canReopen) &&
+      (action != "nextWallpaper" || canChangeWallpaper) &&
+      (action != "historyBack" || canGoBack) && (action != "historyForward" || canGoForward) &&
       (action != "new" || canCreateSwarm) && (action != "closePane" || canClosePane) &&
       (!["findTerminal", "findNext", "findPrevious"].contains(action) || canFind)
   }
@@ -215,6 +248,11 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation {
   @objc private func historyAction(_ sender: NSMenuItem) {
     guard validateMenuItem(sender), let id = sender.representedObject as? String else { return }
     channel.invokeMethod("historyDestination", arguments: ["id": id])
+  }
+
+  @objc private func closedHistoryAction(_ sender: NSMenuItem) {
+    guard validateMenuItem(sender), let id = sender.representedObject as? String else { return }
+    channel.invokeMethod("reopenHistory", arguments: ["id": id])
   }
 }
 

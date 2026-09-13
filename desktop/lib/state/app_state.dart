@@ -16,6 +16,8 @@ import '../core/config.dart';
 import '../core/build_identity.dart';
 import '../core/engine_availability.dart';
 import '../core/local_hostname.dart';
+import '../core/local_git_projects.dart';
+import '../core/test_run.dart';
 import '../core/models.dart';
 import '../core/retry.dart';
 import '../settings/config_store.dart';
@@ -104,6 +106,7 @@ class MachineState {
   /// local machine never falls back to cloud E2EE while that identity exists.
   bool localOnly = false;
   LocalCliEndpoint? localEndpoint;
+  Map<String, AgentProject> localProjects = const {};
   // Set when the local CLI's relay reports NO_PEER_LINK for this (non-local) machine — it needs
   // `harness link connect <machineId>` (the other machine's remote password) before it can
   // connect. The CLI owns E2EE entirely now; this is just "is trust established yet", not a
@@ -162,7 +165,9 @@ class MachineState {
   bool get usesLocalTransport => localEndpoint != null;
 
   AgentProject? projectOf(Agent agent) =>
-      agent.project ?? localEndpoint?.agentProjects[agent.id];
+      agent.project ??
+      localProjects[agent.id] ??
+      localEndpoint?.agentProjects[agent.id];
 
   Agent? get activeAgent {
     for (final agent in agents) {
@@ -328,6 +333,9 @@ class AppNotifier extends ChangeNotifier {
   // now, not just this computer's own one (see src/lib/remoteRelay.ts in the harness CLI repo: a
   // foreign machineId is relayed to backend transparently, so the app never dials backend directly).
   LocalCliEndpoint? _cliEndpoint;
+  late final _localGitProjects = LocalGitProjects(
+    onChanged: _applyLocalGitProjects,
+  );
 
   AppStatus status = AppStatus.bootstrapping;
   CurrentUserProfile? currentUser;
@@ -344,6 +352,9 @@ class AppNotifier extends ChangeNotifier {
   static const maxSwarms = 24;
   static const maxClosedSwarms = 24;
   final List<ClosedSwarm> _closedSwarms = [];
+  int _nextClosedSwarmId = 1;
+  List<ClosedSwarm> get closedSwarms =>
+      List.unmodifiable(_closedSwarms.reversed);
   bool get canReopenClosedSwarm =>
       _closedSwarms.isNotEmpty && swarms.length < maxSwarms;
   Swarm get activeSwarm => swarms.firstWhere(
@@ -477,7 +488,12 @@ class AppNotifier extends ChangeNotifier {
       swarms.add(replacement);
     }
     _closedSwarms.add(
-      ClosedSwarm(removed, index: index, replacement: replacement),
+      ClosedSwarm(
+        removed,
+        historyId: 'closed-${_nextClosedSwarmId++}',
+        index: index,
+        replacement: replacement,
+      ),
     );
     if (_closedSwarms.length > maxClosedSwarms) _closedSwarms.removeAt(0);
     if (_activeSwarmId == id) {
@@ -495,9 +511,13 @@ class AppNotifier extends ChangeNotifier {
     }
   }
 
-  void reopenClosedSwarm() {
+  void reopenClosedSwarm({String? historyId}) {
     if (_disposed || !canReopenClosedSwarm) return;
-    final saved = _closedSwarms.removeLast();
+    final index = historyId == null
+        ? _closedSwarms.length - 1
+        : _closedSwarms.indexWhere((entry) => entry.historyId == historyId);
+    if (index < 0) return;
+    final saved = _closedSwarms.removeAt(index);
     if (swarms.length == 1 && saved.replacesUntouchedWelcome(swarms.single)) {
       swarms.clear();
     }
@@ -1634,12 +1654,36 @@ class AppNotifier extends ChangeNotifier {
     var changed = false;
     for (final machine in machineStates.values) {
       final previous = machine.localEndpoint;
-      if (previous == null ||
-          previous.computerId != endpoint.computerId ||
-          mapEquals(previous.agentProjects, endpoint.agentProjects)) {
+      if (previous == null || previous.computerId != endpoint.computerId) {
         continue;
       }
-      machine.localEndpoint = endpoint;
+      if (!mapEquals(previous.agentProjects, endpoint.agentProjects)) {
+        machine.localEndpoint = endpoint;
+        changed = true;
+      }
+      if (!kUnderTest) {
+        for (final project in endpoint.agentProjects.values) {
+          unawaited(_localGitProjects.read(project.cwd));
+        }
+      }
+    }
+    _applyLocalGitProjects();
+    if (changed) notifyListeners();
+  }
+
+  void _applyLocalGitProjects() {
+    if (_disposed) return;
+    var changed = false;
+    for (final machine in machineStates.values) {
+      final projects = <String, AgentProject>{
+        for (final entry
+            in (machine.localEndpoint?.agentProjects ??
+                    const <String, AgentProject>{})
+                .entries)
+          entry.key: ?_localGitProjects.cached(entry.value.cwd),
+      };
+      if (mapEquals(machine.localProjects, projects)) continue;
+      machine.localProjects = Map.unmodifiable(projects);
       changed = true;
     }
     if (changed) notifyListeners();
@@ -2040,6 +2084,7 @@ class AppNotifier extends ChangeNotifier {
         unawaited(_applyNodeStatus(state, reportedOnline));
       }
     }
+    if (localEndpoint != null) _updateLocalProjectSnapshot(localEndpoint);
     _autoConnectAndLoadMachines();
     notifyListeners();
   }
@@ -3499,11 +3544,9 @@ class AppNotifier extends ChangeNotifier {
           terminal.status != TerminalSessionStatus.controlling &&
           terminal.status != TerminalSessionStatus.resyncing) {
         if (!_canAttachPane(existing)) return;
-        // A healthy pane is focus-only: opening the same daemon controller a
-        // second time would take over its own first stream. A frozen/closed
-        // pane is different — the explicit retry action needs a fresh session.
-        await _detachSession(existing, sendClose: true);
-        await _attachSession(existing);
+        // Retry the dead stream in place so its output and view context remain
+        // available until the next keyframe. Healthy panes stay focus-only.
+        await terminal.reopen();
       }
       return;
     }
@@ -3676,15 +3719,15 @@ class AppNotifier extends ChangeNotifier {
     }
     if (agent == null || !agent.terminalAvailable) return;
 
-    final connection = _conn(pane.machineId);
     final terminal = TerminalSession(
       machineId: pane.machineId,
       agentId: agent.id,
       agentName: agent.name,
       engineId: agent.engine,
-      send: connection.sendTerminalFrame,
+      send: (type, payload) =>
+          _conn(pane.machineId).sendTerminalFrame(type, payload),
       sendBinary: (frame) => _sendTerminalBinary(pane.machineId, frame),
-      onOpenStalled: connection.forceReconnect,
+      onOpenStalled: () => _conn(pane.machineId).forceReconnect(),
     );
     pane.session = terminal;
     terminal.addListener(notifyListeners);
@@ -4256,15 +4299,16 @@ class AppNotifier extends ChangeNotifier {
     };
   }
 
-  /// Throw away a tile's dead stream and open a fresh one for the same agent.
-  ///
-  /// `sendClose: false` — the stream being replaced is one the machine has
-  /// already lost or closed, so a close addressed to it would at best be
-  /// ignored and at worst land on whatever took its place.
+  /// Reopen a dead stream in its existing session, keeping its rendered output.
+  /// An already-lost stream needs no close addressed to its previous owner.
   Future<void> _reattachPane(TerminalPane pane) async {
     if (!_canAttachPane(pane)) return;
-    await _detachSession(pane, sendClose: false);
-    await _attachSession(pane);
+    final session = pane.session;
+    if (session == null) {
+      await _attachSession(pane);
+    } else {
+      await session.reopen();
+    }
   }
 
   bool _canAttachPane(TerminalPane pane) {
@@ -4611,6 +4655,7 @@ class AppNotifier extends ChangeNotifier {
 
   @override
   void dispose() {
+    _localGitProjects.dispose();
     _disposed = true;
     _closedSwarms.clear();
     _daemonSupervisionTimer?.cancel();

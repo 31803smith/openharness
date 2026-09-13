@@ -405,9 +405,20 @@ void main() {
       final connection = _TerminalConnection();
       final app = _notifier(connectionForTest: (_) => connection);
       final machine = _machine(app, 'm1', ['a']);
-      final pane = app.adoptSessionForTest(_session('m1', 'a'));
+      machine.nodeOnline = true;
+      machine.terminalCapabilityAvailable = true;
+      final attaching = app.addAgentToSwarm('m1', 'a');
+      final pane = app.panes.single;
+      pane.session!.reportViewport(120, 40);
+      await attaching;
+      expect(
+        connection.sent.where((type) => type == 'terminal_open'),
+        hasLength(1),
+      );
+      connection.sent.clear();
       final dead = pane.session!;
       dead.transportLost('Harness reconnected; restoring terminal…');
+      machine.nodeOnline = false;
 
       dead.terminal.write('Last useful result');
       await app.selectAgent('m1', 'a');
@@ -418,7 +429,7 @@ void main() {
       machine.terminalCapabilityAvailable = true;
       final retry = app.selectAgent('m1', 'a');
       await Future<void>.delayed(Duration.zero);
-      expect(pane.session, isNot(same(dead)));
+      expect(pane.session, same(dead));
       pane.session!.reportViewport(120, 40);
       await retry;
       expect(

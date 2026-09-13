@@ -9,19 +9,25 @@ import 'swarm_welcome.dart';
 Future<SwarmDestination?> showSwarmSwitcher(
   BuildContext context,
   AppNotifier app,
-  SwarmNavigationHistory history,
-) => showAppDialog<SwarmDestination>(
+  SwarmNavigationHistory history, {
+  bool historyOnly = false,
+}) => showAppDialog<SwarmDestination>(
   context: context,
   transitionDuration: Duration.zero,
   veilBlur: 0,
   veilTint: const Color(0x66000000),
-  builder: (_) => _SwarmSwitcher(app: app, recent: history.recent),
+  builder: (_) => _SwarmSwitcher(
+    app: app,
+    recent: history.recent,
+    history: historyOnly ? history : null,
+  ),
 );
 
 class _SwarmSwitcher extends StatefulWidget {
-  const _SwarmSwitcher({required this.app, required this.recent});
+  const _SwarmSwitcher({required this.app, required this.recent, this.history});
   final AppNotifier app;
   final List<String> recent;
+  final SwarmNavigationHistory? history;
   @override
   State<_SwarmSwitcher> createState() => _SwarmSwitcherState();
 }
@@ -47,7 +53,12 @@ class _SwarmSwitcherState extends State<_SwarmSwitcher> {
   void _onAppChanged() => setState(_refreshCatalog);
 
   void _refreshCatalog() {
-    _catalog = swarmDestinations(widget.app, recent: widget.recent);
+    _catalog = widget.history == null
+        ? swarmDestinations(widget.app, recent: widget.recent)
+        : [
+            ...widget.history!.menuDestinations(widget.app),
+            ...closedSwarmDestinations(widget.app),
+          ];
     _filter();
   }
 
@@ -126,9 +137,30 @@ class _SwarmSwitcherState extends State<_SwarmSwitcher> {
           padding: const EdgeInsets.all(16),
           child: Column(
             children: [
+              if (widget.history != null) ...[
+                const Row(
+                  children: [
+                    Text(
+                      'History',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    Spacer(),
+                    Text(
+                      'This session',
+                      style: TextStyle(fontSize: 11, color: Colors.white54),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+              ],
               SwarmSearchField(
                 autofocus: true,
-                hintText: 'Jump to an agent or swarm…',
+                hintText: widget.history == null
+                    ? 'Jump to an agent or swarm…'
+                    : 'Search history…',
                 onChanged: (value) => setState(() {
                   _query = value;
                   _cursor = 0;
@@ -187,7 +219,9 @@ class _SwarmSwitcherState extends State<_SwarmSwitcher> {
                               ),
                             ),
                             trailing: Text(
-                              row.current
+                              row.closedId != null
+                                  ? 'Reopen'
+                                  : row.current
                                   ? 'Current'
                                   : row.isSwarm
                                   ? 'Swarm'
@@ -208,7 +242,9 @@ class _SwarmSwitcherState extends State<_SwarmSwitcher> {
               Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  selected != null && !selected.hasView
+                  selected?.closedId != null
+                      ? '↵ Reopen swarm · Esc to close'
+                      : selected != null && !selected.hasView
                       ? '↵ Open view in $_targetName · Esc to close'
                       : '↑↓ or ⌃N ⌃P to choose · Return to jump · Esc to close',
                   maxLines: 1,

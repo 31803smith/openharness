@@ -88,7 +88,7 @@ void main() {
 
     // ⌘] is two caps. Ctrl+Tab switches swarms.
     final next = find.ancestor(
-      of: find.text('Next agent'),
+      of: find.text('Forward'),
       matching: find.byType(Row),
     );
     expect(
@@ -150,7 +150,7 @@ void main() {
 
     await pumpDeck(tester, 900);
 
-    final label = tester.renderObject<RenderBox>(find.text('Next agent'));
+    final label = tester.renderObject<RenderBox>(find.text('Forward'));
     expect(
       label.size.height,
       lessThan(KeyCap.height),

@@ -60,28 +60,32 @@ class Swarm {
 /// Session-free history for an accidental tab close. Terminal buffers and
 /// controllers are released normally; a reopened view reuses any live peer.
 class ClosedSwarm {
-  ClosedSwarm(Swarm swarm, {required this.index, Swarm? replacement})
-    : id = swarm.id,
-      name = swarm.name,
-      wallpaper = swarm.wallpaper,
-      gridColumns = swarm.gridColumns,
-      focus = swarm.panes.indexWhere((p) => p.id == swarm.focusedPaneId),
-      previousFocus = swarm.panes.indexWhere(
-        (p) => p.id == swarm.previousPaneId,
-      ),
-      zoom = swarm.panes.indexWhere((p) => p.id == swarm.zoomedPaneId),
-      presets = Map.unmodifiable(swarm.presets),
-      panes = List.unmodifiable([
-        for (final pane in swarm.panes)
-          (
-            machineId: pane.machineId,
-            agentId: pane.agentId,
-            composerVisible: pane.composerVisible,
-            pinnedSlot: swarm.pinnedSlots[pane.id],
-          ),
-      ]),
-      replacementId = replacement?.id,
-      replacementWallpaper = replacement?.wallpaper;
+  ClosedSwarm(
+    Swarm swarm, {
+    required this.historyId,
+    required this.index,
+    Swarm? replacement,
+  }) : id = swarm.id,
+       name = swarm.name,
+       wallpaper = swarm.wallpaper,
+       gridColumns = swarm.gridColumns,
+       focus = swarm.panes.indexWhere((p) => p.id == swarm.focusedPaneId),
+       previousFocus = swarm.panes.indexWhere(
+         (p) => p.id == swarm.previousPaneId,
+       ),
+       zoom = swarm.panes.indexWhere((p) => p.id == swarm.zoomedPaneId),
+       presets = Map.unmodifiable(swarm.presets),
+       panes = List.unmodifiable([
+         for (final pane in swarm.panes)
+           (
+             machineId: pane.machineId,
+             agentId: pane.agentId,
+             composerVisible: pane.composerVisible,
+             pinnedSlot: swarm.pinnedSlots[pane.id],
+           ),
+       ]),
+       replacementId = replacement?.id,
+       replacementWallpaper = replacement?.wallpaper;
 
   final String id;
   final String name;
@@ -97,6 +101,7 @@ class ClosedSwarm {
   >
   panes;
   final String? replacementId;
+  final String historyId;
   final int? replacementWallpaper;
 
   bool replacesUntouchedWelcome(Swarm swarm) =>

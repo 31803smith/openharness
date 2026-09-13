@@ -48,6 +48,7 @@ enum ShortcutAction {
   newSwarm,
   closeSwarm,
   reopenClosedSwarm,
+  showHistory,
   renameSwarm,
   nextSwarm,
   previousSwarm,
@@ -350,20 +351,18 @@ const List<AppShortcut> kAppShortcuts = [
 
   // --- agents ---------------------------------------------------------------
   //
-  // THE BRACKETS MEAN ONE THING NOW. They used to carry three: ⌘[ ] walked
-  // panes, ⇧⌘[ ] walked agents and ⌥⌘[ ] moved panes — three verbs told apart
-  // only by which modifiers were down. Panes moved to hjkl and arrows, so the
-  // brackets keep the one job they are good at: stepping along a list.
+  // In Swarms, brackets follow Chrome's Back/Forward history. Directional
+  // pane movement keeps its own keys; Shift-brackets step through tabs.
   AppShortcut(
     action: ShortcutAction.previousAgent,
     activator: SingleActivator(LogicalKeyboardKey.bracketLeft, meta: true),
-    label: 'Previous agent',
+    label: 'Back',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
     action: ShortcutAction.nextAgent,
     activator: SingleActivator(LogicalKeyboardKey.bracketRight, meta: true),
-    label: 'Next agent',
+    label: 'Forward',
     group: ShortcutGroup.navigate,
   ),
   // ⌘P — "go to", the way VS Code's quick-open spells it, because that is what
@@ -477,6 +476,12 @@ List<AppShortcut> appShortcuts({bool swarmMode = true}) => [
 /// Swarm bindings replace the old workspace navigation in the retained legacy
 /// screen. Live Swarm bindings, tooltips, and help all use this same catalog.
 const kSwarmShortcuts = [
+  AppShortcut(
+    action: ShortcutAction.showHistory,
+    activator: SingleActivator(LogicalKeyboardKey.keyY, meta: true),
+    label: 'Show full history',
+    group: ShortcutGroup.navigate,
+  ),
   AppShortcut(
     action: ShortcutAction.newSwarm,
     activator: SingleActivator(LogicalKeyboardKey.keyT, meta: true),

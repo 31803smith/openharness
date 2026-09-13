@@ -39,15 +39,24 @@ class SavedSwarmProject {
     required this.machineId,
     required this.path,
     required this.name,
+    this.members = const [],
   });
   final String machineId;
   final String path;
   final String name;
+
+  /// Explicit membership also works with daemons that predate project metadata.
+  final List<({String machineId, String agentId})> members;
   String get id => '$machineId\u0000$path';
-  Map<String, String> toJson() => {
+  Map<String, Object> toJson() => {
     'machineId': machineId,
     'path': path,
     'name': name,
+    if (members.isNotEmpty)
+      'members': [
+        for (final member in members)
+          {'machineId': member.machineId, 'agentId': member.agentId},
+      ],
   };
 }
 
@@ -67,7 +76,11 @@ List<SwarmProjectGroup> swarmProjects(
 ) {
   final groups = <String, SwarmProjectGroup>{};
   final folders = <String, String>{};
-  for (final entry in swarmAgents(app)) {
+  final agents = swarmAgents(app);
+  final byId = {
+    for (final a in agents) (machineId: a.machineId, agentId: a.agent.id): a,
+  };
+  for (final entry in agents) {
     final project = entry.project;
     if (project == null) continue;
     final id = project.identity(entry.machineId);
@@ -83,10 +96,17 @@ List<SwarmProjectGroup> swarmProjects(
   }
   for (final item in saved) {
     final id = folders[item.id] ?? 'folder:${item.machineId}:${item.path}';
-    groups
-            .putIfAbsent(id, () => SwarmProjectGroup(id: id, name: item.name))
-            .saved =
-        item;
+    final group = groups.putIfAbsent(
+      id,
+      () => SwarmProjectGroup(id: id, name: item.name),
+    );
+    group.saved = item;
+    for (final member in item.members) {
+      final agent = byId[member];
+      if (agent != null && !group.agents.contains(agent)) {
+        group.agents.add(agent);
+      }
+    }
   }
   return groups.values.toList()
     ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
@@ -125,6 +145,19 @@ class SwarmProjectStore extends ChangeNotifier {
           machineId: row['machineId'],
           path: row['path'],
           name: row['name'],
+          members: {
+            if (row['members'] is List)
+              for (final member in (row['members'] as List).take(256))
+                if (member is Map &&
+                    member['machineId'] is String &&
+                    member['agentId'] is String &&
+                    (member['machineId'] as String).isNotEmpty &&
+                    (member['agentId'] as String).isNotEmpty)
+                  (
+                    machineId: member['machineId'] as String,
+                    agentId: member['agentId'] as String,
+                  ),
+          }.toList(growable: false),
         );
         if (item.path.isEmpty ||
             item.name.isEmpty ||

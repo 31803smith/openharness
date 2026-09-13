@@ -16,6 +16,57 @@ import 'swarm_state_test.dart' show createApp;
 import 'swarm_switcher_test.dart' show jumpField;
 
 void main() {
+  test('Back and Forward retain exact pane locations and discard a branched future', () async {
+    final app = createApp();
+    addTearDown(app.dispose);
+    final history = SwarmNavigationHistory();
+    app.addListener(() => history.record(app));
+    final first = app.adoptSessionForTest(terminal('a0', []));
+    history.record(app);
+    final original = app.activeSwarmId;
+    final second = app.adoptSessionForTest(terminal('a1', []));
+    history.record(app);
+    app.newSwarm(name: 'Other');
+    final other = app.activeSwarmId;
+    await app.addAgentToSwarm('m', 'a0');
+    history.step(app, -1);
+    expect(app.activeSwarmId, original);
+    expect(app.focusedPaneId, second.id);
+    expect(history.canGoForward(app), isTrue);
+    history.step(app, 1);
+    expect(app.activeSwarmId, other);
+    history.step(app, -1);
+    app.focusPane(first.id);
+    expect(history.canGoForward(app), isFalse);
+    await app.closePane(second.id);
+    history.step(app, -1);
+    expect(app.focusedPaneId, isNot(second.id));
+    expect(app.allPanes.where((p) => p.agentId == 'a1'), isEmpty);
+  });
+
+  test(
+    'a chosen closed Swarm restores independently and stale tokens stay inert',
+    () async {
+      final app = createApp();
+      addTearDown(app.dispose);
+      final first = app.activeSwarmId;
+      app.renameSwarm(first, 'First');
+      app.newSwarm(name: 'Second');
+      final second = app.activeSwarmId;
+      app.newSwarm(name: 'Keep');
+      await app.closeSwarm(first);
+      final restoreFirst = app.closedSwarms.single.historyId;
+      await app.closeSwarm(second);
+      app.reopenClosedSwarm(historyId: restoreFirst);
+      expect(app.activeSwarm.name, 'First');
+      expect(app.closedSwarms.single.name, 'Second');
+      await app.closeSwarm(first);
+      final before = app.swarms.toList();
+      app.reopenClosedSwarm(historyId: restoreFirst);
+      expect(app.swarms, before);
+      expect(app.closedSwarms, hasLength(2));
+    },
+  );
   test(
     'recent menus retain snapshots through output and refresh live identities',
     () async {
@@ -156,6 +207,26 @@ void main() {
       await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
       await tester.pump(const Duration(milliseconds: 10));
       expect(otherInput.single.bytes, [27, 91, 68]);
+
+      await native('historyBack');
+      await tester.pump();
+      expect(app.focusedPaneId, first.id);
+      await native('historyForward');
+      await tester.pump();
+      expect(app.focusedPaneId, second.id);
+      final historyView = native('showHistory');
+      await tester.pump();
+      final historyField = find.byWidgetPredicate(
+        (w) => w is TextField && w.decoration?.hintText == 'Search history…',
+      );
+      expect(historyField, findsOneWidget);
+      await tester.enterText(historyField, 'Agent 0');
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      await historyView;
+      expect(app.focusedPaneId, first.id);
+      app.focusPane(second.id);
 
       await app.closePane(first.id);
       await tester.pump();

@@ -54,7 +54,8 @@ void main() {
       revision.value = 2;
       await tester.pump();
       expect(find.text('Renamed terminal'), findsOneWidget);
-      expect(find.text('Terminal project / fast-focus'), findsOneWidget);
+      expect(find.text('fast-focus'), findsOneWidget);
+      expect(find.byTooltip('fast-focus\n/work/terminal'), findsOneWidget);
       session.status = TerminalSessionStatus.takenOver;
       revision.value = 3;
       await tester.pump();

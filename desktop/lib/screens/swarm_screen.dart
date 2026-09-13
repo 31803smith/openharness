@@ -23,6 +23,7 @@ import '../widgets/new_agent_dialog.dart';
 import '../widgets/pane_grid.dart';
 import '../widgets/shortcuts_sheet.dart';
 import '../widgets/swarm_dialogs.dart';
+import '../widgets/swarm_project_agents.dart';
 import '../widgets/swarm_attention.dart';
 import '../widgets/swarm_switcher.dart';
 import '../widgets/swarm_wallpaper.dart';
@@ -135,6 +136,18 @@ class _SwarmScreenState extends State<SwarmScreen> {
       'canReopen': app.canReopenClosedSwarm,
       'canFind': _canFindTerminal,
       'canClosePane': app.focusedPane != null,
+      'canChangeWallpaper': app.panes.isEmpty,
+      'canGoBack': _navigation.canGoBack(app),
+      'canGoForward': _navigation.canGoForward(app),
+      'closedHistory': [
+        for (final entry in closedSwarmDestinations(app))
+          {
+            'id': entry.id,
+            'title': entry.title,
+            'detail': entry.detail,
+            'swarm': true,
+          },
+      ],
       'attention': _attention,
       'history': [
         for (final entry in _navigation.menuDestinations(app))
@@ -182,6 +195,16 @@ class _SwarmScreenState extends State<SwarmScreen> {
         app.newSwarm();
       case 'reopen':
         app.reopenClosedSwarm();
+      case 'reopenHistory':
+        if (args['id'] is String) app.reopenClosedSwarm(historyId: args['id']);
+      case 'historyBack':
+        _stepHistory(-1);
+      case 'historyForward':
+        _stepHistory(1);
+      case 'showHistory':
+        await _jump(historyOnly: true);
+      case 'nextWallpaper':
+        if (app.panes.isEmpty) app.nextSwarmWallpaper();
       case 'select':
         if (args['id'] is String) app.selectSwarm(args['id']);
       case 'close':
@@ -283,15 +306,30 @@ class _SwarmScreenState extends State<SwarmScreen> {
       swarmId: swarmId,
     );
   });
-  Future<void> _jump() async {
+  Future<void> _jump({bool historyOnly = false}) async {
     final target = app.activeSwarmId;
     SwarmDestination? selected;
     await _dialog(() async {
-      selected = await showSwarmSwitcher(context, app, _navigation);
+      selected = await showSwarmSwitcher(
+        context,
+        app,
+        _navigation,
+        historyOnly: historyOnly,
+      );
     });
     if (!mounted || selected == null) return;
     _preparePaneFocus();
     await activateSwarmDestination(app, selected!, destinationSwarmId: target);
+  }
+
+  void _stepHistory(int direction) {
+    if (direction < 0
+        ? !_navigation.canGoBack(app)
+        : !_navigation.canGoForward(app)) {
+      return;
+    }
+    _preparePaneFocus();
+    _navigation.step(app, direction);
   }
 
   void _preparePaneFocus() {
@@ -360,6 +398,11 @@ class _SwarmScreenState extends State<SwarmScreen> {
       ]);
     }
   }
+
+  Future<void> _projectAgents(SwarmProjectGroup group) => _dialog(() async {
+    final project = await showSwarmProjectAgents(context, app, group);
+    if (project != null) await _projects.add(project);
+  });
 
   Future<void> _notifications() async {
     final target = app.activeSwarmId;
@@ -460,8 +503,9 @@ class _SwarmScreenState extends State<SwarmScreen> {
                   app.movePaneDirection(dx: 0, dy: -1),
               ShortcutAction.movePaneDown: () =>
                   app.movePaneDirection(dx: 0, dy: 1),
-              ShortcutAction.nextAgent: () => app.focusPaneBy(1),
-              ShortcutAction.previousAgent: () => app.focusPaneBy(-1),
+              ShortcutAction.nextAgent: () => _stepHistory(1),
+              ShortcutAction.previousAgent: () => _stepHistory(-1),
+              ShortcutAction.showHistory: () => _jump(historyOnly: true),
               ShortcutAction.findTerminal: () =>
                   app.focusedPane?.session?.find(TerminalFindAction.open),
               ShortcutAction.findNext: () =>
@@ -579,6 +623,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                   ),
                                   onMachine: _machine,
                                   onProject: _project,
+                                  onProjectAgents: _projectAgents,
                                   onAgent: (entry) => app.addAgentToSwarm(
                                     entry.machineId,
                                     entry.agent.id,

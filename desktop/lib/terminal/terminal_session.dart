@@ -141,6 +141,7 @@ class TerminalSession extends ChangeNotifier {
   int _autoReopenAttempts = 0;
   bool _openStallRecovered = false;
   bool _disposed = false;
+  int _generation = 0;
   bool _remoteCursorVisible = true;
   bool _cursorBlinkPhaseVisible = true;
   List<int> _utf8Tail = const [];
@@ -190,15 +191,47 @@ class TerminalSession extends ChangeNotifier {
     initialRows: initialRows,
     waitForViewportSize: waitForViewportSize,
     resetRecovery: true,
+    preserveTerminal: false,
   );
+
+  /// Reconnect the same agent without discarding its last usable screen.
+  /// Input resumes only after the replacement stream's first keyframe.
+  Future<void> reopen() async {
+    if (_disposed ||
+        status == TerminalSessionStatus.opening ||
+        status == TerminalSessionStatus.controlling ||
+        status == TerminalSessionStatus.resyncing) {
+      return;
+    }
+    await _open(
+      initialCols: _measuredViewport?.cols ?? cols,
+      initialRows: _measuredViewport?.rows ?? rows,
+      waitForViewportSize: false,
+      resetRecovery: true,
+      preserveTerminal: true,
+    );
+  }
+
+  bool _isCurrent(int generation) => !_disposed && generation == _generation;
 
   Future<void> _open({
     required int initialCols,
     required int initialRows,
     required bool waitForViewportSize,
     required bool resetRecovery,
+    required bool preserveTerminal,
   }) async {
+    if (_disposed) return;
+    final generation = ++_generation;
     _cancelTimers();
+    _abortActiveUpload();
+    _inputBytes.clear();
+    _pendingScrollUp = null;
+    _pendingScrollLines = 0;
+    _lastInputFlushAt = null;
+    _lastResizeFlushAt = null;
+    _renderTail = Future<void>.value();
+    _inputSendTail = Future<void>.value();
     streamId = null;
     linkMode = null;
     errorCode = null;
@@ -221,7 +254,7 @@ class TerminalSession extends ChangeNotifier {
     }
     cols = _clampCols(initialCols);
     rows = _clampRows(initialRows);
-    terminal = _newTerminal()..resize(cols, rows);
+    if (!preserveTerminal) terminal = _newTerminal()..resize(cols, rows);
     status = TerminalSessionStatus.opening;
     _openRequestId =
         'term_${DateTime.now().microsecondsSinceEpoch}_${Random.secure().nextInt(1 << 31)}';
@@ -232,14 +265,22 @@ class TerminalSession extends ChangeNotifier {
         final measured = await _viewportSize.future.timeout(
           const Duration(seconds: 2),
         );
+        if (!_isCurrent(generation) ||
+            status != TerminalSessionStatus.opening) {
+          return;
+        }
         cols = _clampCols(measured.cols);
         rows = _clampRows(measured.rows);
-        terminal.resize(cols, rows);
+        if (!preserveTerminal) terminal.resize(cols, rows);
         notifyListeners();
       } on TimeoutException {
         // Keep the conservative fallback when the terminal viewport cannot be
         // measured; the normal resize path will reconcile it after attach.
       }
+    }
+
+    if (!_isCurrent(generation) || status != TerminalSessionStatus.opening) {
+      return;
     }
 
     final openPayload = {
@@ -251,21 +292,34 @@ class TerminalSession extends ChangeNotifier {
       'compression': const ['zlib', 'none'],
     };
     var sent = await send('terminal_open', openPayload);
+    if (!_isCurrent(generation) ||
+        status != TerminalSessionStatus.opening ||
+        streamId != null) {
+      return;
+    }
     if (!sent) {
       // Most commonly transient: the local transport is mid-reconnect at this exact instant (e.g.
       // right after the app itself just started, or another machine's relay hiccupped a moment ago).
-      sent = await _recoverAndResend(openPayload);
+      sent = await _recoverAndResend(openPayload, generation);
+    }
+    if (!_isCurrent(generation) ||
+        status != TerminalSessionStatus.opening ||
+        streamId != null) {
+      return;
     }
     if (!sent) {
       transportLost('Could not send terminal_open');
       return;
     }
+    // An immediate ready/keyframe can arrive before send() resolves. Its
+    // watchdog or live stream must not be replaced by an open timeout.
+    if (status != TerminalSessionStatus.opening || streamId != null) return;
     // Armed unconditionally (not just on reopen attempts): a `terminal_open` sent through a silently
     // stale relay session never gets ANY reply — nothing else would ever notice or recover from that.
     _resyncTimer?.cancel();
     _resyncTimer = Timer(
       resyncTimeout,
-      () => unawaited(_handleOpenTimeout(openPayload)),
+      () => unawaited(_handleOpenTimeout(openPayload, generation)),
     );
   }
 
@@ -273,14 +327,26 @@ class TerminalSession extends ChangeNotifier {
   /// itself succeeded — the relay session was silently stale (ciphertext for a dead E2EE session gets
   /// dropped, not rejected). Force a fresh dial and resend the SAME open request (same `requestId`, so
   /// a late reply for the original still matches) before giving up.
-  Future<void> _handleOpenTimeout(Map<String, dynamic> openPayload) async {
-    if (status != TerminalSessionStatus.opening || streamId != null) return;
-    final sent = await _recoverAndResend(openPayload);
+  Future<void> _handleOpenTimeout(
+    Map<String, dynamic> openPayload,
+    int generation,
+  ) async {
+    if (!_isCurrent(generation) ||
+        status != TerminalSessionStatus.opening ||
+        streamId != null) {
+      return;
+    }
+    final sent = await _recoverAndResend(openPayload, generation);
+    if (!_isCurrent(generation) ||
+        status != TerminalSessionStatus.opening ||
+        streamId != null) {
+      return;
+    }
     if (sent) {
       _resyncTimer?.cancel();
       _resyncTimer = Timer(
         resyncTimeout,
-        () => unawaited(_handleOpenTimeout(openPayload)),
+        () => unawaited(_handleOpenTimeout(openPayload, generation)),
       );
       return;
     }
@@ -298,7 +364,10 @@ class TerminalSession extends ChangeNotifier {
   /// `forceReconnect()` resolving only means the redial STARTED, not that the transport is ready again.
   /// Bounded by [_openStallRecovered] (one forced reconnect per open) and a fixed poll budget, so a
   /// persistently broken connection still fails closed instead of retrying forever.
-  Future<bool> _recoverAndResend(Map<String, dynamic> openPayload) async {
+  Future<bool> _recoverAndResend(
+    Map<String, dynamic> openPayload,
+    int generation,
+  ) async {
     final recover = onOpenStalled;
     if (_openStallRecovered || recover == null) return false;
     _openStallRecovered = true;
@@ -308,7 +377,11 @@ class TerminalSession extends ChangeNotifier {
       // Still worth polling for readiness even if the forced reconnect itself errored.
     }
     for (var attempt = 0; attempt < 10; attempt++) {
-      if (_disposed || status != TerminalSessionStatus.opening) return false;
+      if (!_isCurrent(generation) ||
+          status != TerminalSessionStatus.opening ||
+          streamId != null) {
+        return false;
+      }
       if (await send('terminal_open', openPayload)) return true;
       await Future.delayed(const Duration(milliseconds: 300));
     }
@@ -317,6 +390,7 @@ class TerminalSession extends ChangeNotifier {
 
   /// Returns true when [type] belongs to this session's protocol.
   Future<bool> handleFrame(String type, Map<String, dynamic> payload) async {
+    if (_disposed) return false;
     switch (type) {
       case 'terminal_ready':
         if (status != TerminalSessionStatus.opening ||
@@ -386,6 +460,7 @@ class TerminalSession extends ChangeNotifier {
         return true;
       case 'terminal_closed':
         if (!_matchesStream(payload)) return true;
+        _generation++;
         _cancelTimers();
         final code = payload['code']?.toString();
         final takenOver = code == 'TERMINAL_TAKEN_OVER';
@@ -398,6 +473,7 @@ class TerminalSession extends ChangeNotifier {
             : payload['reason']?.toString();
         streamId = null;
         linkMode = null;
+        _abortActiveUpload();
         notifyListeners();
         return true;
       case 'terminal_error':
@@ -470,9 +546,11 @@ class TerminalSession extends ChangeNotifier {
   }
 
   Future<void> handleBinary(TerminalBinaryFrame frame) async {
-    if (frame.streamId != streamId) return;
+    if (_disposed || frame.streamId != streamId) return;
+    final generation = _generation;
     _renderTail = _renderTail
         .then((_) async {
+          if (!_isCurrent(generation) || frame.streamId != streamId) return;
           final bytes = _decodeBinaryBytes(frame);
           if (bytes == null) {
             await _requestResync('TERMINAL_BINARY_DECODE_FAILED');
@@ -485,16 +563,19 @@ class TerminalSession extends ChangeNotifier {
               await _requestResync('TERMINAL_KEYFRAME_INVALID');
               return;
             }
+            // Publish a complete screen atomically. A damaged snapshot must
+            // leave the retained screen available while resync recovers.
+            final decoded = _decodeUtf8(_prepareKeyframeBytes(bytes));
+            final replacement = _newTerminal(bindCallbacks: false)
+              ..resize(_clampCols(nextCols), _clampRows(nextRows))
+              ..write(decoded.text);
+            _bindTerminal(replacement);
+            terminal = replacement;
             cols = _clampCols(nextCols);
             rows = _clampRows(nextRows);
-            _utf8Tail = const [];
-            _remoteCursorVisible = true;
+            _utf8Tail = decoded.tail;
+            _remoteCursorVisible = terminal.cursorVisibleMode;
             _cursorBlinkPhaseVisible = true;
-            terminal = _newTerminal()..resize(cols, rows);
-            if (!_writeBytes(_prepareKeyframeBytes(bytes))) {
-              await _requestResync('TERMINAL_UTF8_DECODE_FAILED');
-              return;
-            }
             _expectedSeq = frame.seq + 1;
             _lastRenderedSeq = frame.seq;
             _resyncRequested = false;
@@ -545,6 +626,7 @@ class TerminalSession extends ChangeNotifier {
           _markForAck(bytes.length);
         })
         .catchError((Object error, StackTrace stackTrace) async {
+          if (!_isCurrent(generation)) return;
           debugPrint(
             '[terminal-session] renderer failed for '
             '$machineId/$agentId: $error\n$stackTrace',
@@ -630,6 +712,13 @@ class TerminalSession extends ChangeNotifier {
     // Most packets end on a scalar boundary. Decode their existing byte view
     // directly; only a split UTF-8 scalar needs a joined buffer.
     final combined = _utf8Tail.isEmpty ? bytes : <int>[..._utf8Tail, ...bytes];
+    final decoded = _decodeUtf8(combined);
+    if (decoded.text.isNotEmpty) _writeTerminalText(decoded.text);
+    _utf8Tail = decoded.tail;
+    return true;
+  }
+
+  ({String text, List<int> tail}) _decodeUtf8(List<int> combined) {
     for (
       var tailLength = 0;
       tailLength <= min(3, combined.length);
@@ -641,12 +730,13 @@ class TerminalSession extends ChangeNotifier {
           0,
           combined.length - tailLength,
         );
-        if (text.isNotEmpty) _writeTerminalText(text);
-        _utf8Tail = tailLength == 0
-            ? const []
-            : combined.sublist(combined.length - tailLength);
-        return true;
-      } catch (_) {
+        return (
+          text: text,
+          tail: tailLength == 0
+              ? const []
+              : combined.sublist(combined.length - tailLength),
+        );
+      } on FormatException {
         // A UTF-8 scalar can span at most four bytes; retain only a trailing
         // partial scalar before falling back to replacement rendering below.
       }
@@ -656,10 +746,7 @@ class TerminalSession extends ChangeNotifier {
     // at the start of the post-cut frame. Real terminals render malformed UTF-8
     // as U+FFFD; resyncing the entire screen creates a second keyframe race and
     // cannot recover the missing pre-cut byte anyway.
-    final text = utf8.decode(combined, allowMalformed: true);
-    if (text.isNotEmpty) _writeTerminalText(text);
-    _utf8Tail = const [];
-    return true;
+    return (text: utf8.decode(combined, allowMalformed: true), tail: const []);
   }
 
   List<int> _prepareKeyframeBytes(Uint8List bytes) {
@@ -686,7 +773,7 @@ class TerminalSession extends ChangeNotifier {
     return <int>[...alternateBuffer, ...bytes];
   }
 
-  Terminal _newTerminal() {
+  Terminal _newTerminal({bool bindCallbacks = true}) {
     final result = Terminal(
       maxLines: 10000,
       platform: TerminalTargetPlatform.macos,
@@ -695,9 +782,13 @@ class TerminalSession extends ChangeNotifier {
       // circular-buffer bug when a remote/local switch changes viewport size.
       reflowEnabled: false,
     );
+    if (bindCallbacks) _bindTerminal(result);
+    return result;
+  }
+
+  void _bindTerminal(Terminal result) {
     result.onOutput = _onTerminalOutput;
     result.onResize = (width, height, _, _) => resize(width, height);
-    return result;
   }
 
   /// Sends a composed message as one turn.
@@ -741,6 +832,7 @@ class TerminalSession extends ChangeNotifier {
     if (text.isEmpty) return false;
     final currentStreamId = streamId;
     if (currentStreamId == null) return false;
+    final generation = _generation;
     final frame = TerminalBinaryFrame(
       kind: TerminalBinaryKind.paste,
       streamId: currentStreamId,
@@ -752,7 +844,9 @@ class TerminalSession extends ChangeNotifier {
       compressed: false,
     );
     final sent = await sendBinary(frame);
-    if (!sent) transportLost('Terminal paste was not sent');
+    if (!sent && _isCurrent(generation)) {
+      transportLost('Terminal paste was not sent');
+    }
     return sent;
   }
 
@@ -833,6 +927,9 @@ class TerminalSession extends ChangeNotifier {
     if (currentStreamId == null) return false;
 
     final upload = _ActiveUpload();
+    final generation = _generation;
+    bool current() =>
+        _isCurrent(generation) && identical(_activeUpload, upload);
     _activeUpload = upload;
     uploadProgress = UploadProgress(
       label: filename ?? 'image',
@@ -847,6 +944,7 @@ class TerminalSession extends ChangeNotifier {
       'totalBytes': bytes.length,
       'filename': ?filename,
     });
+    if (!current()) return false;
     if (!sentBegin) {
       transportLost('Terminal upload request was not sent');
       _clearUpload();
@@ -857,7 +955,8 @@ class TerminalSession extends ChangeNotifier {
       const Duration(seconds: 10),
       onTimeout: () => false,
     );
-    if (!accepted || !identical(_activeUpload, upload)) {
+    if (!current()) return false;
+    if (!accepted) {
       _clearUpload();
       return false;
     }
@@ -874,8 +973,8 @@ class TerminalSession extends ChangeNotifier {
         compressed: false,
       );
       final sentChunk = await sendBinary(frame);
-      if (!sentChunk || !identical(_activeUpload, upload)) {
-        if (sentChunk) return false; // upload was cancelled/cleared out from under us mid-send
+      if (!current()) return false;
+      if (!sentChunk) {
         transportLost('Terminal upload chunk was not sent');
         _clearUpload();
         return false;
@@ -888,7 +987,8 @@ class TerminalSession extends ChangeNotifier {
       const Duration(minutes: 2),
       onTimeout: () => false,
     );
-    if (identical(_activeUpload, upload)) _clearUpload();
+    if (!current()) return false;
+    _clearUpload();
     return finished;
   }
 
@@ -948,8 +1048,13 @@ class TerminalSession extends ChangeNotifier {
     _lastInputFlushAt = DateTime.now();
     final currentStreamId = streamId;
     if (currentStreamId == null) return;
+    final generation = _generation;
     final queued = _inputSendTail.then((_) async {
-      if (!acceptsInput || streamId != currentStreamId) return;
+      if (!_isCurrent(generation) ||
+          !acceptsInput ||
+          streamId != currentStreamId) {
+        return;
+      }
       // Numbered HERE, on the tail, not when the flush was asked for. A frame
       // the guard above drops — the session went `resyncing` while an earlier
       // send was still in flight — must not consume a seq: the daemon wants
@@ -965,6 +1070,11 @@ class TerminalSession extends ChangeNotifier {
         offset < bytes.length;
         offset += kInputFrameMaxBytes
       ) {
+        if (!_isCurrent(generation) ||
+            !acceptsInput ||
+            streamId != currentStreamId) {
+          return;
+        }
         final end = min(offset + kInputFrameMaxBytes, bytes.length);
         final frame = TerminalBinaryFrame(
           kind: TerminalBinaryKind.input,
@@ -974,6 +1084,7 @@ class TerminalSession extends ChangeNotifier {
           compressed: false,
         );
         final sent = await sendBinary(frame);
+        if (!_isCurrent(generation)) return;
         if (!sent) {
           transportLost('Terminal input was not sent');
           return;
@@ -981,9 +1092,9 @@ class TerminalSession extends ChangeNotifier {
       }
     });
     _inputSendTail = queued.catchError((_) {
-      transportLost('Terminal input was not sent');
+      if (_isCurrent(generation)) transportLost('Terminal input was not sent');
     });
-    await queued;
+    await _inputSendTail;
   }
 
   /// A finger on the dial moved — scroll whatever this session is showing.
@@ -1042,12 +1153,14 @@ class TerminalSession extends ChangeNotifier {
     cols = nextCols;
     rows = nextRows;
     _lastResizeFlushAt = DateTime.now();
+    final generation = _generation;
     final sent = await send('terminal_resize', {
       'streamId': streamId,
       'resizeSeq': _resizeSeq++,
       'cols': cols,
       'rows': rows,
     });
+    if (!_isCurrent(generation)) return;
     if (!sent) transportLost('Terminal resize was not sent');
     notifyListeners();
   }
@@ -1111,17 +1224,23 @@ class TerminalSession extends ChangeNotifier {
     }
     _framesSinceAck = 0;
     _renderedSinceAckBytes = 0;
+    final generation = _generation;
     final sent = await send('terminal_ack', {
       'streamId': streamId,
       'lastSeq': _lastRenderedSeq,
     });
-    if (!sent) transportLost('Terminal ACK was not sent');
+    if (!sent && _isCurrent(generation)) {
+      transportLost('Terminal ACK was not sent');
+    }
   }
 
   Future<void> _sendHeartbeat() async {
     if (!acceptsInput) return;
+    final generation = _generation;
     final sent = await send('terminal_alive', {'streamId': streamId});
-    if (!sent) transportLost('Terminal heartbeat was not sent');
+    if (!sent && _isCurrent(generation)) {
+      transportLost('Terminal heartbeat was not sent');
+    }
   }
 
   Future<void> _requestResync(String reason) async {
@@ -1152,6 +1271,7 @@ class TerminalSession extends ChangeNotifier {
 
   Future<void> _sendResyncAttempt() async {
     final currentStream = streamId;
+    final generation = _generation;
     if (!_resyncRequested || currentStream == null) return;
     if (_resyncAttempts >= 3) {
       await _recoverByReopen();
@@ -1167,6 +1287,11 @@ class TerminalSession extends ChangeNotifier {
       'attempt': _resyncAttempts,
       'reason': errorCode,
     });
+    if (!_isCurrent(generation) ||
+        streamId != currentStream ||
+        !_resyncRequested) {
+      return;
+    }
     if (!sent) {
       transportLost('Could not request terminal resync');
       return;
@@ -1208,16 +1333,19 @@ class TerminalSession extends ChangeNotifier {
       initialRows: rows,
       waitForViewportSize: false,
       resetRecovery: false,
+      preserveTerminal: true,
     );
   }
 
   Future<void> close() async {
+    _generation++;
     final closingStream = streamId;
     _cancelTimers();
     _inputBytes.clear();
     streamId = null;
     linkMode = null;
     status = TerminalSessionStatus.closed;
+    _abortActiveUpload();
     notifyListeners();
     if (closingStream != null) {
       await send('terminal_close', {'streamId': closingStream});
@@ -1231,10 +1359,12 @@ class TerminalSession extends ChangeNotifier {
     // may reopen a stream someone else claimed. A WS hiccup must not quietly overwrite that into
     // `error`, which auto-reattach WOULD pick back up — that is exactly the two-machine tug-of-war
     // this status exists to prevent.
-    if (status == TerminalSessionStatus.closed ||
+    if (_disposed ||
+        status == TerminalSessionStatus.closed ||
         status == TerminalSessionStatus.takenOver) {
       return;
     }
+    _generation++;
     _cancelTimers();
     _inputBytes.clear();
     streamId = null;
@@ -1247,6 +1377,8 @@ class TerminalSession extends ChangeNotifier {
   }
 
   void _fail(String code, String? message) {
+    if (_disposed) return;
+    _generation++;
     _cancelTimers();
     _inputBytes.clear();
     streamId = null;
@@ -1298,6 +1430,7 @@ class TerminalSession extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _generation++;
     _cancelTimers();
     super.dispose();
   }

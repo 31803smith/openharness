@@ -61,6 +61,7 @@ dependencies:
   # read".
   sqlite3: ^2.4.0
   desktop_drop: ^0.8.4
+  path: ^1.9.1
 
 dev_dependencies:
   flutter_test:

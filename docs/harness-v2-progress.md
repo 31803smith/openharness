@@ -1,6 +1,20 @@
 # Harness App V2 — development handoff
 
-Updated 2026-09-13 after the pane-focus, disconnected-terminal and native-menu continuations. This is a working preview, not a release.
+Updated 2026-09-13 after reconnect continuity, Chrome History, project/header cleanup, and the six-prototype review. This is a working preview, not a release.
+
+## Latest continuation
+
+- The user asked to review all prototypes in `autonomous-ai/harness-new-ui`, keeping only a few durable ideas. [The review](harness-v2-prototype-review.md) covers all six running variants and source at `19ced37`. Keep durable sessions, fast navigation, explicit layout changes, and exact return. Next small addition: optional cached Cmd+P preview/highlights. Do not adopt the permanent shelf, primary/supporting hierarchy, extra footer/context row, model dashboard, generic handoff system, or a default Ctrl+B prefix that conflicts with tmux.
+- Reconnect reuses the `TerminalSession` and mounted `TerminalView`. A replacement keyframe restores a matching viewport, Find bookmark/match and exact surviving selection; composer text/caret and Find controllers remain. Generation guards isolate stale output, input, resize, upload, heartbeat and open/recovery completions. No stale queued input is replayed. Atomic keyframe construction leaves retained output intact until replacement succeeds. Arbitrary IME preedit continuity and a real remote interruption still need native validation.
+- Chrome is now the primary menu reference. History has Back/Forward (`Cmd+[` / `Cmd+]`), up to 10 Recently Closed Swarms, 15 Recently Visited destinations and Show Full History (`Cmd+Y`). Cmd+P is in Swarm; Reopen Closed Swarm is in File. The searchable History view is explicitly **This session**: 64 recent identities, a 128-location exact-pane trail, and 24 recoverable closed Swarms. It does not persist an all-time browsing log or terminal text.
+- The pane header now has one agent title, a visible available branch, machine and right-aligned controls. Repeated project-name text is removed. Full checkout context remains in the tooltip; narrow headers use a machine icon with its full name. Isolated renders were inspected at 740, 480 and 280 points.
+- The permanent Next wallpaper button is removed. Use native View → Next Wallpaper or the empty New swarm context menu. The View action disables for populated Swarms. Active canvases retain the flat selected-tab color.
+- The Workshop issue was traced to older daemons returning agent lists without project/cwd metadata. Local `/api/status` supplies real folders; the old remote list does not. Project options → Choose agents now persists explicit cross-machine associations without attaching a terminal. Automatic grouping still uses canonical repository remote, or machine plus folder when no remote is known. Branches/worktrees do not split a repository project.
+- A local compatibility reader resolves Git root/origin/HEAD asynchronously, caches at most 256 folders and watches Git metadata for branch changes; no shell process, network call or rendering-path read is used. Daemon-supplied metadata remains authoritative. The lightweight parser does not implement Git include/includeIf or URL rewrite semantics, and older remote daemons still cannot provide branch labels through this fallback.
+- After normally quitting PID 50524, the requested iMac Home Workshop association was saved through `HarnessFileStore`; every other state value was verified unchanged. This updates project starters, not the membership of already-created Swarms. No production daemon was restarted or upgraded.
+- Validation: **1,050 Flutter tests pass, one existing skip; 229 AppKit checks pass**, including hidden native window layout and Chrome menu behavior. Analyzer: no errors/warnings and 12 existing vendored infos after cleaning all new diagnostics. New project-launch, exact-pane History, local Git worktree/watch and reconnect view/race regressions pass.
+- Release build succeeded and the sole preview was normally relaunched as **PID 88567**; revalidate its PID before any later restart. Live CUA review confirmed compact headers with the actual local `main` branch, full New swarm wallpaper with no permanent button, View → Next Wallpaper, Chrome History/its searchable session view, and native Back returning to the same Workshop pane. Cmd+P search → Return visibly focused the other existing Workshop pane; Cmd+P → Return restored the original pane. No input was sent to an agent. A direct bracket-key request was unsupported by the CUA key-name API; native Back was checked through its menu instead, with shortcut routing covered by isolated checks.
+- The live New swarm project count is **3** for Workshop. Project options show the two automatic local repository matches plus the checked **Workshop: NYC Chess Set — iMac -Home** association. The settings dialog was canceled after inspection, and the original Workshop Swarm/focus was restored. The existing Swarm remains its chosen two-pane arrangement; project starters include all three when invoked. No extra review Swarms, terminal attachments or agent messages were created by this verification.
 
 ## Resume here
 
@@ -23,7 +37,7 @@ Updated 2026-09-13 after the pane-focus, disconnected-terminal and native-menu c
 - The latest hover pass uses 13-point native titles, 14-point leading space inside the 28-point hover shape, a 12-point corner radius and a 10-point close symbol. Both neighboring separators disappear on hover. The title layout is cached across hover redraws. Native selected shoulders still meet the flat canvas. Isolated native before/after images were inspected. CUA later captured the real strip and wallpaper; pointer-hover/drag review still needs an uninterrupted live window.
 - The user reported that Cmd+P did not focus the selected agent. New tests reproduced two failures: the closing picker could restore the old terminal and overwrite the selected pane, and an offscreen result stayed outside the viewport. Both pickers now clear that stale focus restoration before activating their result. Explicit jumps refocus even the currently selected pane and reveal it before paint, accounting for changed canvas padding when leaving New swarm. Checks cover same-Swarm, repeated, zoomed, offscreen and cross-Swarm jumps, including the first key arriving only at the destination.
 - Retained sessions now keep the same terminal renderer through offline, missing-machine, link-required and unavailable-agent presentation. The large frozen overlay and redundant connection overlays are removed; status and explicit Reconnect/Take control actions occupy the header. Offline output stays selectable/searchable, and disabled composer text remains intact. Tab switches no longer retry existing dead streams; unavailable retries keep the old session. A never-attached pane still shows setup guidance.
-- The user asked for File/History menus like Safari/Chrome and removal of the duplicate Settings gear. The macOS menu order is now Harness, File, Edit, View, History, Swarm, Window, Help. File groups existing creation/link/project/close actions. History owns native Cmd+P, 12 recent agents (with machine names), 12 recent Swarms and existing closed-Swarm recovery. Settings stays in the app menu; non-macOS fallback keeps its Settings control. History reuses the bounded 64-identity session-local navigation record, caches presentation across output notifications, and revalidates open-view identities on selection. It does not store terminal text or recreate stale closed views. Native/channel focus, modal, cache and stale-action checks pass.
+- The first native-menu pass removed the duplicate Settings gear and established Harness, File, Edit, View, History, Swarm, Window, Help. The latest continuation above replaces its separate recent-agent/Swarm submenus with Chrome-style sections and exact-pane Back/Forward. Settings stays in the app menu; non-macOS fallback keeps its Settings control. History caches presentation across output notifications and revalidates destination identities on selection.
 - The user asked where the research suggestions live and whether implementation follows them. The developer-tool audit now starts with a compact status/next-work table; keep it current alongside this handoff.
 - Continue implementation here. Do not create another repository or fork for V2.
 
@@ -55,7 +69,7 @@ Harness is one place to work with all your agents. Swarms are named, chosen coll
 - Notifications reflect actual pending questions, never fabricated sample statuses.
 - New agent uses real engine discovery, working folders, Codex profiles, and permissions. An agent name is not a submitted task prompt.
 
-Approved reference: `/Users/ab/code/harness-new-ui`, React prototype commit `f83b32338f44dd675e2ad668519e6d429342d9ff` on `ui-prototype`, pushed to `autonomous-ai/harness-app-landing-page`. Its `HARNESS.md` and `research/conversation-history.md` record product decisions. Six wallpapers were copied from `public/`. This reference informs the existing native Flutter app implementation.
+Original reference: `/Users/ab/code/harness-new-ui` at `f83b32338f44dd675e2ad668519e6d429342d9ff`; six wallpapers came from `public/`. The user's newly requested review inspected this repository at `19ced37`, with origin `autonomous-ai/harness-new-ui`, and all six live variants. Its historical contracts are comparison material; [the selective V2 review](harness-v2-prototype-review.md) and current user direction govern what to keep.
 
 ## Implementation map
 
@@ -104,14 +118,14 @@ Approved reference: `/Users/ab/code/harness-new-ui`, React prototype commit `f83
 - Project-store load/add operations are serialized, and failures are visible without claiming a project was saved.
 - Search supports arrows, Ctrl-N/P, and Return, reveals the selected row, and retains the highlighted agent across live list changes. Both the welcome and picker immediately focus search; blank Return on welcome does not open an invisible first result.
 - `widgets/swarm_attention.dart` and `state/swarm_attention.dart` replace the mouse-only notifications list with **Needs input** (Cmd+Shift+I). It opens with no transition or blur, searches live prompts plus agent/project/machine context using the existing fuzzy ranker, and builds rows on demand. Blank search keeps the time each question was first heard; live updates preserve the selected agent and remove resolved questions. Unavailable terminals remain visible and cannot create an unknown view. Activation revalidates the same pending request before using focus-only navigation or explicitly opening a view in the captured Swarm. It never answers a question or retries/takes over an existing terminal. Cmd+P, Return restores prior work, including across Swarms. Keyboard movement in both pickers now scrolls before paint, avoiding a second frame for an offscreen selection.
-- Spoken-task subscription/reporting/window reveal and existing linking dialogs are retained. Settings is in the title bar, with Account/sign-out restored inside Settings.
+- Spoken-task subscription/reporting/window reveal and existing linking dialogs are retained. Settings is in the native app menu, with Account/sign-out inside Settings; the non-macOS toolbar retains its entry.
 - Settings opens/closes immediately and switches sections without cross-fades. The former 170/120 ms route and 200/90 ms section transitions are removed.
 - Non-macOS/tests use a Flutter reorderable tab-strip fallback. Linux/Windows have not been built or visually reviewed.
 
 ### Native macOS tabs
 
 - `desktop/macos/Runner/SwarmTitlebar.swift`, registered in Xcode and owned by `MainFlutterWindow`.
-- `NSTitlebarAccessoryViewController` with native scrollable tabs, new button, notification bell, settings. Automatic native window tabbing disabled; Flutter content begins below title bar.
+- `NSTitlebarAccessoryViewController` with native scrollable tabs, new button and Needs input bell. The redundant Settings button is removed on macOS. Automatic native window tabbing is disabled; Flutter content begins below the title bar.
 - An empty native toolbar with `.unifiedCompact` supplies a single 40-point title row. A `.right` accessory cannot set its own height; the prior standalone view was clipped to 32 points. AppKit now owns height, traffic lights align with the tab controls, and the selected tab has flared lower shoulders at the canvas edge. The selected fill matches Dart's `#463746` exactly. Hover rectangles, measured text and close controls share one vertical center, with balanced horizontal padding.
 - Method channel `harness/swarm_tabs`: Dart sends tab ID/name/selection/attention and recovery availability; Swift sends new/reopen/select/close/rename/reorder/navigation/settings/notifications.
 - Native tab click, double-click rename, context menu, close, drag/drop reorder. Tab button instances are retained across refreshes.
@@ -153,7 +167,8 @@ Approved reference: `/Users/ab/code/harness-new-ui`, React prototype commit `f83
 | Add agent picker / New agent | Cmd+Shift+F / Cmd+N |
 | Focus neighboring pane | Cmd+H/J/K/L or Cmd+arrow |
 | Move pane | Cmd+Shift+H/J/K/L or Cmd+Shift+arrow |
-| Previous / next agent view | Cmd+[ / ] |
+| History Back / Forward | Cmd+[ / ] |
+| Show Full History (this session) | Cmd+Y |
 | Zoom / previous focus | Cmd+Enter / Cmd+; |
 | Focus index | Cmd+1 through Cmd+9 |
 | Layout / pin | Cmd+S / Cmd+Shift+P |
@@ -254,13 +269,13 @@ Earlier logs contain superseded failures. Temporary logs and toolchains are loca
 
 ## Remaining work
 
-1. Continue live CUA review of an existing-agent jump, stable canvas, restored output/caret, project starters and keyboard navigation. Cmd+P opening/filtering/Escape and the File/History menus are now verified in the real app. Access returned after the pane-focus rebuild. The user is actively changing window size and Swarms; re-read UI state before actions and preserve their arrangement.
+1. Measure native terminal input and tab-switch responsiveness under output load, including p50/p95/p99 and cold/warm paths. Live Cmd+P destination focus/quick return, branch headers, project associations, New swarm cleanup and native History are verified. Keep typing/transport measurements in disposable fixtures; the user's real agent terminals are not test inputs.
 2. Audit native drag/reorder, overflow, close-last-tab, renaming and accessibility without changing the user's saved agent memberships. Keep any integration runner separate and out of the foreground review app.
-3. Measure native terminal input and tab-switch responsiveness before making end-to-end latency claims. Headless CPU benchmarks are now recorded. Preserve the existing immediate first-input flush and shared retained renderers.
+3. Verify real remote reconnect, nested tmux/Vim, paste, selection and IME against disposable local/remote processes. The AppNotifier/keyframe and stale completion regressions now pass; they do not prove every network or native editing condition. Preserve immediate first-input flush and shared retained renderers.
 4. Visually confirm app-menu modal behavior and overflow accessibility in AppKit; route/shortcut behavior is covered by passing Flutter tests.
 5. Build/review Linux and Windows when their toolchains are available. Remote full project/branch metadata requires daemons running the new wire format; do not upgrade them automatically.
-6. Preserve the retained buffer, Find context and composer draft through an actual stream reattachment until its replacement keyframe arrives. This pass preserves them while unavailable and during navigation; a ready retry still creates a new TerminalSession. Exercise actual reconnect ordering with a disposable local protocol fixture, never a real agent.
-7. Continue the agreed goal and apply the latest steering. The research proposes a focused roadmap and specific subtraction candidates; do not mistake proposals for already-implemented removals.
+6. Follow the bounded prototype recommendation: optional retained-context preview/highlights in Cmd+P, then deliberate right/down splits with compatible layout persistence. Verify ordinary-shell creation, remappable keys and prefix passthrough before promising a complete terminal replacement. Keep the rejected shelf/hierarchy/dashboard/manager surfaces absent.
+7. Audit local Git watch failure/removal and relocated-worktree invalidation before broadening that compatibility path. It deliberately reads a small subset of Git metadata; prefer richer daemon metadata as available. Continue the active goal using the current research status list, distinguishing shipped reductions from proposed follow-ups.
 
 ## Toolchain and workflow
 

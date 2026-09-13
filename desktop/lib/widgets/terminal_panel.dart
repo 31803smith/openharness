@@ -16,6 +16,7 @@ import 'rename_agent_dialog.dart';
 import 'terminal_composer.dart';
 import 'terminal_find_bar.dart';
 import '../terminal/terminal_search.dart';
+import '../terminal/terminal_snapshot.dart';
 import '../terminal/terminal_binary.dart';
 import '../terminal/terminal_font_store.dart';
 import '../terminal/terminal_link_opener.dart';
@@ -316,6 +317,41 @@ class _TerminalPanelState extends State<TerminalPanel>
 
   void _syncTerminal(Terminal terminal) {
     if (identical(_viewTerminal, terminal)) return;
+    final previous = _viewTerminal.buffer;
+    final next = terminal.buffer;
+    final render = _laidOutTerminalView()?.renderTerminal;
+    final lineHeight = render?.lineHeight;
+    final position = _scrollController.hasClients
+        ? _scrollController.position
+        : null;
+    final viewportRow = position != null && lineHeight != null
+        ? (position.pixels / lineHeight).floor()
+        : null;
+    final viewportFraction = position != null && lineHeight != null
+        ? position.pixels / lineHeight - viewportRow!
+        : 0.0;
+    final atEnd =
+        position == null || position.maxScrollExtent - position.pixels < 1;
+    final originRow = _findOriginLine?.attached == true
+        ? _findOriginLine!.y
+        : null;
+    final originFraction = _findOriginFraction;
+    final originAtEnd = _findOriginAtEnd;
+    final match =
+        _find?.match?.begin ??
+        (_lastFindAnchor?.attached == true ? _lastFindAnchor!.offset : null);
+    final selection = _controller.selection;
+    final selectedText = selection == null ? null : previous.getText(selection);
+    final locations = remapTerminalRows(previous, next, [
+      if (!atEnd) ?viewportRow,
+      ?originRow,
+      ?match?.y,
+      ?selection?.begin.y,
+      ?selection?.end.y,
+    ]);
+    int row(int old) => locations[old] ?? old.clamp(0, next.lines.length - 1);
+    CellOffset location(CellOffset old) =>
+        CellOffset(old.x.clamp(0, terminal.viewWidth - 1), row(old.y));
     final wasFinding = _find != null;
     _closeFind(restore: false, focus: false, rebuild: false);
     _clearLastFind();
@@ -328,19 +364,52 @@ class _TerminalPanelState extends State<TerminalPanel>
     _pressedLink = null;
     _hoveredLink = null;
     _observeLinkModifiers(false);
-    _terminalViewKey = GlobalKey<TerminalViewState>();
     _cancelDialInertia();
     _alternateScrollRemainder = 0;
     _cursorBlinkVisible = true;
     widget.session.setCursorBlinkPhase(true);
+    if (position != null &&
+        lineHeight != null &&
+        !atEnd &&
+        viewportRow != null) {
+      // Correct before the retained renderer lays out the replacement, so its
+      // first frame already shows the reader's location without a scroll flash.
+      position.correctPixels(
+        (row(viewportRow) + viewportFraction) * lineHeight,
+      );
+    }
+    if (match != null) {
+      _lastFindBuffer = next;
+      _lastFindAnchor = next.createAnchorFromOffset(location(match));
+    }
+    if (selection != null &&
+        locations.containsKey(selection.begin.y) &&
+        locations.containsKey(selection.end.y)) {
+      final range = selection is BufferRangeBlock
+          ? BufferRangeBlock(location(selection.begin), location(selection.end))
+          : BufferRangeLine(location(selection.begin), location(selection.end));
+      if (next.getText(range) == selectedText) {
+        _controller.setSelection(
+          next.createAnchorFromOffset(range.begin),
+          next.createAnchorFromOffset(range.end),
+        );
+      }
+    }
     if (wasFinding) {
-      _findOriginBuffer = terminal.buffer;
-      _findOriginAtEnd = true;
+      _findOriginBuffer = next;
+      _findOriginAtEnd = originAtEnd;
+      _findOriginFraction = originFraction;
+      if (originRow != null) {
+        _findOriginLine = next.createAnchor(0, row(originRow));
+      }
       _findRevealPending = true;
-      _find = TerminalSearch(terminal)..addListener(_onFindChanged);
+      _find = TerminalSearch(
+        terminal,
+        origin: match == null ? null : location(match),
+      )..addListener(_onFindChanged);
       _find!.setQuery(_lastFindQuery, caseSensitive: _lastFindCaseSensitive);
     }
-    _afterTerminalMounted(clearSelection: true);
+    _afterTerminalMounted(scrollToEnd: false);
   }
 
   /// Typing in the composer focuses the tile, exactly like clicking into the terminal does.
@@ -465,7 +534,10 @@ class _TerminalPanelState extends State<TerminalPanel>
     }
   }
 
-  void _afterTerminalMounted({bool clearSelection = false}) {
+  void _afterTerminalMounted({
+    bool clearSelection = false,
+    bool scrollToEnd = true,
+  }) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !widget.visible) return;
       if (clearSelection) _controller.clearSelection();
@@ -480,7 +552,7 @@ class _TerminalPanelState extends State<TerminalPanel>
           renderSize.height ~/ cellSize.height,
         );
       }
-      if (_scrollController.hasClients) {
+      if (scrollToEnd && _scrollController.hasClients) {
         _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
       }
       // Never over the composer: a rebuild that re-focuses this tile while someone is typing into
@@ -1267,177 +1339,211 @@ class _TerminalHeader extends StatelessWidget {
         .where((a) => a.id == session.agentId)
         .firstOrNull;
     final project = agent == null ? null : machine?.projectOf(agent);
-    final contextLabel = [
-      if (project != null) project.name,
-      if (project?.branch != null) project!.branch!,
-    ].join(' / ');
+    final machineName = machine?.machine.displayName ?? session.machineId;
+    final identityDetail = [
+      session.agentName,
+      machineName,
+      if (project != null) project.cwd,
+      if (project?.branch != null) 'Branch: ${project!.branch}',
+      if (profile != null) 'Codex profile: $profile',
+      'Double-click to rename',
+    ].join('\n');
     final strip = SizedBox(
       height: compact ? 38 : 46,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: _stripPadding),
-        child: Row(
-          children: [
-            EngineMark(engine: session.engineId, size: 17),
-            const SizedBox(width: 8),
-            Expanded(
-              // Double click the NAME to rename — the same dialog the rail's
-              // row opens, so one name has one way to change wherever it is
-              // shown. Scoped to the text rather than the whole strip: the
-              // strip is the drag handle, and a double click that both renamed
-              // and looked like the start of a drag would be two answers to one
-              // gesture.
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onDoubleTap: () => unawaited(
-                  showAgentRenameDialog(
-                    context,
-                    notifier,
-                    session.machineId,
-                    session.agentId,
-                    session.agentName,
-                  ),
-                ),
-                child: Tooltip(
-                  message: profile == null
-                      ? 'Double-click to rename'
-                      : 'Codex profile: $profile\nDouble-click to rename',
-                  waitDuration: const Duration(milliseconds: 700),
-                  child: Text(
-                    // The profile path's basename used to trail the name here, but for the
-                    // default profile that basename is literally the hidden `.codex` folder —
-                    // meaningless clutter on every ordinary codex agent. The tooltip above still
-                    // carries the full path for whoever actually needs it.
-                    session.agentName,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: AppColors.text,
-                      fontFamily: AppFonts.sans,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
+        child: LayoutBuilder(
+          builder: (context, constraints) => Row(
+            children: [
+              EngineMark(engine: session.engineId, size: 17),
+              const SizedBox(width: 10),
+              Expanded(
+                // Double click the NAME to rename — the same dialog the rail's
+                // row opens, so one name has one way to change wherever it is
+                // shown. Scoped to the text rather than the whole strip: the
+                // strip is the drag handle, and a double click that both renamed
+                // and looked like the start of a drag would be two answers to one
+                // gesture.
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onDoubleTap: () => unawaited(
+                    showAgentRenameDialog(
+                      context,
+                      notifier,
+                      session.machineId,
+                      session.agentId,
+                      session.agentName,
                     ),
                   ),
-                ),
-              ),
-            ),
-            if (compact && status == null && project != null) ...[
-              const SizedBox(width: 12),
-              Flexible(
-                child: Tooltip(
-                  message:
-                      '${project.cwd}\n${project.remote ?? project.root ?? ""}',
-                  child: Text(
-                    contextLabel,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 11, color: AppColors.textSoft),
-                  ),
-                ),
-              ),
-            ],
-            if (compact && status == null) ...[
-              const SizedBox(width: 12),
-              Flexible(
-                child: Tooltip(
-                  message: machine?.machine.displayName ?? session.machineId,
-                  child: Text(
-                    machine?.machine.displayName ?? session.machineId,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: AppColors.mutedStrong,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-            const SizedBox(width: 6),
-            if (status != null)
-              Flexible(
-                fit: FlexFit.tight,
-                child: Align(
-                  alignment: Alignment.centerRight,
                   child: Tooltip(
-                    message: status.detail,
-                    child: TextButton(
-                      onPressed: canReconnect
-                          ? () => notifier.selectAgent(
-                              session.machineId,
-                              session.agentId,
-                            )
-                          : null,
-                      style: TextButton.styleFrom(
-                        foregroundColor: color,
-                        disabledForegroundColor: AppColors.textSoft,
-                        minimumSize: Size.zero,
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 4,
+                    message: identityDetail,
+                    waitDuration: const Duration(milliseconds: 700),
+                    child: Text(
+                      // The profile path's basename used to trail the name here, but for the
+                      // default profile that basename is literally the hidden `.codex` folder —
+                      // meaningless clutter on every ordinary codex agent. The tooltip above still
+                      // carries the full path for whoever actually needs it.
+                      session.agentName,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: AppColors.text,
+                        fontFamily: AppFonts.sans,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              if (compact && status == null && project?.branch != null) ...[
+                const SizedBox(width: 16),
+                Tooltip(
+                  message: '${project!.branch}\n${project.cwd}',
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        LucideIcons.gitBranch,
+                        size: 12,
+                        color: AppColors.mutedStrong,
+                      ),
+                      const SizedBox(width: 5),
+                      ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxWidth: math.min(112, constraints.maxWidth * .22),
+                        ),
+                        child: Text(
+                          project.branch!,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: AppColors.textSoft,
+                          ),
                         ),
                       ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(status.icon, size: 14),
-                          const SizedBox(width: 6),
-                          Flexible(
-                            child: Text(
-                              status.label,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontSize: 11),
+                    ],
+                  ),
+                ),
+              ],
+              if (compact && status == null) ...[
+                const SizedBox(width: 16),
+                ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: math.min(156, constraints.maxWidth * .28),
+                  ),
+                  child: Tooltip(
+                    message: machineName,
+                    child: constraints.maxWidth < 380 && project?.branch != null
+                        ? Icon(
+                            machine?.isLocalMachine == true
+                                ? Icons.laptop_mac
+                                : Icons.desktop_mac,
+                            size: 14,
+                            color: AppColors.mutedStrong,
+                          )
+                        : Text(
+                            machineName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: AppColors.mutedStrong,
                             ),
                           ),
-                        ],
+                  ),
+                ),
+              ],
+              const SizedBox(width: 8),
+              if (status != null)
+                ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: constraints.maxWidth * .42,
+                  ),
+                  child: Align(
+                    alignment: Alignment.centerRight,
+                    child: Tooltip(
+                      message: status.detail,
+                      child: TextButton(
+                        onPressed: canReconnect
+                            ? () => notifier.selectAgent(
+                                session.machineId,
+                                session.agentId,
+                              )
+                            : null,
+                        style: TextButton.styleFrom(
+                          foregroundColor: color,
+                          disabledForegroundColor: AppColors.textSoft,
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 4,
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(status.icon, size: 14),
+                            const SizedBox(width: 6),
+                            Flexible(
+                              child: Text(
+                                status.label,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontSize: 11),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
+                )
+              else if (!compact)
+                Padding(
+                  padding: const EdgeInsets.all(4),
+                  child: Icon(Icons.circle, size: 8, color: color),
                 ),
-              )
-            else if (!compact)
-              Padding(
-                padding: const EdgeInsets.all(4),
-                child: Icon(Icons.circle, size: 8, color: color),
-              ),
-            // Which of the three paths carries this pane's bytes. Absent for a local machine's own
-            // terminal, which has no such distinction and so gets no badge.
-            //
-            // The wire word and the word a person reads differ for the middle state, deliberately:
-            // the CLI sends 'turn' (it is a TURN allocation) but both middle and last are relays to
-            // a reader, so they read as "relay" and "ws". 'relay' on the wire kept its original
-            // meaning — the backend WebSocket — so an older CLI is never mislabelled.
-            if (!compact && session.linkMode != null)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 2),
-                child: _LinkModeMark(mode: session.linkMode!),
-              ),
-            // Before the close button: pinning is the rarer act, and a control
-            // that appears to the LEFT of the one people aim for by muscle
-            // memory cannot shift it under their pointer.
-            if (!compact && onTogglePin != null)
-              PanePinButton(pinned: pinned, onPressed: onTogglePin!),
-            if (compact && onToggleComposer != null)
-              IconButton(
-                tooltip: composerVisible
-                    ? 'Hide message composer'
-                    : 'Show message composer',
-                onPressed: onToggleComposer,
-                icon: Icon(
-                  Icons.edit_note,
-                  size: 18,
-                  color: composerVisible
-                      ? AppColors.text
-                      : AppColors.mutedStrong,
+              // Which of the three paths carries this pane's bytes. Absent for a local machine's own
+              // terminal, which has no such distinction and so gets no badge.
+              //
+              // The wire word and the word a person reads differ for the middle state, deliberately:
+              // the CLI sends 'turn' (it is a TURN allocation) but both middle and last are relays to
+              // a reader, so they read as "relay" and "ws". 'relay' on the wire kept its original
+              // meaning — the backend WebSocket — so an older CLI is never mislabelled.
+              if (!compact && session.linkMode != null)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 2),
+                  child: _LinkModeMark(mode: session.linkMode!),
                 ),
-                constraints: const BoxConstraints.tightFor(
-                  width: 28,
-                  height: 28,
+              // Before the close button: pinning is the rarer act, and a control
+              // that appears to the LEFT of the one people aim for by muscle
+              // memory cannot shift it under their pointer.
+              if (!compact && onTogglePin != null)
+                PanePinButton(pinned: pinned, onPressed: onTogglePin!),
+              if (compact && onToggleComposer != null)
+                IconButton(
+                  tooltip: composerVisible
+                      ? 'Hide message composer'
+                      : 'Show message composer',
+                  onPressed: onToggleComposer,
+                  icon: Icon(
+                    Icons.edit_note,
+                    size: 18,
+                    color: composerVisible
+                        ? AppColors.text
+                        : AppColors.mutedStrong,
+                  ),
+                  constraints: const BoxConstraints.tightFor(
+                    width: 28,
+                    height: 28,
+                  ),
+                  padding: EdgeInsets.zero,
                 ),
-                padding: EdgeInsets.zero,
-              ),
-            if (onClose != null) PaneCloseButton(onPressed: onClose!),
-          ],
+              if (onClose != null) PaneCloseButton(onPressed: onClose!),
+            ],
+          ),
         ),
       ),
     );

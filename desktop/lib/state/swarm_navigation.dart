@@ -15,6 +15,9 @@ class SwarmNavigationHistory {
   static const capacity = 64;
   final _recent = <String>[];
   (String, int?)? _location;
+  final _trail = <(String, int?)>[];
+  int _cursor = -1;
+  bool _traversing = false;
   int _revision = 0;
   List<Object?>? _menuPresentation;
   List<SwarmDestination> _menuDestinations = const [];
@@ -23,6 +26,12 @@ class SwarmNavigationHistory {
   void record(AppNotifier app) {
     final location = (app.activeSwarmId, app.focusedPaneId);
     if (_location == location) return;
+    if (!_traversing) {
+      _trail.removeRange(_cursor + 1, _trail.length);
+      _trail.add(location);
+      if (_trail.length > capacity * 2) _trail.removeAt(0);
+      _cursor = _trail.length - 1;
+    }
     _revision++;
     if (_location?.$1 != location.$1) {
       _remember(swarmDestinationId(location.$1));
@@ -32,6 +41,43 @@ class SwarmNavigationHistory {
       _remember(agentDestinationId(pane!.machineId, pane.agentId!));
     }
     _location = location;
+  }
+
+  int? _next(AppNotifier app, int direction) {
+    for (
+      var i = _cursor + direction;
+      i >= 0 && i < _trail.length;
+      i += direction
+    ) {
+      final (swarmId, paneId) = _trail[i];
+      final swarm = app.swarms.where((s) => s.id == swarmId).firstOrNull;
+      if (swarm == null ||
+          (paneId == null && swarm.panes.isNotEmpty) ||
+          (paneId != null && !swarm.panes.any((p) => p.id == paneId))) {
+        continue;
+      }
+      if ((swarmId, paneId) != _location) return i;
+    }
+    return null;
+  }
+
+  bool canGoBack(AppNotifier app) => _next(app, -1) != null;
+  bool canGoForward(AppNotifier app) => _next(app, 1) != null;
+
+  /// Changes focus only; closed views are skipped without attaching a stream.
+  void step(AppNotifier app, int direction) {
+    if (direction != -1 && direction != 1) return;
+    final index = _next(app, direction);
+    if (index == null) return;
+    final (swarmId, paneId) = _trail[index];
+    _cursor = index;
+    _traversing = true;
+    try {
+      app.selectSwarm(swarmId, attachPending: false);
+      if (paneId != null) app.focusPane(paneId, reveal: true);
+    } finally {
+      _traversing = false;
+    }
   }
 
   void _remember(String id) {
@@ -60,6 +106,7 @@ class SwarmNavigationHistory {
           machine.agents,
           machine.agents.length,
           machine.localEndpoint?.agentProjects,
+          machine.localProjects,
         ),
     ];
     if (listEquals(_menuPresentation, presentation)) return _menuDestinations;
@@ -86,6 +133,7 @@ class SwarmDestination {
     this.machineId,
     this.agentId,
     this.engine,
+    this.closedId,
     Iterable<String?> searchFields = const [],
   }) : fields = [
          title.toLowerCase(),
@@ -94,11 +142,25 @@ class SwarmDestination {
 
   final String id, title, detail;
   final String? swarmId, machineId, agentId, engine;
+  final String? closedId;
   final bool current;
   final List<String> fields;
   bool get isSwarm => agentId == null;
   bool get hasView => swarmId != null;
 }
+
+List<SwarmDestination> closedSwarmDestinations(AppNotifier app) => [
+  for (final entry in app.closedSwarms)
+    SwarmDestination(
+      id: entry.historyId,
+      closedId: entry.historyId,
+      title: entry.name,
+      detail:
+          '${entry.panes.length} ${entry.panes.length == 1 ? 'view' : 'views'} · Recently closed',
+      swarmId: null,
+      current: false,
+    ),
+];
 
 List<SwarmDestination> swarmDestinations(
   AppNotifier app, {
@@ -279,6 +341,14 @@ Future<bool> activateSwarmDestination(
   SwarmDestination destination, {
   required String destinationSwarmId,
 }) async {
+  if (destination.closedId != null) {
+    if (!app.canReopenClosedSwarm ||
+        !app.closedSwarms.any((s) => s.historyId == destination.closedId)) {
+      return false;
+    }
+    app.reopenClosedSwarm(historyId: destination.closedId);
+    return true;
+  }
   if (destination.isSwarm) {
     if (!app.swarms.any((s) => s.id == destination.swarmId)) return false;
     app.selectSwarm(destination.swarmId!, attachPending: false);
