@@ -2,6 +2,14 @@
 
 Updated 2026-09-13 with coordinated palettes, Models, combined closed-work History and faster unified search. This is a working preview, not a release.
 
+## Search match visibility checkpoint
+
+- Both search locations now emphasize matching text in names and visible context using font weight. Commands use the same presentation. Ranking chooses the emphasized field: an exact project/machine match takes precedence over incidental fuzzy letters in a title. Hidden search metadata is not painted into an unrelated label. Empty queries retain the previous plain presentation.
+- Text remains one accessible label with the same one-line truncation. Unicode emoji and combining sequences remain intact. Work is limited to constructed result rows, with caps on highlight terms and label length. Matching intervals are sorted and traversed once; duplicate terms do not repeat emphasis work. No output/network subscription or preview activation is added.
+- Validation: 48 search/navigation/keyboard checks passed, then 21 final algorithm/shared-matcher/render checks passed after the performance refinement. Analyzer has zero errors/warnings and the existing 12 vendored infos. Isolated renders were reviewed for top search, inline New swarm search, an 880×560 window and command search. The foreground app has not yet been rebuilt for this checkpoint.
+- Artifacts: `/private/tmp/harness-v2-search-highlight-{tests,final,analyze}.log` and `/private/tmp/harness-v2-search-highlight-{top,inline,narrow,commands}.png`. Debug CPU measurements for ten labels were 0.263 ms p95 for ordinary labels and 0.455 ms p95 for a deliberately long repeated fuzzy query. These measure emphasis construction, not native interaction/display latency; details are in [performance notes](harness-v2-performance.md).
+- Next: another first-use pass and measured interaction performance. Preserve the existing simple defaults and real-agent drafts. Public-origin push approval is still pending; do not retry until it arrives.
+
 ## Keyboard customization checkpoint
 
 - Production startup now loads the optional `~/.config/harness/keybindings.jsonc` file (or its XDG location). Starting with no file creates nothing. Settings and the shortcut sheet offer **Edit keyboard config**, a context selector, the current path, and readable error details. The explicit edit action creates a commented template with command IDs and opens the associated editor. Invalid edits keep the last working bindings; the workspace shows a notice.
@@ -11,7 +19,7 @@ Updated 2026-09-13 with coordinated palettes, Models, combined closed-work Histo
 - Validation: **1,155 Flutter tests passed, one existing skip**; **51 native decoder checks and 319 AppKit titlebar checks passed**. The native checks use the actual Dart-exported configuration in a hidden native field. Final rendering/integration checks also passed after replacing missing Tab/Return glyphs with icons and making the sheet's Close button neutral. Analyzer has zero errors/warnings and the same 12 vendored infos. No real agent received test input.
 - Artifacts: `/private/tmp/harness-v2-keymap-runtime-{full-tests,native,final-checks,analyze,build}.log`, `/private/tmp/harness-v2-keymap-{settings,narrow,sheet}.png`. Visual review covered both help layouts, custom and unassigned keys, and an 880px window. Release build succeeded and the exact development preview reopened after PID 31252 was normally quit and confirmed exited. Computer-use capture still returns `cgWindowNotFound`; visual evidence is from isolated renders, not a live-window capture.
 - Push status: `364f1fb` is on `origin/app-v2`. Subsequent preview/native checkpoints are local (`f04f6d3`, `cd0aa0f`, `fcb8b33`). Automatic approval review rejected pushing to the verified existing public origin `autonomous-ai/autonomous-harness`, despite ADMIN access and the user's earlier push instruction. Explicit approval naming that public destination is pending; **do not retry pushes until it arrives**. Continue local work and commits.
-- Next: search match highlighting and another first-use pass, followed by measured interaction performance. Keep the current defaults, agent drafts, sessions and saved swarm arrangements intact.
+- Saved as local commit `bf7f37d`; the rebuilt preview is running. Search match highlighting is covered by the newer checkpoint above.
 
 ## Optional search preview checkpoint
 

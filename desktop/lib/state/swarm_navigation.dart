@@ -553,6 +553,27 @@ List<SwarmDestination> swarmDestinations(
 
 final _words = RegExp(r'\s+');
 
+List<String> swarmQueryTerms(String query) {
+  final needle = query.trim().toLowerCase();
+  return needle.isEmpty ? const [] : needle.split(_words);
+}
+
+/// The same field preference drives ranking and the visible match emphasis.
+/// A good metadata match should not paint unrelated fuzzy title characters.
+int? swarmFieldMatchScore(String field, String term, {required bool title}) {
+  final offset = field.indexOf(term);
+  final spread = offset >= 0 ? 0 : subsequenceSpread(field, term);
+  if (spread == null) return null;
+  return (title ? 0 : 64) +
+      (field == term
+          ? 0
+          : offset == 0
+          ? 8
+          : offset > 0
+          ? 16
+          : 128 + spread);
+}
+
 /// Each word may match a different field, in either order: "mini auth" and
 /// "auth mini" both find Auth on Mac mini. Names outrank incidental metadata.
 List<SwarmDestination> rankSwarmDestinations(
@@ -561,7 +582,7 @@ List<SwarmDestination> rankSwarmDestinations(
   List<String> recent = const [],
 }) {
   final needle = query.trim().toLowerCase();
-  final terms = needle.isEmpty ? const <String>[] : needle.split(_words);
+  final terms = swarmQueryTerms(query);
   final recency = {for (var i = 0; i < recent.length; i++) recent[i]: i};
   final ranked = <({SwarmDestination entry, int score})>[];
   for (final entry in all) {
@@ -574,18 +595,8 @@ List<SwarmDestination> rankSwarmDestinations(
       int? best;
       for (var i = 0; i < entry.fields.length; i++) {
         final field = entry.fields[i];
-        final offset = field.indexOf(term);
-        final spread = offset >= 0 ? 0 : subsequenceSpread(field, term);
-        if (spread == null) continue;
-        final score =
-            (i == 0 ? 0 : 64) +
-            (field == term
-                ? 0
-                : offset == 0
-                ? 8
-                : offset > 0
-                ? 16
-                : 128 + spread);
+        final score = swarmFieldMatchScore(field, term, title: i == 0);
+        if (score == null) continue;
         if (best == null || score < best) best = score;
         // Every remaining field is metadata, whose best possible score is 64.
         // An exact/prefix/substring title match already beats that; an exact

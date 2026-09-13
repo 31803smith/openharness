@@ -10,6 +10,19 @@ flutter test --no-pub --reporter expanded test/benchmarks/swarm_benchmark.dart
 
 It prints `SWARM_BENCH` JSON records. Its filename deliberately does not end in `_test.dart`, so ordinary correctness runs do not include timing measurements.
 
+## Search match emphasis (2026-09-13)
+
+Highlighting runs only for built result rows, sharing ranking's field scores and rune-based subsequence matching. The visible labels preserve grapheme boundaries and do not change ranking. A label longer than 1,024 UTF-16 units stays plain; up to twelve distinct terms from the first twelve query terms are considered, each at most 128 units, against fields at most 4,096 units. Empty queries stay on the plain-text path.
+
+The isolated debug fixture measures the field selection and two labels for ten rows, using 20 warmups and 100 samples. Normal labels use “Fix authentication in Payments” with “ath payments”; the stress case uses a 511-character fuzzy title and a 127-character term repeated twelve times. Before sorting intervals and deduplicating terms, stress-case median/p95/p99 were 22.084/22.863/23.028 ms. The final implementation measured:
+
+| Ten-row workload | Median | p95 | p99 |
+| --- | ---: | ---: | ---: |
+| Ordinary labels | 0.069 ms | 0.263 ms | 0.305 ms |
+| Long fuzzy labels | 0.353 ms | 0.455 ms | 0.558 ms |
+
+This measures CPU work to construct emphasis runs in the headless debug runner, not layout, rasterization, native typing or transport latency. The ranking algorithm itself is unchanged. Logs: `/private/tmp/harness-v2-search-highlight-render.log` (initial) and `/private/tmp/harness-v2-search-highlight-final.log` (final). The temporary renderer/measurement source is `/private/tmp/harness-v2-search-highlight-render.dart`.
+
 ## Optional search output preview (2026-09-13)
 
 Preview is off by default. With preview enabled, changing the selected agent reads at most 160 retained rows × 192 cells, stopping after 12 nonblank lines. Query edits that keep the same selection reuse the snapshot without reading the buffer or scanning open panes again. There are no output listeners, periodic refreshes, network calls or terminal attachments. The tooltip explains that toggling preview off/on refreshes its snapshot.

@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../shortcuts/app_keymap.dart';
 import '../shortcuts/keymap.dart';
+import 'search_result_text.dart';
 
 import '../shared/theme/app_theme.dart' as grid;
 import '../shared/widgets/app_dialog.dart';
@@ -328,6 +329,11 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
     ].join(' · ');
     _rowHeight = swarmSearchRowHeight(scale, commands: search.isCommandMode);
     final selected = search.selected;
+    final terms = swarmQueryTerms(
+      search.isCommandMode
+          ? search.query.trimLeft().substring(1)
+          : search.query,
+    );
     return LayoutBuilder(
       builder: (context, constraints) {
         final previewHeight = (constraints.maxHeight - _rowHeight - 48).clamp(
@@ -358,6 +364,7 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                         itemExtent: _rowHeight,
                         itemBuilder: (context, index) {
                           final row = search.rows[index];
+                          final matches = searchResultMatches(row, terms);
                           return ListTile(
                             key: ValueKey(row.id),
                             minTileHeight: _rowHeight,
@@ -392,18 +399,18 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                                     size: 19,
                                     color: Colors.white60,
                                   ),
-                            title: Text(
+                            title: SearchResultText(
                               row.title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                              matches: matches.where((match) => match.title),
                               style: const TextStyle(fontSize: 13),
                             ),
                             subtitle: row.isCommand
                                 ? null
-                                : Text(
+                                : SearchResultText(
                                     row.detail,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
+                                    matches: matches.where(
+                                      (match) => !match.title,
+                                    ),
                                     style: const TextStyle(
                                       fontSize: 11,
                                       color: Colors.white70,
