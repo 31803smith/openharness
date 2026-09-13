@@ -29,12 +29,16 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
   private var searchKeyDispatch: HarnessNativeKeyDispatch?
   private var searchKeyMonitor: Any?
   private var pendingKeyNames: [String] = []
+  private var tabActionGeneration = 0
 
   init(window: NSWindow, messenger: FlutterBinaryMessenger) {
     self.window = window
     channel = FlutterMethodChannel(name: "harness/swarm_tabs", binaryMessenger: messenger)
     super.init()
-    strip.emit = { [weak self] method, args in self?.channel.invokeMethod(method, arguments: args) }
+    strip.emit = { [weak self] method, args in
+      guard let self else { return }
+      self.sendTabAction(method, arguments: args)
+    }
     strip.editingEnded = { [weak self] in
       self?.cancelKeySequence()
       self?.syncMenuKeys()
@@ -110,6 +114,23 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
   deinit {
     removeKeyMonitor()
     observers.forEach(NotificationCenter.default.removeObserver)
+  }
+
+  private func sendTabAction(_ method: String, arguments: Any?) {
+    guard ["select", "close", "new", "rename"].contains(method) else {
+      channel.invokeMethod(method, arguments: arguments)
+      return
+    }
+    tabActionGeneration += 1
+    let generation = tabActionGeneration
+    // Keyboard/VoiceOver activation can leave a button as responder. Wait for
+    // Flutter to apply the action before giving the next key to its content.
+    channel.invokeMethod(method, arguments: arguments) { [weak self, weak responder = window?.firstResponder] result in
+      guard let self, let window = self.window, generation == self.tabActionGeneration,
+            !(result is FlutterError), result as? NSObject !== FlutterMethodNotImplemented,
+            window.firstResponder === responder || window.firstResponder === window else { return }
+      window.makeFirstResponder(window.contentViewController)
+    }
   }
 
   private func removeKeyMonitor() {
@@ -832,6 +853,8 @@ private final class SwarmTabStrip: NSView, NSSearchFieldDelegate {
   private var lastSearchWidth: CGFloat = 0
   private var tabs: [SwarmTabButton] = []
   private var activeId = ""
+  private var revealActiveAfterLayout = false
+  private var tabOrderChanged = false
   private var actionsEnabled = false
   override var mouseDownCanMoveWindow: Bool { true }
 
@@ -876,9 +899,12 @@ private final class SwarmTabStrip: NSView, NSSearchFieldDelegate {
     }
     actionsEnabled = state["enabled"] as? Bool == true
     let rows = state["tabs"] as? [[String: Any]] ?? []
-    activeId = state["activeId"] as? String ?? ""
+    let nextActiveId = state["activeId"] as? String ?? ""
+    revealActiveAfterLayout = revealActiveAfterLayout || nextActiveId != activeId
+    activeId = nextActiveId
     let ids = rows.compactMap { $0["id"] as? String }
     let previousOrder = tabs.map(\.swarmId)
+    tabOrderChanged = tabOrderChanged || ids != previousOrder
     for tab in tabs where !ids.contains(tab.swarmId) { tab.removeFromSuperview() }
     let previous = Dictionary(uniqueKeysWithValues: tabs.map { ($0.swarmId, $0) })
     tabs = rows.compactMap { row in
@@ -889,7 +915,11 @@ private final class SwarmTabStrip: NSView, NSSearchFieldDelegate {
       tab.selected = id == activeId
       tab.actionsEnabled = actionsEnabled
       tab.attention = (row["attention"] as? Int ?? 0) > 0
-      tab.emit = { [weak self] method, args in self?.emit?(method, args) }
+      tab.emit = { [weak self, weak tab] method, args in
+        guard let self, let tab, self.actionsEnabled,
+              self.tabs.contains(where: { $0 === tab }) else { return }
+        self.emit?(method, args)
+      }
       tab.hoverChanged = { [weak self] in self?.updateDividers() }
       if tab.superview == nil { document.addSubview(tab) }
       tab.needsDisplay = true
@@ -918,6 +948,10 @@ private final class SwarmTabStrip: NSView, NSSearchFieldDelegate {
 
   override func layout() {
     super.layout()
+    let active = tabs.first(where: { $0.swarmId == activeId })
+    let activeWasVisible = active.map { scroll.documentVisibleRect.intersects($0.frame) } ?? false
+    let previousScrollSize = scroll.frame.size
+    let previousDocumentSize = document.frame.size
     let searchWidth: CGFloat = searchField.searching
       ? min(600, max(128, bounds.width - 184))
       : bounds.width < 480 ? 128 : bounds.width < 720 ? 156 : 200
@@ -937,9 +971,12 @@ private final class SwarmTabStrip: NSView, NSSearchFieldDelegate {
       lastSearchWidth = searchWidth
       emit?("searchGeometry", ["width": searchWidth])
     }
-    if let active = tabs.first(where: { $0.swarmId == activeId }) {
+    let geometryChanged = scroll.frame.size != previousScrollSize || document.frame.size != previousDocumentSize
+    if let active, revealActiveAfterLayout || (activeWasVisible && (geometryChanged || tabOrderChanged)) {
       document.scrollToVisible(active.frame)
     }
+    revealActiveAfterLayout = false
+    tabOrderChanged = false
   }
   override func draw(_ dirtyRect: NSRect) {
     // The selected tab meets this edge; its bottom corners are shoulders,
@@ -956,7 +993,9 @@ private final class SwarmTabStrip: NSView, NSSearchFieldDelegate {
     if event.clickCount == 2 { window?.performZoom(nil) }
     else { window?.performDrag(with: event) }
   }
-  @objc private func newSwarm() { emit?("new", nil) }
+  @objc private func newSwarm() {
+    if actionsEnabled && newButton.isEnabled { emit?("new", nil) }
+  }
   private func beginSearch() {
     guard actionsEnabled, !searchField.searching else { return }
     searchField.searching = true
@@ -1012,15 +1051,22 @@ private final class SwarmTabStrip: NSView, NSSearchFieldDelegate {
     }
     return true
   }
-  override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation { actionsEnabled ? .move : [] }
-  override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation { actionsEnabled ? .move : [] }
+  private func draggedTab(_ sender: NSDraggingInfo) -> SwarmTabButton? {
+    guard actionsEnabled, sender.draggingSourceOperationMask.contains(.move),
+          let source = sender.draggingSource as? SwarmTabButton,
+          tabs.contains(where: { $0 === source }),
+          sender.draggingPasteboard.string(forType: swarmPasteboardType) == source.swarmId,
+          scroll.frame.contains(convert(sender.draggingLocation, from: nil)) else { return nil }
+    return source
+  }
+  override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation { draggedTab(sender) == nil ? [] : .move }
+  override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation { draggedTab(sender) == nil ? [] : .move }
   override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-    guard actionsEnabled, let id = sender.draggingPasteboard.string(forType: swarmPasteboardType),
-          tabs.contains(where: { $0.swarmId == id }) else { return false }
+    guard let source = draggedTab(sender), let old = tabs.firstIndex(where: { $0 === source }) else { return false }
     let point = document.convert(sender.draggingLocation, from: nil)
     let index = tabs.firstIndex(where: { point.x < $0.frame.midX }) ?? tabs.count
-    let old = tabs.firstIndex(where: { $0.swarmId == id })!
-    emit?("reorder", ["id": id, "index": max(0, index > old ? index - 1 : index)])
+    let destination = max(0, index > old ? index - 1 : index)
+    if destination != old { emit?("reorder", ["id": source.swarmId, "index": destination]) }
     return true
   }
 }
@@ -1032,13 +1078,13 @@ private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidati
   let swarmId: String
   var name = "New swarm" { didSet { if name != oldValue { invalidateLabel(); updateAccessibility() } } }
   var selected = false { didSet { if selected != oldValue { invalidateLabel(); updateAccessibility() } } }
-  var attention = false
+  var attention = false { didSet { if attention != oldValue { needsDisplay = true; updateAccessibility() } } }
   var showsDivider = false { didSet { if showsDivider != oldValue { needsDisplay = true } } }
   var contentCenterY: CGFloat = 20
   var emit: ((String, Any?) -> Void)?
   var hoverChanged: (() -> Void)?
   var isHovered: Bool { hovered && actionsEnabled }
-  private let closeButton = NSButton()
+  private let closeButton = SwarmTabActionButton()
   private let selectButton = SwarmSelectButton()
   private var cachedLabel: NSAttributedString?
   var actionsEnabled = true {
@@ -1059,6 +1105,7 @@ private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidati
     setAccessibilityElement(true)
     setAccessibilityRole(.group)
     selectButton.owner = self
+    closeButton.owner = self
     selectButton.title = ""
     selectButton.isBordered = false
     selectButton.target = self
@@ -1157,6 +1204,7 @@ private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidati
     setAccessibilityLabel(name)
     selectButton.setAccessibilityLabel("Select \(name)")
     selectButton.setAccessibilityValue(selected ? "Selected" : "")
+    selectButton.setAccessibilityHelp(attention ? "Contains agents needing input" : nil)
     toolTip = "\(name) — double-click to rename"
     closeButton.setAccessibilityLabel("Close \(name)")
   }
@@ -1189,8 +1237,16 @@ private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidati
 
 /// Selection and closing are sibling accessibility buttons, so VoiceOver and
 /// UI automation can reach the close action without treating the tab as a leaf.
-private final class SwarmSelectButton: NSButton {
+private class SwarmTabActionButton: NSButton {
   weak var owner: SwarmTabButton?
+  override func becomeFirstResponder() -> Bool {
+    guard super.becomeFirstResponder() else { return false }
+    if let owner { owner.scrollToVisible(owner.bounds) }
+    return true
+  }
+}
+
+private final class SwarmSelectButton: SwarmTabActionButton {
   override func mouseDown(with event: NSEvent) {
     guard isEnabled else { return }
     owner?.mouseDown(with: event)

@@ -81,6 +81,22 @@ private extension SwarmTabStrip {
       try tab.checkAccessibility(expectedName: "Swarm \(index)", active: index == 11)
     }
     try checkActiveVisible()
+    scroll.contentView.scroll(to: .zero)
+    scroll.reflectScrolledClipView(scroll.contentView)
+    let browsingOrigin = scroll.documentVisibleRect.origin
+    var refreshed = state(rows, active: "swarm-11")
+    var renamedRows = rows
+    renamedRows[0]["name"] = "Background task renamed"
+    refreshed["tabs"] = renamedRows
+    update(refreshed)
+    try checkTitlebar(scroll.documentVisibleRect.origin == browsingOrigin,
+      "A background title update preserves the tabs the user scrolled to")
+    refreshed["palette"] = ["workspace": Int64(0xff252d43)]
+    update(refreshed)
+    try checkTitlebar(scroll.documentVisibleRect.origin == browsingOrigin,
+      "A palette update does not undo manual tab scrolling")
+    update(state(rows, active: "swarm-23"))
+    try checkActiveVisible()
     setFrameSize(NSSize(width: 320, height: 40))
     needsLayout = true
     layoutSubtreeIfNeeded()
@@ -155,6 +171,7 @@ private extension SwarmTabStrip {
     newButton.performClick(nil)
     focusSearch()
     try checkTitlebar(events.isEmpty, "Disabled controls emit no actions")
+    try checkDragOperations()
   }
 }
 
@@ -186,17 +203,153 @@ private extension SwarmTabStrip {
     try checkTitlebar(window.firstResponder === window.contentViewController,
       "Closing native search returns keyboard events to the content controller")
   }
+
+  func checkTabKeyboardFocus(_ window: NSWindow, messenger: TitlebarCheckMessenger) throws {
+    update(["enabled": true, "activeId": "keyboard-23",
+      "tabs": (0..<24).map { ["id": "keyboard-\($0)", "name": "Keyboard \($0)"] }])
+    let tab = tabs[0]
+    let buttons = tab.accessibilityChildren()!.compactMap { $0 as? NSButton }
+    for button in buttons {
+      try checkTitlebar(window.makeFirstResponder(button), "An enabled tab action accepts keyboard focus")
+      try checkTitlebar(scroll.documentVisibleRect.contains(tab.frame),
+        "Keyboard focus reveals the entire overflowed tab and close control")
+      try checkTitlebar(activeId == "keyboard-23", "Focusing a tab control does not activate its swarm")
+      let before = messenger.calls.count
+      messenger.holdReplies = true
+      button.performClick(nil)
+      try checkTitlebar(window.firstResponder === button,
+        "Typing stays out of the old workspace until the tab action is acknowledged")
+      messenger.finishNextReply()
+      try checkTitlebar(window.firstResponder === window.contentViewController,
+        "Activating a tab action returns the next key to Flutter content")
+      try checkTitlebar(messenger.calls.count == before + 1, "Each native tab activation sends one action")
+    }
+    tab.attention = true
+    try checkTitlebar(buttons[0].accessibilityHelp()?.contains("needing input") == true,
+      "The attention dot has an accessible description")
+    tab.attention = false
+    try checkTitlebar(buttons[0].accessibilityHelp() == nil, "Resolved attention clears its accessible description")
+    try checkTitlebar(window.makeFirstResponder(buttons[0]), "Rename starts from an actual focused control")
+    let rename = tab.menu!.items.first!
+    NSApp.sendAction(rename.action!, to: rename.target, from: rename)
+    messenger.finishNextReply()
+    try checkTitlebar(window.firstResponder === window.contentViewController && messenger.calls.last?.method == "rename",
+      "Renaming gives the Flutter form native keyboard ownership")
+    let stale = tab
+    update(["enabled": true, "activeId": "survivor", "tabs": [["id": "survivor", "name": "Survivor"]]])
+    let beforeStale = messenger.calls.count
+    stale.clickBothActions()
+    try checkTitlebar(messenger.calls.count == beforeStale, "A removed tab's retained controls cannot dispatch actions")
+    try checkTitlebar(window.makeFirstResponder(newButton), "New swarm accepts keyboard focus")
+    newButton.performClick(nil)
+    messenger.finishNextReply()
+    try checkTitlebar(window.firstResponder === window.contentViewController && messenger.calls.last?.method == "new",
+      "New swarm returns keyboard ownership to the workspace")
+    let current = tabs[0].accessibilityChildren()!.first as! NSButton
+    window.makeFirstResponder(current)
+    current.performClick(nil)
+    focusSearch()
+    let editor = window.firstResponder
+    messenger.finishNextReply()
+    try checkTitlebar(window.firstResponder === editor && editor is NSTextView,
+      "A delayed tab reply cannot steal focus from a newer search")
+    closeSearch()
+    window.makeFirstResponder(current)
+    current.performClick(nil)
+    current.performClick(nil)
+    messenger.finishNextReply()
+    try checkTitlebar(window.firstResponder === current, "An older tab action cannot release a newer action's focus")
+    messenger.finishNextReply()
+    try checkTitlebar(window.firstResponder === window.contentViewController,
+      "The latest acknowledged tab action restores content focus")
+    messenger.holdReplies = false
+  }
+}
+
+private final class TitlebarCheckDrag: NSObject, NSDraggingInfo {
+  var draggingDestinationWindow: NSWindow?
+  var draggingSourceOperationMask: NSDragOperation = .move
+  var draggingLocation = NSPoint.zero
+  var draggedImageLocation = NSPoint.zero
+  var draggedImage: NSImage? { nil }
+  let draggingPasteboard = NSPasteboard.withUniqueName()
+  var draggingSource: Any?
+  var draggingSequenceNumber: Int { 1 }
+  var draggingFormation: NSDraggingFormation = .none
+  var animatesToDestination = false
+  var numberOfValidItemsForDrop = 1
+  var springLoadingHighlight: NSSpringLoadingHighlight { .none }
+  func slideDraggedImage(to screenPoint: NSPoint) {}
+  override func namesOfPromisedFilesDropped(atDestination dropDestination: URL) -> [String]? { nil }
+  func resetSpringLoading() {}
+  func enumerateDraggingItems(options: NSDraggingItemEnumerationOptions, for view: NSView?, classes: [AnyClass],
+    searchOptions: [NSPasteboard.ReadingOptionKey: Any], using block: (NSDraggingItem, Int, UnsafeMutablePointer<ObjCBool>) -> Void) {}
+  deinit { draggingPasteboard.releaseGlobally() }
+}
+
+private extension SwarmTabStrip {
+  func checkDragOperations() throws {
+    setFrameSize(NSSize(width: 900, height: 40))
+    let rows = (0..<4).map { ["id": "drag-\($0)", "name": "Drag \($0)"] }
+    update(["tabs": rows, "activeId": "drag-0", "enabled": true])
+    var moves: [[String: Any]] = []
+    emit = { method, args in if method == "reorder", let args = args as? [String: Any] { moves.append(args) } }
+    let info = TitlebarCheckDrag()
+    info.draggingSource = tabs[0]
+    info.draggingPasteboard.setString("drag-0", forType: swarmPasteboardType)
+    info.draggingLocation = document.convert(NSPoint(x: tabs[2].frame.midX + 1, y: 20), to: nil)
+    try checkTitlebar(draggingEntered(info) == .move && draggingUpdated(info) == .move,
+      "An owned tab can move within the visible tab area")
+    try checkTitlebar(performDragOperation(info) && moves.last?["index"] as? Int == 2,
+      "Moving right accounts for removing the source tab first")
+    moves.removeAll()
+    info.draggingLocation = document.convert(NSPoint(x: tabs[0].frame.midX - 1, y: 20), to: nil)
+    try checkTitlebar(performDragOperation(info) && moves.isEmpty, "Dropping in place performs no redundant reorder")
+    info.draggingSource = tabs[3]
+    info.draggingPasteboard.setString("drag-3", forType: swarmPasteboardType)
+    try checkTitlebar(performDragOperation(info) && moves.last?["index"] as? Int == 0,
+      "Moving left preserves the requested first position")
+    moves.removeAll()
+    func rejected(_ reason: String) throws {
+      try checkTitlebar(draggingEntered(info).isEmpty && draggingUpdated(info).isEmpty && !performDragOperation(info), reason)
+      try checkTitlebar(moves.isEmpty, "Rejected drag emits no reorder")
+    }
+    info.draggingLocation = convert(NSPoint(x: searchField.frame.midX, y: 20), to: nil)
+    try rejected("Search is not a tab drop target")
+    info.draggingLocation = document.convert(NSPoint(x: tabs[0].frame.midX, y: 20), to: nil)
+    info.draggingSource = SwarmTabButton(id: "drag-3")
+    try rejected("A foreign tab with a matching ID cannot reorder this strip")
+    info.draggingSource = tabs[3]
+    info.draggingSourceOperationMask = .copy
+    try rejected("A copy-only source is not advertised as movable")
+    info.draggingSourceOperationMask = .move
+    info.draggingPasteboard.setString("drag-0", forType: swarmPasteboardType)
+    try rejected("The pasteboard identity must match the actual dragged tab")
+    info.draggingPasteboard.setString("drag-3", forType: swarmPasteboardType)
+    update(["tabs": rows, "activeId": "drag-0", "enabled": false])
+    try rejected("A modal rejects a pending tab drop")
+    update(["tabs": Array(rows.prefix(3)), "activeId": "drag-0", "enabled": true])
+    try rejected("A removed source cannot finish its pending drag")
+  }
 }
 
 // No engine, account, terminal or transport is involved in native layout.
 private final class TitlebarCheckMessenger: NSObject, FlutterBinaryMessenger {
   var calls: [FlutterMethodCall] = []
+  var holdReplies = false
+  var replies: [FlutterBinaryReply] = []
+  func finishNextReply() {
+    replies.removeFirst()(FlutterStandardMethodCodec.sharedInstance().encodeSuccessEnvelope(nil))
+  }
   func send(onChannel channel: String, message: Data?) {
     if let message { calls.append(FlutterStandardMethodCodec.sharedInstance().decodeMethodCall(message)) }
   }
   func send(onChannel channel: String, message: Data?, binaryReply callback: FlutterBinaryReply?) {
     send(onChannel: channel, message: message)
-    callback?(nil)
+    if let callback {
+      if holdReplies { replies.append(callback) }
+      else { callback(FlutterStandardMethodCodec.sharedInstance().encodeSuccessEnvelope(nil)) }
+    }
   }
   func setMessageHandlerOnChannel(_ channel: String, binaryMessageHandler handler: FlutterBinaryMessageHandler?) -> FlutterBinaryMessengerConnection { 1 }
   func cleanUpConnection(_ connection: FlutterBinaryMessengerConnection) {}
@@ -302,7 +455,7 @@ private extension SwarmTitlebar {
     try checkTitlebar(searchKeyMonitor == nil, "The scoped event monitor is removed explicitly")
   }
 
-  func checkNativeContainer() throws {
+  func checkNativeContainer(messenger: TitlebarCheckMessenger) throws {
     guard let window else { throw TitlebarCheckFailure(message: "Native test window exists") }
     let main = NSMenu()
     let appItem = NSMenuItem(title: "Harness V2", action: nil, keyEquivalent: "")
@@ -482,6 +635,7 @@ private extension SwarmTitlebar {
       try strip.checkWindowGeometry(window)
     }
     try strip.checkSearchEditing(window)
+    try strip.checkTabKeyboardFocus(window, messenger: messenger)
     try checkTitlebar(!window.isVisible, "Native layout check never displays its window")
   }
 }
@@ -545,7 +699,7 @@ do {
     window.contentViewController = content
     let messenger = TitlebarCheckMessenger()
     let titlebar = SwarmTitlebar(window: window, messenger: messenger)
-    try titlebar.checkNativeContainer()
+    try titlebar.checkNativeContainer(messenger: messenger)
     if let path = ProcessInfo.processInfo.environment["HARNESS_TITLEBAR_KEYMAP_FIXTURE"] {
       let fixture = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: path))) as! [String: [String: Any]]
       try titlebar.checkKeymapRuntime(fixture, messenger: messenger)

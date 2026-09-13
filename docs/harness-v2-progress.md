@@ -2,6 +2,14 @@
 
 Updated 2026-09-13 with coordinated palettes, Models, combined closed-work History and faster unified search. This is a working preview, not a release.
 
+## Native tab interaction checkpoint
+
+- A reproduced overflow regression let background name/status/palette updates snap the strip back to the active tab. The strip now preserves manual scrolling during those updates, reveals a newly selected tab, and keeps a previously visible active tab in view when the strip's geometry or order changes.
+- Keyboard focus reveals the complete tab and its close control. Select, close, new and rename return native keyboard ownership after Flutter acknowledges the destination's rendered focus tree. Rename acknowledges its open form instead of waiting for it to close. Late replies cannot steal a newer Search field or release a newer tab action's focus. The attention dot has an accessible description that clears when resolved.
+- Reordering accepts only an actual tab owned by this strip, with a matching private pasteboard identity and a move operation inside the visible tab area. Search, foreign/stale controls, disabled actions and removed sources cannot reorder the swarm. Dropping in place sends no redundant reorder.
+- Validation: **21 focused Flutter checks passed**, including first text immediately after native select/close acknowledgements, immediate rename input, and closing the last swarm. **51 native decoder checks and 361 AppKit checks passed**, using actual Dart-exported bindings and a hidden window. Analyzer has zero errors/warnings and the existing 12 vendored infos. Artifacts: `/private/tmp/harness-v2-native-tab-{routing-tests,keymap-final,analyze}.log`; the pre-fix overflow failure is `/private/tmp/harness-v2-native-overflow-before.log`.
+- These are isolated keyboard/focus, drop-policy and layout checks, not a live VoiceOver session, pointer-drag audit or native latency measurement. Real agents received no test input. Release rebuild follows this checkpoint; public-origin push approval remains pending.
+
 ## Git context recovery checkpoint
 
 - Three regressions reproduced stale branch context after a worktree pointer changed or a directory watch ended/errored. The local compatibility reader now watches the working tree's `.git` connection, follows changed Git/common directories, and rebinds subscriptions after same-path directory replacement. Removed working folders clear their cached context instead of borrowing the parent repository.
@@ -428,7 +436,7 @@ Earlier logs contain superseded failures. Temporary logs and toolchains are loca
 ## Remaining work
 
 1. Measure native terminal input and tab-switch responsiveness under output load, including p50/p95/p99 and cold/warm paths. Calibration is paused until there is new evidence that the isolated window can become active/key; do not bypass its focus guard. Earlier live Cmd+P destination focus/quick return, branch headers, project associations, New swarm cleanup and native History were verified. Keep typing/transport measurements in disposable fixtures; the user's real agent terminals are not test inputs.
-2. Audit native drag/reorder, overflow, close-last-tab, renaming and accessibility without changing the user's saved agent memberships. Keep any integration runner separate and out of the foreground review app.
+2. Native overflow, drop ownership/bounds, close-last-tab, rename and keyboard/accessibility control focus are now covered by isolated AppKit/Flutter regressions. Live pointer dragging and VoiceOver still need a foreground-capable disposable window. Keep any integration runner separate and out of the foreground review app; preserve saved agent memberships.
 3. Verify real remote reconnect, agent input, paste, selection and IME against disposable local/remote processes. The AppNotifier/keyframe and stale completion regressions now pass; they do not prove every network or native editing condition. Preserve immediate first-input flush and shared retained renderers.
 4. Visually confirm app-menu modal behavior and overflow accessibility in AppKit; route/shortcut behavior is covered by passing Flutter tests.
 5. Build/review Linux and Windows when their toolchains are available. Remote full project/branch metadata requires daemons running the new wire format; do not upgrade them automatically.

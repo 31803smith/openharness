@@ -13,6 +13,7 @@ Updated 2026-09-13 after user review. Keep the existing simple Command shortcuts
 | Status | Work |
 | --- | --- |
 | In the preview | Real machine/project data; native Swarm tabs; wallpaper only in New swarm; Cmd+P jump, Needs input and terminal Find. |
+| Native tab behavior implemented and regression checked | Background updates preserve manually scrolled overflow. Keyboard/accessible controls reveal their tab and hand input back after Flutter's visible destination is ready; late replies preserve newer focus. Drops are restricted to owned tabs in the visible tab area. Hidden-window and synthetic-session checks cover these policies; live pointer/VoiceOver use remains unverified. |
 | Fixed and rebuilt | Cmd+P stale focus/offscreen targets; retained offline output and composer drafts; blocking frozen overlays removed. |
 | In the rebuilt preview | Settings gear removed on macOS; native File/History menus and Cmd+P routing. Menus and picker typing verified live; focus/input regression tests pass. |
 | Rebuilt; native menu reviewed live | Models replaces Swarm; Subscription shows existing account limits, while API, Local and Add Model are disabled placeholders. History uses provider icons and restores both closed agents and closed Swarms. Recovery is covered with isolated sessions; live agents were not closed to test it. |
@@ -105,6 +106,12 @@ Source inspection: `desktop/lib/screens/swarm_screen.dart`, `widgets/swarm_dialo
 Apple's [native menu documentation](https://developer.apple.com/documentation/swiftui/building-and-customizing-the-menu-bar-with-swiftui) shows File handling New Message, Close and opening a conversation in a window. File represents creating/opening/closing the app's work, beyond documents on disk. For Harness, the corresponding work is a Swarm or agent view. Keep Edit's standard text actions, View's layout/font controls, and the system Window menu.
 
 Chrome is the user's primary interaction reference. Chromium's [menu definition](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/chrome/browser/ui/cocoa/main_menu_builder.mm) and [History bridge](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/chrome/browser/ui/cocoa/history_menu_bridge.mm) inform Back/Forward, direct Recently Closed/Recently Visited sections, and Show Full History. Harness shows up to 10 closed agents or Swarms and 15 recent destinations there. Navigation retains at most 64 recent identities, a 128-entry exact-pane Back/Forward trail, and a combined 24-close recovery list. Show Full History searches those recoverable destinations and explicitly says **This session**. History does not persist across app exit or collect terminal commands, prompts or output. These bounded session records are not a durable all-time browser history.
+
+## Tab navigation and attention
+
+Chromium's [tab design notes](https://www.chromium.org/user-experience/tabs/) treat each tab and its content as an independent unit and describe spatial keyboard switching. Its overflow section describes shrinking tabs; it does not establish a policy for preserving manual horizontal scrolling. Harness's minimum-width overflow policy is our adaptation: background agent activity should not move the strip the developer is currently exploring. A deliberate selection reveals its destination, while background metadata updates keep the chosen scroll position. AppKit's [scroll-to-visible API](https://developer.apple.com/documentation/appkit/nsview/scrolltovisible%28_%3A%29) also lets a keyboard-focused tab reveal its own complete control area without selecting another swarm.
+
+The September 13 native audit found and reproduced automatic scroll reset during background title updates. It also addressed native button focus after activation and rejects tab drops over Search or from stale/foreign controls. Passing isolated tests establish these local policies and input routing; they do not establish live pointer/VoiceOver usability or input-to-display latency. The next validation remains an isolated real-window pass once foreground access works.
 
 ## Reductions and prototype follow-up
 

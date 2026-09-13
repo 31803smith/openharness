@@ -13,6 +13,7 @@ import 'package:harness/settings/settings_screen.dart';
 import 'package:harness/shared/widgets/app_select_field.dart';
 import 'package:harness/state/app_state.dart';
 import 'package:harness/state/swarm_catalog.dart';
+import 'package:harness/terminal/terminal_binary.dart';
 import 'package:harness/widgets/codex_profile_field.dart';
 import 'package:harness/widgets/new_agent_dialog.dart';
 import 'package:harness/widgets/swarm_dialogs.dart';
@@ -137,6 +138,100 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     app.dispose();
   });
+
+  testWidgets(
+    'native tab replies wait for destination focus and allow rename input',
+    (tester) async {
+      const channel = MethodChannel('harness/swarm_tabs');
+      const codec = StandardMethodCodec();
+      final messenger = tester.binding.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(channel, (_) async => true);
+      addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+      final app = createApp();
+      final input = <TerminalBinaryFrame>[];
+      app.machineStates['m']!.nodeOnline = true;
+      app.adoptSessionForTest(terminal('a0', input));
+      final first = app.activeSwarmId;
+      app.newSwarm();
+      app.adoptSessionForTest(terminal('a1', input));
+      final second = app.activeSwarmId;
+      app.selectSwarm(first);
+      final projects = SwarmProjectStore();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SwarmScreen(
+            notifier: app,
+            nativeTabs: true,
+            projectStore: projects,
+          ),
+        ),
+      );
+      await tester.pump();
+
+      Future<void> activate(String method, [Object? args]) async {
+        final reply = Completer<void>();
+        messenger.handlePlatformMessage(
+          channel.name,
+          codec.encodeMethodCall(MethodCall(method, args)),
+          (bytes) {
+            try {
+              codec.decodeEnvelope(bytes!);
+              reply.complete();
+            } catch (error, stack) {
+              reply.completeError(error, stack);
+            }
+          },
+        );
+        for (var frame = 0; frame < 5 && !reply.isCompleted; frame++) {
+          await tester.pump();
+        }
+        expect(
+          reply.isCompleted,
+          isTrue,
+          reason: '$method must acknowledge its visible result',
+        );
+        await reply.future;
+      }
+
+      await activate('select', {'id': second});
+      expect(app.activeSwarmId, second);
+      // No extra frame between the native acknowledgement and the first key.
+      expect(tester.testTextInput.hasAnyClients, isTrue);
+      tester.testTextInput.enterText('x');
+      await tester.idle();
+      expect(input.single.streamId, 'stream-a1');
+      expect(String.fromCharCodes(input.single.bytes), 'x');
+      await activate('rename', {'id': second});
+      expect(find.text('Rename swarm'), findsOneWidget);
+      final name = tester.widget<TextField>(find.byType(TextField));
+      expect(name.focusNode!.hasPrimaryFocus, isTrue);
+      tester.testTextInput.enterText('Keyboard work');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+      expect(app.activeSwarm.name, 'Keyboard work');
+      expect(input, hasLength(1));
+
+      await activate('close', {'id': second});
+      expect(app.activeSwarmId, first);
+      expect(tester.testTextInput.hasAnyClients, isTrue);
+      tester.testTextInput.enterText('y');
+      await tester.idle();
+      expect(input.last.streamId, 'stream-a0');
+      expect(String.fromCharCodes(input.last.bytes), 'y');
+      await activate('close', {'id': first});
+      expect(app.swarms, hasLength(1));
+      expect(app.panes, isEmpty);
+      expect(app.activeSwarmId, isNot(anyOf(first, second)));
+      expect(find.text('Start a swarm'), findsOneWidget);
+      await activate('new');
+      expect(app.swarms, hasLength(2));
+      expect(input, hasLength(2));
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+      projects.dispose();
+    },
+  );
 
   testWidgets('native Swarm commands cannot mutate the view behind Settings', (
     tester,

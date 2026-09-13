@@ -416,7 +416,9 @@ class _SwarmScreenState extends State<SwarmScreen> {
       case 'closeActive':
         await app.closeSwarm(app.activeSwarmId);
       case 'rename':
-        if (args['id'] is String) await _rename(args['id']);
+        // Acknowledge after the form opens so the titlebar can hand its native
+        // keyboard focus to Flutter while the user edits the name.
+        if (args['id'] is String) unawaited(_rename(args['id']));
       case 'renameActive':
         await _rename(app.activeSwarmId);
       case 'next':
@@ -462,6 +464,13 @@ class _SwarmScreenState extends State<SwarmScreen> {
         await _notifications();
       case 'settings':
         await _settings();
+    }
+    if (mounted &&
+        const {'select', 'close', 'new', 'rename'}.contains(call.method)) {
+      // Native tab controls wait for this reply before releasing keyboard
+      // ownership. The destination's actual focus tree must be ready first.
+      await WidgetsBinding.instance.endOfFrame;
+      if (mounted) FocusManager.instance.applyFocusChangesIfNeeded();
     }
   }
 
