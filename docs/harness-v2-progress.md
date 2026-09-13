@@ -2,6 +2,13 @@
 
 Updated 2026-09-13 with coordinated palettes, Models, combined closed-work History and faster unified search. This is a working preview, not a release.
 
+## First-agent recovery checkpoint
+
+- A reproduced Escape/backdrop dismissal during agent creation now keeps the form and its result visible. Pending creation has a readable progress label; controls return after a response. Failures preserve the user's choices, and a new folder/engine choice clears the obsolete error.
+- Missing/invalid folders and missing tmux now explain recovery on the named machine. Unknown server details retain their diagnostic text. An unanswered request says the result is unconfirmed and recommends checking Search before creating another; no automatic retry occurs. [The onboarding notes](harness-v2-appearance-onboarding.md) record the source recheck and product rationale.
+- Validation: the regression failed on the previous implementation; 46 onboarding/profile/split/async checks now pass. Analyzer has no errors/warnings and the existing 12 vendored infos. Isolated 880×560 renders cover pending, folder failure and timeout. Artifacts: `/private/tmp/harness-v2-onboarding-recovery-{before,tests,render,analyze}.log` and `/private/tmp/harness-v2-onboarding-recovery-{pending,folder-error,timeout}.png`. No real agent input or install was used.
+- Public-origin push approval remains pending. Continue local checkpoints and do not retry pushes until it arrives. Preserve the unrelated first-agent swarm-naming edits in `app_state.dart`/`swarm_state_test.dart` and the collaboration design draft.
+
 ## Search match visibility checkpoint
 
 - Both search locations now emphasize matching text in names and visible context using font weight. Commands use the same presentation. Ranking chooses the emphasized field: an exact project/machine match takes precedence over incidental fuzzy letters in a title. Hidden search metadata is not painted into an unrelated label. Empty queries retain the previous plain presentation.

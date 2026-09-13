@@ -37,6 +37,7 @@ class _FirstUseApp extends AppNotifier {
   }
 
   Completer<void>? probe;
+  Completer<String?>? creation;
   final launches =
       <({String machine, String engine, String folder, bool bypass})>[];
   final input = <TerminalBinaryFrame>[];
@@ -62,6 +63,10 @@ class _FirstUseApp extends AppNotifier {
       folder: folder,
       bypass: bypassPermission,
     ));
+    if (creation != null) {
+      final error = await creation!.future;
+      if (error != null) return error;
+    }
     adoptSessionForTest(terminal('created', input));
     notifyListeners();
     return null;
@@ -83,6 +88,70 @@ class _FolderPicker extends FileSelectorPlatform {
 }
 
 void main() {
+  testWidgets(
+    'pending creation stays visible and an error preserves choices for retry',
+    (tester) async {
+      final app = _FirstUseApp()..creation = Completer<String?>();
+      app.machineStates['m']!.engines.replace(const [
+        EngineAvailability(engine: 'claude', installed: true),
+      ]);
+      final oldPicker = FileSelectorPlatform.instance;
+      FileSelectorPlatform.instance = _FolderPicker();
+      addTearDown(() => FileSelectorPlatform.instance = oldPicker);
+      await mount(tester, app);
+      await tester.tap(find.text('New agent'));
+      await tester.pump();
+      await tester.tap(find.text('Browse…'));
+      await tester.pump();
+      await tester.tap(find.text('Create agent'));
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
+      await tester.tapAt(const Offset(8, 100));
+      await tester.pump();
+      expect(find.byType(AlertDialog), findsOneWidget);
+      expect(find.text('Creating agent…'), findsOneWidget);
+      expect(app.launches, hasLength(1));
+      expect(app.panes, isEmpty);
+      final folder = find.byKey(const Key('new-agent-folder'));
+      expect(
+        tester.widget<InkWell>(folder).focusNode!.canRequestFocus,
+        isFalse,
+      );
+
+      app.creation!.complete('Choose another project folder and try again.');
+      await tester.pump();
+      expect(
+        find.text('Choose another project folder and try again.'),
+        findsOneWidget,
+      );
+      expect(find.text('/work/my-project'), findsOneWidget);
+      expect(
+        tester
+            .widget<AppSelectField<String>>(
+              find.byKey(const Key('new-agent-engine-field')),
+            )
+            .value,
+        'claude',
+      );
+      await tester.tap(find.text('Change'));
+      await tester.pump();
+      expect(
+        find.text('Choose another project folder and try again.'),
+        findsNothing,
+      );
+      app.creation = null;
+      await tester.tap(find.text('Create agent'));
+      await tester.pump();
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(find.byType(TerminalView), findsOneWidget);
+      expect(app.launches, hasLength(2));
+      expect(app.input, isEmpty);
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+    },
+  );
+
   testWidgets(
     'new agent is keyboard accessible without hidden focus stops',
     (tester) async {

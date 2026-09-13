@@ -78,6 +78,75 @@ class _PendingWriteStore extends MemoryStore {
 }
 
 void main() {
+  for (final (code, detail, expected) in [
+    (
+      'CWD_NOT_FOUND',
+      null,
+      'The project folder is unavailable on Test host. Choose another folder and try again.',
+    ),
+    (
+      'INVALID_CWD',
+      null,
+      'The project folder is unavailable on Test host. Choose another folder and try again.',
+    ),
+    (
+      'TMUX_UNAVAILABLE',
+      null,
+      'Harness needs tmux to start agents on Test host. Install tmux there, then try again.',
+    ),
+    (
+      'UNSUPPORTED',
+      null,
+      'Update the harness CLI on this machine to use New Agent',
+    ),
+    (
+      'SPAWN_FAILED',
+      'The machine could not allocate an agent process.',
+      'Create agent failed: The machine could not allocate an agent process.',
+    ),
+  ]) {
+    test(
+      'agent creation gives a useful recovery for $code without retrying',
+      () async {
+        final connection = _PendingConnection();
+        final app = createApp(connectionForTest: (_) => connection);
+        addTearDown(app.dispose);
+        final creation = app.createAgent(
+          'm',
+          engine: 'claude',
+          folder: '/work/missing',
+        );
+        connection.reply.completeError(
+          WsRequestFailure(
+            responseType: 'agent_create_result',
+            code: code,
+            detail: detail,
+          ),
+        );
+        expect(await creation, expected);
+        expect(connection.calls, ['agent_create']);
+        expect(app.panes, isEmpty);
+      },
+    );
+  }
+
+  test(
+    'an unconfirmed creation is not presented as a definite failure',
+    () async {
+      final connection = _PendingConnection();
+      final app = createApp(connectionForTest: (_) => connection);
+      addTearDown(app.dispose);
+      final creation = app.createAgent('m', engine: 'claude', folder: '/work');
+      connection.reply.completeError(const WsRequestTimeout('agent_create'));
+      expect(
+        await creation,
+        'Test host has not confirmed the new agent yet. Check Search before creating another.',
+      );
+      expect(connection.calls, ['agent_create']);
+      expect(app.panes, isEmpty);
+    },
+  );
+
   for (final failFirst in [false, true]) {
     test(
       'rapid tab changes save only the final queued layout after ${failFirst ? 'a failed' : 'a slow'} write',

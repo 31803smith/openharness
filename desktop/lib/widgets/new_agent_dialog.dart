@@ -310,6 +310,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
         _picking = false;
         if (picked != null && pickingRevision == _machineRevision) {
           _folder = picked;
+          _error = null;
         }
       });
     } catch (error) {
@@ -373,7 +374,12 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     grid.AppTheme.watch(context);
     return ListenableBuilder(
       listenable: widget.notifier,
-      builder: (context, _) => _buildDialog(context),
+      builder: (context, _) => PopScope(
+        // The launch request cannot be cancelled after it is sent. Keep its
+        // outcome visible instead of allowing an accidental second launch.
+        canPop: !_submitting,
+        child: _buildDialog(context),
+      ),
     );
   }
 
@@ -419,10 +425,13 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
               ),
               if (_error != null) ...[
                 const SizedBox(height: _gapBlock),
-                Text(
-                  _error!,
-                  style: Theme.of(context).textTheme.bodySmall
-                      ?.copyWith(color: Theme.of(context).colorScheme.error),
+                Semantics(
+                  liveRegion: true,
+                  child: Text(
+                    _error!,
+                    style: Theme.of(context).textTheme.bodySmall
+                        ?.copyWith(color: Theme.of(context).colorScheme.error),
+                  ),
                 ),
               ],
             ],
@@ -439,11 +448,26 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
         ),
         FilledButton(
           onPressed: canCreate ? _submit : null,
+          style: FilledButton.styleFrom(
+            disabledForegroundColor: _submitting
+                ? grid.AppPalette.textPrimary
+                : null,
+          ),
           child: _submitting
-              ? const SizedBox(
-                  width: 14,
-                  height: 14,
-                  child: CircularProgressIndicator(strokeWidth: 2),
+              ? Semantics(
+                  liveRegion: true,
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                      SizedBox(width: 8),
+                      Text('Creating agent…'),
+                    ],
+                  ),
                 )
               : const Text('Create agent'),
         ),
@@ -533,6 +557,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
           onChanged: (value) => setState(() {
             _engineChosenByUser = true;
             _engine = value;
+            _error = null;
             _codexProfile = null;
             _codexProfilesBusy = true;
             if (!kEngineBypassPermissionFlag.containsKey(value)) {

@@ -3414,10 +3414,22 @@ class AppNotifier extends ChangeNotifier {
       // A refusal the CLI MEANT arrives as a thrown WsRequestFailure, never as an `error` key on a
       // reply that was returned — see that class. This used to be a branch on `result['error']`
       // below, which could not run, so the user got the wire code in place of the sentence.
-      return failure.code == 'UNSUPPORTED_ON_REMOTE' ||
-              failure.code == 'UNSUPPORTED'
-          ? 'Update the harness CLI on this machine to use New Agent'
-          : 'Create agent failed: ${failure.detail ?? failure.code}';
+      return switch (failure.code) {
+        'CWD_NOT_FOUND' || 'INVALID_CWD' =>
+          'The project folder is unavailable on ${machine.machine.displayName}. '
+              'Choose another folder and try again.',
+        'TMUX_UNAVAILABLE' =>
+          'Harness needs tmux to start agents on ${machine.machine.displayName}. '
+              'Install tmux there, then try again.',
+        'UNSUPPORTED_ON_REMOTE' || 'UNSUPPORTED' =>
+          'Update the harness CLI on this machine to use New Agent',
+        _ => 'Create agent failed: ${failure.detail ?? failure.code}',
+      };
+    } on WsRequestTimeout {
+      // The request may have succeeded while its reply was lost. Do not call
+      // that a definite failure or encourage blindly creating a duplicate.
+      return '${machine.machine.displayName} has not confirmed the new agent yet. '
+          'Check Search before creating another.';
     } catch (error) {
       return 'Create agent failed: $error';
     }
