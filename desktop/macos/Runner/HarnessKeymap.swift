@@ -159,6 +159,69 @@ final class HarnessNativeKeymap {
     }
     return (node.binding, !node.children.isEmpty)
   }
+
+  func hint(for command: String, context: String) -> String? {
+    bindings[context]?.first(where: { $0.command == command })?.hint
+  }
+
+  /// Only explicitly identified Harness rows change. AppKit's Edit, Window,
+  /// Services and font-size commands retain their native ownership.
+  func applyMenuKeys(to menu: NSMenu, context: String) {
+    let resolved = bindings[context] ?? []
+    for item in menu.items {
+      if let identifier = item.identifier?.rawValue,
+         identifier.hasPrefix(HarnessKeymapMenu.actionPrefix) {
+        let action = String(identifier.dropFirst(HarnessKeymapMenu.actionPrefix.count))
+        let binding = resolved.first(where: { $0.menuAction == action })
+        let key = binding?.keys.count == 1 ? binding?.keys.first : nil
+        item.keyEquivalent = key?.menuEquivalent ?? ""
+        item.keyEquivalentModifierMask = key?.modifiers ?? []
+        // AppKit has no multi-stroke key-equivalent column. Show its complete
+        // binding in the tooltip; never advertise just a sequence's first key.
+        item.toolTip = binding.map { "\(item.title) — \($0.hint)" }
+      }
+      if let submenu = item.submenu { applyMenuKeys(to: submenu, context: context) }
+    }
+  }
+}
+
+/// Display the effective native shortcuts without dispatching them ahead of
+/// the focused Flutter input. The union of first strokes is deliberate: the
+/// synchronous Dart focus context, not an asynchronous menu snapshot, decides
+/// whether a terminal-only override or unbinding applies to this event.
+final class HarnessKeymapMenu: NSMenu {
+  static let actionPrefix = "harness.keymap."
+  weak var ownerWindow: NSWindow?
+  private var inputStrokes: Set<HarnessKeyStroke> = []
+
+  static func replacing(_ previous: NSMenu) -> HarnessKeymapMenu {
+    let menu = HarnessKeymapMenu(title: previous.title)
+    menu.autoenablesItems = previous.autoenablesItems
+    menu.delegate = previous.delegate
+    // Retain the actual submenu objects: NSApp's Services/Windows references
+    // and AppKit's first-responder targets must continue to point at them.
+    for item in previous.items {
+      previous.removeItem(item)
+      menu.addItem(item)
+    }
+    return menu
+  }
+
+  func update(_ map: HarnessNativeKeymap, window: NSWindow) {
+    ownerWindow = window
+    inputStrokes = Set(map.bindings.values.flatMap { $0.compactMap { $0.keys.first } })
+  }
+
+  func defersToInput(_ event: NSEvent) -> Bool {
+    guard let ownerWindow, (event.window ?? NSApp.keyWindow) === ownerWindow,
+          let stroke = HarnessKeyStroke.fromEvent(event) else { return false }
+    return inputStrokes.contains(stroke)
+  }
+
+  override func performKeyEquivalent(with event: NSEvent) -> Bool {
+    if defersToInput(event) { return false }
+    return super.performKeyEquivalent(with: event)
+  }
 }
 
 /// Synchronous native-field dispatcher. Mirrors KeymapDispatch: cancelled or

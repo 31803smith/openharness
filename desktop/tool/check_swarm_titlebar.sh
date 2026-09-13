@@ -16,7 +16,8 @@ if [[ ! -d "$framework_dir/FlutterMacOS.framework/Modules" ]]; then
 fi
 check_dir="$(mktemp -d "${TMPDIR:-/tmp}/harness-v2-titlebar.XXXXXX")"
 trap 'rm -rf "$check_dir"' EXIT
-cat "$desktop_dir/macos/Runner/SwarmTitlebar.swift" \
+cat "$desktop_dir/macos/Runner/HarnessKeymap.swift" \
+  "$desktop_dir/macos/Runner/SwarmTitlebar.swift" \
   "$desktop_dir/tool/swarm_titlebar_checks.swift" > "$check_dir/main.swift"
 xcrun swiftc -swift-version 5 -module-cache-path "$check_dir/module-cache" \
   -F "$framework_dir" -framework FlutterMacOS \

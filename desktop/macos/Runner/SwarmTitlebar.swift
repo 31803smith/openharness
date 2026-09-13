@@ -24,12 +24,20 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
   private let historyIcons = SwarmHistoryIcons()
   private let modelsMenu = NSMenu(title: "Models")
   private var subscriptions: [SwarmSubscriptionEntry] = []
+  private var keymap: HarnessNativeKeymap?
+  private var flutterKeyContext = "workspace"
+  private var searchKeyDispatch: HarnessNativeKeyDispatch?
+  private var searchKeyMonitor: Any?
 
   init(window: NSWindow, messenger: FlutterBinaryMessenger) {
     self.window = window
     channel = FlutterMethodChannel(name: "harness/swarm_tabs", binaryMessenger: messenger)
     super.init()
     strip.emit = { [weak self] method, args in self?.channel.invokeMethod(method, arguments: args) }
+    strip.editingEnded = { [weak self] in
+      self?.searchKeyDispatch?.cancel()
+      self?.syncMenuKeys()
+    }
     channel.setMethodCallHandler { [weak self] call, result in
       guard let self else { result(nil); return }
       switch call.method {
@@ -39,6 +47,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
       case "update":
         let state = call.arguments as? [String: Any] ?? [:]
         self.actionsEnabled = state["enabled"] as? Bool == true
+        if !self.actionsEnabled { self.searchKeyDispatch?.cancel() }
         self.canReopen = state["canReopen"] as? Bool == true
         self.canFind = state["canFind"] as? Bool == true
         self.canClosePane = state["canClosePane"] as? Bool == true
@@ -56,11 +65,28 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
         self.strip.setSearchState(call.arguments as? [String: Any] ?? [:])
         result(nil)
       case "closeSearch":
+        self.searchKeyDispatch?.cancel()
         self.strip.closeSearch()
+        self.syncMenuKeys()
         result(nil)
       case "modelsState":
         let state = call.arguments as? [String: Any] ?? [:]
         self.updateModels(state["subscriptions"] as? [[String: Any]] ?? [])
+        result(nil)
+      case "keymapState":
+        guard let payload = call.arguments as? [String: Any],
+              let map = HarnessNativeKeymap(payload) else {
+          result(FlutterError(code: "INVALID_KEYMAP", message: "Invalid keyboard configuration", details: nil))
+          return
+        }
+        self.setKeymap(map)
+        result(nil)
+      case "keymapContext":
+        if let context = (call.arguments as? [String: Any])?["context"] as? String,
+           ["workspace", "terminal", "picker"].contains(context) {
+          self.flutterKeyContext = context
+          self.syncMenuKeys()
+        }
         result(nil)
       default: result(FlutterMethodNotImplemented)
       }
@@ -73,9 +99,76 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     }
     // Keep an in-progress search and its native input owner across app switches.
     // Cancelling on window blur would return the next typed key to an agent.
+    observers.append(NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification,
+      object: window, queue: .main) { [weak self] _ in self?.searchKeyDispatch?.suspend() })
+    observers.append(NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification,
+      object: window, queue: .main) { [weak self] _ in self?.removeKeyMonitor() })
   }
 
-  deinit { observers.forEach(NotificationCenter.default.removeObserver) }
+  deinit {
+    removeKeyMonitor()
+    observers.forEach(NotificationCenter.default.removeObserver)
+  }
+
+  private func removeKeyMonitor() {
+    if let searchKeyMonitor { NSEvent.removeMonitor(searchKeyMonitor) }
+    searchKeyMonitor = nil
+    searchKeyDispatch?.suspend()
+  }
+
+  private func setKeymap(_ map: HarnessNativeKeymap) {
+    keymap = map
+    if let searchKeyDispatch { searchKeyDispatch.update(map) }
+    else { searchKeyDispatch = HarnessNativeKeyDispatch(map) }
+    strip.searchField.usesKeymap = true
+    strip.searchField.shortcutHint = map.hint(for: "navigation.quick_open", context: "workspace")
+    if let main = NSApp.mainMenu, let window {
+      let menu = main as? HarnessKeymapMenu ?? HarnessKeymapMenu.replacing(main)
+      if NSApp.mainMenu !== menu { NSApp.mainMenu = menu }
+      menu.update(map, window: window)
+    }
+    syncMenuKeys()
+    guard searchKeyMonitor == nil else { return }
+    // A local monitor is needed for ordinary letters that follow a custom
+    // prefix. NSTextView's command delegate only receives editing commands;
+    // it cannot stop a plain sequence suffix before it becomes query text.
+    searchKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .leftMouseDown, .rightMouseDown]) {
+      [weak self] event in
+      guard let self else { return event }
+      return self.handleSearchKey(event)
+    }
+  }
+
+  private func handleSearchKey(_ event: NSEvent) -> NSEvent? {
+    guard let dispatch = searchKeyDispatch else { return event }
+    if event.type == .leftMouseDown || event.type == .rightMouseDown {
+      dispatch.cancel()
+      return event
+    }
+    guard let window, event.window === window else { return event }
+    // Consume the paired release even when a command just moved focus. It
+    // must not leak half a keystroke into the newly selected agent.
+    if event.type == .keyUp { return dispatch.release(event.keyCode) ? nil : event }
+    guard actionsEnabled, strip.searchField.searching,
+          let editor = strip.searchField.currentEditor() as? NSTextView,
+          window.firstResponder === editor else {
+      dispatch.cancel()
+      return event
+    }
+    let result = dispatch.dispatch(HarnessKeyStroke.fromEvent(event), keyCode: event.keyCode,
+      repeated: event.isARepeat, composing: editor.hasMarkedText(), context: "picker", owner: editor)
+    if let command = result.command {
+      if command == "navigation.quick_open" { editor.selectAll(nil) }
+      else { channel.invokeMethod("keymapCommand", arguments: ["command": command]) }
+    }
+    return result.handled ? nil : event
+  }
+
+  private func syncMenuKeys() {
+    guard let keymap, let main = NSApp.mainMenu else { return }
+    let context = strip.searchField.currentEditor() == nil ? flutterKeyContext : "picker"
+    keymap.applyMenuKeys(to: main, context: context)
+  }
 
   private func configure() {
     guard let window, !configured else { return }
@@ -101,6 +194,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     window.addTitlebarAccessoryViewController(accessory)
     resize()
     installWorkspaceMenus()
+    if let keymap { setKeymap(keymap) }
     // An editable accessory must not become the window's initial input owner.
     window.makeFirstResponder(window.contentViewController)
   }
@@ -123,6 +217,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
       settings.target = self
       settings.action = #selector(menuAction(_:))
       settings.representedObject = "settings"
+      settings.identifier = NSUserInterfaceItemIdentifier(HarnessKeymapMenu.actionPrefix + "settings")
       settings.keyEquivalentModifierMask = [.command]
       if settings.menu == nil { appMenu.insertItem(settings, at: min(2, appMenu.numberOfItems)) }
     }
@@ -131,6 +226,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
       item.keyEquivalentModifierMask = modifiers
       item.target = self
       item.representedObject = action
+      item.identifier = NSUserInterfaceItemIdentifier(HarnessKeymapMenu.actionPrefix + action)
       menu.addItem(item)
     }
     func install(_ menu: NSMenu, at index: Int) {
@@ -173,6 +269,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
   }
 
   func menuWillOpen(_ menu: NSMenu) {
+    syncMenuKeys()
     guard menu === modelsMenu, actionsEnabled else { return }
     // The native menu opens from its cache. Network/credential reads happen
     // asynchronously in Dart and never hold up AppKit's menu tracking.
@@ -241,6 +338,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
       let item = NSMenuItem(title: title, action: #selector(menuAction(_:)), keyEquivalent: key)
       item.target = self
       item.representedObject = action
+      item.identifier = NSUserInterfaceItemIdentifier(HarnessKeymapMenu.actionPrefix + action)
       item.keyEquivalentModifierMask = [.command]
       historyMenu.addItem(item)
     }
@@ -252,6 +350,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     appendHistorySection("Recently Visited", entries: Array(history.prefix(15)), closed: false)
     historyMenu.addItem(.separator())
     command("Show Full History", "y", "showHistory")
+    if let keymap { keymap.applyMenuKeys(to: historyMenu, context: flutterKeyContext) }
   }
 
   private func appendHistorySection(_ title: String, entries: [SwarmHistoryEntry], closed: Bool) {
@@ -295,6 +394,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
       item.keyEquivalentModifierMask = modifiers
       item.target = self
       item.representedObject = action
+      item.identifier = NSUserInterfaceItemIdentifier(HarnessKeymapMenu.actionPrefix + action)
       menu.addItem(item)
     }
     // The template's find/replace actions target an unused text-editor handler.
@@ -599,6 +699,8 @@ private final class SwarmSearchField: NSSearchField {
   var begin: (() -> Void)?
   var command: ((String) -> Void)?
   var searching = false { didSet { needsDisplay = true } }
+  var usesKeymap = false
+  var shortcutHint: String? = "⌘P" { didSet { needsDisplay = true } }
   override init(frame: NSRect) {
     super.init(frame: frame)
     cell = SwarmSearchCell(textCell: "")
@@ -634,6 +736,7 @@ private final class SwarmSearchField: NSSearchField {
     super.mouseDown(with: event)
   }
   override func performKeyEquivalent(with event: NSEvent) -> Bool {
+    if usesKeymap { return super.performKeyEquivalent(with: event) }
     if let editor = currentEditor() as? NSTextView,
        event.modifierFlags.intersection([.command, .option, .control, .shift]) == .command {
       if event.charactersIgnoringModifiers == "p" && !editor.hasMarkedText() {
@@ -687,11 +790,13 @@ private final class SwarmSearchField: NSSearchField {
       rim.stroke()
     }
     super.draw(dirtyRect)
-    if !searching && stringValue.isEmpty && bounds.width >= 140 {
-      let shortcut = "⌘P" as NSString
+    if !searching && stringValue.isEmpty && bounds.width >= 140, let shortcutHint,
+       !shortcutHint.isEmpty {
+      let shortcut = shortcutHint as NSString
       let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 11),
         .foregroundColor: NSColor.secondaryLabelColor]
       let size = shortcut.size(withAttributes: attrs)
+      guard size.width <= bounds.width * 0.4 else { return }
       shortcut.draw(at: NSPoint(x: bounds.width - size.width - 12,
         y: (bounds.height - size.height) / 2), withAttributes: attrs)
     }
@@ -701,10 +806,11 @@ private final class SwarmSearchField: NSSearchField {
 private final class SwarmTabStrip: NSView, NSSearchFieldDelegate {
   private(set) var palette = SwarmNativePalette()
   var emit: ((String, Any?) -> Void)?
+  var editingEnded: (() -> Void)?
   private let scroll = NSScrollView()
   private let document = NSView()
   private let newButton = NSButton()
-  private let searchField = SwarmSearchField()
+  fileprivate let searchField = SwarmSearchField()
   private var lastSearchWidth: CGFloat = 0
   private var tabs: [SwarmTabButton] = []
   private var activeId = ""
@@ -876,7 +982,9 @@ private final class SwarmTabStrip: NSView, NSSearchFieldDelegate {
     guard searchField.searching else { return }
     emit?("searchChanged", ["query": searchField.stringValue])
   }
+  func controlTextDidEndEditing(_ notification: Notification) { editingEnded?() }
   func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+    if searchField.usesKeymap { return false }
     let event = NSApp.currentEvent
     guard let action = SwarmSearchField.resultCommand(NSStringFromSelector(selector), event: event,
       composing: textView.hasMarkedText()) else { return false }

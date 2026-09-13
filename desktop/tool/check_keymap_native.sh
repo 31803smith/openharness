@@ -14,3 +14,5 @@ cat macos/Runner/HarnessKeymap.swift tool/keymap_native_checks.swift > "$check_d
 xcrun swiftc -swift-version 5 -module-cache-path "$check_dir/module-cache" \
   "$check_dir/main.swift" -o "$check_dir/check-keymap"
 "$check_dir/check-keymap" "$check_dir/bindings.json"
+HARNESS_TITLEBAR_KEYMAP_FIXTURE="$check_dir/bindings.json" \
+  bash tool/check_swarm_titlebar.sh "$flutter_sdk" --window-layout

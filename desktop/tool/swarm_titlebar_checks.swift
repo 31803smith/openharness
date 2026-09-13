@@ -190,13 +190,118 @@ private extension SwarmTabStrip {
 
 // No engine, account, terminal or transport is involved in native layout.
 private final class TitlebarCheckMessenger: NSObject, FlutterBinaryMessenger {
-  func send(onChannel channel: String, message: Data?) {}
-  func send(onChannel channel: String, message: Data?, binaryReply callback: FlutterBinaryReply?) { callback?(nil) }
+  var calls: [FlutterMethodCall] = []
+  func send(onChannel channel: String, message: Data?) {
+    if let message { calls.append(FlutterStandardMethodCodec.sharedInstance().decodeMethodCall(message)) }
+  }
+  func send(onChannel channel: String, message: Data?, binaryReply callback: FlutterBinaryReply?) {
+    send(onChannel: channel, message: message)
+    callback?(nil)
+  }
   func setMessageHandlerOnChannel(_ channel: String, binaryMessageHandler handler: FlutterBinaryMessageHandler?) -> FlutterBinaryMessengerConnection { 1 }
   func cleanUpConnection(_ connection: FlutterBinaryMessengerConnection) {}
 }
 
 private extension SwarmTitlebar {
+  func checkKeymapRuntime(_ fixture: [String: [String: Any]], messenger: TitlebarCheckMessenger) throws {
+    guard let window, let defaults = HarnessNativeKeymap(fixture["defaults"]!),
+          let changed = HarnessNativeKeymap(fixture["changed"]!) else {
+      throw TitlebarCheckFailure(message: "Exported runtime keymaps exist")
+    }
+    let original = NSApp.mainMenu!
+    let edit = original.item(withTitle: "Edit")!.submenu!
+    let jump = edit.items.first(where: { $0.representedObject as? String == "jump" })!
+    let file = original.item(withTitle: "File")!.submenu!
+    let newSwarm = file.items.first(where: { $0.representedObject as? String == "new" })!
+    let nativeCopy = NSMenuItem(title: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+    edit.addItem(nativeCopy)
+    setKeymap(defaults)
+    let main = NSApp.mainMenu as! HarnessKeymapMenu
+    try checkTitlebar(main !== original && main.item(withTitle: "Edit")?.submenu === edit,
+      "The main-menu dispatcher retains the actual Edit submenu and its targets")
+    try checkTitlebar(jump.keyEquivalent == "p" && jump.toolTip?.contains("⌘P") == true,
+      "Native shortcut display comes from the effective Dart binding")
+    setKeymap(changed)
+    try checkTitlebar(NSApp.mainMenu === main && jump.keyEquivalent == "o",
+      "Hot reload updates the existing menu to the remapped key")
+    try checkTitlebar(nativeCopy.keyEquivalent == "c" && nativeCopy.action == #selector(NSText.copy(_:)),
+      "Standard native editing remains intact")
+    // The inherited default is still first; a sequence is not falsely shown
+    // as a second one-stroke accelerator in AppKit's shortcut column.
+    let onlySequence = HarnessNativeKeymap(["version": 1, "contexts": Dictionary(uniqueKeysWithValues:
+      ["workspace", "terminal", "picker"].map { ($0, [["keys": ["cmd+k", "n"], "command": "swarm.new",
+        "hint": "⌘K N", "repeatable": false, "menuAction": "new"]]) })])!
+    setKeymap(onlySequence)
+    try checkTitlebar(newSwarm.keyEquivalent.isEmpty && newSwarm.toolTip?.contains("⌘K N") == true,
+      "A sequence has a complete tooltip without a misleading first-key menu shortcut")
+    try checkTitlebar(jump.keyEquivalent.isEmpty && jump.toolTip == nil,
+      "Unbinding clears the old native shortcut and hint")
+    rebuildHistoryMenu()
+    try checkTitlebar(historyMenu.items.allSatisfy { $0.keyEquivalent.isEmpty },
+      "Rebuilt History rows retain effective unbindings")
+    setKeymap(changed)
+    actionsEnabled = true
+    strip.focusSearch()
+    guard let editor = strip.searchField.currentEditor() as? NSTextView else {
+      throw TitlebarCheckFailure(message: "Native search owns an editor for shortcut checks")
+    }
+    strip.setSearchState(["query": "workshop 木"])
+    func event(_ text: String, _ code: UInt16, _ flags: NSEvent.ModifierFlags = [],
+               up: Bool = false, repeated: Bool = false) -> NSEvent {
+      NSEvent.keyEvent(with: up ? .keyUp : .keyDown, location: .zero, modifierFlags: flags,
+        timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: text,
+        charactersIgnoringModifiers: text, isARepeat: repeated, keyCode: code)!
+    }
+    let open = event("o", 31, .command)
+    let oldOpen = event("p", 35, .command)
+    try checkTitlebar(main.defersToInput(open) && !main.defersToInput(oldOpen),
+      "The menu yields the new key while the unbound old key has no native owner")
+    try checkTitlebar(!main.performKeyEquivalent(with: open), "Menu key equivalents defer before dispatch")
+    try checkTitlebar(handleSearchKey(oldOpen) === oldOpen, "Unbound search key is not claimed by a fallback")
+    try checkTitlebar(handleSearchKey(open) == nil && editor.selectedRange().length == editor.string.utf16.count,
+      "Remapped search shortcut selects the existing native query")
+    try checkTitlebar(handleSearchKey(event("o", 31, .command, up: true)) == nil,
+      "A claimed key-up cannot escape to another input")
+    let down = event("\u{f701}", 125)
+    try checkTitlebar(handleSearchKey(down) === down &&
+      !strip.control(strip.searchField, textView: editor, doCommandBy: #selector(NSResponder.moveDown(_:))),
+      "Unbound result navigation is not revived by NSTextView's delegate")
+    messenger.calls.removeAll()
+    let previous = event("j", 38, .control)
+    NSApp.sendEvent(previous)
+    try checkTitlebar(messenger.calls.filter { $0.method == "keymapCommand" }.count == 1 &&
+      (messenger.calls.last?.arguments as? [String: Any])?["command"] as? String == "picker.previous",
+      "The installed local monitor routes one remapped result action")
+    try checkTitlebar(editor.string == "workshop 木", "Consumed native shortcuts never become query text")
+    _ = handleSearchKey(event("k", 40, .command))
+    try checkTitlebar(searchKeyDispatch?.pending.count == 1, "Native field retains a sequence prefix")
+    let before = messenger.calls.count
+    _ = handleSearchKey(event("n", 45, .command))
+    try checkTitlebar(messenger.calls.count == before + 1 &&
+      (messenger.calls.last?.arguments as? [String: Any])?["command"] as? String == "swarm.new",
+      "The configured sequence dispatches its command once")
+    _ = handleSearchKey(event("k", 40, .command))
+    editor.setMarkedText("木", selectedRange: NSRange(location: 1, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+    let enter = event("\r", 36)
+    try checkTitlebar(handleSearchKey(enter) === enter && searchKeyDispatch?.pending.isEmpty == true,
+      "IME owns Return and cancels any partial shortcut")
+    editor.unmarkText()
+    _ = handleSearchKey(event("k", 40, .command))
+    NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: window)
+    try checkTitlebar(searchKeyDispatch?.pending.isEmpty == true && window.firstResponder === editor,
+      "Blur cancels a partial shortcut while preserving search input ownership")
+    _ = handleSearchKey(event("k", 40, .command))
+    setKeymap(defaults)
+    try checkTitlebar(searchKeyDispatch?.pending.isEmpty == true && strip.searchField.shortcutHint == "⌘P",
+      "Reload cancels a pending sequence and refreshes the native search hint")
+    strip.closeSearch()
+    let ordinary = event("x", 7)
+    try checkTitlebar(handleSearchKey(ordinary) === ordinary,
+      "The native monitor does not intercept Flutter or agent input")
+    removeKeyMonitor()
+    try checkTitlebar(searchKeyMonitor == nil, "The scoped event monitor is removed explicitly")
+  }
+
   func checkNativeContainer() throws {
     guard let window else { throw TitlebarCheckFailure(message: "Native test window exists") }
     let main = NSMenu()
@@ -438,8 +543,13 @@ do {
     let content = TitlebarCheckContentController()
     content.view = NSView(frame: NSRect(x: 0, y: 0, width: 1280, height: 700))
     window.contentViewController = content
-    let titlebar = SwarmTitlebar(window: window, messenger: TitlebarCheckMessenger())
+    let messenger = TitlebarCheckMessenger()
+    let titlebar = SwarmTitlebar(window: window, messenger: messenger)
     try titlebar.checkNativeContainer()
+    if let path = ProcessInfo.processInfo.environment["HARNESS_TITLEBAR_KEYMAP_FIXTURE"] {
+      let fixture = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: path))) as! [String: [String: Any]]
+      try titlebar.checkKeymapRuntime(fixture, messenger: messenger)
+    }
     window.close()
     print("AppKit Swarm titlebar: \(titlebarCheckCount) checks passed, including native window layout; no windows displayed.")
   } else {

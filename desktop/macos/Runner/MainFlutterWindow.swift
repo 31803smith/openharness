@@ -231,6 +231,10 @@ class MainFlutterWindow: NSWindow {
     )
     item.target = self
     item.tag = tag
+    if tag == shortcutsMenuItemTag || tag == layoutMenuItemTag {
+      let command = tag == shortcutsMenuItemTag ? "showShortcuts" : "layout"
+      item.identifier = NSUserInterfaceItemIdentifier(HarnessKeymapMenu.actionPrefix + command)
+    }
     // Every other row in this menu carries a glyph, so one without reads as
     // unfinished — the gutter stays but nothing sits in it.
     item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
