@@ -41,6 +41,15 @@ struct HarnessKeyStroke: Hashable {
     hasher.combine(modifiers.rawValue)
   }
 
+  var canonical: String {
+    var parts: [String] = []
+    if modifiers.contains(.control) { parts.append("ctrl") }
+    if modifiers.contains(.option) { parts.append("alt") }
+    if modifiers.contains(.command) { parts.append("cmd") }
+    if modifiers.contains(.shift) { parts.append("shift") }
+    return (parts + [key]).joined(separator: "+")
+  }
+
   private static func validKey(_ key: String) -> Bool {
     if named.contains(key) { return true }
     if key.count == 1, let value = key.unicodeScalars.first?.value {

@@ -480,6 +480,15 @@ class TerminalViewState extends State<TerminalView> {
   @visibleForTesting
   String? get debugComposingText => _composingText;
 
+  /// Live input-client composition, independent of its visual preview (which
+  /// may already match echoed terminal cells). Workspace shortcuts must let
+  /// the IME finish its marked text before claiming a key.
+  bool get isComposing {
+    final range =
+        _customTextEditKey.currentState?.currentTextEditingValue?.composing;
+    return range != null && range.isValid && !range.isCollapsed;
+  }
+
   KeyEventResult _handleKeyEvent(FocusNode focusNode, KeyEvent event) {
     final resultOverride = widget.onKeyEvent?.call(focusNode, event);
     if (resultOverride != null && resultOverride != KeyEventResult.ignored) {

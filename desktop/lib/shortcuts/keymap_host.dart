@@ -114,7 +114,6 @@ class _KeymapHostState extends State<KeymapHost> with WidgetsBindingObserver {
       _notifyPending();
       return KeyEventResult.ignored;
     }
-    final actions = localActions ?? widget.actions;
     final value = context
         .findAncestorStateOfType<EditableTextState>()
         ?.widget
@@ -138,12 +137,17 @@ class _KeymapHostState extends State<KeymapHost> with WidgetsBindingObserver {
       composing: composing,
       modifier: _modifiers.contains(event.logicalKey),
       canExecute: (id) =>
-          actions.containsKey(id) &&
-          (localActions != null || widget.canExecute?.call(id) != false),
+          (localActions?.containsKey(id) == true ||
+              widget.actions.containsKey(id)) &&
+          (localActions?.containsKey(id) == true ||
+              (widget.enabled() && widget.canExecute?.call(id) != false)),
       canRepeat: (id) => harnessCommandById[id]?.repeatable == true,
     );
     _notifyPending();
-    if (result.command != null) actions[result.command!]?.call();
+    if (result.command != null) {
+      (localActions?[result.command!] ?? widget.actions[result.command!])
+          ?.call();
+    }
     return result.handled ? KeyEventResult.handled : KeyEventResult.ignored;
   }
 

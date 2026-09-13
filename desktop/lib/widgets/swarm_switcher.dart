@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../shortcuts/app_keymap.dart';
+import '../shortcuts/keymap.dart';
+
 import '../shared/theme/app_theme.dart' as grid;
 import '../shared/widgets/app_dialog.dart';
 import '../state/app_state.dart';
@@ -130,6 +133,31 @@ class SwarmSearchKeys extends StatelessWidget {
       final choice = add ? search?.addHere() : search?.submit();
       if (choice != null) onChoose(choice);
     });
+    if (KeymapTheme.of(context) != null) {
+      return KeymapRegion(
+        contextKind: KeymapContext.picker,
+        composing: composing,
+        actions: {
+          if (search != null) ...{
+            'picker.accept': () => choose(false),
+            'picker.add_here': () => choose(true),
+            'picker.next': () => search.move(1),
+            'picker.previous': () => search.move(-1),
+            'picker.preview': search.togglePreview,
+            'picker.cancel': onClose,
+            if (search.history == null)
+              'navigation.commands': () {
+                editing.value = const TextEditingValue(
+                  text: '> ',
+                  selection: TextSelection.collapsed(offset: 2),
+                );
+                search.setQuery('> ');
+              },
+          },
+        },
+        child: child,
+      );
+    }
     return CallbackShortcuts(
       bindings: search == null
           ? {}
@@ -283,6 +311,21 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
   @override
   Widget build(BuildContext context) {
     final scale = MediaQuery.textScalerOf(context);
+    String? hint(String command) => effectiveCommandHint(
+      context,
+      command,
+      contextKind: KeymapContext.picker,
+    );
+    final previewHint = hint('picker.preview');
+    final movementHints = [
+      hint('picker.previous'),
+      hint('picker.next'),
+    ].whereType<String>().join(' ');
+    final cancelHint = hint('picker.cancel');
+    final navigationHint = [
+      if (movementHints.isNotEmpty) '$movementHints choose',
+      if (cancelHint != null) '$cancelHint close',
+    ].join(' · ');
     _rowHeight = swarmSearchRowHeight(scale, commands: search.isCommandMode);
     final selected = search.selected;
     return LayoutBuilder(
@@ -408,7 +451,7 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                             ? 'Opens in ${search.targetName}'
                             : search.query.isEmpty && search.commands != null
                             ? 'Type > for commands'
-                            : '↑↓ choose · Esc close',
+                            : navigationHint,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
@@ -421,9 +464,8 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                   if (search.canPreview ||
                       search.previewEnabled && !search.isCommandMode)
                     Tooltip(
-                      message: search.previewEnabled
-                          ? 'Hide preview (⌘I)'
-                          : 'Preview recent output (⌘I)',
+                      message:
+                          '${search.previewEnabled ? 'Hide preview' : 'Preview recent output'}${previewHint == null ? '' : ' ($previewHint)'}',
                       child: IconButton(
                         key: const ValueKey('swarm-search-preview-toggle'),
                         onPressed: () {
@@ -450,7 +492,7 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                       ),
                       child: const _SearchActionLabel(
                         'Add to this swarm',
-                        command: true,
+                        command: 'picker.add_here',
                       ),
                     ),
                   TextButton(
@@ -473,20 +515,47 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
 }
 
 class _SearchActionLabel extends StatelessWidget {
-  const _SearchActionLabel(this.label, {this.command = false});
+  const _SearchActionLabel(this.label, {this.command = 'picker.accept'});
   final String label;
-  final bool command;
+  final String command;
 
   @override
-  Widget build(BuildContext context) => Row(
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      Text(label, style: const TextStyle(fontSize: 11)),
-      const SizedBox(width: 8),
-      if (command) const Text('⌘', style: TextStyle(fontSize: 11)),
-      const Icon(Icons.keyboard_return, size: 14),
-    ],
-  );
+  Widget build(BuildContext context) {
+    final hint = effectiveCommandHint(
+      context,
+      command,
+      contextKind: KeymapContext.picker,
+    );
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(label, style: const TextStyle(fontSize: 11)),
+        if (hint != null) ...[
+          const SizedBox(width: 8),
+          if (RegExp(r'^[⌃⌥⇧⌘]*↵$').hasMatch(hint)) ...[
+            if (hint.length > 1)
+              Text(
+                hint.substring(0, hint.length - 1),
+                style: const TextStyle(fontSize: 11),
+              ),
+            const Icon(Icons.keyboard_return, size: 14),
+          ] else
+            Tooltip(
+              message: hint,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 96),
+                child: Text(
+                  hint.replaceAll('↵', 'Return').replaceAll('⇥', 'Tab'),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 11),
+                ),
+              ),
+            ),
+        ],
+      ],
+    );
+  }
 }
 
 class _OutputPreview extends StatelessWidget {

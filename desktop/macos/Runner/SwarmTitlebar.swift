@@ -28,6 +28,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
   private var flutterKeyContext = "workspace"
   private var searchKeyDispatch: HarnessNativeKeyDispatch?
   private var searchKeyMonitor: Any?
+  private var pendingKeyNames: [String] = []
 
   init(window: NSWindow, messenger: FlutterBinaryMessenger) {
     self.window = window
@@ -35,9 +36,10 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     super.init()
     strip.emit = { [weak self] method, args in self?.channel.invokeMethod(method, arguments: args) }
     strip.editingEnded = { [weak self] in
-      self?.searchKeyDispatch?.cancel()
+      self?.cancelKeySequence()
       self?.syncMenuKeys()
     }
+    strip.editingBegan = { [weak self] in self?.syncMenuKeys() }
     channel.setMethodCallHandler { [weak self] call, result in
       guard let self else { result(nil); return }
       switch call.method {
@@ -47,7 +49,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
       case "update":
         let state = call.arguments as? [String: Any] ?? [:]
         self.actionsEnabled = state["enabled"] as? Bool == true
-        if !self.actionsEnabled { self.searchKeyDispatch?.cancel() }
+        if !self.actionsEnabled { self.cancelKeySequence() }
         self.canReopen = state["canReopen"] as? Bool == true
         self.canFind = state["canFind"] as? Bool == true
         self.canClosePane = state["canClosePane"] as? Bool == true
@@ -65,7 +67,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
         self.strip.setSearchState(call.arguments as? [String: Any] ?? [:])
         result(nil)
       case "closeSearch":
-        self.searchKeyDispatch?.cancel()
+        self.cancelKeySequence()
         self.strip.closeSearch()
         self.syncMenuKeys()
         result(nil)
@@ -100,7 +102,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     // Keep an in-progress search and its native input owner across app switches.
     // Cancelling on window blur would return the next typed key to an agent.
     observers.append(NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification,
-      object: window, queue: .main) { [weak self] _ in self?.searchKeyDispatch?.suspend() })
+      object: window, queue: .main) { [weak self] _ in self?.cancelKeySequence(suspend: true) })
     observers.append(NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification,
       object: window, queue: .main) { [weak self] _ in self?.removeKeyMonitor() })
   }
@@ -113,13 +115,27 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
   private func removeKeyMonitor() {
     if let searchKeyMonitor { NSEvent.removeMonitor(searchKeyMonitor) }
     searchKeyMonitor = nil
-    searchKeyDispatch?.suspend()
+    cancelKeySequence(suspend: true)
+  }
+
+  private func cancelKeySequence(suspend: Bool = false) {
+    if suspend { searchKeyDispatch?.suspend() }
+    else { searchKeyDispatch?.cancel() }
+    syncPendingKeys()
+  }
+
+  private func syncPendingKeys() {
+    let names = searchKeyDispatch?.pending.map(\.canonical) ?? []
+    guard names != pendingKeyNames else { return }
+    pendingKeyNames = names
+    channel.invokeMethod("keymapPending", arguments: ["keys": names])
   }
 
   private func setKeymap(_ map: HarnessNativeKeymap) {
     keymap = map
     if let searchKeyDispatch { searchKeyDispatch.update(map) }
     else { searchKeyDispatch = HarnessNativeKeyDispatch(map) }
+    syncPendingKeys()
     strip.searchField.usesKeymap = true
     strip.searchField.shortcutHint = map.hint(for: "navigation.quick_open", context: "workspace")
     if let main = NSApp.mainMenu, let window {
@@ -142,7 +158,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
   private func handleSearchKey(_ event: NSEvent) -> NSEvent? {
     guard let dispatch = searchKeyDispatch else { return event }
     if event.type == .leftMouseDown || event.type == .rightMouseDown {
-      dispatch.cancel()
+      cancelKeySequence()
       return event
     }
     guard let window, event.window === window else { return event }
@@ -152,11 +168,12 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     guard actionsEnabled, strip.searchField.searching,
           let editor = strip.searchField.currentEditor() as? NSTextView,
           window.firstResponder === editor else {
-      dispatch.cancel()
+      cancelKeySequence()
       return event
     }
     let result = dispatch.dispatch(HarnessKeyStroke.fromEvent(event), keyCode: event.keyCode,
       repeated: event.isARepeat, composing: editor.hasMarkedText(), context: "picker", owner: editor)
+    syncPendingKeys()
     if let command = result.command {
       if command == "navigation.quick_open" { editor.selectAll(nil) }
       else { channel.invokeMethod("keymapCommand", arguments: ["command": command]) }
@@ -807,6 +824,7 @@ private final class SwarmTabStrip: NSView, NSSearchFieldDelegate {
   private(set) var palette = SwarmNativePalette()
   var emit: ((String, Any?) -> Void)?
   var editingEnded: (() -> Void)?
+  var editingBegan: (() -> Void)?
   private let scroll = NSScrollView()
   private let document = NSView()
   private let newButton = NSButton()
@@ -983,6 +1001,7 @@ private final class SwarmTabStrip: NSView, NSSearchFieldDelegate {
     emit?("searchChanged", ["query": searchField.stringValue])
   }
   func controlTextDidEndEditing(_ notification: Notification) { editingEnded?() }
+  func controlTextDidBeginEditing(_ notification: Notification) { editingBegan?() }
   func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
     if searchField.usesKeymap { return false }
     let event = NSApp.currentEvent

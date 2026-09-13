@@ -95,6 +95,12 @@ class SwarmSearchController extends ChangeNotifier {
     notifyListeners();
   }
 
+  void refreshCommands() {
+    if (!isCommandMode) return;
+    _filter();
+    notifyListeners();
+  }
+
   void _filter() {
     final availableCommands = isCommandMode
         ? commands?.call() ?? const <SwarmDestination>[]

@@ -2,6 +2,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../shortcuts/app_keymap.dart';
+
 import '../shared/theme/app_theme.dart' as grid;
 import '../state/app_state.dart';
 import '../state/swarm_catalog.dart';
@@ -37,6 +39,7 @@ class _SwarmInlineSearchState extends State<SwarmInlineSearch> {
   final _overlay = OverlayPortalController();
   final _tapGroup = Object();
   SwarmSearchController? _search;
+  AppKeymap? _keymap;
 
   @override
   void initState() {
@@ -45,8 +48,24 @@ class _SwarmInlineSearchState extends State<SwarmInlineSearch> {
   }
 
   void _focusChanged() {
-    if (!_focus.hasFocus) _close();
+    if (_focus.hasFocus) {
+      _begin();
+    } else {
+      _close();
+    }
   }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final next = KeymapTheme.of(context);
+    if (next == _keymap) return;
+    _keymap?.removeListener(_keymapChanged);
+    _keymap = next;
+    _keymap?.addListener(_keymapChanged);
+  }
+
+  void _keymapChanged() => _search?.refreshCommands();
 
   void _begin() {
     if (_search != null) return;
@@ -82,6 +101,7 @@ class _SwarmInlineSearchState extends State<SwarmInlineSearch> {
 
   @override
   void dispose() {
+    _keymap?.removeListener(_keymapChanged);
     _search?.removeListener(_changed);
     _search?.dispose();
     _focus.removeListener(_focusChanged);

@@ -42,16 +42,25 @@ class KeyCap extends StatelessWidget {
       // and a label squeezed to a character per line beside it.
       child: Center(
         widthFactor: 1,
-        child: Text(
-          label,
-          style: TextStyle(
-            color: grid.AppPalette.textPrimary,
-            fontSize: 11.5,
-            height: 1,
-            // Tabular so ⌘1 – ⌘9 and ⌘W keep the same cap width.
-            fontFeatures: const [FontFeature.tabularFigures()],
-          ),
-        ),
+        child: label == '⇥' || label == '↵' || label == '⏎'
+            ? Semantics(
+                label: label == '⇥' ? 'Tab' : 'Return',
+                child: Icon(
+                  label == '⇥' ? Icons.keyboard_tab : Icons.keyboard_return,
+                  size: 14,
+                  color: grid.AppPalette.textPrimary,
+                ),
+              )
+            : Text(
+                label,
+                style: TextStyle(
+                  color: grid.AppPalette.textPrimary,
+                  fontSize: 11.5,
+                  height: 1,
+                  // Tabular so ⌘1 – ⌘9 and ⌘W keep the same cap width.
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
       ),
     );
   }

@@ -49,7 +49,7 @@ class AppKeymap extends ChangeNotifier {
   }
 
   /// These are names of actual AppKit commands, not all system shortcuts.
-  /// The second stroke of an explicit sequence can still use an editing key.
+  /// Native editing is dispatched before Flutter, including sequence suffixes.
   static void validateNativeKeys(ResolvedKeymap map, {required bool macOS}) {
     if (!macOS) return;
     final reserved = {
@@ -67,14 +67,19 @@ class AppKeymap extends ChangeNotifier {
         'cmd+alt+shift+v',
         'cmd+backquote',
         'cmd+shift+backquote',
+        'cmd+0',
+        'cmd+equal',
+        'cmd+shift+equal',
+        'cmd+minus',
       ])
         KeyStroke.parse(chord),
     };
     for (final context in KeymapContext.values) {
       for (final binding in map.bindingsFor(context)) {
-        if (binding.custom && reserved.contains(binding.keys.first)) {
+        final conflict = binding.keys.where(reserved.contains).firstOrNull;
+        if (binding.custom && conflict != null) {
           throw FormatException(
-            '${binding.keys.first} belongs to a native Mac editing or window command; choose another first key',
+            '$conflict belongs to a native Mac editing, font or window command; choose another key',
           );
         }
       }
@@ -163,4 +168,77 @@ String withEffectiveShortcutHint(
 ) {
   final hint = effectiveShortcutHint(context, action);
   return hint == null ? label : '$label  $hint';
+}
+
+String? effectiveCommandHint(
+  BuildContext context,
+  String command, {
+  KeymapContext contextKind = KeymapContext.workspace,
+}) {
+  final bindings = (KeymapTheme.of(context)?.current ?? harnessDefaultKeymap)
+      .bindingsFor(contextKind);
+  final binding = bindings
+      .where((binding) => binding.command == command)
+      .firstOrNull;
+  return binding == null ? null : describeKeyBinding(binding);
+}
+
+List<ShortcutRow> effectiveShortcutRows(
+  BuildContext context,
+  KeymapContext contextKind,
+) {
+  final map = KeymapTheme.of(context)?.current;
+  if (map == null && contextKind == KeymapContext.workspace) {
+    return shortcutRows();
+  }
+  final bindings = (map ?? harnessDefaultKeymap).bindingsFor(contextKind);
+  final defaultDigits =
+      contextKind != KeymapContext.picker &&
+      List.generate(kAgentDigitCount, (i) {
+        final matches = bindings
+            .where((b) => b.command == 'pane.focus_${i + 1}')
+            .toList();
+        return matches.length == 1 &&
+            matches.single.keys.length == 1 &&
+            matches.single.keys.single == KeyStroke.parse('cmd+${i + 1}');
+      }).every((value) => value);
+  final shortcuts = appShortcuts();
+  return [
+    for (final command in harnessCommands)
+      if ((command.context == KeymapContext.workspace ||
+              command.context == contextKind) &&
+          (!defaultDigits ||
+              !RegExp(r'^pane\.focus_[1-9]$').hasMatch(command.id)))
+        if (command.action != null ||
+            bindings.any((b) => b.command == command.id))
+          ShortcutRow(
+            label:
+                shortcuts
+                    .where((s) => s.action == command.action)
+                    .firstOrNull
+                    ?.label ??
+                command.label,
+            chords: [
+              for (final binding in bindings.where(
+                (b) => b.command == command.id,
+              ))
+                binding.keys.length == 1
+                    ? describeKeyStrokeKeys(binding.keys.single)
+                    : [
+                        describeKeyBinding(binding)
+                            .replaceAll('↵', 'Return')
+                            .replaceAll('⇥', 'Tab'),
+                      ],
+            ],
+            group: command.group,
+          ),
+    if (defaultDigits)
+      const ShortcutRow(
+        label: 'Focus the 1st–9th pane',
+        chords: [
+          ['⌘', '1 – 9'],
+        ],
+        group: ShortcutGroup.panes,
+      ),
+  ];
 }

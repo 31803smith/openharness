@@ -96,7 +96,16 @@ void main() {
   test(
     'Mac native editing and window conflicts are rejected before activation',
     () {
-      for (final keys in ['cmd+q', 'cmd+c', 'cmd+alt+h']) {
+      for (final keys in [
+        'cmd+q',
+        'cmd+c',
+        'cmd+alt+h',
+        'cmd+equal',
+        'cmd+shift+equal',
+        'cmd+0',
+        'cmd+minus',
+        'f6 cmd+c',
+      ]) {
         final map = ResolvedKeymap(
           harnessDefaultBindings,
           KeymapConfig.parse(
@@ -113,7 +122,7 @@ void main() {
       final map = ResolvedKeymap(
         harnessDefaultBindings,
         KeymapConfig.parse(
-          '{"bindings":[{"keys":"cmd+h","command":"pane.focus_left"},{"keys":"cmd+k","command":null},{"keys":"cmd+k cmd+c","command":"pane.focus_right"}]}',
+          '{"bindings":[{"keys":"cmd+h","command":"pane.focus_left"},{"keys":"cmd+k","command":null},{"keys":"cmd+k c","command":"pane.focus_right"}]}',
           commands: harnessCommandById.keys.toSet(),
         ),
       );

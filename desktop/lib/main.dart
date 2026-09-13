@@ -22,6 +22,7 @@ import 'widgets/flash_firmware_dialog.dart';
 import 'core/startup.dart';
 import 'logging/app_log.dart';
 import 'logging/install.dart';
+import 'shortcuts/app_keymap.dart';
 import 'widgets/shortcuts_sheet.dart';
 import 'widgets/update_notice.dart';
 import 'widgets/window_chrome.dart';
@@ -34,14 +35,17 @@ Future<void> main() async {
   CrashLog.install();
   appLog.info('app', 'launched');
   await loadPersistedSettings();
+  final keymap = AppKeymap(store: AppKeymap.fileStore());
+  await keymap.start();
   // After the settings: the window shows itself once it is ready, and the
   // first frame it shows must already wear the saved theme.
   await configureDesktopWindow();
-  runApp(const ProviderScope(child: DesktopApp()));
+  runApp(ProviderScope(child: DesktopApp(keymap: keymap)));
 }
 
 class DesktopApp extends StatelessWidget {
-  const DesktopApp({super.key});
+  const DesktopApp({super.key, this.keymap});
+  final AppKeymap? keymap;
 
   @override
   Widget build(BuildContext context) {
@@ -108,7 +112,14 @@ class DesktopApp extends StatelessWidget {
       builder: (context, child) => MediaQuery.withClampedTextScaling(
         minScaleFactor: scale,
         maxScaleFactor: scale,
-        child: _GridTokenScope(child: child ?? const SizedBox.shrink()),
+        child: _GridTokenScope(
+          child: keymap == null
+              ? child ?? const SizedBox.shrink()
+              : KeymapProvider(
+                  keymap: keymap!,
+                  child: child ?? const SizedBox.shrink(),
+                ),
+        ),
       ),
       home: const AnalyticsLifecycle(child: RootShell()),
     );

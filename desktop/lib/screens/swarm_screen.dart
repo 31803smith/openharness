@@ -12,7 +12,12 @@ import '../settings/settings_screen.dart';
 import '../settings/settings_section.dart';
 import '../shared/theme/app_theme.dart' as grid;
 import '../shortcuts/app_shortcuts.dart';
+import '../shortcuts/app_keymap.dart';
+import '../shortcuts/keymap.dart';
 import '../shortcuts/keymap_commands.dart';
+import '../shortcuts/keymap_host.dart';
+import '../shortcuts/keymap_native.dart';
+import '../shortcuts/keymap_settings.dart';
 import '../state/app_state.dart';
 import '../state/pane_arrangement.dart';
 import '../terminal/terminal_viewport.dart';
@@ -78,16 +83,23 @@ class _SwarmScreenState extends State<SwarmScreen> {
   String? _nativeState;
   ModelsMenuController? _modelsMenu;
   String? _modelsState;
+  final _defaultKeymap = AppKeymap();
+  AppKeymap? _providedKeymap;
+  AppKeymap get _keymap => _providedKeymap ?? _defaultKeymap;
+  String? _nativeKeyContext;
+  String _pendingKeys = '';
   AppNotifier get app => widget.notifier;
 
   @override
   void initState() {
     super.initState();
+    _keymap.addListener(_keymapChanged);
     app.hasNavigationRail = false;
     app.railFocused = false;
     _recordNavigation();
     app.addListener(_recordNavigation);
     FocusManager.instance.addListener(_restoreEmptyFocus);
+    FocusManager.instance.addListener(_syncKeyContext);
     _searchFocus.addListener(_searchFocusChanged);
     grid.AppTheme.palette.addListener(_paletteChanged);
     unawaited(_projects.load());
@@ -107,6 +119,13 @@ class _SwarmScreenState extends State<SwarmScreen> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    final keymap = KeymapTheme.of(context);
+    if (keymap != _providedKeymap) {
+      _keymap.removeListener(_keymapChanged);
+      _providedKeymap = keymap;
+      _keymap.addListener(_keymapChanged);
+    }
+    _syncKeymap();
     final current = ModalRoute.isCurrentOf(context) ?? true;
     if (_routeIsCurrent == current) return;
     _routeIsCurrent = current;
@@ -120,9 +139,12 @@ class _SwarmScreenState extends State<SwarmScreen> {
 
   @override
   void dispose() {
+    _keymap.removeListener(_keymapChanged);
+    _defaultKeymap.dispose();
     grid.AppTheme.palette.removeListener(_paletteChanged);
     app.removeListener(_recordNavigation);
     FocusManager.instance.removeListener(_restoreEmptyFocus);
+    FocusManager.instance.removeListener(_syncKeyContext);
     _searchOverlay?.remove();
     _searchOverlay?.dispose();
     _search?.dispose();
@@ -144,6 +166,50 @@ class _SwarmScreenState extends State<SwarmScreen> {
     }
     if (widget.projectStore == null) _projects.dispose();
     super.dispose();
+  }
+
+  AppKeymap? _sentKeymap;
+  int? _sentKeymapVersion;
+  void _syncKeymap() {
+    if (!_native ||
+        (_sentKeymap == _keymap && _sentKeymapVersion == _keymap.version)) {
+      return;
+    }
+    _sentKeymap = _keymap;
+    _sentKeymapVersion = _keymap.version;
+    unawaited(
+      _channel.invokeMethod<void>('keymapState', nativeKeymapSnapshot(_keymap)),
+    );
+  }
+
+  void _keymapChanged() {
+    _syncKeymap();
+    if (mounted) setState(() {});
+    _search?.refreshCommands();
+  }
+
+  void _syncKeyContext() {
+    if (!_native) return;
+    final focus = FocusManager.instance.primaryFocus?.context;
+    final kind = focus == null
+        ? KeymapContext.workspace
+        : KeymapRegion.of(focus)?.contextKind ?? KeymapContext.workspace;
+    if (_nativeKeyContext == kind.name) return;
+    _nativeKeyContext = kind.name;
+    unawaited(
+      _channel.invokeMethod<void>('keymapContext', {'context': kind.name}),
+    );
+  }
+
+  bool get _shortcutsEnabled =>
+      mounted && _routeIsCurrent && !_dialogOpen && !_spokenPaletteOpen;
+
+  void _runShortcut(String id) {
+    if (!_canExecuteCommand(id)) return;
+    if (id != 'navigation.quick_open' && id != 'navigation.commands') {
+      _closeSearch();
+    }
+    _commands[id]?.call();
   }
 
   void _recordNavigation() {
@@ -249,6 +315,18 @@ class _SwarmScreenState extends State<SwarmScreen> {
   }
 
   Future<void> _onNative(MethodCall call) async {
+    if (mounted && call.method == 'keymapPending') {
+      final keys = (call.arguments as Map?)?['keys'];
+      if (keys is List &&
+          keys.length <= 4 &&
+          keys.every((key) => key is String)) {
+        final pending = keys
+            .map((key) => describeKeyStroke(KeyStroke.parse(key)))
+            .join(' ');
+        if (_pendingKeys != pending) setState(() => _pendingKeys = pending);
+      }
+      return;
+    }
     if (!mounted ||
         _dialogOpen ||
         _spokenPaletteOpen ||
@@ -280,10 +358,25 @@ class _SwarmScreenState extends State<SwarmScreen> {
       }
       return;
     }
-    if (call.method == 'searchCommand') {
+    if (call.method == 'keymapCommand' &&
+        !(args['command'] as String? ?? '').startsWith('picker.')) {
+      if (args['command'] is String) _runShortcut(args['command']);
+      return;
+    }
+    if (call.method == 'searchCommand' || call.method == 'keymapCommand') {
       final search = _search;
       if (search == null) return;
-      switch (args['command']) {
+      final command =
+          const {
+            'picker.next': 'next',
+            'picker.previous': 'previous',
+            'picker.preview': 'preview',
+            'picker.accept': 'submit',
+            'picker.add_here': 'add',
+            'picker.cancel': 'close',
+          }[args['command']] ??
+          args['command'];
+      switch (command) {
         case 'next':
           search.move(1);
         case 'previous':
@@ -859,8 +952,16 @@ class _SwarmScreenState extends State<SwarmScreen> {
     for (final command in harnessCommands)
       if (command.action != null && _actionHandlers.containsKey(command.action))
         command.id: _actionHandlers[command.action]!,
+    for (var i = 1; i <= kAgentDigitCount; i++)
+      'pane.focus_$i': () => app.focusPaneByIndex(i - 1),
+    'navigation.commands': () {
+      _openSearch();
+      _search?.setQuery('> ');
+      _focusSearch();
+    },
     'machine.link': () => _dialog(() => showSwarmLinkDialog(context, app)),
     'project.add': _addProject,
+    'keyboard.open_config': () => openKeyboardConfig(context),
     'pane.resize': app.beginPaneResize,
     'pane.reset_sizes': app.resetPaneSizes,
     'pane.split_right': () => _splitAgent(PaneResizeAxis.x),
@@ -874,9 +975,8 @@ class _SwarmScreenState extends State<SwarmScreen> {
         _spokenPaletteOpen) {
       return false;
     }
-    if (id == 'navigation.quick_open') {
-      return false;
-    }
+    if (id == 'keyboard.open_config') return _keymap.store != null;
+    if (id == 'pane.layout' || id == 'task.route') return true;
     if (id == 'swarm.new') return app.swarms.length < AppNotifier.maxSwarms;
     if (id == 'swarm.reopen') return app.canReopenLastClosed;
     if (id == 'swarm.next' || id == 'swarm.previous') {
@@ -907,7 +1007,10 @@ class _SwarmScreenState extends State<SwarmScreen> {
 
   List<SwarmDestination> _searchCommands() => [
     for (final command in harnessCommands)
-      if (_canExecuteCommand(command.id))
+      if (command.id != 'navigation.quick_open' &&
+          command.id != 'navigation.commands' &&
+          !RegExp(r'^pane\.focus_[1-9]$').hasMatch(command.id) &&
+          _canExecuteCommand(command.id))
         SwarmDestination(
           id: 'command:${command.id}',
           title: command.label,
@@ -915,13 +1018,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
           swarmId: null,
           current: false,
           commandId: command.id,
-          shortcut: command.keys.isEmpty
-              ? null
-              : describeKeyBinding(
-                  harnessDefaultBindings.firstWhere(
-                    (binding) => binding.command == command.id,
-                  ),
-                ),
+          shortcut: _keymap.hint(command.id),
           searchFields: [command.id],
         ),
   ];
@@ -937,125 +1034,169 @@ class _SwarmScreenState extends State<SwarmScreen> {
           (_) => _restoreEmptyFocus(),
         );
       }
-      return CallbackShortcuts(
-        bindings: {
-          ...buildShortcutBindings(
-            handlers: _actionHandlers,
-            onSelectPaneIndex: app.focusPaneByIndex,
-          ),
-        },
-        child: Focus(
-          focusNode: _shellFocus,
-          autofocus: true,
-          child: Scaffold(
-            backgroundColor: grid.AppPalette.swarmField,
-            body: Column(
-              children: [
-                if (!_native) _tabStrip(),
-                if (_projects.error != null || app.lastError != null)
-                  Material(
-                    color: grid.AppPalette.panelBg,
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      child: Row(
-                        children: [
-                          const Icon(
-                            Icons.info_outline,
-                            size: 16,
-                            color: Colors.orangeAccent,
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Text(
-                              _projects.error ?? app.lastError!,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontSize: 12),
-                            ),
-                          ),
-                          if (_projects.error == null && app.lastErrorRetryable)
-                            TextButton(
-                              onPressed: app.retryMachines,
-                              child: const Text('Retry'),
-                            ),
-                          IconButton(
-                            onPressed: _projects.error != null
-                                ? _projects.dismissError
-                                : app.dismissError,
-                            tooltip: 'Dismiss',
-                            icon: const Icon(Icons.close, size: 16),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                Expanded(
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      if (app.panes.isEmpty)
-                        const RepaintBoundary(child: SwarmWallpaper()),
-                      Padding(
-                        padding: app.panes.isEmpty
-                            ? EdgeInsets.zero
-                            : const EdgeInsets.all(10),
-                        child: Stack(
+      return KeymapProvider(
+        keymap: _keymap,
+        child: KeymapHost(
+          keymap: _keymap,
+          enabled: () => _shortcutsEnabled,
+          canExecute: _canExecuteCommand,
+          actions: {
+            for (final id in _commands.keys) id: () => _runShortcut(id),
+          },
+          onPending: (keys) => setState(() => _pendingKeys = keys),
+          child: Focus(
+            focusNode: _shellFocus,
+            autofocus: true,
+            child: Scaffold(
+              backgroundColor: grid.AppPalette.swarmField,
+              body: Column(
+                children: [
+                  if (!_native) _tabStrip(),
+                  if (_keymap.error != null)
+                    Material(
+                      color: grid.AppPalette.panelBg,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: Row(
                           children: [
-                            Positioned.fill(
-                              child: PaneGrid(
-                                notifier: app,
-                                swarmMode: true,
-                                empty: SwarmWelcome(
-                                  key: ValueKey(app.activeSwarmId),
-                                  notifier: app,
-                                  projects: _projects.projects,
-                                  onNewAgent: _newAgent,
-                                  onAgent: (entry) => _activateSearch(
-                                    SwarmSearchSelection(
-                                      SwarmDestination(
-                                        id: agentDestinationId(
-                                          entry.machineId,
-                                          entry.agent.id,
-                                        ),
-                                        title: entry.agent.name,
-                                        detail:
-                                            entry.machine.machine.displayName,
-                                        swarmId: null,
-                                        current: false,
-                                        machineId: entry.machineId,
-                                        agentId: entry.agent.id,
-                                        engine: entry.agent.engine,
-                                      ),
-                                    ),
-                                    app.activeSwarmId,
-                                  ),
-                                  searchField: SwarmInlineSearch(
-                                    key: ValueKey(
-                                      'welcome-search:${app.activeSwarmId}',
-                                    ),
-                                    app: app,
-                                    projects: _projects,
-                                    recent: _navigation.recent,
-                                    commands: _searchCommands,
-                                    onChoose: _activateSearch,
-                                  ),
-                                  onAddProject: _addProject,
-                                  onLinkMachine: () => _dialog(
-                                    () => showSwarmLinkDialog(context, app),
-                                  ),
-                                  onMachine: _machine,
-                                  onProject: _project,
-                                  onProjectAgents: _projectAgents,
-                                ),
+                            const Expanded(
+                              child: Text(
+                                'Keyboard config has an error. Using the last working shortcuts.',
+                                style: TextStyle(fontSize: 12),
                               ),
+                            ),
+                            TextButton(
+                              onPressed: () =>
+                                  _dialog(() => showShortcutsSheet(context)),
+                              child: const Text('Details'),
                             ),
                           ],
                         ),
                       ),
-                    ],
+                    ),
+                  if (_pendingKeys.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 4,
+                      ),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          '$_pendingKeys …  Esc to cancel',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: grid.AppPalette.textSecondary,
+                          ),
+                        ),
+                      ),
+                    ),
+                  if (_projects.error != null || app.lastError != null)
+                    Material(
+                      color: grid.AppPalette.panelBg,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: Row(
+                          children: [
+                            const Icon(
+                              Icons.info_outline,
+                              size: 16,
+                              color: Colors.orangeAccent,
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                _projects.error ?? app.lastError!,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontSize: 12),
+                              ),
+                            ),
+                            if (_projects.error == null &&
+                                app.lastErrorRetryable)
+                              TextButton(
+                                onPressed: app.retryMachines,
+                                child: const Text('Retry'),
+                              ),
+                            IconButton(
+                              onPressed: _projects.error != null
+                                  ? _projects.dismissError
+                                  : app.dismissError,
+                              tooltip: 'Dismiss',
+                              icon: const Icon(Icons.close, size: 16),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  Expanded(
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        if (app.panes.isEmpty)
+                          const RepaintBoundary(child: SwarmWallpaper()),
+                        Padding(
+                          padding: app.panes.isEmpty
+                              ? EdgeInsets.zero
+                              : const EdgeInsets.all(10),
+                          child: Stack(
+                            children: [
+                              Positioned.fill(
+                                child: PaneGrid(
+                                  notifier: app,
+                                  swarmMode: true,
+                                  empty: SwarmWelcome(
+                                    key: ValueKey(app.activeSwarmId),
+                                    notifier: app,
+                                    projects: _projects.projects,
+                                    onNewAgent: _newAgent,
+                                    onAgent: (entry) => _activateSearch(
+                                      SwarmSearchSelection(
+                                        SwarmDestination(
+                                          id: agentDestinationId(
+                                            entry.machineId,
+                                            entry.agent.id,
+                                          ),
+                                          title: entry.agent.name,
+                                          detail:
+                                              entry.machine.machine.displayName,
+                                          swarmId: null,
+                                          current: false,
+                                          machineId: entry.machineId,
+                                          agentId: entry.agent.id,
+                                          engine: entry.agent.engine,
+                                        ),
+                                      ),
+                                      app.activeSwarmId,
+                                    ),
+                                    searchField: SwarmInlineSearch(
+                                      key: ValueKey(
+                                        'welcome-search:${app.activeSwarmId}',
+                                      ),
+                                      app: app,
+                                      projects: _projects,
+                                      recent: _navigation.recent,
+                                      commands: _searchCommands,
+                                      onChoose: _activateSearch,
+                                    ),
+                                    onAddProject: _addProject,
+                                    onLinkMachine: () => _dialog(
+                                      () => showSwarmLinkDialog(context, app),
+                                    ),
+                                    onMachine: _machine,
+                                    onProject: _project,
+                                    onProjectAgents: _projectAgents,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
@@ -1133,7 +1274,11 @@ class _SwarmScreenState extends State<SwarmScreen> {
           ),
         ),
         IconButton(
-          tooltip: withShortcutHint('New swarm', ShortcutAction.newSwarm),
+          tooltip: withEffectiveShortcutHint(
+            context,
+            'New swarm',
+            ShortcutAction.newSwarm,
+          ),
           onPressed: app.swarms.length < AppNotifier.maxSwarms
               ? app.newSwarm
               : null,
@@ -1194,12 +1339,24 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                     width: 36,
                                     height: 32,
                                   ),
-                              suffixIcon: _search == null
-                                  ? const Padding(
-                                      padding: EdgeInsets.only(right: 12),
-                                      child: Text(
-                                        '⌘P',
-                                        style: TextStyle(fontSize: 11),
+                              suffixIcon:
+                                  _search == null &&
+                                      _keymap.hint('navigation.quick_open') !=
+                                          null
+                                  ? Padding(
+                                      padding: const EdgeInsets.only(right: 12),
+                                      child: ConstrainedBox(
+                                        constraints: const BoxConstraints(
+                                          maxWidth: 80,
+                                        ),
+                                        child: Text(
+                                          _keymap.hint(
+                                            'navigation.quick_open',
+                                          )!,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(fontSize: 11),
+                                        ),
                                       ),
                                     )
                                   : null,
@@ -1246,7 +1403,11 @@ class _SwarmScreenState extends State<SwarmScreen> {
           ),
         ),
         IconButton(
-          tooltip: withShortcutHint('Settings', ShortcutAction.showSettings),
+          tooltip: withEffectiveShortcutHint(
+            context,
+            'Settings',
+            ShortcutAction.showSettings,
+          ),
           onPressed: _settings,
           icon: const Icon(Icons.settings_outlined, size: 18),
         ),

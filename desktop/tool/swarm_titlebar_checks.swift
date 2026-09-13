@@ -275,9 +275,9 @@ private extension SwarmTitlebar {
     try checkTitlebar(editor.string == "workshop 木", "Consumed native shortcuts never become query text")
     _ = handleSearchKey(event("k", 40, .command))
     try checkTitlebar(searchKeyDispatch?.pending.count == 1, "Native field retains a sequence prefix")
-    let before = messenger.calls.count
+    let before = messenger.calls.filter { $0.method == "keymapCommand" }.count
     _ = handleSearchKey(event("n", 45, .command))
-    try checkTitlebar(messenger.calls.count == before + 1 &&
+    try checkTitlebar(messenger.calls.filter { $0.method == "keymapCommand" }.count == before + 1 &&
       (messenger.calls.last?.arguments as? [String: Any])?["command"] as? String == "swarm.new",
       "The configured sequence dispatches its command once")
     _ = handleSearchKey(event("k", 40, .command))

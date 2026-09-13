@@ -389,7 +389,7 @@ final harnessDefaultKeymap = ResolvedKeymap(
   const KeymapConfig.empty(),
 );
 
-String describeKeyStroke(KeyStroke stroke) => [
+List<String> describeKeyStrokeKeys(KeyStroke stroke) => [
   if (stroke.control) '⌃',
   if (stroke.alt) '⌥',
   if (stroke.shift) '⇧',
@@ -418,6 +418,8 @@ String describeKeyStroke(KeyStroke stroke) => [
         'delete': '⌦',
       }[stroke.key] ??
       stroke.key.toUpperCase(),
-].join();
+];
+String describeKeyStroke(KeyStroke stroke) =>
+    describeKeyStrokeKeys(stroke).join();
 String describeKeyBinding(KeyBinding binding) =>
     binding.keys.map(describeKeyStroke).join(' ');

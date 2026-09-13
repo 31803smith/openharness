@@ -14,6 +14,8 @@ import '../state/app_state.dart';
 import 'agent_drag.dart';
 import 'rename_agent_dialog.dart';
 import 'terminal_composer.dart';
+import '../shortcuts/app_keymap.dart';
+import '../shortcuts/keymap.dart';
 import 'terminal_find_bar.dart';
 import '../terminal/terminal_search.dart';
 import '../terminal/terminal_snapshot.dart';
@@ -1016,174 +1018,182 @@ class _TerminalPanelState extends State<TerminalPanel>
     final machineState = widget.notifier.stateOf(session.machineId);
     final remote = machineState != null && !machineState.isLocalMachine;
     final showComposer = _showsComposer;
-    return ColoredBox(
-      color: grid.AppPalette.windowBg,
-      child: Column(
-        children: [
-          Stack(
-            children: [
-              Visibility(
-                visible: _find == null,
-                maintainSize: true,
-                maintainAnimation: true,
-                maintainState: true,
-                child: _buildHeader(context, remote: remote),
-              ),
-              if (_find != null)
-                Positioned.fill(
-                  child: LayoutBuilder(
-                    builder: (context, constraints) => Row(
-                      children: [
-                        if (constraints.maxWidth > 520)
-                          Expanded(
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: _stripPadding,
-                              ),
-                              child: Text(
-                                session.agentName,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 13,
-                                  color: Colors.white70,
+    return KeymapRegion(
+      contextKind: KeymapContext.terminal,
+      composing: () =>
+          _focusNode.hasFocus &&
+          _terminalViewKey.currentState?.isComposing == true,
+      child: ColoredBox(
+        color: grid.AppPalette.windowBg,
+        child: Column(
+          children: [
+            Stack(
+              children: [
+                Visibility(
+                  visible: _find == null,
+                  maintainSize: true,
+                  maintainAnimation: true,
+                  maintainState: true,
+                  child: _buildHeader(context, remote: remote),
+                ),
+                if (_find != null)
+                  Positioned.fill(
+                    child: LayoutBuilder(
+                      builder: (context, constraints) => Row(
+                        children: [
+                          if (constraints.maxWidth > 520)
+                            Expanded(
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: _stripPadding,
+                                ),
+                                child: Text(
+                                  session.agentName,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    color: Colors.white70,
+                                  ),
                                 ),
                               ),
-                            ),
-                          )
-                        else
-                          const Spacer(),
-                        SizedBox(
-                          width: math.min(constraints.maxWidth, 380),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 4,
-                            ),
-                            child: TerminalFindBar(
-                              key: _findBarKey,
-                              search: _find!,
-                              readOnly:
-                                  widget.readOnly || !session.acceptsInput,
-                              onQuery: _queryFind,
-                              onStep: _stepFind,
-                              onClose: _closeFind,
-                              onFocus: () => widget.onRendererFocus?.call(),
+                            )
+                          else
+                            const Spacer(),
+                          SizedBox(
+                            width: math.min(constraints.maxWidth, 380),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 4,
+                              ),
+                              child: TerminalFindBar(
+                                key: _findBarKey,
+                                search: _find!,
+                                readOnly:
+                                    widget.readOnly || !session.acceptsInput,
+                                onQuery: _queryFind,
+                                onStep: _stepFind,
+                                onClose: _closeFind,
+                                onFocus: () => widget.onRendererFocus?.call(),
+                              ),
                             ),
                           ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-            ],
-          ),
-
-          Divider(height: 1, color: AppColors.border),
-          Expanded(
-            child: Stack(
-              children: [
-                Positioned.fill(
-                  child: MouseRegion(
-                    onEnter: (event) => _hoverLink(event.position),
-                    onHover: (event) => _hoverLink(event.position),
-                    onExit: (_) => _hoverLink(null),
-                    child: Tooltip(
-                      message: _hoveredLink == null
-                          ? ''
-                          : '${defaultTargetPlatform == TargetPlatform.macOS ? '⌘' : 'Ctrl'}-click to open\n$_hoveredLink',
-                      child: TerminalView(
-                        session.terminal,
-                        key: _terminalViewKey,
-                        controller: _controller,
-                        autoResize: widget.visible,
-                        renderingEnabled: widget.visible,
-                        scrollController: _scrollController,
-                        focusNode: _focusNode,
-                        autofocus: widget.focused && !showComposer,
-                        readOnly: widget.readOnly || !session.acceptsInput,
-                        theme: terminalThemeFor(grid.AppTheme.palette.value),
-                        padding: const EdgeInsets.all(10),
-                        textStyle: terminalFontStore.value,
-                        // ⚠️ The terminal is NOT app chrome, and the user said so:
-                        // it carries its own font settings (Settings ▸ Terminal,
-                        // [terminalFontStore]) precisely because its type is a grid
-                        // a remote program is drawing into, not a label.
-                        //
-                        // Without this, `TerminalView` falls back to
-                        // `MediaQuery.textScalerOf(context)` (xterm's
-                        // terminal_view.dart:257), so the app-wide UI size would
-                        // change the cell size — and a changed cell size is not
-                        // cosmetic here: it re-derives `rows`, which fires
-                        // `Terminal.resize` → `session.resize` → a `terminal_resize`
-                        // frame on the wire and a real SIGWINCH at the far end.
-                        //
-                        // Read in `createRenderObject`, not only on update, so this
-                        // holds from the very first frame — no scaled first paint
-                        // and no startup resize.
-                        textScaler: TextScaler.noScaling,
-                        onKeyEvent: _onTerminalKey,
-                        onTapDown: _onLinkTapDown,
-                        onTapUp: _onLinkTapUp,
-                        mouseCursor:
-                            _hoveredLink != null && _linkModifierPressed
-                            ? SystemMouseCursors.click
-                            : SystemMouseCursors.text,
-                        onSecondaryTapDown: (_, _) => _copyOrPaste(),
-
-                        onAltBufferScroll: session.scrollViaTmuxCopyMode
-                            ? (up) => session.sendScrollCommand(up, 1)
-                            : null,
+                        ],
                       ),
-                    ),
-                  ),
-                ),
-                if (session.uploadProgress != null || _previewProgress != null)
-                  Positioned(
-                    left: 14,
-                    right: 14,
-                    bottom: 12,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (session.uploadProgress != null)
-                          _TransferProgressBadge(
-                            label: 'Uploading ${session.uploadProgress!.label}',
-                            fraction: session.uploadProgress!.percent,
-                            onCancel: () => unawaited(session.cancelUpload()),
-                          ),
-                        if (session.uploadProgress != null &&
-                            _previewProgress != null)
-                          const SizedBox(height: 8),
-                        if (_previewProgress != null)
-                          _TransferProgressBadge(
-                            label: _previewProgress!.totalBytes == null
-                                ? 'Preparing preview…'
-                                : 'Downloading ${_previewProgress!.filename}',
-                            fraction: _previewProgress!.fraction,
-                            onCancel: () => _previewCancellation?.cancel(),
-                          ),
-                      ],
                     ),
                   ),
               ],
             ),
-          ),
-          // The grip is shown whether or not the box is: collapsed, it is the only way back.
-          if (!widget.compactHeader &&
-              remote &&
-              widget.onToggleComposer != null)
-            ComposerGrip(
-              expanded: widget.composerVisible,
-              onPressed: widget.onToggleComposer!,
+
+            Divider(height: 1, color: AppColors.border),
+            Expanded(
+              child: Stack(
+                children: [
+                  Positioned.fill(
+                    child: MouseRegion(
+                      onEnter: (event) => _hoverLink(event.position),
+                      onHover: (event) => _hoverLink(event.position),
+                      onExit: (_) => _hoverLink(null),
+                      child: Tooltip(
+                        message: _hoveredLink == null
+                            ? ''
+                            : '${defaultTargetPlatform == TargetPlatform.macOS ? '⌘' : 'Ctrl'}-click to open\n$_hoveredLink',
+                        child: TerminalView(
+                          session.terminal,
+                          key: _terminalViewKey,
+                          controller: _controller,
+                          autoResize: widget.visible,
+                          renderingEnabled: widget.visible,
+                          scrollController: _scrollController,
+                          focusNode: _focusNode,
+                          autofocus: widget.focused && !showComposer,
+                          readOnly: widget.readOnly || !session.acceptsInput,
+                          theme: terminalThemeFor(grid.AppTheme.palette.value),
+                          padding: const EdgeInsets.all(10),
+                          textStyle: terminalFontStore.value,
+                          // ⚠️ The terminal is NOT app chrome, and the user said so:
+                          // it carries its own font settings (Settings ▸ Terminal,
+                          // [terminalFontStore]) precisely because its type is a grid
+                          // a remote program is drawing into, not a label.
+                          //
+                          // Without this, `TerminalView` falls back to
+                          // `MediaQuery.textScalerOf(context)` (xterm's
+                          // terminal_view.dart:257), so the app-wide UI size would
+                          // change the cell size — and a changed cell size is not
+                          // cosmetic here: it re-derives `rows`, which fires
+                          // `Terminal.resize` → `session.resize` → a `terminal_resize`
+                          // frame on the wire and a real SIGWINCH at the far end.
+                          //
+                          // Read in `createRenderObject`, not only on update, so this
+                          // holds from the very first frame — no scaled first paint
+                          // and no startup resize.
+                          textScaler: TextScaler.noScaling,
+                          onKeyEvent: _onTerminalKey,
+                          onTapDown: _onLinkTapDown,
+                          onTapUp: _onLinkTapUp,
+                          mouseCursor:
+                              _hoveredLink != null && _linkModifierPressed
+                              ? SystemMouseCursors.click
+                              : SystemMouseCursors.text,
+                          onSecondaryTapDown: (_, _) => _copyOrPaste(),
+
+                          onAltBufferScroll: session.scrollViaTmuxCopyMode
+                              ? (up) => session.sendScrollCommand(up, 1)
+                              : null,
+                        ),
+                      ),
+                    ),
+                  ),
+                  if (session.uploadProgress != null ||
+                      _previewProgress != null)
+                    Positioned(
+                      left: 14,
+                      right: 14,
+                      bottom: 12,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (session.uploadProgress != null)
+                            _TransferProgressBadge(
+                              label:
+                                  'Uploading ${session.uploadProgress!.label}',
+                              fraction: session.uploadProgress!.percent,
+                              onCancel: () => unawaited(session.cancelUpload()),
+                            ),
+                          if (session.uploadProgress != null &&
+                              _previewProgress != null)
+                            const SizedBox(height: 8),
+                          if (_previewProgress != null)
+                            _TransferProgressBadge(
+                              label: _previewProgress!.totalBytes == null
+                                  ? 'Preparing preview…'
+                                  : 'Downloading ${_previewProgress!.filename}',
+                              fraction: _previewProgress!.fraction,
+                              onCancel: () => _previewCancellation?.cancel(),
+                            ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
             ),
-          if (showComposer)
-            TerminalComposer(
-              session: session,
-              focusNode: _composerFocus,
-              inputEnabled: !widget.readOnly,
-            ),
-        ],
+            // The grip is shown whether or not the box is: collapsed, it is the only way back.
+            if (!widget.compactHeader &&
+                remote &&
+                widget.onToggleComposer != null)
+              ComposerGrip(
+                expanded: widget.composerVisible,
+                onPressed: widget.onToggleComposer!,
+              ),
+            if (showComposer)
+              TerminalComposer(
+                session: session,
+                focusNode: _composerFocus,
+                inputEnabled: !widget.readOnly,
+              ),
+          ],
+        ),
       ),
     );
   }

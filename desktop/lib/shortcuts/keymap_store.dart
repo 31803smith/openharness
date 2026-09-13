@@ -271,14 +271,21 @@ class KeymapStore extends ChangeNotifier {
       if (await handle.length() == 0) {
         await handle.writeString(
           '''// Harness keyboard overrides. Defaults are inherited.
-// Use command names from Keyboard Shortcuts / the command picker.
+// Save this file to apply changes. Invalid edits keep the last working keys.
 // A null command unbinds a key or a sequence prefix.
+// "when" can be "workspace" (default), "terminal", or "picker".
+// Workspace bindings are inherited by the other two contexts.
 {
   "version": 1,
   "bindings": [
-    // { "keys": "cmd+ctrl+h", "command": "pane.focus_left", "when": "terminal" },
+    // Example: move search from Command-P to Command-O.
+    // { "keys": "cmd+p", "command": null },
+    // { "keys": "cmd+o", "command": "navigation.quick_open" },
   ],
 }
+
+// Available command names:
+${(_commands.toList()..sort()).map((id) => '//   $id').join('\n')}
 ''',
         );
         await handle.flush();

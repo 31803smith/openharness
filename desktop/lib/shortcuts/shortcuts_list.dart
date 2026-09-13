@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 
 import '../shared/theme/app_theme.dart' as grid;
 import 'app_shortcuts.dart';
+import 'app_keymap.dart';
+import 'keymap.dart';
 import 'key_cap.dart';
 
 /// Every shortcut, grouped and printed — in the two shapes the app needs.
@@ -19,11 +21,12 @@ import 'key_cap.dart';
 /// The sheet's body: one column, group headers, no card chrome — it is already
 /// inside a dialog, and a card in a card is one surface too many.
 class ShortcutsList extends StatelessWidget {
-  const ShortcutsList({super.key});
+  const ShortcutsList({super.key, this.contextKind = KeymapContext.workspace});
+  final KeymapContext contextKind;
 
   @override
   Widget build(BuildContext context) {
-    final rows = shortcutRows();
+    final rows = effectiveShortcutRows(context, contextKind);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -49,7 +52,8 @@ class ShortcutsList extends StatelessWidget {
 /// screenful — which is the only reason to open this screen rather than the
 /// sheet.
 class ShortcutsDeck extends StatelessWidget {
-  const ShortcutsDeck({super.key});
+  const ShortcutsDeck({super.key, this.contextKind = KeymapContext.workspace});
+  final KeymapContext contextKind;
 
   /// Narrower than this and a label wraps under its own keycaps. Public so the
   /// deck's tests can render a card at exactly the width it is least able to
@@ -69,7 +73,7 @@ class ShortcutsDeck extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     grid.AppTheme.watch(context);
-    final rows = shortcutRows();
+    final rows = effectiveShortcutRows(context, contextKind);
     final cards = <Widget>[
       for (final group in ShortcutGroup.values)
         _ShortcutCard(
@@ -338,7 +342,15 @@ class _ShortcutRowView extends StatelessWidget {
               constraints: BoxConstraints(
                 maxWidth: math.max(0, constraints.maxWidth - _gutter),
               ),
-              child: KeyChordView(chords: row.chords),
+              child: row.chords.isEmpty
+                  ? Text(
+                      'Unassigned',
+                      style: TextStyle(
+                        color: grid.AppPalette.textFaint,
+                        fontSize: 11.5,
+                      ),
+                    )
+                  : KeyChordView(chords: row.chords),
             ),
           ],
         ),
