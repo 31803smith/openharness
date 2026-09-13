@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
@@ -9,8 +10,11 @@ import 'models.dart';
 /// directory watches invalidate the cache when a checkout or remote changes.
 /// No Git processes, network calls, terminal reads, or work on the render path.
 class LocalGitProjects {
-  LocalGitProjects({required this.onChanged});
+  LocalGitProjects({required this.onChanged, DateTime Function()? now})
+    : _now = now ?? DateTime.now;
   final void Function() onChanged;
+  final DateTime Function() _now;
+  static const _cacheAge = Duration(minutes: 1);
   final _entries = <String, _LocalGitEntry>{};
   bool _disposed = false;
 
@@ -21,23 +25,52 @@ class LocalGitProjects {
     final existing = _entries[cwd];
     if (existing != null) {
       if (existing.pending != null) return existing.pending!;
-      if (existing.watchers.isNotEmpty ||
-          DateTime.now().difference(existing.checkedAt) <
-              const Duration(minutes: 1)) {
+      // Even a live watcher can miss a rename or a coalesced OS event. Check
+      // again on ordinary discovery after the TTL; there is no polling timer.
+      if (_now().difference(existing.checkedAt) < _cacheAge) {
         return Future.value();
       }
-      return existing.pending = _resolve(cwd, existing);
+      return _refresh(cwd, existing);
     }
     if (_entries.length >= 256) {
       _entries.remove(_entries.keys.first)?.dispose();
     }
     final entry = _LocalGitEntry();
     _entries[cwd] = entry;
-    return entry.pending = _resolve(cwd, entry);
+    return _refresh(cwd, entry);
+  }
+
+  Future<void> _refresh(String cwd, _LocalGitEntry entry) {
+    if (_disposed || entry.disposed) return Future.value();
+    if (entry.pending != null) {
+      entry.dirty = true;
+      return entry.pending!;
+    }
+    return entry.pending = _refreshEntry(cwd, entry);
+  }
+
+  Future<void> _refreshEntry(String cwd, _LocalGitEntry entry) async {
+    try {
+      do {
+        entry.dirty = false;
+        await _resolve(cwd, entry);
+      } while (entry.dirty && !_disposed && !entry.disposed);
+    } finally {
+      entry.checkedAt = _now();
+      entry.pending = null;
+    }
   }
 
   Future<void> _resolve(String cwd, _LocalGitEntry entry) async {
+    final targets = <String, Set<String>>{};
+    void watch(String directory, Set<String> names) =>
+        (targets[directory] ??= {}).addAll(names);
     try {
+      if (!await Directory(cwd).exists()) {
+        _publish(entry, null);
+        return;
+      }
+      watch(p.normalize(cwd), {'.git'});
       var root = p.normalize(cwd);
       String? gitDir;
       for (var depth = 0; depth < 32; depth++) {
@@ -48,9 +81,12 @@ class LocalGitProjects {
           break;
         }
         if (type == FileSystemEntityType.file) {
+          targets.clear();
+          watch(root, {'.git'});
           final pointer = await _text(marker);
           if (pointer?.startsWith('gitdir: ') == true) {
-            gitDir = p.normalize(p.join(root, pointer!.substring(8).trim()));
+            final path = pointer!.substring(8).trim();
+            if (path.isNotEmpty) gitDir = p.normalize(p.join(root, path));
           }
           break;
         }
@@ -59,16 +95,23 @@ class LocalGitProjects {
         root = parent;
       }
       if (gitDir == null) {
-        if (!_disposed && !entry.disposed && entry.project != null) {
-          entry.project = null;
-          onChanged();
-        }
+        _publish(entry, null);
         return;
       }
+      // The working tree owns the .git pointer (and directory replacement),
+      // while HEAD/config may live elsewhere. Keep watching that connection.
+      targets.clear();
+      watch(root, {'.git'});
+      if (!await Directory(gitDir).exists()) {
+        _publish(entry, null);
+        return;
+      }
+      watch(gitDir, {'HEAD', 'commondir'});
       final shared = await _text(p.join(gitDir, 'commondir'));
       final common = shared == null
           ? gitDir
           : p.normalize(p.join(gitDir, shared.trim()));
+      watch(common, {'config'});
       final head = (await _text(p.join(gitDir, 'HEAD')))?.trim();
       final config = await _text(p.join(common, 'config'));
       if (_disposed || entry.disposed) return;
@@ -84,48 +127,124 @@ class LocalGitProjects {
         'remote': _origin(config),
         'branch': branch,
       });
-      if (entry.watchers.isEmpty) {
-        for (final directory in {gitDir, common}) {
-          try {
-            entry.watchers.add(
-              Directory(directory).watch().listen((event) {
-                if (!{
-                  'HEAD',
-                  'config',
-                  'commondir',
-                }.contains(p.basename(event.path))) {
-                  return;
-                }
-                entry.debounce?.cancel();
-                entry.debounce = Timer(const Duration(milliseconds: 100), () {
-                  if (!_disposed && !entry.disposed) {
-                    entry.pending = _resolve(cwd, entry);
-                  }
-                });
-              }, onError: (Object _) {}),
-            );
-          } on FileSystemException {
-            // Metadata is still useful when the filesystem cannot watch it.
-          }
-        }
-      }
-      if (entry.project != project) {
-        entry.project = project;
-        onChanged();
-      }
+      _publish(entry, project);
     } on FileSystemException {
       // A removed/unreadable working folder must not interfere with discovery.
+      _publish(entry, null);
     } finally {
-      entry.checkedAt = DateTime.now();
-      entry.pending = null;
+      if (!_disposed && !entry.disposed) _syncWatches(cwd, entry, targets);
+    }
+  }
+
+  void _publish(_LocalGitEntry entry, AgentProject? project) {
+    if (_disposed || entry.disposed || entry.project == project) return;
+    entry.project = project;
+    onChanged();
+  }
+
+  void _invalidate(String cwd, _LocalGitEntry entry) {
+    if (_disposed || entry.disposed) return;
+    entry.debounce?.cancel();
+    entry.debounce = Timer(const Duration(milliseconds: 100), () {
+      entry.debounce = null;
+      unawaited(_refresh(cwd, entry));
+    });
+  }
+
+  void _syncWatches(
+    String cwd,
+    _LocalGitEntry entry,
+    Map<String, Set<String>> targets,
+  ) {
+    entry.watchTargets = targets;
+    for (final directory in entry.watchers.keys.toList()) {
+      if (!targets.containsKey(directory)) {
+        unawaited(entry.watchers.remove(directory)!.cancel());
+      }
+    }
+    entry.retryWatchAt.removeWhere((path, _) => !targets.containsKey(path));
+    for (final directory in targets.keys) {
+      if (entry.watchers.containsKey(directory) ||
+          entry.retryWatchAt[directory]?.isAfter(_now()) == true) {
+        continue;
+      }
+      late StreamSubscription<FileSystemEvent> subscription;
+      void lost() {
+        if (_disposed ||
+            entry.disposed ||
+            entry.watchers[directory] != subscription) {
+          return;
+        }
+        entry.watchers.remove(directory);
+        unawaited(subscription.cancel());
+        // Refresh the data once, but wait for later discovery to retry a
+        // failed watch. A permanently unavailable watcher must not loop.
+        entry.retryWatchAt[directory] = _now().add(_cacheAge);
+        _invalidate(cwd, entry);
+      }
+
+      bool related(String path) =>
+          p.normalize(path) == directory ||
+          entry.watchTargets[directory]?.contains(p.basename(path)) == true;
+      try {
+        subscription = Directory(directory).watch().listen(
+          (event) {
+            if (_disposed ||
+                entry.disposed ||
+                entry.watchers[directory] != subscription) {
+              return;
+            }
+            if (related(event.path) ||
+                event is FileSystemMoveEvent &&
+                    event.destination != null &&
+                    related(event.destination!)) {
+              if (event.isDirectory &&
+                  (event is FileSystemCreateEvent ||
+                      event is FileSystemDeleteEvent ||
+                      event is FileSystemMoveEvent)) {
+                // A replacement can reuse the path while the OS watch still
+                // follows the old directory. Rebind those subscriptions.
+                final changed = {
+                  p.normalize(event.path),
+                  if (event is FileSystemMoveEvent && event.destination != null)
+                    p.normalize(event.destination!),
+                };
+                for (final watched in entry.watchers.keys.toList()) {
+                  if (changed.any(
+                    (path) => path == watched || p.isWithin(path, watched),
+                  )) {
+                    unawaited(entry.watchers.remove(watched)!.cancel());
+                    entry.retryWatchAt.remove(watched);
+                  }
+                }
+              }
+              _invalidate(cwd, entry);
+            }
+          },
+          onError: (Object _) => lost(),
+          onDone: lost,
+          cancelOnError: true,
+        );
+        entry.watchers[directory] = subscription;
+        entry.retryWatchAt.remove(directory);
+      } on FileSystemException {
+        entry.retryWatchAt[directory] = _now().add(_cacheAge);
+      } on UnsupportedError {
+        entry.retryWatchAt[directory] = _now().add(_cacheAge);
+      }
     }
   }
 
   Future<String?> _text(String path) async {
-    final file = File(path);
     try {
-      if (await file.length() > 64 * 1024) return null;
-      return await file.readAsString();
+      final file = await File(path).open();
+      try {
+        // Bound the read itself, including a file growing during discovery.
+        final bytes = await file.read(64 * 1024 + 1);
+        return bytes.length <= 64 * 1024 ? utf8.decode(bytes) : null;
+      } finally {
+        await file.close();
+      }
     } on FileSystemException {
       return null;
     } on FormatException {
@@ -198,17 +317,21 @@ String? canonicalGitRemote(String raw) {
 }
 
 class _LocalGitEntry {
-  DateTime checkedAt = DateTime.now();
+  DateTime checkedAt = DateTime.fromMillisecondsSinceEpoch(0);
   AgentProject? project;
   Future<void>? pending;
-  final watchers = <StreamSubscription<FileSystemEvent>>[];
+  bool dirty = false;
+  final watchers = <String, StreamSubscription<FileSystemEvent>>{};
+  Map<String, Set<String>> watchTargets = {};
+  final retryWatchAt = <String, DateTime>{};
   Timer? debounce;
   bool disposed = false;
   void dispose() {
     disposed = true;
     debounce?.cancel();
-    for (final watcher in watchers) {
+    for (final watcher in watchers.values) {
       unawaited(watcher.cancel());
     }
+    watchers.clear();
   }
 }

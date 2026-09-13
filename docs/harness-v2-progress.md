@@ -2,12 +2,19 @@
 
 Updated 2026-09-13 with coordinated palettes, Models, combined closed-work History and faster unified search. This is a working preview, not a release.
 
+## Git context recovery checkpoint
+
+- Three regressions reproduced stale branch context after a worktree pointer changed or a directory watch ended/errored. The local compatibility reader now watches the working tree's `.git` connection, follows changed Git/common directories, and rebinds subscriptions after same-path directory replacement. Removed working folders clear their cached context instead of borrowing the parent repository.
+- Stopped watches trigger one coalesced refresh, with a one-minute retry delay. Ordinary discovery rechecks entries older than one minute even when a watch still appears healthy; there is no polling timer. Concurrent invalidations serialize behind a pending read, and disposal cannot republish or recreate watches. Metadata reads themselves are bounded to 64 KiB plus one byte; oversized content is rejected.
+- Validation: all three new regressions failed before the fix. **38 focused metadata, project membership, screen, navigation and search checks passed** afterward, including simulated missed/stopped/unsupported watches, delayed reads, directory replacement and the existing actual-filesystem worktree branch watch. Analyzer has zero errors/warnings and the existing 12 vendored infos. Logs: `/private/tmp/harness-v2-git-watch-{before,tests,analyze}.log`.
+- This remains a small read-only compatibility path for local agents on older daemons, not a complete Git configuration resolver. No terminal/network input, Git process, remote daemon upgrade or real worktree modification was used. [The performance notes](harness-v2-performance.md) record its limits and source documentation. Rebuild is pending for this checkpoint.
+
 ## First-folder checkpoint
 
 - A genuinely empty, discovered local workspace now offers **Choose folder…**. That action opens the native folder chooser directly, then the ordinary New agent form with the selected folder. Installed-agent discovery overlaps folder selection, and the form reuses that request. The returning-user button and Cmd-N still open New agent normally.
 - Repeated activation cannot stack native choosers. Cancellation, a changed swarm/machine, loss of local identity, disconnection or a newly required link discards the late result. No agent starts until Create agent is selected; no task is sent automatically.
 - Validation: **65 focused onboarding, engine/profile, split and inline-search checks passed**, followed by an isolated visual render of the welcome and prefilled form at 880×560. Analyzer has zero errors/warnings and the existing 12 vendored infos. Artifacts: `/private/tmp/harness-v2-first-folder-{tests,render,analyze}.log` and `/private/tmp/harness-v2-first-folder-{welcome,form}.png`.
-- The preceding search-highlighting and first-agent-recovery changes were rebuilt successfully (`/private/tmp/harness-v2-search-onboarding-build.log`). The first-folder change is awaiting its own rebuild. Live capture is still unavailable; visual evidence here is from isolated renders.
+- Saved as local commit `9b7bff9`. Release build succeeded (`/private/tmp/harness-v2-first-folder-build.log`) and the exact preview reopened after PID 76047 was normally quit and confirmed exited. This includes the preceding search-highlighting and first-agent-recovery changes. Live capture is still unavailable; visual evidence here is from isolated renders.
 - Native latency calibration is paused: the disposable Release benchmark window was visible, but macOS reported it inactive and not key. No timings were accepted. See [performance notes](harness-v2-performance.md) for the failed calibration artifacts and restart condition. The real preview was reopened after the fixture exited.
 - Continue local commits. Public-origin approval remains pending; do not retry pushing or include the unrelated naming edits, collaboration draft or native benchmark directory in this checkpoint.
 
@@ -425,7 +432,7 @@ Earlier logs contain superseded failures. Temporary logs and toolchains are loca
 4. Visually confirm app-menu modal behavior and overflow accessibility in AppKit; route/shortcut behavior is covered by passing Flutter tests.
 5. Build/review Linux and Windows when their toolchains are available. Remote full project/branch metadata requires daemons running the new wire format; do not upgrade them automatically.
 6. Optional retained-context preview/highlights, deliberate right/down splits, controlled resizing, file-based keyboard customization and existing-command search are implemented and regression checked. Continue targeted real-workflow verification; ordinary-shell creation is outside the current agent-workspace scope. Keep the rejected shelf/hierarchy/dashboard/manager surfaces absent.
-7. Audit local Git watch failure/removal and relocated-worktree invalidation before broadening that compatibility path. It deliberately reads a small subset of Git metadata; prefer richer daemon metadata as available. Continue the active goal using the current research status list, distinguishing shipped reductions from proposed follow-ups.
+7. Local Git watch failure/removal, directory replacement and relocated-worktree invalidation are now regression checked. The compatibility path deliberately reads a small subset of Git metadata; prefer richer daemon metadata as available. Continue the active goal using the current research status list, distinguishing shipped reductions from proposed follow-ups.
 
 ## Toolchain and workflow
 

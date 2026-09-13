@@ -10,6 +10,16 @@ flutter test --no-pub --reporter expanded test/benchmarks/swarm_benchmark.dart
 
 It prints `SWARM_BENCH` JSON records. Its filename deliberately does not end in `_test.dart`, so ordinary correctness runs do not include timing measurements.
 
+## Local Git context recovery (2026-09-13)
+
+[Dart's filesystem watch documentation](https://api.dart.dev/dart-io/FileSystemEntity/watch.html) warns that events can coalesce or arrive out of order, and that watches end when their target disappears or the watcher stops. [Git's repository layout](https://git-scm.com/docs/gitrepository-layout) distinguishes the working tree's `.git` pointer, worktree-specific HEAD and shared configuration through `commondir`. The compatibility reader now observes those relationships and treats a subscription as fallible.
+
+The cache still holds at most 256 working folders. Each entry watches at most three nonrecursive directories, filters metadata events, and retains the 100 ms debounce. Changed targets cancel obsolete subscriptions; a replaced directory rebinds its watches even when the path is reused. Watch loss schedules one refresh and delays another subscription attempt for one minute. Normal daemon discovery rechecks one-minute-old entries even if their watches appear live; no periodic timer was added. Removed working folders clear context. Work is serialized per entry, so a slow older result cannot finish after a newer one and replace it.
+
+Reads traverse at most 32 ancestors and request at most 64 KiB plus one byte per metadata file, rejecting oversized/invalid text. They open no Git processes, read no terminal output, send no input/network traffic and perform no work on the render path. This limited compatibility reader does not replace Git's full config/environment resolution or richer daemon metadata.
+
+All three stale-cache regressions failed on the earlier code. The final focused run passed 38 tests, including directory and common-path changes, ended/failed/unsupported watches, missed events, deletion, same-path replacement, serialized slow reads and disposal. The preexisting real temporary-filesystem worktree watch also passes; synthetic watchers cover failure ordering without relying on OS timing. Logs: `/private/tmp/harness-v2-git-watch-{before,tests,analyze}.log`. This establishes recovery and bounded work; it is not a new native latency measurement.
+
 ## Native calibration remains unmeasured (2026-09-13)
 
 A fresh disposable Release copy of the existing native benchmark built at `/private/tmp/harness-native-benchmark-4t74nfhn`. Its separate bundle identity, temporary store, blocked networking and synthetic retained terminals isolate it from real agents. AppKit events are posted only to that fixture's own queue. The planned metric joins each observed input to Flutter's matching frame number and raster-finish timestamp; it excludes network and physical display latency. [Flutter's FrameTiming reference](https://api.flutter.dev/flutter/dart-ui/FrameTiming-class.html) describes those fields and recommends profile/release performance collection. The distinction between input latency under load and throughput follows the measurement discussion in [Dan Luu's terminal study](https://danluu.com/term-latency/); its old terminal rankings are not treated as current comparisons.
