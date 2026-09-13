@@ -31,6 +31,8 @@ import 'engine_identity.dart';
 /// The pane header's own horizontal inset.
 const double _stripPadding = 14;
 
+typedef TerminalNotice = ({String label, String detail, IconData icon});
+
 class TerminalPanel extends StatefulWidget {
   final AppNotifier notifier;
   final TerminalSession session;
@@ -51,10 +53,12 @@ class TerminalPanel extends StatefulWidget {
   final bool focused;
   final bool visible;
   final bool compactHeader;
+  final int focusRequest;
 
   /// Whether this tile's composer textbox is showing. Only consulted for a remote machine.
   final bool composerVisible;
   final bool readOnly;
+  final TerminalNotice? notice;
 
   /// Flips [composerVisible]. Null where there is no composer to toggle.
   final VoidCallback? onToggleComposer;
@@ -74,8 +78,10 @@ class TerminalPanel extends StatefulWidget {
     required this.focused,
     this.visible = true,
     this.compactHeader = false,
+    this.focusRequest = 0,
     this.composerVisible = false,
     this.readOnly = false,
+    this.notice,
     this.onToggleComposer,
     this.onClose,
     this.pinned = false,
@@ -223,7 +229,8 @@ class _TerminalPanelState extends State<TerminalPanel>
       _pressedLink = null;
       _observeLinkModifiers(false);
     }
-    if (!oldWidget.focused && widget.focused) {
+    if (widget.focused &&
+        (!oldWidget.focused || oldWidget.focusRequest != widget.focusRequest)) {
       _claimFocusAfterFrame();
     }
     // Showing or hiding the box changes how many rows the terminal has. Re-measure so the remote
@@ -271,10 +278,7 @@ class _TerminalPanelState extends State<TerminalPanel>
   /// one, which is what puts it on the loopback transport.
   bool get _showsComposer {
     final machineState = widget.notifier.stateOf(widget.session.machineId);
-    return machineState != null &&
-        !machineState.isLocalMachine &&
-        !widget.readOnly &&
-        widget.composerVisible;
+    return machineState?.isLocalMachine != true && widget.composerVisible;
   }
 
   /// The composer refuses focus while it is disabled, which it is until the stream goes live. When
@@ -290,7 +294,7 @@ class _TerminalPanelState extends State<TerminalPanel>
       _composerFocusPending = false;
       return;
     }
-    if (!widget.session.acceptsInput) return;
+    if (widget.readOnly || !widget.session.acceptsInput) return;
     _composerFocusPending = false;
     // Deferred a frame on purpose. This panel registers its session listener before the composer
     // registers its own (a parent's initState runs first), so at this instant the field is still
@@ -298,7 +302,7 @@ class _TerminalPanelState extends State<TerminalPanel>
     // composer rebuilds in is what makes the claim actually land.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !widget.focused || !_showsComposer) return;
-      if (!widget.session.acceptsInput) return;
+      if (widget.readOnly || !widget.session.acceptsInput) return;
       _composerFocus.requestFocus();
     });
   }
@@ -368,7 +372,7 @@ class _TerminalPanelState extends State<TerminalPanel>
     if (_composerFocus.hasFocus) return;
     // On a remote pane the box gets the caret, not the terminal. Landing in the terminal would
     // hand the user the per-keystroke path by default — the exact cost the box exists to avoid.
-    if (_showsComposer) {
+    if (_showsComposer && !widget.readOnly) {
       if (widget.session.acceptsInput) {
         _composerFocus.requestFocus();
       } else {
@@ -1062,32 +1066,6 @@ class _TerminalPanelState extends State<TerminalPanel>
                     ),
                   ),
                 ),
-                if (session.status == TerminalSessionStatus.opening ||
-                    session.status == TerminalSessionStatus.resyncing)
-                  Positioned(
-                    top: 12,
-                    right: 14,
-                    child: _OverlayBadge(
-                      label: session.status == TerminalSessionStatus.opening
-                          ? 'ATTACHING'
-                          : 'RESYNCING',
-                      spinning: true,
-                    ),
-                  ),
-                if (_find == null &&
-                    (session.status == TerminalSessionStatus.error ||
-                        session.status == TerminalSessionStatus.takenOver))
-                  Positioned.fill(
-                    child: _FrozenOverlay(
-                      session: session,
-                      onRetry: () => widget.notifier.selectAgent(
-                        session.machineId,
-                        session.agentId,
-                      ),
-                    ),
-                  ),
-                // Bottom, not top-right alongside ATTACHING/RESYNCING: the two are not mutually
-                // exclusive (a reconnect can happen mid-upload) and must not overlap each other.
                 if (session.uploadProgress != null || _previewProgress != null)
                   Positioned(
                     left: 14,
@@ -1128,7 +1106,11 @@ class _TerminalPanelState extends State<TerminalPanel>
               onPressed: widget.onToggleComposer!,
             ),
           if (showComposer)
-            TerminalComposer(session: session, focusNode: _composerFocus),
+            TerminalComposer(
+              session: session,
+              focusNode: _composerFocus,
+              inputEnabled: !widget.readOnly,
+            ),
         ],
       ),
     );
@@ -1153,6 +1135,9 @@ class _TerminalPanelState extends State<TerminalPanel>
       session: session,
       name: session.agentName,
       status: session.status,
+      notice: widget.notice,
+      readOnly: widget.readOnly,
+      error: session.errorMessage ?? session.errorCode,
       link: session.linkMode,
       machine: machine?.machine,
       agent: agent,
@@ -1171,6 +1156,8 @@ class _TerminalPanelState extends State<TerminalPanel>
       _header = _TerminalHeader(
         notifier: widget.notifier,
         session: session,
+        notice: widget.notice,
+        readOnly: widget.readOnly,
         compact: widget.compactHeader,
         onClose: widget.onClose == null ? null : () => widget.onClose?.call(),
         pinned: widget.pinned,
@@ -1191,6 +1178,8 @@ class _TerminalPanelState extends State<TerminalPanel>
 class _TerminalHeader extends StatelessWidget {
   final AppNotifier notifier;
   final TerminalSession session;
+  final TerminalNotice? notice;
+  final bool readOnly;
   final VoidCallback? onClose;
   final bool pinned;
   final bool compact;
@@ -1211,6 +1200,8 @@ class _TerminalHeader extends StatelessWidget {
   const _TerminalHeader({
     required this.notifier,
     required this.session,
+    this.notice,
+    this.readOnly = false,
     this.onClose,
     this.pinned = false,
     this.compact = false,
@@ -1236,30 +1227,41 @@ class _TerminalHeader extends StatelessWidget {
         .where((agent) => agent.id == session.agentId)
         .firstOrNull
         ?.codexHome;
-    final statusLabel = switch (session.status) {
-      TerminalSessionStatus.controlling => 'controlling',
-      TerminalSessionStatus.opening => 'attaching',
-      TerminalSessionStatus.resyncing => 'resyncing',
-      TerminalSessionStatus.takenOver => 'taken over',
-      TerminalSessionStatus.error => 'error',
-      TerminalSessionStatus.closed => 'closed',
-    };
-    final statusMark = switch (session.status) {
-      TerminalSessionStatus.opening ||
-      TerminalSessionStatus.resyncing => SizedBox(
-        width: 13,
-        height: 13,
-        child: CircularProgressIndicator(strokeWidth: 1.7, color: color),
-      ),
-      TerminalSessionStatus.controlling ||
-      TerminalSessionStatus.takenOver ||
-      TerminalSessionStatus.error ||
-      TerminalSessionStatus.closed => Container(
-        width: 8,
-        height: 8,
-        decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-      ),
-    };
+    final status =
+        notice ??
+        switch (session.status) {
+          TerminalSessionStatus.controlling => null,
+          TerminalSessionStatus.opening => (
+            label: 'Connecting',
+            icon: Icons.sync,
+            detail:
+                'Connecting to this terminal. Retained output is read only.',
+          ),
+          TerminalSessionStatus.resyncing => (
+            label: 'Restoring',
+            icon: Icons.sync,
+            detail: 'Restoring this terminal. Retained output is read only.',
+          ),
+          TerminalSessionStatus.takenOver => (
+            label: 'Take control',
+            icon: Icons.lock_outline,
+            detail: 'Read only: another app controls this terminal. Take control moves input ownership to this app.',
+          ),
+          TerminalSessionStatus.error || TerminalSessionStatus.closed => (
+            label: 'Reconnect',
+            icon: Icons.refresh,
+            detail:
+                session.errorMessage ??
+                session.errorCode ??
+                'This stream is closed. Retained output is read only.',
+          ),
+        };
+    final canReconnect =
+        notice == null &&
+        !readOnly &&
+        (session.status == TerminalSessionStatus.error ||
+            session.status == TerminalSessionStatus.closed ||
+            session.status == TerminalSessionStatus.takenOver);
     final machine = notifier.stateOf(session.machineId);
     final agent = machine?.agents
         .where((a) => a.id == session.agentId)
@@ -1317,7 +1319,7 @@ class _TerminalHeader extends StatelessWidget {
                 ),
               ),
             ),
-            if (compact && project != null) ...[
+            if (compact && status == null && project != null) ...[
               const SizedBox(width: 12),
               Flexible(
                 child: Tooltip(
@@ -1332,7 +1334,7 @@ class _TerminalHeader extends StatelessWidget {
                 ),
               ),
             ],
-            if (compact) ...[
+            if (compact && status == null) ...[
               const SizedBox(width: 12),
               Flexible(
                 child: Tooltip(
@@ -1350,15 +1352,53 @@ class _TerminalHeader extends StatelessWidget {
               ),
             ],
             const SizedBox(width: 6),
-            if (!compact && session.status == TerminalSessionStatus.controlling)
-              Padding(padding: const EdgeInsets.all(4), child: statusMark)
-            else if (session.status != TerminalSessionStatus.controlling)
-              Tooltip(
-                message: statusLabel,
-                child: Padding(
-                  padding: const EdgeInsets.all(4),
-                  child: statusMark,
+            if (status != null)
+              Flexible(
+                fit: FlexFit.tight,
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: Tooltip(
+                    message: status.detail,
+                    child: TextButton(
+                      onPressed: canReconnect
+                          ? () => notifier.selectAgent(
+                              session.machineId,
+                              session.agentId,
+                            )
+                          : null,
+                      style: TextButton.styleFrom(
+                        foregroundColor: color,
+                        disabledForegroundColor: AppColors.textSoft,
+                        minimumSize: Size.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 4,
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(status.icon, size: 14),
+                          const SizedBox(width: 6),
+                          Flexible(
+                            child: Text(
+                              status.label,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 11),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                 ),
+              )
+            else if (!compact)
+              Padding(
+                padding: const EdgeInsets.all(4),
+                child: Icon(Icons.circle, size: 8, color: color),
               ),
             // Which of the three paths carries this pane's bytes. Absent for a local machine's own
             // terminal, which has no such distinction and so gets no badge.
@@ -1458,54 +1498,7 @@ class _LinkModeMark extends StatelessWidget {
   }
 }
 
-class _OverlayBadge extends StatelessWidget {
-  final String label;
-  final bool spinning;
-  const _OverlayBadge({required this.label, required this.spinning});
-
-  @override
-  Widget build(BuildContext context) {
-    grid.AppTheme.watch(context);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
-      decoration: BoxDecoration(
-        color: grid.AppPalette.panelBg.withValues(alpha: 0.93),
-        border: Border.all(color: AppColors.borderStrong),
-        // Left at 4 on purpose. This badge is drawn INSIDE a terminal pane, and
-        // the pane is off-limits to the app-wide design pass — it is reviewed
-        // with the terminal, not with the app's chrome.
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (spinning) ...[
-            const SizedBox(
-              width: 11,
-              height: 11,
-              child: CircularProgressIndicator(strokeWidth: 1.5),
-            ),
-            const SizedBox(width: 7),
-          ],
-          Text(
-            label,
-            style: TextStyle(
-              color: AppColors.textSoft,
-              fontFamily: AppFonts.sans,
-              fontSize: 10,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Shown while an image/file drag-drop upload is in flight — see [TerminalSession.uploadProgress].
-/// Same container language as [_OverlayBadge] (panelBg@0.93, borderStrong border, radius 4,
-/// textSoft label) with a thin [LinearProgressIndicator] in place of a spinner, plus a Cancel
-/// affordance.
+/// Image/file transfer progress with a cancel action, kept in the pane's corner.
 class _TransferProgressBadge extends StatelessWidget {
   final String label;
   final double? fraction;
@@ -1573,67 +1566,6 @@ class _TransferProgressBadge extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _FrozenOverlay extends StatelessWidget {
-  final TerminalSession session;
-  final VoidCallback onRetry;
-  const _FrozenOverlay({required this.session, required this.onRetry});
-
-  @override
-  Widget build(BuildContext context) {
-    grid.AppTheme.watch(context);
-    final takenOver = session.status == TerminalSessionStatus.takenOver;
-    final accent = takenOver ? AppColors.warning : AppColors.danger;
-    return ColoredBox(
-      color: grid.AppPalette.windowBg.withValues(alpha: 0.67),
-      child: Center(
-        child: Container(
-          constraints: const BoxConstraints(maxWidth: 440),
-          padding: const EdgeInsets.all(18),
-          decoration: BoxDecoration(
-            color: grid.AppPalette.panelBg,
-            border: Border.all(color: const Color(0xff7f1d1d)),
-            borderRadius: BorderRadius.circular(6),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                'TERMINAL FROZEN',
-                style: TextStyle(
-                  color: accent,
-                  fontFamily: AppFonts.sans,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                takenOver
-                    ? 'Another app is controlling this terminal.'
-                    : session.errorMessage ??
-                          session.errorCode ??
-                          'Stream closed',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: AppColors.textSoft,
-                  fontFamily: AppFonts.sans,
-                  fontSize: 11,
-                ),
-              ),
-              const SizedBox(height: 14),
-              OutlinedButton.icon(
-                onPressed: onRetry,
-                icon: Icon(takenOver ? Icons.link : Icons.refresh, size: 16),
-                label: Text(takenOver ? 'CONNECT' : 'ATTACH NEW STREAM'),
-              ),
-            ],
-          ),
-        ),
       ),
     );
   }

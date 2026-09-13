@@ -272,6 +272,14 @@ void main() {
     app.dismissError();
     await tester.pump();
     expect(updates.last['canFind'], isTrue);
+    app.machineStates['m']!.nodeOnline = false;
+    app.dismissError();
+    await tester.pump();
+    expect(
+      updates.last['canFind'],
+      isTrue,
+      reason: 'Retained offline output stays searchable',
+    );
     await native('findTerminal');
     await tester.pump();
     expect(find.byType(TerminalFindBar), findsOneWidget);

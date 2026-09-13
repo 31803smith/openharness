@@ -4,6 +4,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/core/models.dart';
 import 'package:harness/state/swarm_navigation.dart';
 import 'package:harness/terminal/terminal_binary.dart';
+import 'package:harness/state/pane_preset.dart';
+import 'package:harness/widgets/terminal_panel.dart';
+import 'package:xterm/xterm.dart';
 
 import 'swarm_interactions_test.dart' show chord;
 import 'swarm_screen_test.dart' show mount, terminal;
@@ -17,6 +20,115 @@ Finder get selectedRow =>
     find.byWidgetPredicate((w) => w is ListTile && w.selected);
 
 void main() {
+  testWidgets('jump reveals an offscreen pane and delivers the first key there', (
+    tester,
+  ) async {
+    final app = createApp();
+    app.machineStates['m']!.nodeOnline = true;
+    final inputs = List.generate(12, (_) => <TerminalBinaryFrame>[]);
+    final sessions = List.generate(12, (i) => terminal('a$i', inputs[i]));
+    for (final session in sessions) {
+      app.adoptSessionForTest(session);
+    }
+    app.setPreset(12, PanePreset.cols2);
+    app.focusPane(app.panes.first.id);
+    await mount(tester, app);
+    await chord(tester, LogicalKeyboardKey.keyP);
+    await tester.enterText(jumpField, 'Agent 11');
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+    final pane = find.byWidgetPredicate(
+      (w) => w is TerminalPanel && identical(w.session, sessions.last),
+    );
+    final rect = tester.getRect(pane);
+    expect(rect.top, greaterThanOrEqualTo(40));
+    expect(rect.bottom, lessThanOrEqualTo(800));
+    final view = tester.widget<TerminalView>(
+      find.descendant(of: pane, matching: find.byType(TerminalView)),
+    );
+    expect(
+      view.focusNode!.hasFocus,
+      isTrue,
+      reason:
+          'model ${app.focusedPaneId} / primary ${FocusManager.instance.primaryFocus}',
+    );
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+    await tester.pump(const Duration(milliseconds: 10));
+    expect(inputs.last.single.bytes, [27, 91, 68]);
+    expect(inputs.take(11).every((input) => input.isEmpty), isTrue);
+    final gridScroll = tester
+        .widget<SingleChildScrollView>(find.byType(SingleChildScrollView).first)
+        .controller!;
+    for (final crossSwarm in [false, true]) {
+      if (crossSwarm) {
+        app.newSwarm();
+      } else {
+        gridScroll.jumpTo(0);
+      }
+      await tester.pump();
+      await chord(tester, LogicalKeyboardKey.keyP);
+      await tester.enterText(jumpField, 'Agent 11');
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      expect(tester.getRect(pane).bottom, lessThanOrEqualTo(800));
+      expect(tester.getRect(pane).top, greaterThanOrEqualTo(40));
+      expect(
+        tester
+            .widget<TerminalView>(
+              find.descendant(of: pane, matching: find.byType(TerminalView)),
+            )
+            .focusNode!
+            .hasFocus,
+        isTrue,
+      );
+    }
+    await tester.pumpWidget(const SizedBox());
+    app.dispose();
+  });
+
+  testWidgets('jump focuses a same-Swarm pane, repeats focus and follows zoom', (
+    tester,
+  ) async {
+    final app = createApp();
+    app.machineStates['m']!.nodeOnline = true;
+    final inputs = List.generate(3, (_) => <TerminalBinaryFrame>[]);
+    final sessions = List.generate(3, (i) => terminal('a$i', inputs[i]));
+    for (final session in sessions) {
+      app.adoptSessionForTest(session);
+    }
+    await mount(tester, app);
+    for (final i in [0, 0, 1]) {
+      if (i == 1) app.toggleZoomPane();
+      await chord(tester, LogicalKeyboardKey.keyP);
+      await tester.enterText(jumpField, 'Agent $i');
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      final view = tester.widget<TerminalView>(
+        find.byWidgetPredicate(
+          (w) =>
+              w is TerminalView && identical(w.terminal, sessions[i].terminal),
+        ),
+      );
+      expect(
+        view.focusNode!.hasFocus,
+        isTrue,
+        reason:
+            'model ${app.focusedPaneId} / primary ${FocusManager.instance.primaryFocus}',
+      );
+      if (i == 1) expect(app.zoomedPaneId, app.panes[i].id);
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+      await tester.pump(const Duration(milliseconds: 10));
+    }
+    expect(inputs[0], hasLength(2));
+    expect(inputs[1].single.bytes, [27, 91, 68]);
+    expect(inputs[2], isEmpty);
+    await tester.pumpWidget(const SizedBox());
+    app.dispose();
+  });
+
   testWidgets(
     'jump opens in one frame, owns typing, cancels, and leaves Add separate',
     (tester) async {

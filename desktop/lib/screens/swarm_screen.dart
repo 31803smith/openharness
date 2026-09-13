@@ -124,20 +124,9 @@ class _SwarmScreenState extends State<SwarmScreen> {
     }
   }
 
-  bool get _canFindTerminal {
-    final pane = app.focusedPane;
-    if (pane?.session == null) return false;
-    final machine = app.stateOf(pane!.machineId);
-    final agent = machine?.agents
-        .where((a) => a.id == pane.agentId)
-        .firstOrNull;
-    // Connection/setup placeholders do not currently mount a TerminalPanel.
-    return machine != null &&
-        agent?.terminalAvailable == true &&
-        machine.nodeOnline != false &&
-        !(machine.isRemote && !machine.isLocalMachine && machine.needsLink) &&
-        (!machine.isLocalMachine || machine.usesLocalTransport);
-  }
+  // Any retained session has a mounted terminal, including read-only/offline
+  // output. Never-attached setup guides have no buffer to search.
+  bool get _canFindTerminal => app.focusedPane?.session != null;
 
   void _syncNative() {
     final payload = {
@@ -267,7 +256,15 @@ class _SwarmScreenState extends State<SwarmScreen> {
       selected = await showSwarmSwitcher(context, app, _navigation);
     });
     if (!mounted || selected == null) return;
+    _preparePaneFocus();
     await activateSwarmDestination(app, selected!, destinationSwarmId: target);
+  }
+
+  void _preparePaneFocus() {
+    // The closing picker otherwise restores its previous terminal, whose focus
+    // callback can overwrite the chosen destination during this same frame.
+    _shellFocus.requestFocus();
+    FocusManager.instance.applyFocusChangesIfNeeded();
   }
 
   Future<void> _addAgent() async {
@@ -337,6 +334,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
       selected = await showSwarmAttention(context, app, _navigation);
     });
     if (!mounted || selected == null) return;
+    _preparePaneFocus();
     await activateSwarmAttention(app, selected!, destinationSwarmId: target);
   }
 

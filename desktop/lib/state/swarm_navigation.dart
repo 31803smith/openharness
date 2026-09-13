@@ -243,6 +243,8 @@ Future<bool> activateSwarmDestination(
   if (destination.isSwarm) {
     if (!app.swarms.any((s) => s.id == destination.swarmId)) return false;
     app.selectSwarm(destination.swarmId!, attachPending: false);
+    final pane = app.focusedPane;
+    if (pane != null) app.focusPane(pane.id, reveal: true);
     return true;
   }
   if (app.revealAgentView(
@@ -266,6 +268,13 @@ Future<bool> activateSwarmDestination(
     destination.agentId!,
     swarmId: destinationSwarmId,
   );
+  if (app.activeSwarmId == destinationSwarmId) {
+    final pane = app.focusedPane;
+    if (pane?.machineId == destination.machineId &&
+        pane?.agentId == destination.agentId) {
+      app.focusPane(pane!.id, reveal: true);
+    }
+  }
   return app.swarms.any(
     (s) =>
         s.id == destinationSwarmId &&

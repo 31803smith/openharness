@@ -58,7 +58,13 @@ void main() {
       session.status = TerminalSessionStatus.takenOver;
       revision.value = 3;
       await tester.pump();
-      expect(find.byTooltip('taken over'), findsOneWidget);
+      expect(find.text('Take control'), findsOneWidget);
+      expect(
+        find.byTooltip(
+          'Read only: another app controls this terminal. Take control moves input ownership to this app.',
+        ),
+        findsOneWidget,
+      );
       await tester.pumpWidget(const SizedBox());
       revision.dispose();
       session.dispose();

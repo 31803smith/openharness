@@ -326,7 +326,8 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pump();
     expect(session.status, TerminalSessionStatus.takenOver);
-    expect(find.text('TERMINAL FROZEN'), findsOneWidget);
+    expect(find.text('TERMINAL FROZEN'), findsNothing);
+    expect(find.text('Take control'), findsOneWidget);
     expect(input, isEmpty);
     await tester.pumpWidget(const SizedBox());
     app.dispose();

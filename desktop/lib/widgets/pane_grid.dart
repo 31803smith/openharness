@@ -219,6 +219,9 @@ class _SwarmCanvasState extends State<_SwarmCanvas> {
   final _scroll = ScrollController(keepScrollOffset: false);
   final _offsets = <String, double>{};
   late String _activeId = widget.notifier.activeSwarmId;
+  late int _focusRequest = widget.notifier.paneFocusRequest;
+  Size? _viewportSize;
+  bool _focusRevealPending = false;
 
   @override
   void initState() {
@@ -235,6 +238,7 @@ class _SwarmCanvasState extends State<_SwarmCanvas> {
       widget.notifier.addListener(_onAppChanged);
       _offsets.clear();
       _activeId = widget.notifier.activeSwarmId;
+      _focusRequest = widget.notifier.paneFocusRequest;
       if (_scroll.hasClients) _scroll.jumpTo(0);
     }
   }
@@ -250,7 +254,49 @@ class _SwarmCanvasState extends State<_SwarmCanvas> {
       final open = app.swarms.map((s) => s.id).toSet();
       _offsets.removeWhere((id, _) => !open.contains(id));
     }
+    if (_focusRequest != app.paneFocusRequest) {
+      _focusRequest = app.paneFocusRequest;
+      _focusRevealPending = true;
+      _revealFocusedPane();
+    }
     setState(() {});
+  }
+
+  void _revealFocusedPane({bool correctingLayout = false}) {
+    final viewport = _viewportSize;
+    if (viewport == null || !_scroll.hasClients) return;
+    final app = widget.notifier;
+    final panes = app.panes
+        .where((p) => app.zoomedPaneId == null || p.id == app.zoomedPaneId)
+        .toList();
+    final index = panes.indexWhere((p) => p.id == app.focusedPaneId);
+    if (index < 0) return;
+    final geometry = _SwarmGeometry(
+      count: panes.length,
+      viewport: viewport,
+      preset: app.presetFor(panes.length),
+      minimum: _MinTile.of(),
+    );
+    final rect = geometry.rectangles[index];
+    final current = _scroll.offset;
+    final offset = rect.top < current || rect.height > viewport.height
+        ? rect.top
+        : rect.bottom > current + viewport.height
+        ? rect.bottom - viewport.height
+        : current;
+    final target = offset.clamp(
+      0.0,
+      (geometry.height - viewport.height).clamp(0.0, double.infinity),
+    );
+    if (target != current) {
+      if (correctingLayout) {
+        // The incoming viewport size will lay out the scroll view immediately
+        // after this LayoutBuilder. Correct without notifying during layout.
+        _scroll.position.correctPixels(target);
+      } else {
+        _scroll.jumpTo(target);
+      }
+    }
   }
 
   void _onFontChanged() => setState(() {});
@@ -263,8 +309,8 @@ class _SwarmCanvasState extends State<_SwarmCanvas> {
     super.dispose();
   }
 
-  /// Cache the healthy terminal path when focus/discovery changes no visible
-  /// presentation. Connection/setup views still read their complete state.
+  /// Cache retained terminal presentation, including read-only output.
+  /// Never-attached connection/setup views still read their complete state.
   /// Theme/font dependencies continue updating retained descendants directly.
   Object? _presentation(TerminalPane pane, bool visible) {
     if (!visible) return null;
@@ -274,32 +320,31 @@ class _SwarmCanvasState extends State<_SwarmCanvas> {
         .where((a) => a.id == pane.agentId)
         .firstOrNull;
     final session = pane.session;
-    if (machine == null ||
-        agent == null ||
-        session == null ||
-        machine.nodeOnline == false ||
-        machine.needsLink ||
-        (machine.isLocalMachine && !machine.usesLocalTransport) ||
-        !agent.terminalAvailable ||
-        session.status != TerminalSessionStatus.controlling) {
-      return Object();
-    }
+    if (session == null) return Object();
     return (
       notifier: app,
-      machine: machine.machine,
-      local: machine.isLocalMachine,
+      machine: machine?.machine,
+      local: machine?.isLocalMachine,
+      online: machine?.nodeOnline,
+      needsLink: machine?.needsLink,
+      localTransport: machine?.usesLocalTransport,
       agent: agent,
-      project: machine.projectOf(agent),
+      project: agent == null ? null : machine?.projectOf(agent),
       session: session,
       terminal: session.terminal,
       name: session.agentName,
+      status: session.status,
+      error: session.errorMessage ?? session.errorCode,
       link: session.linkMode,
       upload: session.uploadProgress,
       focused: app.isPaneFocused(pane.id),
+      focusRequest: app.isPaneFocused(pane.id) ? app.paneFocusRequest : 0,
       single: app.panes.length == 1,
       pinned: app.isPanePinned(pane),
       composer: pane.composerVisible,
-      blocked: app.questionFor(pane.machineId, agent.id) != null,
+      blocked:
+          app.questionFor(pane.machineId, pane.agentId ?? session.agentId) !=
+          null,
       dragging: widget.dragging,
     );
   }
@@ -308,6 +353,12 @@ class _SwarmCanvasState extends State<_SwarmCanvas> {
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, constraints) {
       final app = widget.notifier;
+      final viewportChanged = _viewportSize != constraints.biggest;
+      _viewportSize = constraints.biggest;
+      if (_focusRevealPending && viewportChanged) {
+        _revealFocusedPane(correctingLayout: true);
+      }
+      _focusRevealPending = false;
       final visible = [
         for (final pane in app.panes)
           if (app.zoomedPaneId == null || pane.id == app.zoomedPaneId) pane,
@@ -892,13 +943,96 @@ class _PaneContent extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final machine = notifier.stateOf(pane.machineId);
-    void close() => notifier.closePane(pane.id);
-
+    final session = pane.session;
     final wantedAgentId = pane.agentId;
+    final agent = machine?.agents
+        .where((agent) => agent.id == wantedAgentId)
+        .firstOrNull;
+    final agentName = agent?.name;
+    void close() => notifier.closePane(pane.id);
+    final needsLink =
+        machine != null &&
+        machine.isRemote &&
+        !machine.isLocalMachine &&
+        machine.needsLink;
+    final offline =
+        machine != null &&
+        (machine.nodeOnline == false ||
+            (machine.isLocalMachine && !machine.usesLocalTransport));
 
+    // Availability changes the header and input permission, never the renderer's
+    // ancestry. Retained output, selection, scroll and Find stay in this view.
+    if (session != null) {
+      final TerminalNotice? notice;
+      if (machine == null) {
+        notice = (
+          label: 'Unavailable',
+          icon: Icons.cloud_off,
+          detail: 'Waiting for this machine. Retained output is read only.',
+        );
+      } else if (needsLink) {
+        notice = (
+          label: 'Link required',
+          icon: Icons.link_off,
+          detail:
+              '${machine.machine.displayName} needs linking. Retained output is read only.',
+        );
+      } else if (offline) {
+        notice = (
+          label: 'Offline',
+          icon: Icons.cloud_off,
+          detail:
+              '${machine.machine.displayName} is offline. Retained output is read only.',
+        );
+      } else if (agent == null || !agent.terminalAvailable) {
+        notice = (
+          label: 'Unavailable',
+          icon: Icons.terminal,
+          detail:
+              agent?.terminalUnavailableReason ??
+              'This agent is unavailable on ${machine.machine.displayName}. Retained output is read only.',
+        );
+      } else if (agent.launchState == 'failed') {
+        notice = (
+          label: 'Start failed',
+          icon: Icons.error_outline,
+          detail:
+              agent.launchDetail ??
+              'The engine failed to start. Terminal output is preserved.',
+        );
+      } else {
+        notice = null;
+      }
+      return LayoutBuilder(
+        builder: (context, constraints) => TerminalPanel(
+          notifier: notifier,
+          session: session,
+          focused: visible && notifier.isPaneFocused(pane.id),
+          focusRequest: notifier.isPaneFocused(pane.id)
+              ? notifier.paneFocusRequest
+              : 0,
+          visible: visible,
+          compactHeader: swarmMode,
+          composerVisible: pane.composerVisible,
+          readOnly: notice != null,
+          notice: notice,
+          onToggleComposer: () => notifier.toggleComposer(pane.id),
+          onClose: single && !swarmMode ? null : close,
+          pinned: notifier.isPanePinned(pane),
+          onTogglePin: single ? null : () => notifier.togglePinPane(pane.id),
+          onRendererFocus: () => notifier.focusPane(pane.id),
+          paneDrag: single
+              ? null
+              : PaneDragHandle(
+                  ref: PaneDragRef(paneId: pane.id),
+                  size: constraints.biggest,
+                ),
+        ),
+      );
+    }
+
+    // A never-attached view has no output to preserve: keep its setup guidance.
     if (machine == null) {
-      // The ordinary state of a restored tile for the first moments of a launch,
-      // and of a tile whose machine is briefly out of the list.
       return _PaneStatus(
         title: wantedAgentId ?? pane.machineId,
         icon: Icons.hourglass_empty,
@@ -907,19 +1041,6 @@ class _PaneContent extends StatelessWidget {
         busy: true,
       );
     }
-
-    final agent = wantedAgentId == null
-        ? null
-        : machine.agents
-              .where((agent) => agent.id == wantedAgentId)
-              .firstOrNull;
-    final agentName = agent?.name;
-
-    // Deliberately NOT gated on isLinkPromptDismissed: dismissing only suppresses the popup (see
-    // showLinkMachineScreenDialog / HomeScreen._maybeShowLinkDialog) — the tile's own status stays
-    // honest about the machine actually being unlinked regardless.
-    final needsLink =
-        machine.isRemote && !machine.isLocalMachine && machine.needsLink;
     if (needsLink) {
       return _PaneStatus(
         title: agentName ?? machine.machine.displayName,
@@ -929,10 +1050,6 @@ class _PaneContent extends StatelessWidget {
         onClose: single && !swarmMode ? null : close,
       );
     }
-
-    final offline =
-        machine.nodeOnline == false ||
-        (machine.isLocalMachine && !machine.usesLocalTransport);
     if (offline) {
       return _Guide(
         single: single && !swarmMode,
@@ -949,10 +1066,6 @@ class _PaneContent extends StatelessWidget {
         ),
       );
     }
-
-    // A machine tile that has nothing left to report. It arrived to carry a
-    // link prompt or a setup form; once those are answered it has said all it
-    // has to say, and the person can drag an agent into it.
     if (wantedAgentId == null) {
       return _PaneStatus(
         title: machine.machine.displayName,
@@ -961,7 +1074,6 @@ class _PaneContent extends StatelessWidget {
         onClose: close,
       );
     }
-
     if (agentName == null) {
       return _PaneStatus(
         title: wantedAgentId,
@@ -970,7 +1082,6 @@ class _PaneContent extends StatelessWidget {
         onClose: close,
       );
     }
-
     if (agent != null && !agent.terminalAvailable) {
       return _PaneStatus(
         title: agentName,
@@ -981,91 +1092,14 @@ class _PaneContent extends StatelessWidget {
         onClose: close,
       );
     }
-
-    final session = pane.session;
-    if (session == null) {
-      return _PaneStatus(
-        title: agentName,
-        icon: Icons.hourglass_empty,
-        message: 'Attaching…',
-        onClose: single && !swarmMode ? null : close,
-        busy: true,
-      );
-    }
-
-    // LayoutBuilder ONLY to learn this tile's size, for the drag ghost to be
-    // cut to. Asking the render object instead — `key.currentContext.size` —
-    // is what Flutter refuses outright during build: "the size getter should
-    // only be called from paint callbacks or interaction event handlers", and
-    // it does not warn, it throws, so every pane became a red error box.
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final launchFailed = agent?.launchState == 'failed';
-        final terminal = TerminalPanel(
-          notifier: notifier,
-          session: session,
-          focused: visible && notifier.isPaneFocused(pane.id),
-          visible: visible,
-          compactHeader: swarmMode,
-          composerVisible: !launchFailed && pane.composerVisible,
-          readOnly: launchFailed,
-          onToggleComposer: launchFailed
-              ? null
-              : () => notifier.toggleComposer(pane.id),
-          onClose: single && !swarmMode ? null : close,
-          pinned: notifier.isPanePinned(pane),
-          onTogglePin: single ? null : () => notifier.togglePinPane(pane.id),
-          onRendererFocus: () => notifier.focusPane(pane.id),
-          paneDrag: single
-              ? null
-              : PaneDragHandle(
-                  ref: PaneDragRef(paneId: pane.id),
-                  size: constraints.biggest,
-                ),
-        );
-        if (agent?.launchState != 'failed') return terminal;
-        return Column(
-          children: [
-            _LaunchFailureBanner(
-              message: agent?.launchDetail ?? 'The engine failed to start. Terminal output is preserved below.',
-            ),
-            Expanded(child: terminal),
-          ],
-        );
-      },
+    return _PaneStatus(
+      title: agentName,
+      icon: Icons.hourglass_empty,
+      message: 'Attaching…',
+      onClose: single && !swarmMode ? null : close,
+      busy: true,
     );
   }
-}
-
-class _LaunchFailureBanner extends StatelessWidget {
-  const _LaunchFailureBanner({required this.message});
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) => Container(
-    width: double.infinity,
-    color: Theme.of(context).colorScheme.errorContainer,
-    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-    child: Row(
-      children: [
-        Icon(
-          Icons.error_outline,
-          size: 16,
-          color: Theme.of(context).colorScheme.onErrorContainer,
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text(
-            message,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: Theme.of(context).colorScheme.onErrorContainer,
-            ),
-          ),
-        ),
-      ],
-    ),
-  );
 }
 
 /// Where an OS file (from Finder/Nautilus, not an in-app drag) may be dropped onto this pane.

@@ -378,7 +378,7 @@ class AppNotifier extends ChangeNotifier {
     _announceFocusToDial();
     if (attachPending) {
       for (final machine in machineStates.values) {
-        _attachPendingPanes(machine);
+        _attachPendingPanes(machine, retryExisting: false);
       }
     }
     notifyListeners();
@@ -407,7 +407,7 @@ class AppNotifier extends ChangeNotifier {
       (p) => p.machineId == machineId && p.agentId == agentId,
     );
     if (owner == activeSwarm) {
-      focusPane(pane.id);
+      focusPane(pane.id, reveal: true);
       return true;
     }
     if (owner.focusedPaneId != pane.id) {
@@ -418,6 +418,7 @@ class AppNotifier extends ChangeNotifier {
     _activeSwarmId = owner.id;
     railFocused = false;
     selectedMachineId = machineId;
+    _paneFocusRequest++;
     _persistLayout();
     _announceFocusToDial();
     notifyListeners();
@@ -568,6 +569,11 @@ class AppNotifier extends ChangeNotifier {
   /// the rail draws as current.
   int? get focusedPaneId => activeSwarm.focusedPaneId;
   set focusedPaneId(int? value) => activeSwarm.focusedPaneId = value;
+
+  int _paneFocusRequest = 0;
+
+  /// Explicit navigation must reveal and refocus even an already-selected pane.
+  int get paneFocusRequest => _paneFocusRequest;
 
   /// The chosen shape for a grid of this size, or the shipped one.
   Map<int, PanePreset> get panePresets => activeSwarm.presets;
@@ -860,7 +866,7 @@ class AppNotifier extends ChangeNotifier {
     }
   }
 
-  void focusPane(int paneId) {
+  void focusPane(int paneId, {bool reveal = false}) {
     if (!panes.any((pane) => pane.id == paneId)) return;
     final moved = focusedPaneId != paneId || railFocused;
     railFocused = false;
@@ -871,6 +877,7 @@ class AppNotifier extends ChangeNotifier {
     if (moved) _previousPaneId = focusedPaneId;
     focusedPaneId = paneId;
     selectedMachineId = focusedPane?.machineId;
+    if (reveal) _paneFocusRequest++;
     if (zoomedPaneId != null) zoomedPaneId = paneId;
     // Announced even when this tile was ALREADY focused.
     //
@@ -889,11 +896,8 @@ class AppNotifier extends ChangeNotifier {
     // real position (`agentId === this.dialFocus` in cableSession), which is the
     // only side that can judge, because only it knows where the dial is.
     _announceFocusToDial();
-    // Only a real move is worth a rebuild.
-    if (moved) {
-      _persistLayout();
-      notifyListeners();
-    }
+    if (moved) _persistLayout();
+    if (moved || reveal) notifyListeners();
   }
 
   /// Tell the local daemon which agent this window is looking at, so the dial follows it.
@@ -3494,6 +3498,7 @@ class AppNotifier extends ChangeNotifier {
       } else if (terminal.status != TerminalSessionStatus.opening &&
           terminal.status != TerminalSessionStatus.controlling &&
           terminal.status != TerminalSessionStatus.resyncing) {
+        if (!_canAttachPane(existing)) return;
         // A healthy pane is focus-only: opening the same daemon controller a
         // second time would take over its own first stream. A frozen/closed
         // pane is different — the explicit retry action needs a fresh session.
@@ -4216,11 +4221,14 @@ class AppNotifier extends ChangeNotifier {
   /// and the machine's terminal protocol has been negotiated — become true at
   /// different moments, and a machine that goes away and returns has to be able
   /// to re-arrive at them.
-  void _attachPendingPanes(MachineState machine) {
+  void _attachPendingPanes(MachineState machine, {bool retryExisting = true}) {
     final machineId = machine.machine.machineId;
     for (final pane in allPanes.toList()) {
       if (!panes.contains(pane) && pane.session == null) continue;
       if (pane.machineId != machineId) continue;
+      // Navigation may mount a new view; it must never retry a retained stream
+      // or discard its output while the machine is unavailable.
+      if (!retryExisting && pane.session != null) continue;
       if (!_paneNeedsAttach(pane)) continue;
       // Covers a tile that never attached AND one holding a stream the machine
       // lost. Only the first used to be covered, and the second is why a
@@ -4254,8 +4262,20 @@ class AppNotifier extends ChangeNotifier {
   /// already lost or closed, so a close addressed to it would at best be
   /// ignored and at worst land on whatever took its place.
   Future<void> _reattachPane(TerminalPane pane) async {
+    if (!_canAttachPane(pane)) return;
     await _detachSession(pane, sendClose: false);
     await _attachSession(pane);
+  }
+
+  bool _canAttachPane(TerminalPane pane) {
+    if (_disposed || !allPanes.contains(pane)) return false;
+    final machine = machineStates[pane.machineId];
+    return machine != null &&
+        machine.nodeOnline != false &&
+        machine.terminalCapabilityAvailable &&
+        !(machine.isRemote && !machine.isLocalMachine && machine.needsLink) &&
+        (!machine.isLocalMachine || machine.usesLocalTransport) &&
+        machine.agents.any((a) => a.id == pane.agentId && a.terminalAvailable);
   }
 
   /// Resolve a dial agent to the machine that owns it.
