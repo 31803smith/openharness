@@ -14,6 +14,7 @@ import '../shared/theme/app_theme.dart' as grid;
 import '../shortcuts/app_shortcuts.dart' hide TerminalKey;
 import '../state/app_state.dart';
 import '../state/pane_preset.dart';
+import '../state/pane_arrangement.dart';
 import '../state/terminal_pane.dart';
 import '../terminal/terminal_binary.dart';
 import '../terminal/terminal_font_store.dart';
@@ -23,6 +24,7 @@ import 'agent_drag.dart';
 import 'harness_join_guide_screen.dart';
 import 'new_agent_dialog.dart';
 import 'terminal_panel.dart';
+import 'pane_resize_handle.dart';
 
 /// Terminal views arranged by the chosen preset. Swarms keep each view under
 /// one stable parent as its rectangle, visibility and keyboard focus change.
@@ -218,6 +220,9 @@ class _SwarmCanvas extends StatefulWidget {
 class _SwarmCanvasState extends State<_SwarmCanvas> {
   final _scroll = ScrollController(keepScrollOffset: false);
   final _offsets = <String, double>{};
+  final _resizeFocus = FocusNode(debugLabel: 'Resize focused agent');
+  final _resizeHelp = OverlayPortalController();
+  late int _resizeRequest = widget.notifier.paneResizeRequest;
   late String _activeId = widget.notifier.activeSwarmId;
   late int _focusRequest = widget.notifier.paneFocusRequest;
   Size? _viewportSize;
@@ -245,7 +250,13 @@ class _SwarmCanvasState extends State<_SwarmCanvas> {
 
   void _onAppChanged() {
     final app = widget.notifier;
+    if (_resizeRequest != app.paneResizeRequest) {
+      _resizeRequest = app.paneResizeRequest;
+      _resizeFocus.requestFocus();
+      _resizeHelp.show();
+    }
     if (_activeId != app.activeSwarmId) {
+      if (_resizeHelp.isShowing) _resizeHelp.hide();
       if (_scroll.hasClients) _offsets[_activeId] = _scroll.offset;
       _activeId = app.activeSwarmId;
       // The notification precedes the frame. Restore before layout/paint so
@@ -276,6 +287,7 @@ class _SwarmCanvasState extends State<_SwarmCanvas> {
       viewport: viewport,
       preset: app.presetFor(panes.length),
       minimum: _MinTile.of(),
+      sizes: app.activeSwarm.paneSizes,
     );
     final rect = geometry.rectangles[index];
     final current = _scroll.offset;
@@ -305,6 +317,7 @@ class _SwarmCanvasState extends State<_SwarmCanvas> {
   void dispose() {
     widget.notifier.removeListener(_onAppChanged);
     terminalFontStore.removeListener(_onFontChanged);
+    _resizeFocus.dispose();
     _scroll.dispose();
     super.dispose();
   }
@@ -368,7 +381,12 @@ class _SwarmCanvasState extends State<_SwarmCanvas> {
         viewport: constraints.biggest,
         preset: app.presetFor(visible.length),
         minimum: _MinTile.of(),
+        sizes: app.activeSwarm.paneSizes,
       );
+      if (app.zoomedPaneId == null) {
+        app.activeSwarm.arranged = layout.arrangement;
+        app.activeSwarm.arrangedKey = layout.key;
+      }
       if (layout.columns != null) app.gridColumns = layout.columns;
       final rectangles = {
         for (var i = 0; i < visible.length; i++)
@@ -411,12 +429,106 @@ class _SwarmCanvasState extends State<_SwarmCanvas> {
                       ),
                     ),
                   ),
+              if (app.zoomedPaneId == null && layout.arrangement != null)
+                Positioned.fill(
+                  child: _resizeLayer(layout, constraints.biggest),
+                ),
             ],
           ),
         ),
       );
     },
   );
+
+  Widget _resizeLayer(_SwarmGeometry layout, Size viewport) {
+    final app = widget.notifier;
+    final swarmId = app.activeSwarmId;
+    final arrangement = layout.arrangement!;
+    final focused = app.panes.indexWhere(
+      (pane) => pane.id == app.focusedPaneId,
+    );
+    final preferred = arrangement.dividers
+        .where((divider) => divider.touches(focused))
+        .firstOrNull;
+    final extent = Size(viewport.width + kPaneGap, layout.height + kPaneGap);
+    final floor = _MinTile.of();
+    final minimum = Size(
+      (floor.width + kPaneGap) / extent.width,
+      (floor.height + kPaneGap) / extent.height,
+    );
+    return OverlayPortal(
+      controller: _resizeHelp,
+      overlayChildBuilder: (context) => Positioned(
+        bottom: 24,
+        left: 24,
+        right: 24,
+        child: IgnorePointer(
+          child: Center(
+            child: Container(
+              key: const ValueKey('pane-resize-hint'),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                border: Border.all(color: AppColors.borderStrong),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                'Arrow keys resize · Shift for larger steps · Tab next divider · Esc done',
+                style: TextStyle(fontSize: 13, color: AppColors.textSoft),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ),
+        ),
+      ),
+      child: FocusScope(
+        onFocusChange: (focused) {
+          if (!focused && _resizeHelp.isShowing) _resizeHelp.hide();
+        },
+        child: Stack(
+          children: [
+            for (final divider in arrangement.dividers)
+              Positioned.fromRect(
+                key: ValueKey('resize:$swarmId:${layout.key}:${divider.id}'),
+                rect: divider.axis == PaneResizeAxis.x
+                    ? Rect.fromLTWH(
+                        divider.position * extent.width - kPaneGap,
+                        divider.start * extent.height,
+                        kPaneGap,
+                        (divider.end - divider.start) * extent.height -
+                            kPaneGap,
+                      )
+                    : Rect.fromLTWH(
+                        divider.start * extent.width,
+                        divider.position * extent.height - kPaneGap,
+                        (divider.end - divider.start) * extent.width - kPaneGap,
+                        kPaneGap,
+                      ),
+                child: PaneResizeHandle(
+                  arrangement: arrangement,
+                  divider: divider,
+                  extent: extent,
+                  minimum: minimum,
+                  focusNode: identical(divider, preferred)
+                      ? _resizeFocus
+                      : null,
+                  onChanged: (next, persist) => app.resizePanes(
+                    swarmId,
+                    layout.key!,
+                    next,
+                    persist: persist,
+                  ),
+                  onLeave: () {
+                    final id = app.focusedPaneId;
+                    if (id != null) app.focusPane(id, reveal: true);
+                  },
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 /// Convert the same unit rectangles used by the layout picker and keyboard
@@ -428,6 +540,7 @@ class _SwarmGeometry {
     required Size viewport,
     required PanePreset? preset,
     required Size minimum,
+    Map<String, PaneArrangement> sizes = const {},
   }) : height = viewport.height {
     if (count == 0) return;
     if (count == 1) {
@@ -448,8 +561,18 @@ class _SwarmGeometry {
         double.infinity,
       );
     }
+    key =
+        '$count:${(preset ?? PanePreset.defaultFor(count))!.id}:${columns ?? 0}:${shape.id}';
+    arrangement =
+        sizes[key] ?? PaneArrangement(shape.tilesFor(count, columns: columns));
+    for (final tile in arrangement!.tiles) {
+      height = ((minimum.height + kPaneGap) / tile.height - kPaneGap).clamp(
+        height,
+        double.infinity,
+      );
+    }
     rectangles = [
-      for (final tile in shape.tilesFor(count, columns: columns))
+      for (final tile in arrangement!.tiles)
         Rect.fromLTWH(
           tile.left * (viewport.width + kPaneGap),
           tile.top * (height + kPaneGap),
@@ -464,6 +587,8 @@ class _SwarmGeometry {
         ),
     ];
   }
+  String? key;
+  PaneArrangement? arrangement;
   double height;
   int? columns;
   List<Rect> rectangles = const [];

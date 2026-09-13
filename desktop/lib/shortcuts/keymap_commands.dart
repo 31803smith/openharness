@@ -236,6 +236,12 @@ final harnessCommands = <HarnessCommand>[
     action: ShortcutAction.showLayout,
     nativeAction: 'layout',
   ),
+  const HarnessCommand('pane.resize', 'Resize panes', ShortcutGroup.panes),
+  const HarnessCommand(
+    'pane.reset_sizes',
+    'Reset pane sizes',
+    ShortcutGroup.panes,
+  ),
   const HarnessCommand(
     'terminal.find',
     'Find in the focused terminal',

@@ -2,14 +2,23 @@
 
 Updated 2026-09-13 with coordinated palettes, Models, combined closed-work History and faster unified search. This is a working preview, not a release.
 
-## Active follow-up: commands and keyboard integration
+## Active follow-up: controlled resizing
+
+- The existing Swarm gaps now resize adjacent agents. Connected divider segments stay aligned; disconnected side stacks can resize independently. Limits derive from the existing 40-column/12-row terminal floor. A deliberately dense preset cannot shrink further below its existing size. Double-click balances the neighboring space.
+- Proportions persist per Swarm, pane count, preset and responsive orientation/column count. Drag frames stay in memory, with an ordinary coalesced layout save when the drag finishes. Saved data is bounded and rejects malformed/overlapping rectangles. Offline restoration and closed-Swarm reopening retain sizes. Selecting any layout through Cmd-S, including the current one, resets custom proportions for that pane count.
+- `> Resize panes` focuses a nearby divider. Arrows move in 2% steps, Shift-arrows in 10% steps, Tab selects another divider and Escape returns to the agent. A temporary hint explains those keys. `> Reset pane sizes` resets directly. No existing shortcut changed. Pointer cancellation restores the starting arrangement; input focus returns to the original agent. Terminal elements and sessions stay mounted.
+- Validation: **1,131 Flutter tests passed, one existing skip**, including geometry limits across all existing presets, saved/offline/reopened proportions, cancellation and exact next-key ownership. The final temporary-hint refinement passed the focused resize/canvas run plus an isolated render. The render initially targeted the crossing of two dividers; its corrected pointer position and explicit width assertion verify the intended drag. Analyzer has no errors/warnings and 12 existing vendored infos. Artifacts: `/private/tmp/harness-v2-resize-{tests,full-tests,final-checks,analyze,render,build}.log` and `/private/tmp/harness-v2-resize-{resized,focused}.png`.
+- Release build succeeded and the preview was relaunched. The verified preview PID 84992 was normally quit and confirmed exited before rebuilding; re-observe the current PID before another restart. Live native capture remains unavailable; current visual evidence is isolated rendering with system fonts. No real agent received test input.
+- Next: deliberate right/down splits using the same stable rectangles, optional cached search preview, and file-remapping ownership across AppKit and Flutter.
+
+## Commands and keyboard integration checkpoint
 
 - Both real search fields now accept `>` for existing workspace commands. Command results use compact rows and show the actual default shortcut. Commands stay out of ordinary agent/swarm search and History; clearing `>` returns to regular navigation. A small hint appears only in open, empty search. No new permanent button or conflicting shortcut was added.
 - Search and keyboard actions share the same callbacks. The command catalog derives workspace bindings directly from the current live table, including Cmd-H/J/K/L and arrows, Cmd-B, Cmd-S, Cmd-R, Cmd-number pane selection, Cmd-Enter zoom, Cmd-Shift-P pin and current tab/history keys. The withdrawn modifier-heavy defaults are removed. **File remapping remains unconnected until native menus, Flutter input, help and native search can agree on its effective bindings.**
 - Availability is checked again at selection and execution. A command cannot add an agent or be resolved as an agent destination. Queries never reach a session. Fixed return focus after non-navigation commands and made Rename focus its selected name immediately; the Rename controller now follows the dialog lifecycle instead of a delayed disposal timer.
 - **1,125 Flutter tests passed, with one existing skip.** Analyzer: no errors or warnings, 12 existing vendored infos. After making command rows compact, all 15 focused command/search checks passed. Final visual fixtures for both inputs were rendered and reviewed; their helper initially failed its cleanup invariant after enabling real shadows, then was corrected to restore that test-only flag. Logs: `/private/tmp/harness-v2-command-{full-tests,focus,final-checks,analyze,render,build}.log`; images: `/private/tmp/harness-v2-commands-{top,inline}.png`.
 - Release build succeeded. Before rebuilding, normally quit verified preview PID 71858 and verified it exited. Re-observe the relaunched preview process/window before later interaction. No real agent received test input and no real session was closed for testing.
-- Next: complete file-remapping ownership across AppKit and Flutter, then controlled splits/resizing and optional cached preview. Do not reapply `/private/tmp/harness-v2-keyboard-wiring-before-inline-search.patch` blindly; its search paths and assumptions are obsolete.
+- File-remapping ownership across AppKit and Flutter remains pending. Do not reapply `/private/tmp/harness-v2-keyboard-wiring-before-inline-search.patch` blindly; its search paths and assumptions are obsolete.
 
 ## Previous checkpoint: first use
 

@@ -1,4 +1,5 @@
 import 'pane_preset.dart';
+import 'pane_arrangement.dart';
 import 'terminal_pane.dart';
 
 /// A named arrangement of agents. Membership never owns the agent process.
@@ -11,6 +12,9 @@ class Swarm {
   String name;
   final List<TerminalPane> panes = [];
   final Map<int, PanePreset> presets = {};
+  final Map<String, PaneArrangement> paneSizes = {};
+  PaneArrangement? arranged;
+  String? arrangedKey;
   int? focusedPaneId;
   int? zoomedPaneId;
   int? previousPaneId;
@@ -42,6 +46,10 @@ class Swarm {
       'previousFocus': agents.indexWhere((p) => p.id == previousPaneId),
       'zoom': agents.indexWhere((p) => p.id == zoomedPaneId),
       'presets': {for (final e in presets.entries) '${e.key}': e.value.id},
+      if (paneSizes.isNotEmpty)
+        'paneSizes': {
+          for (final e in paneSizes.entries) e.key: e.value.toJson(),
+        },
       'panes': [
         for (final p in agents)
           PaneLayoutEntry(
@@ -102,6 +110,7 @@ class ClosedSwarm extends ClosedWork {
        ),
        zoom = swarm.panes.indexWhere((p) => p.id == swarm.zoomedPaneId),
        presets = Map.unmodifiable(swarm.presets),
+       paneSizes = Map.unmodifiable(swarm.paneSizes),
        panes = List.unmodifiable([
          for (final pane in swarm.panes)
            (
@@ -121,6 +130,7 @@ class ClosedSwarm extends ClosedWork {
   final int previousFocus;
   final int zoom;
   final Map<int, PanePreset> presets;
+  final Map<String, PaneArrangement> paneSizes;
   final List<
     ({String machineId, String? agentId, bool composerVisible, int? pinnedSlot})
   >

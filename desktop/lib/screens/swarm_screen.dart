@@ -843,6 +843,8 @@ class _SwarmScreenState extends State<SwarmScreen> {
         command.id: _actionHandlers[command.action]!,
     'machine.link': () => _dialog(() => showSwarmLinkDialog(context, app)),
     'project.add': _addProject,
+    'pane.resize': app.beginPaneResize,
+    'pane.reset_sizes': app.resetPaneSizes,
   };
 
   bool _canExecuteCommand(String id) {
@@ -863,6 +865,14 @@ class _SwarmScreenState extends State<SwarmScreen> {
     if (id == 'navigation.back') return _navigation.canGoBack(app);
     if (id == 'navigation.forward') return _navigation.canGoForward(app);
     if (id.startsWith('terminal.')) return _canFindTerminal;
+    if (id == 'pane.resize') {
+      return app.panes.length > 1 && app.zoomedPaneId == null;
+    }
+    if (id == 'pane.reset_sizes') {
+      return app.activeSwarm.paneSizes.keys.any(
+        (key) => key.startsWith('${app.panes.length}:'),
+      );
+    }
     if (id.startsWith('pane.') || id == 'task.route') {
       return app.focusedPane != null;
     }

@@ -36,6 +36,7 @@ import '../ws/ws_conn.dart';
 import '../ws/local_cli_discovery.dart';
 import '../ws/ws_pool.dart';
 import 'pane_preset.dart';
+import 'pane_arrangement.dart';
 import 'pending_question.dart';
 import '../usage/remote_usage.dart';
 import '../usage/usage_accounts.dart';
@@ -546,7 +547,8 @@ class AppNotifier extends ChangeNotifier {
     }
     final restored = Swarm(id: id, name: saved.name)
       ..gridColumns = saved.gridColumns
-      ..presets.addAll(saved.presets);
+      ..presets.addAll(saved.presets)
+      ..paneSizes.addAll(saved.paneSizes);
     for (final entry in saved.panes) {
       final pane = pool.putIfAbsent(
         (entry.machineId, entry.agentId),
@@ -669,19 +671,62 @@ class AppNotifier extends ChangeNotifier {
   PanePreset? presetFor(int paneCount) =>
       panePresets[paneCount] ?? PanePreset.defaultFor(paneCount);
 
-  /// Choose a shape. Keyed by tile COUNT: three tiles and four tiles are
-  /// different shapes and one choice cannot speak for both.
-  ///
-  /// The shape is now the ONLY thing to choose about the grid — tiles are laid
-  /// out at the proportions the shape states and nothing is draggable. Which is
-  /// why the shapes had to become a real list first: dragging was what a person
-  /// reached for when the one shape on offer was not the one they wanted.
+  /// Choosing a preset also resets custom sizes for that pane count. Selecting
+  /// the current preset in Command-S is the quick way back to its proportions.
   void setPreset(int paneCount, PanePreset preset) {
     if (!PanePreset.forCount(paneCount).contains(preset)) return;
-    if (presetFor(paneCount) == preset) return;
+    final resized = activeSwarm.paneSizes.keys.any(
+      (key) => key.startsWith('$paneCount:'),
+    );
+    if (presetFor(paneCount) == preset && !resized) return;
     panePresets[paneCount] = preset;
+    activeSwarm.paneSizes.removeWhere(
+      (key, _) => key.startsWith('$paneCount:'),
+    );
+    activeSwarm.arranged = null;
+    activeSwarm.arrangedKey = null;
     notifyListeners();
     _persistLayout();
+  }
+
+  int _paneResizeRequest = 0;
+  int get paneResizeRequest => _paneResizeRequest;
+  void beginPaneResize() {
+    if (panes.length < 2 || zoomedPaneId != null) return;
+    _paneResizeRequest++;
+    notifyListeners();
+  }
+
+  /// Drag frames only update in-memory intent. The completed gesture performs
+  /// one ordinary coalesced layout save; terminal sessions remain untouched.
+  bool resizePanes(
+    String swarmId,
+    String layoutKey,
+    PaneArrangement arrangement, {
+    bool persist = true,
+  }) {
+    if (activeSwarmId != swarmId ||
+        zoomedPaneId != null ||
+        arrangement.tiles.length != panes.length ||
+        activeSwarm.arrangedKey != layoutKey) {
+      return false;
+    }
+    if (identical(activeSwarm.paneSizes[layoutKey], arrangement)) {
+      if (persist) _persistLayout();
+      return true;
+    }
+    activeSwarm.paneSizes[layoutKey] = arrangement;
+    while (activeSwarm.paneSizes.length > 64) {
+      activeSwarm.paneSizes.remove(activeSwarm.paneSizes.keys.first);
+    }
+    activeSwarm.arranged = arrangement;
+    notifyListeners();
+    if (persist) _persistLayout();
+    return true;
+  }
+
+  void resetPaneSizes() {
+    setPreset(panes.length, presetFor(panes.length) ?? PanePreset.auto);
   }
 
   int _nextPaneId = 1;
@@ -3894,7 +3939,9 @@ class AppNotifier extends ChangeNotifier {
   int? _wrapVertically(int delta) {
     final count = panes.length;
     if (count < 2) return null;
-    final shape = presetFor(count)?.tilesFor(count, columns: gridColumns);
+    final shape = activeSwarm.arranged?.tiles.length == count
+        ? activeSwarm.arranged!.tiles
+        : presetFor(count)?.tilesFor(count, columns: gridColumns);
     if (shape == null || shape.length != count) return null;
     final at = panes.indexWhere((pane) => pane.id == focusedPaneId);
     if (at < 0) return null;
@@ -3989,7 +4036,9 @@ class AppNotifier extends ChangeNotifier {
   int? _neighbour({required int dx, required int dy}) {
     final count = panes.length;
     if (count < 2) return null;
-    final shape = presetFor(count)?.tilesFor(count, columns: gridColumns);
+    final shape = activeSwarm.arranged?.tiles.length == count
+        ? activeSwarm.arranged!.tiles
+        : presetFor(count)?.tilesFor(count, columns: gridColumns);
     if (shape == null || shape.length != count) return null;
     final at = panes.indexWhere((pane) => pane.id == focusedPaneId);
     if (at < 0) return null;
@@ -4279,6 +4328,7 @@ class AppNotifier extends ChangeNotifier {
             }
           }
         }
+        swarm.paneSizes.addAll(PaneArrangement.readSaved(raw['paneSizes']));
         restored.add(swarm);
       }
       if (restored.isNotEmpty) {
