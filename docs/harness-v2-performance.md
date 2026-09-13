@@ -141,13 +141,43 @@ Cmd+Shift+I opens the existing bell's **Needs input** surface without the prior 
 
 Keyboard selection in both pickers now adjusts the scroll offset during the key event, before painting. The earlier post-frame scroll could leave the new selection offscreen for a frame. Tests require the selected row to be visible after a single pump on each arrow movement, including past the bottom edge. Live catalog changes still reveal selection after the new list dimensions exist, with at most one scheduled reveal callback.
 
-Nine new state/widget checks pass, alongside the extended native command guards. They cover immediate search focus, Ctrl-N/P, 2× text at 880×600, stale question/view guards and the cross-Swarm round trip: select a waiting agent, deliver input only there, then Cmd+P / Return and deliver input only to the prior agent. The final full suite passes 1,023 tests with one skip. These are frame-order and correctness checks, not measurements of physical input-to-display latency.
+Nine new state/widget checks pass, alongside the extended native command guards. They cover immediate search focus, Ctrl-N/P, 2× text at 880×600, stale question/view guards and the cross-Swarm round trip: select a waiting agent, deliver input only there, then Cmd+P / Return and deliver input only to the prior agent. That continuation passed 1,023 tests with one skip. These are frame-order and correctness checks, not measurements of physical input-to-display latency.
+
+## Terminal Find and tab hover
+
+Cmd+F mounts a small field in the focused pane's existing header. It neither changes the terminal viewport nor covers output. Cmd+G / Cmd+Shift+G and Enter / Shift+Enter select matches; Escape restores the original scroll bookmark and input focus. A real keyframe preserves the text controller, caret, query and focus while replacing the emulator. This test also exposed a resize debounce callback whose handle was dropped by a keyframe's immediate flush; the flush now cancels that pending callback first.
+
+The literal Unicode search joins soft-wrapped lines and keeps hard lines distinct. An optional index reuses decoded text from unchanged line identities and versions, yields after about 1.5 ms of scan work, and stores one offset checkpoint per 64 matches. Only the selected search result owns an anchor; the renderer highlights that result separately from normal terminal selection. Already-valid matches remain navigable while output refreshes. Hidden, covered and inactive searches release the index and listeners, retaining the query and selected location. Closing Find leaves no search listener or timer. Line-version increments remain in the ordinary buffer mutation path.
+
+Sequential isolated benchmarks (`--concurrency=1`, with no other test/build running) use 10,000 retained rows at 120 columns. These are debug event-loop times including cooperative yields, excluding native input, display, transport and file search:
+
+| Operation | Median | p95 |
+| --- | --- | --- |
+| Cold query, one observation | 42.181 ms | — |
+| Changed query over cached text, 40 samples | 7.183 ms | 15.497 ms |
+| Live single-row output refresh, 40 samples | 2.809 ms | 7.452 ms |
+| Move to next match, 40 samples | 0.004 ms | 0.026 ms |
+
+Background-output comparison before/after line versioning and Find:
+
+| Retained terminals / scope | Before median / p95 | After median / p95 |
+| --- | --- | --- |
+| 16 / hidden | 0.120 / 0.169 ms | 0.118 / 0.165 ms |
+| 16 / all | 0.790 / 1.665 ms | 0.818 / 1.362 ms |
+| 48 / hidden | 0.195 / 0.218 ms | 0.205 / 0.246 ms |
+| 48 / all | 0.736 / 0.912 ms | 0.774 / 1.048 ms |
+
+All hidden-output samples still reported zero hidden renderers needing layout and no scheduled frame. Several median timings increased by about 4–5%; these shared-workstation observations do not isolate that difference or establish zero overhead. Logs: `/private/tmp/harness-v2-find-benchmark.log` and `/private/tmp/harness-v2-find-output-before.log`. The earlier overlapping benchmark run was replaced by this sequential result.
+
+The final full suite passes 1,035 tests with one skip; the analyzer reports zero errors/warnings and 12 existing vendored infos. Find checks cover literal/wide-character mapping, reflow and buffer changes, 50,000 repeated matches, cancellation/eviction, immediate navigation during output, first-frame opening, no resize or agent input, hidden suspension, keyframe focus preservation, read-only ownership, and a narrow field at 2× text. Offline panes still show a connection guide in place of their retained renderer, so offline search is not yet available.
+
+Native tab hover now hides both adjacent separators, uses a 28-point shape with 12-point corners, and aligns 13-point text with a 10-point close symbol. The title and paragraph layout are cached until the name or selection changes. Before/after native component renders were inspected, alongside an isolated Flutter Find render; neither substitutes for live native interaction or physical-display timing.
 
 ## Native follow-up
 
 The optimized real-data app builds and runs locally. The native tab/canvas polish was visually reviewed before the navigation and retained-canvas continuations; CUA currently returns `cgWindowNotFound` for the rebuilt Release preview, so those newer interactions still need live native review. The tab strip uses AppKit's compact unified title bar: the old right accessory was clipped to 32 points; the container now supplies 40 points and aligns controls with the system traffic lights.
 
-The native check covers overflow, resizing, accessibility order and disabled actions. `bash tool/check_swarm_titlebar.sh /path/to/flutter --window-layout` adds actual container checks in a hidden window at three widths, for 176 assertions total, including the native attention shortcut and its modal guard. No Flutter engine, account or terminal is accessed.
+The native check covers overflow, resizing, accessibility order and disabled actions. `bash tool/check_swarm_titlebar.sh /path/to/flutter --window-layout` adds actual container checks in a hidden window at three widths, for 195 assertions total, including hover separators and native Find/attention shortcuts and modal guards. No Flutter engine, account or terminal is accessed.
 
 Wallpaper is built only for the empty New swarm. Populated Swarms paint a flat color matching the selected native tab, and the disposed wallpaper evicts its own decoded cache entry. This removes wallpaper painting/cache retention from the active terminal canvas; no process-memory reduction has been measured yet.
 

@@ -76,6 +76,10 @@ enum ShortcutAction {
   /// Find a live question and jump to the agent waiting for input.
   showAttention,
 
+  findTerminal,
+  findNext,
+  findPrevious,
+
   /// Add a view to the current Swarm, independently of navigation.
   addAgent,
 
@@ -114,6 +118,28 @@ class AppShortcut {
 }
 
 const List<AppShortcut> kAppShortcuts = [
+  AppShortcut(
+    action: ShortcutAction.findTerminal,
+    activator: SingleActivator(LogicalKeyboardKey.keyF, meta: true),
+    label: 'Find in the focused terminal',
+    group: ShortcutGroup.navigate,
+  ),
+  AppShortcut(
+    action: ShortcutAction.findNext,
+    activator: SingleActivator(LogicalKeyboardKey.keyG, meta: true),
+    label: 'Next terminal match',
+    group: ShortcutGroup.navigate,
+  ),
+  AppShortcut(
+    action: ShortcutAction.findPrevious,
+    activator: SingleActivator(
+      LogicalKeyboardKey.keyG,
+      meta: true,
+      shift: true,
+    ),
+    label: 'Previous terminal match',
+    group: ShortcutGroup.navigate,
+  ),
   // --- navigate -------------------------------------------------------------
   //
   // ONE MOTION, TWO SPELLINGS. Every direction is bound as both `⌘`+arrow and
@@ -135,7 +161,8 @@ const List<AppShortcut> kAppShortcuts = [
   // the header describes for ⌘C/⌘V/⌘A, and answered the same way: the
   // keyEquivalent is stripped, the menu item stays and still works when clicked.
   // ⌘J (Jump to Selection) and ⌘; (Check Document Now) went with it; this app
-  // has no Find and no spell-checked field. The cost is real and worth saying:
+  // uses those keys for pane navigation. Terminal Find owns ⌘F/G separately.
+  // The cost is real and worth saying:
   // Hide is no longer a keystroke in this app.
   AppShortcut(
     action: ShortcutAction.focusPaneLeft,

@@ -67,6 +67,14 @@ private extension SwarmTabStrip {
       ["tabs": rows, "activeId": active, "enabled": enabled, "attention": 2]
     }
     update(state(rows, active: "swarm-11"))
+    let hover = NSEvent.mouseEvent(with: .mouseMoved, location: .zero, modifierFlags: [],
+      timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, clickCount: 0, pressure: 0)!
+    try checkTitlebar(tabs[0].showsDivider && tabs[1].showsDivider, "Idle neighboring tabs have separators")
+    tabs[1].mouseEntered(with: hover)
+    try checkTitlebar(!tabs[0].showsDivider && !tabs[1].showsDivider, "Hover clears separators on both sides of the tab")
+    tabs[1].mouseExited(with: hover)
+    try checkTitlebar(tabs[0].showsDivider && tabs[1].showsDivider, "Separators return when the pointer leaves")
+    try checkTitlebar(!tabs[10].showsDivider && !tabs[11].showsDivider, "Selected tab remains joined without neighboring separators")
     try checkTitlebar(tabs.count == 24, "All overflow tabs exist")
     try checkTitlebar(!newButton.isEnabled, "New tab is disabled at capacity")
     for (index, tab) in tabs.enumerated() {
@@ -122,6 +130,13 @@ private extension SwarmTitlebar {
     guard let window else { throw TitlebarCheckFailure(message: "Native test window exists") }
     let main = NSMenu()
     main.addItem(NSMenuItem(title: "Harness V2", action: nil, keyEquivalent: ""))
+    let edit = NSMenuItem(title: "Edit", action: nil, keyEquivalent: "")
+    edit.submenu = NSMenu(title: "Edit")
+    let find = NSMenuItem(title: "Find", action: nil, keyEquivalent: "")
+    find.submenu = NSMenu(title: "Find")
+    find.submenu?.addItem(NSMenuItem(title: "Find and Replace…", action: nil, keyEquivalent: "f"))
+    edit.submenu?.addItem(find)
+    main.addItem(edit)
     NSApp.mainMenu = main
     configure()
     guard let menu = main.items.first(where: { $0.title == "Swarm" })?.submenu,
@@ -135,6 +150,20 @@ private extension SwarmTitlebar {
     try checkTitlebar(!validateMenuItem(attention), "Native attention shortcut is disabled behind a modal")
     actionsEnabled = true
     try checkTitlebar(validateMenuItem(attention), "Native attention shortcut returns when the modal closes")
+    let findItems = find.submenu?.items ?? []
+    try checkTitlebar(findItems.map(\.title) == ["Find in Terminal…", "Find Next", "Find Previous"], "Find replaces the unused editor actions with terminal commands")
+    try checkTitlebar(findItems.map(\.keyEquivalent) == ["f", "g", "g"], "Native find shortcuts match Flutter")
+    try checkTitlebar(findItems.last?.keyEquivalentModifierMask == [.command, .shift], "Previous match uses Shift-Command-G")
+    for item in findItems {
+      canFind = false
+      try checkTitlebar(!validateMenuItem(item), "Find is disabled without a focused terminal")
+      canFind = true
+      try checkTitlebar(validateMenuItem(item), "Find is enabled for a focused terminal")
+      actionsEnabled = false
+      try checkTitlebar(!validateMenuItem(item), "Find cannot run behind a modal")
+      actionsEnabled = true
+      try checkTitlebar(item.target === self && item.action == #selector(menuAction(_:)), "Find uses the guarded channel handler")
+    }
     strip.update([
       "enabled": true, "activeId": "swarm-11",
       "tabs": (0..<12).map { ["id": "swarm-\($0)", "name": "Swarm \($0)"] },

@@ -13,6 +13,13 @@ fix and the regression in `test/terminal_session_test.dart` passes against it.
 
 ## Local patches
 
+- **On-demand terminal find** (`lib/src/core/buffer/line.dart`,
+  `lib/src/terminal.dart`). Text mutations advance a local line version so a
+  search can reuse decoded rows; color-only changes keep the version. Optional
+  resize listeners run after buffer reflow without replacing the transport's
+  `onResize` callback. Search attaches only while visible with a nonempty query.
+  Regressions: `test/terminal_search_test.dart`, `test/terminal_find_test.dart`.
+
 - **Host-handled primary clicks** (`lib/src/terminal_view.dart`,
   `lib/src/ui/gesture/gesture_handler.dart`). `onTapUp` was declared but never
   dispatched by the single-click path. It now runs, and a consuming `onTapDown`

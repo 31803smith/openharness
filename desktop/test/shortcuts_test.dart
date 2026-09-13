@@ -295,6 +295,9 @@ void main() {
       expect(chordsFor(ShortcutAction.switchAgent), isNot(contains('⇧⌘F')));
       expect(chordsFor(ShortcutAction.addAgent), ['⇧⌘F']);
       expect(chordsFor(ShortcutAction.showAttention), ['⇧⌘I']);
+      expect(chordsFor(ShortcutAction.findTerminal), ['⌘F']);
+      expect(chordsFor(ShortcutAction.findNext), ['⌘G']);
+      expect(chordsFor(ShortcutAction.findPrevious), ['⇧⌘G']);
     });
 
     test(

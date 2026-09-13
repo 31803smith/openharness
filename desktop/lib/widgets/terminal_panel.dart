@@ -14,6 +14,8 @@ import '../state/app_state.dart';
 import 'agent_drag.dart';
 import 'rename_agent_dialog.dart';
 import 'terminal_composer.dart';
+import 'terminal_find_bar.dart';
+import '../terminal/terminal_search.dart';
 import '../terminal/terminal_binary.dart';
 import '../terminal/terminal_font_store.dart';
 import '../terminal/terminal_link_opener.dart';
@@ -99,6 +101,20 @@ class _TerminalPanelState extends State<TerminalPanel>
   final ScrollController _scrollController = ScrollController();
   final FocusNode _focusNode = FocusNode();
   final FocusNode _composerFocus = FocusNode();
+  final _findBarKey = GlobalKey<TerminalFindBarState>();
+  TerminalSearch? _find;
+  String _lastFindQuery = '';
+  bool _lastFindCaseSensitive = false;
+  CellAnchor? _lastFindAnchor;
+  Buffer? _lastFindBuffer;
+  TerminalHighlight? _findHighlight;
+  Buffer? _findPaintedBuffer;
+  BufferRangeLine? _findPaintedRange;
+  Buffer? _findOriginBuffer;
+  CellAnchor? _findOriginLine;
+  double _findOriginFraction = 0;
+  bool _findOriginAtEnd = false;
+  bool _findRevealPending = false;
   late Terminal _viewTerminal;
   late GlobalKey<TerminalViewState> _terminalViewKey;
   Timer? _dialInertiaTimer;
@@ -174,6 +190,9 @@ class _TerminalPanelState extends State<TerminalPanel>
   void didUpdateWidget(TerminalPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (!identical(oldWidget.session, widget.session)) {
+      _closeFind(restore: false, focus: false, rebuild: false);
+      _clearLastFind();
+      _lastFindQuery = '';
       _previewCancellation?.cancel();
       _previewProgress = null;
       oldWidget.session.setCursorBlinkPhase(true);
@@ -217,6 +236,8 @@ class _TerminalPanelState extends State<TerminalPanel>
 
   @override
   void dispose() {
+    _closeFind(restore: false, focus: false, rebuild: false);
+    _clearLastFind();
     WidgetsBinding.instance.removeObserver(this);
     _tickerMode?.removeListener(_syncCursorBlink);
     _previewCancellation?.cancel();
@@ -291,6 +312,9 @@ class _TerminalPanelState extends State<TerminalPanel>
 
   void _syncTerminal(Terminal terminal) {
     if (identical(_viewTerminal, terminal)) return;
+    final wasFinding = _find != null;
+    _closeFind(restore: false, focus: false, rebuild: false);
+    _clearLastFind();
     // Selection anchors belong to a specific circular buffer. Detach them
     // before the TerminalView starts laying out the replacement terminal.
     _controller.clearSelection();
@@ -305,6 +329,13 @@ class _TerminalPanelState extends State<TerminalPanel>
     _alternateScrollRemainder = 0;
     _cursorBlinkVisible = true;
     widget.session.setCursorBlinkPhase(true);
+    if (wasFinding) {
+      _findOriginBuffer = terminal.buffer;
+      _findOriginAtEnd = true;
+      _findRevealPending = true;
+      _find = TerminalSearch(terminal)..addListener(_onFindChanged);
+      _find!.setQuery(_lastFindQuery, caseSensitive: _lastFindCaseSensitive);
+    }
     _afterTerminalMounted(clearSelection: true);
   }
 
@@ -329,7 +360,12 @@ class _TerminalPanelState extends State<TerminalPanel>
   /// focus when needed, or opens the connection immediately when focus stayed
   /// on this tile. That is essential for ordinary keys and IMEs alike.
   void _claimFocus(TerminalViewState view) {
-    if (!mounted || !widget.focused || _composerFocus.hasFocus) return;
+    if (!mounted || !widget.focused || !widget.visible) return;
+    if (_find != null) {
+      _findBarKey.currentState?.focusSearch(selectAll: false);
+      return;
+    }
+    if (_composerFocus.hasFocus) return;
     // On a remote pane the box gets the caret, not the terminal. Landing in the terminal would
     // hand the user the per-keystroke path by default — the exact cost the box exists to avoid.
     if (_showsComposer) {
@@ -356,6 +392,13 @@ class _TerminalPanelState extends State<TerminalPanel>
   /// ticker mode without rebuilding the subtree when a route covers it.
   void _syncCursorBlink() {
     final lifecycle = WidgetsBinding.instance.lifecycleState;
+    final findEnabled =
+        mounted &&
+        widget.visible &&
+        (_tickerMode?.value.enabled ?? false) &&
+        (lifecycle == null || lifecycle == AppLifecycleState.resumed);
+    _find?.setEnabled(findEnabled);
+    if (!findEnabled) _clearFindHighlight();
     final enabled =
         mounted &&
         widget.visible &&
@@ -439,8 +482,160 @@ class _TerminalPanelState extends State<TerminalPanel>
       // Never over the composer: a rebuild that re-focuses this tile while someone is typing into
       // the box would pull the caret out from under them mid-sentence.
       _claimFocus(view);
+      if (_find != null) _onFindChanged();
       if (_linkPointerPosition != null) _hoverLink(_linkPointerPosition);
     });
+  }
+
+  @override
+  void find(TerminalFindAction action) {
+    if (!mounted || !widget.visible || !widget.focused) return;
+    final wasClosed = _find == null;
+    if (wasClosed) {
+      final view = _laidOutTerminalView();
+      if (view == null || !_scrollController.hasClients) return;
+      final position = _scrollController.position;
+      final height = view.renderTerminal.lineHeight;
+      final row = (position.pixels / height).floor().clamp(
+        0,
+        _viewTerminal.buffer.lines.length - 1,
+      );
+      _findOriginBuffer = _viewTerminal.buffer;
+      _findOriginLine = _findOriginBuffer!.createAnchor(0, row);
+      _findOriginFraction = position.pixels / height - row;
+      _findOriginAtEnd = position.maxScrollExtent - position.pixels < 1;
+      var origin = CellOffset(0, row);
+      if (action != TerminalFindAction.open &&
+          _lastFindAnchor?.attached == true &&
+          identical(_lastFindBuffer, _viewTerminal.buffer)) {
+        final last = _lastFindAnchor!.offset;
+        origin = CellOffset(
+          last.x + (action == TerminalFindAction.next ? 1 : 0),
+          last.y,
+        );
+      }
+      _find = TerminalSearch(_viewTerminal, origin: origin)
+        ..addListener(_onFindChanged);
+      _findRevealPending = true;
+      _find!.setQuery(_lastFindQuery, caseSensitive: _lastFindCaseSensitive);
+      setState(() {});
+    } else if (action == TerminalFindAction.open) {
+      _findBarKey.currentState?.focusSearch();
+    }
+    if (action != TerminalFindAction.open &&
+        !(wasClosed && action == TerminalFindAction.next)) {
+      _stepFind(action == TerminalFindAction.next ? 1 : -1);
+    }
+  }
+
+  void _queryFind(String query, bool caseSensitive) {
+    _lastFindQuery = query;
+    _lastFindCaseSensitive = caseSensitive;
+    _findRevealPending = true;
+    _find?.setQuery(query, caseSensitive: caseSensitive);
+  }
+
+  void _stepFind(int delta) {
+    _findRevealPending = true;
+    _find?.step(delta);
+  }
+
+  void _onFindChanged() {
+    final search = _find;
+    if (!mounted || search == null || !widget.visible) return;
+    final range = search.match;
+    if (range != _findPaintedRange ||
+        !identical(_findPaintedBuffer, _viewTerminal.buffer)) {
+      _clearFindHighlight();
+      if (range != null) {
+        _findPaintedBuffer = _viewTerminal.buffer;
+        _findPaintedRange = range;
+        _findHighlight = _controller.highlight(
+          p1: _viewTerminal.buffer.createAnchorFromOffset(range.begin),
+          p2: _viewTerminal.buffer.createAnchorFromOffset(range.end),
+          color: const Color(0x99cf8e25),
+        );
+      }
+    }
+    if (_findRevealPending && search.hasSnapshot && range != null) {
+      final render = _laidOutTerminalView()?.renderTerminal;
+      if (render == null || !_scrollController.hasClients) return;
+      _findRevealPending = false;
+      final position = _scrollController.position;
+      final top = range.begin.y * render.lineHeight + 10;
+      final bottom = (range.end.y + 1) * render.lineHeight + 10;
+      final safeTop = position.pixels + 10;
+      final safeBottom = position.pixels + position.viewportDimension - 10;
+      final offset = top < safeTop
+          ? top - 10
+          : bottom > safeBottom
+          ? bottom - position.viewportDimension + 10
+          : position.pixels;
+      final target = offset.clamp(
+        position.minScrollExtent,
+        position.maxScrollExtent,
+      );
+      if (target != position.pixels) position.jumpTo(target);
+    }
+  }
+
+  void _clearFindHighlight() {
+    final highlight = _findHighlight;
+    _findHighlight = null;
+    _findPaintedBuffer = null;
+    _findPaintedRange = null;
+    if (highlight == null) return;
+    highlight.dispose();
+    highlight.p1.dispose();
+    highlight.p2.dispose();
+  }
+
+  void _clearLastFind() {
+    _lastFindAnchor?.dispose();
+    _lastFindAnchor = null;
+    _lastFindBuffer = null;
+  }
+
+  void _closeFind({
+    bool restore = true,
+    bool focus = true,
+    bool rebuild = true,
+  }) {
+    final search = _find;
+    if (search == null) return;
+    final match = search.match;
+    if (match != null) {
+      _clearLastFind();
+      _lastFindAnchor = _viewTerminal.buffer.createAnchorFromOffset(
+        match.begin,
+      );
+      _lastFindBuffer = _viewTerminal.buffer;
+    }
+    _find = null;
+    search.removeListener(_onFindChanged);
+    search.dispose();
+    _clearFindHighlight();
+    if (restore &&
+        identical(_findOriginBuffer, _viewTerminal.buffer) &&
+        _scrollController.hasClients) {
+      final height = _laidOutTerminalView()?.renderTerminal.lineHeight;
+      final position = _scrollController.position;
+      if (height != null) {
+        final offset = _findOriginAtEnd
+            ? position.maxScrollExtent
+            : _findOriginLine?.attached == true
+            ? (_findOriginLine!.y + _findOriginFraction) * height
+            : 0.0;
+        position.jumpTo(
+          offset.clamp(position.minScrollExtent, position.maxScrollExtent),
+        );
+      }
+    }
+    _findOriginLine?.dispose();
+    _findOriginLine = null;
+    _findOriginBuffer = null;
+    if (rebuild && mounted) setState(() {});
+    if (focus) _claimFocusAfterFrame();
   }
 
   @override
@@ -749,7 +944,64 @@ class _TerminalPanelState extends State<TerminalPanel>
       color: grid.AppPalette.windowBg,
       child: Column(
         children: [
-          _buildHeader(context, remote: remote),
+          Stack(
+            children: [
+              Visibility(
+                visible: _find == null,
+                maintainSize: true,
+                maintainAnimation: true,
+                maintainState: true,
+                child: _buildHeader(context, remote: remote),
+              ),
+              if (_find != null)
+                Positioned.fill(
+                  child: LayoutBuilder(
+                    builder: (context, constraints) => Row(
+                      children: [
+                        if (constraints.maxWidth > 520)
+                          Expanded(
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: _stripPadding,
+                              ),
+                              child: Text(
+                                session.agentName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  color: Colors.white70,
+                                ),
+                              ),
+                            ),
+                          )
+                        else
+                          const Spacer(),
+                        SizedBox(
+                          width: math.min(constraints.maxWidth, 380),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 4,
+                            ),
+                            child: TerminalFindBar(
+                              key: _findBarKey,
+                              search: _find!,
+                              readOnly:
+                                  widget.readOnly || !session.acceptsInput,
+                              onQuery: _queryFind,
+                              onStep: _stepFind,
+                              onClose: _closeFind,
+                              onFocus: () => widget.onRendererFocus?.call(),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
+          ),
 
           Divider(height: 1, color: AppColors.border),
           Expanded(
@@ -822,8 +1074,9 @@ class _TerminalPanelState extends State<TerminalPanel>
                       spinning: true,
                     ),
                   ),
-                if (session.status == TerminalSessionStatus.error ||
-                    session.status == TerminalSessionStatus.takenOver)
+                if (_find == null &&
+                    (session.status == TerminalSessionStatus.error ||
+                        session.status == TerminalSessionStatus.takenOver))
                   Positioned.fill(
                     child: _FrozenOverlay(
                       session: session,

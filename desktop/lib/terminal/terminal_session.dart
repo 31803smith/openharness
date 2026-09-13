@@ -995,6 +995,8 @@ class TerminalSession extends ChangeNotifier {
     _viewport?.scroll(phase, dy, velocity);
   }
 
+  void find(TerminalFindAction action) => _viewport?.find(action);
+
   /// Coalescing windows for the two things the user drives directly.
   ///
   /// Both are leading + trailing: act on the first event, batch the rest. A flat trailing debounce
@@ -1027,6 +1029,9 @@ class TerminalSession extends ChangeNotifier {
   }
 
   Future<void> _flushResize() async {
+    // A keyframe can flush the measured viewport before the debounce fires.
+    // Cancel that callback before releasing its handle.
+    _resizeTimer?.cancel();
     _resizeTimer = null;
     if (!acceptsInput || _pendingCols == null || _pendingRows == null) return;
     final nextCols = _pendingCols!;

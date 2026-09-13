@@ -17,6 +17,7 @@ import 'package:harness/widgets/codex_profile_field.dart';
 import 'package:harness/widgets/new_agent_dialog.dart';
 import 'package:harness/widgets/swarm_dialogs.dart';
 import 'package:harness/widgets/terminal_composer.dart';
+import 'package:harness/widgets/terminal_find_bar.dart';
 
 import 'swarm_screen_test.dart' show mount, terminal;
 import 'swarm_state_test.dart' show createApp;
@@ -263,6 +264,32 @@ void main() {
     await tester.pump();
     await attention;
     expect(updates.last['enabled'], isTrue);
+    expect(updates.last['canFind'], isFalse);
+    app.machineStates['m']!.nodeOnline = true;
+    final session = terminal('a0', []);
+    session.terminal.write('marker one\r\nmarker two\r\n');
+    app.adoptSessionForTest(session);
+    app.dismissError();
+    await tester.pump();
+    expect(updates.last['canFind'], isTrue);
+    await native('findTerminal');
+    await tester.pump();
+    expect(find.byType(TerminalFindBar), findsOneWidget);
+    await tester.enterText(find.byType(TextField), 'marker');
+    await tester.pump(const Duration(milliseconds: 10));
+    final search = tester
+        .widget<TerminalFindBar>(find.byType(TerminalFindBar))
+        .search;
+    expect(search.count, 2);
+    await native('findNext');
+    await tester.pump();
+    expect(search.selected, 1);
+    await native('findPrevious');
+    await tester.pump();
+    expect(search.selected, 0);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pump();
+    expect(find.byType(TerminalFindBar), findsNothing);
     await tester.pumpWidget(const SizedBox());
     projects.dispose();
     app.dispose();

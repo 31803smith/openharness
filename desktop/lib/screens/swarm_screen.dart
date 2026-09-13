@@ -13,6 +13,7 @@ import '../settings/settings_section.dart';
 import '../shared/theme/app_theme.dart' as grid;
 import '../shortcuts/app_shortcuts.dart';
 import '../state/app_state.dart';
+import '../terminal/terminal_viewport.dart';
 import '../state/swarm_catalog.dart';
 import '../state/swarm_attention.dart';
 import '../state/swarm_navigation.dart';
@@ -123,11 +124,27 @@ class _SwarmScreenState extends State<SwarmScreen> {
     }
   }
 
+  bool get _canFindTerminal {
+    final pane = app.focusedPane;
+    if (pane?.session == null) return false;
+    final machine = app.stateOf(pane!.machineId);
+    final agent = machine?.agents
+        .where((a) => a.id == pane.agentId)
+        .firstOrNull;
+    // Connection/setup placeholders do not currently mount a TerminalPanel.
+    return machine != null &&
+        agent?.terminalAvailable == true &&
+        machine.nodeOnline != false &&
+        !(machine.isRemote && !machine.isLocalMachine && machine.needsLink) &&
+        (!machine.isLocalMachine || machine.usesLocalTransport);
+  }
+
   void _syncNative() {
     final payload = {
       'enabled': _routeIsCurrent && !_dialogOpen && !_spokenPaletteOpen,
       'activeId': app.activeSwarmId,
       'canReopen': app.canReopenClosedSwarm,
+      'canFind': _canFindTerminal,
       'attention': _attention,
       'tabs': [
         for (final swarm in app.swarms)
@@ -185,6 +202,12 @@ class _SwarmScreenState extends State<SwarmScreen> {
         await _addAgent();
       case 'closePane':
         if (app.focusedPaneId != null) await app.closePane(app.focusedPaneId!);
+      case 'findTerminal':
+        app.focusedPane?.session?.find(TerminalFindAction.open);
+      case 'findNext':
+        app.focusedPane?.session?.find(TerminalFindAction.next);
+      case 'findPrevious':
+        app.focusedPane?.session?.find(TerminalFindAction.previous);
       case 'notifications':
         await _notifications();
       case 'settings':
@@ -407,6 +430,12 @@ class _SwarmScreenState extends State<SwarmScreen> {
                   app.movePaneDirection(dx: 0, dy: 1),
               ShortcutAction.nextAgent: () => app.focusPaneBy(1),
               ShortcutAction.previousAgent: () => app.focusPaneBy(-1),
+              ShortcutAction.findTerminal: () =>
+                  app.focusedPane?.session?.find(TerminalFindAction.open),
+              ShortcutAction.findNext: () =>
+                  app.focusedPane?.session?.find(TerminalFindAction.next),
+              ShortcutAction.findPrevious: () =>
+                  app.focusedPane?.session?.find(TerminalFindAction.previous),
               ShortcutAction.lastPane: app.focusLastPane,
               ShortcutAction.zoomPane: app.toggleZoomPane,
               ShortcutAction.switchAgent: _jump,

@@ -1,6 +1,6 @@
 # Harness App V2 — development handoff
 
-Updated 2026-09-13 after the keyboard attention continuation. This is a working preview, not a release.
+Updated 2026-09-13 after the terminal Find and native hover continuation. This is a working preview, not a release.
 
 ## Resume here
 
@@ -17,8 +17,10 @@ Updated 2026-09-13 after the keyboard attention continuation. This is a working 
 - Cmd+Shift+I now opens **Needs input** from the existing bell or native Swarm menu. It searches live questions and agent/project/machine context, keeps the oldest first when search is blank, and shares focus-only navigation with Cmd+P. Cmd+P, Return takes you back to the prior agent. Both pickers scroll and highlight keyboard selections in the same frame. Nine new state/widget checks pass, including large text and the full terminal-input round trip.
 - Swarm terminals now keep the same widget ancestry across tabs, zoom and presets, retaining unchanged cells and headers. The paired headless check reduced median tab-switch CPU time from 20.924 to 12.226 ms with 16 terminals and from 14.151 to 8.925 ms with 48; focus changes also improved. Settings route and section fades are removed. These are debug CPU measurements, not native input-to-display timings.
 - Cursor timers now follow the active, focused terminal, stopping for hidden/covered views and inactive windows. With 48 retained terminals, the isolated five-second observation fell from 480 periodic callbacks to 10 in the foreground and zero when inactive. New swarm retains only its search caret timer. Link-modifier keyboard listeners exist only while hovering a visible link. The idle-work continuation's full suite passed 1,010 tests with one skip.
-- Ordinary hidden output now updates the buffer without scheduling a renderer frame. The paired 16/48-terminal debug benchmark reduced hidden-output median CPU cost by 88%/84%; mixed visible/hidden output improved by 32%/51%. Restoring a view reconciles its current buffer, scroll and dimensions once; native caret coordinates coalesce after the frame. That continuation passed 1,014 tests with one skip; the current full suite passes 1,023 with one skip.
-- The final Release preview was rebuilt and normally relaunched; PID **84666** was the sole V2 instance at the last check. Revalidate the process before any later restart. CUA still reports `cgWindowNotFound` when selecting that full bundle path after this rebuild, as it did after an earlier CUA reset and normal relaunches. CUA's earlier surface inventory listed the preview as running. An earlier relaunched process did have a 1280×840 onscreen CoreGraphics window. Bundle-ID selection was also ambiguous with the retained backup under `/Users/ab/code/harness-app-v2`; no backup was altered. Do not claim the new jump/Needs input interaction, stable canvas, cursor lifecycle or renderer restoration was reviewed in the live native window. The actual native titlebar/canvas had been reviewed before these continuations; both pickers were visually inspected in isolated Flutter renders with native font files and engine icons loaded. First-frame renderer pixels and native caret messages are now covered by isolated Flutter checks.
+- Ordinary hidden output now updates the buffer without scheduling a renderer frame. The paired 16/48-terminal debug benchmark reduced hidden-output median CPU cost by 88%/84%; mixed visible/hidden output improved by 32%/51%. Restoring a view reconciles its current buffer, scroll and dimensions once; native caret coordinates coalesce after the frame. That continuation passed 1,014 tests with one skip; the current full suite passes 1,035 with one skip.
+- The final Release preview was rebuilt and normally relaunched; PID **20082** was the sole V2 instance at the last check. Revalidate the process before any later restart. CUA still reports `cgWindowNotFound` when selecting that full bundle path after this rebuild, as it did after an earlier CUA reset and normal relaunches. CUA's inventory after this rebuild still listed the preview as running, alongside an unlaunched backup with the same bundle ID. An earlier relaunched process did have a 1280×840 onscreen CoreGraphics window. Bundle-ID selection was also ambiguous with the retained backup under `/Users/ab/code/harness-app-v2`; no backup was altered. Do not claim the new Find/jump/Needs input interaction, latest hover refinement, stable canvas, cursor lifecycle or renderer restoration was reviewed in the live native window. The actual native titlebar/canvas had been reviewed before these continuations; both pickers were visually inspected in isolated Flutter renders with native font files and engine icons loaded. First-frame renderer pixels and native caret messages are now covered by isolated Flutter checks.
+- Cmd+F now searches retained output in the focused terminal; Cmd+G / Cmd+Shift+G and Enter / Shift+Enter move through matches. Escape restores the previous scroll position and input focus. The field occupies the existing header without resizing the terminal. Find pauses and releases its index when hidden or covered. A keyframe keeps the field, caret and query; read-only rendered panes remain searchable without taking control. Offline panes currently replace retained output with a connection guide, so offline search remains a separate follow-up.
+- The latest hover pass uses 13-point native titles, 14-point leading space inside the 28-point hover shape, a 12-point corner radius and a 10-point close symbol. Both neighboring separators disappear on hover. The title layout is cached across hover redraws. Native selected shoulders still meet the flat canvas. Isolated native before/after images were inspected; CUA still could not capture the live window after the normal Release relaunch.
 - Continue implementation here. Do not create another repository or fork for V2.
 
 ```bash
@@ -143,6 +145,7 @@ Approved reference: `/Users/ab/code/harness-new-ui`, React prototype commit `f83
 | Previous / next swarm | Cmd+Shift+[ / ], Ctrl+Shift+Tab / Ctrl+Tab |
 | Jump to agent or swarm | Cmd+P |
 | Agents needing input | Cmd+Shift+I |
+| Find in terminal / next / previous match | Cmd+F / Cmd+G / Cmd+Shift+G |
 | Add agent picker / New agent | Cmd+Shift+F / Cmd+N |
 | Focus neighboring pane | Cmd+H/J/K/L or Cmd+arrow |
 | Move pane | Cmd+Shift+H/J/K/L or Cmd+Shift+arrow |
@@ -164,7 +167,7 @@ The reopen binding follows the documented Mac tab-recovery shortcut in [Safari](
 | --- | --- |
 | macOS debug build | Passed and launched from the monorepo with real saved Swarms and terminals. |
 | macOS optimized local build | Passed and running with the real entry point and saved V2 state. Local ad hoc signing requires the command-line `ENABLE_HARDENED_RUNTIME=NO` override for Flutter's framework; distribution signing settings remain unchanged. The distribution Developer ID certificate is unavailable; nothing was uploaded. Normal asynchronous quit and relaunch were verified. Unlocked native review confirmed the taller tab container, edge-to-edge empty wallpaper, and the flat populated canvas joining the selected tab. The native hover rendering was also inspected in a local image. |
-| Full Flutter suite | **1,023 passed, 1 skipped** on the final keyboard attention production code, including terminal, modal, persistence, layout and shortcut regressions. |
+| Full Flutter suite | **1,035 passed, 1 skipped** on the final terminal Find and native hover code, including terminal, modal, persistence, layout and shortcut regressions. |
 | Hidden rendering and native caret | Four new checks cover binary output arriving without hidden layout/frame requests; retained selection, manual scroll and follow-tail; first-visible-frame raster pixels; changed emulator dimensions and preserved TUI scroll regions; covered routes; and coalesced/fresh caret coordinates. The focused restoration/IME/key-ownership run passed 22 checks. |
 | Cursor and link activity | Four new checks cover one cursor clock across retained Swarms/focus/zoom, immediate suspension for inactive windows and disabled ticker mode, session replacement and read-only/connection ownership, and stationary link hover across session replacement/modifier release. The earlier focused cursor/session run passed 74 checks. |
 | Retained canvas and header | Five new checks cover stable element ancestry and terminal State across tabs/zoom/presets, first-frame per-Swarm scrolling, tall splits and hidden geometry, font metrics at unchanged point size, and fresh header metadata/callbacks. Layout checks compare legacy and Swarm geometry for all fixed presets and auto layouts at two sizes. |
@@ -180,7 +183,7 @@ The reopen binding follows the documented Mac tab-recovery shortcut in [Safari](
 | Headless performance | The prior five-case catalog/terminal/output benchmark passed. The paired retained-canvas continuation reran both 16/48-terminal cases with new focus measurements: tab medians 12.226 / 8.925 ms and focus medians 5.284 / 4.586 ms. Reproducible commands and limits in `docs/harness-v2-performance.md`. |
 | Idle-work measurement | Both isolated timer scenarios passed: 16/48 retained terminals now share one focused cursor clock, with 10 callbacks in five seconds, and zero terminal cursor callbacks when the window is inactive or an empty Swarm is shown. Empty New swarm keeps its search field's caret timer. These are fake-clock structural counts, not native process CPU/battery measurements. |
 | Background output measurement | Both 16/48-terminal cases passed with hidden-only and mixed output. Hidden dirty renderers fell from 12/44 to zero; hidden-only bursts schedule no frame in this workload. Final CPU medians are 0.110/0.206 ms for hidden output and 0.757/0.766 ms for all-terminal output. See performance notes for scope and paired results. |
-| AppKit components and container | **176 assertions passed**: component, attention shortcut/menu/modal checks plus native-container checks at 880, 1280 and 1920 points. These verify height, traffic-light clearance/alignment, direct contact with the content edge and active-tab visibility. The optional container check creates a hidden native window; no window is displayed and no engine, account or terminal is accessed. |
+| AppKit components and container | **195 assertions passed**: component, hover separator behavior, terminal Find/attention shortcut/menu/modal checks plus native-container checks at 880, 1280 and 1920 points. These verify height, traffic-light clearance/alignment, direct contact with the content edge and active-tab visibility. The optional container check creates a hidden native window; no window is displayed and no engine, account or terminal is accessed. |
 | Remote terminals / production release | No remote takeover, release, installer, or production CLI update/restart. Cross-platform and end-to-end latency measurements remain. |
 
 Tests now exercise the actual V2 welcome/settings/linking flow. Usage pricing again explains a partial estimate as a lower bound. Small offline panes avoid overflowing the full connection guide. No remaining full-suite failures are being dismissed as baseline.
@@ -189,9 +192,16 @@ Tests now exercise the actual V2 welcome/settings/linking flow. Usage pricing ag
 
 Evidence on this Mac under `/private/tmp`:
 
+- `harness-v2-find-full-tests.log`: 1,035 passed, one existing skip.
+- `harness-v2-find-focused.log`: 99 focused checks, including one isolated visual fixture; `harness-v2-find-visual-tests.log`: final six-case render/find pass.
+- `harness-v2-find-native.log`: 195 AppKit checks, including hidden native window geometry and hover separators.
+- `harness-v2-find-analyze.log`: current diagnostics, zero errors/warnings and 12 existing vendored infos.
+- `harness-v2-find-benchmark.log`: sequential three-case terminal Find/background-output run; `harness-v2-find-output-before.log`: pre-index versioning background baseline. Timings and limits are in the performance notes.
+- `harness-titlebar-before.png`, `harness-titlebar-after.png`, `harness-find-review.png`: inspected isolated native/Flutter renders, not live app captures.
+
 - `harness-v2-background-full-tests.log`: full 1,014-test pass on the final production changes.
 - `harness-v2-background-caret-tests.log`: 22 restoration/IME/key-ownership checks, including raster and native-caret assertions.
-- `harness-v2-background-analyze.log`: latest diagnostics, 0 errors/warnings and 12 existing vendored infos.
+- `harness-v2-background-analyze.log`: earlier background-work diagnostics, 0 errors/warnings and 12 existing vendored infos.
 - `harness-v2-background-before.log`, `harness-v2-background-measured.log`: paired parser/render CPU measurements and hidden layout/frame counts.
 - `harness-v2-idle-full-tests.log`: full 1,010-test pass on the idle-work changes.
 - `harness-v2-idle-tests.log`: 74 cursor/session/focus/canvas checks before the hover-listener change.
@@ -231,7 +241,8 @@ Earlier logs contain superseded failures. Temporary logs and toolchains are loca
 3. Measure native terminal input and tab-switch responsiveness before making end-to-end latency claims. Headless CPU benchmarks are now recorded. Preserve the existing immediate first-input flush and shared retained renderers.
 4. Visually confirm app-menu modal behavior and overflow accessibility in AppKit; route/shortcut behavior is covered by passing Flutter tests.
 5. Build/review Linux and Windows when their toolchains are available. Remote full project/branch metadata requires daemons running the new wire format; do not upgrade them automatically.
-6. Continue the agreed goal and apply the latest steering. The research proposes a focused roadmap and specific subtraction candidates; do not mistake proposals for already-implemented removals.
+6. Preserve retained terminal output when an offline pane shows a connection guide, then enable offline Find without reconnecting or taking control. Current Find searches only the buffer rendered by TerminalPanel, not remote files or unretained history.
+7. Continue the agreed goal and apply the latest steering. The research proposes a focused roadmap and specific subtraction candidates; do not mistake proposals for already-implemented removals.
 
 ## Toolchain and workflow
 

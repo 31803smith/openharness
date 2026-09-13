@@ -12,6 +12,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation {
   private var configured = false
   private var actionsEnabled = false
   private var canReopen = false
+  private var canFind = false
 
   init(window: NSWindow, messenger: FlutterBinaryMessenger) {
     self.window = window
@@ -28,6 +29,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation {
         let state = call.arguments as? [String: Any] ?? [:]
         self.actionsEnabled = state["enabled"] as? Bool == true
         self.canReopen = state["canReopen"] as? Bool == true
+        self.canFind = state["canFind"] as? Bool == true
         self.strip.update(state)
         result(nil)
       default: result(FlutterMethodNotImplemented)
@@ -113,10 +115,33 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation {
     let item = NSMenuItem(title: "Swarm", action: nil, keyEquivalent: "")
     item.submenu = menu
     main.insertItem(item, at: min(2, main.numberOfItems))
+    installTerminalFindMenu(main)
+  }
+
+  private func installTerminalFindMenu(_ main: NSMenu) {
+    guard let edit = main.items.first(where: { $0.title == "Edit" })?.submenu,
+          let find = edit.items.first(where: { $0.title == "Find" }) else { return }
+    let menu = NSMenu(title: "Find")
+    for (title, key, action, modifiers) in [
+      ("Find in Terminal…", "f", "findTerminal", NSEvent.ModifierFlags.command),
+      ("Find Next", "g", "findNext", NSEvent.ModifierFlags.command),
+      ("Find Previous", "g", "findPrevious", NSEvent.ModifierFlags([.command, .shift])),
+    ] {
+      let item = NSMenuItem(title: title, action: #selector(menuAction(_:)), keyEquivalent: key)
+      item.keyEquivalentModifierMask = modifiers
+      item.target = self
+      item.representedObject = action
+      menu.addItem(item)
+    }
+    // The template's find/replace actions target an unused text-editor handler.
+    // Terminal output is searchable; replacement belongs to the running tool.
+    find.submenu = menu
   }
 
   func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-    actionsEnabled && (menuItem.representedObject as? String != "reopen" || canReopen)
+    let action = menuItem.representedObject as? String ?? ""
+    return actionsEnabled && (action != "reopen" || canReopen) &&
+      (!["findTerminal", "findNext", "findPrevious"].contains(action) || canFind)
   }
 
   @objc private func menuAction(_ sender: NSMenuItem) {
@@ -183,13 +208,12 @@ private final class SwarmTabStrip: NSView {
       tab.actionsEnabled = actionsEnabled
       tab.attention = (row["attention"] as? Int ?? 0) > 0
       tab.emit = { [weak self] method, args in self?.emit?(method, args) }
+      tab.hoverChanged = { [weak self] in self?.updateDividers() }
       if tab.superview == nil { document.addSubview(tab) }
       tab.needsDisplay = true
       return tab
     }
-    for (index, tab) in tabs.enumerated() {
-      tab.showsDivider = !tab.selected && index + 1 < tabs.count && !tabs[index + 1].selected
-    }
+    updateDividers()
     // Moving frames alone leaves AppKit's child traversal in insertion order.
     document.setAccessibilityChildren(tabs)
     newButton.isEnabled = actionsEnabled && tabs.count < 24
@@ -205,6 +229,14 @@ private final class SwarmTabStrip: NSView {
     layoutSubtreeIfNeeded()
     if ids != previousOrder {
       NSAccessibility.post(element: document, notification: .layoutChanged)
+    }
+  }
+
+  private func updateDividers() {
+    for (index, tab) in tabs.enumerated() {
+      let next = index + 1 < tabs.count ? tabs[index + 1] : nil
+      tab.showsDivider = !tab.selected && !tab.isHovered && next != nil &&
+        next?.selected == false && next?.isHovered == false
     }
   }
 
@@ -255,14 +287,17 @@ private final class SwarmTabStrip: NSView {
 
 private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidation {
   let swarmId: String
-  var name = "New swarm" { didSet { updateAccessibility() } }
-  var selected = false { didSet { updateAccessibility() } }
+  var name = "New swarm" { didSet { if name != oldValue { invalidateLabel(); updateAccessibility() } } }
+  var selected = false { didSet { if selected != oldValue { invalidateLabel(); updateAccessibility() } } }
   var attention = false
-  var showsDivider = false
+  var showsDivider = false { didSet { if showsDivider != oldValue { needsDisplay = true } } }
   var contentCenterY: CGFloat = 20
   var emit: ((String, Any?) -> Void)?
+  var hoverChanged: (() -> Void)?
+  var isHovered: Bool { hovered && actionsEnabled }
   private let closeButton = NSButton()
   private let selectButton = SwarmSelectButton()
+  private var cachedLabel: NSAttributedString?
   var actionsEnabled = true {
     didSet {
       closeButton.isEnabled = actionsEnabled
@@ -287,7 +322,7 @@ private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidati
     selectButton.action = #selector(selectSwarm)
     addSubview(selectButton)
     closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close swarm")
-    closeButton.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 9, weight: .semibold)
+    closeButton.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 10, weight: .semibold)
     closeButton.contentTintColor = NSColor(white: 0.78, alpha: 1)
     closeButton.isBordered = false
     closeButton.target = self
@@ -317,8 +352,28 @@ private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidati
     addTrackingArea(area)
     hoverTracking = area
   }
-  override func mouseEntered(with event: NSEvent) { hovered = true; needsDisplay = true }
-  override func mouseExited(with event: NSEvent) { hovered = false; needsDisplay = true }
+  override func mouseEntered(with event: NSEvent) { setHovered(true) }
+  override func mouseExited(with event: NSEvent) { setHovered(false) }
+  private func setHovered(_ value: Bool) {
+    guard hovered != value else { return }
+    hovered = value
+    needsDisplay = true
+    hoverChanged?()
+  }
+  private func invalidateLabel() {
+    cachedLabel = nil
+    needsDisplay = true
+  }
+  private var label: NSAttributedString {
+    if let cachedLabel { return cachedLabel }
+    let paragraph = NSMutableParagraphStyle()
+    paragraph.lineBreakMode = .byTruncatingTail
+    let label = NSAttributedString(string: name,
+      attributes: [.font: NSFont.systemFont(ofSize: 13, weight: selected ? .medium : .regular),
+        .foregroundColor: selected ? NSColor.white : NSColor(white: 0.76, alpha: 1), .paragraphStyle: paragraph])
+    cachedLabel = label
+    return label
+  }
   override func draw(_ dirtyRect: NSRect) {
     if selected {
       let w = bounds.width, h = bounds.height
@@ -337,20 +392,16 @@ private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidati
     } else if hovered && actionsEnabled {
       NSColor(white: 1, alpha: 0.05).setFill()
       let hoverRect = NSRect(x: 8, y: contentCenterY - 14, width: bounds.width - 16, height: 28)
-      NSBezierPath(roundedRect: hoverRect, xRadius: 10, yRadius: 10).fill()
+      NSBezierPath(roundedRect: hoverRect, xRadius: 12, yRadius: 12).fill()
     }
     if showsDivider && !hovered {
       NSColor(white: 1, alpha: 0.16).setFill()
       NSBezierPath(roundedRect: NSRect(x: bounds.width - 0.5, y: contentCenterY - 8, width: 1, height: 16),
         xRadius: 0.5, yRadius: 0.5).fill()
     }
-    let paragraph = NSMutableParagraphStyle()
-    paragraph.lineBreakMode = .byTruncatingTail
-    let label = NSAttributedString(string: name,
-      attributes: [.font: NSFont.systemFont(ofSize: 12, weight: selected ? .medium : .regular),
-        .foregroundColor: selected ? NSColor.white : NSColor(white: 0.72, alpha: 1), .paragraphStyle: paragraph])
+    let label = self.label
     let labelHeight = label.size().height
-    label.draw(in: NSRect(x: 24, y: contentCenterY - labelHeight / 2,
+    label.draw(in: NSRect(x: 22, y: contentCenterY - labelHeight / 2,
       width: bounds.width - 64, height: labelHeight))
     if attention {
       NSColor.systemOrange.setFill()
