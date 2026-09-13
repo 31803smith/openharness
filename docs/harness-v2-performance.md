@@ -10,6 +10,14 @@ flutter test --no-pub --reporter expanded test/benchmarks/swarm_benchmark.dart
 
 It prints `SWARM_BENCH` JSON records. Its filename deliberately does not end in `_test.dart`, so ordinary correctness runs do not include timing measurements.
 
+## Concurrent machine discovery (2026-09-13)
+
+Agent inventory and terminal capability requests now start together after the machine handshake. The small capability request is sent first because the CLI dispatches frames through a per-client FIFO; it can answer that request before assembling project metadata for the agent list. The list becomes visible as soon as it arrives. Existing panes attach only when both inventory and protocol information are available, without changing focus or membership.
+
+Readiness has a bounded wait. Its elapsed time is subtracted from the inventory's existing ten-second budget; capabilities retain an eight-second reply budget that begins after the handshake. Pending capability work is shared across a failed inventory request and its retry. Close, unlink, expired waits, removed machines and signed-out sessions cannot queue new metadata requests from a late completion.
+
+Both initial regressions failed before the change. The affected suite passed 107 checks; a subsequent 14-check discovery/readiness run includes a new combined AppNotifier and actual WebSocket test against a disposable loopback peer. The peer receives both requests before releasing either reply, and the app publishes the agent list before the capability reply. This verifies the request graph and behavior; it is not an observed remote or native latency measurement. Logs: `/private/tmp/harness-v2-machine-loading-{before,tests,transport-tests}.log`.
+
 ## Workspace discovery without a profile dependency (2026-09-13)
 
 After CLI sign-in and daemon readiness, machine discovery used to wait for the account profile. Refresh recovery repeated that dependency whenever no profile was known. The requests now run independently; only one profile request is kept in flight, and a completed response updates the account separately. A failed profile does not delay machine error recovery or require another sign-in.

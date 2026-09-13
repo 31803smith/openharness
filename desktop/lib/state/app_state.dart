@@ -118,6 +118,7 @@ class MachineState {
   bool agentsRefreshing = false;
   String? agentsLoadError;
   Future<void>? agentsLoadInFlight;
+  Future<void>? terminalCapabilityLoadInFlight;
   String? activeAgentId;
   bool terminalCapabilityLoaded = false;
   bool terminalCapabilityAvailable = false;
@@ -2856,11 +2857,26 @@ class AppNotifier extends ChangeNotifier {
     machine.agentsLoadError = null;
     notifyListeners();
     final connection = _conn(machine.machine.machineId);
+    final deadline = Stopwatch()..start();
     debugPrint('agents_list start: ${machine.machine.machineId}');
     try {
+      const inventoryTimeout = Duration(seconds: 10);
+      await connection.waitUntilReady(timeout: inventoryTimeout);
+      if (!_machineWorkCurrent(machine, revision)) return;
+      // Keep the inventory's existing total budget, including connection time.
+      // Capabilities get their own budget only once the handshake is complete.
+      final remaining = inventoryTimeout - deadline.elapsed;
+      if (remaining <= Duration.zero) {
+        throw const WsRequestTimeout('agents_list');
+      }
+      final capabilities = _loadTerminalCapabilities(
+        machine,
+        connection,
+        revision,
+      );
       final response = await connection.request(
         'agents_list',
-        timeout: const Duration(seconds: 10),
+        timeout: remaining,
       );
       if (!_machineWorkCurrent(machine, revision)) return;
       final agents = (response['agents'] as List<dynamic>? ?? [])
@@ -2874,7 +2890,15 @@ class AppNotifier extends ChangeNotifier {
         'agents_list success: ${machine.machine.machineId} '
         '(${machine.agents.length} agents)',
       );
-      await _loadTerminalCapabilities(machine, connection, revision);
+      // Publish discovery immediately. The capability loader attaches waiting
+      // panes when its reply arrives; either response may finish first.
+      if (machine.terminalCapabilityLoadInFlight == null) {
+        _attachPendingPanes(machine);
+        _autoPickFirstAgent();
+      }
+      notifyListeners();
+      await capabilities;
+      return;
     } catch (error) {
       if (!_machineWorkCurrent(machine, revision)) return;
       machine.agentsRefreshing = false;
@@ -3009,6 +3033,27 @@ class AppNotifier extends ChangeNotifier {
     MachineState machine,
     WsConn connection,
     int revision,
+  ) {
+    final pending = machine.terminalCapabilityLoadInFlight;
+    if (pending != null) return pending;
+    late final Future<void> load;
+    load = _readTerminalCapabilities(
+      machine,
+      connection,
+      revision,
+    ).whenComplete(() {
+      if (identical(machine.terminalCapabilityLoadInFlight, load)) {
+        machine.terminalCapabilityLoadInFlight = null;
+      }
+    });
+    machine.terminalCapabilityLoadInFlight = load;
+    return load;
+  }
+
+  Future<void> _readTerminalCapabilities(
+    MachineState machine,
+    WsConn connection,
+    int revision,
   ) async {
     try {
       final result = await connection.request(
@@ -3043,6 +3088,13 @@ class AppNotifier extends ChangeNotifier {
       machine.terminalImagePasteAvailable = false;
       machine.terminalPasteFileAvailable = false;
       machine.mediaPreviewAvailable = false;
+    }
+    if (!_machineWorkCurrent(machine, revision)) return;
+    if (machine.agentLoadStatus != AgentLoadStatus.loading &&
+        !machine.agentsRefreshing) {
+      _attachPendingPanes(machine);
+      _autoPickFirstAgent();
+      notifyListeners();
     }
   }
 

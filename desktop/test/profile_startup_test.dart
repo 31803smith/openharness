@@ -92,6 +92,9 @@ class _Connection extends WsConn {
   final requests = <String>[];
 
   @override
+  Future<void> waitUntilReady({required Duration timeout}) async {}
+
+  @override
   Future<Map<String, dynamic>> request(
     String type, {
     Map<String, dynamic> payload = const {},
@@ -388,6 +391,7 @@ void main() {
           final pending = Completer<Map<String, dynamic>>();
           if (request == 'agents_list') {
             connection.agents = pending;
+            connection.capabilities = Completer<Map<String, dynamic>>();
           } else {
             connection.capabilities = pending;
           }
@@ -406,15 +410,16 @@ void main() {
             await app.logout();
           }
           pending.complete(request == 'agents_list' ? _agents : _capabilities);
+          if (request == 'agents_list') {
+            connection.capabilities!.complete(_capabilities);
+          }
           await load;
+          await _tick();
           expect(machine.terminalCapabilityLoaded, isFalse);
           expect(app.panes, isEmpty);
           if (request == 'agents_list') {
             expect(machine.agents, isEmpty);
-            expect(
-              connection.requests,
-              isNot(contains('terminal_capabilities')),
-            );
+            expect(connection.requests, hasLength(2));
           }
         },
       );

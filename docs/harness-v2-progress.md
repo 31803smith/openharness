@@ -2,6 +2,14 @@
 
 Updated 2026-09-13 with coordinated palettes, Models, combined closed-work History and faster unified search. This is a working preview, not a release.
 
+## Concurrent machine discovery checkpoint
+
+- Agent inventory and terminal capabilities now start together after the machine handshake. Capability checks are sent first, so the CLI's per-client FIFO can answer that small request before building the agent catalog. Discovered agents publish without waiting for a slower capability response. Restored panes still require both results, attach once and preserve focus.
+- Handshake time remains inside the inventory's existing ten-second budget. The capability request keeps its eight-second reply budget, starting only after readiness. No request is sent after a timed-out/closed wait or after the target machine/session is removed. Concurrent callers share pending work; an inventory failure can retry while sharing a still-pending capability request.
+- Two isolated regressions reproduced serialization and delayed agent visibility before the change (`/private/tmp/harness-v2-machine-loading-before.log`). **107 affected tests passed**, followed by **14 discovery/readiness checks** that include one additional combined AppNotifier/real-WebSocket test. That loopback peer withholds both replies until both requests arrive, then verifies visible agents before capabilities. Logs: `/private/tmp/harness-v2-machine-loading-tests.log` and `/private/tmp/harness-v2-machine-loading-transport-tests.log`.
+- Analyzer has zero errors/warnings and the existing 12 vendored infos (`/private/tmp/harness-v2-machine-loading-analyze.log`). These checks prove ordering, timeout-budget handling, retry and attachment behavior, not real remote latency. The fixture uses no credentials, real agent or CLI daemon.
+- The user explicitly reaffirmed permission to push to the public `autonomous-ai/autonomous-harness` repository on `app-v2`. The prior 17 local commits were pushed through `1c535b3`, and the remote head was verified. Continue ordinary checkpoint pushes there without asking again. Preserve unrelated naming edits, collaboration notes and native benchmark tooling.
+
 ## Workspace startup and profile checkpoint
 
 - Launch, sign-in and Cmd-R recovery now load machines independently of account display metadata. The CLI still confirms authentication and daemon readiness first. A pending profile no longer holds the workspace or refresh future; a successful profile publishes its account details when it arrives.
@@ -9,7 +17,7 @@ Updated 2026-09-13 with coordinated palettes, Models, combined closed-work Histo
 - Signing out invalidates pending account and inventory work before asynchronous cleanup. Late sign-in, profile, machine and terminal-capability replies cannot restore the old account, open old agents, clear a newer session's loading state or notify a disposed app. Runtime sign-out clears displayed account identity as well.
 - The original four profile/startup regressions failed before the fix (`/private/tmp/harness-v2-profile-startup-before.log`). A separate refresh-after-close check reproduced a disposed-notifier error (`/private/tmp/harness-v2-profile-refresh-close-before.log`). **118 focused tests now pass**, including 14 profile/startup lifecycle checks and existing daemon, environment, login, first-workspace, machine refresh and closed-work restoration coverage (`/private/tmp/harness-v2-profile-startup-tests.log`).
 - Analyzer has zero errors/warnings and the existing 12 vendored infos (`/private/tmp/harness-v2-profile-startup-analyze.log`). Fixtures use pending scripted responses, synthetic accounts and an isolated transport. This verifies removal of a dependency, not a measured reduction in cold launch or first-agent latency. No provider sign-in or real agent input was used.
-- Public-origin approval is still pending. Preserve the unrelated first-agent naming edits, collaboration draft and native benchmark directory. Native foreground/capture validation still needs new access evidence; do not retry the same failed calibration.
+- Saved and pushed as `1c535b3`. Release build succeeded (`/private/tmp/harness-v2-profile-startup-build.log`), and the exact development preview reopened as PID 66006 after PID 50695 was normally quit and confirmed exited. Native foreground/capture validation still needs new access evidence; do not retry the same failed calibration.
 
 ## Native startup appearance checkpoint
 

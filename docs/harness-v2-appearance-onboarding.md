@@ -36,6 +36,8 @@ Repeated refreshes share a pending profile request, and a failed profile can be 
 
 Fourteen isolated profile/startup lifecycle checks and the existing first-run/machine suites pass: 118 focused tests in total. These establish request independence, notification and recovery behavior with synthetic data. They do not measure real sign-in duration, network latency or user activation.
 
+The next discovery stage now overlaps agent inventory and terminal capabilities after the machine handshake. Agents become visible when their list arrives, while existing panes wait for both prerequisites before attaching. A combined app/WebSocket fixture verifies that both requests reach a loopback peer before either reply, including visible inventory while capabilities remain pending. This removes another serial dependency without shortening the existing connection/reply budgets or moving keyboard focus.
+
 ## Onboarding evidence and direction
 
 | Primary source | Observed behavior | Harness adaptation |
