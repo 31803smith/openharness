@@ -108,6 +108,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation {
     menu.addItem(.separator())
     add("Add Agent…", "f", "addAgent", [.command, .shift])
     add("Close Agent View", "w", "closePane", [.command, .shift])
+    add("Agents Needing Input…", "i", "notifications", [.command, .shift])
     if !settingsInAppMenu { add("Settings…", ",", "settings") }
     let item = NSMenuItem(title: "Swarm", action: nil, keyEquivalent: "")
     item.submenu = menu
@@ -160,7 +161,7 @@ private final class SwarmTabStrip: NSView {
       addSubview(button)
     }
     button(newButton, "plus", "New swarm (⌘T)", #selector(newSwarm))
-    button(notifications, "bell", "Notifications", #selector(showNotifications))
+    button(notifications, "bell", "Needs input", #selector(showNotifications))
     button(settings, "gearshape", "Settings (⌘,)", #selector(showSettings))
     registerForDraggedTypes([swarmPasteboardType])
   }
@@ -195,10 +196,11 @@ private final class SwarmTabStrip: NSView {
     notifications.isEnabled = actionsEnabled
     settings.isEnabled = actionsEnabled
     let count = state["attention"] as? Int ?? 0
+    let attentionLabel = count > 0 ? "\(count) agents need input" : "Needs input"
     notifications.image = NSImage(systemSymbolName: count > 0 ? "bell.badge" : "bell",
-      accessibilityDescription: count > 0 ? "\(count) agents need input" : "Notifications")
-    notifications.toolTip = count > 0 ? "\(count) agents need input" : "Notifications"
-    notifications.setAccessibilityLabel(notifications.toolTip)
+      accessibilityDescription: attentionLabel)
+    notifications.toolTip = "\(attentionLabel) (⇧⌘I)"
+    notifications.setAccessibilityLabel(attentionLabel)
     needsLayout = true
     layoutSubtreeIfNeeded()
     if ids != previousOrder {

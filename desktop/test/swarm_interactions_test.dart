@@ -221,6 +221,8 @@ void main() {
     expect(updates.last['enabled'], isFalse);
     await native('new');
     await native('closeActive');
+    await native('notifications');
+    expect(find.text('Needs input'), findsNothing);
     expect(app.swarms.single.id, 'swarm-1');
     Navigator.of(tester.element(find.byType(SettingsScreen))).pop();
     await tester.pump(const Duration(milliseconds: 300));
@@ -249,6 +251,18 @@ void main() {
     await tester.pump();
     expect(app.swarms.single.name, 'Recover me');
     expect(updates.last['canReopen'], isFalse);
+    final attention = native('notifications');
+    await tester.pump();
+    expect(find.text('Needs input'), findsOneWidget);
+    expect(updates.last['enabled'], isFalse);
+    await native('new');
+    await native('notifications');
+    expect(app.swarms.single.name, 'Recover me');
+    expect(find.byType(Dialog), findsOneWidget);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pump();
+    await attention;
+    expect(updates.last['enabled'], isTrue);
     await tester.pumpWidget(const SizedBox());
     projects.dispose();
     app.dispose();

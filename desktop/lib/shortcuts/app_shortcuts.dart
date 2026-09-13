@@ -73,6 +73,9 @@ enum ShortcutAction {
   /// Jump to any agent by name, on any machine.
   switchAgent,
 
+  /// Find a live question and jump to the agent waiting for input.
+  showAttention,
+
   /// Add a view to the current Swarm, independently of navigation.
   addAgent,
 
@@ -519,6 +522,16 @@ const kSwarmShortcuts = [
     action: ShortcutAction.switchAgent,
     activator: SingleActivator(LogicalKeyboardKey.keyP, meta: true),
     label: 'Jump to an agent or swarm',
+    group: ShortcutGroup.navigate,
+  ),
+  AppShortcut(
+    action: ShortcutAction.showAttention,
+    activator: SingleActivator(
+      LogicalKeyboardKey.keyI,
+      meta: true,
+      shift: true,
+    ),
+    label: 'Show agents needing input',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(

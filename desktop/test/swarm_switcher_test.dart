@@ -119,6 +119,11 @@ void main() {
       for (var i = 0; i < 12; i++) {
         await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
         await tester.pump();
+        expect(selectedRow, findsOneWidget);
+        final row = tester.getRect(selectedRow);
+        final list = tester.getRect(find.byType(ListView));
+        expect(row.top, greaterThanOrEqualTo(list.top));
+        expect(row.bottom, lessThanOrEqualTo(list.bottom));
       }
       await tester.pump();
       final selectedId =

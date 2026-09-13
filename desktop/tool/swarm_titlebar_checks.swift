@@ -92,6 +92,7 @@ private extension SwarmTabStrip {
     try original.checkAccessibility(expectedName: "Renamed tab", active: true)
     try checkTitlebar(newButton.isEnabled, "New tab returns below capacity")
     try checkTitlebar(notifications.accessibilityLabel() == "2 agents need input", "Attention has a readable accessible label")
+    try checkTitlebar(notifications.toolTip == "2 agents need input (⇧⌘I)", "Attention tooltip advertises its keyboard shortcut")
     try original.checkEnabled(true)
     original.clickBothActions()
     try checkTitlebar(events == ["select", "close"], "Native selection and close dispatch once each")
@@ -119,7 +120,21 @@ private final class TitlebarCheckMessenger: NSObject, FlutterBinaryMessenger {
 private extension SwarmTitlebar {
   func checkNativeContainer() throws {
     guard let window else { throw TitlebarCheckFailure(message: "Native test window exists") }
+    let main = NSMenu()
+    main.addItem(NSMenuItem(title: "Harness V2", action: nil, keyEquivalent: ""))
+    NSApp.mainMenu = main
     configure()
+    guard let menu = main.items.first(where: { $0.title == "Swarm" })?.submenu,
+          let attention = menu.items.first(where: { $0.representedObject as? String == "notifications" }) else {
+      throw TitlebarCheckFailure(message: "Swarm menu exposes agents needing input")
+    }
+    try checkTitlebar(attention.title == "Agents Needing Input…", "Native command names its destination")
+    try checkTitlebar(attention.keyEquivalent == "i" && attention.keyEquivalentModifierMask == [.command, .shift], "Native attention shortcut matches Flutter")
+    try checkTitlebar(attention.target === self && attention.action == #selector(menuAction(_:)), "Native attention command uses the guarded channel handler")
+    actionsEnabled = false
+    try checkTitlebar(!validateMenuItem(attention), "Native attention shortcut is disabled behind a modal")
+    actionsEnabled = true
+    try checkTitlebar(validateMenuItem(attention), "Native attention shortcut returns when the modal closes")
     strip.update([
       "enabled": true, "activeId": "swarm-11",
       "tabs": (0..<12).map { ["id": "swarm-\($0)", "name": "Swarm \($0)"] },

@@ -11,18 +11,18 @@ import '../core/test_run.dart';
 import '../settings/settings_screen.dart';
 import '../settings/settings_section.dart';
 import '../shared/theme/app_theme.dart' as grid;
-import '../shared/widgets/app_dialog.dart';
 import '../shortcuts/app_shortcuts.dart';
 import '../state/app_state.dart';
 import '../state/swarm_catalog.dart';
+import '../state/swarm_attention.dart';
 import '../state/swarm_navigation.dart';
-import '../widgets/engine_identity.dart';
 import '../widgets/layout_palette.dart';
 import '../widgets/link_machine_screen.dart';
 import '../widgets/new_agent_dialog.dart';
 import '../widgets/pane_grid.dart';
 import '../widgets/shortcuts_sheet.dart';
 import '../widgets/swarm_dialogs.dart';
+import '../widgets/swarm_attention.dart';
 import '../widgets/swarm_switcher.dart';
 import '../widgets/swarm_wallpaper.dart';
 import '../widgets/swarm_welcome.dart';
@@ -307,98 +307,15 @@ class _SwarmScreenState extends State<SwarmScreen> {
     }
   }
 
-  Future<void> _goToAgent(String machineId, String agentId) async {
-    if (app.revealAgentView(machineId, agentId)) return;
-    await app.addAgentToSwarm(machineId, agentId);
+  Future<void> _notifications() async {
+    final target = app.activeSwarmId;
+    SwarmAttentionEntry? selected;
+    await _dialog(() async {
+      selected = await showSwarmAttention(context, app, _navigation);
+    });
+    if (!mounted || selected == null) return;
+    await activateSwarmAttention(app, selected!, destinationSwarmId: target);
   }
-
-  Future<void> _notifications() => _dialog(() async {
-    final selected = await showAppDialog<({String machineId, String agentId})>(
-      context: context,
-      builder: (context) => Dialog(
-        child: SizedBox(
-          width: 520,
-          height: 400,
-          child: Padding(
-            padding: const EdgeInsets.all(22),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    const Text('Notifications', style: TextStyle(fontSize: 20)),
-                    const Spacer(),
-                    IconButton(
-                      tooltip: 'Close notifications',
-                      onPressed: () => Navigator.pop(context),
-                      icon: const Icon(Icons.close, size: 18),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 14),
-                Expanded(
-                  child: ListenableBuilder(
-                    listenable: app,
-                    builder: (context, _) {
-                      final questions =
-                          app.machineStates.values
-                              .expand((m) => m.blockedAgents.values)
-                              .toList()
-                            ..sort((a, b) => a.since.compareTo(b.since));
-                      if (questions.isEmpty) {
-                        return const Center(
-                          child: Text(
-                            'No agents need your input',
-                            style: TextStyle(color: Colors.white60),
-                          ),
-                        );
-                      }
-                      return ListView(
-                        children: [
-                          for (final q in questions)
-                            ListTile(
-                              leading: EngineMark(
-                                engine: app
-                                    .stateOf(q.machineId)
-                                    ?.agents
-                                    .where((a) => a.id == q.agentId)
-                                    .firstOrNull
-                                    ?.engine,
-                                size: 22,
-                              ),
-                              title: Text(
-                                q.prompt,
-                                maxLines: 3,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(fontSize: 13),
-                              ),
-                              subtitle: Text(
-                                '${app.stateOf(q.machineId)?.agents.where((a) => a.id == q.agentId).firstOrNull?.name ?? q.agentId} · ${app.stateOf(q.machineId)?.machine.displayName ?? q.machineId}',
-                                style: const TextStyle(
-                                  fontSize: 11,
-                                  color: Colors.white54,
-                                ),
-                              ),
-                              onTap: () => Navigator.pop(context, (
-                                machineId: q.machineId,
-                                agentId: q.agentId,
-                              )),
-                            ),
-                        ],
-                      );
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-    if (selected != null) {
-      await _goToAgent(selected.machineId, selected.agentId);
-    }
-  });
 
   Future<void> _openSpokenTask(SpokenTaskRequest request) async {
     final spoken = SpokenTask(
@@ -493,6 +410,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
               ShortcutAction.lastPane: app.focusLastPane,
               ShortcutAction.zoomPane: app.toggleZoomPane,
               ShortcutAction.switchAgent: _jump,
+              ShortcutAction.showAttention: _notifications,
               ShortcutAction.addAgent: _addAgent,
               ShortcutAction.closePane: () {
                 if (app.focusedPaneId != null) {
@@ -720,9 +638,10 @@ class _SwarmScreenState extends State<SwarmScreen> {
         ),
         const Spacer(),
         IconButton(
-          tooltip: _attention == 0
-              ? 'Notifications'
-              : '$_attention agents need input',
+          tooltip: withShortcutHint(
+            _attention == 0 ? 'Needs input' : '$_attention agents need input',
+            ShortcutAction.showAttention,
+          ),
           onPressed: _notifications,
           icon: Badge(
             isLabelVisible: _attention > 0,

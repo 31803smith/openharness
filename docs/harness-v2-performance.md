@@ -1,6 +1,6 @@
 # Harness V2 performance checks
 
-Measured on 2026-09-12, with retained-canvas, idle-work and background-output continuations on 2026-09-13, using Apple M2 Max, macOS 26.6.2, Flutter 3.47.2 and Dart 3.13.2.
+Measured on 2026-09-12, with retained-canvas, idle-work, background-output and keyboard attention continuations on 2026-09-13, using Apple M2 Max, macOS 26.6.2, Flutter 3.47.2 and Dart 3.13.2.
 
 The explicit benchmark runs in the headless Flutter test runner with isolated synthetic sessions. It never opens a sample-data app or connects to a real agent. Run it from `desktop/`:
 
@@ -135,11 +135,19 @@ The continuation's headless debug run produced the following measurements in `/p
 
 All five benchmark cases passed; retained rebuild counts remained 1,491 / 1,625. This repetition was not a controlled paired comparison with the prior run. The new search measurements establish CPU cost for that query and catalog, excluding widget layout, AppKit input and physical display. Correctness checks verify the first terminal key after a jump goes only to its destination, but they do not measure native keystroke latency.
 
+## Waiting work and keyboard scrolling
+
+Cmd+Shift+I opens the existing bell's **Needs input** surface without the prior 140 ms dialog transition or backdrop blur. Its live catalog uses the same fuzzy ranking as Cmd+P, including question text. No discovery, network call, polling or aging timer runs on each keystroke. Only visible and cached list rows are built.
+
+Keyboard selection in both pickers now adjusts the scroll offset during the key event, before painting. The earlier post-frame scroll could leave the new selection offscreen for a frame. Tests require the selected row to be visible after a single pump on each arrow movement, including past the bottom edge. Live catalog changes still reveal selection after the new list dimensions exist, with at most one scheduled reveal callback.
+
+Nine new state/widget checks pass, alongside the extended native command guards. They cover immediate search focus, Ctrl-N/P, 2× text at 880×600, stale question/view guards and the cross-Swarm round trip: select a waiting agent, deliver input only there, then Cmd+P / Return and deliver input only to the prior agent. The final full suite passes 1,023 tests with one skip. These are frame-order and correctness checks, not measurements of physical input-to-display latency.
+
 ## Native follow-up
 
 The optimized real-data app builds and runs locally. The native tab/canvas polish was visually reviewed before the navigation and retained-canvas continuations; CUA currently returns `cgWindowNotFound` for the rebuilt Release preview, so those newer interactions still need live native review. The tab strip uses AppKit's compact unified title bar: the old right accessory was clipped to 32 points; the container now supplies 40 points and aligns controls with the system traffic lights.
 
-The native check covers overflow, resizing, accessibility order and disabled actions. `bash tool/check_swarm_titlebar.sh /path/to/flutter --window-layout` adds actual container checks in a hidden window at three widths, for 170 assertions total. No Flutter engine, account or terminal is accessed.
+The native check covers overflow, resizing, accessibility order and disabled actions. `bash tool/check_swarm_titlebar.sh /path/to/flutter --window-layout` adds actual container checks in a hidden window at three widths, for 176 assertions total, including the native attention shortcut and its modal guard. No Flutter engine, account or terminal is accessed.
 
 Wallpaper is built only for the empty New swarm. Populated Swarms paint a flat color matching the selected native tab, and the disposed wallpaper evicts its own decoded cache entry. This removes wallpaper painting/cache retention from the active terminal canvas; no process-memory reduction has been measured yet.
 

@@ -2,38 +2,40 @@ import 'package:flutter/material.dart';
 
 import '../shared/widgets/app_dialog.dart';
 import '../state/app_state.dart';
+import '../state/swarm_attention.dart';
 import '../state/swarm_navigation.dart';
 import 'engine_identity.dart';
 import 'swarm_welcome.dart';
 
-Future<SwarmDestination?> showSwarmSwitcher(
+Future<SwarmAttentionEntry?> showSwarmAttention(
   BuildContext context,
   AppNotifier app,
   SwarmNavigationHistory history,
-) => showAppDialog<SwarmDestination>(
+) => showAppDialog<SwarmAttentionEntry>(
   context: context,
   transitionDuration: Duration.zero,
   veilBlur: 0,
   veilTint: const Color(0x66000000),
-  builder: (_) => _SwarmSwitcher(app: app, recent: history.recent),
+  builder: (_) => _SwarmAttention(app: app, recent: history.recent),
 );
 
-class _SwarmSwitcher extends StatefulWidget {
-  const _SwarmSwitcher({required this.app, required this.recent});
+class _SwarmAttention extends StatefulWidget {
+  const _SwarmAttention({required this.app, required this.recent});
   final AppNotifier app;
   final List<String> recent;
+
   @override
-  State<_SwarmSwitcher> createState() => _SwarmSwitcherState();
+  State<_SwarmAttention> createState() => _SwarmAttentionState();
 }
 
-class _SwarmSwitcherState extends State<_SwarmSwitcher> {
+class _SwarmAttentionState extends State<_SwarmAttention> {
   final _scroll = ScrollController();
-  late List<SwarmDestination> _catalog;
-  List<SwarmDestination> _rows = [];
+  late List<SwarmAttentionEntry> _catalog;
+  List<SwarmAttentionEntry> _rows = [];
   String _query = '';
   String? _selectedId;
   int _cursor = 0;
-  double _rowHeight = 56;
+  double _rowHeight = 104;
   bool _revealScheduled = false;
   late final _targetName = widget.app.activeSwarm.name;
 
@@ -47,12 +49,12 @@ class _SwarmSwitcherState extends State<_SwarmSwitcher> {
   void _onAppChanged() => setState(_refreshCatalog);
 
   void _refreshCatalog() {
-    _catalog = swarmDestinations(widget.app, recent: widget.recent);
+    _catalog = swarmAttentionEntries(widget.app, recent: widget.recent);
     _filter();
   }
 
   void _filter() {
-    _rows = rankSwarmDestinations(_catalog, _query, recent: widget.recent);
+    _rows = filterSwarmAttention(_catalog, _query);
     final index = _rows.indexWhere((row) => row.id == _selectedId);
     _cursor = _rows.isEmpty
         ? 0
@@ -98,7 +100,9 @@ class _SwarmSwitcherState extends State<_SwarmSwitcher> {
   }
 
   void _submit() {
-    if (_rows.isNotEmpty) Navigator.pop(context, _rows[_cursor]);
+    if (_rows.isNotEmpty && _rows[_cursor].available) {
+      Navigator.pop(context, _rows[_cursor]);
+    }
   }
 
   @override
@@ -111,24 +115,39 @@ class _SwarmSwitcherState extends State<_SwarmSwitcher> {
   @override
   Widget build(BuildContext context) {
     final scale = MediaQuery.textScalerOf(context);
-    _rowHeight = (scale.scale(13) + scale.scale(11) + 32).clamp(
-      56,
-      double.infinity,
-    );
+    _rowHeight = (scale.scale(13) * 1.35 * 3 + scale.scale(11) * 1.3 + 36)
+        .clamp(104, double.infinity);
     final selected = _rows.isEmpty ? null : _rows[_cursor];
     return Dialog(
       alignment: const Alignment(0, -0.5),
       insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 48),
       child: SizedBox(
-        width: 620,
-        height: 480,
+        width: 660,
+        height: 560,
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Column(
             children: [
+              Row(
+                children: [
+                  const Text('Needs input', style: TextStyle(fontSize: 16)),
+                  const SizedBox(width: 8),
+                  Text(
+                    '${_catalog.length}',
+                    style: const TextStyle(fontSize: 13, color: Colors.white54),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    tooltip: 'Close notifications',
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close, size: 18),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
               SwarmSearchField(
                 autofocus: true,
-                hintText: 'Jump to an agent or swarm…',
+                hintText: 'Find a question, agent, or project…',
                 onChanged: (value) => setState(() {
                   _query = value;
                   _cursor = 0;
@@ -141,10 +160,15 @@ class _SwarmSwitcherState extends State<_SwarmSwitcher> {
               const SizedBox(height: 12),
               Expanded(
                 child: _rows.isEmpty
-                    ? const Center(
+                    ? Center(
                         child: Text(
-                          'No matching agents or swarms',
-                          style: TextStyle(fontSize: 13, color: Colors.white60),
+                          _catalog.isEmpty
+                              ? 'No agents need your input'
+                              : 'No matching questions',
+                          style: const TextStyle(
+                            fontSize: 13,
+                            color: Colors.white60,
+                          ),
                         ),
                       )
                     : ListView.builder(
@@ -153,8 +177,10 @@ class _SwarmSwitcherState extends State<_SwarmSwitcher> {
                         itemExtent: _rowHeight,
                         itemBuilder: (context, index) {
                           final row = _rows[index];
+                          final destination = row.destination;
                           return ListTile(
                             key: ValueKey(row.id),
+                            enabled: row.available,
                             selected: index == _cursor,
                             selectedColor: Colors.white,
                             selectedTileColor: Colors.white10,
@@ -164,34 +190,52 @@ class _SwarmSwitcherState extends State<_SwarmSwitcher> {
                             contentPadding: const EdgeInsets.symmetric(
                               horizontal: 12,
                             ),
-                            leading: row.isSwarm
-                                ? const Icon(
-                                    Icons.tab,
-                                    size: 19,
-                                    color: Colors.white60,
-                                  )
-                                : EngineMark(engine: row.engine, size: 20),
-                            title: Text(
-                              row.title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontSize: 13),
+                            leading: EngineMark(
+                              engine: destination.engine,
+                              size: 20,
                             ),
-                            subtitle: Text(
-                              row.detail,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontSize: 11,
-                                color: Colors.white54,
-                              ),
+                            title: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  destination.title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    height: 1.35,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  row.question.prompt,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    height: 1.35,
+                                    color: Colors.white70,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  destination.detail,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    height: 1.3,
+                                    color: Colors.white54,
+                                  ),
+                                ),
+                              ],
                             ),
                             trailing: Text(
-                              row.current
-                                  ? 'Current'
-                                  : row.isSwarm
-                                  ? 'Swarm'
-                                  : row.hasView
+                              !row.available
+                                  ? 'Unavailable'
+                                  : destination.hasView
                                   ? 'Jump'
                                   : 'Open view',
                               style: const TextStyle(
@@ -199,7 +243,9 @@ class _SwarmSwitcherState extends State<_SwarmSwitcher> {
                                 color: Colors.white54,
                               ),
                             ),
-                            onTap: () => Navigator.pop(context, row),
+                            onTap: row.available
+                                ? () => Navigator.pop(context, row)
+                                : null,
                           );
                         },
                       ),
@@ -208,7 +254,9 @@ class _SwarmSwitcherState extends State<_SwarmSwitcher> {
               Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  selected != null && !selected.hasView
+                  selected != null && !selected.available
+                      ? 'This agent’s terminal is unavailable · Esc to close'
+                      : selected != null && !selected.destination.hasView
                       ? '↵ Open view in $_targetName · Esc to close'
                       : '↑↓ or ⌃N ⌃P to choose · Return to jump · Esc to close',
                   maxLines: 1,
