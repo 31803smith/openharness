@@ -87,6 +87,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
     app.addListener(_recordNavigation);
     FocusManager.instance.addListener(_restoreEmptyFocus);
     _searchFocus.addListener(_searchFocusChanged);
+    grid.AppTheme.palette.addListener(_paletteChanged);
     unawaited(_projects.load());
     _spokenTasks = app.spokenTasks.listen(_openSpokenTask);
     if (_native) {
@@ -117,6 +118,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
 
   @override
   void dispose() {
+    grid.AppTheme.palette.removeListener(_paletteChanged);
     app.removeListener(_recordNavigation);
     FocusManager.instance.removeListener(_restoreEmptyFocus);
     _searchOverlay?.remove();
@@ -173,10 +175,16 @@ class _SwarmScreenState extends State<SwarmScreen> {
   // output. Never-attached setup guides have no buffer to search.
   bool get _canFindTerminal => app.focusedPane?.session != null;
 
+  void _paletteChanged() {
+    _searchOverlay?.markNeedsBuild();
+    if (_native) _syncNative();
+  }
+
   void _syncNative() {
     final payload = {
       'enabled': _routeIsCurrent && !_dialogOpen && !_spokenPaletteOpen,
       'activeId': app.activeSwarmId,
+      'palette': grid.AppTheme.palette.value.nativeColors,
       'canReopen': app.canReopenLastClosed,
       'canFind': _canFindTerminal,
       'canClosePane': app.focusedPane != null,

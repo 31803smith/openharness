@@ -47,6 +47,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
         self.canCreateSwarm = (state["tabs"] as? [Any] ?? []).count < 24
         self.updateHistory(state["history"] as? [[String: Any]] ?? [], closed: state["closedHistory"] as? [[String: Any]] ?? [])
         self.strip.update(state)
+        self.window?.backgroundColor = self.strip.palette.tabBar
         result(nil)
       case "focusSearch":
         self.strip.focusSearch(selectAll: (call.arguments as? [String: Any])?["selectAll"] as? Bool == true)
@@ -85,7 +86,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     window.titleVisibility = .hidden
     window.titlebarAppearsTransparent = true
     window.styleMask.remove(.fullSizeContentView)
-    window.backgroundColor = NSColor(srgbRed: 0.20, green: 0.16, blue: 0.21, alpha: 1)
+    window.backgroundColor = strip.palette.tabBar
     // AppKit fixes a right accessory's height to the title bar. A taller view
     // alone is clipped. A compact unified toolbar gives the native traffic
     // lights and the tab strip one 40-point row, without a second toolbar row.
@@ -543,10 +544,28 @@ private final class SwarmHistoryIcons {
 }
 
 private let swarmPasteboardType = NSPasteboard.PasteboardType("ai.autonomous.harness.v2.swarm")
-// Matches AppPalette.swarmField exactly, joining the tab to the terminal canvas.
-private let swarmSelectedTabColor = NSColor(srgbRed: 70.0 / 255, green: 55.0 / 255, blue: 70.0 / 255, alpha: 1)
-// Matches AppPalette.swarmSearchSurface so the input joins its results below.
-private let swarmSearchSurface = NSColor(srgbRed: 61.0 / 255, green: 51.0 / 255, blue: 63.0 / 255, alpha: 1)
+/// Dart's palette is authoritative. These defaults match Graphite before its
+/// first snapshot arrives; every window retains its own resolved colors.
+private struct SwarmNativePalette: Equatable {
+  let tabBar: NSColor
+  let workspace: NSColor
+  let search: NSColor
+  let accent: NSColor
+
+  init(_ values: [String: Any] = [:]) {
+    func color(_ name: String, _ fallback: UInt32) -> NSColor {
+      let supplied = values[name] as? Int64
+      let valid = supplied.map { $0 >= 0 && $0 <= Int64(UInt32.max) && ($0 >> 24) == 255 } ?? false
+      let argb = valid ? UInt32(supplied!) : fallback
+      return NSColor(srgbRed: CGFloat((argb >> 16) & 255) / 255,
+        green: CGFloat((argb >> 8) & 255) / 255, blue: CGFloat(argb & 255) / 255, alpha: 1)
+    }
+    tabBar = color("tabBar", 0xff1c1c1c)
+    workspace = color("workspace", 0xff282828)
+    search = color("search", 0xff2c2c2c)
+    accent = color("accent", 0xffbdcbdc)
+  }
+}
 
 private final class SwarmSearchCell: NSSearchFieldCell {
   override func select(withFrame rect: NSRect, in controlView: NSView, editor: NSText,
@@ -576,6 +595,7 @@ private final class SwarmSearchCell: NSSearchFieldCell {
 /// AppKit owns editing, selection, paste and IME. Only result-navigation keys
 /// leave the field editor; ordinary terminal input never passes through here.
 private final class SwarmSearchField: NSSearchField {
+  var palette = SwarmNativePalette() { didSet { needsDisplay = true } }
   var begin: (() -> Void)?
   var command: ((String) -> Void)?
   var searching = false { didSet { needsDisplay = true } }
@@ -649,7 +669,7 @@ private final class SwarmSearchField: NSSearchField {
   }
   override func draw(_ dirtyRect: NSRect) {
     let shape = NSBezierPath(roundedRect: bounds, xRadius: searching ? 10 : 16, yRadius: searching ? 10 : 16)
-    swarmSearchSurface.setFill()
+    palette.search.setFill()
     shape.fill()
     if searching {
       // The strip continues the square bottom edge down to the result list.
@@ -674,6 +694,7 @@ private final class SwarmSearchField: NSSearchField {
 }
 
 private final class SwarmTabStrip: NSView, NSSearchFieldDelegate {
+  private(set) var palette = SwarmNativePalette()
   var emit: ((String, Any?) -> Void)?
   private let scroll = NSScrollView()
   private let document = NSView()
@@ -697,7 +718,7 @@ private final class SwarmTabStrip: NSView, NSSearchFieldDelegate {
       button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
       button.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 13, weight: .regular)
       button.isBordered = false
-      button.contentTintColor = NSColor(srgbRed: 0.80, green: 0.75, blue: 0.83, alpha: 1)
+      button.contentTintColor = palette.accent
       button.target = self
       button.action = action
       button.toolTip = label
@@ -717,6 +738,13 @@ private final class SwarmTabStrip: NSView, NSSearchFieldDelegate {
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
   func update(_ state: [String: Any]) {
+    let nextPalette = SwarmNativePalette(state["palette"] as? [String: Any] ?? [:])
+    if nextPalette != palette {
+      palette = nextPalette
+      searchField.palette = palette
+      newButton.contentTintColor = palette.accent
+      needsDisplay = true
+    }
     actionsEnabled = state["enabled"] as? Bool == true
     let rows = state["tabs"] as? [[String: Any]] ?? []
     activeId = state["activeId"] as? String ?? ""
@@ -727,6 +755,7 @@ private final class SwarmTabStrip: NSView, NSSearchFieldDelegate {
     tabs = rows.compactMap { row in
       guard let id = row["id"] as? String else { return nil }
       let tab = previous[id] ?? SwarmTabButton(id: id)
+      tab.palette = palette
       tab.name = row["name"] as? String ?? "New swarm"
       tab.selected = id == activeId
       tab.actionsEnabled = actionsEnabled
@@ -786,10 +815,10 @@ private final class SwarmTabStrip: NSView, NSSearchFieldDelegate {
   override func draw(_ dirtyRect: NSRect) {
     // The selected tab meets this edge; its bottom corners are shoulders,
     // rather than the rounded bottom of a separate pill.
-    swarmSelectedTabColor.setFill()
+    palette.workspace.setFill()
     NSRect(x: 0, y: 0, width: bounds.width, height: 1).fill()
     if searchField.searching {
-      swarmSearchSurface.setFill()
+      palette.search.setFill()
       NSRect(x: searchField.frame.minX, y: 0, width: searchField.frame.width,
         height: searchField.frame.minY + 1).fill()
     }
@@ -865,6 +894,9 @@ private final class SwarmTabStrip: NSView, NSSearchFieldDelegate {
 }
 
 private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidation {
+  var palette = SwarmNativePalette() {
+    didSet { if palette != oldValue { needsDisplay = true } }
+  }
   let swarmId: String
   var name = "New swarm" { didSet { if name != oldValue { invalidateLabel(); updateAccessibility() } } }
   var selected = false { didSet { if selected != oldValue { invalidateLabel(); updateAccessibility() } } }
@@ -966,7 +998,7 @@ private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidati
       shape.line(to: NSPoint(x: w - 8, y: 8))
       shape.curve(to: NSPoint(x: w, y: 0), controlPoint1: NSPoint(x: w - 8, y: 3.6), controlPoint2: NSPoint(x: w - 4.4, y: 0))
       shape.close()
-      swarmSelectedTabColor.setFill()
+      palette.workspace.setFill()
       shape.fill()
     } else if hovered && actionsEnabled {
       NSColor(white: 1, alpha: 0.05).setFill()

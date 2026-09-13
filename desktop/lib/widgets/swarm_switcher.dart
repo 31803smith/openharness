@@ -328,7 +328,7 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
                             fontSize: 11,
-                            color: Colors.white54,
+                            color: Colors.white70,
                           ),
                         ),
                         onTap: search.canSubmit(row)
@@ -359,7 +359,7 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                         : '↑↓ choose · Esc close',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 11, color: Colors.white54),
+                    style: const TextStyle(fontSize: 11, color: Colors.white70),
                   ),
                 ),
               ),

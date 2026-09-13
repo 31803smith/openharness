@@ -1102,7 +1102,7 @@ class _TerminalPanelState extends State<TerminalPanel>
                         focusNode: _focusNode,
                         autofocus: widget.focused && !showComposer,
                         readOnly: widget.readOnly || !session.acceptsInput,
-                        theme: darkTerminalTheme,
+                        theme: terminalThemeFor(grid.AppTheme.palette.value),
                         padding: const EdgeInsets.all(10),
                         textStyle: terminalFontStore.value,
                         // ⚠️ The terminal is NOT app chrome, and the user said so:

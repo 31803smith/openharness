@@ -58,6 +58,7 @@ class DesktopApp extends StatelessWidget {
   }
 
   Widget _app(AppearancePrefs prefs) {
+    grid.AppTheme.palette.value = prefs.palette;
     // ⚠️ ORDER MATTERS, and it is why this is a statement rather than something
     // tucked into the tree below: `buildAppTheme` reads `AppFont.sans` and
     // `AppControl.*Scaled`, so the settings have to be on `AppFont` BEFORE the

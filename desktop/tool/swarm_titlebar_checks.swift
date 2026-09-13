@@ -109,6 +109,14 @@ private extension SwarmTabStrip {
     try checkTitlebar(events.filter { $0 == "searchBegin" }.count == 1, "Refocusing search keeps the same search session")
     setSearchState(["query": "Workshop", "hint": "Search agents in Workshop…"])
     try checkTitlebar(searchField.stringValue == "Workshop", "Group navigation updates the original editable input")
+    var themedState = state([["id": "swarm-0", "name": "Renamed tab"]], active: "swarm-0")
+    themedState["palette"] = ["workspace": Int64(0xff252d43), "search": Int64(0xff262f46)]
+    let oldField = searchField
+    update(themedState)
+    try checkTitlebar(searchField === oldField && searchField.stringValue == "Workshop" && searchField.searching,
+      "Palette changes preserve the open native search and typed query")
+    try checkTitlebar(tabs[0] === original && tabs[0].palette == palette && searchField.palette == palette,
+      "The existing native tab and search controls receive one coordinated palette")
     closeSearch()
     try checkTitlebar(searchField.stringValue.isEmpty && !searchField.searching, "Closing search clears and collapses its original input")
     func key(_ characters: String, _ flags: NSEvent.ModifierFlags = []) -> NSEvent {
@@ -380,6 +388,16 @@ let titlebarCheckApp = NSApplication.shared
 titlebarCheckApp.setActivationPolicy(.prohibited)
 titlebarCheckApp.appearance = NSAppearance(named: .darkAqua)
 do {
+  let paletteValues: [String: Any] = [
+    "tabBar": Int64(0xff1b2030), "workspace": Int64(0xff252d43),
+    "search": Int64(0xff262f46), "accent": Int64(0xffb1c7f5),
+  ]
+  let palette = SwarmNativePalette(paletteValues)
+  let searchColor = palette.search.usingColorSpace(.sRGB)!
+  try checkTitlebar(abs(searchColor.redComponent - 38.0 / 255) < 0.0001 && abs(searchColor.blueComponent - 70.0 / 255) < 0.0001,
+    "Native search uses the exact palette channels supplied by Flutter")
+  try checkTitlebar(SwarmNativePalette(["search": -1, "tabBar": "invalid"]) == SwarmNativePalette(),
+    "Malformed palette data retains readable native defaults")
   let historyRow = SwarmHistoryEntry([
     "id": "agent", "title": "Build a toy", "machineName": "MacBook Pro M2", "engine": "codex",
   ])!

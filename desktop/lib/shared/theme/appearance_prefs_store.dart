@@ -3,10 +3,11 @@ import 'package:flutter/foundation.dart';
 import '../../core/harness_file_store.dart';
 import '../../core/local_key_value_store.dart';
 import 'app_theme.dart';
+import 'color_palette.dart';
 
-/// How the app's own type is set on this Mac: which face, and how big.
+/// The app's coordinated palette and UI typography on this computer.
 ///
-/// Deliberately NOT the terminal's type. The terminal renders a grid a remote
+/// This does not change the terminal's type. The terminal renders a grid a remote
 /// program draws into, so it keeps its own face and its own size in
 /// [TerminalFontStore], reached from Settings ▸ Terminal — and the app's UI
 /// scale is fenced out of it at five seams (see the notes in
@@ -14,7 +15,13 @@ import 'app_theme.dart';
 /// in `test/terminal_ui_scale_isolation_test.dart`).
 @immutable
 class AppearancePrefs {
-  const AppearancePrefs({this.uiFamily, this.uiSize = uiSizeDefault});
+  const AppearancePrefs({
+    this.uiFamily,
+    this.uiSize = uiSizeDefault,
+    this.palette = HarnessPalette.graphite,
+  });
+
+  final HarnessPalette palette;
 
   /// The face the app's chrome is set in. `null` means the system font, which is
   /// what [AppFont.sans] falls back to.
@@ -44,20 +51,23 @@ class AppearancePrefs {
   AppearancePrefs copyWith({
     String? uiFamily,
     double? uiSize,
+    HarnessPalette? palette,
     bool clearUiFamily = false,
   }) => AppearancePrefs(
     uiFamily: clearUiFamily ? null : (uiFamily ?? this.uiFamily),
     uiSize: uiSize ?? this.uiSize,
+    palette: palette ?? this.palette,
   );
 
   @override
   bool operator ==(Object other) =>
       other is AppearancePrefs &&
       other.uiFamily == uiFamily &&
-      other.uiSize == uiSize;
+      other.uiSize == uiSize &&
+      other.palette == palette;
 
   @override
-  int get hashCode => Object.hash(uiFamily, uiSize);
+  int get hashCode => Object.hash(uiFamily, uiSize, palette);
 }
 
 /// The user's appearance choices, remembered across launches.
@@ -74,6 +84,8 @@ class AppearancePrefsStore extends ValueNotifier<AppearancePrefs> {
 
   static const _familyKey = 'app_ui_font_family';
   static const _sizeKey = 'app_ui_font_size';
+  static const _paletteKey = 'app_color_palette';
+  Future<void>? _paletteSave;
 
   final LocalKeyValueStore _storage;
 
@@ -86,12 +98,36 @@ class AppearancePrefsStore extends ValueNotifier<AppearancePrefs> {
     try {
       final family = await _storage.read(_familyKey);
       final size = await _storage.read(_sizeKey);
+      final palette = await _storage.read(_paletteKey);
       value = AppearancePrefs(
         uiFamily: _familyFrom(family),
         uiSize: _sizeFrom(size),
+        palette: HarnessPalette.fromId(palette),
       );
     } catch (_) {
       value = const AppearancePrefs();
+    }
+  }
+
+  /// Preview now, persist in order. Rapid choices coalesce while storage is
+  /// busy so an older write cannot replace the user's final selection.
+  Future<void> setPalette(HarnessPalette palette) {
+    if (value.palette == palette) return _paletteSave ?? Future.value();
+    value = value.copyWith(palette: palette);
+    return _paletteSave ??= _savePalette();
+  }
+
+  Future<void> _savePalette() async {
+    try {
+      while (true) {
+        final id = value.palette.name;
+        await _storage.write(_paletteKey, id);
+        if (value.palette.name == id) break;
+      }
+    } catch (_) {
+      // The chosen palette remains usable for this run if storage fails.
+    } finally {
+      _paletteSave = null;
     }
   }
 
@@ -130,9 +166,11 @@ class AppearancePrefsStore extends ValueNotifier<AppearancePrefs> {
   /// Back to the shipped defaults.
   Future<void> reset() async {
     value = const AppearancePrefs();
+    await _paletteSave;
     try {
       await _storage.delete(_familyKey);
       await _storage.delete(_sizeKey);
+      await _storage.delete(_paletteKey);
     } catch (_) {
       // See above.
     }

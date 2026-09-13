@@ -2,6 +2,8 @@ import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
 
+import 'color_palette.dart';
+
 /// The app's live brightness — the single source of truth the color tokens below
 /// resolve against. Harness Desktop is dark-only: `_GridTokenScope` (in
 /// `main.dart`) pins this to [Brightness.dark] once, at the top of the tree.
@@ -20,6 +22,7 @@ abstract final class AppTheme {
   /// through the same [watch], since a widget that reads one token generally
   /// reads both.
   static final FontNotifier fonts = FontNotifier();
+  static final palette = ValueNotifier(HarnessPalette.graphite);
 
   static bool get isDark => brightness.value == Brightness.dark;
 
@@ -81,6 +84,7 @@ abstract final class AppTheme {
   static Brightness watch(BuildContext context) {
     context.dependOnInheritedWidgetOfExactType<_BrightnessScope>();
     context.dependOnInheritedWidgetOfExactType<_FontScope>();
+    context.dependOnInheritedWidgetOfExactType<_PaletteScope>();
     return brightness.value;
   }
 }
@@ -158,7 +162,10 @@ class BrightnessScope extends StatelessWidget {
   Widget build(BuildContext context) {
     return _BrightnessScope(
       notifier: AppTheme.brightness,
-      child: _FontScope(notifier: AppTheme.fonts, child: child),
+      child: _FontScope(
+        notifier: AppTheme.fonts,
+        child: _PaletteScope(notifier: AppTheme.palette, child: child),
+      ),
     );
   }
 }
@@ -171,17 +178,21 @@ class _FontScope extends InheritedNotifier<FontNotifier> {
   const _FontScope({required super.notifier, required super.child});
 }
 
+class _PaletteScope extends InheritedNotifier<ValueNotifier<HarnessPalette>> {
+  const _PaletteScope({required super.notifier, required super.child});
+}
+
 /// The app's palette — a warm paper white with near-black ink in light, a deep
 /// charcoal with off-white ink in dark (the design-system "Codex" direction).
 /// Centralized so every pane reads the same surfaces/accents instead of re-typing
 /// hex literals, and resolves per [AppTheme.brightness].
 abstract final class AppPalette {
   // Approved Swarms canvas and native tab-strip palette.
-  static Color get swarmField => const Color(0xff463746);
-  static Color get swarmTabBar => const Color(0xff332936);
-  static Color get swarmAccent => const Color(0xffd8cce1);
+  static Color get swarmField => AppTheme.palette.value.workspace;
+  static Color get swarmTabBar => AppTheme.palette.value.tabBar;
+  static Color get swarmAccent => AppTheme.palette.value.accent;
   // Shared with the native search field for a continuous input/results surface.
-  static Color get swarmSearchSurface => const Color(0xff3d333f);
+  static Color get swarmSearchSurface => AppTheme.palette.value.search;
 
   // the conversation / content area — pure white in light, like Codex.
   //
@@ -192,19 +203,19 @@ abstract final class AppPalette {
   // therefore carried by the rim and the shadow, not by the fill — §2's stack
   // still holds, it just has less room to say it in.
   static Color get windowBg =>
-      AppTheme.pick(const Color(0xFFFFFFFF), const Color(0xFF181818));
+      AppTheme.pick(const Color(0xFFFFFFFF), AppTheme.palette.value.background);
 
   // sidebar column — a barely-there cool grey (Codex keeps the rail almost white,
   // set apart by a hairline, not a tone) / charcoal panel in dark.
   static Color get panelBg =>
-      AppTheme.pick(const Color(0xFFF9F9F8), const Color(0xFF141414));
+      AppTheme.pick(const Color(0xFFF9F9F8), AppTheme.palette.value.panel);
 
   // input fills, quiet cards
   static Color get cardBg =>
-      AppTheme.pick(const Color(0xFFF3F3F2), const Color(0xFF1E1E1E));
+      AppTheme.pick(const Color(0xFFF3F3F2), AppTheme.palette.value.card);
 
   static Color get cardBgHover =>
-      AppTheme.pick(const Color(0xFFECECEA), const Color(0xFF252525));
+      AppTheme.pick(const Color(0xFFECECEA), AppTheme.palette.value.hover);
 
   // A hairline separator. Light: a faint cool black; dark: a faint white — a
   // black divider would vanish on charcoal.
@@ -263,7 +274,7 @@ abstract final class AppPalette {
   /// it is the fill under white text in ~100 places, and lightening it there
   /// would drop that text to ~3.1:1 — fixing the icon by breaking the buttons.
   static Color get accentOnSurface =>
-      AppTheme.pick(const Color(0xFF2F5BEA), const Color(0xFF6E8BFF));
+      AppTheme.pick(const Color(0xFF2F5BEA), AppTheme.palette.value.accent);
 
   // avatar fill (white text on it); a touch brighter in dark for contrast.
   static Color get accentMuted =>
@@ -895,17 +906,17 @@ abstract final class AppCard {
 ThemeData buildAppTheme({Brightness brightness = Brightness.light}) {
   final isDark = brightness == Brightness.dark;
   final scheme = isDark
-      ? const ColorScheme.dark(
+      ? ColorScheme.dark(
           primary: AppPalette.accent,
           onPrimary: Colors.white,
           secondary: AppPalette.accent,
-          surface: Color(0xFF181818),
-          onSurface: Color(0xFFF5F5F5),
-          onSurfaceVariant: Color(0xFFA8A8A2),
-          surfaceContainerHighest: Color(0xFF1E1E1E),
-          outline: Color(0x14FFFFFF),
-          outlineVariant: Color(0x14FFFFFF),
-          error: Color(0xFFF2544B),
+          surface: AppTheme.palette.value.background,
+          onSurface: const Color(0xFFF5F5F5),
+          onSurfaceVariant: const Color(0xFFA8A8A2),
+          surfaceContainerHighest: AppTheme.palette.value.card,
+          outline: const Color(0x14FFFFFF),
+          outlineVariant: const Color(0x14FFFFFF),
+          error: const Color(0xFFF2544B),
         )
       : const ColorScheme.light(
           primary: AppPalette.accent,
@@ -934,7 +945,9 @@ ThemeData buildAppTheme({Brightness brightness = Brightness.light}) {
   // both were `#1E1E1E`, which is [AppCard.base] — a content card's colour, one
   // step *below* the block it was supposed to be.
   final panelFill = isDark ? AppMenu.fillDark : AppMenu.fillLight;
-  final dialogFill = isDark ? const Color(0xFF202020) : const Color(0xFFFFFFFF);
+  final dialogFill = isDark
+      ? AppTheme.palette.value.card
+      : const Color(0xFFFFFFFF);
   final textTheme = _appTextTheme(scheme.onSurface, scheme.onSurfaceVariant);
 
   return ThemeData(
