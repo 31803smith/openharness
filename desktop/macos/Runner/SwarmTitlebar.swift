@@ -48,7 +48,8 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
       guard let self else { result(nil); return }
       switch call.method {
       case "configure":
-        self.configure()
+        let state = call.arguments as? [String: Any] ?? [:]
+        self.configure(palette: state["palette"] as? [String: Any])
         result(true)
       case "update":
         let state = call.arguments as? [String: Any] ?? [:]
@@ -208,7 +209,13 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     keymap.applyMenuKeys(to: main, context: context)
   }
 
-  private func configure() {
+  private func configure(palette: [String: Any]? = nil) {
+    // Appearance is loaded before the workspace exists. Apply it before the
+    // explicit show request, without inventing tabs or enabling their actions.
+    if let palette {
+      strip.updatePalette(palette)
+      window?.backgroundColor = strip.palette.tabBar
+    }
     guard let window, !configured else { return }
     configured = true
     NSWindow.allowsAutomaticWindowTabbing = false
@@ -878,6 +885,7 @@ private final class SwarmTabStrip: NSView, NSSearchFieldDelegate {
       addSubview(button)
     }
     button(newButton, "plus", "New swarm (⌘T)", #selector(newSwarm))
+    newButton.isEnabled = false
     searchField.delegate = self
     searchField.isEnabled = false
     searchField.begin = { [weak self] in self?.beginSearch() }
@@ -889,14 +897,19 @@ private final class SwarmTabStrip: NSView, NSSearchFieldDelegate {
   }
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
+  func updatePalette(_ values: [String: Any]) {
+    let nextPalette = SwarmNativePalette(values)
+    guard nextPalette != palette else { return }
+    palette = nextPalette
+    searchField.palette = palette
+    newButton.contentTintColor = palette.accent
+    for tab in tabs { tab.palette = palette }
+    needsDisplay = true
+  }
+
   func update(_ state: [String: Any]) {
-    let nextPalette = SwarmNativePalette(state["palette"] as? [String: Any] ?? [:])
-    if nextPalette != palette {
-      palette = nextPalette
-      searchField.palette = palette
-      newButton.contentTintColor = palette.accent
-      needsDisplay = true
-    }
+    // Workspace teardown clears its controls without changing appearance.
+    if let palette = state["palette"] as? [String: Any] { updatePalette(palette) }
     actionsEnabled = state["enabled"] as? Bool == true
     let rows = state["tabs"] as? [[String: Any]] ?? []
     let nextActiveId = state["activeId"] as? String ?? ""

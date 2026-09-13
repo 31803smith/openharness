@@ -2,6 +2,15 @@
 
 Updated 2026-09-13 with coordinated palettes, Models, combined closed-work History and faster unified search. This is a working preview, not a release.
 
+## Native startup appearance checkpoint
+
+- The loaded palette now reaches native titlebar configuration before the explicit show request, including startup and sign-in where no Swarm screen exists yet. Native New swarm and Search controls begin disabled; a palette update neither creates tabs nor enables workspace actions.
+- A reproduced teardown regression reset the native palette when Swarm screen disposal sent only `tabs: []` and `enabled: false`. An omitted palette now preserves the current colors, so leaving the workspace does not revert its native chrome to Graphite. Explicit palette updates retain existing tab/search controls.
+- Window setup now awaits native configuration, show and focus requests directly. The installed `window_manager` callback is a `VoidCallback` and does not await an async callback. A delayed-reply test showed the old setup future completing while all three operations were still pending. Failures now propagate through the setup future instead of escaping it.
+- **40 focused Flutter tests passed**, including all six initial palette payloads, delayed setup replies, error propagation, persisted settings and the existing startup/sign-in/first-workspace screens. **51 native decoder and 371 AppKit checks passed** against Dart's exported bindings. The AppKit checks include initial colors, repeated configuration, workspace teardown, keyboard ownership and retained search composition, with no window displayed.
+- Reproductions: `/private/tmp/harness-v2-window-startup-before.log`, `/private/tmp/harness-v2-window-palette-native-before.log` and `/private/tmp/harness-v2-window-palette-exit-before.log`. Final checks: `/private/tmp/harness-v2-window-startup-tests.log` and `/private/tmp/harness-v2-window-palette-native.log`. This establishes request ordering and color retention in isolation; live launch presentation and foreground native timing remain unmeasured.
+- Analyzer has zero errors/warnings and the existing 12 vendored infos (`/private/tmp/harness-v2-window-startup-analyze.log`). Public-origin push approval is still pending.
+
 ## Startup settings checkpoint
 
 - Five per-key appearance reads now use two grouped snapshots through the existing serialized file store. Each snapshot returns only requested keys and is discarded after the read. Locking, private permissions, corruption recovery and future-schema protection remain intact; later reads see intervening writes.
@@ -9,6 +18,7 @@ Updated 2026-09-13 with coordinated palettes, Models, combined closed-work Histo
 - In one isolated debug benchmark run with warm temporary files, settings-plus-keyboard initialization went from **31.877 ms median / 34.919 ms p95** to **13.042 / 14.295 ms**. This is one initialization step, not full app launch or native display latency. The explicit benchmark is `desktop/test/benchmarks/startup_benchmark.dart`; [performance notes](harness-v2-performance.md) record the setup and limits.
 - **58 focused tests passed**, covering complete preference/counter restoration, all-store readiness under delayed/failed reads, temporary-store isolation, selected-key batches, intervening writes/deletes and existing permission/schema protections. Artifacts: `/private/tmp/harness-v2-startup-tests.log` and `/private/tmp/harness-v2-startup-benchmark-{before,after}.log`.
 - Analyzer has zero errors/warnings and the existing 12 vendored infos (`/private/tmp/harness-v2-startup-analyze.log`). The explicit benchmark is excluded from ordinary test discovery and does not collect user settings.
+- Saved as local commit `6c192ee`. Release build succeeded (`/private/tmp/harness-v2-startup-build.log`), and the exact development preview reopened as PID 40428 after PID 26548 was normally quit and confirmed exited.
 - Startup tests now inject all three stores; none falls through to the user's global appearance or stats store. No real agent, credential or keyboard configuration was used in validation. Public-origin push approval remains pending; preserve unrelated naming edits, the collaboration draft and native benchmark tooling.
 
 ## Search arrival and typing checkpoint

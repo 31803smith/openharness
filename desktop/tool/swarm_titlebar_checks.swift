@@ -36,6 +36,14 @@ private extension SwarmTabButton {
 }
 
 private extension SwarmTabStrip {
+  func checkStartupPalette(_ expected: SwarmNativePalette) throws {
+    try checkTitlebar(palette == expected && searchField.palette == expected &&
+      newButton.contentTintColor == expected.accent,
+      "Initial search and new-swarm colors use the saved palette")
+    try checkTitlebar(tabs.isEmpty && !actionsEnabled && !newButton.isEnabled && !searchField.isEnabled,
+      "Initial palette setup does not create or enable workspace controls")
+  }
+
   func checkWindowGeometry(_ window: NSWindow) throws {
     let stripFrame = convert(bounds, to: nil)
     let close = window.standardWindowButton(.closeButton)!
@@ -351,6 +359,7 @@ private extension SwarmTabStrip {
 // No engine, account, terminal or transport is involved in native layout.
 private final class TitlebarCheckMessenger: NSObject, FlutterBinaryMessenger {
   var calls: [FlutterMethodCall] = []
+  private var handlers: [String: FlutterBinaryMessageHandler] = [:]
   var holdReplies = false
   var replies: [FlutterBinaryReply] = []
   func finishNextReply() {
@@ -366,7 +375,20 @@ private final class TitlebarCheckMessenger: NSObject, FlutterBinaryMessenger {
       else { callback(FlutterStandardMethodCodec.sharedInstance().encodeSuccessEnvelope(nil)) }
     }
   }
-  func setMessageHandlerOnChannel(_ channel: String, binaryMessageHandler handler: FlutterBinaryMessageHandler?) -> FlutterBinaryMessengerConnection { 1 }
+  func setMessageHandlerOnChannel(_ channel: String, binaryMessageHandler handler: FlutterBinaryMessageHandler?) -> FlutterBinaryMessengerConnection {
+    handlers[channel] = handler
+    return 1
+  }
+  func receive(_ method: String, arguments: [String: Any]) throws -> Data? {
+    guard let handler = handlers["harness/swarm_tabs"] else {
+      throw TitlebarCheckFailure(message: "Native channel handler is installed")
+    }
+    var reply: Data?
+    let message = FlutterStandardMethodCodec.sharedInstance().encode(
+      FlutterMethodCall(methodName: method, arguments: arguments))
+    handler(message) { reply = $0 }
+    return reply
+  }
   func cleanUpConnection(_ connection: FlutterBinaryMessengerConnection) {}
 }
 
@@ -490,7 +512,29 @@ private extension SwarmTitlebar {
       main.addItem(item)
     }
     NSApp.mainMenu = main
+    let startupColors: [String: Any] = [
+      "tabBar": Int64(0xff1b2720), "workspace": Int64(0xff2b3b31),
+      "search": Int64(0xff293a31), "accent": Int64(0xffb4d8be),
+    ]
+    let reply = try messenger.receive("configure", arguments: ["palette": startupColors])
+    try checkTitlebar(reply == FlutterStandardMethodCodec.sharedInstance().encodeSuccessEnvelope(true),
+      "Native configure acknowledges the initial palette synchronously")
+    let startupPalette = SwarmNativePalette(startupColors)
+    try checkTitlebar(strip.palette == startupPalette && window.backgroundColor == startupPalette.tabBar,
+      "The saved palette reaches native chrome before any workspace update")
+    try strip.checkStartupPalette(startupPalette)
     configure()
+    try checkTitlebar(strip.palette == startupPalette && window.titlebarAccessoryViewControllers.count == 1,
+      "Repeated configuration preserves the saved palette and one titlebar accessory")
+    _ = try messenger.receive("update", arguments: [
+      "tabs": [["id": "startup-check", "name": "Synthetic swarm"]],
+      "activeId": "startup-check", "enabled": true, "palette": startupColors,
+    ])
+    // SwarmScreen.dispose sends this when sign-in or setup takes its place.
+    _ = try messenger.receive("update", arguments: ["tabs": [], "enabled": false])
+    try checkTitlebar(window.backgroundColor == startupPalette.tabBar,
+      "Leaving the workspace preserves the saved native background")
+    try strip.checkStartupPalette(startupPalette)
     try checkTitlebar(window.firstResponder === window.contentViewController,
       "Adding the search field does not take initial keyboard focus from the workspace")
     try checkTitlebar(main.items.map(\.title) == ["Harness V2", "File", "Edit", "View", "History", "Models", "Window", "Help"], "Models replaces the redundant Swarm menu")

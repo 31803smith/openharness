@@ -20,6 +20,14 @@ The existing ANSI color ramp and explicit agent-emitted colors remain intact. A 
 
 Verification includes persistence/reload, keyboard operation, narrow layout, contrast, retained terminal identity and native titlebar/query identity. Primary text meets 7:1 on each terminal background; the tested secondary text meets 4.5:1 on the search, card and workspace surfaces. These checks cover Harness defaults, not arbitrary colors emitted by an agent.
 
+## Native appearance during startup and sign-in
+
+Saved colors now travel with the initial native `configure` request, before the app's explicit show request. Previously only an authenticated Swarm screen supplied those colors, so the native titlebar used Graphite during startup/sign-in even when Flutter had loaded a different palette. Clearing a workspace also used to reset the native colors because its teardown packet intentionally omits palette data. That omission now means retain the current palette.
+
+New swarm and Search remain disabled until the workspace enables them. Repeated native configuration preserves the current palette and one titlebar accessory. The existing tab controls, search editor, query and composition survive later palette updates.
+
+The window setup future now awaits configure, show and focus requests directly. The installed window library's callback is synchronous and previously allowed that future to report completion before its async native work finished. Delayed-reply checks reproduced the issue; error responses now reach the awaited setup call. These checks exercise actual Dart request ordering and a hidden AppKit window. Live first-frame presentation and macOS foreground activation remain unmeasured.
+
 ## Onboarding evidence and direction
 
 | Primary source | Observed behavior | Harness adaptation |

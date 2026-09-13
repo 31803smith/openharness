@@ -38,9 +38,8 @@ Future<void> main() async {
   // Keyboard configuration has its own file and watchers. It can load beside
   // the appearance, but both must be ready before the window becomes usable.
   await Future.wait([loadPersistedSettings(), keymap.start()]);
-  // After the settings: the window shows itself once it is ready, and the
-  // first frame it shows must already wear the saved theme.
-  await configureDesktopWindow();
+  // Apply the saved palette to native chrome as well as the Flutter theme.
+  await configureDesktopWindow(palette: appearancePrefsStore.value.palette);
   runApp(ProviderScope(child: DesktopApp(keymap: keymap)));
 }
 
