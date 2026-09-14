@@ -477,25 +477,64 @@ void main() {
       });
     });
 
-    test(
-      'a shadow that also lands on turn is abandoned, three tries then done',
-      () {
-        fakeAsync((async) {
-          final b = onTurn(async);
-          for (var attempt = 1; attempt <= 3; attempt++) {
-            async.elapse(const Duration(seconds: 60));
-            expect(b.links.created, hasLength(1 + attempt));
-            b.links.last.open(transport: TerminalP2pTransport.relay);
-            flush(async);
-            expect(b.links.last.stopReason, 'upgrade_no_gain');
-          }
-          async.elapse(const Duration(minutes: 5));
-          expect(b.links.created, hasLength(4), reason: 'gave up');
-          expect(b.links.first.stopped, isFalse);
-          b.plugin.dispose();
-        });
-      },
-    );
+    test('a shadow that also lands on turn is abandoned; three quick tries, then slow', () {
+      fakeAsync((async) {
+        final b = onTurn(async);
+        for (var attempt = 1; attempt <= 3; attempt++) {
+          async.elapse(const Duration(seconds: 60));
+          expect(b.links.created, hasLength(1 + attempt));
+          b.links.last.open(transport: TerminalP2pTransport.relay);
+          flush(async);
+          expect(b.links.last.stopReason, 'upgrade_no_gain');
+        }
+        async.elapse(const Duration(minutes: 5));
+        expect(b.links.created, hasLength(4), reason: 'slowed down, not yet');
+        async.elapse(const Duration(minutes: 10));
+        expect(b.links.created, hasLength(5), reason: 'every 15 min from now');
+        expect(b.links.last.upgrade, isTrue);
+        expect(b.links.first.stopped, isFalse);
+        b.plugin.dispose();
+      });
+    });
+
+    test('a demotion gives the next link a fresh upgrade budget', () {
+      fakeAsync((async) {
+        final b = onTurn(async);
+        for (var attempt = 1; attempt <= 3; attempt++) {
+          async.elapse(const Duration(seconds: 60));
+          b.links.last.open(transport: TerminalP2pTransport.relay);
+          flush(async);
+        }
+        // The primary dies; the retry lands on TURN again.
+        b.links.first.drop('peer_failed');
+        flush(async);
+        async.elapse(const Duration(seconds: 60));
+        final second = b.links.last;
+        expect(second.upgrade, isFalse);
+        second.open(transport: TerminalP2pTransport.relay);
+        flush(async);
+        // Quick attempts again, not the slow pace.
+        async.elapse(const Duration(seconds: 60));
+        expect(b.links.last.upgrade, isTrue);
+        expect(b.links.last, isNot(second));
+        b.plugin.dispose();
+      });
+    });
+
+    test('coming back to the foreground on turn tries an upgrade at once', () {
+      fakeAsync((async) {
+        final b = onTurn(async);
+        async.elapse(const Duration(seconds: 5));
+        expect(b.links.created, hasLength(1));
+        b.plugin.kickRetry();
+        expect(b.links.created, hasLength(2));
+        expect(b.links.last.upgrade, isTrue);
+        // Not twice while that trial is still running.
+        b.plugin.kickRetry();
+        expect(b.links.created, hasLength(2));
+        b.plugin.dispose();
+      });
+    });
 
     test(
       'an unanswered promote keeps the old connection open as an orphan',
@@ -511,8 +550,11 @@ void main() {
           flush(async);
           async.elapse(const Duration(seconds: 5));
           expect(primary.stopped, isFalse);
+          // The promoted shadow dying takes the orphan with it.
+          shadow.drop('peer_failed');
+          flush(async);
+          expect(primary.stopReason, 'primary_demoted');
           b.plugin.dispose();
-          expect(primary.stopped, isTrue);
           expect(shadow.stopped, isTrue);
         });
       },

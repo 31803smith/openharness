@@ -34,10 +34,15 @@ const _migrationTtl = Duration(seconds: 30);
 const _migrationSweepEvery = Duration(seconds: 20);
 
 // A connection that reached 'direct' only through a TURN pair still costs per GB —
-// worth periodically trying for a truly direct one. Never touches the live
-// connection until a replacement has already proven itself.
-const _upgradeMaxAttempts = 3;
+// and, what a person actually notices, a relay round trip on every keystroke. Worth
+// periodically trying for a truly direct one; the trial never touches the live
+// connection until a replacement has already proven itself. The CLI gives up for
+// good after three tries; a phone's relay socket can live in the foreground for
+// hours, so after those three it keeps trying at a slow pace instead — and again
+// at once when the app comes back, since that usually means the network changed.
+const _upgradeQuickAttempts = 3;
 const _upgradeRetryDelay = Duration(seconds: 60);
+const _upgradeSlowRetryDelay = Duration(minutes: 15);
 const _upgradeAttemptTimeout = Duration(seconds: 15);
 const _upgradeDrainTimeout = Duration(seconds: 5);
 const _promoteAckTimeout = Duration(seconds: 5);
@@ -125,6 +130,10 @@ class TerminalP2pPlugin implements TerminalTransportPlugin {
   final _upgradeDraining = <String, DateTime>{};
   void Function()? _upgradeWaitResolve;
   TerminalP2pLink? _upgradeOrphan;
+  DateTime? _lastUpgradeAttemptAt;
+
+  /// Set only once a cutover succeeded — there is nothing left to upgrade to. A
+  /// demotion resets it along with the attempt count: the next link is its own.
   bool _upgradeDone = false;
 
   String get _sid =>
@@ -194,15 +203,28 @@ class TerminalP2pPlugin implements TerminalTransportPlugin {
     onDisposed?.call(this);
   }
 
-  /// The app came back to the foreground: a retry waiting out its delay fires now.
+  /// The app came back to the foreground: a retry waiting out its delay fires now,
+  /// and a link sitting on TURN gets an upgrade trial at once — coming back usually
+  /// means the network changed, which is exactly when a direct pair may have
+  /// become possible.
   void kickRetry() {
+    if (_disposed) return;
     final timer = _retryTimer;
-    if (timer == null || _disposed) return;
-    timer.cancel();
-    _retryTimer = null;
-    _log('retry kicked · app resumed');
-    _link = null;
-    _startP2p();
+    if (timer != null) {
+      timer.cancel();
+      _retryTimer = null;
+      _log('retry kicked · app resumed');
+      if (_link == null) _startP2p();
+      return;
+    }
+    if (_link?.transport == TerminalP2pTransport.relay &&
+        _upgradeShadow == null &&
+        !_upgradeDone) {
+      _upgradeTimer?.cancel();
+      _upgradeTimer = null;
+      _log('upgrade kicked · app resumed');
+      _attemptUpgrade();
+    }
   }
 
   // ── Negotiation ───────────────────────────────────────────────────────────
@@ -300,9 +322,7 @@ class TerminalP2pPlugin implements TerminalTransportPlugin {
     }
     _retryTimer = Timer(delay, () {
       _retryTimer = null;
-      if (_disposed) return;
-      _link = null;
-      _startP2p();
+      if (!_disposed && _link == null) _startP2p();
     });
   }
 
@@ -560,14 +580,23 @@ class TerminalP2pPlugin implements TerminalTransportPlugin {
   // ── Demotion, migration ───────────────────────────────────────────────────
 
   Future<void> _demote(String reason) async {
-    if (_disposed) return;
+    // Two causes can race (a refused send and relay-delivered output, say); the
+    // second finds nothing left to demote.
+    if (_disposed || (_link == null && _p2pStreams.isEmpty)) return;
     // The ONE place every demotion converges, so none can fall through silently.
     _log('demoted · reason=$reason streams=${_p2pStreams.length}');
     _upgradeTimer?.cancel();
     _upgradeTimer = null;
+    _upgradeAttempts = 0;
+    _upgradeDone = false;
     final shadow = _upgradeShadow;
     _upgradeShadow = null;
     if (shadow != null) unawaited(shadow.stop(reason: 'primary_demoted'));
+    // An orphan from an unanswered promote was only worth keeping beside the
+    // primary it was cut over from; with that gone it is just a TURN allocation.
+    final orphan = _upgradeOrphan;
+    _upgradeOrphan = null;
+    if (orphan != null) unawaited(orphan.stop(reason: 'primary_demoted'));
     _upgradeDraining.clear();
     _upgradeWaitResolve = null;
     final link = _link;
@@ -634,11 +663,10 @@ class TerminalP2pPlugin implements TerminalTransportPlugin {
 
   void _scheduleUpgradeAttempt() {
     if (_upgradeTimer != null || _upgradeShadow != null || _upgradeDone) return;
-    if (_upgradeAttempts >= _upgradeMaxAttempts) {
-      _upgradeDone = true;
-      return;
-    }
-    _upgradeTimer = Timer(_upgradeRetryDelay, () {
+    final delay = _upgradeAttempts < _upgradeQuickAttempts
+        ? _upgradeRetryDelay
+        : _upgradeSlowRetryDelay;
+    _upgradeTimer = Timer(delay, () {
       _upgradeTimer = null;
       if (!_disposed) _attemptUpgrade();
     });
@@ -657,6 +685,11 @@ class TerminalP2pPlugin implements TerminalTransportPlugin {
         policy == null) {
       return;
     }
+    // A resume can ask at any moment; one full negotiation a minute is plenty.
+    final now = _now();
+    final last = _lastUpgradeAttemptAt;
+    if (last != null && now.difference(last) < _upgradeRetryDelay) return;
+    _lastUpgradeAttemptAt = now;
     _upgradeAttempts++;
     final attempt = _upgradeAttempts;
     late final TerminalP2pLink shadow;
@@ -705,12 +738,11 @@ class TerminalP2pPlugin implements TerminalTransportPlugin {
   }
 
   void _finishUpgradeAttempt() {
-    if (_upgradeAttempts >= _upgradeMaxAttempts) {
-      _upgradeDone = true;
+    if (_upgradeAttempts == _upgradeQuickAttempts) {
       _log(
-        'upgrade giving up · staying on turn after $_upgradeAttempts attempts',
+        'upgrade slowing down · still on turn after $_upgradeAttempts attempts,'
+        ' retrying every ${_upgradeSlowRetryDelay.inMinutes}min',
       );
-      return;
     }
     _scheduleUpgradeAttempt();
   }
@@ -774,8 +806,8 @@ class TerminalP2pPlugin implements TerminalTransportPlugin {
         'protocolVersion': terminalP2pProtocolVersion,
       });
     }, _promoteAckTimeout);
-    _upgradeDone = true; // either way, this connection is done trying
     if (acked) {
+      _upgradeDone = true; // nothing left to upgrade to
       unawaited(old.stop(reason: 'upgraded', notifyPeer: false));
       _log('upgrade promoted · attempt=$_upgradeAttempts');
       // The streams did not change wire from their own point of view, but the
@@ -787,7 +819,9 @@ class TerminalP2pPlugin implements TerminalTransportPlugin {
       }
     } else {
       // Keep the old connection alive rather than guess it is safe to close; it is
-      // closed when the plugin itself is disposed.
+      // closed when the plugin itself is disposed. The cutover itself stands, so
+      // this link is direct now and there is nothing more to try.
+      _upgradeDone = true;
       _upgradeOrphan = old;
       _log('upgrade promote ack timeout · keeping the old connection open');
     }

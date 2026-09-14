@@ -499,7 +499,11 @@ class WsConn {
     var openViaPlugin = false;
     final plugin = _plugin;
     final requestId = payload['requestId'];
-    if (plugin != null && type == 'terminal_open' && requestId is String) {
+    // Not worth the wait when the frame cannot go anyway.
+    if (plugin != null &&
+        isReady &&
+        type == 'terminal_open' &&
+        requestId is String) {
       openViaPlugin = await plugin.prepareOpen(requestId);
     }
     return _enqueueFrame(

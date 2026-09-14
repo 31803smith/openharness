@@ -97,9 +97,12 @@ class WebRtcTerminalP2pLink implements TerminalP2pLink {
   Completer<void>? _reflexive;
   Completer<void>? _drained;
 
-  /// Candidates gathered after the offer left. Held until the answer is in: the
+  /// Candidates not carried by the offer. Held until the answer is in: the
   /// responder only adds a candidate to an entry that already has a remote
   /// description, and one arriving earlier is dropped or tears the session down.
+  /// Before the offer goes out everything lands here too, and what its SDP turns
+  /// out to carry is dropped again then — the alternative, ignoring candidates
+  /// until the SDP is known, loses the ones reported while it is being read.
   final _lateCandidates = <RTCIceCandidate>[];
   String _offeredSdp = '';
 
@@ -195,6 +198,7 @@ class WebRtcTerminalP2pLink implements TerminalP2pLink {
       throw StateError('local_description_missing');
     }
     _offeredSdp = sdp;
+    _lateCandidates.removeWhere((c) => sdp.contains(c.candidate ?? ''));
     sendSignal('p2p_offer', {
       'sessionId': sessionId,
       'protocolVersion': terminalP2pProtocolVersion,
@@ -242,8 +246,11 @@ class WebRtcTerminalP2pLink implements TerminalP2pLink {
           }
         case 'p2p_abort':
           final reason = payload['reason'];
+          // The peer's word for it, bounded before it reaches a log line.
           _fail(
-            reason is String && reason.isNotEmpty ? reason : 'peer_aborted',
+            reason is String && reason.isNotEmpty
+                ? (reason.length > 64 ? reason.substring(0, 64) : reason)
+                : 'peer_aborted',
           );
       }
     } catch (error) {
@@ -283,10 +290,12 @@ class WebRtcTerminalP2pLink implements TerminalP2pLink {
       final message = data is String
           ? RTCDataChannelMessage(data)
           : RTCDataChannelMessage.fromBinary(asBytes(data));
-      // The plugin's send is a Future; a rejection is a channel that stopped being
-      // usable. Reported on a later turn so the caller's relay fallback for THIS
-      // frame goes out before any resync a failure triggers — otherwise the
-      // higher-counter resync would arrive first and read as a replay.
+      // The plugin's send is a Future, so a rejection lands after this has already
+      // answered true and the frame is gone — unlike the CLI's synchronous werift
+      // send, which hands a refused frame back for the relay. Rare (the channel
+      // has to die between the state check and the native call); the demotion's
+      // resync restores the screen, and a lost keystroke is retyped. Reported on a
+      // later turn so nothing of the failure precedes the frames already queued.
       unawaited(
         channel.send(message).catchError((Object error) {
           appLog.warn('p2p', 'data channel send failed', error: error);
@@ -367,6 +376,7 @@ class WebRtcTerminalP2pLink implements TerminalP2pLink {
     _timeout = null;
     _clearDisconnectGrace();
     _settleWaiters(false);
+    _lateCandidates.clear();
     _drained?.complete();
     _drained = null;
     if (notifyPeer) {
@@ -421,7 +431,7 @@ class WebRtcTerminalP2pLink implements TerminalP2pLink {
         if (reflexive != null && !reflexive.isCompleted) reflexive.complete();
       }
       // Everything gathered before the offer left is already inside its SDP.
-      if (_offeredSdp.isEmpty || _offeredSdp.contains(line)) return;
+      if (_offeredSdp.isNotEmpty && _offeredSdp.contains(line)) return;
       if (_sawAnswer) {
         _trickle(candidate);
       } else {
