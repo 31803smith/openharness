@@ -3,44 +3,14 @@ import 'dart:async';
 import 'package:flutter/cupertino.dart';
 
 import 'package:harness/state/app_state.dart';
-import 'agent_hero.dart';
+import 'agent_index.dart';
+import 'agent_swipe.dart';
 import 'agents_page.dart';
 import 'link_page.dart';
-import 'terminal_page.dart';
 
 /// Every phone page slides in the iOS way, and goes back with the edge swipe.
 Route<void> phoneRoute(WidgetBuilder builder) =>
     CupertinoPageRoute<void>(builder: builder);
-
-/// The route a terminal opens on: the row grows into the page's header, and nothing else moves.
-///
-/// ⚠️ **The page itself gets NO transition of its own, and that is the whole point.** A plain
-/// [CupertinoPageRoute] slides the incoming page in from the right *while* the Hero flies the
-/// header up out of the list — two motions in different directions, which is what makes a Hero
-/// look like a piece escaping the transition. Fading the page instead is no better: the page
-/// paints its own opaque background, so a fade is a full-screen rectangle changing opacity across
-/// the flight, and the eye reads that as the screen flashing.
-///
-/// With no transition the page is simply *there*, under the flying header, and the only thing
-/// moving is the header and the body rising under it ([AgentBodyReveal]).
-///
-/// Still a [CupertinoPageRoute] subclass so the edge-swipe back gesture survives — and the swipe
-/// runs the Hero in reverse, which is the point of using one.
-class _AgentPageRoute extends CupertinoPageRoute<void> {
-  _AgentPageRoute({required super.builder});
-
-  /// Matches the flight, so the route is finished exactly when the header lands.
-  @override
-  Duration get transitionDuration => kAgentHeroDuration;
-
-  @override
-  Widget buildTransitions(
-    BuildContext context,
-    Animation<double> animation,
-    Animation<double> secondaryAnimation,
-    Widget child,
-  ) => child;
-}
 
 /// Where a tap on a machine goes. A machine this device holds no link to opens on ITS password
 /// form — each machine has its own remote password — and only a linked one opens on its agents.
@@ -62,34 +32,65 @@ void openMachine(BuildContext context, AppNotifier notifier, String machineId) {
 /// for a second tile, so whatever else was open is closed rather than left attached somewhere
 /// nobody can see it. The page goes up first and says it is attaching; the attach follows.
 ///
-/// [heroSource] names the list this was opened from, so the engine mark's Hero tag matches the row
-/// it is flying out of — see [agentHeroTag] for why the source has to be part of the tag at all.
+/// [swipeNeighbours] turns the page into a pager over that list — see [AgentSwipeList] and
+/// [openAgentPager], which is how the Agents tab calls this.
 void openAgent(
   BuildContext context,
   AppNotifier notifier,
   String machineId,
   String agentId, {
-  required AgentHeroSource heroSource,
+  AgentSwipeList? swipeNeighbours,
 }) {
   Navigator.of(context).push(
-    _AgentPageRoute(
-      builder: (_) => TerminalPage(
+    phoneRoute(
+      (_) => AgentSwipeHost(
         notifier: notifier,
         machineId: machineId,
         agentId: agentId,
-        heroSource: heroSource,
+        neighbours: swipeNeighbours,
       ),
     ),
   );
-  unawaited(_showOnly(notifier, machineId, agentId));
+  unawaited(_openPane(notifier, machineId, agentId, keepOthers: swipeNeighbours != null));
 }
 
-Future<void> _showOnly(
+/// Opens one agent as a PAGER over [entries]: the page it lands on is the agent tapped, and a
+/// horizontal swipe moves to the entry beside it.
+///
+/// Takes the entries as a SNAPSHOT rather than a way to recompute them. The list is sorted partly on
+/// state that moves by itself — an agent that starts working sorts upward — so a page recomputing
+/// "the next one" mid-session would renumber itself under the finger. What the person saw when they
+/// tapped is the order they get, for as long as that screen is open.
+void openAgentPager(
+  BuildContext context,
+  AppNotifier notifier,
+  List<AgentEntry> entries,
+  AgentEntry entry,
+) => openAgent(
+  context,
+  notifier,
+  entry.machineId,
+  entry.agent.id,
+  swipeNeighbours: AgentSwipeList(entries),
+);
+
+/// Attaches the agent's pane.
+///
+/// [keepOthers] is what separates the two ways in. A page opened on its own keeps the phone's old
+/// rule — one pane, because a second one attached behind a screen nobody can see is a terminal
+/// streaming for nothing. A PAGER deliberately keeps its neighbours attached: that is the whole
+/// point of swiping, and the panes it keeps are exactly the pages it has mounted.
+///
+/// `selectAgent` already does the right thing either way — it reuses an existing pane and only
+/// reopens a session that died, so arriving back on a page already attached costs nothing.
+Future<void> _openPane(
   AppNotifier notifier,
   String machineId,
-  String agentId,
-) async {
+  String agentId, {
+  required bool keepOthers,
+}) async {
   await notifier.selectAgent(machineId, agentId);
+  if (keepOthers) return;
   final keep = notifier.focusedPane?.id;
   for (final pane in [...notifier.panes]) {
     if (pane.id != keep) await notifier.closePane(pane.id);

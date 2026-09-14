@@ -4,7 +4,6 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:harness/shared/theme/app_theme.dart';
 import 'package:harness/shared/widgets/empty_state.dart';
 import 'package:harness/state/app_state.dart';
-import 'agent_hero.dart';
 import 'agent_index.dart';
 import 'agent_row.dart';
 import 'account_button.dart';
@@ -155,8 +154,12 @@ class _Body extends StatelessWidget {
       );
     }
 
-    final waiting = waitingAgents(entries);
-    final rest = otherAgents(entries);
+    // The order a swipe on the terminal page walks, split back into the two sections this list
+    // draws. Taken from [visibleAgents] rather than assembled here so the page and the list cannot
+    // drift apart — the split below is presentation, the order is not.
+    final ordered = visibleAgents(entries);
+    final waiting = ordered.where((entry) => entry.isWaiting).toList();
+    final rest = ordered.where((entry) => !entry.isWaiting).toList();
     return RefreshIndicator(
       onRefresh: notifier.retryMachines,
       child: ListView(
@@ -165,31 +168,28 @@ class _Body extends StatelessWidget {
         children: [
           if (waiting.isNotEmpty) ...[
             const _SectionLabel('Waiting for you'),
-            for (final entry in waiting) _row(context, entry),
+            for (final entry in waiting) _row(context, ordered, entry),
             const SizedBox(height: 6),
           ],
           if (rest.isNotEmpty) ...[
             if (waiting.isNotEmpty) const _SectionLabel('All agents'),
-            for (final entry in rest) _row(context, entry),
+            for (final entry in rest) _row(context, ordered, entry),
           ],
         ],
       ),
     );
   }
 
-  Widget _row(BuildContext context, AgentEntry entry) => Padding(
-    padding: const EdgeInsets.only(bottom: kPhoneCardGap),
-    child: AgentRow(
-      entry: entry,
-      onTap: () => openAgent(
-        context,
-        notifier,
-        entry.machineId,
-        entry.agent.id,
-        heroSource: AgentHeroSource.agents,
-      ),
-    ),
-  );
+  Widget _row(BuildContext context, List<AgentEntry> ordered, AgentEntry entry) =>
+      Padding(
+        padding: const EdgeInsets.only(bottom: kPhoneCardGap),
+        child: AgentRow(
+          entry: entry,
+          // The whole visible list goes with the tap, so the page opens as a pager over exactly the
+          // agents on screen — the filter chip included. Swiping there walks this order.
+          onTap: () => openAgentPager(context, notifier, ordered, entry),
+        ),
+      );
 }
 
 class _SectionLabel extends StatelessWidget {
