@@ -5834,9 +5834,15 @@ static void swarm_picker_rebuild(void)
 {
     if (!s_swarm_list) return;
     lv_obj_clean(s_swarm_list);
+    int shown = 0;
     for (int i = 0; i < s_swarm_count; i++) {
         const cable_swarm_t *w = &s_swarms[i];
         bool here = strcmp(w->id, s_swarm_selected) == 0;
+        // An untouched welcome tab — the window's default name and nothing in it — is not a place the
+        // dial can go, so it is not a row (owner, 2026-09-14: "không có New swarm"). The one on screen
+        // is still listed, whatever it is called.
+        if (!here && w->agents == 0 && strcmp(w->name, "New swarm") == 0) continue;
+        shown++;
         lv_obj_t *row = lv_button_create(s_swarm_list);
         lv_obj_set_width(row, lv_pct(100));
         lv_obj_set_height(row, LV_SIZE_CONTENT);
@@ -5869,7 +5875,7 @@ static void swarm_picker_rebuild(void)
         lv_obj_set_style_text_align(sub, LV_TEXT_ALIGN_CENTER, 0);
         lv_label_set_text_fmt(sub, "%d agent%s", w->agents, w->agents == 1 ? "" : "s");
     }
-    if (s_swarm_count == 0) make_label(s_swarm_list, "No swarms — open the app", COL_MUTED, &geist_med_28);
+    if (shown == 0) make_label(s_swarm_list, "No swarms — open the app", COL_MUTED, &geist_med_28);
 }
 
 static void swarm_picker_build(void)
