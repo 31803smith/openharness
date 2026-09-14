@@ -29,6 +29,8 @@ class CloneRepositoryDialog extends StatefulWidget {
 
 class _CloneRepositoryDialogState extends State<CloneRepositoryDialog> {
   final _url = TextEditingController();
+  final _actionFocus = FocusNode(debugLabel: 'Clone repository');
+  final _errorAnchor = GlobalKey(debugLabel: 'Clone error');
   String? _parent, _error;
   RepositoryClone? _clone;
   bool _picking = false, _closing = false;
@@ -39,10 +41,12 @@ class _CloneRepositoryDialogState extends State<CloneRepositoryDialog> {
   void dispose() {
     _clone?.cancel();
     _url.dispose();
+    _actionFocus.dispose();
     super.dispose();
   }
 
   Future<void> _chooseDestination() async {
+    if (_busy || _picking || _closing) return;
     setState(() => _picking = true);
     try {
       final folder = await getDirectoryPath(
@@ -70,7 +74,9 @@ class _CloneRepositoryDialogState extends State<CloneRepositoryDialog> {
 
   Future<void> _submit() async {
     final repository = _repository, parent = _parent;
-    if (repository == null || parent == null || _busy) return;
+    if (repository == null || parent == null || _busy || _picking || _closing) {
+      return;
+    }
     final clone = widget.createClone?.call() ?? RepositoryClone();
     setState(() {
       _clone = clone;
@@ -90,14 +96,37 @@ class _CloneRepositoryDialogState extends State<CloneRepositoryDialog> {
     } finally {
       if (mounted) {
         setState(() => _clone = null);
-        if (result != null || _closing) Navigator.pop(context, result);
+        if (_closing) {
+          // A complete checkout can win the filesystem race with cancellation.
+          // Keep it on disk, but honor Cancel instead of advancing onboarding
+          // or replacing the working folder in the parent New agent form.
+          Navigator.pop(context);
+        } else if (result != null) {
+          Navigator.pop(context, result);
+        } else {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && ModalRoute.of(context)?.isCurrent == true) {
+              final errorContext = _errorAnchor.currentContext;
+              if (errorContext != null) {
+                Scrollable.ensureVisible(
+                  errorContext,
+                  alignment: 1,
+                  alignmentPolicy:
+                      ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+                );
+              }
+              _actionFocus.requestFocus();
+            }
+          });
+        }
       }
     }
   }
 
   void _cancel() {
+    if (_closing) return;
+    setState(() => _closing = true);
     if (_busy) {
-      setState(() => _closing = true);
       _clone!.cancel();
     } else {
       Navigator.pop(context);
@@ -110,96 +139,115 @@ class _CloneRepositoryDialogState extends State<CloneRepositoryDialog> {
     final repository = _repository;
     return PopScope(
       canPop: !_busy,
-      child: AlertDialog(
-        title: const Text('Clone repository'),
-        content: SizedBox(
-          width: 520,
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const FieldLabel('GitHub repository'),
-                TextField(
-                  key: const ValueKey('clone-repository-url'),
-                  controller: _url,
-                  autofocus: true,
-                  readOnly: _busy,
-                  decoration: const InputDecoration(
-                    hintText: 'https://github.com/owner/repository',
-                  ),
-                  onChanged: (_) => setState(() => _error = null),
-                  onSubmitted: (_) => _submit(),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  'Use an HTTPS or SSH URL, or owner/repository.',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-                const SizedBox(height: 20),
-                const FieldLabel('Destination on this computer'),
-                OutlinedButton.icon(
-                  onPressed: _busy || _picking ? null : _chooseDestination,
-                  icon: const Icon(Icons.folder_open_outlined, size: 18),
-                  label: Text(
-                    _parent ?? 'Choose folder…',
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  style: OutlinedButton.styleFrom(
-                    alignment: Alignment.centerLeft,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 14,
+      child: Actions(
+        actions: {
+          // Escape is the keyboard equivalent of Cancel. Outside clicks still
+          // respect PopScope, so an accidental click cannot stop a clone.
+          DismissIntent: CallbackAction<DismissIntent>(
+            onInvoke: (_) {
+              _cancel();
+              return null;
+            },
+          ),
+        },
+        child: AlertDialog(
+          title: const Text('Clone repository'),
+          content: SizedBox(
+            width: 520,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const FieldLabel('GitHub repository'),
+                  TextField(
+                    key: const ValueKey('clone-repository-url'),
+                    controller: _url,
+                    autofocus: true,
+                    readOnly: _busy,
+                    decoration: const InputDecoration(
+                      hintText: 'https://github.com/owner/repository',
                     ),
-                    foregroundColor: grid.AppPalette.textPrimary,
+                    onChanged: (_) => setState(() => _error = null),
+                    onSubmitted: (_) => _submit(),
                   ),
-                ),
-                if (_parent != null && repository != null) ...[
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 6),
                   Text(
-                    'Creates ${p.join(_parent!, repository.name)}',
+                    'Use an HTTPS or SSH URL, or owner/repository.',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
-                ],
-                if (_busy) ...[
                   const SizedBox(height: 20),
-                  const LinearProgressIndicator(minHeight: 2),
-                  const SizedBox(height: 8),
-                  Text(
-                    _closing ? 'Cancelling…' : 'Cloning ${repository!.name}…',
-                    style: Theme.of(context).textTheme.bodySmall,
+                  const FieldLabel('Destination on this computer'),
+                  OutlinedButton.icon(
+                    onPressed: _busy || _picking ? null : _chooseDestination,
+                    icon: const Icon(Icons.folder_open_outlined, size: 18),
+                    label: Text(
+                      _parent ?? 'Choose folder…',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      alignment: Alignment.centerLeft,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 14,
+                      ),
+                      foregroundColor: grid.AppPalette.textPrimary,
+                    ),
                   ),
-                ],
-                if (_error != null) ...[
-                  const SizedBox(height: 16),
-                  Semantics(
-                    liveRegion: true,
-                    child: Text(
-                      _error!,
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.error,
+                  if (_parent != null && repository != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      'Creates ${p.join(_parent!, repository.name)}',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                  if (_busy) ...[
+                    const SizedBox(height: 20),
+                    const LinearProgressIndicator(minHeight: 2),
+                    const SizedBox(height: 8),
+                    Semantics(
+                      liveRegion: true,
+                      child: Text(
+                        _closing
+                            ? 'Cancelling…'
+                            : 'Cloning ${repository!.name}…',
+                        style: Theme.of(context).textTheme.bodySmall,
                       ),
                     ),
-                  ),
+                  ],
+                  if (_error != null) ...[
+                    const SizedBox(height: 16),
+                    Semantics(
+                      key: _errorAnchor,
+                      liveRegion: true,
+                      child: Text(
+                        _error!,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                      ),
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
+          actions: [
+            TextButton(
+              onPressed: _closing ? null : _cancel,
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              focusNode: _actionFocus,
+              onPressed:
+                  _busy || _picking || repository == null || _parent == null
+                  ? null
+                  : _submit,
+              child: const Text('Clone repository'),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: _closing ? null : _cancel,
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed:
-                _busy || _picking || repository == null || _parent == null
-                ? null
-                : _submit,
-            child: const Text('Clone repository'),
-          ),
-        ],
       ),
     );
   }

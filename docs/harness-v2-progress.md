@@ -6,6 +6,19 @@ Updated 2026-09-14 after integrating the continuation into main. This is a worki
 
 ## Continue directly on main
 
+- Fixed Clone repository cancellation and keyboard recovery. Escape now uses
+  Cancel and waits for cleanup; a late successful clone cannot advance a
+  cancelled flow. Outside clicks leave an active clone running. Failed clones
+  preserve the repository/destination and restore Enter on the retry action.
+  Large-text errors are brought into view beside the still-visible actions.
+  The 50 affected workflow/render checks pass, as do analysis (zero
+  errors/warnings, 14 existing infos) and the normal arm64 Release build at
+  `/private/tmp/harness-clone-release/Build/Products/Release/Harness.app`.
+  Logs: `/private/tmp/harness-clone-{final-tests,final-analyze,release}.log`.
+  A direct public GitHub clone also succeeded with isolated Git configuration
+  and complete temporary-folder cleanup (`harness-clone-public.log`). Private
+  repository access, native chooser and genuine first-install validation remain
+  open. The app was not launched and benchmarking stays deferred.
 - Added browser-sign-in recovery: **Open browser** reuses the current link,
   **Copy link** offers a fallback, and **Cancel** immediately restores Sign in
   with keyboard focus. Cancellation before CLI startup, late authorization URLs,

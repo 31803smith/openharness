@@ -48,6 +48,13 @@ authorization succeeds, those controls disappear while the workspace restores.
 Enter starts sign-in and can start again after cancellation. Live first-install
 and provider sign-in still need direct observation.
 
+Repository cloning now treats **Escape** as Cancel, waits visibly for cleanup,
+and does not advance onboarding if a cancelled clone finishes successfully.
+Failures retain the URL and destination, reveal the error even with large text,
+and return keyboard focus to the retry action. The public GitHub clone service
+was also exercised directly in a disposable folder; private access and the
+native chooser still need first-use observation.
+
 ## Goal
 
 Build the best everyday workspace for people directing persistent AI agents:
@@ -72,7 +79,18 @@ Research must lead to justified improvements, not feature accumulation.
 - Continue on **`main`**, tracking `origin/main`. The user's latest instruction
   is to work, commit, and push directly on main from now on. This supersedes
   the earlier preference for creating a fresh feature branch after each merge.
-- The browser-sign-in recovery continuation passes 64 affected workflow checks
+- Clone recovery passes 49 affected workflow checks and one real-font render
+  check at 880×560 with normal/2× text. The original cancellation and keyboard
+  retry regressions failed before the fix; visual review then exposed the hidden
+  large-text error. Analysis has zero errors/warnings and 14 existing infos.
+  The normal arm64 Release build succeeds at
+  `/private/tmp/harness-clone-release/Build/Products/Release/Harness.app` and was
+  not launched. Logs: `/private/tmp/harness-clone-{final-tests,final-analyze,release}.log`.
+  A real public `octocat/Hello-World` clone passed with isolated Git configuration,
+  a valid checkout and no staging residue; its temporary folder was removed.
+  Log: `/private/tmp/harness-clone-public.log`. No user agent or running app was
+  started/stopped, and no benchmark ran.
+- **`b7b6075`** adds browser-sign-in recovery and passes 64 affected workflow checks
   plus one real-font render check (65 total), including late process startup,
   cancelled/replaced sign-ins, browser launch failure, clipboard recovery,
   keyboard retry and the authorization-to-workspace boundary. Analysis has zero
@@ -523,6 +541,8 @@ that its isolated window can become active/key.
    Browser reopen/copy/cancel recovery is implemented with isolated subprocess
    and platform fixtures. Check the real browser handoff and provider return;
    do not infer live sign-in success from fixture results.
+   Public GitHub cloning passed a direct service check in a disposable folder;
+   the native chooser and private repository access still need observation.
    Creation recovery is implemented and tested with isolated replies. Verify a
    deliberately delayed remote create on a disposable agent, including an older
    CLI and a changed original swarm. A status check must remain read-only. A

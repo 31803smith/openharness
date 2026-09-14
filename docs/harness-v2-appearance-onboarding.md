@@ -119,6 +119,29 @@ Analysis has no errors/warnings and 14 existing infos; the normal arm64 Release
 build succeeds. These checks use fake subprocess, browser and clipboard replies.
 Real first-install, provider sign-in and time to a useful agent remain unverified.
 
+## Repository clone recovery
+
+The separate Clone repository dialog keeps the original repository and
+destination after a failed clone. Enter can retry immediately, and the error is
+brought into view at large text sizes while the actions remain visible.
+**Escape** performs the same cancellation as the Cancel button, showing
+**Cancelling…** until the clone service settles. Clicking outside a running clone
+continues to leave it active.
+
+If a checkout finishes just as cancellation arrives, the completed folder is
+preserved but is not returned to the parent flow. Cancelling therefore cannot
+replace the working folder in New agent or unexpectedly advance first use.
+Partial-checkout cleanup remains owned by the existing clone service.
+
+The affected workflow/render suite passes 50 checks, including three reproduced
+cancellation/keyboard regressions and an error-visibility regression found in
+the 880×560, 2× text render. Analysis and the normal arm64 Release build pass.
+A direct service check cloned public `octocat/Hello-World` from GitHub using
+isolated Git configuration, verified its HEAD and staging cleanup, then removed
+the disposable checkout. This verifies public cloning, not private repository
+authentication or the native folder chooser. Those remain part of genuine
+first-use observation.
+
 ## Earlier onboarding evidence and direction (historical)
 
 | Primary source | Observed behavior | Harness adaptation |
