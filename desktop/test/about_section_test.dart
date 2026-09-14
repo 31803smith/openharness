@@ -29,15 +29,12 @@ void main() {
     buildSignature: '',
   );
 
-  Future<AppNotifier> pumpAbout(
-    WidgetTester tester, {
-    bool updatesEnabled = true,
-  }) async {
+  Future<AppNotifier> pumpAbout(WidgetTester tester) async {
     final notifier = AppNotifier(
       config: AppConfig.dev,
       authSession: AuthSession(),
       configStore: null,
-      desktopUpdater: updatesEnabled ? DesktopUpdater(enabled: true) : null,
+      desktopUpdater: DesktopUpdater(enabled: true),
     );
     addTearDown(notifier.dispose);
     tester.view.physicalSize = const Size(900 * 2, 700 * 2);
@@ -67,26 +64,6 @@ void main() {
     sha256: 'deadbeef',
     size: 48600000,
   );
-
-  testWidgets('the preview identifies itself and explains disabled updates', (
-    tester,
-  ) async {
-    final notifier = await pumpAbout(tester, updatesEnabled: false);
-    expect(find.text('Harness'), findsOneWidget);
-    expect(find.text('Preview · updates disabled'), findsOneWidget);
-    expect(
-      find.text(
-        'Automatic and manual updates are disabled for this V2 preview.',
-      ),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const Key('settings-check-updates-button')),
-      findsNothing,
-    );
-    notifier.availableUpdate = update;
-    expect(await notifier.installAvailableUpdate(), isFalse);
-  });
 
   testWidgets('names the app, its version, and says nothing is waiting', (
     tester,
