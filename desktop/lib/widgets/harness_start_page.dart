@@ -27,19 +27,31 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
   final _query = TextEditingController();
   final _focus = FocusNode(debugLabel: 'Start page search');
   final _searchGroup = Object();
-  late final _search = widget.createSearch();
-  bool _showResults = false;
+  SwarmSearchController? _search;
+  SwarmSearchDraft? _draft;
+  bool get _showResults => _search != null;
 
   void _open() {
     // Commands can replace the editor value without a TextField onChanged.
     // Reveal results for the visible text, including on keyboard-only entry.
-    _search.setQuery(_query.text);
-    if (!_showResults) setState(() => _showResults = true);
+    if (_search == null) {
+      final search = widget.createSearch();
+      if (_draft case final draft?) search.restoreDraft(draft);
+      search.setQuery(_query.text);
+      setState(() => _search = search);
+    } else {
+      _search!.setQuery(_query.text);
+    }
     _focus.requestFocus();
   }
 
   void _close() {
-    if (_showResults) setState(() => _showResults = false);
+    final search = _search;
+    if (search != null) {
+      _draft = search.draft;
+      setState(() => _search = null);
+      search.dispose();
+    }
     _focus.unfocus();
   }
 
@@ -55,7 +67,7 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
 
   @override
   void dispose() {
-    _search.dispose();
+    _search?.dispose();
     _query.dispose();
     _focus.dispose();
     super.dispose();
@@ -112,13 +124,10 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
                               inputKey: const ValueKey('harness-start-search'),
                               controller: _query,
                               focusNode: _focus,
-                              search: _showResults ? _search : null,
+                              search: _search,
                               onChoose: _choose,
                               onClose: _close,
-                              onChanged: (value) {
-                                _search.setQuery(value);
-                                _open();
-                              },
+                              onChanged: (_) => _open(),
                               onOpen: _open,
                               onNewAgent: _new,
                               onTapOutside: _close,
@@ -138,7 +147,7 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
                               ),
                               child: SwarmSearchResults(
                                 key: const ValueKey('harness-start-results'),
-                                search: _search,
+                                search: _search!,
                                 onChoose: _choose,
                                 onRefocus: _focus.requestFocus,
                               ),

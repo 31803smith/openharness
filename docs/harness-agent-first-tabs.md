@@ -16,6 +16,10 @@ The field starts empty and unfocused. Clicking it or Open Harness reveals the
 same input, results, highlight, action arrow and keyboard navigation as Cmd-O.
 Typing filters immediately; arrows select and Enter opens. Escape or clicking
 outside closes the dropdown and hides the caret. The recent-agent list is removed.
+The closed page retains only search text and selection: it does not keep a live
+search subscription or build a catalog when an unused page closes. Reopening
+refreshes results against current app state. Command-mode shortcuts synchronize
+the field and results without adding editor rebuilds to arrow navigation.
 A small product image and introduction sit well below the controls and link to
 https://www.autonomous.ai/harness-device. The bundled image is the official
 product photo from https://cdn.autonomous.ai/production/ecm/260731/2.webp.

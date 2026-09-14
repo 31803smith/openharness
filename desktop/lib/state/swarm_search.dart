@@ -5,8 +5,8 @@ import 'pane_arrangement.dart';
 import 'swarm_catalog.dart';
 import 'swarm_navigation.dart';
 
-/// An in-memory Add draft for a temporary detour into New agent. Membership and
-/// availability are revalidated against a fresh catalog when the picker returns.
+/// Search text and selection retained while the start-page picker is dismissed.
+/// Membership and availability are revalidated against a fresh catalog on return.
 class SwarmSearchDraft {
   const SwarmSearchDraft._(this.targetId, this.query, this.selectedId);
   final String targetId, query;
