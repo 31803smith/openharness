@@ -690,6 +690,15 @@ export class BackendSocket {
     }
   }
 
+  /** Ask one local desktop to select focus, without opening panes in every window. */
+  sendFirstLocal(frame: Frame): boolean {
+    for (const [connId, sink] of this.localClients) {
+      if (sink.sendFrame(frame)) return true
+      void this.unregisterLocalClient(connId)
+    }
+    return false
+  }
+
   /** Send an up-frame to exactly ONE web connection (E2EE pairing/welcome + targeted RPC replies). */
   sendTo(connId: string, frame: Frame): void {
     const direct = this.directDeviceSinks.get(connId)

@@ -125,6 +125,7 @@ a duplicate may return any retained receipt state. Supported operations:
 
 | Operation | Additional request fields | Success fields |
 |---|---|---|
+| `focus.ensure` | none | Same snapshot as `focus.get`; enable-time first-agent fallback acknowledged by Desktop |
 | `focus.get` | none | `focus:null\|{machineId,agentId,name?},focusRevision` |
 | `agents.list` | none | `machineId,agents:[{machineId,agentId,name,engine,state}]` |
 | `status` | `machineId,agentId` | `machineId,agentId,state,openQuestion:null\|{requestId,questions}` |
@@ -243,3 +244,18 @@ Full CLI regression passed: `npm test -- --maxWorkers=1 --testTimeout=30000 --ho
 The default 5-second test deadline timed out in existing password/scrypt tests under local load;
 the serial run uses command-line deadlines only and does not change test files or configuration.
 No physical device deployment.
+
+### Enable-time default agent
+
+The optional negotiated `focus.ensure` capability accepts only `{type:"focus.ensure",requestId}`.
+It preserves any current app focus, including focus on a remote machine; the OS remains responsible
+for refusing an unsupported remote target. With no focus, it asks one connected local Desktop window
+to select the first agent in the local `agents.list` order using its ordinary pane selection path.
+Desktop reannounces an existing selection instead of replacing it. Only the existing `app_focus`
+acknowledgment establishes authoritative focus; no task is dispatched and no headless target is invented.
+Concurrent requests share the same two-second wait. Missing agents return `NO_AGENTS`; no window or
+no acknowledgment returns `FOCUS_UNAVAILABLE`. The local `device_focus` frame carries an expiration
+so a delayed request cannot open a pane after the wait. This operation is for enabling voice mode,
+never for recovering a missing target during an utterance. Older CLIs without this capability require
+an explicit app selection. `focus.get`, events, pairing, and normal turn dispatch remain unchanged.
+The automatic app acknowledgment carries its original focus revision; CLI discards it if a newer explicit selection arrived while the request was in flight.

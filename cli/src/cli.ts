@@ -2896,7 +2896,9 @@ async function runForeground(session: AuthSession): Promise<void> {
   const localWsServer = attachLocalWsServer(hookServer, {
     // The window and the dial are one desk: opening an agent in the app brings the dial to it, switching
     // the dial's machine first when the app moved to another one.
-    onAppFocusState: (machineId, agentId, connId) => {
+    onAppFocusState: (machineId, agentId, connId, expectedRevision) => {
+      // A delayed automatic selection cannot replace a newer explicit user choice.
+      if (expectedRevision && autonomousDeviceService?.focusSnapshot().focusRevision !== expectedRevision) return false
       if (agentId === null) {
         if (appVoiceFocus?.connId === connId) appVoiceFocus = undefined
       } else appVoiceFocus = { machineId, agentId, connId }
@@ -4198,6 +4200,9 @@ async function runForeground(session: AuthSession): Promise<void> {
 
   autonomousDeviceService = new AutonomousDeviceService({
     machineId: backend.machineId,
+    requestAppFocus: (agentId, expiresAt, focusRevision) => backend.sendFirstLocal({
+      type: 'device_focus', payload: { machineId: backend.machineId, agentId, expiresAt, focusRevision },
+    }),
     agents: () => registry.advertised().map(s => ({ agentId: s.agentId, name: projectDisplayName(s), engine: s.engine,
       state: turnStartedAt.has(s.sessionId) ? 'running' : 'idle' })),
     submit: submitAgent,

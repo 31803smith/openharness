@@ -12,6 +12,54 @@ function fixture(now?: () => number, fullAnswer?: string) {
 }
 
 describe('Autonomous device local-agent service', () => {
+  it('ensures focus through the desktop once for concurrent enables', async () => {
+    const requestAppFocus = vi.fn(() => true)
+    const submit = vi.fn()
+    const service = new AutonomousDeviceService({ machineId: 'machine',
+      agents: () => [{ agentId: 'first', name: 'First', engine: 'claude', state: 'idle' }],
+      requestAppFocus, submit, stop: async () => true, answer: async () => true,
+      cancelDelivery: () => true, recent: () => [] })
+    const request = () => service.request('device', { type: 'focus.ensure', requestId: randomUUID() })
+    const first = request(), second = request()
+    expect(requestAppFocus).toHaveBeenCalledTimes(1)
+    expect(requestAppFocus.mock.calls[0]).toEqual(['first', expect.any(Number), expect.any(String)])
+    expect(service.focusSnapshot().focus).toBeNull()
+    // A user selection wins over the suggested first agent, even on another machine.
+    service.appFocus('remote', 'chosen', 'window')
+    expect((await first).focus).toEqual({ machineId: 'remote', agentId: 'chosen' })
+    expect((await second).focus).toEqual({ machineId: 'remote', agentId: 'chosen' })
+    await request()
+    expect(requestAppFocus).toHaveBeenCalledTimes(1)
+    expect(submit).not.toHaveBeenCalled()
+  })
+
+  it('requires an app acknowledgment and never invents headless focus', async () => {
+    const f = fixture()
+    const request = { type: 'focus.ensure', requestId: randomUUID() }
+    expect((await f.service.request('device', request)).error).toMatchObject({ code: 'FOCUS_UNAVAILABLE' })
+    expect(f.service.focusSnapshot().focus).toBeNull()
+    const empty = new AutonomousDeviceService({ machineId: 'machine', agents: () => [],
+      submit: vi.fn(), stop: async () => true, answer: async () => true,
+      cancelDelivery: () => true, recent: () => [] })
+    expect((await empty.request('device', request)).error).toMatchObject({ code: 'NO_AGENTS' })
+  })
+
+  it('expires unacknowledged focus requests without retrying', async () => {
+    vi.useFakeTimers()
+    try {
+      const requestAppFocus = vi.fn(() => true)
+      const service = new AutonomousDeviceService({ machineId: 'machine',
+        agents: () => [{ agentId: 'first', name: 'First', engine: 'claude', state: 'idle' }],
+        requestAppFocus, submit: vi.fn(), stop: async () => true, answer: async () => true,
+        cancelDelivery: () => true, recent: () => [] })
+      const pending = service.request('device', { type: 'focus.ensure', requestId: randomUUID() })
+      await vi.advanceTimersByTimeAsync(2001)
+      expect((await pending).error).toMatchObject({ code: 'FOCUS_UNAVAILABLE' })
+      expect(requestAppFocus).toHaveBeenCalledTimes(1)
+      expect(service.focusSnapshot().focus).toBeNull()
+    } finally { vi.useRealTimers() }
+  })
+
   it('reserves before dispatch and deduplicates concurrent sends without selecting another agent', async () => {
     const f = fixture()
     const [a, b] = await Promise.all([f.service.request('device', f.send()), f.service.request('device', f.send())])

@@ -478,6 +478,22 @@ describe('BackendSocket outbound queue', () => {
     await socket.stop()
   })
 
+  it('sends a device focus request to one desktop window only', async () => {
+    const socket = new BackendSocket('token')
+    const first = vi.fn(() => true), second = vi.fn(() => true)
+    const frame = { type: 'device_focus', payload: { agentId: 'first' } }
+    expect(socket.sendFirstLocal(frame)).toBe(false)
+    socket.registerLocalClient('local:first', { sendFrame: first, sendBinary: () => true })
+    socket.registerLocalClient('local:second', { sendFrame: second, sendBinary: () => true })
+    first.mockClear(); second.mockClear()
+    expect(socket.sendFirstLocal(frame)).toBe(true)
+    expect(first).toHaveBeenCalledExactlyOnceWith(frame)
+    expect(second).not.toHaveBeenCalled()
+    await socket.unregisterLocalClient('local:first')
+    await socket.unregisterLocalClient('local:second')
+    await socket.stop()
+  })
+
   it('hands a blocked agent to the window without putting the question on the cloud leg', async () => {
     const socket = new BackendSocket('token')
     expect(socket.hasLocalClient()).toBe(false)
