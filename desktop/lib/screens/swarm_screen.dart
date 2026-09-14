@@ -1457,21 +1457,6 @@ class _SwarmScreenState extends State<SwarmScreen> {
             child: const Icon(Icons.notifications_none, size: 20),
           ),
         ),
-        IconButton(
-          key: const ValueKey('swarm-settings-button'),
-          // Last, after the two that act on THIS swarm: navigate it, and see
-          // what in it needs you. Settings is the one button here that leaves
-          // the swarm behind, so it sits at the edge rather than among them.
-          // Same screen `_settings` opens from the keyboard — the row and the
-          // shortcut must not become two ways to reach two different places.
-          tooltip: withEffectiveShortcutHint(
-            context,
-            'Settings',
-            ShortcutAction.showSettings,
-          ),
-          onPressed: _settings,
-          icon: const Icon(Icons.settings_outlined, size: 20),
-        ),
         const SizedBox(width: 6),
       ],
     ),
