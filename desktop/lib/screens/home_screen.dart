@@ -16,7 +16,6 @@ import '../widgets/machine_rail_mini.dart';
 import '../settings/settings_screen.dart';
 import '../settings/settings_section.dart';
 import '../shortcuts/app_shortcuts.dart';
-import '../widgets/agent_switcher.dart';
 import '../widgets/new_agent_dialog.dart';
 import '../widgets/task_palette.dart';
 import '../widgets/pane_grid.dart';
@@ -256,9 +255,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   ?.find(TerminalFindAction.previous),
               ShortcutAction.lastPane: notifier.focusLastPane,
               ShortcutAction.zoomPane: notifier.toggleZoomPane,
-              ShortcutAction.switchAgent: () =>
-                  unawaited(showAgentSwitcher(context, notifier)),
-
               ShortcutAction.closePane: _closeFocusedPane,
               ShortcutAction.newAgent: _newAgent,
               ShortcutAction.routeTask: () =>

@@ -225,7 +225,7 @@ void main() {
     app.newSwarm();
     final target = app.activeSwarm;
     await mount(tester, app);
-    await tester.tap(find.byKey(const ValueKey('swarm-add-agent-button')));
+    await chord(tester, LogicalKeyboardKey.keyN);
     await tester.pump();
     final field = find.byKey(const ValueKey('swarm-search-input'));
     await tester.enterText(field, 'Agent 0');
@@ -264,7 +264,7 @@ void main() {
     await tester.pump();
     await tester.enterText(field, 'no results here');
     await tester.pump();
-    expect(find.text('Add 2 agents'), findsOneWidget);
+    expect(find.text('Open 2 agents'), findsOneWidget);
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pump();
     expect(target.panes, [second, first]);

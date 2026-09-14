@@ -58,6 +58,68 @@ TerminalSession terminal(String id, List<TerminalBinaryFrame> input) =>
       ..streamId = 'stream-$id';
 
 void main() {
+  for (final native in [false, true]) {
+    testWidgets('tab identity follows its agent count (native=$native)', (
+      tester,
+    ) async {
+      const channel = MethodChannel('harness/swarm_tabs');
+      final updates = <Map>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (
+        call,
+      ) async {
+        if (call.method == 'update') updates.add(call.arguments as Map);
+        return true;
+      });
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          channel,
+          null,
+        ),
+      );
+      final app = createApp();
+      final tab = app.activeSwarm;
+      await mount(tester, app, nativeTabs: native);
+      expect(tab.name, 'New Agent');
+      expect(find.text('New Agent'), findsWidgets);
+
+      await app.addAgentToSwarm('m', 'a0');
+      await tester.pump();
+      if (native) {
+        final row = (updates.last['tabs'] as List).single as Map;
+        expect(row['agentCount'], 1);
+        expect(row['engine'], 'codex');
+        expect(row['iconAsset'], 'assets/engine-icons/codex.png');
+      } else {
+        expect(find.byKey(ValueKey('tab-engine:${tab.id}')), findsOneWidget);
+      }
+
+      await app.addAgentToSwarm('m', 'a1');
+      await tester.pump();
+      if (native) {
+        final row = (updates.last['tabs'] as List).single as Map;
+        expect(row['agentCount'], 2);
+        expect(row['engine'], isNull);
+      } else {
+        expect(find.byKey(ValueKey('tab-group:${tab.id}')), findsOneWidget);
+      }
+
+      await app.closePane(app.panes.last.id);
+      await tester.pump();
+      if (native) {
+        expect(
+          ((updates.last['tabs'] as List).single as Map)['engine'],
+          'codex',
+        );
+      } else {
+        expect(find.byKey(ValueKey('tab-engine:${tab.id}')), findsOneWidget);
+        expect(find.byKey(ValueKey('tab-group:${tab.id}')), findsNothing);
+      }
+      expect(app.activeSwarm, same(tab));
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+    });
+  }
+
   testWidgets(
     'an older daemon working folder is searchable and seeds its real agents',
     (tester) async {
@@ -73,7 +135,7 @@ void main() {
         },
       );
       await mount(tester, app);
-      expect(find.text('Existing project'), findsOneWidget);
+      expect(find.text('Existing project'), findsNothing);
       await tester.tap(
         find.byKey(const ValueKey('swarm-welcome-search-input')),
       );
@@ -92,9 +154,7 @@ void main() {
         findsOneWidget,
       );
       expect(find.byKey(ValueKey(agentDestinationId('m', 'a2'))), findsNothing);
-      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-      await tester.pump();
-      await tester.tap(find.text('Existing project'));
+      await tester.tap(find.widgetWithText(ListTile, 'Existing project'));
       await tester.pump(const Duration(milliseconds: 100));
       expect(app.activeSwarm.name, 'Existing project');
       expect(app.panes.map((p) => p.agentId), ['a0', 'a1']);
@@ -108,9 +168,9 @@ void main() {
     (tester) async {
       final app = createApp();
       await mount(tester, app);
-      expect(find.text('Start a swarm'), findsOneWidget);
+      expect(find.text('New Agent'), findsWidgets);
       expect(find.text('Models'), findsNothing);
-      expect(find.text('Machines'), findsOneWidget);
+      expect(find.text('Machines'), findsNothing);
       await tester.tap(
         find.byKey(const ValueKey('swarm-welcome-search-input')),
       );
@@ -125,10 +185,11 @@ void main() {
       await tester.pump();
       await app.addAgentToSwarm('m', 'a2');
       app.toggleZoomPane();
-      await tester.pump();
+      // The Add button appears when the first agent replaces the welcome page.
+      await tester.pump(const Duration(milliseconds: 200));
       final zoom = app.zoomedPaneId;
       final before = tester.getSize(find.byType(PaneGrid));
-      await tester.tap(find.byKey(const ValueKey('swarm-search-button')));
+      await tester.tap(find.byKey(const ValueKey('swarm-add-agent-button')));
       await tester.pump(const Duration(milliseconds: 300));
       expect(
         find.byKey(const ValueKey('swarm-search-results')),

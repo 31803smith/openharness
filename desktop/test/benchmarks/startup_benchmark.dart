@@ -52,7 +52,7 @@ void main() {
     final keymapFile = File('${directory.path}/config/keybindings.jsonc');
     await keymapFile.parent.create();
     await keymapFile.writeAsString(
-      '{"bindings":[{"keys":"cmd+g","command":"navigation.quick_open"}]}',
+      '{"bindings":[{"keys":"cmd+g","command":"swarm.new"}]}',
     );
 
     for (final withKeymap in [false, true]) {
@@ -93,7 +93,7 @@ void main() {
           expect(stats.summary.agentsSpawned, 12);
           if (withKeymap) {
             expect(keymap.error, isNull);
-            expect(keymap.bindings('navigation.quick_open').length, 2);
+            expect(keymap.bindings('swarm.new').length, 2);
           }
         } finally {
           keymap.dispose();

@@ -115,13 +115,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 10));
       expect(firstInput.single.bytes, [27, 91, 68]);
       expect(secondInput, isEmpty);
-      await chord(tester, LogicalKeyboardKey.keyP);
-      expect(
-        find.descendant(of: selectedRow, matching: find.text('Agent 1')),
-        findsOneWidget,
-      );
-      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-      await tester.pump();
+      await chord(tester, LogicalKeyboardKey.bracketLeft);
       expect(app.activeSwarmId, second.id);
       expect(app.focusedPaneId, secondPane.id);
       await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);

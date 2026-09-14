@@ -1,5 +1,11 @@
 # Harness v2: goal, plan, and continuation handoff
 
+**Latest UI direction:** [Agent-first tabs](harness-agent-first-tabs.md) supersedes
+the swarm terminology in the historical notes below. First launch and New Tab
+offer existing-agent search alongside New agent. Single-agent tabs show engine
+icons; groups show the group icon. The macOS Agent menu now includes tab actions,
+with no separate Swarm menu. Existing creation, split and session behavior remains.
+
 Updated September 14, 2026. **Read this first when resuming on another computer.**
 This is the current product contract and next-work order. It supersedes conflicting
 historical checkpoints in [the progress log](harness-v2-progress.md). The user

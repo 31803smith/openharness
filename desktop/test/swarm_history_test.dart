@@ -356,32 +356,8 @@ void main() {
       await tester.pump();
       await settings;
 
-      // Native navigation opens the centered editor and exact locations.
-      final jumping = native('jump');
+      await native('historyDestination', {'id': agentDestinationId('m', 'a1')});
       await tester.pump();
-      expect(
-        find.byKey(const ValueKey('swarm-search-results')),
-        findsOneWidget,
-      );
-      final field = find.byKey(const ValueKey('swarm-search-input'));
-      expect(field, findsOneWidget);
-      await tester.enterText(field, 'Agent 1');
-      await tester.pump();
-      expect(tester.widget<TextField>(field).focusNode!.hasFocus, isTrue);
-      expect(fieldUpdates, isEmpty, reason: 'Queries stay in Flutter');
-      final picker = tester.getRect(
-        find.byKey(const ValueKey('swarm-search-results')),
-      );
-      expect(picker.width, greaterThan(600));
-      expect(
-        picker.center.dx,
-        tester.view.physicalSize.width / tester.view.devicePixelRatio / 2,
-      );
-      expect(find.byKey(const ValueKey('swarm-search-preview')), findsNothing);
-      expect(otherInput, isEmpty);
-      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-      await tester.pump();
-      await jumping;
       expect(app.focusedPaneId, second.id);
       await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
       await tester.pump(const Duration(milliseconds: 10));

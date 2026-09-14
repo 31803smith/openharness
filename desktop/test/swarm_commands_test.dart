@@ -18,7 +18,7 @@ void main() {
       addTearDown(app.dispose);
       final command = SwarmDestination(
         id: 'command:swarm.new',
-        title: 'New swarm',
+        title: 'New Agent',
         detail: 'Navigate',
         swarmId: null,
         current: false,
@@ -32,7 +32,7 @@ void main() {
         commands: () => available ? [command] : [],
       );
       addTearDown(search.dispose);
-      search.setQuery('New swarm');
+      search.setQuery('New Agent');
       expect(search.rows.any((row) => row.isCommand), isFalse);
       search.setQuery('> new');
       expect(search.selected, same(command));
@@ -68,13 +68,13 @@ void main() {
       final pane = app.adoptSessionForTest(terminal('a0', frames));
       final original = app.activeSwarm;
       await mount(tester, app);
-      await chord(tester, LogicalKeyboardKey.keyP);
+      await chord(tester, LogicalKeyboardKey.keyP, shift: true);
       final input = find.byKey(const ValueKey('swarm-search-input'));
       await tester.enterText(input, '> pin');
       await tester.pump();
       expect(find.text('⌘⇧P'), findsNothing);
       expect(find.text('⇧⌘P'), findsNothing);
-      expect(find.text('Add to this swarm'), findsNothing);
+      expect(find.text('Add to this tab'), findsNothing);
       expect(find.byKey(const ValueKey('command:pane.pin')), findsOneWidget);
       expect(app.isPanePinned(pane), isFalse);
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
@@ -106,7 +106,7 @@ void main() {
   );
 
   testWidgets(
-    'New swarm commands stay inline and hand focus to the chosen dialog',
+    'New tab commands stay inline and hand focus to the chosen dialog',
     (tester) async {
       final app = createApp();
       await mount(tester, app);

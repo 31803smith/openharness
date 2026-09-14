@@ -5,7 +5,7 @@ import '../state/swarm_search.dart';
 import '../state/swarm_navigation.dart';
 import 'swarm_switcher.dart';
 
-/// The same editable input in the centered picker and the New swarm page.
+/// The same editable input in the centered picker and the New Agent page.
 /// Flutter owns both the caret and result navigation; native chrome only opens it.
 class SwarmSearchInput extends StatelessWidget {
   const SwarmSearchInput({
@@ -69,7 +69,7 @@ class SwarmSearchInput extends StatelessWidget {
         cursorColor: grid.AppPalette.swarmAccent,
         textAlignVertical: TextAlignVertical.center,
         decoration: InputDecoration(
-          hintText: search?.hint ?? 'Search agents to add…',
+          hintText: search?.hint ?? 'Find an existing agent…',
           hintStyle: const TextStyle(fontSize: 16, color: Colors.white60),
           prefixIcon: const Icon(Icons.search, size: 20, color: Colors.white60),
           prefixIconConstraints: const BoxConstraints(
@@ -126,7 +126,7 @@ class SwarmSearchInput extends StatelessWidget {
             ),
             icon: const Icon(Icons.add, size: 20),
             label: const Text(
-              'New agent',
+              'Create Agent',
               style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
             ),
           ),

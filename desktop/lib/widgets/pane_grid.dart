@@ -1890,7 +1890,7 @@ class _EmptyGrid extends StatelessWidget {
                 FilledButton.icon(
                   key: const ValueKey('empty-grid-new-agent'),
                   icon: const Icon(Icons.add, size: 16),
-                  label: const Text('New agent'),
+                  label: const Text('Create Agent'),
                   onPressed: () => showNewAgentDialog(
                     context,
                     notifier,

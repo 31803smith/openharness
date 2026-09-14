@@ -92,7 +92,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
   }
 
   private func sendTabAction(_ method: String, arguments: Any?) {
-    guard ["select", "close", "new", "rename", "jump", "commands", "notifications", "addAgent", "newAgent", "splitRight", "splitDown", "zoomPane", "pinPane"].contains(method) else {
+    guard ["select", "close", "new", "rename", "commands", "notifications", "addAgent", "newAgent", "splitRight", "splitDown", "zoomPane", "pinPane"].contains(method) else {
       channel.invokeMethod(method, arguments: arguments)
       return
     }
@@ -110,8 +110,8 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
 
   private func setKeymap(_ map: HarnessNativeKeymap) {
     keymap = map
-    let hint = map.hint(for: "navigation.quick_open", context: "workspace")
-    strip.searchButton.toolTip = hint.map { "Navigate (\($0))" } ?? "Navigate"
+    let hint = map.hint(for: "swarm.new", context: "workspace")
+    strip.newButton.toolTip = hint.map { "New Agent (\($0))" } ?? "New Agent"
     if let main = NSApp.mainMenu, let window {
       let menu = main as? HarnessKeymapMenu ?? HarnessKeymapMenu.replacing(main)
       if NSApp.mainMenu !== menu { NSApp.mainMenu = menu }
@@ -196,17 +196,10 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
       main.insertItem(item, at: index)
     }
     if let file = main.item(withTitle: "File") { main.removeItem(file) }
-    let swarm = NSMenu(title: "Swarm")
-    add(swarm, "New Swarm", "t", "new")
-    add(swarm, "Rename Swarm…", "r", "renameActive", [.command, .shift])
-    add(swarm, "Close Swarm", "w", "closeActive")
-    swarm.addItem(.separator())
-    add(swarm, "Link Machine…", "", "linkMachine")
-    add(swarm, "Add Project…", "", "addProject")
-    install(swarm, at: 1)
     let agent = NSMenu(title: "Agent")
+    add(agent, "New Agent", "t", "new")
     add(agent, "Add Agent…", "n", "addAgent")
-    add(agent, "New Agent…", "n", "newAgent", [.command, .shift])
+    add(agent, "Create Agent…", "n", "newAgent", [.command, .shift])
     agent.addItem(.separator())
     add(agent, "Split Right…", "", "splitRight")
     add(agent, "Split Down…", "", "splitDown")
@@ -214,16 +207,20 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     add(agent, "Zoom Agent", "", "zoomPane")
     add(agent, "Pin or Unpin Agent", "", "pinPane")
     agent.addItem(.separator())
-    add(agent, "Remove Agent from Swarm", "w", "closePane", [.command, .shift])
-    install(agent, at: 2)
+    add(agent, "Rename Tab…", "r", "renameActive", [.command, .shift])
+    add(agent, "Close Agent Pane", "w", "closePane", [.command, .shift])
+    add(agent, "Close Tab", "w", "closeActive")
+    agent.addItem(.separator())
+    add(agent, "Link Machine…", "", "linkMachine")
+    add(agent, "Add Project…", "", "addProject")
+    install(agent, at: 1)
 
     rebuildHistoryMenu()
-    install(historyMenu, at: 3)
+    install(historyMenu, at: main.items.firstIndex(where: { $0.title == "Window" }) ?? main.numberOfItems)
 
     // Native menu hints mirror Flutter; the shared picker owns all editing.
     if let edit = main.item(withTitle: "Edit")?.submenu {
       edit.addItem(.separator())
-      add(edit, "Navigate to Agent or Swarm…", "p", "jump")
       add(edit, "Search Commands…", "p", "commands", [.command, .shift])
     }
     if let view = main.item(withTitle: "View")?.submenu {
@@ -233,7 +230,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     modelsMenu.autoenablesItems = false
     modelsMenu.delegate = self
     rebuildModelsMenu()
-    install(modelsMenu, at: 3)
+    install(modelsMenu, at: main.items.firstIndex(where: { $0.title == "Window" }) ?? main.numberOfItems)
     installTerminalFindMenu(main)
   }
 
@@ -350,7 +347,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
       historyMenu.addItem(item)
     }
     if entries.isEmpty {
-      let item = NSMenuItem(title: closed ? "No Recently Closed Agents or Swarms" : "No Recent Visits", action: nil, keyEquivalent: "")
+      let item = NSMenuItem(title: closed ? "No Recently Closed Agents or Tabs" : "No Recent Visits", action: nil, keyEquivalent: "")
       item.isEnabled = false
       historyMenu.addItem(item)
     }
@@ -658,10 +655,10 @@ private final class SwarmTabStrip: NSView {
   var emit: ((String, Any?) -> Void)?
   private let scroll = NSScrollView()
   private let document = NSView()
-  private let newButton = NSButton()
-  fileprivate let searchButton = NSButton()
+  fileprivate let newButton = NSButton()
   fileprivate let notificationButton = SwarmNotificationButton()
   private var tabs: [SwarmTabButton] = []
+  private let icons = SwarmHistoryIcons()
   private var activeId = ""
   private var revealActiveAfterLayout = false
   private var tabOrderChanged = false
@@ -690,12 +687,10 @@ private final class SwarmTabStrip: NSView {
       button.setAccessibilityLabel(label)
       addSubview(button)
     }
-    button(newButton, "plus", "New swarm (⌘T)", #selector(newSwarm))
+    button(newButton, "plus", "New Agent (⌘T)", #selector(newSwarm))
+    newButton.setAccessibilityLabel("New Agent")
     newButton.isEnabled = false
-    button(searchButton, "safari", "Navigate (⌘P)", #selector(openSearch))
-    searchButton.setAccessibilityLabel("Navigate")
     button(notificationButton, "bell", "Notifications", #selector(openNotifications))
-    searchButton.isEnabled = false
     notificationButton.isEnabled = false
     registerForDraggedTypes([swarmPasteboardType])
   }
@@ -705,7 +700,6 @@ private final class SwarmTabStrip: NSView {
     let nextPalette = SwarmNativePalette(values)
     guard nextPalette != palette else { return }
     palette = nextPalette
-    searchButton.contentTintColor = palette.accent
     notificationButton.contentTintColor = palette.accent
     newButton.contentTintColor = palette.accent
     for tab in tabs { tab.palette = palette }
@@ -729,7 +723,13 @@ private final class SwarmTabStrip: NSView {
       guard let id = row["id"] as? String else { return nil }
       let tab = previous[id] ?? SwarmTabButton(id: id)
       tab.palette = palette
-      tab.name = row["name"] as? String ?? "New swarm"
+      tab.name = row["name"] as? String ?? "New Agent"
+      let count = row["agentCount"] as? Int ?? 0
+      tab.icon = count == 1
+        ? icons.image(engine: row["engine"] as? String, asset: row["iconAsset"] as? String)
+        : count > 1
+        ? SwarmIdentity.menuIcon
+        : NSImage(systemSymbolName: "plus.square", accessibilityDescription: "New Agent")
       tab.selected = id == activeId
       tab.actionsEnabled = actionsEnabled
       tab.attention = (row["attention"] as? Int ?? 0) > 0
@@ -747,7 +747,6 @@ private final class SwarmTabStrip: NSView {
     // Moving frames alone leaves AppKit's child traversal in insertion order.
     document.setAccessibilityChildren(tabs)
     newButton.isEnabled = actionsEnabled && tabs.count < 24
-    searchButton.isEnabled = actionsEnabled
     notificationButton.isEnabled = actionsEnabled
     let attention = state["attention"] as? Int ?? 0
     notificationButton.hasAttention = attention > 0
@@ -774,7 +773,7 @@ private final class SwarmTabStrip: NSView {
     let activeWasVisible = active.map { scroll.documentVisibleRect.intersects($0.frame) } ?? false
     let previousScrollSize = scroll.frame.size
     let previousDocumentSize = document.frame.size
-    let available = max(132, bounds.width - 124)
+    let available = max(132, bounds.width - 84)
     let width = min(220, max(132, available / CGFloat(max(1, tabs.count))))
     let occupied = min(available, CGFloat(tabs.count) * width)
     scroll.frame = NSRect(x: 0, y: 0, width: occupied, height: bounds.height)
@@ -785,7 +784,6 @@ private final class SwarmTabStrip: NSView {
     }
     let buttonY = (bounds.height - 28) / 2
     newButton.frame = NSRect(x: occupied + 4, y: buttonY, width: 28, height: 28)
-    searchButton.frame = NSRect(x: bounds.width - 80, y: buttonY, width: 28, height: 28)
     notificationButton.frame = NSRect(x: bounds.width - 40, y: buttonY, width: 28, height: 28)
     let geometryChanged = scroll.frame.size != previousScrollSize || document.frame.size != previousDocumentSize
     if let active, revealActiveAfterLayout || (activeWasVisible && (geometryChanged || tabOrderChanged)) {
@@ -822,9 +820,6 @@ private final class SwarmTabStrip: NSView {
   @objc private func newSwarm() {
     if actionsEnabled && newButton.isEnabled { emit?("new", nil) }
   }
-  @objc private func openSearch() {
-    if actionsEnabled { emit?("jump", nil) }
-  }
   @objc private func openNotifications() {
     if actionsEnabled { emit?("notifications", nil) }
   }
@@ -854,7 +849,7 @@ private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidati
     didSet { if palette != oldValue { needsDisplay = true } }
   }
   let swarmId: String
-  var name = "New swarm" { didSet { if name != oldValue { invalidateLabel(); updateAccessibility() } } }
+  var name = "New Agent" { didSet { if name != oldValue { invalidateLabel(); updateAccessibility() } } }
   var selected = false { didSet { if selected != oldValue { invalidateLabel(); updateAccessibility() } } }
   var attention = false { didSet { if attention != oldValue { needsDisplay = true; updateAccessibility() } } }
   var showsDivider = false { didSet { if showsDivider != oldValue { needsDisplay = true } } }
@@ -864,6 +859,11 @@ private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidati
   var isHovered: Bool { hovered && actionsEnabled }
   private let closeButton = SwarmTabActionButton()
   private let selectButton = SwarmSelectButton()
+  private let iconView = NSImageView()
+  var icon: NSImage? {
+    get { iconView.image }
+    set { iconView.image = newValue }
+  }
   private var cachedLabel: NSAttributedString?
   var actionsEnabled = true {
     didSet {
@@ -882,6 +882,10 @@ private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidati
     super.init(frame: .zero)
     setAccessibilityElement(true)
     setAccessibilityRole(.group)
+    iconView.imageScaling = .scaleProportionallyDown
+    iconView.contentTintColor = NSColor(white: 0.85, alpha: 1)
+    iconView.setAccessibilityElement(false)
+    addSubview(iconView)
     selectButton.owner = self
     closeButton.owner = self
     selectButton.title = ""
@@ -889,16 +893,16 @@ private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidati
     selectButton.target = self
     selectButton.action = #selector(selectSwarm)
     addSubview(selectButton)
-    closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close swarm")
+    closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close tab")
     closeButton.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 10, weight: .semibold)
     closeButton.contentTintColor = NSColor(white: 0.78, alpha: 1)
     closeButton.isBordered = false
     closeButton.target = self
     closeButton.action = #selector(closeSwarm)
-    closeButton.toolTip = "Close swarm"
+    closeButton.toolTip = "Close tab"
     addSubview(closeButton)
     let menu = NSMenu()
-    for (title, action) in [("Rename Swarm…", #selector(renameSwarm)), ("Close Swarm", #selector(closeSwarm))] {
+    for (title, action) in [("Rename Tab…", #selector(renameSwarm)), ("Close Tab", #selector(closeSwarm))] {
       let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
       item.target = self
       menu.addItem(item)
@@ -909,6 +913,7 @@ private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidati
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
   override func layout() {
     super.layout()
+    iconView.frame = NSRect(x: 22, y: contentCenterY - 8, width: 16, height: 16)
     selectButton.frame = NSRect(x: 0, y: 0, width: max(0, bounds.width - 36), height: bounds.height)
     closeButton.frame = NSRect(x: bounds.width - 36, y: contentCenterY - 12, width: 24, height: 24)
   }
@@ -969,8 +974,8 @@ private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidati
     }
     let label = self.label
     let labelHeight = label.size().height
-    label.draw(in: NSRect(x: 22, y: contentCenterY - labelHeight / 2,
-      width: bounds.width - 64, height: labelHeight))
+    label.draw(in: NSRect(x: 46, y: contentCenterY - labelHeight / 2,
+      width: bounds.width - 88, height: labelHeight))
     if attention {
       NSColor.systemOrange.setFill()
       NSBezierPath(ovalIn: NSRect(x: 13, y: contentCenterY - 2, width: 4, height: 4)).fill()

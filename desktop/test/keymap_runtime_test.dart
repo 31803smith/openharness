@@ -13,7 +13,6 @@ import 'package:harness/state/app_state.dart';
 import 'package:harness/state/swarm_catalog.dart';
 import 'package:harness/terminal/terminal_binary.dart';
 import 'package:harness/widgets/swarm_switcher.dart';
-import 'package:harness/widgets/swarm_navigator.dart';
 import 'package:xterm/xterm.dart';
 
 import 'keymap_host_test.dart' show MemoryKeymap, key;
@@ -119,7 +118,7 @@ void main() {
 
   for (final inline in [false, true]) {
     testWidgets(
-      'configured picker actions and hints stay in ${inline ? 'New swarm' : 'titlebar'} search',
+      'configured picker actions and hints stay in ${inline ? 'New Agent' : 'titlebar'} search',
       (tester) async {
         final map = MemoryKeymap()
           ..apply('''{"bindings":[
@@ -132,7 +131,6 @@ void main() {
         app.machineStates['m']!.nodeOnline = true;
         final frames = <TerminalBinaryFrame>[];
         final pane = app.adoptSessionForTest(terminal('a0', frames));
-        final original = app.activeSwarmId;
         app.newSwarm();
         final addingTo = app.activeSwarmId;
         await mount(tester, app, map);
@@ -144,7 +142,7 @@ void main() {
         if (inline) {
           await tester.tap(input);
         } else {
-          await key(tester, LogicalKeyboardKey.keyP, cmd: true);
+          await key(tester, LogicalKeyboardKey.keyN, cmd: true);
         }
         await tester.enterText(input, 'Agent');
         await tester.pump();
@@ -152,7 +150,9 @@ void main() {
             ? tester
                   .widget<SwarmSearchResults>(find.byType(SwarmSearchResults))
                   .search
-            : tester.widget<SwarmNavigator>(find.byType(SwarmNavigator)).search;
+            : tester
+                  .widget<SwarmSearchResults>(find.byType(SwarmSearchResults))
+                  .search;
         final initial = search.cursor;
         await key(tester, LogicalKeyboardKey.arrowDown);
         expect(search.cursor, initial);
@@ -160,19 +160,22 @@ void main() {
         expect(search.cursor, (initial - 1) % search.rows.length);
         await tester.enterText(input, 'Agent 0');
         await tester.pump();
-        expect(search.previewVisible, inline);
+        expect(
+          find.byKey(const ValueKey('swarm-search-preview')),
+          findsNothing,
+        );
         expect(
           find.byKey(const ValueKey('swarm-search-preview-toggle')),
           findsNothing,
         );
         await key(tester, LogicalKeyboardKey.enter);
         expect(
-          find.byType(inline ? SwarmSearchResults : SwarmNavigator),
+          find.byType(inline ? SwarmSearchResults : SwarmSearchResults),
           findsOneWidget,
         );
         expect(frames, isEmpty);
         await key(tester, LogicalKeyboardKey.enter, alt: true);
-        expect(app.activeSwarmId, inline ? addingTo : original);
+        expect(app.activeSwarmId, addingTo);
         expect(app.focusedPane, same(pane));
         expect(find.byType(SwarmSearchResults), findsNothing);
         await key(tester, LogicalKeyboardKey.arrowLeft);
@@ -185,7 +188,7 @@ void main() {
   }
 
   testWidgets(
-    'closed New swarm search honors remapped opening keys and command mode',
+    'closed New tab search honors remapped opening keys and command mode',
     (tester) async {
       final map = MemoryKeymap()
         ..apply('''{"bindings":[
@@ -255,12 +258,10 @@ void main() {
       final map = MemoryKeymap();
       final app = createApp();
       await mount(tester, app, map, native: true);
-      await native(tester, 'keymapCommand', {
-        'command': 'navigation.quick_open',
-      });
+      await native(tester, 'keymapCommand', {'command': 'swarm.new'});
       await tester.pump();
       calls.clear();
-      final field = find.byKey(const ValueKey('swarm-search-input'));
+      var field = find.byKey(const ValueKey('swarm-welcome-search-input'));
       for (final query in ['w', 'wo', 'wor', 'work', 'work 木']) {
         await tester.enterText(field, query);
         app.renameSwarm(app.activeSwarmId, 'Background $query');
@@ -291,6 +292,7 @@ void main() {
       await tester.pump();
       calls.clear();
       await native(tester, 'keymapCommand', {'command': 'navigation.commands'});
+      field = find.byKey(const ValueKey('swarm-search-input'));
       await tester.pump();
       expect(
         calls
@@ -380,34 +382,32 @@ void main() {
       await mount(tester, app, map, native: true);
       expect(calls.where((c) => c.method == 'keymapState'), hasLength(1));
       map.apply(
-        '{"bindings":[{"keys":"cmd+p","command":null},{"keys":"cmd+o","command":"navigation.quick_open"}]}',
+        '{"bindings":[{"keys":"cmd+t","command":null},{"keys":"cmd+o","command":"swarm.new"}]}',
       );
       await tester.pump();
       final snapshot =
           calls.lastWhere((c) => c.method == 'keymapState').arguments as Map;
       final picker = (snapshot['contexts'] as Map)['picker'] as List;
       expect(
-        picker.any((row) => (row['keys'] as List).contains('cmd+p')),
+        picker.any((row) => (row['keys'] as List).contains('cmd+t')),
         isFalse,
       );
       expect(
         picker.any(
           (row) =>
-              row['command'] == 'navigation.quick_open' &&
+              row['command'] == 'swarm.new' &&
               (row['keys'] as List).contains('cmd+o'),
         ),
         isTrue,
       );
-      await native(tester, 'keymapCommand', {
-        'command': 'navigation.quick_open',
-      });
+      await native(tester, 'keymapCommand', {'command': 'swarm.new'});
       await tester.pump();
       await tester.enterText(
-        find.byKey(const ValueKey('swarm-search-input')),
+        find.byKey(const ValueKey('swarm-welcome-search-input')),
         'Agent 0',
       );
       await tester.pump();
-      expect(find.byType(SwarmNavigator), findsOneWidget);
+      expect(find.byType(SwarmSearchResults), findsOneWidget);
       await native(tester, 'keymapCommand', {'command': 'picker.accept'});
       await tester.pump();
       expect(find.byType(SwarmSearchResults), findsNothing);
@@ -438,11 +438,11 @@ void main() {
       );
       var rows = effectiveShortcutRows(helpContext, KeymapContext.workspace);
       final searchLabel = rows
-          .firstWhere((row) => row.chords.any((keys) => keys.join() == '⌘P'))
+          .firstWhere((row) => row.chords.any((keys) => keys.join() == '⌘T'))
           .label;
       map.apply('''{"bindings":[
-      {"keys":"cmd+p","command":null},
-      {"keys":"cmd+o","command":"navigation.quick_open"},
+      {"keys":"cmd+t","command":null},
+      {"keys":"cmd+o","command":"swarm.new"},
       {"keys":"cmd+s","command":null,"when":"terminal"}
     ]}''');
       await tester.pump();
@@ -451,7 +451,7 @@ void main() {
         ['⌘', 'O'],
       ]);
       expect(
-        rows.any((r) => r.chords.any((keys) => keys.join() == '⌘P')),
+        rows.any((r) => r.chords.any((keys) => keys.join() == '⌘T')),
         isFalse,
       );
       final terminalRows = effectiveShortcutRows(

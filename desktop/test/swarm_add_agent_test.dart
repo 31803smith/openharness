@@ -47,7 +47,7 @@ void main() {
         'Agent 0',
       );
       await tester.pump();
-      expect(find.text('Add to this swarm'), findsNWidgets(2));
+      expect(find.text('Add to this tab'), findsNWidgets(2));
       expect(find.byKey(const ValueKey('swarm-row-action')), findsOneWidget);
       expect(find.text('Go to agent'), findsNothing);
       expect(find.byType(AlertDialog), findsNothing);
@@ -82,7 +82,7 @@ void main() {
         await tester.pump();
         final neighborRect = tester.getRect(find.byKey(neighbor.cellKey));
         final expected = app.preparePaneSplit(axis)!;
-        await chord(tester, LogicalKeyboardKey.keyP);
+        await chord(tester, LogicalKeyboardKey.keyP, shift: true);
         final inputField = find.byKey(const ValueKey('swarm-search-input'));
         await tester.enterText(
           inputField,

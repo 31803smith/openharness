@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:harness/widgets/swarm_project_agents.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/core/models.dart';
 import 'package:harness/screens/swarm_screen.dart';
@@ -60,9 +61,11 @@ void main() {
         ),
       );
       await tester.pump();
-      await tester.tap(find.byTooltip('Project options for Workshop'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Choose agents…'));
+      final editing = showSwarmProjectAgents(
+        tester.element(find.byType(SwarmScreen)),
+        app,
+        swarmProjects(app, projects.projects).single,
+      );
       await tester.pumpAndSettle();
       await tester.enterText(
         find.byWidgetPredicate(
@@ -76,6 +79,9 @@ void main() {
       await tester.tap(find.widgetWithText(CheckboxListTile, 'Chess Set'));
       await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
+      final saved = await editing;
+      expect(saved, isNotNull);
+      await projects.add(saved!);
       final restored = SwarmProjectStore(storage: memory);
       await restored.load();
       final group = swarmProjects(app, restored.projects).single;
@@ -86,7 +92,12 @@ void main() {
         reason:
             'Editing project membership does not attach or take over terminals',
       );
-      await tester.tap(find.text('Workshop'));
+      await tester.enterText(
+        find.byKey(const ValueKey('swarm-welcome-search-input')),
+        'Workshop',
+      );
+      await tester.pump();
+      await tester.tap(find.widgetWithText(ListTile, 'Workshop'));
       await tester.pump(const Duration(milliseconds: 100));
       expect(app.panes.map((p) => (p.machineId, p.agentId)), [
         ('m', 'a0'),

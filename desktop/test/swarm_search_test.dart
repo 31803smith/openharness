@@ -27,7 +27,7 @@ void main() {
       await mount(tester, app);
       final input = find.byKey(const ValueKey('swarm-search-input'));
       expect(input, findsNothing);
-      await tester.tap(find.byKey(const ValueKey('swarm-search-button')));
+      await chord(tester, LogicalKeyboardKey.keyN);
       await tester.pump();
       final originalController = tester.widget<TextField>(input).controller;
       await tester.enterText(input, 'a query only');
@@ -174,7 +174,7 @@ void main() {
       search.setQuery('Test host');
       final choice = search.submit();
       expect(choice?.destination.isMachine, isTrue);
-      expect(SwarmSearchController.action(choice!.destination), 'Go to swarm');
+      expect(SwarmSearchController.action(choice!.destination), 'Go to tab');
       expect(
         await activateSwarmSearchSelection(
           app,
@@ -275,7 +275,7 @@ void main() {
         .take(3)
         .toList();
     await mount(tester, app);
-    await tester.tap(find.byKey(const ValueKey('swarm-add-agent-button')));
+    await chord(tester, LogicalKeyboardKey.keyN);
     await tester.pump();
     await tester.enterText(jumpField, 'Test host');
     await tester.pump();
@@ -304,12 +304,12 @@ void main() {
     app.adoptSessionForTest(terminal('a1', secondInputs));
     final target = app.activeSwarm;
     await mount(tester, app);
-    await tester.tap(find.byKey(const ValueKey('swarm-add-agent-button')));
+    await chord(tester, LogicalKeyboardKey.keyN);
     await tester.pump();
     await tester.enterText(jumpField, 'Agent 0');
     await tester.pump();
     expect(find.byKey(const ValueKey('swarm-row-action')), findsOneWidget);
-    expect(find.text('Add to this swarm'), findsNWidgets(2));
+    expect(find.text('Add to this tab'), findsNWidgets(2));
     await chord(tester, LogicalKeyboardKey.enter);
     expect(find.byType(Dialog), findsNothing);
     expect(app.activeSwarm, same(target));
@@ -332,7 +332,7 @@ void main() {
 
   for (final adding in [false, true]) {
     testWidgets(
-      'Return waits for composing text in ${adding ? 'Add' : 'Navigate'}',
+      'Return waits for composing text in ${adding ? 'Add' : 'New Agent'}',
       (tester) async {
         final app = createApp();
         app.adoptSessionForTest(terminal('a0', []));
@@ -340,24 +340,32 @@ void main() {
         app.newSwarm();
         final target = app.activeSwarm;
         await mount(tester, app);
+        final field = find.byKey(
+          ValueKey(
+            adding ? 'swarm-search-input' : 'swarm-welcome-search-input',
+          ),
+        );
         if (adding) {
-          await tester.tap(
-            find.byKey(const ValueKey('swarm-add-agent-button')),
-          );
+          await chord(tester, LogicalKeyboardKey.keyN);
           await tester.pump();
         } else {
-          await chord(tester, LogicalKeyboardKey.keyP);
+          await tester.tap(field);
+          await tester.pump();
         }
-        await tester.enterText(jumpField, 'Agent 0');
+        await tester.enterText(field, 'Agent 0');
         await tester.pump();
-        final controller = tester.widget<TextField>(jumpField).controller!;
+        final controller = tester.widget<TextField>(field).controller!;
         controller.value = controller.value.copyWith(
           composing: const TextRange(start: 0, end: 7),
         );
         await tester.sendKeyEvent(LogicalKeyboardKey.enter);
         await tester.pump();
         expect(
-          find.byKey(const ValueKey('swarm-search-results')),
+          find.byKey(
+            ValueKey(
+              adding ? 'swarm-search-results' : 'swarm-welcome-search-results',
+            ),
+          ),
           findsOneWidget,
         );
         expect(find.byType(Dialog), findsNothing);
@@ -366,7 +374,7 @@ void main() {
         await tester.sendKeyEvent(LogicalKeyboardKey.enter);
         await tester.pump();
         expect(app.panes.single.agentId, 'a0');
-        expect(app.activeSwarm, same(adding ? target : original));
+        expect(app.activeSwarm, same(target));
         expect(original.panes, hasLength(1));
         await tester.pumpWidget(const SizedBox());
         app.dispose();

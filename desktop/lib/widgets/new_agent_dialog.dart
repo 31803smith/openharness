@@ -33,7 +33,7 @@ const Map<String, String> kEngineBypassPermissionFlag = {
 
 enum NewAgentDialogResult { created, findExisting }
 
-/// Opens the New agent dialog for [machineId].
+/// Opens the Create Agent dialog for [machineId].
 ///
 /// [source] names the door it was opened by — `machine_row`, `rail_empty`,
 /// `pane_empty` or `shortcut` — and is required rather than defaulted, so a
@@ -320,7 +320,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
       _codexProfilesBusy;
 
   /// [Machine.displayName], not `name` — the latter is nullable and a machine
-  /// that never got one would title the dialog "New agent on null".
+  /// that never got one would title the dialog "Create Agent on null".
   String get _machineName =>
       widget.notifier.stateOf(_machineId)?.machine.displayName ??
       'this machine';
@@ -484,9 +484,9 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
 
     return AlertDialog(
       title: Text(switch (widget.split?.axis) {
-        PaneResizeAxis.x => 'New agent to the right',
-        PaneResizeAxis.y => 'New agent below',
-        null => 'New agent',
+        PaneResizeAxis.x => 'Create Agent to the right',
+        PaneResizeAxis.y => 'Create Agent below',
+        null => 'Create Agent',
       }),
       titleTextStyle: Theme.of(context).textTheme.titleMedium,
       content: SizedBox(
@@ -556,6 +556,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
             label: const Text('Find existing agent…'),
           ),
         FilledButton(
+          key: const ValueKey('create-agent-submit'),
           focusNode: _actionFocus,
           onPressed: canCreate ? _submit : null,
           style: FilledButton.styleFrom(
@@ -587,7 +588,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                   _confirmationPending
                       ? 'Check status'
                       : _machineIsThisComputer
-                      ? 'Create agent'
+                      ? 'Create Agent'
                       : 'Create on $_machineName',
                 ),
         ),

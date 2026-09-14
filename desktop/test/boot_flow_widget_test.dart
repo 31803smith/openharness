@@ -829,9 +829,10 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.text('Start with one agent'), findsOneWidget);
-      expect(find.text('New agent'), findsNothing);
-      expect(find.text('Add project'), findsOneWidget);
+      expect(find.text('New Agent'), findsWidgets);
+      expect(find.text('Create Agent'), findsNothing);
+      expect(find.text('Add project'), findsNothing);
+      await tester.ensureVisible(find.text('Link a machine'));
       await tester.tap(find.text('Link a machine'));
       await tester.pumpAndSettle();
       expect(find.text('harness login\nharness start'), findsOneWidget);
@@ -1080,6 +1081,14 @@ void main() {
     await tester.pump();
     expect(find.text('Link this machine'), findsNothing);
 
+    await chord(tester, LogicalKeyboardKey.keyP, shift: true);
+    await tester.enterText(
+      find.byKey(const ValueKey('swarm-welcome-search-input')),
+      '> link machine',
+    );
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('link-mac'));
     await tester.tap(find.text('link-mac'));
     // Same popup-transition reasoning as above.
@@ -1158,6 +1167,14 @@ void main() {
     await tester.pump();
     expect(find.text('Link this machine'), findsNothing);
 
+    await chord(tester, LogicalKeyboardKey.keyP, shift: true);
+    await tester.enterText(
+      find.byKey(const ValueKey('swarm-welcome-search-input')),
+      '> link machine',
+    );
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('link-mac'));
     await tester.tap(find.text('link-mac'));
     await tester.pumpAndSettle();

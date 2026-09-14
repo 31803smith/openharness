@@ -184,7 +184,7 @@ void main() {
       findsOneWidget,
     );
     expect(app.launches, isEmpty);
-    await tester.tap(find.text('Create agent'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Create Agent'));
     await tester.pump();
     expect(app.launches.single, {
       'machine': 'machine-1',

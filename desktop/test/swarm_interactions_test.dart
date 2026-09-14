@@ -242,7 +242,7 @@ void main() {
       expect(input.single.streamId, 'stream-a1');
       expect(String.fromCharCodes(input.single.bytes), 'x');
       await activate('rename', {'id': second});
-      expect(find.text('Rename swarm'), findsOneWidget);
+      expect(find.text('Rename tab'), findsOneWidget);
       final name = tester.widget<TextField>(find.byType(TextField));
       expect(name.focusNode!.hasPrimaryFocus, isTrue);
       tester.testTextInput.enterText('Keyboard work');
@@ -262,7 +262,7 @@ void main() {
       expect(app.swarms, hasLength(1));
       expect(app.panes, isEmpty);
       expect(app.activeSwarmId, isNot(anyOf(first, second)));
-      expect(find.text('Start a swarm'), findsOneWidget);
+      expect(find.text('New Agent'), findsOneWidget);
       await activate('new');
       expect(app.swarms, hasLength(2));
       expect(input, hasLength(2));

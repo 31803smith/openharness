@@ -459,7 +459,7 @@ class AppNotifier extends ChangeNotifier {
   Iterable<TerminalPane> get allPanes => swarms.expand((s) => s.panes).toSet();
   String get activeSwarmId => activeSwarm.id;
 
-  void newSwarm({String name = 'New swarm'}) {
+  void newSwarm({String name = 'New Agent'}) {
     if (swarms.length >= maxSwarms) return;
     while (swarms.any((s) => s.id == 'swarm-$_nextSwarmId')) {
       _nextSwarmId++;
@@ -557,7 +557,7 @@ class AppNotifier extends ChangeNotifier {
     // welcome tabs, evicting the real work from recently closed history.
     if (swarms.length == 1 &&
         swarms.single.panes.isEmpty &&
-        swarms.single.name == 'New swarm' &&
+        swarms.single.name == 'New Agent' &&
         swarms.single.presets.isEmpty) {
       return;
     }
@@ -3718,9 +3718,9 @@ class AppNotifier extends ChangeNotifier {
       return 'The layout changed. Close this dialog and split the agent again.';
     }
     final target = swarms.where((s) => s.id == targetId).firstOrNull;
-    if (target == null) return 'This swarm was closed';
+    if (target == null) return 'This tab was closed';
     if (target.panes.length >= maxPanes) {
-      return 'This swarm is full. Open a new swarm to create an agent.';
+      return 'This tab is full. Open a new tab to create an agent.';
     }
     return null;
   }
@@ -3874,8 +3874,8 @@ class AppNotifier extends ChangeNotifier {
     notifyListeners();
     if (_creationPlacementError(targetId, split) != null) {
       _lastError =
-          'The agent was created, but its original swarm or layout changed. '
-          'Find it with Add agent.';
+          'The agent was created, but its original tab or layout changed. '
+          'Find it with New Agent.';
       _lastErrorRetryable = false;
       notifyListeners();
       return null;
@@ -4312,7 +4312,7 @@ class AppNotifier extends ChangeNotifier {
         existing == null &&
         targetPanes.length >= maxPanes) {
       _lastError =
-          'This swarm holds $maxPanes agents. Open another swarm to add more.';
+          'This tab holds $maxPanes agents. Open another tab to add more.';
       _lastErrorRetryable = false;
       notifyListeners();
       return;
@@ -4338,7 +4338,7 @@ class AppNotifier extends ChangeNotifier {
       target.arranged = split.after;
       target.arrangedKey = key;
     }
-    if (firstAgent && target.name == 'New swarm') {
+    if (firstAgent && target.name == 'New Agent') {
       final name = agent.name.trim();
       if (name.isNotEmpty) {
         target.name = name.length > 80 ? name.substring(0, 80) : name;
@@ -4866,7 +4866,7 @@ class AppNotifier extends ChangeNotifier {
                   0,
                   (raw['name'] as String).length.clamp(0, 80),
                 )
-              : 'New swarm',
+              : 'New Agent',
         );
         for (final item in (raw['panes'] as List).take(maxPanes)) {
           final entry = PaneLayoutEntry.fromJson(item);

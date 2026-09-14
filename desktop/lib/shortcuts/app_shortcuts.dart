@@ -40,9 +40,6 @@ enum ShortcutAction {
   /// One pane filling the grid, and back. tmux's `prefix z`.
   zoomPane,
 
-  /// Jump to any agent by name, on any machine.
-  switchAgent,
-
   /// Find a live question and jump to the agent waiting for input.
   showAttention,
 
@@ -67,7 +64,7 @@ enum ShortcutGroup { navigate, panes, actions }
 
 extension ShortcutGroupLabel on ShortcutGroup {
   String get label => switch (this) {
-    ShortcutGroup.navigate => 'Navigate',
+    ShortcutGroup.navigate => 'Workspace',
     ShortcutGroup.panes => 'Panes',
     ShortcutGroup.actions => 'Actions',
   };
@@ -276,7 +273,7 @@ const List<AppShortcut> kAppShortcuts = [
   AppShortcut(
     action: ShortcutAction.closePane,
     activator: SingleActivator(LogicalKeyboardKey.keyW, meta: true),
-    label: 'Remove the focused agent from this swarm',
+    label: 'Close the focused agent pane',
     group: ShortcutGroup.panes,
   ),
   AppShortcut(
@@ -312,12 +309,6 @@ const List<AppShortcut> kAppShortcuts = [
   //
   // ⌘K stays unbound and is now spoken for by the navigation row above — see
   // the header's note about what the file used to hold it in reserve for.
-  AppShortcut(
-    action: ShortcutAction.switchAgent,
-    activator: SingleActivator(LogicalKeyboardKey.keyP, meta: true),
-    label: 'Go to an agent by name',
-    group: ShortcutGroup.navigate,
-  ),
   // ⌃⇥ / ⌃⇧⇥ — the one Ctrl pair this app is allowed, and the terminal is made
   // to let it past on purpose (terminal_view.dart) because no shell or tmux
   // binding wants it.
@@ -357,7 +348,7 @@ const List<AppShortcut> kAppShortcuts = [
       meta: true,
       shift: true,
     ),
-    label: 'New agent',
+    label: 'Create Agent',
     group: ShortcutGroup.actions,
   ),
   AppShortcut(
@@ -406,7 +397,6 @@ List<AppShortcut> appShortcuts({bool swarmMode = true}) => [
         (!const {
               ShortcutAction.toggleRail,
               ShortcutAction.closePane,
-              ShortcutAction.switchAgent,
             }.contains(shortcut.action) &&
             !shortcut.activator.control))
       shortcut,
@@ -420,7 +410,7 @@ const kSwarmShortcuts = [
   AppShortcut(
     action: ShortcutAction.addAgent,
     activator: SingleActivator(LogicalKeyboardKey.keyN, meta: true),
-    label: 'Add agent to this swarm',
+    label: 'Add agent to this tab',
     group: ShortcutGroup.actions,
   ),
   AppShortcut(
@@ -432,7 +422,7 @@ const kSwarmShortcuts = [
   AppShortcut(
     action: ShortcutAction.newSwarm,
     activator: SingleActivator(LogicalKeyboardKey.keyT, meta: true),
-    label: 'New swarm',
+    label: 'New Agent',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
@@ -442,13 +432,13 @@ const kSwarmShortcuts = [
       meta: true,
       shift: true,
     ),
-    label: 'Reopen last closed agent or swarm',
+    label: 'Reopen last closed agent or tab',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
     action: ShortcutAction.closeSwarm,
     activator: SingleActivator(LogicalKeyboardKey.keyW, meta: true),
-    label: 'Close this swarm',
+    label: 'Close this tab',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
@@ -458,7 +448,7 @@ const kSwarmShortcuts = [
       meta: true,
       shift: true,
     ),
-    label: 'Rename this swarm',
+    label: 'Rename this tab',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
@@ -468,7 +458,7 @@ const kSwarmShortcuts = [
       meta: true,
       shift: true,
     ),
-    label: 'Next swarm',
+    label: 'Next tab',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
@@ -478,13 +468,13 @@ const kSwarmShortcuts = [
       meta: true,
       shift: true,
     ),
-    label: 'Previous swarm',
+    label: 'Previous tab',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
     action: ShortcutAction.nextSwarm,
     activator: SingleActivator(LogicalKeyboardKey.tab, control: true),
-    label: 'Next swarm',
+    label: 'Next tab',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
@@ -494,13 +484,7 @@ const kSwarmShortcuts = [
       control: true,
       shift: true,
     ),
-    label: 'Previous swarm',
-    group: ShortcutGroup.navigate,
-  ),
-  AppShortcut(
-    action: ShortcutAction.switchAgent,
-    activator: SingleActivator(LogicalKeyboardKey.keyP, meta: true),
-    label: 'Search agents, swarms, machines and projects',
+    label: 'Previous tab',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
@@ -520,7 +504,7 @@ const kSwarmShortcuts = [
       meta: true,
       shift: true,
     ),
-    label: 'Remove the focused agent from this swarm',
+    label: 'Close the focused agent pane',
     group: ShortcutGroup.panes,
   ),
   AppShortcut(

@@ -88,7 +88,7 @@ Future<void> _timeOut(
 
 void main() {
   for (final entry in ['Add', 'Split right', 'Split down']) {
-    testWidgets('cancel New agent returns to the same $entry search', (
+    testWidgets('cancel Create Agent returns to the same $entry search', (
       tester,
     ) async {
       final connection = _Connection();
@@ -103,7 +103,7 @@ void main() {
       if (entry == 'Add') {
         await chord(tester, LogicalKeyboardKey.keyN);
       } else {
-        await chord(tester, LogicalKeyboardKey.keyP);
+        await chord(tester, LogicalKeyboardKey.keyP, shift: true);
         await tester.enterText(field, '> $entry');
         await tester.pump();
         await tester.sendKeyEvent(LogicalKeyboardKey.enter);
@@ -171,7 +171,7 @@ void main() {
       await mount(tester, app);
       final field = find.byKey(const ValueKey('swarm-search-input'));
       if (change == 'changed split') {
-        await chord(tester, LogicalKeyboardKey.keyP);
+        await chord(tester, LogicalKeyboardKey.keyP, shift: true);
         await tester.enterText(field, '> split right');
         await tester.pump();
         await tester.sendKeyEvent(LogicalKeyboardKey.enter);
@@ -229,7 +229,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('new-agent-folder')));
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(FilledButton, 'Create agent'));
+      await tester.tap(find.byKey(const ValueKey('create-agent-submit')));
       await tester.pump();
       final create = connection.calls.single;
       if (outcome == 'created') {
@@ -290,7 +290,7 @@ void main() {
           ? find.byKey(const ValueKey('swarm-welcome-search-input'))
           : search;
       if (splitting) {
-        await chord(tester, LogicalKeyboardKey.keyP);
+        await chord(tester, LogicalKeyboardKey.keyP, shift: true);
         await tester.enterText(search, '> split right');
         await tester.pump();
         await tester.sendKeyEvent(LogicalKeyboardKey.enter);
@@ -309,7 +309,7 @@ void main() {
       await tester.tap(find.byKey(const Key('new-agent-folder')));
       await tester.pumpAndSettle();
       expect(find.text('Find existing agent…'), findsNothing);
-      await tester.tap(find.widgetWithText(FilledButton, 'Create agent'));
+      await tester.tap(find.byKey(const ValueKey('create-agent-submit')));
       await tester.pump();
       expect(find.text('Find existing agent…'), findsNothing);
       connection.calls.last.reply.completeError(
@@ -345,7 +345,7 @@ void main() {
         expect(search, findsNothing);
         expect(
           find.textContaining(
-            change == 'closed' ? 'swarm was closed' : 'split changed',
+            change == 'closed' ? 'tab was closed' : 'split changed',
           ),
           findsOneWidget,
         );
@@ -585,7 +585,7 @@ void main() {
       app.stateOf('m')!.agents.any((agent) => agent.id == 'created'),
       isTrue,
     );
-    expect(app.lastError, contains('Find it with Add agent'));
+    expect(app.lastError, contains('Find it with New Agent'));
   });
 
   testWidgets(
@@ -617,14 +617,14 @@ void main() {
       );
       await tester.tap(find.text('open'));
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(FilledButton, 'Create agent'));
+      await tester.tap(find.byKey(const ValueKey('create-agent-submit')));
       await tester.pump();
       connection.calls.last.reply.completeError(
         const WsRequestTimeout('agent_create'),
       );
       await tester.pumpAndSettle();
       expect(find.text('/work'), findsOneWidget);
-      expect(find.widgetWithText(FilledButton, 'Create agent'), findsNothing);
+      expect(find.widgetWithText(FilledButton, 'Create Agent'), findsNothing);
       final action = tester.widget<FilledButton>(
         find.widgetWithText(FilledButton, 'Check status'),
       );

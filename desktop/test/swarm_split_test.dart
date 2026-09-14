@@ -217,7 +217,7 @@ void main() {
       await mountWide(tester, app);
       tester.view.physicalSize = const Size(3000, 1800);
       await tester.pump();
-      await chord(tester, LogicalKeyboardKey.keyP);
+      await chord(tester, LogicalKeyboardKey.keyP, shift: true);
       await tester.enterText(
         find.byKey(const ValueKey('swarm-search-input')),
         '> split right',
@@ -230,7 +230,7 @@ void main() {
       expect(find.byType(AlertDialog), findsNothing);
       await tester.tap(find.byKey(const ValueKey('swarm-search-new-agent')));
       await tester.pump();
-      expect(find.text('New agent to the right'), findsOneWidget);
+      expect(find.text('Create Agent to the right'), findsOneWidget);
       expect(find.text('/work/checkout'), findsOneWidget);
       expect(app.panes, [pane]);
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);

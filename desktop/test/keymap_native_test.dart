@@ -16,8 +16,8 @@ void main() {
       addTearDown(keymap.dispose);
       final defaults = nativeKeymapSnapshot(keymap);
       keymap.apply('''{"bindings":[
-      {"keys":"cmd+p","command":null},
-      {"keys":"cmd+o","command":"navigation.quick_open"},
+      {"keys":"cmd+t","command":null},
+      {"keys":"cmd+o","command":"swarm.new"},
       {"keys":"cmd+k","command":null},
       {"keys":"cmd+k cmd+n","command":"swarm.new"},
       {"keys":"cmd+h","command":null,"when":"terminal"},
@@ -46,7 +46,7 @@ void main() {
           );
         }
         expect(
-          rows.any((row) => (row['keys'] as List).join(' ') == 'cmd+p'),
+          rows.any((row) => (row['keys'] as List).join(' ') == 'cmd+t'),
           isFalse,
         );
       }

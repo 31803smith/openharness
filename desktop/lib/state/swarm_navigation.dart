@@ -524,7 +524,7 @@ Future<bool> activateSwarmSearchSelection(
           )) {
         return false;
       }
-      if (target.panes.isEmpty && target.name == 'New swarm') {
+      if (target.panes.isEmpty && target.name == 'New Agent') {
         app.renameSwarm(target.id, destination.title);
       }
       // Every membership is recorded before awaiting any attachment. A slow

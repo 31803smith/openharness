@@ -1,9 +1,10 @@
+import 'swarm_search_field.dart';
+
 import 'package:flutter/material.dart';
 
 import '../shared/widgets/app_dialog.dart';
 import '../state/app_state.dart';
 import '../state/swarm_catalog.dart';
-import 'swarm_welcome.dart';
 
 Future<SavedSwarmProject?> showSwarmProjectAgents(
   BuildContext context,

@@ -59,6 +59,28 @@ AppNotifier createApp({
 
 void main() {
   test(
+    'old empty swarm names restore as tabs and still name the first agent',
+    () async {
+      final store = MemoryStore();
+      final original = createApp(store: store);
+      original.renameSwarm(original.activeSwarmId, 'New swarm');
+      await original.flushPaneLayout();
+      // Retain the old payload exactly as previous versions wrote it.
+      expect(
+        store.values.values.any((value) => value.contains('New swarm')),
+        isTrue,
+      );
+      original.dispose();
+      final restored = createApp(store: store);
+      addTearDown(restored.dispose);
+      await restored.restorePaneLayoutForTest();
+      expect(restored.activeSwarm.name, 'New Agent');
+      await restored.addAgentToSwarm('m', 'a0');
+      expect(restored.activeSwarm.name, 'Agent 0');
+    },
+  );
+
+  test(
     'first agent names a swarm and survives closing and reopening',
     () async {
       final app = createApp();
@@ -175,7 +197,7 @@ void main() {
         for (var i = 0; i < 70; i++) (machineId: 'm', agentId: 'a$i'),
       ]);
       expect(app.panes.length, AppNotifier.maxPanes);
-      expect(app.lastError, contains('Open another swarm'));
+      expect(app.lastError, contains('Open another tab'));
       expect(app.panes.first.agentId, 'a0');
       app.dispose();
     },

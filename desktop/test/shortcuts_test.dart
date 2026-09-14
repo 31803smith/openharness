@@ -291,8 +291,11 @@ void main() {
     test('the terminal verbs tmux trained people on are all here', () {
       expect(chordsFor(ShortcutAction.zoomPane), contains('⌘⏎'));
       expect(chordsFor(ShortcutAction.lastPane), contains('⌘;'));
-      expect(chordsFor(ShortcutAction.switchAgent), contains('⌘P'));
-      expect(chordsFor(ShortcutAction.switchAgent), isNot(contains('⇧⌘F')));
+      expect(chordsFor(ShortcutAction.newSwarm), ['⌘T']);
+      expect(
+        appShortcuts().where((s) => describeShortcut(s.activator) == '⌘P'),
+        isEmpty,
+      );
       expect(chordsFor(ShortcutAction.addAgent), ['⌘N']);
       expect(chordsFor(ShortcutAction.newAgent), ['⇧⌘N']);
       expect(chordsFor(ShortcutAction.showAttention), ['⇧⌘I']);
@@ -329,7 +332,7 @@ void main() {
         ['⌘', '→'],
       ]);
 
-      final next = rows.firstWhere((row) => row.label == 'Next swarm');
+      final next = rows.firstWhere((row) => row.label == 'Next tab');
       expect(next.chords, [
         ['⇧', '⌘', ']'],
         ['⌃', '⇥'],

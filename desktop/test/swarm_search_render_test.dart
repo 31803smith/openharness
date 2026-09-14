@@ -28,7 +28,7 @@ class _CatalogMachine extends MachineState {
 }
 
 void main() {
-  for (final add in [false, true]) {
+  for (final add in [true]) {
     testWidgets(
       'reopened ${add ? 'Add' : 'Navigate'} sees changed metadata and membership',
       (tester) async {
@@ -126,7 +126,7 @@ void main() {
   }
 
   testWidgets(
-    'reopening Add reuses catalog work but refreshes output and choices',
+    'reopening Add reuses catalog work and resets choices without showing output',
     (tester) async {
       final app = createApp();
       final machine = _CatalogMachine(app.machineStates['m']!.machine)
@@ -150,7 +150,7 @@ void main() {
       final first = inputWidget().search!;
       final oldRow = first.selected!;
       expect(oldRow.agentId, 'a0');
-      expect(first.preview!.text, contains('Earlier useful output.'));
+      expect(find.byKey(const ValueKey('swarm-search-preview')), findsNothing);
       first.toggle();
       await tester.pump();
       expect(first.checkedCount, 1);
@@ -164,7 +164,7 @@ void main() {
       await tester.pump();
       final next = inputWidget().search!;
       expect(next.checkedCount, 0);
-      expect(next.preview!.text, contains('Newest useful output.'));
+      expect(find.textContaining('Newest useful output.'), findsNothing);
       expect(next.selected, same(oldRow));
       expect(machine.projectReads, 0, reason: 'Agent metadata did not change');
       expect(input, isEmpty);
@@ -176,7 +176,7 @@ void main() {
   for (final native in [false, true]) {
     for (final add in [false, true]) {
       testWidgets(
-        '${add ? 'Add' : 'Navigate'} opening and cancel keep the canvas built (native $native)',
+        '${add ? 'Add' : 'Commands'} opening and cancel keep the canvas built (native $native)',
         (tester) async {
           const channel = MethodChannel('harness/swarm_tabs');
           final messenger = tester.binding.defaultBinaryMessenger;
@@ -197,6 +197,7 @@ void main() {
             await chord(
               tester,
               add ? LogicalKeyboardKey.keyN : LogicalKeyboardKey.keyP,
+              shift: !add,
             );
             expect(
               tester
@@ -351,7 +352,7 @@ void main() {
     final row = find.byKey(ValueKey(agentDestinationId('m', 'a0')));
     expect(tester.widget<ListTile>(row).enabled, isFalse);
     expect(
-      find.descendant(of: row, matching: find.text('In this swarm')),
+      find.descendant(of: row, matching: find.text('In this tab')),
       findsOneWidget,
     );
     await app.closePane(app.panes.last.id);

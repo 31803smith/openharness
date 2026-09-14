@@ -89,7 +89,7 @@ void main() {
     expect(command('cmd+alt+left'), isNull);
     expect(command('cmd+shift+enter'), isNull);
     expect(command('ctrl+n', KeymapContext.picker), 'picker.next');
-    expect(command('cmd+p', KeymapContext.picker), 'navigation.quick_open');
+    expect(command('cmd+t', KeymapContext.picker), 'swarm.new');
     expect(command('cmd+['), 'navigation.back');
   });
 
@@ -144,7 +144,7 @@ void main() {
             child: KeymapHost(
               keymap: map,
               enabled: () => true,
-              actions: {'navigation.quick_open': () => searches++},
+              actions: {'swarm.new': () => searches++},
               child: KeymapRegion(
                 contextKind: KeymapContext.terminal,
                 child: Focus(
@@ -165,7 +165,7 @@ void main() {
         ),
       );
       await tester.pump();
-      await key(tester, LogicalKeyboardKey.keyP, cmd: true);
+      await key(tester, LogicalKeyboardKey.keyT, cmd: true);
       expect(searches, 1);
       expect(delivered, isEmpty);
       await key(tester, LogicalKeyboardKey.keyB, ctrl: true);
@@ -173,13 +173,13 @@ void main() {
       await key(tester, LogicalKeyboardKey.tab, ctrl: true);
       expect(delivered, ['ctrl+b', 'alt+c']);
       map.apply(
-        '{"bindings":[{"keys":"cmd+p","command":null},{"keys":"ctrl+o","command":"navigation.quick_open","when":"terminal"}]}',
+        '{"bindings":[{"keys":"cmd+t","command":null},{"keys":"ctrl+o","command":"swarm.new","when":"terminal"}]}',
       );
       await tester.pump();
-      await key(tester, LogicalKeyboardKey.keyP, cmd: true);
+      await key(tester, LogicalKeyboardKey.keyT, cmd: true);
       await key(tester, LogicalKeyboardKey.keyO, ctrl: true);
       expect(searches, 2);
-      expect(delivered.last, 'cmd+p');
+      expect(delivered.last, 'cmd+t');
       await tester.pumpWidget(const SizedBox());
       focus.dispose();
       map.dispose();

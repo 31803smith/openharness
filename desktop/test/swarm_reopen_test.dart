@@ -175,7 +175,7 @@ void main() {
       expect(app.swarms, hasLength(AppNotifier.maxSwarms));
       await app.closeSwarm(app.activeSwarmId);
       app.reopenClosedSwarm();
-      expect(app.activeSwarm.name, 'New swarm');
+      expect(app.activeSwarm.name, 'New Agent');
       // Free slots directly without adding newer close records to this check.
       app.swarms.removeRange(1, app.swarms.length);
       app.selectSwarm(app.swarms.single.id);

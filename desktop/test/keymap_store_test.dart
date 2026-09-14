@@ -8,23 +8,20 @@ import 'package:harness/shortcuts/keymap_store.dart';
 
 String config(String command) => jsonEncode({
   'bindings': [
-    {'keys': 'cmd+p', 'command': command},
+    {'keys': 'cmd+t', 'command': command},
   ],
 });
 KeymapStore storeFor(File file, {bool watch = false}) => KeymapStore(
   file: file,
   watchFiles: watch,
   defaults: [
-    KeyBinding(
-      keys: [KeyStroke.parse('cmd+p')],
-      command: 'navigation.quick_open',
-    ),
+    KeyBinding(keys: [KeyStroke.parse('cmd+t')], command: 'swarm.new'),
   ],
-  commands: {'navigation.quick_open', 'pane.focus_left'},
+  commands: {'swarm.new', 'pane.focus_left'},
 );
 String? selected(KeymapStore store) => store.current.match(
   KeymapContext.terminal,
-  [KeyStroke.parse('cmd+p')],
+  [KeyStroke.parse('cmd+t')],
 ).command;
 
 Future<void> eventually(bool Function() condition) async {
@@ -61,7 +58,7 @@ void main() {
     final store = storeFor(file);
     addTearDown(store.dispose);
     await store.start();
-    expect(selected(store), 'navigation.quick_open');
+    expect(selected(store), 'swarm.new');
     expect(store.error, isNull);
     expect(await file.parent.exists(), false);
     expect(store.revision, 0);
@@ -94,7 +91,7 @@ void main() {
       expect(changes, 3); // New map, diagnostic, diagnostic cleared.
       await file.delete();
       await store.reload();
-      expect(selected(store), 'navigation.quick_open');
+      expect(selected(store), 'swarm.new');
     },
   );
 
@@ -157,9 +154,9 @@ void main() {
       await file.writeAsString(config('pane.focus_left'));
       await eventually(() => selected(store) == 'pane.focus_left');
       final replacement = File('${file.path}.save');
-      await replacement.writeAsString(config('navigation.quick_open'));
+      await replacement.writeAsString(config('swarm.new'));
       await replacement.rename(file.path);
-      await eventually(() => selected(store) == 'navigation.quick_open');
+      await eventually(() => selected(store) == 'swarm.new');
       expect(store.error, isNull);
     },
   );
@@ -171,7 +168,7 @@ void main() {
       final second = File('${directory.path}/repo2/keys.jsonc');
       await first.parent.create();
       await second.parent.create();
-      await first.writeAsString(config('navigation.quick_open'));
+      await first.writeAsString(config('swarm.new'));
       await second.writeAsString(config('pane.focus_left'));
       final link = Link('${directory.path}/app/keybindings.jsonc');
       await Directory('${directory.path}/app').create();
@@ -182,9 +179,9 @@ void main() {
       await link.update(second.path);
       await eventually(() => selected(store) == 'pane.focus_left');
       final replacement = File('${second.path}.save');
-      await replacement.writeAsString(config('navigation.quick_open'));
+      await replacement.writeAsString(config('swarm.new'));
       await replacement.rename(second.path);
-      await eventually(() => selected(store) == 'navigation.quick_open');
+      await eventually(() => selected(store) == 'swarm.new');
     },
     skip: Platform.isWindows
         ? 'Creating Windows symlinks requires host permission'

@@ -15,16 +15,16 @@ for (key, command) in [
   ("cmd+h", "pane.focus_left"), ("cmd+j", "pane.focus_below"),
   ("cmd+k", "pane.focus_above"), ("cmd+l", "pane.focus_right"),
   ("cmd+s", "pane.layout"), ("cmd+r", "machines.refresh"),
-  ("cmd+b", "task.route"), ("cmd+p", "navigation.quick_open"),
+  ("cmd+b", "task.route"), ("cmd+t", "swarm.new"),
 ] {
   try checkKeymap(defaults.match([stroke(key)], context: "workspace").binding?.command == command,
     "Preserve the current default for \(key)")
 }
 for context in ["workspace", "terminal", "picker"] {
-  try checkKeymap(changed.match([stroke("cmd+p")], context: context).binding == nil,
+  try checkKeymap(changed.match([stroke("cmd+t")], context: context).binding == nil,
     "Native context honors inherited unbinding")
   let search = changed.match([stroke("cmd+o")], context: context).binding
-  try checkKeymap(search?.command == "navigation.quick_open" && search?.hint == "⌘O" && search?.menuAction == "jump",
+  try checkKeymap(search?.command == "swarm.new" && search?.hint == "⌘O" && search?.menuAction == "new",
     "The new key, menu owner and displayed hint agree")
   try checkKeymap(changed.match([stroke("cmd+k")], context: context).prefix,
     "User sequence prefix replaces the shorter command")
@@ -76,9 +76,9 @@ _ = send("cmd+k")
 dispatcher.suspend()
 try checkKeymap(dispatcher.pending.isEmpty && !dispatcher.release(1), "Window blur clears pending and held keys")
 dispatcher.update(defaults)
-try checkKeymap(send("cmd+p").command == "navigation.quick_open", "Reload installs the new resolved map")
+try checkKeymap(send("cmd+t").command == "swarm.new", "Reload installs the new resolved map")
 
-try checkKeymap(HarnessKeyStroke.fromCharacters("P", modifiers: [.command, .capsLock]) == stroke("cmd+p"),
+try checkKeymap(HarnessKeyStroke.fromCharacters("T", modifiers: [.command, .capsLock]) == stroke("cmd+t"),
   "Caps Lock does not change a Command binding")
 try checkKeymap(HarnessKeyStroke.fromCharacters("1", modifiers: [.command, .shift]) == stroke("cmd+shift+1"),
   "Shift stays in modifiers after layout translation")
@@ -98,7 +98,7 @@ try checkKeymap(HarnessNativeKeymap(payload([prefix, sequence])) == nil, "Reject
 try checkKeymap(HarnessNativeKeymap(payload([prefix, prefix])) == nil, "Reject duplicate strokes atomically")
 try checkKeymap(HarnessNativeKeymap(payload(Array(repeating: prefix, count: 641))) == nil, "Bound incoming binding counts")
 try checkKeymap(HarnessNativeKeymap(["version": 2, "contexts": [:]]) == nil, "Reject unsupported snapshots")
-for value in ["cmd+cmd+p", "cmd+", "cmd+not-a-key", "ctrl+alt+shift+cmd+fn+p", "f01"] {
+for value in ["cmd+cmd+t", "cmd+", "cmd+not-a-key", "ctrl+alt+shift+cmd+fn+p", "f01"] {
   try checkKeymap(HarnessKeyStroke(value) == nil, "Reject malformed native stroke \(value)")
 }
 print("Native keyboard bridge: \(keymapChecks) checks passed against Dart's exported bindings; no windows or agents opened.")

@@ -1,3 +1,5 @@
+import 'swarm_search_field.dart';
+
 import 'package:flutter/material.dart';
 
 import '../shared/widgets/app_dialog.dart';
@@ -5,7 +7,6 @@ import '../state/app_state.dart';
 import '../state/swarm_attention.dart';
 import '../state/swarm_navigation.dart';
 import 'engine_identity.dart';
-import 'swarm_welcome.dart';
 
 Future<SwarmAttentionEntry?> showSwarmAttention(
   BuildContext context,

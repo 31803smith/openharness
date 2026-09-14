@@ -17,7 +17,7 @@ final _results = find.byKey(const ValueKey('swarm-welcome-search-results'));
 void main() {
   for (final native in [false, true]) {
     testWidgets(
-      'New swarm arrives ready to type without opening results (native=$native)',
+      'New tab arrives ready to type without opening results (native=$native)',
       (tester) async {
         const channel = MethodChannel('harness/swarm_tabs');
         final messages = <MethodCall>[];
@@ -142,7 +142,7 @@ void main() {
   }
 
   testWidgets(
-    'New swarm keeps editing and results at the field that was clicked',
+    'New tab keeps editing and results at the field that was clicked',
     (tester) async {
       final app = createApp();
       await mount(tester, app);
@@ -168,15 +168,12 @@ void main() {
       await tester.tap(_input);
       await tester.pump();
       expect(_results, findsOneWidget);
-      await chord(tester, LogicalKeyboardKey.keyP);
+      await chord(tester, LogicalKeyboardKey.keyP, shift: true);
       await tester.pump();
-      expect(_results, findsNothing);
-      expect(
-        find.byKey(const ValueKey('swarm-search-results')),
-        findsOneWidget,
-      );
-      expect(tester.widget<TextField>(top).focusNode!.hasFocus, isTrue);
-      expect(tester.widget<TextField>(top).controller!.text, isEmpty);
+      expect(_results, findsOneWidget);
+      expect(top, findsNothing);
+      expect(tester.widget<TextField>(_input).focusNode!.hasFocus, isTrue);
+      expect(tester.widget<TextField>(_input).controller!.text, '> ');
       await tester.pumpWidget(const SizedBox());
       app.dispose();
     },
