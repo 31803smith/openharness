@@ -23,6 +23,7 @@ import '../theme/app_theme.dart';
 import 'agent_drag.dart';
 import 'harness_join_guide_screen.dart';
 import 'new_agent_dialog.dart';
+import 'delete_agent_dialog.dart';
 import 'terminal_panel.dart';
 import 'pane_resize_handle.dart';
 
@@ -1167,6 +1168,18 @@ class _PaneContent extends StatelessWidget {
           notice: notice,
           onToggleComposer: () => notifier.toggleComposer(pane.id),
           onClose: single && !swarmMode ? null : close,
+          // The same confirmation the rail's row menu opens. Only for an
+          // agent the machine still lists — a pane whose agent is already
+          // gone has nothing to end.
+          onDelete: agent == null
+              ? null
+              : () => confirmDeleteAgent(
+                  context,
+                  notifier,
+                  pane.machineId,
+                  agent.id,
+                  agent.name,
+                ),
           pinned: notifier.isPanePinned(pane),
           onTogglePin: single ? null : () => notifier.togglePinPane(pane.id),
           zoomed: notifier.zoomedPaneId == pane.id,
