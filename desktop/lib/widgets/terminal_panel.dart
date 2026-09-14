@@ -254,7 +254,9 @@ class _TerminalPanelState extends State<TerminalPanel>
       _afterTerminalMounted(scrollToEnd: _followTail);
     }
     if (oldWidget.viewportSize != widget.viewportSize) {
-      _afterTerminalMounted(scrollToEnd: _followTail);
+      // Geometry can change while a resize handle or another control owns
+      // the keyboard. Refresh the viewport without claiming input ownership.
+      _afterTerminalMounted(scrollToEnd: _followTail, claimFocus: false);
     }
     if (widget.focused &&
         (!oldWidget.focused || oldWidget.focusRequest != widget.focusRequest)) {
@@ -565,6 +567,7 @@ class _TerminalPanelState extends State<TerminalPanel>
   void _afterTerminalMounted({
     bool clearSelection = false,
     bool scrollToEnd = true,
+    bool claimFocus = true,
     int retries = 2,
   }) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -576,6 +579,7 @@ class _TerminalPanelState extends State<TerminalPanel>
           _afterTerminalMounted(
             clearSelection: clearSelection,
             scrollToEnd: scrollToEnd,
+            claimFocus: claimFocus,
             retries: retries - 1,
           );
         }
@@ -596,7 +600,7 @@ class _TerminalPanelState extends State<TerminalPanel>
       }
       // Never over the composer: a rebuild that re-focuses this tile while someone is typing into
       // the box would pull the caret out from under them mid-sentence.
-      _claimFocus(view);
+      if (claimFocus) _claimFocus(view);
       if (_find != null) _onFindChanged();
       if (_linkPointerPosition != null) _hoverLink(_linkPointerPosition);
     });

@@ -193,8 +193,14 @@ void main() {
     ).widget.scrollController!;
     reading.jumpTo(100);
     await tester.pump();
-    app.setPreset(4, PanePreset.rows);
+    final before = terminalView(tester, sessions.first).renderTerminal.size;
+    app.setPreset(4, PanePreset.mainAndStack);
     await tester.pump();
+    expect(app.presetFor(4), PanePreset.mainAndStack);
+    expect(
+      terminalView(tester, sessions.first).renderTerminal.size,
+      isNot(before),
+    );
     expect(reading.offset, 100);
     for (final session in sessions.skip(1)) {
       final scroll = terminalView(tester, session).widget.scrollController!;
