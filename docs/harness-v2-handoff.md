@@ -1,6 +1,6 @@
 # Harness v2: goal, plan, and continuation handoff
 
-**Picker focus correction:** Tab could move from the search field into a result,
+**Picker focus correction:** `0c240dd` is pushed. Tab could move from the search field into a result,
 outside its shortcut scope. Both Cmd-N and the native New Harness action then
 left the inline results underneath creation. The whole input/results surface now
 shares its keymap region, highlights the Tab-focused row, returns arrows/command
@@ -11,8 +11,9 @@ All **47 affected keyboard/search/history checks** pass in
 rebuild checks. All five changed source/test files analyze cleanly in
 `/private/tmp/harness-picker-scope-analyze.log`. The full desktop suite passes
 **1,420 checks**, with the optional CLI-media placeholder skipped, in
-`/private/tmp/harness-picker-scope-full.log`. The prepared and running previews
-below still predate this correction until the next build refresh.
+`/private/tmp/harness-picker-scope-full.log`. The prepared Release below includes
+this correction and passes signature verification. The console remains locked;
+the running preview is unchanged.
 
 **Previous desktop regression checkpoint:** `67c20f4` is pushed. All **1,416 unit/widget checks** pass
 in `/private/tmp/harness-current-full-suite-after.log`. The one optional remote
@@ -65,7 +66,7 @@ receipt and never submits another launch. Analysis reports only two existing
 brace-style infos in
 unchanged `app_state.dart` lines (2264 and 2932), with no errors or warnings;
 see `/private/tmp/harness-current-creation-recovery-analyze.log`.
-The prepared Release bundle includes these changes through `67c20f4`; the console
+The prepared Release below includes these changes; the console
 remains locked and the running preview is unchanged. The full current suite is
 now green; native first-use, latency and Linux-host qualification remain open.
 
@@ -93,8 +94,8 @@ The existing guarantee that arrow navigation rebuilds only changed rows remains
 verified. Analysis of the five changed source/test files reports no issues in
 `/private/tmp/harness-start-search-analyze.log`.
 
-The latest Release build, through `67c20f4`, succeeds in
-`/private/tmp/harness-current-ui-release.log`. Both rebuilt frameworks verified
+The latest Release build, through `0c240dd`, succeeds in
+`/private/tmp/harness-picker-scope-release.log`. Both rebuilt frameworks verified
 before refreshing the outer ad-hoc signature; the full bundle then passed deep,
 strict signature verification at
 `/private/tmp/harness-pane-controls-release/Build/Products/Release/Harness.app`.
@@ -105,8 +106,8 @@ CUA lookups returned `cgWindowNotFound`; the preview process was confirmed runni
 Do not treat that as a stopped app or launch an old fixture. When accessible,
 use Quit and Keep Windows, replace only the current checkout's preview with the
 verified bundle, and check inline command entry/reopen from both keyboard and
-native menu, New Harness dismissal from inline search, initial folder focus and
-folder cancellation. The visual and terminal
+native menu, including after Tab focuses a result. Check New Harness dismissal
+from inline search, initial folder focus and folder cancellation. The visual and terminal
 checks below describe the preceding `b4baf68` preview. Native latency benchmarking
 remains deferred.
 
