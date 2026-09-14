@@ -1,3 +1,4 @@
+import '../core/host_platform.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -44,7 +45,8 @@ class KeymapStore extends ChangeNotifier {
   static String defaultPath({Map<String, String>? environment}) {
     final env = environment ?? Platform.environment;
     final xdg = env['XDG_CONFIG_HOME'];
-    final home = env['HOME'] ?? env['USERPROFILE'];
+    var home = env['HOME'] ?? env['USERPROFILE'];
+    if (home == null || home.isEmpty) home = containerHome;
     final String root;
     if (xdg != null && p.isAbsolute(xdg)) {
       root = xdg;

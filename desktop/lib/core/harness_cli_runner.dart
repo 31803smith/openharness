@@ -1,3 +1,4 @@
+import 'host_platform.dart';
 import 'dart:io';
 
 import '../logging/cli_transcript.dart';
@@ -56,7 +57,9 @@ class HarnessCliRunner {
     // before any UI existed to report it.
     final home = Platform.environment['HOME'];
     final profile = Platform.environment['USERPROFILE'];
-    final resolved = home != null && home.isNotEmpty ? home : profile;
+    final resolved = home != null && home.isNotEmpty
+        ? home
+        : (profile != null && profile.isNotEmpty ? profile : containerHome);
     if (resolved == null || resolved.isEmpty) {
       throw StateError('Could not resolve the current user home directory');
     }

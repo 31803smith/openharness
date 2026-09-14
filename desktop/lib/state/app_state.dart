@@ -8,10 +8,14 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../analytics/analytics.dart';
 import '../api/api_client.dart';
+import '../viewer/viewer_services.dart';
 import '../auth/auth_session.dart';
+import '../auth/peer_link_client.dart';
+import '../auth/sign_in_client.dart';
 import '../auth/cli_link.dart';
 import '../auth/cli_login.dart';
 import '../bootstrap/environment_provisioner.dart';
+import '../core/viewer_mode.dart';
 import '../core/config.dart';
 import '../core/agent_preference.dart';
 import '../core/build_identity.dart';
@@ -234,8 +238,19 @@ class AppNotifier extends ChangeNotifier {
   final AuthSession session;
   AppConfig config;
   late ApiClient api;
-  final CliLogin cliLogin;
+  /// Signs in, and says whether this computer is signed in: the harness CLI in a desktop build,
+  /// [ViewerServices.login] in a viewer build — which has no CLI — under one name, so every call
+  /// site reads the same in both.
+  late final SignInClient cliLogin;
   final CliLink cliLink;
+
+  /// Links to other machines by remote password: [cliLink] in a desktop build, the app itself in a
+  /// viewer. THIS machine's own remote password stays on [cliLink] — a viewer is not a machine, and
+  /// has no password for anyone to link to.
+  late final PeerLinkClient peerLinks;
+
+  /// A viewer build's stand-ins for the harness CLI (`lib/viewer/`); null on a desktop build.
+  final ViewerServices? viewer;
   final ConfigStore? _store;
 
   /// Spoken tasks waiting for a palette. Broadcast because the screen subscribes and unsubscribes with
@@ -839,8 +854,10 @@ class AppNotifier extends ChangeNotifier {
     this.environmentProvisioner,
     this.desktopUpdater,
     this.connectionForTest,
-    CliLogin? cliLogin,
+    SignInClient? cliLogin,
     CliLink? cliLink,
+    PeerLinkClient? peerLinks,
+    ViewerServices? viewer,
     PaneLayoutStore? paneLayoutStore,
     this.turnActivityTimeout = const Duration(seconds: 12),
   }) : _paneLayout = paneLayoutStore,
@@ -851,12 +868,25 @@ class AppNotifier extends ChangeNotifier {
        agentPreference = AgentPreference(paneLayoutStore?.storage),
        session = authSession,
        _store = configStore,
-       cliLogin = cliLogin ?? CliLogin(),
        cliLink = cliLink ?? CliLink(),
-       config = configStore?.config ?? config {
+       config = configStore?.config ?? config,
+       viewer =
+           viewer ??
+           (kViewerMode
+               ? ViewerServices(
+                   config: configStore?.config ?? config,
+                   session: authSession,
+                 )
+               : null) {
+    this.cliLogin = cliLogin ?? this.viewer?.login ?? CliLogin();
+    this.peerLinks = peerLinks ?? this.viewer?.links ?? this.cliLink;
     _autonomousEnv = this.config.autonomousEnv;
-    api = ApiClient(config: this.config, session: session);
+    api = _newApiClient();
   }
+
+  /// Through the local CLI in a desktop build; straight to the backend, signed, in a viewer.
+  ApiClient _newApiClient() =>
+      ApiClient(config: config, session: session, auth: viewer?.auth);
 
   String? get lastError => _lastError;
   bool get lastErrorRetryable => _lastErrorRetryable;
@@ -1380,7 +1410,7 @@ class AppNotifier extends ChangeNotifier {
         // history) — a stale `stag` value saved before that removal must
         // never silently resurrect it.
         _autonomousEnv = 'prod';
-        api = ApiClient(config: config, session: session);
+        api = _newApiClient();
         _skippedDesktopUpdateVersion = _store.skippedDesktopUpdateVersion;
       }
       _startUpdateChecking();
@@ -1422,6 +1452,14 @@ class AppNotifier extends ChangeNotifier {
   /// runtime were absent; provisioning now makes that a visible, recoverable
   /// first-run phase instead.
   Future<bool> _prepareEnvironment() async {
+    // A viewer has nothing to provision. The provisioner looks for a shell, the
+    // POSIX tools, tmux and a managed Node runtime under `~/.harness` — all of
+    // which exist to host the local `harness` CLI, which a viewer build does
+    // not have and does not want. Running it on a phone reported every step
+    // missing and parked the app on a setup screen whose two actions, Retry
+    // and Switch to Manual, could not succeed either. Treated as ready so
+    // bootstrap goes on to ask about sign-in, which a viewer can answer.
+    if (viewer != null) return true;
     if (_environmentSetupInFlight) return false;
     _environmentSetupInFlight = true;
     status = AppStatus.checkingEnvironment;
@@ -1496,7 +1534,12 @@ class AppNotifier extends ChangeNotifier {
     final revision = _authRevision;
     if (!_authWorkCurrent(revision)) return;
     _cancelEnvironmentRecheckTimer();
-    status = AppStatus.checkingEnvironment;
+    // A viewer skipped the preflight (see [_prepareEnvironment]), so there is no
+    // preflight screen to hold while the sign-in is checked — it stays on the
+    // boot spinner instead.
+    status = viewer == null
+        ? AppStatus.checkingEnvironment
+        : AppStatus.bootstrapping;
     notifyListeners();
     // Auth now lives entirely with the local `harness` CLI — it owns the SSO session on disk and
     // refreshes it itself. This app never reads, stores, or refreshes a token of its own; it just
@@ -1697,7 +1740,7 @@ class AppNotifier extends ChangeNotifier {
   void _bootstrapLocalManual(LocalManualFixture fixture) {
     _autonomousEnv = 'prod';
     config = AppConfig(apiBaseUrl: fixture.apiBaseUrl);
-    api = ApiClient(config: config, session: session);
+    api = _newApiClient();
     currentUser = const CurrentUserProfile.local();
     final machine = Machine(
       machineId: fixture.machineId,
@@ -2509,7 +2552,7 @@ class AppNotifier extends ChangeNotifier {
     void Function(String stage)? onProgress,
   }) async {
     if (password.isEmpty) return 'Enter the remote password first';
-    final result = await cliLink.connect(
+    final result = await peerLinks.connect(
       machineId,
       password,
       onProgress: onProgress,
@@ -2552,7 +2595,7 @@ class AppNotifier extends ChangeNotifier {
   Future<void> refreshLinkedMachines() async {
     linkedMachinesLoading = true;
     notifyListeners();
-    final result = await cliLink.list();
+    final result = await peerLinks.list();
     linkedMachinesLoading = false;
     linkedMachinesError = result.error;
     linkedMachines = result.machines;
@@ -2561,7 +2604,7 @@ class AppNotifier extends ChangeNotifier {
 
   /// Removes a linked machine's trust pin, then refreshes the list. Returns null on success.
   Future<String?> unlinkMachine(String machineId) async {
-    final error = await cliLink.unlink(machineId);
+    final error = await peerLinks.unlink(machineId);
     if (error == null) await refreshLinkedMachines();
     return error;
   }

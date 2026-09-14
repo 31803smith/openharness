@@ -39,6 +39,7 @@ import '../widgets/swarm_search_input.dart';
 import '../widgets/swarm_project_agents.dart';
 import '../widgets/swarm_attention.dart';
 import '../widgets/swarm_switcher.dart';
+import '../widgets/swarm_tab_strip.dart';
 import '../widgets/swarm_wallpaper.dart';
 import '../widgets/swarm_welcome.dart';
 import '../widgets/task_palette.dart';
@@ -1064,7 +1065,15 @@ class _SwarmScreenState extends State<SwarmScreen> {
               backgroundColor: grid.AppPalette.swarmField,
               body: Column(
                 children: [
-                  if (!_native) _tabStrip(),
+                  if (!_native)
+                    SwarmTabStrip(
+                      notifier: app,
+                      attention: _attention,
+                      onRename: _rename,
+                      onSearch: _jump,
+                      onNewAgent: _newAgent,
+                      onNotifications: _notifications,
+                    ),
                   if (_keymap.error != null)
                     Material(
                       color: grid.AppPalette.panelBg,
@@ -1221,123 +1230,5 @@ class _SwarmScreenState extends State<SwarmScreen> {
         ),
       );
     },
-  );
-
-  Widget _tabStrip() => Container(
-    height: 44,
-    color: grid.AppPalette.swarmTabBar,
-    child: Row(
-      children: [
-        const SizedBox(width: 10),
-        Expanded(
-          child: ReorderableListView.builder(
-            scrollDirection: Axis.horizontal,
-            shrinkWrap: true,
-            buildDefaultDragHandles: false,
-            itemCount: app.swarms.length,
-            onReorderItem: (old, to) =>
-                app.reorderSwarm(app.swarms[old].id, to),
-            itemBuilder: (context, index) {
-              final swarm = app.swarms[index];
-              return ReorderableDragStartListener(
-                key: ValueKey(swarm.id),
-                index: index,
-                child: GestureDetector(
-                  onDoubleTap: () => _rename(swarm.id),
-                  child: Container(
-                    width: 186,
-                    margin: const EdgeInsets.only(top: 6, right: 2),
-                    decoration: BoxDecoration(
-                      color: app.activeSwarmId == swarm.id
-                          ? grid.AppPalette.swarmField
-                          : Colors.transparent,
-                      borderRadius: const BorderRadius.vertical(
-                        top: Radius.circular(9),
-                      ),
-                    ),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: TextButton(
-                            onPressed: () => app.selectSwarm(swarm.id),
-                            style: TextButton.styleFrom(
-                              animationDuration: Duration.zero,
-                              foregroundColor: app.activeSwarmId == swarm.id
-                                  ? Colors.white
-                                  : Colors.white70,
-                            ),
-                            child: Text(
-                              swarm.name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontSize: 13),
-                            ),
-                          ),
-                        ),
-                        IconButton(
-                          tooltip: 'Close ${swarm.name}',
-                          onPressed: () => app.closeSwarm(swarm.id),
-                          icon: const Icon(Icons.close, size: 13),
-                          constraints: const BoxConstraints.tightFor(
-                            width: 30,
-                            height: 30,
-                          ),
-                          padding: EdgeInsets.zero,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-        IconButton(
-          tooltip: withEffectiveShortcutHint(
-            context,
-            'New swarm',
-            ShortcutAction.newSwarm,
-          ),
-          onPressed: app.swarms.length < AppNotifier.maxSwarms
-              ? app.newSwarm
-              : null,
-          icon: const Icon(Icons.add, size: 18),
-        ),
-        IconButton(
-          key: const ValueKey('swarm-search-button'),
-          tooltip: withEffectiveShortcutHint(
-            context,
-            'Search',
-            ShortcutAction.switchAgent,
-          ),
-          onPressed: _jump,
-          icon: const Icon(Icons.search, size: 20),
-        ),
-        IconButton(
-          key: const ValueKey('swarm-new-agent-button'),
-          tooltip: withEffectiveShortcutHint(
-            context,
-            'New agent',
-            ShortcutAction.newAgent,
-          ),
-          onPressed: _newAgent,
-          icon: const Icon(Icons.add, size: 20),
-        ),
-        IconButton(
-          key: const ValueKey('swarm-notifications-button'),
-          tooltip: withEffectiveShortcutHint(
-            context,
-            'Agents needing input',
-            ShortcutAction.showAttention,
-          ),
-          onPressed: _notifications,
-          icon: Badge(
-            isLabelVisible: _attention > 0,
-            child: const Icon(Icons.notifications_none, size: 20),
-          ),
-        ),
-        const SizedBox(width: 6),
-      ],
-    ),
   );
 }
