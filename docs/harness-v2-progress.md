@@ -6,6 +6,21 @@ Updated 2026-09-14 after integrating the continuation into main. This is a worki
 
 ## Continue directly on main
 
+- Added browser-sign-in recovery: **Open browser** reuses the current link,
+  **Copy link** offers a fallback, and **Cancel** immediately restores Sign in
+  with keyboard focus. Cancellation before CLI startup, late authorization URLs,
+  old results and delayed browser replies cannot disturb a replacement login.
+  Recovery controls disappear after authorization succeeds, while the workspace
+  restores. The compact layout keeps the normal-size actions visible at 880×560;
+  larger text wraps in the existing scrollable card. The affected workflow/render
+  suite passes 65 checks; analysis has zero errors/warnings and 14 existing infos.
+  Logs: `/private/tmp/harness-signin-final-{tests,analyze}.log`. The normal arm64
+  Release build succeeds at
+  `/private/tmp/harness-signin-release/Build/Products/Release/Harness.app`;
+  log: `/private/tmp/harness-signin-release.log`. It was not launched. The team's
+  `b45c156` main update changes CLI recap text and does not overlap this work.
+  Real first-install/provider sign-in and remote workflow checks remain open;
+  Archive/Resume remains a proposal and benchmarking remains deferred.
 - Added **Find existing agent…** to uncertain New agent forms. It opens shared
   Add with the search query, original swarm and split preserved; a closed swarm
   or stale split gets an explanation. The dialog releases keyboard ownership

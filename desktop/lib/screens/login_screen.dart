@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../shared/theme/app_theme.dart' as grid;
 import '../state/app_state.dart';
@@ -7,7 +8,7 @@ import '../widgets/welcome_workspace_preview.dart';
 
 /// The sign-in screen.
 ///
-/// Lead with the work: real coding agents together in one workspace. A static
+/// Lead with the work: real agents together in one workspace. A static
 /// example explains a swarm before sign-in; the privacy guarantee stays in the
 /// quiet footer. The preview never creates agents or sends them a task.
 ///
@@ -44,6 +45,8 @@ class LoginScreen extends StatelessWidget {
     // The same flag `RootShell` routes on, so the button's state and the reason
     // this screen is on screen at all can never disagree.
     final waiting = notifier.signingIn;
+    final compact = MediaQuery.sizeOf(context).height < 640;
+    final gap = compact ? 16.0 : 24.0;
 
     return Scaffold(
       // The PANEL tone, not the window's. In light both `windowBg` and the
@@ -58,7 +61,7 @@ class LoginScreen extends StatelessWidget {
           const Positioned.fill(child: LoginAurora()),
           Center(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.all(24),
+              padding: EdgeInsets.all(compact ? 16 : 24),
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: _cardWidth),
                 child: Container(
@@ -68,12 +71,12 @@ class LoginScreen extends StatelessWidget {
                     borderRadius: BorderRadius.circular(14),
                     boxShadow: grid.AppCard.shadow,
                   ),
-                  padding: const EdgeInsets.all(24),
+                  padding: EdgeInsets.all(compact ? 20 : 24),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       const _AppMark(),
-                      const SizedBox(height: 24),
+                      SizedBox(height: gap),
                       Text(
                         'All your agents, on one screen',
                         textAlign: TextAlign.center,
@@ -86,9 +89,9 @@ class LoginScreen extends StatelessWidget {
                         textAlign: TextAlign.center,
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
-                      const SizedBox(height: 24),
+                      SizedBox(height: gap),
                       const WelcomeWorkspacePreview(),
-                      const SizedBox(height: 24),
+                      SizedBox(height: gap),
                       _Action(notifier: notifier, waiting: waiting),
                       if (notifier.lastError != null) ...[
                         const SizedBox(height: 16),
@@ -97,7 +100,7 @@ class LoginScreen extends StatelessWidget {
                           onRetry: notifier.login,
                         ),
                       ],
-                      const SizedBox(height: 24),
+                      SizedBox(height: gap),
                       const _Seal(),
                     ],
                   ),
@@ -117,27 +120,79 @@ class LoginScreen extends StatelessWidget {
 /// changes, a spinner replaces the glyph, and Cancel appears beside it. Nothing
 /// moves position, so the wait reads as *this button is working* rather than as
 /// a new screen.
-class _Action extends StatelessWidget {
+class _Action extends StatefulWidget {
   const _Action({required this.notifier, required this.waiting});
 
   final AppNotifier notifier;
   final bool waiting;
 
   @override
+  State<_Action> createState() => _ActionState();
+}
+
+class _ActionState extends State<_Action> {
+  AppNotifier get notifier => widget.notifier;
+  final _signInFocus = FocusNode(debugLabel: 'Sign in');
+  String? _copiedUrl;
+  String? _copyFailureUrl;
+  bool _copying = false;
+
+  @override
+  void didUpdateWidget(covariant _Action oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.waiting && !widget.waiting) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && ModalRoute.of(context)?.isCurrent != false) {
+          _signInFocus.requestFocus();
+        }
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _signInFocus.dispose();
+    super.dispose();
+  }
+
+  Future<void> _copyLink() async {
+    final url = notifier.pendingAuthorizeUrl;
+    if (url == null || !notifier.signingIn || _copying) return;
+    setState(() => _copying = true);
+    var copied = false;
+    try {
+      await Clipboard.setData(ClipboardData(text: url));
+      copied = true;
+    } catch (_) {
+      // Keep recovery in the same sign-in if the OS clipboard is unavailable.
+    }
+    if (!mounted) return;
+    setState(() {
+      _copying = false;
+      if (notifier.signingIn && notifier.pendingAuthorizeUrl == url) {
+        _copiedUrl = copied ? url : null;
+        _copyFailureUrl = copied ? null : url;
+      }
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     grid.AppTheme.watch(context);
 
-    if (!waiting) {
+    if (!widget.waiting) {
       return Column(
         children: [
           FilledButton.icon(
+            focusNode: _signInFocus,
+            autofocus: true,
             onPressed: notifier.login,
             icon: const Icon(Icons.login, size: grid.AppControl.iconSize),
             label: const Text('Sign in'),
           ),
           const SizedBox(height: 12),
           Text(
-            'Sign in through your browser. We’ll bring you back here.',
+            'Sign in through your browser to continue.',
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.bodySmall,
           ),
@@ -145,6 +200,12 @@ class _Action extends StatelessWidget {
       );
     }
 
+    final url = notifier.pendingAuthorizeUrl;
+    final message =
+        notifier.loginBrowserError ??
+        (url != null && _copyFailureUrl == url
+            ? 'Couldn’t copy the link. Try opening your browser again.'
+            : null);
     return Column(
       children: [
         FilledButton.icon(
@@ -156,23 +217,65 @@ class _Action extends StatelessWidget {
             height: grid.AppControl.iconSize,
             child: CircularProgressIndicator(strokeWidth: 2),
           ),
-          label: const Text('Waiting for your browser'),
+          label: Text(url == null ? 'Signing in…' : 'Waiting for your browser'),
         ),
         const SizedBox(height: 12),
-        Text(
-          // Says the thing the idle line could not: what to do if the browser
-          // did not come forward. That is the actual failure people hit here —
-          // the tab opens behind the app and the window looks stuck.
-          'Finish in your browser. If it didn\'t open, check behind this '
-          'window.',
-          textAlign: TextAlign.center,
-          style: Theme.of(context).textTheme.bodySmall,
+        Semantics(
+          liveRegion: true,
+          child: Text(
+            message ??
+                (url == null
+                    ? 'Your workspace will open when sign-in is complete.'
+                    : 'Finish signing in in your browser, then return here.'),
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
         ),
-        const SizedBox(height: 8),
-        TextButton(
-          onPressed: notifier.cancelLogin,
-          child: const Text('Cancel'),
-        ),
+        if (url != null || notifier.canCancelLogin) ...[
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            alignment: WrapAlignment.center,
+            children: [
+              if (url != null) ...[
+                OutlinedButton.icon(
+                  onPressed: notifier.openingLoginBrowser
+                      ? null
+                      : notifier.openLoginBrowser,
+                  icon: const Icon(Icons.open_in_new, size: 16),
+                  label: Text(
+                    notifier.openingLoginBrowser
+                        ? 'Opening browser…'
+                        : 'Open browser',
+                  ),
+                ),
+                TextButton.icon(
+                  onPressed: _copying ? null : _copyLink,
+                  icon: Icon(
+                    _copiedUrl == url ? Icons.check : Icons.content_copy,
+                    size: 16,
+                  ),
+                  label: Semantics(
+                    liveRegion: true,
+                    child: Text(
+                      _copiedUrl == url ? 'Link copied' : 'Copy link',
+                    ),
+                  ),
+                ),
+              ],
+              if (notifier.canCancelLogin)
+                TextButton(
+                  autofocus: true,
+                  onPressed: notifier.cancelLogin,
+                  style: TextButton.styleFrom(
+                    foregroundColor: grid.AppPalette.textSecondary,
+                  ),
+                  child: const Text('Cancel'),
+                ),
+            ],
+          ),
+        ],
       ],
     );
   }

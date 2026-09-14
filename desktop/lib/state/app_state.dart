@@ -341,6 +341,8 @@ class AppNotifier extends ChangeNotifier {
       !_disposed && revision == _authRevision;
 
   int _invalidateAuthWork() {
+    _resetLoginBrowser();
+    _loginAuthorized = false;
     _profileInFlight = null;
     _retryInFlight = null;
     machinesLoading = false;
@@ -890,9 +892,14 @@ class AppNotifier extends ChangeNotifier {
   static const maxPanes = 64;
   // Set only while `harness login --force --json` is waiting for the user to finish SSO in their system
   // browser. It arrives PART WAY THROUGH the flow — the CLI has to start before it can hand one
-  // over — so it says "the browser is open", not "a sign-in is running". Use [signingIn] for the
-  // second question; see the note there.
+  // over. It identifies the current sign-in link; [signingIn] tracks the whole
+  // attempt, including CLI startup and workspace restoration.
   String? pendingAuthorizeUrl;
+  bool openingLoginBrowser = false;
+  String? loginBrowserError;
+  int _loginBrowserRevision = 0;
+  bool _loginAuthorized = false;
+  bool get canCancelLogin => signingIn && !_loginAuthorized;
 
   /// True from the moment the user presses Sign in until the flow settles, one way or the other.
   ///
@@ -2152,17 +2159,21 @@ class AppNotifier extends ChangeNotifier {
       await cliLogin.login(
         onAuthorizeUrl: (url) {
           if (!_authWorkCurrent(revision)) return;
+          if (pendingAuthorizeUrl == url) return;
+          _resetLoginBrowser();
           pendingAuthorizeUrl = url;
           notifyListeners();
           // Must be the system browser, not an embedded webview: this SSO page's Google button uses
           // Google's popup-based Identity Services flow (a real popup window posts the result back to
           // its opener), which only a real browser can satisfy.
-          unawaited(
-            launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
-          );
+          unawaited(openLoginBrowser());
         },
       );
       if (!_authWorkCurrent(revision)) return;
+      _loginAuthorized = true;
+      pendingAuthorizeUrl = null;
+      _resetLoginBrowser();
+      notifyListeners();
       await _finishBootstrapSignedIn();
       if (!_authWorkCurrent(revision) || status != AppStatus.authenticated)
         return;
@@ -2188,6 +2199,8 @@ class AppNotifier extends ChangeNotifier {
       // Cleared last, and only here: everything above may still be running when the URL goes, and
       // dropping the flag any earlier is what put a bare spinner over the user's own screen.
       if (_authWorkCurrent(revision)) {
+        _resetLoginBrowser();
+        _loginAuthorized = false;
         pendingAuthorizeUrl = null;
         signingIn = false;
       }
@@ -2195,11 +2208,63 @@ class AppNotifier extends ChangeNotifier {
     if (_authWorkCurrent(revision)) notifyListeners();
   }
 
-  /// Aborts an in-flight [login] — the embedded sign-in webview's close button calls this.
-  void cancelLogin() => cliLogin.cancel();
+  void _resetLoginBrowser() {
+    ++_loginBrowserRevision;
+    openingLoginBrowser = false;
+    loginBrowserError = null;
+  }
+
+  /// Reopens the current authorization URL without creating another login.
+  Future<void> openLoginBrowser() async {
+    final url = pendingAuthorizeUrl;
+    if (_disposed || !signingIn || url == null || openingLoginBrowser) return;
+    final authRevision = _authRevision;
+    final browserRevision = ++_loginBrowserRevision;
+    openingLoginBrowser = true;
+    loginBrowserError = null;
+    notifyListeners();
+    var opened = false;
+    try {
+      final uri = Uri.tryParse(url);
+      if (uri != null &&
+          uri.hasAuthority &&
+          (uri.scheme == 'https' || uri.scheme == 'http')) {
+        opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      }
+    } catch (_) {
+      // Browser handoff failure is recoverable within the same sign-in. Never
+      // put a credential-bearing URL or a raw platform exception in the UI.
+    }
+    if (!_authWorkCurrent(authRevision) ||
+        browserRevision != _loginBrowserRevision ||
+        pendingAuthorizeUrl != url) {
+      return;
+    }
+    openingLoginBrowser = false;
+    if (!opened) {
+      loginBrowserError =
+          'Couldn’t open your browser. Open it again or copy the sign-in link.';
+    }
+    notifyListeners();
+  }
+
+  /// Return immediately; late URLs, results and browser replies belong to the
+  /// cancelled attempt and cannot change a subsequent sign-in.
+  void cancelLogin() {
+    if (_disposed || !canCancelLogin) return;
+    _invalidateAuthWork();
+    signingIn = false;
+    pendingAuthorizeUrl = null;
+    status = AppStatus.unauthenticated;
+    _lastError = null;
+    _lastErrorRetryable = false;
+    cliLogin.cancel();
+    notifyListeners();
+  }
 
   Future<void> logout() async {
     final revision = _invalidateAuthWork();
+    cliLogin.cancel();
     signingIn = false;
     pendingAuthorizeUrl = null;
     _closedHistory.clear();
@@ -5313,6 +5378,7 @@ class AppNotifier extends ChangeNotifier {
   void dispose() {
     _localGitProjects.dispose();
     _disposed = true;
+    if (signingIn) cliLogin.cancel();
     _closedHistory.clear();
     _daemonSupervisionTimer?.cancel();
     _updateCheckTimer?.cancel();

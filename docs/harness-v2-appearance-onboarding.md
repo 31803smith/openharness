@@ -95,6 +95,30 @@ were inspected at 1280×800 and at 880×560 with 2× text. These are synthetic U
 checks; first-install/provider-sign-in observation and measured time to a useful
 real agent remain release qualification work.
 
+## Browser sign-in recovery
+
+Sign-in keeps its workspace example and action in the same card through CLI
+startup, browser authorization and workspace restoration. It now offers
+**Open browser** and **Copy link** when an authorization URL is available.
+Reopening reuses that URL; it does not launch a second CLI sign-in. Browser
+launch failure stays recoverable in place, with no raw URL or platform error
+rendered in the message.
+
+**Cancel** returns immediately, including while the CLI process is still
+starting. An obsolete process cannot publish a link, finish a replacement login
+or clear its process handle. Browser responses likewise belong to their original
+attempt and URL. After authorization succeeds, browser recovery and Cancel
+disappear while the workspace restores. The initial Sign in button takes keyboard
+focus; cancellation returns focus there so Enter can try again.
+
+The minimum-height layout keeps the normal-size controls visible at 880×560.
+Large text wraps the actions within the existing scrollable card. Sixty-four
+affected workflow tests and one real-font render check pass, with minimum-size,
+2× text and synthetic light/dark review. The shipping app remains dark-only.
+Analysis has no errors/warnings and 14 existing infos; the normal arm64 Release
+build succeeds. These checks use fake subprocess, browser and clipboard replies.
+Real first-install, provider sign-in and time to a useful agent remain unverified.
+
 ## Earlier onboarding evidence and direction (historical)
 
 | Primary source | Observed behavior | Harness adaptation |

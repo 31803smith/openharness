@@ -25,7 +25,12 @@ Widget _host(
         size: const Size(880, 560),
         disableAnimations: reduceMotion,
       ),
-      child: grid.BrightnessScope(child: LoginScreen(notifier: app)),
+      child: grid.BrightnessScope(
+        child: ListenableBuilder(
+          listenable: app,
+          builder: (_, _) => LoginScreen(notifier: app),
+        ),
+      ),
     ),
   );
 }
@@ -100,7 +105,9 @@ void main() {
     tester,
   ) async {
     // `signingIn` is what `main.dart` routes on — see the note there.
-    final app = _notifier(AppStatus.bootstrapping)..signingIn = true;
+    final app = _notifier(AppStatus.bootstrapping)
+      ..signingIn = true
+      ..pendingAuthorizeUrl = 'https://auth.example/authorize';
     await tester.pumpWidget(_host(app));
     await tester.pump(const Duration(milliseconds: 100));
 
@@ -233,7 +240,7 @@ void main() {
 
     // Just pressed: in flight, no URL yet.
     expect(app.pendingAuthorizeUrl, isNull);
-    expect(find.text('Waiting for your browser'), findsOneWidget);
+    expect(find.text('Signing in…'), findsOneWidget);
     expect(find.byType(WelcomeWorkspacePreview), findsOneWidget);
 
     // The CLI hands one over; nothing about the screen should change.
@@ -248,6 +255,8 @@ void main() {
     app.pendingAuthorizeUrl = null;
     app.notifyListeners();
     await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text('Signing in…'), findsOneWidget);
+    expect(find.text('Copy link'), findsNothing);
     expect(find.byType(WelcomeWorkspacePreview), findsOneWidget);
   });
 

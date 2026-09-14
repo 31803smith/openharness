@@ -40,6 +40,14 @@ query back to Add and retains its original swarm/split. A closed swarm or change
 split gets an explanation instead of redirecting the addition. A background
 empty tab cannot take focus from the open creation dialog.
 
+Browser sign-in now offers **Open browser**, **Copy link** and immediate **Cancel**
+while waiting for authorization. Reopening uses the current link without starting
+another CLI login. Cancel works even before the CLI finishes starting; late URLs,
+results and browser replies cannot affect a replacement attempt. After browser
+authorization succeeds, those controls disappear while the workspace restores.
+Enter starts sign-in and can start again after cancellation. Live first-install
+and provider sign-in still need direct observation.
+
 ## Goal
 
 Build the best everyday workspace for people directing persistent AI agents:
@@ -64,6 +72,17 @@ Research must lead to justified improvements, not feature accumulation.
 - Continue on **`main`**, tracking `origin/main`. The user's latest instruction
   is to work, commit, and push directly on main from now on. This supersedes
   the earlier preference for creating a fresh feature branch after each merge.
+- The browser-sign-in recovery continuation passes 64 affected workflow checks
+  plus one real-font render check (65 total), including late process startup,
+  cancelled/replaced sign-ins, browser launch failure, clipboard recovery,
+  keyboard retry and the authorization-to-workspace boundary. Analysis has zero
+  errors/warnings and 14 existing infos. Minimum-size and 2× text renders were
+  reviewed. Logs: `/private/tmp/harness-signin-final-{tests,analyze}.log`.
+  The normal arm64 Release build succeeds at
+  `/private/tmp/harness-signin-release/Build/Products/Release/Harness.app`;
+  log: `/private/tmp/harness-signin-release.log`. It was not launched. The team's
+  `b45c156` CLI recap change was fast-forwarded from main and does not overlap
+  this desktop work. No real sign-in, agent restart or benchmark ran.
 - The creation-to-Add continuation passes 87 affected workflow tests, including
   six new keyboard/destination regressions, plus a real-font render check at
   880×560 with normal and 2× text. Analysis has zero errors/warnings and the same
@@ -501,6 +520,9 @@ that its isolated window can become active/key.
    machine/project starters are implemented. Check fresh dependencies, provider sign-in, cloning,
    first task and adding a second agent; improve what the observation exposes.
    Preserve choices on failure and the distinction between Navigate and Add.
+   Browser reopen/copy/cancel recovery is implemented with isolated subprocess
+   and platform fixtures. Check the real browser handoff and provider return;
+   do not infer live sign-in success from fixture results.
    Creation recovery is implemented and tested with isolated replies. Verify a
    deliberately delayed remote create on a disposable agent, including an older
    CLI and a changed original swarm. A status check must remain read-only. A
