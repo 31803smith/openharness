@@ -182,7 +182,7 @@ class _SwarmInlineSearchState extends State<SwarmInlineSearch> {
         );
       },
       child: SwarmSearchInput(
-        hintText: 'Find a harness…',
+        hintText: 'Find a harness',
         rounded: true,
         inputKey: const ValueKey('swarm-welcome-search-input'),
         controller: _text,

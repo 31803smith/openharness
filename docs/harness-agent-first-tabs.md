@@ -8,9 +8,12 @@ proposals in the progress log.
 ## New Harness
 
 The tab-bar plus and Cmd-T open **New Harness**. First launch and every empty tab
-use the same centered page: a **New Harness** heading, a **Find a harness…** search
-field, a prominent **Create harness** button, and up to six recent harnesses below.
-Search and Create sit together on desktop and stack on narrow or large-text layouts.
+use the same centered page: a **Harness** heading and a full-width **Find a harness**
+search field. Up to six recent shortcuts sit underneath without a section label;
+each shows its machine above its session name. After some space, a quiet **or**
+divider separates existing work from the centered **Create a new harness** button.
+The page scrolls when a narrow window or large text needs more room.
+
 Recent shortcuts use existing navigation history, with open/restored sessions as
 fallbacks. They are deduplicated by machine and agent, even across several tabs.
 
@@ -24,7 +27,7 @@ creation recovery remain available.
 **Add Agent** and split right/down use the same single-choice search and prominent
 **Create Agent** button. Canceling creation returns to the original query, text
 selection, highlighted row and split target. Success opens the agent directly.
-The new-tab page calls its creation entry **Create harness**; the existing form
+The new-tab page calls its creation entry **Create a new harness**; the existing form
 and pane operations still use agent terminology.
 
 There is no Navigate action, compass button, or Cmd-P directory. Command search

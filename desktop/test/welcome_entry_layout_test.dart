@@ -71,9 +71,11 @@ void main() {
         await tester.pumpAndSettle();
         final field = find.byKey(const ValueKey('swarm-welcome-search-input'));
         final create = find.byKey(const ValueKey('swarm-start-primary'));
-        expect(find.text('Find a harness…'), findsOneWidget);
-        expect(find.text('Create harness'), findsOneWidget);
-        expect(find.text('Recent harnesses'), findsOneWidget);
+        expect(find.text('Find a harness'), findsOneWidget);
+        expect(find.text('Create a new harness'), findsOneWidget);
+        expect(find.text('Recent harnesses'), findsNothing);
+        expect(find.text('Harness'), findsOneWidget);
+        expect(find.text('or'), findsOneWidget);
         expect(find.byType(Checkbox), findsNothing);
         expect(
           find.byKey(const ValueKey('swarm-add-agent-button')),
@@ -81,13 +83,13 @@ void main() {
         );
         final findRect = tester.getRect(field);
         final createRect = tester.getRect(create);
-        if (width == 1280 || width == 880) {
-          expect(createRect.left, greaterThan(findRect.right));
-          expect(createRect.center.dy, closeTo(findRect.center.dy, 1));
-        } else {
-          expect(createRect.top, greaterThan(findRect.bottom));
+        expect(createRect.top, greaterThan(findRect.bottom));
+        expect(findRect.center.dx, closeTo(width / 2, 1));
+        expect(findRect.width, closeTo((width - 96).clamp(0, 920), 1));
+        if (scale == 1) {
+          expect(create.hitTestable(), findsOneWidget);
+          expect(createRect.bottom, lessThanOrEqualTo(height));
         }
-        expect(create.hitTestable(), findsOneWidget);
         expect(tester.takeException(), isNull);
         final output = Platform.environment['HARNESS_WELCOME_CAPTURE_DIR'];
         if (output != null) {

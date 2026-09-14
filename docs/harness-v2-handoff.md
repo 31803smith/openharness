@@ -1,8 +1,10 @@
 # Harness v2: goal, plan, and continuation handoff
 
 **Latest UI direction:** [Harness entry and pane controls](harness-agent-first-tabs.md)
-is the current contract. **New Harness** is a centered search with recent harnesses
-and a prominent creation button. Pick one result and open it immediately; multi-select
+is the current contract. The **New Harness** tab shows a centered **Harness**
+heading, a full-width **Find a harness** field and unlabeled recent shortcuts
+(machine above session name). An **or** divider leads to **Create a new harness**
+below. Pick one result and open it immediately; multi-select
 is removed. **File** replaces Agent in the macOS menu, and **Machines** follows Models.
 The latest header keeps icon/name left, folder/branch/machine right, swapping the
 right side for muted actions on hover. **Cmd-1…Cmd-9** select tabs in visual order;

@@ -97,7 +97,7 @@ class _SwarmWelcomeState extends State<SwarmWelcome> {
       icon: Icon(canCreate ? Icons.add : Icons.computer_outlined, size: 20),
       label: Text(
         canCreate
-            ? 'Create harness'
+            ? 'Create a new harness'
             : finding
             ? 'Finding computers…'
             : needsLink
@@ -105,8 +105,8 @@ class _SwarmWelcomeState extends State<SwarmWelcome> {
             : 'Reconnect',
       ),
       style: FilledButton.styleFrom(
-        minimumSize: const Size(180, 56),
-        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 18),
+        minimumSize: const Size(220, 52),
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
         backgroundColor: grid.AppPalette.swarmAccent,
         foregroundColor: grid.AppPalette.swarmTabBar,
         textStyle: TextStyle(
@@ -139,7 +139,7 @@ class _SwarmWelcomeState extends State<SwarmWelcome> {
               child: Padding(
                 padding: EdgeInsets.fromLTRB(
                   padding,
-                  (constraints.maxHeight * .16).clamp(40.0, 132.0),
+                  (constraints.maxHeight * .12).clamp(32.0, 100.0),
                   padding,
                   40,
                 ),
@@ -151,7 +151,7 @@ class _SwarmWelcomeState extends State<SwarmWelcome> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         const Text(
-                          'New Harness',
+                          'Harness',
                           key: ValueKey('welcome-title'),
                           textAlign: TextAlign.center,
                           style: TextStyle(
@@ -163,51 +163,9 @@ class _SwarmWelcomeState extends State<SwarmWelcome> {
                           ),
                         ),
                         const SizedBox(height: 32),
-                        LayoutBuilder(
-                          builder: (context, size) {
-                            if (size.maxWidth < 700 * textScale) {
-                              return Column(
-                                children: [
-                                  widget.searchField,
-                                  const SizedBox(height: 16),
-                                  create,
-                                ],
-                              );
-                            }
-                            return Row(
-                              children: [
-                                Expanded(child: widget.searchField),
-                                const SizedBox(width: 14),
-                                create,
-                              ],
-                            );
-                          },
-                        ),
-                        if (!canCreate && !finding) ...[
-                          const SizedBox(height: 14),
-                          Text(
-                            needsLink
-                                ? 'Connect a computer to create your first harness.'
-                                : 'Your computers are offline. Reconnect to start something new.',
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(
-                              fontSize: 13,
-                              height: 1.5,
-                              color: Colors.white60,
-                            ),
-                          ),
-                        ],
+                        widget.searchField,
                         if (recent.isNotEmpty && widget.onRecent != null) ...[
-                          const SizedBox(height: 32),
-                          const Text(
-                            'Recent harnesses',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w500,
-                              color: Colors.white60,
-                            ),
-                          ),
-                          const SizedBox(height: 16),
+                          const SizedBox(height: 24),
                           Wrap(
                             alignment: WrapAlignment.center,
                             spacing: 12,
@@ -223,6 +181,42 @@ class _SwarmWelcomeState extends State<SwarmWelcome> {
                                   ),
                                 ),
                             ],
+                          ),
+                        ],
+                        const SizedBox(height: 32),
+                        const SizedBox(
+                          width: 220,
+                          child: Row(
+                            children: [
+                              Expanded(child: Divider(color: Colors.white12)),
+                              Padding(
+                                padding: EdgeInsets.symmetric(horizontal: 16),
+                                child: Text(
+                                  'or',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.white38,
+                                  ),
+                                ),
+                              ),
+                              Expanded(child: Divider(color: Colors.white12)),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                        create,
+                        if (!canCreate && !finding) ...[
+                          const SizedBox(height: 14),
+                          Text(
+                            needsLink
+                                ? 'Connect a computer to create your first harness.'
+                                : 'Your computers are offline. Reconnect to start something new.',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              height: 1.5,
+                              color: Colors.white60,
+                            ),
                           ),
                         ],
                       ],
@@ -273,6 +267,14 @@ class _RecentHarness extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               Text(
+                entry.machineLabel,
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 11, color: Colors.white54),
+              ),
+              const SizedBox(height: 4),
+              Text(
                 entry.title,
                 textAlign: TextAlign.center,
                 maxLines: 2,
@@ -282,14 +284,6 @@ class _RecentHarness extends StatelessWidget {
                   height: 1.3,
                   color: Colors.white,
                 ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                entry.machineLabel,
-                textAlign: TextAlign.center,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 11, color: Colors.white54),
               ),
             ],
           ),
