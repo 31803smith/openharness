@@ -8,13 +8,15 @@ import type { AutonomousDeviceService, AutonomousDeviceFrame } from './lib/auton
  *   - `down` { t:'down', connId, frame }  → web chat/control + data-plane RPC requests
  *
  * Mirrors the hosted runtime’s managerSocket: idempotent connect, exponential backoff (1s→30s),
- * WS ping/pong keep-alive + a 15s app-level `{t:'ping'}` that refreshes the backend presence
- * key, and a bounded FIFO queue for client-facing outbound frames.
+ * WS liveness (`lib/wsLiveness.ts`: ping every 20s, 60s deadline on silence) + a 15s app-level
+ * `{t:'ping'}` that refreshes the backend presence key, and a bounded FIFO queue for client-facing
+ * outbound frames.
  *
  * Auth: the SSO access token rides as the first WS subprotocol.
  */
 
 import { WebSocket } from 'ws'
+import { watchSocketLiveness, type LivenessWatch } from './lib/wsLiveness.js'
 import { stat, readFile } from 'fs/promises'
 import { isAbsolute, join } from 'path'
 import { hostname } from 'os'
@@ -90,7 +92,6 @@ const HERMES_DB = join(env.HERMES_HOME, 'state.db')
 export type RecentProvider = (sessionId: string, n: number) => Array<{ kind: string; text: string; recap?: string }>
 
 
-const HEARTBEAT_MS = 20_000
 const APP_PING_MS = 15_000
 // How long the opening handshake may take before the attempt is abandoned and retried. `ws` waits
 // forever by default, and the heartbeat below only starts on 'open' — so a TCP connection that came
@@ -291,7 +292,7 @@ export class BackendSocket {
   private draining = false
   private nextQueueId = 1
   private droppedSinceLog = 0
-  private heartbeat: NodeJS.Timeout | null = null
+  private heartbeat: LivenessWatch | null = null
   private appPing: NodeJS.Timeout | null = null
   private readonly downChains = new Map<string, Promise<void>>()
   private readonly localClients = new Map<string, LocalClientSink>()
@@ -299,7 +300,6 @@ export class BackendSocket {
   private readonly terminalP2p: TerminalP2pResponderPool
   private readonly p2pPendingOpens = new Map<string, Set<string>>()
   private readonly p2pStreams = new Map<string, Set<string>>()
-  private isAlive = true
   private onStatus: (connected: boolean) => void
   /** Cross-instance commander (device) client count, from backend `__clients` frames. */
   private commanderCount = 0
@@ -570,20 +570,13 @@ export class BackendSocket {
 
     ws.on('open', () => {
       this.attempts = 0
-      this.isAlive = true
       console.log(`[backend] connected → ${this.url}`)
       this.onStatus(true)
       this.drainQueue()
 
-      this.heartbeat = setInterval(() => {
-        if (!this.isAlive) {
-          try { ws.terminate() } catch { /* ignore */ }
-          return
-        }
-        this.isAlive = false
-        try { ws.ping() } catch { /* ignore */ }
-      }, HEARTBEAT_MS)
-      ws.on('pong', () => { this.isAlive = true })
+      this.heartbeat = watchSocketLiveness(ws, {
+        onIdle: (idleMs) => console.log(`[backend] no traffic for ${Math.round(idleMs / 1000)}s — terminating the link`),
+      })
 
       // App-level ping refreshes the backend's presence key (TTL 30s).
       this.appPing = setInterval(() => this.sendBestEffort({ t: 'ping' }), APP_PING_MS)
@@ -608,7 +601,7 @@ export class BackendSocket {
     const onGone = (why: string): void => {
       if (this.ws !== ws) return
       this.ws = null
-      if (this.heartbeat) { clearInterval(this.heartbeat); this.heartbeat = null }
+      if (this.heartbeat) { this.heartbeat.stop(); this.heartbeat = null }
       if (this.appPing) { clearInterval(this.appPing); this.appPing = null }
       this.draining = false
       // While the backend link is down we can neither observe device presence nor deliver a card, so
@@ -660,7 +653,7 @@ export class BackendSocket {
 
   async stop(): Promise<void> {
     this.closed = true
-    if (this.heartbeat) clearInterval(this.heartbeat)
+    if (this.heartbeat) this.heartbeat.stop()
     if (this.appPing) clearInterval(this.appPing)
     await this.terminalStreams?.stop()
     await this.terminalP2p.stop()

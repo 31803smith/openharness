@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'fs'
 import { fileURLToPath } from 'url'
 import { BackendSocket, compactRuntimePickerModels, deviceAgentListItem, grokHistoryPage } from './backendSocket.js'
+import { WS_IDLE_DEADLINE_MS as IDLE_DEADLINE_MS } from './lib/wsLiveness.js'
 import type { TerminalStreamManager } from './lib/terminalStreamManager.js'
 import { decodeTerminalLocal, TerminalBinaryKind } from './lib/terminalBinary.js'
 import { registry, type RegisteredSession } from './lib/registry.js'
@@ -17,6 +18,9 @@ const wsMock = vi.hoisted(() => {
     readyState = MockWebSocket.CONNECTING
     sent: string[] = []
     failNextSend: Error | null = null
+    /** Peer stopped answering pings (a half-open TCP link, a laptop coming back from sleep). */
+    silent = false
+    pings = 0
     private handlers = new Map<string, Array<(...args: unknown[]) => void>>()
 
     constructor(readonly url: string, readonly protocols: string[], readonly options?: { handshakeTimeout?: number }) {
@@ -28,6 +32,15 @@ const wsMock = vi.hoisted(() => {
       list.push(cb)
       this.handlers.set(event, list)
       return this
+    }
+
+    once(event: string, cb: (...args: unknown[]) => void): this {
+      const wrapped = (...args: unknown[]): void => {
+        const list = this.handlers.get(event) ?? []
+        this.handlers.set(event, list.filter((fn) => fn !== wrapped))
+        cb(...args)
+      }
+      return this.on(event, wrapped)
     }
 
     private emit(event: string, ...args: unknown[]): void {
@@ -70,7 +83,13 @@ const wsMock = vi.hoisted(() => {
     }
 
     ping(): void {
-      this.emit('pong')
+      this.pings++
+      if (!this.silent) this.emit('pong')
+    }
+
+    /** The backend's own liveness ping (every 25s from `trackSocketLiveness`). */
+    peerPing(): void {
+      this.emit('ping')
     }
   }
 
@@ -133,6 +152,53 @@ describe('BackendSocket outbound queue', () => {
     expect(ws2.options?.handshakeTimeout).toBe(15_000)
     ws2.open()
     expect(socket.isConnected()).toBe(true)
+
+    await socket.stop()
+  })
+
+  it('gives a silent peer the whole deadline, not one missed pong, before terminating', async () => {
+    // The old heartbeat killed the link the first time a ping went unanswered (20–40s), which is
+    // what every macOS DarkWake looked like from inside the daemon: the pre-sleep ping's pong never
+    // came, so the first tick after wake terminated a link that was about to work again.
+    vi.useFakeTimers()
+    const socket = new BackendSocket('token')
+    socket.connect()
+    const ws = wsMock.instances[0]
+    ws.open()
+    ws.silent = true
+
+    await vi.advanceTimersByTimeAsync(IDLE_DEADLINE_MS - 1_000)
+    expect(socket.isConnected()).toBe(true)
+    expect(ws.pings).toBeGreaterThanOrEqual(2) // it kept asking the whole time
+    expect(wsMock.instances).toHaveLength(1)
+
+    await vi.advanceTimersByTimeAsync(20_000)
+    expect(socket.isConnected()).toBe(false)
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(wsMock.instances).toHaveLength(2) // and re-entered the ordinary backoff
+
+    await socket.stop()
+  })
+
+  it('counts data and the backend\'s own pings as proof of life, not only pongs', async () => {
+    // A backend busy streaming data can answer a control-frame ping late; the data itself is the
+    // stronger proof, and the backend pings this socket every 25s on its own.
+    vi.useFakeTimers()
+    const socket = new BackendSocket('token')
+    socket.connect()
+    const ws = wsMock.instances[0]
+    ws.open()
+    ws.silent = true
+
+    await vi.advanceTimersByTimeAsync(40_000)
+    ws.message({ t: 'down', connId: 'c1', frame: { type: 'noop' } })
+    await vi.advanceTimersByTimeAsync(40_000) // 80s in, 40s since the last frame
+    expect(socket.isConnected()).toBe(true)
+    ws.peerPing()
+    await vi.advanceTimersByTimeAsync(40_000)
+    expect(socket.isConnected()).toBe(true)
+    await vi.advanceTimersByTimeAsync(IDLE_DEADLINE_MS)
+    expect(socket.isConnected()).toBe(false)
 
     await socket.stop()
   })
