@@ -1,12 +1,14 @@
 import type { IncomingMessage } from 'http'
 import type { Duplex } from 'stream'
-import { WebSocketServer, WebSocket, type RawData } from 'ws'
+import { WebSocket, type RawData } from 'ws'
+import { createWss, WS_LIMITS } from './wsServer.js'
 import { randomUUID } from 'crypto'
 import { attachHubClient, trackSocketLiveness, DEVICE_IDLE_DEADLINE_MS, type HubClient } from './hub.js'
 import {
   getAgentPresence,
-  getMachineAppState,
-  subscribeUp,
+  getAgentPresenceMany,
+  getMachineAppStateMany,
+  subscribeStatus,
   setDevicePresence,
   clearDevicePresence,
   publishDeviceStatus,
@@ -23,6 +25,7 @@ import * as registry from './registry.js'
 import { nodeRequest } from './nodeRpc.js'
 import type { Frame } from './tunnel.js'
 import { transcribe, MAX_PCM, normalizeLang } from './stt.js'
+import { reserveVoice, releaseVoice } from './voiceBudget.js'
 import { prisma } from './prisma.js'
 import { deviceService } from '../services/index.js'
 import { touchDeviceOnlineDay } from './dailyTracking.js'
@@ -30,6 +33,9 @@ import { utcDayKey } from '../types/analytics.js'
 import { agentLimit, recordCreatedAgent } from './agentTracker.js'
 import { env } from '../config/env.js'
 import { logger } from '../utils/logger.js'
+import { fireAndForget } from '../utils/async.js'
+import { guardedSend, guardedSendJson } from './wsSend.js'
+import { createOrderedInbox } from './orderedInbox.js'
 import { ensureMachineReady, getMachineLifecycleStatus, type MachineLifecycleStatus } from './machineLifecycle.js'
 import { normalizeComputerId } from './deviceAuth.js'
 import { authenticateAccessToken, SsoAuthError } from './ssoAuth.js'
@@ -65,13 +71,7 @@ import {
 // that single machine (the old firmware never sends machine_select), so a rolling deploy doesn't brick it.
 
 // Echo the offered subprotocol (the device token) so the ESP client accepts the handshake.
-const wss = new WebSocketServer({
-  noServer: true,
-  handleProtocols: (protocols) => {
-    const first = [...protocols][0]
-    return first ?? false
-  },
-})
+const wss = createWss(WS_LIMITS.device, { echoFirstProtocol: true })
 
 // Presence refresh must beat the key TTL (45s in bus.setDevicePresence) with margin.
 const DEVICE_PRESENCE_REFRESH_MS = 15_000
@@ -93,9 +93,7 @@ function clampSr(sr: unknown): number {
 }
 
 function safeSend(ws: WebSocket, obj: unknown): void {
-  if (ws.readyState === WebSocket.OPEN) {
-    try { ws.send(JSON.stringify(obj)) } catch { /* ignore */ }
-  }
+  guardedSendJson(ws, obj, 'must', { kind: 'device' })
 }
 
 type DeviceSend = (obj: unknown) => void
@@ -502,7 +500,7 @@ function relay(device: WebSocket, opts: RelayOpts): void {
       controlUnsub?.()
       controlUnsub = unsub
       void publishDeviceControl(id, { action: 'superseded', by: connToken }) // force any older half-open socket to park now
-    })
+    }).catch((err) => logger.warn('device control subscribe failed', { userId, deviceId: id, error: errMsg(err) }))
   }
   if (deviceId) startPresence(deviceId)
 
@@ -534,10 +532,23 @@ function relay(device: WebSocket, opts: RelayOpts): void {
   const ROUTE_AUTO_THRESHOLD = 0.75
   const ROUTE_PENDING_TTL_MS = 60_000
   const pendingRoutes = new Map<string, { text: string; goal: boolean; loop: boolean; ts: number }>()
+  // Pruned on a timer too, not only on the next route_confirm: a device that walks away after a routed
+  // utterance would otherwise keep its transcript here until it next confirms something.
+  const pendingRoutesPrune = setInterval(() => {
+    const now = Date.now()
+    for (const [k, v] of pendingRoutes) if (now - v.ts > ROUTE_PENDING_TTL_MS) pendingRoutes.delete(k)
+  }, ROUTE_PENDING_TTL_MS)
+  pendingRoutesPrune.unref()
   let voiceSr = 16000
   let voiceLang: string = 'en'   // STT language for this utterance (device Settings; see VOICE_LANGS)
   let chunks: Buffer[] = []
   let voiceSize = 0
+  // Bytes this connection currently holds against the process-wide voice budget (voiceBudget.ts). Kept
+  // separately from voiceSize because finishVoice keeps its concat'd copy alive through STT after the
+  // chunk array is cleared. Released at every point the PCM is let go.
+  let voiceBudgeted = 0
+  let voiceOverBudget = false
+  const releaseVoiceBudget = (): void => { releaseVoice(voiceBudgeted); voiceBudgeted = 0; voiceOverBudget = false }
   let voiceIdleTimer: NodeJS.Timeout | null = null
   let voiceMaxTimer: NodeJS.Timeout | null = null
   let deviceFirmwareVersion: string | null = null
@@ -556,9 +567,7 @@ function relay(device: WebSocket, opts: RelayOpts): void {
     const payload = JSON.stringify(obj)
     const ac = activeClient()
     if (ac && activeMachineId && registry.queueCommanderFrame(activeMachineId, ac.connId, obj, payload)) return
-    if (device.readyState === WebSocket.OPEN) {
-      try { device.send(payload) } catch { /* ignore */ }
-    }
+    guardedSend(device, payload, 'must', { userId, kind: 'device' })
   }
   const sendDeviceNow = (obj: unknown): void => safeSend(device, obj)
   const clearVoiceQueue = (): void => {
@@ -571,8 +580,7 @@ function relay(device: WebSocket, opts: RelayOpts): void {
     const queued = registry.flushCommanderVoiceQueue(activeMachineId, ac.connId)
     if (!queued.length) return
     for (const q of queued) {
-      if (device.readyState !== WebSocket.OPEN) break
-      try { device.send(q.payload) } catch { /* ignore */ }
+      if (!guardedSend(device, q.payload, 'must', { userId, kind: 'device' })) break
     }
     logger.info('commander voice queue flushed', { userId, machineId: activeMachineId, connId: ac.connId, frames: queued.length, reason })
   }
@@ -585,6 +593,7 @@ function relay(device: WebSocket, opts: RelayOpts): void {
     voiceActive = false
     chunks = []
     voiceSize = 0
+    releaseVoiceBudget()
     voiceMode = 'turn'
     voiceRequestId = null
     voiceAgentId = null
@@ -654,9 +663,10 @@ function relay(device: WebSocket, opts: RelayOpts): void {
     for (const id of [...machineMeta.keys()]) if (!wanted.has(id)) { machineMeta.delete(id); machineApp.delete(id) }
     for (const [id] of wanted) {
       if (statusSubs.has(id)) continue
-      // Bus subscriptions are refcounted — co-existing with the commander's up:{id} sub is fine.
-      const unsub = await subscribeUp(id, (msg) => {
-        const fr = msg.frame as { type?: string; payload?: { online?: boolean; status?: MachineLifecycleStatus; reason?: string; engine?: string; state?: string } }
+      // `status:{id}` carries only node_status / machine_app_status — not the machine's turn stream,
+      // which subscribing `up:` here used to pull in for every machine on the picker.
+      const unsub = await subscribeStatus(id, (frame) => {
+        const fr = frame as { type?: string; payload?: { online?: boolean; status?: MachineLifecycleStatus; reason?: string; engine?: string; state?: string } }
         // Desktop-app presence: one single-row status frame, the same partial path node_status uses.
         // Deliberately NOT publishDeviceMachineListChanged — that re-queries Mongo per device and
         // pushes machines_changed to every browser tab, so quitting Cursor would cost a DB round trip.
@@ -698,16 +708,18 @@ function relay(device: WebSocket, opts: RelayOpts): void {
       }
     }
     // Seed the full current picture (presence keys = source of truth) so the list is right immediately.
+    // Presence and app state come back in one MGET each, instead of 2 GETs per machine.
+    const ids = [...wanted.keys()]
+    const [presence, appStates] = await Promise.all([getAgentPresenceMany(ids), getMachineAppStateMany(ids)])
     const statuses = await Promise.all(
-      [...wanted.values()].map(async (f) => {
-        const online = !!(await getAgentPresence(f.machineId))
-        const status = online ? 'running' : await getMachineLifecycleStatus(f.machineId)
+      ids.map(async (machineId) => {
+        const online = !!presence.get(machineId)
+        const status = online ? 'running' : await getMachineLifecycleStatus(machineId)
         // Seed the app state from Redis too, so a device that connects while the Mac has been up for
-        // an hour sees "Cursor open" immediately instead of waiting for the next transition. Issued
-        // inside the existing Promise.all, so it adds no wall-clock latency.
-        const app = online ? await getMachineAppState(f.machineId) : null
-        if (app) machineApp.set(f.machineId, app); else machineApp.delete(f.machineId)
-        return machineRow(f.machineId, online, { status: status === 'unknown' ? 'offline' as const : status })
+        // an hour sees "Cursor open" immediately instead of waiting for the next transition.
+        const app = online ? appStates.get(machineId) ?? null : null
+        if (app) machineApp.set(machineId, app); else machineApp.delete(machineId)
+        return machineRow(machineId, online, { status: status === 'unknown' ? 'offline' as const : status })
       }),
     )
     if (gen === watchGen && !closed) sendMachines(statuses, true)
@@ -738,19 +750,31 @@ function relay(device: WebSocket, opts: RelayOpts): void {
     }
   }
 
+  // Several list pokes in a row (a bulk rename fans `machines_changed` to every device of the user)
+  // collapse into one re-derivation ≤250ms later. `machines_watch` from the device stays synchronous
+  // (it is awaited on the ordered inbox and the firmware expects the full list as its reply).
+  const WATCH_DEBOUNCE_MS = 250
+  let watchMachinesTimer: NodeJS.Timeout | null = null
+  const scheduleWatchMachines = (): void => {
+    if (watchMachinesTimer) clearTimeout(watchMachinesTimer)
+    watchMachinesTimer = setTimeout(() => {
+      watchMachinesTimer = null
+      if (closed) return
+      void watchMachines().catch((err) => logger.warn('device watchMachines failed', { userId, error: errMsg(err) }))
+    }, WATCH_DEBOUNCE_MS)
+  }
+
   // ── Machine selection (ported from webWs.bindAgent; + remote guard + deviceId re-tag) ───────────────
   let selectGen = 0
   const seedNodeStatus = (machineId: string): void => {
-    void getAgentPresence(machineId).then((mgr) => {
-      if (device.readyState === WebSocket.OPEN && activeMachineId === machineId) {
-        const online = !!mgr
-        void getMachineLifecycleStatus(machineId).then((status) => {
-          if (device.readyState === WebSocket.OPEN && activeMachineId === machineId) {
-            sendDevice({ type: 'node_status', payload: { online, status: online ? 'running' : status === 'unknown' ? 'offline' : status } })
-          }
-        })
-      }
-    })
+    fireAndForget((async () => {
+      const mgr = await getAgentPresence(machineId)
+      if (device.readyState !== WebSocket.OPEN || activeMachineId !== machineId) return
+      const online = !!mgr
+      const status = await getMachineLifecycleStatus(machineId)
+      if (device.readyState !== WebSocket.OPEN || activeMachineId !== machineId) return
+      sendDevice({ type: 'node_status', payload: { online, status: online ? 'running' : status === 'unknown' ? 'offline' : status } })
+    })(), 'device seed node_status', { userId, machineId })
   }
   const bindMachine = async (machineIdRaw: unknown): Promise<void> => {
     if (typeof machineIdRaw !== 'string' || !machineIdRaw) return
@@ -829,6 +853,8 @@ function relay(device: WebSocket, opts: RelayOpts): void {
     if (closed) return
     closed = true
     releaseLiveness()
+    clearInterval(pendingRoutesPrune)
+    pendingRoutes.clear()
     if (presenceTimer) { clearInterval(presenceTimer); presenceTimer = null }
     if (controlUnsub) { controlUnsub(); controlUnsub = null }
     if (machineListUnsub) { machineListUnsub(); machineListUnsub = null }
@@ -837,14 +863,15 @@ function relay(device: WebSocket, opts: RelayOpts): void {
       // Conditional clear: only publish offline if the key is really gone (a superseding reconnect
       // keeps its own key → we stay silent). lastSeenAt = the moment the device actually went away.
       const seenAt = new Date()
-      void clearDevicePresence(id, connToken).then((gone) => {
-        if (gone) void publishDeviceStatus(userId, { deviceId: id, online: false, lastSeenAt: seenAt.toISOString() })
-      })
+      fireAndForget(clearDevicePresence(id, connToken).then((gone) => {
+        if (gone) return publishDeviceStatus(userId, { deviceId: id, online: false, lastSeenAt: seenAt.toISOString() })
+      }), 'device offline publish', { userId, deviceId: id })
       void prisma.deviceBinding.update({ where: { deviceId: id }, data: { lastSeenAt: seenAt } }).catch(() => { /* best effort */ })
       touchDevicePresence(id, false)
     }
     for (const [, unsub] of statusSubs) unsub()
     statusSubs.clear()
+    if (watchMachinesTimer) { clearTimeout(watchMachinesTimer); watchMachinesTimer = null }
     // Resumable upload: if a streamed recording is still in flight (no voice_end seen) and the firmware sent
     // an uploadId, PARK it in Redis (grace ~60s) instead of discarding, so the device's reconnect can resume
     // it — possibly on a different backend instance. Otherwise discard as before.
@@ -856,6 +883,7 @@ function relay(device: WebSocket, opts: RelayOpts): void {
       }
       const pcm = Buffer.concat(chunks)
       clearVoiceTimers(); voiceActive = false
+      chunks = []; voiceSize = 0; releaseVoiceBudget()
       void parkVoiceUpload(deviceId, meta, pcm)
       logger.info('commander voice parked (WS drop mid-stream)', { userId, deviceId, uploadId: voiceUploadId, bytes: pcm.length })
     } else {
@@ -895,7 +923,7 @@ function relay(device: WebSocket, opts: RelayOpts): void {
     // normalizeLang gates on the SAME list Deepgram enforces; firmware older than the picker sends no
     // `lang` at all and lands on the default.
     voiceLang = normalizeLang(msg.lang)
-    chunks = []; voiceSize = 0
+    chunks = []; voiceSize = 0; releaseVoiceBudget()
     // A fresh utterance invalidates any parked partial from a previous (abandoned) recording on this device.
     if (deviceId) void evictVoiceUpload(deviceId)
     const ac = activeClient()
@@ -960,6 +988,15 @@ function relay(device: WebSocket, opts: RelayOpts): void {
       return
     }
     const m = parked.meta
+    // The rehydrated partial counts against the budget like live chunks would have.
+    if (!reserveVoice(parked.pcm.length)) {
+      sendDeviceNow({ type: 'voice_resume_reject', uploadId })
+      sendDeviceNow({ type: 'error', message: 'VOICE_BUFFER_FULL' })
+      logger.warn('commander voice_resume refused — voice budget exhausted', { userId, deviceId, uploadId, bytes: parked.pcm.length })
+      return
+    }
+    releaseVoiceBudget()
+    voiceBudgeted = parked.pcm.length
     voiceActive = true
     voiceMode = m.mode; voiceRoute = m.route; voiceGoal = m.goal; voiceLoop = m.loop === true; voiceAutonomy = m.autonomy
     voiceAgentId = m.agentId; voiceSessionId = m.sessionId; voiceRequestId = m.requestId
@@ -1149,16 +1186,41 @@ function relay(device: WebSocket, opts: RelayOpts): void {
   // Device → backend. Binary is voice PCM (buffered for STT); JSON is routed by type. Voice + hello are
   // synchronous; machine-select / RPC / chat go through a strict in-order chain (bindMachine awaits a DB
   // lookup, and a machine_select followed immediately by agents_list must not be routed by the PREVIOUS
-  // selection — the same leak webWs guards against).
-  let frameChain: Promise<void> = Promise.resolve()
+  // selection — the same leak webWs guards against). Bounded (see orderedInbox.ts): past the ceiling a
+  // frame is refused and answered right away instead of parking in the heap behind a machine wake.
+  let lastOverflowLogAt = 0
+  const inbox = createOrderedInbox<CommanderMsg>(
+    handleFrame,
+    (err, msg) => logger.warn('commander frame failed', { userId, type: msg.type, error: errMsg(err) }),
+    (msg, inflight) => {
+      const requestId = payloadOf(msg).requestId
+      if (typeof requestId === 'string' && typeof msg.type === 'string') {
+        sendDeviceNow({ type: `${msg.type}_result`, payload: { requestId, error: 'INBOUND_OVERFLOW' } })
+      } else {
+        sendDeviceNow({ type: 'error', message: 'INBOUND_OVERFLOW' })
+      }
+      const now = Date.now()
+      if (now - lastOverflowLogAt > 10_000) {
+        lastOverflowLogAt = now
+        logger.warn('commander inbound overflow — refusing frames', { userId, machineId: activeMachineId, inflight, type: msg.type })
+      }
+    },
+  )
   device.on('message', (raw: RawData, isBinary: boolean) => {
     if (isBinary) {
       if (voiceActive) {
         const buf = raw as Buffer
-        if (voiceSize + buf.length <= MAX_PCM) {
+        if (voiceSize + buf.length <= MAX_PCM && reserveVoice(buf.length)) {
+          voiceBudgeted += buf.length
           chunks.push(buf)
           voiceSize += buf.length
           armVoiceIdleTimer()
+        } else if (!voiceOverBudget && voiceSize + buf.length <= MAX_PCM) {
+          // Process-wide budget, not this upload's cap: tell the device once so it can stop recording
+          // instead of trickling chunks that are silently dropped; the utterance stays open for voice_end.
+          voiceOverBudget = true
+          sendDeviceNow({ type: 'error', message: 'VOICE_BUFFER_FULL' })
+          logger.warn('commander voice chunk dropped — voice budget exhausted', { userId, machineId: activeMachineId, bytes: voiceSize })
         }
       }
       return // audio is NOT forwarded upstream; non-voice binary is dropped
@@ -1169,9 +1231,7 @@ function relay(device: WebSocket, opts: RelayOpts): void {
     if (msg.type === 'voice_end') { void finishVoice(); return }
     if (msg.type === 'voice_resume') { void handleVoiceResume(msg); return }
     if (msg.type === 'device_hello') { handleHello(msg); return }
-    frameChain = frameChain
-      .then(() => handleFrame(msg))
-      .catch((err) => logger.warn('commander frame failed', { userId, type: msg.type, error: errMsg(err) }))
+    inbox.enqueue(msg)
   })
   device.on('close', closeBoth)
   device.on('error', closeBoth)
@@ -1180,11 +1240,11 @@ function relay(device: WebSocket, opts: RelayOpts): void {
   // the device then drives selection with machine_select (or its saved-machine auto-select on connect).
   void subscribeDeviceMachineListChanged(userId, (msg) => {
     logger.info('device machine list changed — refreshing picker', { userId, reason: msg.reason })
-    void watchMachines().catch((err) => logger.warn('device watchMachines failed', { userId, error: errMsg(err) }))
+    scheduleWatchMachines()
   }).then((unsub) => {
     if (closed) { unsub(); return }
     machineListUnsub = unsub
-  })
+  }).catch((err) => logger.warn('device machine-list subscribe failed', { userId, error: errMsg(err) }))
   void watchMachines().catch((err) => logger.warn('device watchMachines failed', { userId, error: errMsg(err) }))
 
   async function finishVoice(): Promise<void> {
@@ -1192,6 +1252,9 @@ function relay(device: WebSocket, opts: RelayOpts): void {
     clearVoiceTimers()
     voiceActive = false
     const pcm = Buffer.concat(chunks); chunks = []; voiceSize = 0
+    // `pcm` lives until this function returns (STT upload); hand the budget back only then.
+    const budgetHeld = voiceBudgeted
+    voiceBudgeted = 0; voiceOverBudget = false
     if (deviceId && voiceUploadId) void evictVoiceUpload(deviceId)   // finalizing → the parked copy is obsolete
     const uploadId = voiceUploadId ?? randomUUID()
     const quotaCheck = voiceQuotaCheck
@@ -1326,6 +1389,8 @@ function relay(device: WebSocket, opts: RelayOpts): void {
       } else {
         sendDeviceNow({ type: 'error', message: errMsg(err) })
       }
+    } finally {
+      releaseVoice(budgetHeld)
     }
   }
 

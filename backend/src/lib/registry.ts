@@ -88,6 +88,14 @@ export function clientsFor(machineId: string): ClientConn[] {
   return m ? [...m.values()] : []
 }
 
+/** Allocation-free walk for the per-frame fan-out (`clientsFor` copies the array on every frame).
+ *  Map iteration tolerates removal mid-walk, so a send that triggers a detach is safe here. */
+export function forEachClient(machineId: string, fn: (c: ClientConn) => void): void {
+  const m = clientsByAgent.get(machineId)
+  if (!m) return
+  for (const c of m.values()) fn(c)
+}
+
 /** Every local client (web + commander) across all agents — for the hub keep-alive sweep. */
 export function allClients(): ClientConn[] {
   const out: ClientConn[] = []

@@ -348,14 +348,17 @@ export async function dispatch(machineId: string, msg: DownBusMsg): Promise<void
  * can be cached for the process lifetime without a staleness problem — the only way it changes is a
  * new machine, which is a new key.
  */
-const modeCache = new Map<string, string>()
+// Same 5-minute lifetime as the profile cache: a machine's authMode changes rarely, but the map must not
+// grow one entry per machine ever seen and keep it for the life of the process.
+const modeCache = new Map<string, { mode: string; at: number }>()
+const MODE_TTL_MS = PROFILE_TTL_MS
 
 async function authModeOf(machineId: string): Promise<string> {
   const cached = modeCache.get(machineId)
-  if (cached) return cached
+  if (cached && Date.now() - cached.at < MODE_TTL_MS) return cached.mode
   const row = await prisma.machine.findUnique({ where: { machineId }, select: { authMode: true } })
   const mode = row?.authMode ?? 'self'
-  modeCache.set(machineId, mode)
+  modeCache.set(machineId, { mode, at: Date.now() })
   return mode
 }
 

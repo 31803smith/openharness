@@ -76,6 +76,26 @@ make release-backend ARGS=--dry-run       # preview, tags/pushes nothing
 
 (equivalent to `bash backend/scripts/release-be.sh`, see that script for details).
 
+### Memory sizing and Redis limits
+
+The `backend` app runs as a pm2 cluster: every worker has its own V8 heap. `ecosystem.config.cjs`
+pins the heap with `--max-old-space-size` (`BACKEND_HEAP_MB`, default 1024) and recycles a worker at
+`BACKEND_MAX_MEMORY` (default `1536M`), so size the container roughly as
+`instances × BACKEND_MAX_MEMORY × 1.25`. `Dockerfile.k8s` runs one plain `node` per container — pass
+`NODE_OPTIONS=--max-old-space-size=…` there and set the pod limit ~1.5× that.
+
+Per-process ceilings that bound WebSocket memory (all in `src/lib`): `wsServer.ts` `WS_LIMITS`
+(inbound frame size per endpoint), `wsSend.ts` `SEND_HIGH_WATER` / `SEND_KILL_WATER` (outbound
+backpressure: droppable frames skipped, slow consumers closed 1013), `orderedInbox.ts`
+`DEFAULT_MAX_INFLIGHT` (queued frames per socket), `VOICE_INFLIGHT_MAX_BYTES` (PCM held for STT across
+all device sockets) and `APP_PROXY_MAX_RELAY_FRAME_BYTES` (largest app-proxy frame relayed cross-instance).
+
+App-proxy bodies can cross instances through Redis pub/sub in multi-MiB messages. Redis' default
+`client-output-buffer-limit pubsub 32mb 8mb 60` disconnects a subscriber that falls behind, so on the
+Redis side set it to at least `64mb 16mb 60` and alert on `client_recent_max_output_buffer`. The
+app-proxy channels ride their own subscriber connection (`appSub` in `bus.ts`), so a disconnect there
+cannot take the chat / presence subscriptions down with it.
+
 ## Persistence
 
 Prisma over the **same MongoDB** as the agent-manager (no migration files — `prisma db push` at

@@ -15,7 +15,8 @@
 import type { IncomingMessage, ServerResponse } from 'http'
 import type { Duplex } from 'stream'
 import { randomUUID } from 'crypto'
-import { WebSocketServer, WebSocket } from 'ws'
+import { WebSocket } from 'ws'
+import { createWss } from './wsServer.js'
 import { subscribeAppUp, publishAppDown } from './bus.js'
 import * as registry from './registry.js'
 import { env } from '../config/env.js'
@@ -34,7 +35,8 @@ const RESPONSE_TIMEOUT_MS = 30_000
 
 type UpFrame = AppResEnvelope | AppBodyEnvelope | AppWsMsgEnvelope | AppWsCloseEnvelope | AppAbortEnvelope
 
-const wss = new WebSocketServer({ noServer: true })
+// Public app sockets: never accept more than the per-frame relay cap (and never less than 64 KiB).
+const wss = createWss(Math.max(64 * 1024, env.APP_PROXY_MAX_WS_FRAME_BYTES))
 
 // streamId → local up-handler, for streams whose manager socket is on THIS instance (LOCAL mode). The
 // manager-ws message loop calls deliverAppUpLocal before falling back to publishAppUp.

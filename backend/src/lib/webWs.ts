@@ -18,16 +18,20 @@
  */
 import type { IncomingMessage } from 'http'
 import type { Duplex } from 'stream'
-import { WebSocketServer, WebSocket, type RawData } from 'ws'
+import { WebSocket, type RawData } from 'ws'
+import { createWss, WS_LIMITS } from './wsServer.js'
 import { extractKey } from '../utils/crypto.js'
 import { machineIdFromKey } from '../utils/crypto.js'
 import { prisma, machineAlive } from './prisma.js'
-import { getAgentPresence, subscribeUp, getDevicePresence, subscribeDeviceStatus, subscribeDeviceMachineListChanged, subscribeDeviceE2eePair } from './bus.js'
+import { getAgentPresence, getAgentPresenceMany, subscribeStatus, getDevicePresence, subscribeDeviceStatus, subscribeDeviceMachineListChanged, subscribeDeviceE2eePair } from './bus.js'
 import { attachHubClient, trackSocketLiveness, type HubClient } from './hub.js'
 import { authenticateAccessToken, SsoAuthError, type AuthUser } from './ssoAuth.js'
-import type { Frame, UpBusMsg } from './tunnel.js'
+import type { Frame } from './tunnel.js'
 import { machineOnline } from './providerLink.js'
 import { logger } from '../utils/logger.js'
+import { fireAndForget } from '../utils/async.js'
+import { guardedSendJson } from './wsSend.js'
+import { createOrderedInbox } from './orderedInbox.js'
 import { ensureMachineReady, getMachineLifecycleStatus, type MachineLifecycleStatus } from './machineLifecycle.js'
 import type { Machine } from '@prisma/client'
 import { machineBillingAllowsDataPlane } from './billingState.js'
@@ -52,17 +56,13 @@ import {
 import { touchUserOnlineDay, recordRemoteUsage } from './dailyTracking.js'
 import { utcDayKey } from '../types/analytics.js'
 
-const wss = new WebSocketServer({
-  noServer: true,
-  handleProtocols: (protocols) => {
-    const first = [...protocols][0]
-    return first ?? false
-  },
-})
+const wss = createWss(WS_LIMITS.web, { echoFirstProtocol: true })
 
 // Device-status re-seed: covers the silent-offline case (worker crash → presence TTL 45s ages out
 // with no transition published) — the watcher re-reads presence keys on this cadence.
 const DEVICE_RESEED_MS = 30_000
+// Trailing debounce for list re-derivations poked by machines_watch (see scheduleWatchAgents).
+const WATCH_DEBOUNCE_MS = 250
 
 /** HTTP upgrade hook for `/api/web-ws`. Subprotocol = SSO access token or legacy agent apiKey. */
 export function handleWebUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
@@ -118,8 +118,9 @@ function attachUserClient(ws: WebSocket, user: AuthUser): void {
   const terminalRate = new TerminalRateGuard()
   const p2pSignalRate = new P2pSignalRateGuard()
 
+  const send = (obj: unknown): boolean => guardedSendJson(ws, obj, 'must', { userId: user.sub })
   logger.info('web user connected', { userId: user.sub })
-  try { ws.send(JSON.stringify({ type: 'connected', payload: { userId: user.sub } })) } catch { /* ignore */ }
+  send({ type: 'connected', payload: { userId: user.sub } })
 
   // Daily presence: mark today online now, and re-check on the existing 30s re-seed tick / on
   // disconnect so a connection spanning UTC midnight gets counted for the new day too. The guard
@@ -149,7 +150,7 @@ function attachUserClient(ws: WebSocket, user: AuthUser): void {
   const statusSubs = new Map<string, () => void>()
   const sendStatuses = (statuses: Array<{ machineId: string; online: boolean; status?: MachineLifecycleStatus; reason?: string }>): void => {
     if (ws.readyState !== WebSocket.OPEN || statuses.length === 0) return
-    try { ws.send(JSON.stringify({ type: 'machines_status', payload: { statuses } })) } catch { /* ignore */ }
+    send({ type: 'machines_status', payload: { statuses } })
   }
   const watchAgents = async (): Promise<void> => {
     const gen = ++watchGen
@@ -164,9 +165,11 @@ function attachUserClient(ws: WebSocket, user: AuthUser): void {
     }
     for (const id of wanted) {
       if (statusSubs.has(id)) continue
-      // Bus subscriptions are refcounted — co-existing with the hub's up:{machineId} sub is fine.
-      const unsub = await subscribeUp(id, (msg: UpBusMsg) => {
-        const f = msg.frame as { type?: string; payload?: { online?: boolean; status?: MachineLifecycleStatus; reason?: string } }
+      // `status:{machineId}` carries only node_status / machine_app_status transitions — not the
+      // machine's whole turn stream, which is what subscribing `up:` here used to pull in for every
+      // machine the user owns, whether or not anyone was looking at it.
+      const unsub = await subscribeStatus(id, (frame) => {
+        const f = frame as { type?: string; payload?: { online?: boolean; status?: MachineLifecycleStatus; reason?: string } }
         if (f?.type === 'node_status') {
           sendStatuses([{ machineId: id, online: f.payload?.online === true, ...(f.payload?.status ? { status: f.payload.status } : {}), ...(f.payload?.reason ? { reason: f.payload.reason } : {}) }])
         }
@@ -175,16 +178,31 @@ function attachUserClient(ws: WebSocket, user: AuthUser): void {
       statusSubs.set(id, unsub)
     }
     // Seed the full current picture (presence keys = source of truth) so the list is right immediately.
+    // One MGET for every presence key, not one GET per machine.
+    const ids = [...wanted]
+    const presence = await getAgentPresenceMany(ids)
     const statuses = await Promise.all(
-      [...wanted].map(async (id) => {
+      ids.map(async (id) => {
         // Same assertion as the per-agent seeds: a provider machine has no presence key and is always
         // online, so reading presence alone would list it as offline on the machine cards too.
-        const online = await machineOnline(id, !!(await getAgentPresence(id)))
+        const online = await machineOnline(id, !!presence.get(id))
         const lifecycle = online ? 'running' : await getMachineLifecycleStatus(id)
         return { machineId: id, online, status: lifecycle === 'unknown' ? 'offline' as const : lifecycle }
       }),
     )
     if (gen === watchGen && !closed) sendStatuses(statuses)
+  }
+  // A machine create/rename/delete pokes every open tab of the user at once (`machines_changed` +
+  // the client's `machines_watch` reply); several in a row (a bulk rename) must not re-derive the
+  // list each time. Trailing debounce: the last poke wins, ≤250ms later.
+  let watchAgentsTimer: NodeJS.Timeout | null = null
+  const scheduleWatchAgents = (): void => {
+    if (watchAgentsTimer) clearTimeout(watchAgentsTimer)
+    watchAgentsTimer = setTimeout(() => {
+      watchAgentsTimer = null
+      if (closed) return
+      void watchAgents().catch((err) => logger.warn('web-ws watchAgents failed', { userId: user.sub, error: String(err) }))
+    }, WATCH_DEBOUNCE_MS)
   }
   void watchAgents().catch((err) => logger.warn('web-ws watchAgents failed', { userId: user.sub, error: String(err) }))
 
@@ -195,7 +213,7 @@ function attachUserClient(ws: WebSocket, user: AuthUser): void {
   // publishes offline, the presence key just ages out (TTL 45s) — the poll notices within ~30s.
   const sendDeviceStatuses = (statuses: Array<{ deviceId: string; online: boolean; lastSeenAt?: string | null }>): void => {
     if (ws.readyState !== WebSocket.OPEN || statuses.length === 0) return
-    try { ws.send(JSON.stringify({ type: 'devices_status', payload: { statuses } })) } catch { /* ignore */ }
+    send({ type: 'devices_status', payload: { statuses } })
   }
   let deviceStatusUnsub: (() => void) | null = null
   let deviceSeedTimer: NodeJS.Timeout | null = null
@@ -237,7 +255,7 @@ function attachUserClient(ws: WebSocket, user: AuthUser): void {
         try { ws.close(4403, `env:${msg.autonomousEnv}`) } catch { /* ignore */ }
         return
       }
-      try { ws.send(JSON.stringify({ type: 'machines_changed', payload: { reason: msg.reason } })) } catch { /* ignore */ }
+      send({ type: 'machines_changed', payload: { reason: msg.reason } })
     })
     if (closed) { machineListUnsub(); machineListUnsub = null }
   })().catch((err) => logger.warn('web-ws machine-list watch failed', { userId: user.sub, error: String(err) }))
@@ -251,30 +269,26 @@ function attachUserClient(ws: WebSocket, user: AuthUser): void {
       if (ws.readyState !== WebSocket.OPEN) return
       const { kind, ...payload } = msg
       const type = kind === 'cleared' ? 'device_e2ee_pair_cleared' : 'device_e2ee_pair_pending'
-      try { ws.send(JSON.stringify({ type, payload })) } catch { /* ignore */ }
+      send({ type, payload })
     })
     if (closed) { deviceE2eePairUnsub(); deviceE2eePairUnsub = null }
   })().catch((err) => logger.warn('web-ws device-e2ee-pair watch failed', { userId: user.sub, error: String(err) }))
 
   // ── Agent selection ──────────────────────────────────────────────────────────────────────────
   const ack = (machineId: string): void => {
-    try {
-      ws.send(JSON.stringify({
-        type: 'connected',
-        payload: { machineId: machineId, p2p: terminalP2pPolicy(user.sub, machineId) },
-      }))
-    } catch { /* ignore */ }
-    // Authoritative node-liveness for the newly-scoped agent (same seed the legacy mode sends).
-    void getAgentPresence(machineId).then(async (mgr) => {
-      if (ws.readyState === WebSocket.OPEN && currentAgentId === machineId) {
-        const online = await machineOnline(machineId, !!mgr)
-        void getMachineLifecycleStatus(machineId).then((lifecycle) => {
-          if (ws.readyState === WebSocket.OPEN && currentAgentId === machineId) {
-            try { ws.send(JSON.stringify({ type: 'node_status', payload: { online, status: online ? 'running' : lifecycle === 'unknown' ? 'offline' : lifecycle } })) } catch { /* ignore */ }
-          }
-        })
-      }
+    send({
+      type: 'connected',
+      payload: { machineId: machineId, p2p: terminalP2pPolicy(user.sub, machineId) },
     })
+    // Authoritative node-liveness for the newly-scoped agent (same seed the legacy mode sends).
+    fireAndForget((async () => {
+      const mgr = await getAgentPresence(machineId)
+      if (ws.readyState !== WebSocket.OPEN || currentAgentId !== machineId) return
+      const online = await machineOnline(machineId, !!mgr)
+      const lifecycle = await getMachineLifecycleStatus(machineId)
+      if (ws.readyState !== WebSocket.OPEN || currentAgentId !== machineId) return
+      send({ type: 'node_status', payload: { online, status: online ? 'running' : lifecycle === 'unknown' ? 'offline' : lifecycle } })
+    })(), 'web-ws seed node_status', { userId: user.sub, machineId })
   }
   const bindAgent = async (machineIdRaw: unknown): Promise<void> => {
     if (typeof machineIdRaw !== 'string' || !machineIdRaw) return
@@ -284,20 +298,20 @@ function attachUserClient(ws: WebSocket, user: AuthUser): void {
     if (closed || gen !== selectGen) return // superseded by a newer select
     if (!binding || binding.deletedAt || binding.userId !== user.sub) {
       logger.warn('machine_select rejected', { userId: user.sub, machineId })
-      try { ws.send(JSON.stringify({ type: 'machine_select_error', payload: { machineId: machineId, error: 'NOT_YOUR_MACHINE' } })) } catch { /* ignore */ }
+      send({ type: 'machine_select_error', payload: { machineId: machineId, error: 'NOT_YOUR_MACHINE' } })
       return
     }
     if (storedAutonomousEnvironment(binding.autonomousEnv) !== user.autonomousEnv) {
       logger.warn('machine_select environment rejected', { userId: user.sub, machineId, autonomousEnv: user.autonomousEnv })
-      try { ws.send(JSON.stringify({ type: 'machine_select_error', payload: { machineId: machineId, error: 'MACHINE_ENV_MISMATCH' } })) } catch { /* ignore */ }
+      send({ type: 'machine_select_error', payload: { machineId: machineId, error: 'MACHINE_ENV_MISMATCH' } })
       return
     }
     if (binding.billingStatus === 'pending') {
-      try { ws.send(JSON.stringify({ type: 'machine_select_error', payload: { machineId: machineId, error: 'MACHINE_PAYMENT_PENDING' } })) } catch { /* ignore */ }
+      send({ type: 'machine_select_error', payload: { machineId: machineId, error: 'MACHINE_PAYMENT_PENDING' } })
       return
     }
     if (binding.billingStatus === 'suspended') {
-      try { ws.send(JSON.stringify({ type: 'machine_select_error', payload: { machineId: machineId, error: 'MACHINE_SUBSCRIPTION_REQUIRED' } })) } catch { /* ignore */ }
+      send({ type: 'machine_select_error', payload: { machineId: machineId, error: 'MACHINE_SUBSCRIPTION_REQUIRED' } })
       return
     }
     try {
@@ -305,7 +319,7 @@ function attachUserClient(ws: WebSocket, user: AuthUser): void {
     } catch (err) {
       if (!closed && gen === selectGen) {
         const code = err instanceof Error && 'code' in err ? String((err as { code?: unknown }).code) : 'MACHINE_START_FAILED'
-        try { ws.send(JSON.stringify({ type: 'machine_select_error', payload: { machineId: machineId, error: code } })) } catch { /* ignore */ }
+        send({ type: 'machine_select_error', payload: { machineId: machineId, error: code } })
       }
       return
     }
@@ -321,6 +335,19 @@ function attachUserClient(ws: WebSocket, user: AuthUser): void {
     ack(machineId)
   }
 
+  // Presence, remembered briefly. Every non-terminal frame used to cost one Redis GET on the hot path;
+  // the key itself has a 30s TTL, so a 2s memory of "it was there" is well inside its own staleness.
+  // Only a POSITIVE answer is cached — an absent key must keep triggering the wake path.
+  const PRESENCE_MEMORY_MS = 2_000
+  let presenceSeen: { machineId: string; at: number } | null = null
+  const presentRecently = async (machineId: string): Promise<boolean> => {
+    const now = Date.now()
+    if (presenceSeen && presenceSeen.machineId === machineId && now - presenceSeen.at < PRESENCE_MEMORY_MS) return true
+    const present = !!(await getAgentPresence(machineId))
+    presenceSeen = present ? { machineId, at: now } : null
+    return present
+  }
+
   const handleFrame = async (frame: Frame): Promise<void> => {
     const type = frame.type as string | undefined
     // Double-underscore frames are backend-to-Harness control messages. A web
@@ -329,13 +356,13 @@ function attachUserClient(ws: WebSocket, user: AuthUser): void {
     const isTerminal = typeof type === 'string' && TERMINAL_DOWN_TYPES.has(type)
     const terminalNamespace = typeof type === 'string' && type.startsWith('terminal_')
     if (terminalNamespace && !isTerminal) {
-      try { ws.send(JSON.stringify({ type: 'terminal_transport_error', payload: { code: 'TERMINAL_TYPE_REJECTED' } })) } catch { /* ignore */ }
+      send({ type: 'terminal_transport_error', payload: { code: 'TERMINAL_TYPE_REJECTED' } })
       return
     }
     if (isTerminal) {
       const bytes = terminalFrameBytes(frame)
       if (bytes > TERMINAL_ENVELOPE_MAX_BYTES || !isEncryptedTerminalFrame(frame) || !terminalRate.allow(type!, bytes)) {
-        try { ws.send(JSON.stringify({ type: 'terminal_transport_error', payload: { code: 'TERMINAL_FRAME_REJECTED' } })) } catch { /* ignore */ }
+        send({ type: 'terminal_transport_error', payload: { code: 'TERMINAL_FRAME_REJECTED' } })
         return
       }
     }
@@ -358,7 +385,7 @@ function attachUserClient(ws: WebSocket, user: AuthUser): void {
       return
     }
     if (p2pNamespace && !isP2pSignal) {
-      try { ws.send(JSON.stringify({ type: 'p2p_transport_error', payload: { code: 'P2P_TYPE_REJECTED' } })) } catch { /* ignore */ }
+      send({ type: 'p2p_transport_error', payload: { code: 'P2P_TYPE_REJECTED' } })
       return
     }
     if (isP2pSignal) {
@@ -368,7 +395,7 @@ function attachUserClient(ws: WebSocket, user: AuthUser): void {
         : false
       if (!policyEnabled || bytes > P2P_SIGNAL_MAX_BYTES
         || !isEncryptedP2pFrame(frame) || !p2pSignalRate.allow(bytes)) {
-        try { ws.send(JSON.stringify({ type: 'p2p_transport_error', payload: { code: 'P2P_SIGNAL_REJECTED' } })) } catch { /* ignore */ }
+        send({ type: 'p2p_transport_error', payload: { code: 'P2P_SIGNAL_REJECTED' } })
         return
       }
       // Remote-usage signal: a p2p_offer actually starts a new p2p session (vs. the ICE/abort
@@ -392,7 +419,7 @@ function attachUserClient(ws: WebSocket, user: AuthUser): void {
       return
     }
     if (type === 'machines_watch') {
-      void watchAgents().catch(() => { /* logged above */ })
+      scheduleWatchAgents()
       return
     }
     if (type === 'devices_watch') {
@@ -403,12 +430,12 @@ function attachUserClient(ws: WebSocket, user: AuthUser): void {
       // A selected machine can idle-stop while the tab remains open. Turn-producing messages always
       // refresh the wake lease; other frames wake only when presence says the node is down.
       try {
-        if ((isTerminal && terminalFrameNeedsWake(type!)) || (!isTerminal && (type === 'message' || !(await getAgentPresence(currentBinding.machineId))))) {
+        if ((isTerminal && terminalFrameNeedsWake(type!)) || (!isTerminal && (type === 'message' || !(await presentRecently(currentBinding.machineId))))) {
           await ensureMachineReady(currentBinding)
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Machine could not be started'
-        try { ws.send(JSON.stringify({ type: 'error', payload: { message } })) } catch { /* ignore */ }
+        send({ type: 'error', payload: { message } })
         return
       }
       client.sendDown(frame)
@@ -418,7 +445,7 @@ function attachUserClient(ws: WebSocket, user: AuthUser): void {
     // 20s timeout; drop fire-and-forget frames.
     const requestId = (frame.payload as { requestId?: unknown } | undefined)?.requestId
     if (typeof requestId === 'string' && typeof type === 'string') {
-      try { ws.send(JSON.stringify({ type: `${type}_result`, payload: { requestId, error: 'NO_MACHINE_SELECTED' } })) } catch { /* ignore */ }
+      send({ type: `${type}_result`, payload: { requestId, error: 'NO_MACHINE_SELECTED' } })
     }
   }
 
@@ -427,7 +454,26 @@ function attachUserClient(ws: WebSocket, user: AuthUser): void {
   // by the PREVIOUS selection's client — an agent-switch could leak the old agent's projects/replies
   // into the new view, or lose the RPC entirely. The chain makes every frame wait for the frames
   // (incl. selects) before it, restoring the single-socket ordering guarantee end-to-end.
-  let frameChain: Promise<void> = Promise.resolve()
+  // Bounded (see orderedInbox.ts): past the ceiling a frame is refused and answered right away.
+  let lastOverflowLogAt = 0
+  const inbox = createOrderedInbox<Frame>(
+    handleFrame,
+    (err, frame) => logger.warn('web-ws frame failed', { userId: user.sub, type: frame.type, error: String(err) }),
+    (frame, inflight) => {
+      const type = frame.type as string | undefined
+      const requestId = (frame.payload as { requestId?: unknown } | undefined)?.requestId
+      if (typeof requestId === 'string' && typeof type === 'string') {
+        send({ type: `${type}_result`, payload: { requestId, error: 'INBOUND_OVERFLOW' } })
+      } else {
+        send({ type: 'error', payload: { code: 'INBOUND_OVERFLOW', message: 'too many frames in flight' } })
+      }
+      const now = Date.now()
+      if (now - lastOverflowLogAt > 10_000) {
+        lastOverflowLogAt = now
+        logger.warn('web-ws inbound overflow — refusing frames', { userId: user.sub, machineId: currentAgentId ?? undefined, inflight, type })
+      }
+    },
+  )
   ws.on('message', (raw: RawData, isBinary: boolean) => {
     if (isBinary) {
       const parsed = parseTerminalClientFrame(new Uint8Array(raw as Buffer))
@@ -439,7 +485,7 @@ function attachUserClient(ws: WebSocket, user: AuthUser): void {
       const rateKey = parsed?.kind === TerminalBinaryKind.input ? 'terminal_input' : 'terminal_paste'
       if (!client || !currentBinding || !parsed || !TERMINAL_BINARY_CLIENT_UP_KINDS.has(parsed.kind)
         || !terminalRate.allow(rateKey, parsed.bytes.length)) {
-        try { ws.send(JSON.stringify({ type: 'terminal_transport_error', payload: { code: 'TERMINAL_BINARY_REJECTED' } })) } catch { /* ignore */ }
+        send({ type: 'terminal_transport_error', payload: { code: 'TERMINAL_BINARY_REJECTED' } })
         return
       }
       client.sendTerminalDown(parsed.bytes)
@@ -447,9 +493,7 @@ function attachUserClient(ws: WebSocket, user: AuthUser): void {
     }
     let frame: Frame
     try { frame = JSON.parse(raw.toString()) as Frame } catch { return }
-    frameChain = frameChain
-      .then(() => handleFrame(frame))
-      .catch((err) => logger.warn('web-ws frame failed', { userId: user.sub, type: frame.type, error: String(err) }))
+    inbox.enqueue(frame)
   })
 
   const cleanup = (): void => {
@@ -461,6 +505,7 @@ function attachUserClient(ws: WebSocket, user: AuthUser): void {
     currentBinding = null
     for (const [, unsub] of statusSubs) unsub()
     statusSubs.clear()
+    if (watchAgentsTimer) { clearTimeout(watchAgentsTimer); watchAgentsTimer = null }
     if (deviceSeedTimer) { clearInterval(deviceSeedTimer); deviceSeedTimer = null }
     if (deviceStatusUnsub) { deviceStatusUnsub(); deviceStatusUnsub = null }
     if (machineListUnsub) { machineListUnsub(); machineListUnsub = null }
@@ -476,19 +521,21 @@ function attachUserClient(ws: WebSocket, user: AuthUser): void {
 function attachWebClient(ws: WebSocket, machineId: string): void {
   const client = attachHubClient(ws, machineId, 'web')
   const terminalRate = new TerminalRateGuard()
+  const send = (obj: unknown): boolean => guardedSendJson(ws, obj, 'must', { machineId, connId: client.connId })
   logger.info('web client connected (legacy)', { machineId, connId: client.connId })
 
-  ws.send(JSON.stringify({ type: 'connected', payload: { machineId: machineId } }))
+  send({ type: 'connected', payload: { machineId: machineId } })
 
   // Authoritative node-liveness signal on connect (presence key = source of truth, set on register +
   // refreshed by the manager ping). Explicit BOTH ways so a client that connects while the node is
   // already up gets `online:true` immediately, not just inferred from the absence of an offline event.
-  void getAgentPresence(machineId).then(async (mgr) => {
+  fireAndForget((async () => {
+    const mgr = await getAgentPresence(machineId)
     const online = await machineOnline(machineId, !!mgr)
     if (ws.readyState === WebSocket.OPEN) {
-      try { ws.send(JSON.stringify({ type: 'node_status', payload: { online } })) } catch { /* ignore */ }
+      send({ type: 'node_status', payload: { online } })
     }
-  })
+  })(), 'web-ws seed node_status (legacy)', { machineId })
 
   ws.on('message', (raw: RawData, isBinary: boolean) => {
     if (isBinary) {
@@ -512,7 +559,10 @@ function attachWebClient(ws: WebSocket, machineId: string): void {
     client.sendDown(frame)
   })
 
+  let closed = false
   const cleanup = (): void => {
+    if (closed) return // 'error' is followed by 'close': detach (and its __client_disconnected) only once
+    closed = true
     client.detach()
     logger.info('web client disconnected (legacy)', { machineId, connId: client.connId })
   }

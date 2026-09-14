@@ -13,9 +13,9 @@ vi.mock('./bus.js', () => ({
   publishDown: bus.publishDown,
   publishTerminalDown: async () => 1,
   setAgentClientCount: async () => undefined,
-  getAgentClientTotals: async () => ({ ui: 0, commander: 0, commanderActive: 0 }),
+  setAgentClientCountsBatch: async () => undefined,
+  getAgentClientState: async () => ({ totals: { ui: 0, commander: 0, commanderActive: 0 }, commanderJoinGeneration: 1 }),
   bumpCommanderJoinGeneration: async () => 1,
-  getCommanderJoinGeneration: async () => 1,
 }))
 
 const { attachHubClient, deliverTerminalUpLocal, deliverUpLocal } = await import('./hub.js')

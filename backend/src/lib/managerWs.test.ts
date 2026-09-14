@@ -6,6 +6,7 @@ const state = vi.hoisted(() => ({
   setAgentPresence: vi.fn(async () => undefined),
   clearAgentPresence: vi.fn(async () => undefined),
   publishUp: vi.fn(async () => 1),
+  publishAppUp: vi.fn(async () => 1),
   recomputeAndSendClients: vi.fn(async () => undefined),
   agentsByManager: new Map<string, Set<string>>(),
   controlSockets: new Map<string, unknown>(),
@@ -20,11 +21,11 @@ vi.mock('./bus.js', () => ({
   subscribeMgr: vi.fn(async () => vi.fn()),
   publishReply: vi.fn(async () => 1),
   subscribeAppDown: vi.fn(async () => vi.fn()),
-  publishAppUp: vi.fn(async () => 1),
+  publishAppUp: state.publishAppUp,
   setAppInstance: vi.fn(async () => undefined),
   clearAppInstance: vi.fn(async () => undefined),
 }))
-vi.mock('../config/env.js', () => ({ env: { MESH_ENABLED: false } }))
+vi.mock('../config/env.js', () => ({ env: { MESH_ENABLED: false, APP_PROXY_MAX_RELAY_FRAME_BYTES: 1024 } }))
 vi.mock('./instance.js', () => ({ INSTANCE_ID: 'backend-test' }))
 vi.mock('./registry.js', () => ({
   PROCESS_ID: 'backend-test',
@@ -107,6 +108,22 @@ describe('manager node readiness', () => {
       connId: 'device-1',
       frame: { type: 'message', payload: { content: 'voice transcript' } },
     })
+
+    ws.emit('close')
+  })
+
+  it('aborts instead of relaying an app frame too large for cross-instance pub/sub', () => {
+    const ws = new FakeManagerSocket()
+    attachManager(ws as never, 'manager-2', 'app')
+
+    const small = { t: 'app_res_body', streamId: 'stream-small', chunk: 'AAAA' }
+    ws.emit('message', Buffer.from(JSON.stringify(small)))
+    expect(state.publishAppUp).toHaveBeenCalledWith('stream-small', small)
+
+    const big = { t: 'app_res_body', streamId: 'stream-big', chunk: 'A'.repeat(4096) }
+    ws.emit('message', Buffer.from(JSON.stringify(big)))
+    expect(state.publishAppUp).not.toHaveBeenCalledWith('stream-big', big)
+    expect(state.publishAppUp).toHaveBeenCalledWith('stream-big', { t: 'app_abort', streamId: 'stream-big', reason: 'frame_too_large' })
 
     ws.emit('close')
   })

@@ -195,6 +195,17 @@ const envSchema = z.object({
   APP_PROXY_MAX_WS_FRAME_BYTES: z.string().default('8388608').transform(Number), // 8 MiB
   APP_PROXY_MAX_STREAMS_PER_SUBDOMAIN: z.string().default('128').transform(Number),
   APP_PROXY_IDLE_TIMEOUT_MS: z.string().default('300000').transform(Number), // 5 min
+  // Largest single app-proxy frame relayed CROSS-INSTANCE through Redis pub/sub (co-located streams
+  // never touch Redis). Above it the stream is aborted rather than published: Redis disconnects a
+  // pub/sub subscriber that exceeds client-output-buffer-limit, so an oversized message is a threat to
+  // every stream on that connection, not just its own. Default sits just above the largest legitimate
+  // frame (APP_PROXY_MAX_WS_FRAME_BYTES base64'd into JSON).
+  APP_PROXY_MAX_RELAY_FRAME_BYTES: z.string().default('16777216').transform(Number), // 16 MiB
+
+  // Voice PCM held in this process across ALL device sockets (each utterance can reach stt.MAX_PCM =
+  // 20 MiB). A budget rather than a per-socket cap so N devices rambling at once degrade to a
+  // VOICE_BUFFER_FULL error instead of an OOM. Size against the worker heap (ecosystem.config.cjs).
+  VOICE_INFLIGHT_MAX_BYTES: z.string().default('536870912').transform(Number), // 512 MiB
 
 })
 

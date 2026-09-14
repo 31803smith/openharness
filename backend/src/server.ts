@@ -18,6 +18,24 @@ import { handleManagerUpgrade } from './lib/managerWs.js'
 import { handleAdapterUpgrade } from './lib/adapterWs.js'
 import { logger } from './utils/logger.js'
 import { startTurnCredentialRefresh } from './lib/turnCredentials.js'
+import { closeBus } from './lib/bus.js'
+import { drainAllSockets, openSocketCount, RELEASE_UPGRADE_SLOT, type SlotSocket } from './lib/wsServer.js'
+
+// Node ≥ 15 turns an unhandled rejection into a process exit. On a cluster worker that holds thousands of
+// sockets, one DB/Redis hiccup inside a fire-and-forget promise would then drop every one of them and
+// leave their presence keys as ghosts until TTL. Log it instead; `fireAndForget` (utils/async.ts) is the
+// per-call-site fix, this is the net under it.
+process.on('unhandledRejection', (reason) => {
+  logger.error('unhandledRejection', reason instanceof Error ? reason : new Error(String(reason)))
+})
+
+// Handshakes in flight: each one holds a raw socket AND an outbound SSO profile call (5s timeout) before
+// we know whether it is legitimate. Without a ceiling, a flood of junk tokens is a cheap way to pin file
+// descriptors and outbound HTTP on this worker. Over the cap → 503 + Retry-After; a healthy client's
+// reconnect backoff handles that fine.
+const MAX_PENDING_UPGRADES = 500
+const UPGRADE_HANDSHAKE_TIMEOUT_MS = 10_000
+let pendingUpgrades = 0
 
 // One http.Server fronts everything. Inverted transport: there is NO data-plane HTTP reverse-proxy
 // anymore (web + device data ride the hub WS). HTTP is entirely the Fastify control API
@@ -37,6 +55,26 @@ const app = Fastify({
       // data. Nothing in this codebase called setNoDelay() before, so every socket here defaulted to
       // Nagle-enabled.
       if (socket instanceof net.Socket) socket.setNoDelay(true)
+      if (pendingUpgrades >= MAX_PENDING_UPGRADES) {
+        try { socket.write('HTTP/1.1 503 Service Unavailable\r\nRetry-After: 2\r\nConnection: close\r\nContent-Length: 0\r\n\r\n') } catch { /* ignore */ }
+        socket.destroy()
+        return
+      }
+      pendingUpgrades++
+      // The slot covers only the PRE-auth handshake (the expensive, unauthenticated phase: an open socket
+      // plus one outbound SSO call). It is released the instant that phase settles — on a successful
+      // upgrade (createWss fires RELEASE_UPGRADE_SLOT from the wss 'connection' event) or on the socket
+      // dying (auth-fail destroy / ws.close) — NOT held for the connection's life or a fixed window, so a
+      // burst of completed reconnects never starves new handshakes. The timer is only a backstop for a
+      // handshake that neither completes nor closes (a hung peer mid-negotiation).
+      let released = false
+      const release = (): void => { if (!released) { released = true; pendingUpgrades-- } }
+      ;(socket as SlotSocket)[RELEASE_UPGRADE_SLOT] = release
+      socket.once('close', release)
+      setTimeout(release, UPGRADE_HANDSHAKE_TIMEOUT_MS).unref()
+      // A handshake that never completes (auth call hung, peer went silent) must not hold the socket.
+      // `ws` resets the timeout to 0 once it completes the upgrade, so this only ever fires pre-upgrade.
+      if (socket instanceof net.Socket) socket.setTimeout(UPGRADE_HANDSHAKE_TIMEOUT_MS, () => socket.destroy())
       const path = (req.url ?? '').split('?')[0]
       // Inverted-transport hub endpoints (terminated here, not proxied):
       //   /api/web-ws     — web clients (replaces the old proxied /proxy/api/ws)
@@ -117,13 +155,29 @@ async function start(): Promise<void> {
   // Internal mesh listener (Phase 2, MESH_ENABLED) — peers forward here when this instance owns the socket.
   const meshServer = startMeshProxy()
 
-  const shutdown = async (signal: string) => {
-    logger.info(`Received ${signal}, shutting down...`)
+  let shuttingDown = false
+  const shutdown = async (signal: string, exitCode = 0) => {
+    if (shuttingDown) return
+    shuttingDown = true
+    logger.info(`Received ${signal}, shutting down...`, { openSockets: openSocketCount() })
     try {
       appProxyServer.close()
       meshServer?.close()
-      await app.close()
-      process.exit(0)
+      // Start Fastify's close (it tells the http server to stop accepting new connections) but DON'T await
+      // it yet: http.Server#close only resolves once every connection has ended, and an upgraded WebSocket
+      // is a connection that never ends on its own — so awaiting here would hang until clients happened to
+      // disconnect, and the drain below would never run.
+      const fastifyClosed = app.close().catch((err) => logger.error('fastify close error', err))
+      // Now end the WebSockets (invisible to http.Server#close), which is what lets fastifyClosed settle.
+      await drainAllSockets()
+      // Sockets terminated at the end of the drain fire their 'close' handler on the next tick, and those
+      // handlers clear presence/owner keys as fire-and-forget Redis writes. Let them land before closeBus
+      // quits the connection, else a half-open socket's key survives on TTL alone.
+      await new Promise((resolve) => setTimeout(resolve, 250))
+      // Bounded wait for Fastify to finish (onClose hooks, Prisma disconnect); never block shutdown on it.
+      await Promise.race([fastifyClosed, new Promise((resolve) => setTimeout(resolve, 5_000))])
+      await closeBus()
+      process.exit(exitCode)
     } catch (err) {
       logger.error('Error during shutdown', err)
       process.exit(1)
@@ -131,6 +185,12 @@ async function start(): Promise<void> {
   }
   process.on('SIGINT', () => void shutdown('SIGINT'))
   process.on('SIGTERM', () => void shutdown('SIGTERM'))
+  // Truly unrecoverable: drain politely so clients reconnect elsewhere, then let PM2/k8s restart us.
+  process.on('uncaughtException', (err) => {
+    logger.error('uncaughtException — draining', err)
+    void shutdown('uncaughtException', 1)
+    setTimeout(() => process.exit(1), 8_000).unref()
+  })
 
   await app.listen({ port: env.PORT, host: '0.0.0.0' })
   logger.info(`backend listening on ${env.PORT}`)

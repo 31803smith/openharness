@@ -18,53 +18,95 @@
 import { Redis } from 'ioredis'
 import { env } from '../config/env.js'
 import { logger } from '../utils/logger.js'
-import type { UpBusMsg, DownBusMsg } from './tunnel.js'
+import type { Frame, UpBusMsg, DownBusMsg } from './tunnel.js'
 
-const redisOpts = { maxRetriesPerRequest: null as null, lazyConnect: false }
+// A connection in subscriber mode must never fail its (re)SUBSCRIBE commands, so the sub side keeps
+// ioredis' "retry forever" setting.
+const subOpts = { maxRetriesPerRequest: null as null, lazyConnect: false }
+// The pub/KV side is the opposite: a command that cannot reach Redis must FAIL FAST, not wait. With the
+// default offline queue, every `publish` issued during a Redis outage (every up-frame from every manager
+// socket, every terminal packet) was stringified and parked in this process' heap until reconnect, and
+// every `await pub.set(...)` in an attach path hung — pinning its closure — for the whole outage.
+const pubOpts = {
+  maxRetriesPerRequest: 1,
+  enableOfflineQueue: false,
+  commandTimeout: 5_000,
+  lazyConnect: false,
+}
 
-export const pub = new Redis(env.REDIS_URL, redisOpts)
-const sub = new Redis(env.REDIS_URL, redisOpts)
-const terminalSub = new Redis(env.REDIS_URL, redisOpts)
+export const pub = new Redis(env.REDIS_URL, pubOpts)
+const sub = new Redis(env.REDIS_URL, subOpts)
+const terminalSub = new Redis(env.REDIS_URL, subOpts)
+// App-proxy replies (`appup:{streamId}`) can be multi-MiB base64 bodies. Redis cuts a subscriber that
+// exceeds `client-output-buffer-limit pubsub`; on the shared connection that took every chat / presence
+// subscription of this instance down with it (ioredis re-subscribes, but everything in between is lost).
+// Isolated here, a heavy app stream can only hurt app streams.
+const appSub = new Redis(env.REDIS_URL, subOpts)
+
+/** Every fan-out publish is best-effort: Redis unreachable → dropped with a warning, 0 subscribers.
+ *  Callers already read 0 as "nobody holds this machine right now", which is exactly the truth. */
+async function safePublish(channel: string, payload: string | Buffer): Promise<number> {
+  try {
+    return await pub.publish(channel, payload)
+  } catch (err) {
+    logger.warn('[bus] publish dropped', { channel, error: err instanceof Error ? err.message : String(err) })
+    return 0
+  }
+}
 
 pub.on('error', (err: Error) => logger.error('[bus] pub redis error', err))
 sub.on('error', (err: Error) => logger.error('[bus] sub redis error', err))
 terminalSub.on('error', (err: Error) => logger.error('[bus] terminal sub redis error', err))
+appSub.on('error', (err: Error) => logger.error('[bus] app sub redis error', err))
 
 export async function closeBus(): Promise<void> {
-  await Promise.allSettled([pub.quit(), sub.quit(), terminalSub.quit()])
+  await Promise.allSettled([pub.quit(), sub.quit(), terminalSub.quit(), appSub.quit()])
 }
 
 type Cb = (msg: unknown) => void
-const channelSubs = new Map<string, Set<Cb>>()
-const channelSubscribePromises = new Map<string, Promise<void>>()
 
-sub.on('message', (channel: string, payload: string) => {
-  const set = channelSubs.get(channel)
-  if (!set || set.size === 0) return
-  let msg: unknown
-  try {
-    msg = JSON.parse(payload)
-  } catch (err) {
-    logger.error('[bus] bad JSON on channel', err, { channel })
-    return
-  }
-  for (const cb of set) {
+/** One refcounted JSON subscriber registry per subscribe-mode connection. */
+interface JsonSubscriber {
+  conn: Redis
+  channelSubs: Map<string, Set<Cb>>
+  channelSubscribePromises: Map<string, Promise<void>>
+}
+
+function createJsonSubscriber(conn: Redis, label: string): JsonSubscriber {
+  const registry: JsonSubscriber = { conn, channelSubs: new Map(), channelSubscribePromises: new Map() }
+  conn.on('message', (channel: string, payload: string) => {
+    const set = registry.channelSubs.get(channel)
+    if (!set || set.size === 0) return
+    let msg: unknown
     try {
-      cb(msg)
+      msg = JSON.parse(payload)
     } catch (err) {
-      logger.error('[bus] subscriber callback threw', err, { channel })
+      logger.error(`[bus] bad JSON on channel (${label})`, err, { channel })
+      return
     }
-  }
-})
+    for (const cb of set) {
+      try {
+        cb(msg)
+      } catch (err) {
+        logger.error(`[bus] subscriber callback threw (${label})`, err, { channel })
+      }
+    }
+  })
+  return registry
+}
+
+const mainSubscriber = createJsonSubscriber(sub, 'main')
+const appSubscriber = createJsonSubscriber(appSub, 'app')
 
 /** Refcounted subscribe: SUBSCRIBEs on the first callback for a channel, UNSUBSCRIBEs on the last. */
-async function addSub(channel: string, cb: Cb): Promise<() => void> {
+async function addSubOn(reg: JsonSubscriber, channel: string, cb: Cb): Promise<() => void> {
+  const { conn, channelSubs, channelSubscribePromises } = reg
   let set = channelSubs.get(channel)
   let subscribePromise = channelSubscribePromises.get(channel)
   if (!set) {
     set = new Set()
     channelSubs.set(channel, set)
-    subscribePromise = sub.subscribe(channel)
+    subscribePromise = conn.subscribe(channel)
       .then(() => undefined)
       .catch((err) => {
         logger.error('[bus] subscribe failed', err, { channel })
@@ -95,12 +137,19 @@ async function addSub(channel: string, cb: Cb): Promise<() => void> {
     s.delete(cb)
     if (s.size === 0) {
       channelSubs.delete(channel)
-      sub.unsubscribe(channel).catch(() => { /* ignore */ })
+      conn.unsubscribe(channel).catch(() => { /* ignore */ })
     }
   }
 }
 
+const addSub = (channel: string, cb: Cb): Promise<() => void> => addSubOn(mainSubscriber, channel, cb)
+
 const upChannel = (machineId: string): string => `up:${machineId}`
+// Transition-only mirror of `up:`. The machine-list watchers (webWs.watchAgents / deviceWs.watchMachines)
+// used to subscribe `up:{machineId}` for EVERY machine the user owns just to pick out node_status —
+// which meant parsing and dispatching the full turn/delta stream of machines nobody was looking at.
+const statusChannel = (machineId: string): string => `status:${machineId}`
+const STATUS_TYPES = new Set(['node_status', 'machine_app_status'])
 const downChannel = (machineId: string): string => `down:${machineId}`
 const mgrChannel = (managerId: string): string => `mgr:${managerId}`
 const appDownChannel = (machineId: string): string => `appdown:${machineId}`
@@ -145,10 +194,10 @@ export function subscribeTerminalDown(machineId: string, callback: BinaryCb): Pr
   return addBinarySub(terminalDownChannel(machineId), callback)
 }
 export function publishTerminalUp(machineId: string, payload: Uint8Array): Promise<number> {
-  return pub.publish(terminalUpChannel(machineId), Buffer.from(payload))
+  return safePublish(terminalUpChannel(machineId), Buffer.from(payload))
 }
 export function publishTerminalDown(machineId: string, payload: Uint8Array): Promise<number> {
-  return pub.publish(terminalDownChannel(machineId), Buffer.from(payload))
+  return safePublish(terminalDownChannel(machineId), Buffer.from(payload))
 }
 
 // ── up / down data channels ──────────────────────────────────────────────────────────────────────
@@ -162,11 +211,18 @@ export function subscribeDown(machineId: string, cb: (msg: DownBusMsg) => void):
 }
 
 export function publishUp(machineId: string, msg: UpBusMsg): Promise<number> {
-  return pub.publish(upChannel(machineId), JSON.stringify(msg))
+  const type = (msg.frame as { type?: unknown } | undefined)?.type
+  if (typeof type === 'string' && STATUS_TYPES.has(type)) void safePublish(statusChannel(machineId), JSON.stringify(msg.frame))
+  return safePublish(upChannel(machineId), JSON.stringify(msg))
+}
+
+/** node_status / machine_app_status frames only (the bare frame, not the UpBusMsg envelope). */
+export function subscribeStatus(machineId: string, cb: (frame: Frame) => void): Promise<() => void> {
+  return addSub(statusChannel(machineId), cb as Cb)
 }
 
 export function publishDown(machineId: string, msg: DownBusMsg): Promise<number> {
-  return pub.publish(downChannel(machineId), JSON.stringify(msg))
+  return safePublish(downChannel(machineId), JSON.stringify(msg))
 }
 
 // ── app-proxy tunnel channels ────────────────────────────────────────────────────────────────────
@@ -180,15 +236,15 @@ export function subscribeAppDown(machineId: string, cb: (msg: unknown) => void):
   return addSub(appDownChannel(machineId), cb)
 }
 export function publishAppDown(machineId: string, msg: unknown): Promise<number> {
-  return pub.publish(appDownChannel(machineId), JSON.stringify(msg))
+  return safePublish(appDownChannel(machineId), JSON.stringify(msg))
 }
 
 /** app→client frames (app_res, app_res_body, app_ws_msg/close, app_abort) → the origin instance. */
 export function subscribeAppUp(streamId: string, cb: (msg: unknown) => void): Promise<() => void> {
-  return addSub(appUpChannel(streamId), cb)
+  return addSubOn(appSubscriber, appUpChannel(streamId), cb)
 }
 export function publishAppUp(streamId: string, msg: unknown): Promise<number> {
-  return pub.publish(appUpChannel(streamId), JSON.stringify(msg))
+  return safePublish(appUpChannel(streamId), JSON.stringify(msg))
 }
 
 // ── manager command channel (Phase 3) ──────────────────────────────────────────────────────────
@@ -198,7 +254,7 @@ export function subscribeMgr(managerId: string, cb: (msg: unknown) => void): Pro
 }
 
 export function publishMgr(managerId: string, msg: unknown): Promise<number> {
-  return pub.publish(mgrChannel(managerId), JSON.stringify(msg))
+  return safePublish(mgrChannel(managerId), JSON.stringify(msg))
 }
 
 // Per-request reply channel for the provisioning RPC (backend → mgr:{managerId} → manager → reply).
@@ -209,7 +265,7 @@ export function subscribeReply(requestId: string, cb: (msg: unknown) => void): P
 }
 
 export function publishReply(requestId: string, msg: unknown): Promise<number> {
-  return pub.publish(replyChannel(requestId), JSON.stringify(msg))
+  return safePublish(replyChannel(requestId), JSON.stringify(msg))
 }
 
 // ── agent→manager presence (which manager currently owns an agent's node) ─────────────────────────
@@ -230,6 +286,20 @@ export async function getAgentPresence(machineId: string): Promise<string | null
     logger.error('[bus] getAgentPresence failed', err, { machineId })
     return null
   }
+}
+
+/** One MGET for a whole machine list (the watchers seed N machines at once). Missing/failed → null. */
+export async function getAgentPresenceMany(machineIds: string[]): Promise<Map<string, string | null>> {
+  const out = new Map<string, string | null>()
+  if (machineIds.length === 0) return out
+  try {
+    const vals = await pub.mget(...machineIds.map(presenceKey))
+    machineIds.forEach((id, i) => out.set(id, vals[i] ?? null))
+  } catch (err) {
+    logger.error('[bus] getAgentPresenceMany failed', err, { count: machineIds.length })
+    for (const id of machineIds) out.set(id, null)
+  }
+  return out
 }
 
 // A device's last-selected machine, so the backend can restore the active machine after a reconnect. A
@@ -405,6 +475,27 @@ export async function getMachineAppState(
   }
 }
 
+function parseAppState(raw: string | null): { engine: string; state: string } | null {
+  if (!raw) return null
+  const sep = raw.indexOf(':')
+  if (sep <= 0 || sep === raw.length - 1) return null
+  return { engine: raw.slice(0, sep), state: raw.slice(sep + 1) }
+}
+
+/** MGET variant of getMachineAppState for the list seeds. */
+export async function getMachineAppStateMany(machineIds: string[]): Promise<Map<string, { engine: string; state: string } | null>> {
+  const out = new Map<string, { engine: string; state: string } | null>()
+  if (machineIds.length === 0) return out
+  try {
+    const vals = await pub.mget(...machineIds.map(appStateKey))
+    machineIds.forEach((id, i) => out.set(id, parseAppState(vals[i] ?? null)))
+  } catch (err) {
+    logger.error('[bus] getMachineAppStateMany failed', err, { count: machineIds.length })
+    for (const id of machineIds) out.set(id, null)
+  }
+  return out
+}
+
 export async function clearMachineAppState(machineId: string): Promise<void> {
   try {
     await pub.del(appStateKey(machineId))
@@ -460,7 +551,7 @@ export interface DeviceStatusMsg { deviceId: string; online: boolean; lastSeenAt
 
 /** Per-USER transition channel (one sub per watching web socket); messages are PER-DEVICE. */
 export function publishDeviceStatus(userId: string, msg: DeviceStatusMsg): Promise<number> {
-  return pub.publish(deviceStatusChannel(userId), JSON.stringify(msg))
+  return safePublish(deviceStatusChannel(userId), JSON.stringify(msg))
 }
 
 export function subscribeDeviceStatus(userId: string, cb: (msg: DeviceStatusMsg) => void): Promise<() => void> {
@@ -476,7 +567,7 @@ export interface DeviceMachineListChangedMsg {
 }
 
 export function publishDeviceMachineListChanged(userId: string, msg: DeviceMachineListChangedMsg): Promise<number> {
-  return pub.publish(deviceMachineListChannel(userId), JSON.stringify(msg))
+  return safePublish(deviceMachineListChannel(userId), JSON.stringify(msg))
 }
 
 export function subscribeDeviceMachineListChanged(userId: string, cb: (msg: DeviceMachineListChangedMsg) => void): Promise<() => void> {
@@ -495,7 +586,7 @@ export interface DeviceE2eePairMsg {
 }
 
 export function publishDeviceE2eePair(userId: string, msg: DeviceE2eePairMsg): Promise<number> {
-  return pub.publish(deviceE2eePairChannel(userId), JSON.stringify(msg))
+  return safePublish(deviceE2eePairChannel(userId), JSON.stringify(msg))
 }
 
 export function subscribeDeviceE2eePair(userId: string, cb: (msg: DeviceE2eePairMsg) => void): Promise<() => void> {
@@ -511,7 +602,7 @@ const deviceControlChannel = (deviceId: string): string => `devctl:${deviceId}`
 export interface DeviceControlMsg { action: 'revoked' | 'superseded'; by?: string }
 
 export function publishDeviceControl(deviceId: string, msg: DeviceControlMsg): Promise<number> {
-  return pub.publish(deviceControlChannel(deviceId), JSON.stringify(msg))
+  return safePublish(deviceControlChannel(deviceId), JSON.stringify(msg))
 }
 
 export function subscribeDeviceControl(deviceId: string, cb: (msg: DeviceControlMsg) => void): Promise<() => void> {
@@ -575,23 +666,87 @@ export async function setAgentClientCount(machineId: string, instanceId: string,
   }
 }
 
+/** Heartbeat variant: every local agent's counts in ONE pipeline instead of 2 round trips per agent.
+ *  Same field format and per-field TTL as setAgentClientCount; HEXPIRE failures fall back to a key TTL. */
+export async function setAgentClientCountsBatch(
+  instanceId: string,
+  rows: Array<{ machineId: string; ui: number; commander: number; commanderActive: number }>,
+): Promise<void> {
+  if (rows.length === 0) return
+  const p = pub.pipeline()
+  // Remember which pipeline result index each HEXPIRE lands at, so the fallback only re-expires the keys
+  // whose HEXPIRE actually failed (rather than every key on any single failure).
+  const hexpireByKey: Array<{ key: string; index: number }> = []
+  let cmdIndex = 0
+  for (const r of rows) {
+    const key = clientsKey(r.machineId)
+    if (r.ui === 0 && r.commander === 0) { p.hdel(key, instanceId); cmdIndex += 1; continue }
+    p.hset(key, instanceId, `${r.ui},${r.commander},${r.commanderActive}`)
+    p.call('HEXPIRE', key, String(CLIENT_COUNT_TTL_SEC), 'FIELDS', '1', instanceId)
+    hexpireByKey.push({ key, index: cmdIndex + 1 }) // hset is cmdIndex, HEXPIRE is the next command
+    cmdIndex += 2
+  }
+  let results: Array<[Error | null, unknown]> | null
+  try {
+    results = await p.exec()
+  } catch (err) {
+    logger.error('[bus] setAgentClientCountsBatch failed', err, { count: rows.length })
+    return
+  }
+  // A HEXPIRE error (Redis < 7.4) → coarser whole-key TTL, exactly like the single-row path. Only the
+  // keys whose own HEXPIRE errored need it; a null result set (shouldn't happen post-exec) falls back for all.
+  const failedKeys = results
+    ? hexpireByKey.filter(({ index }) => results![index]?.[0]).map(({ key }) => key)
+    : hexpireByKey.map(({ key }) => key)
+  if (failedKeys.length > 0) {
+    const fb = pub.pipeline()
+    for (const key of failedKeys) fb.expire(key, CLIENT_COUNT_TTL_SEC)
+    try { await fb.exec() } catch { /* best-effort */ }
+  }
+}
+
+function sumClientFields(h: Record<string, string>): { ui: number; commander: number; commanderActive: number } {
+  let ui = 0
+  let commander = 0
+  let commanderActive = 0
+  for (const v of Object.values(h)) {
+    const [u, c, a] = String(v).split(',')
+    ui += parseInt(u, 10) || 0
+    commander += parseInt(c, 10) || 0
+    commanderActive += parseInt(a, 10) || 0
+  }
+  return { ui, commander, commanderActive }
+}
+
 /** Sum of every live instance's counts for an agent (expired fields already dropped Redis-side). */
 export async function getAgentClientTotals(machineId: string): Promise<{ ui: number; commander: number; commanderActive: number }> {
   try {
-    const h = await pub.hgetall(clientsKey(machineId))
-    let ui = 0
-    let commander = 0
-    let commanderActive = 0
-    for (const v of Object.values(h)) {
-      const [u, c, a] = String(v).split(',')
-      ui += parseInt(u, 10) || 0
-      commander += parseInt(c, 10) || 0
-      commanderActive += parseInt(a, 10) || 0
-    }
-    return { ui, commander, commanderActive }
+    return sumClientFields(await pub.hgetall(clientsKey(machineId)))
   } catch (err) {
     logger.error('[bus] getAgentClientTotals failed', err, { machineId })
     return { ui: 0, commander: 0, commanderActive: 0 }
+  }
+}
+
+/** Totals + commander join generation in one round trip (the `__clients` recompute reads both). */
+export async function getAgentClientState(machineId: string): Promise<{
+  totals: { ui: number; commander: number; commanderActive: number }
+  commanderJoinGeneration: number | undefined
+}> {
+  try {
+    const res = await pub.pipeline().hgetall(clientsKey(machineId)).get(commanderJoinGenerationKey(machineId)).exec()
+    const [hErr, h] = res?.[0] ?? [null, {}]
+    const [gErr, g] = res?.[1] ?? [null, null]
+    if (hErr) throw hErr
+    if (gErr) throw gErr
+    const generation = g == null ? undefined : Number(g)
+    return {
+      totals: sumClientFields((h ?? {}) as Record<string, string>),
+      commanderJoinGeneration: generation != null && Number.isSafeInteger(generation) && generation >= 0 ? generation : undefined,
+    }
+  } catch (err) {
+    logger.error('[bus] getAgentClientState failed', err, { machineId })
+    return { totals: { ui: 0, commander: 0, commanderActive: 0 }, commanderJoinGeneration: undefined }
   }
 }
 

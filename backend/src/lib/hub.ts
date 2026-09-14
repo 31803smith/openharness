@@ -10,12 +10,12 @@ import { WebSocket } from 'ws'
 import { randomUUID } from 'crypto'
 import {
   bumpCommanderJoinGeneration,
-  getAgentClientTotals,
-  getCommanderJoinGeneration,
+  getAgentClientState,
   publishDown,
   publishTerminalDown,
   publishUp,
   setAgentClientCount,
+  setAgentClientCountsBatch,
   subscribeUp,
   subscribeTerminalUp,
 } from './bus.js'
@@ -26,6 +26,7 @@ import type { Frame, UpBusMsg } from './tunnel.js'
 import { routeDown } from './providerLink.js'
 import { logger } from '../utils/logger.js'
 import { decodeTerminalHop, encodeTerminalHop, TerminalHopDirection } from './terminalBinary.js'
+import { guardedSend, guardedSendJson } from './wsSend.js'
 
 // Reserved inner-frame type: backend→node client-presence signal (drives the node's event buffering
 // and replay-on-connect + commander recap warm). Never surfaced to a real client.
@@ -44,8 +45,12 @@ export function deliverTerminalUpLocal(machineId: string, packet: Uint8Array): v
   const decoded = decodeTerminalHop(packet)
   if (!decoded || decoded.direction !== TerminalHopDirection.up) return
   const client = registry.clientsFor(machineId).find((candidate) => candidate.kind === 'web' && candidate.connId === decoded.connId)
-  if (!client || client.socket.readyState !== WebSocket.OPEN) return
-  try { client.socket.send(decoded.clientFrame) } catch { /* ignore */ }
+  if (!client) return
+  // Lossless: terminal frames are opaque E2EE bytes with no per-frame ack, so a silently dropped output
+  // frame leaves a gap the client cannot detect or request a keyframe for — it just stalls
+  // (TERMINAL_RENDER_STALLED). Backpressure is bounded instead by the kill-water close in guardedSend:
+  // a genuinely stuck reader is disconnected and does a full resync on reconnect.
+  guardedSend(client.socket, decoded.clientFrame, 'must', { machineId, connId: decoded.connId, kind: 'web' })
 }
 
 /** Deliver an up-frame to every local client of the agent (device/exclude filters applied). Called both
@@ -58,36 +63,36 @@ export function deliverUpLocal(machineId: string, msg: UpBusMsg): void {
   // The payload itself is untouched (stays E2EE-encrypted for remote machines). Web sockets re-attach per
   // agent (one machine at a time) so they never need it — keep their wire byte-identical. Computed lazily.
   let commanderPayload: string | null = null
-  for (const c of registry.clientsFor(machineId)) {
-    if (msg.excludeConnId && c.connId === msg.excludeConnId) continue
+  registry.forEachClient(machineId, (c) => {
+    if (msg.excludeConnId && c.connId === msg.excludeConnId) return
     // Device-targeted push (e.g. device_revoked): only the commander socket whose reported deviceId
     // matches. A socket that hasn't reported one (legacy fw / pre-hello) never matches — harmless.
-    if (msg.targetDeviceId && c.deviceId !== msg.targetDeviceId) continue
+    if (msg.targetDeviceId && c.deviceId !== msg.targetDeviceId) return
     // Connection-targeted push (E2EE pairing/welcome + per-client encrypted RPC replies): only the
     // one web socket that owns this connId. Absent ⇒ normal fan-out.
-    if (msg.targetConnId && c.connId !== msg.targetConnId) continue
-    if (msg.targetKind && c.kind !== msg.targetKind) continue
+    if (msg.targetConnId && c.connId !== msg.targetConnId) return
+    if (msg.targetKind && c.kind !== msg.targetKind) return
     // A `targetConnId`-addressed frame is E2EE traffic for exactly ONE connection (pairing/welcome/rekey,
     // per-client encrypted RPC replies) — for a WEB browser OR a hardware device. It bypasses the
     // kind/eligibility/`_result` filters below: those trim the broadcast fan-out, but a connId-targeted
     // frame is not a broadcast. Without this, `e2e_status_result` etc. never reach a paired device
     // (commanders are filtered by `!commanderEligible` and by the `_result` suppression).
     if (!msg.targetConnId) {
-      if (c.kind === 'web' && msg.webEligible === false) continue        // device-only frame (forwardToCommander)
-      if (c.kind === 'commander' && !msg.commanderEligible) continue     // preserve COMMANDER_FORWARD filter
+      if (c.kind === 'web' && msg.webEligible === false) return        // device-only frame (forwardToCommander)
+      if (c.kind === 'commander' && !msg.commanderEligible) return     // preserve COMMANDER_FORWARD filter
       // RPC replies (`<x>_result`) are answered to the device directly by deviceWs (trimmed); the
       // raw node reply must never reach a device — it's only for the backend nodeRequest awaiter / web.
-      if (c.kind === 'commander' && typeof frameType === 'string' && frameType.endsWith('_result')) continue
+      if (c.kind === 'commander' && typeof frameType === 'string' && frameType.endsWith('_result')) return
     }
     // Commander gets the machineId-tagged frame; web gets the untagged one.
     const out = c.kind === 'commander'
       ? (commanderPayload ??= JSON.stringify({ ...(msg.frame as Record<string, unknown>), machineId: machineId }))
       : payload
-    if (c.kind === 'commander' && registry.queueCommanderFrame(machineId, c.connId, msg.frame, out)) continue
-    if (c.socket.readyState === WebSocket.OPEN) {
-      try { c.socket.send(out) } catch { /* ignore */ }
-    }
-  }
+    if (c.kind === 'commander' && registry.queueCommanderFrame(machineId, c.connId, msg.frame, out)) return
+    // 'must': every fan-out frame is either order-sensitive (chat deltas) or opaque (terminal). None can
+    // be silently dropped without corrupting the client; a stuck reader is bounded by the kill-water close.
+    guardedSend(c.socket, out, 'must', { machineId, connId: c.connId, kind: c.kind })
+  })
 }
 
 /**
@@ -113,11 +118,29 @@ export function pushDeviceRevoked(machineId: string, deviceId: string): void {
  * over that socket. If we're not B_m, poke B_m (via down:{machineId}, whose sole subscriber IS B_m).
  * Call after the local registry mutation (attach/detach) so clientCounts reflects the new state.
  */
-export async function sendClientsControl(machineId: string, commanderJoined = false): Promise<void> {
+export function sendClientsControl(machineId: string, commanderJoined = false): void {
+  // Coalesced per machine within one turn of the event loop. A multi-attach device connecting with N
+  // machines, or a web tab switching agents (detach+attach back-to-back), fired this N× in a row — each
+  // one an HSET+HEXPIRE, sometimes an INCR, then HGETALL+GET or a PUBLISH. One flush reads the registry
+  // AFTER every synchronous mutation, so it publishes the same final state with a fraction of the traffic.
+  const prev = pendingClientsControl.get(machineId)
+  if (prev !== undefined) { pendingClientsControl.set(machineId, prev || commanderJoined); return }
+  pendingClientsControl.set(machineId, commanderJoined)
+  setImmediate(() => {
+    const joined = pendingClientsControl.get(machineId) ?? false
+    pendingClientsControl.delete(machineId)
+    void sendClientsControlNow(machineId, joined).catch((err) => logger.warn('sendClientsControl failed', { machineId, error: err instanceof Error ? err.message : String(err) }))
+  })
+}
+const pendingClientsControl = new Map<string, boolean>()
+
+async function sendClientsControlNow(machineId: string, commanderJoined: boolean): Promise<void> {
   const { ui, commander, commanderActive } = registry.clientCounts(machineId) // capture sync (post-mutation), before await
   await setAgentClientCount(machineId, INSTANCE_ID, ui, commander, commanderActive)
   // Count snapshots can coalesce (1→0→1 may be observed as 1→1). Persist a separate join generation so
-  // every real commander attach still forces the node/adapter to replay its live state.
+  // every real commander attach still forces the node/adapter to replay its live state. Several attaches
+  // within one event-loop tick coalesce to a SINGLE bump here (the flag is OR-ed in sendClientsControl);
+  // that is safe because the replay it triggers is idempotent — one bump still forces one replay.
   if (commanderJoined) await bumpCommanderJoinGeneration(machineId)
   if (registry.controlSocketFor(machineId)) { await recomputeAndSendClients(machineId); return }
   void publishDown(machineId, { connId: '', frame: { type: CLIENTS_DIRTY } })
@@ -126,17 +149,14 @@ export async function sendClientsControl(machineId: string, commanderJoined = fa
 /** B_m-only: read the cross-instance total and emit `__clients` down the local manager control socket
  *  (single in-order writer → the node's last frame is always the true global state). */
 export async function recomputeAndSendClients(machineId: string): Promise<void> {
-  const [{ ui, commander, commanderActive }, commanderJoinGeneration] = await Promise.all([
-    getAgentClientTotals(machineId),
-    getCommanderJoinGeneration(machineId),
-  ])
+  const { totals: { ui, commander, commanderActive }, commanderJoinGeneration } = await getAgentClientState(machineId)
   const frame = {
     type: CLIENTS_FRAME,
     payload: { ui, commander, commanderActive, ...(commanderJoinGeneration != null ? { commanderJoinGeneration } : {}) },
   }
   const local = registry.controlSocketFor(machineId)
   if (local && local.readyState === WebSocket.OPEN) {
-    try { local.send(JSON.stringify({ t: 'down', machineId: machineId, connId: '', frame })) } catch { /* ignore */ }
+    guardedSendJson(local, { t: 'down', machineId: machineId, connId: '', frame }, 'must', { machineId, kind: 'control' })
     return
   }
   // B_m's control socket briefly gone (mid-failover) → best-effort via Redis (sole subscriber is B_m).
@@ -263,23 +283,30 @@ setInterval(() => {
 
 // Client-count upkeep. Cadence is bound to the Redis field TTL, NOT to how fast a dead peer is noticed.
 export const CLIENT_HEARTBEAT_MS = 25_000
-setInterval(() => {
+// The resyncs below are spread across this window instead of fired as one burst.
+const CLIENT_RESYNC_SPREAD_MS = 20_000
+function clientHeartbeatTick(): void {
   // Refresh this instance's client-count fields (25s < 45s TTL) so an idle client isn't garbage-collected
-  // out of the global total. A crashed instance simply stops refreshing → its fields expire.
-  for (const machineId of registry.localAgentIds()) {
-    const { ui, commander, commanderActive } = registry.clientCounts(machineId)
-    void setAgentClientCount(machineId, INSTANCE_ID, ui, commander, commanderActive)
-  }
+  // out of the global total. A crashed instance simply stops refreshing → its fields expire. One pipeline
+  // for every local agent, not 2 round trips each.
+  const rows = registry.localAgentIds().map((machineId) => ({ machineId, ...registry.clientCounts(machineId) }))
+  void setAgentClientCountsBatch(INSTANCE_ID, rows)
   // B_m periodic resync: re-emit the summed `__clients` for every agent whose control socket lives
   // here. Field EXPIRY (a client-holding instance crashed — its fields age out of the hash after 45s)
   // has no attach/detach event to poke a recompute, so without this the node keeps the ghost count
   // forever (brain recap stays warm for a device that's gone). Receivers apply the absolute value
   // idempotently, so re-sending an unchanged count is a no-op — and doubles as self-heal for any
-  // `__clients` frame lost to a pub/sub drop. Converges ≤ TTL(45s) + sweep(25s).
-  for (const machineId of registry.controlAgentIds()) {
-    void recomputeAndSendClients(machineId)
-  }
-}, CLIENT_HEARTBEAT_MS).unref?.()
+  // `__clients` frame lost to a pub/sub drop. Converges ≤ TTL(45s) + sweep(25s) + spread(20s).
+  const ids = registry.controlAgentIds()
+  ids.forEach((machineId, i) => {
+    setTimeout(() => { void recomputeAndSendClients(machineId) }, Math.floor((i / ids.length) * CLIENT_RESYNC_SPREAD_MS)).unref?.()
+  })
+}
+// Random start offset so instances booted together (a rolling deploy) don't all hit Redis in phase.
+setTimeout(() => {
+  clientHeartbeatTick()
+  setInterval(clientHeartbeatTick, CLIENT_HEARTBEAT_MS).unref?.()
+}, Math.floor(Math.random() * 5_000)).unref?.()
 
 /** Register a client socket into the hub. The caller still owns the socket's 'message' handler. */
 export function attachHubClient(socket: WebSocket, machineId: string, kind: ClientKind): HubClient {
@@ -316,14 +343,14 @@ export function attachHubClient(socket: WebSocket, machineId: string, kind: Clie
       })
       .catch(() => { /* logged in bus */ })
   }
-  void sendClientsControl(machineId, kind === 'commander')
+  sendClientsControl(machineId, kind === 'commander')
 
   const sendDown = (frame: Frame): void => {
     // Fast-path: if THIS instance holds the agent's control manager socket (co-located), send the
     // down frame straight to it — no Redis. Local delivery is guaranteed reachable (socket open).
     const local = registry.controlSocketFor(machineId)
     if (local && local.readyState === WebSocket.OPEN) {
-      try { local.send(JSON.stringify({ t: 'down', machineId: machineId, connId, frame })) } catch { /* ignore */ }
+      guardedSendJson(local, { t: 'down', machineId: machineId, connId, frame }, 'must', { machineId, kind: 'control' })
       return
     }
     // publishDown returns the Redis subscriber count. 0 = no backend holds this agent's manager
@@ -333,9 +360,7 @@ export function attachHubClient(socket: WebSocket, machineId: string, kind: Clie
     void routeDown(machineId, { connId, frame }, () => publishDown(machineId, { connId, frame })).then((n) => {
       // HANDLED_IN_PROCESS = a provider machine, which has no socket to count. Only a real zero
       // means "nobody holds this machine right now".
-      if (n === 0 && socket.readyState === WebSocket.OPEN) {
-        try { socket.send(JSON.stringify({ type: 'node_status', payload: { online: false, reason: 'unreachable' } })) } catch { /* ignore */ }
-      }
+      if (n === 0) guardedSendJson(socket, { type: 'node_status', payload: { online: false, reason: 'unreachable' } }, 'must', { machineId, connId })
     }).catch(() => { /* ignore */ })
   }
 
@@ -346,13 +371,11 @@ export function attachHubClient(socket: WebSocket, machineId: string, kind: Clie
       const packet = encodeTerminalHop(TerminalHopDirection.down, connId, clientFrame)
       if (!packet) return
       void publishTerminalDown(machineId, packet).then((subscribers) => {
-        if (subscribers === 0 && socket.readyState === WebSocket.OPEN) {
-          try { socket.send(JSON.stringify({ type: 'terminal_transport_error', payload: { code: 'TERMINAL_UNREACHABLE' } })) } catch { /* ignore */ }
-        }
+        if (subscribers === 0) guardedSendJson(socket, { type: 'terminal_transport_error', payload: { code: 'TERMINAL_UNREACHABLE' } }, 'must', { machineId, connId })
       }).catch(() => { /* ignore */ })
     },
     setActive: (active: boolean) => {
-      if (registry.setClientActive(machineId, connId, active)) void sendClientsControl(machineId)
+      if (registry.setClientActive(machineId, connId, active)) sendClientsControl(machineId)
     },
     detach: () => {
       // The Harness owns per-connection E2EE state and terminal controller
@@ -377,5 +400,5 @@ function detachConn(machineId: string, connId: string): void {
     const terminalUnsub = terminalUpSubs.get(machineId)
     if (terminalUnsub) { terminalUnsub(); terminalUpSubs.delete(machineId) }
   }
-  void sendClientsControl(machineId)
+  sendClientsControl(machineId)
 }
