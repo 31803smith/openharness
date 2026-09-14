@@ -86,6 +86,36 @@ describe('lastTurnTextFromRawLines', () => {
     })
   })
 
+  it('keeps the last REAL ask when bash-mode (!command) lines follow it', () => {
+    // Bash mode writes the command + its output back as a user line. It is the person running a shell,
+    // not a prompt, so the recap must stay on the real task instead of drifting to shell mechanics.
+    const lines = [
+      userPrompt('u1', 'scan the network for loginable OrangePis'),
+      asstText('a1', 'Found .143 — orangepi/orangepi works and it has passwordless sudo.'),
+      userPrompt('b1', "<bash-input>ssh orangepi@172.168.20.143 echo hi</bash-input>"),
+      userPrompt('b2', '<bash-stdout></bash-stdout><bash-stderr>unsupported option "no...".</bash-stderr>'),
+      asstText('a2', 'That paste dropped a space; put it on one line.'),
+    ]
+    // The ask is the task, and the assistant text stays attributed to it (bash lines opened no new turn).
+    expect(lastTurnTextFromRawLines(lines)).toEqual({
+      userMessage: 'scan the network for loginable OrangePis',
+      assistantText: 'Found .143 — orangepi/orangepi works and it has passwordless sudo.\n\nThat paste dropped a space; put it on one line.',
+    })
+  })
+
+  it('still counts a user line that carries prose alongside a bash block', () => {
+    const lines = [
+      userPrompt('u1', 'old ask'),
+      asstText('a1', 'old answer'),
+      userPrompt('u2', 'here is the output, what now?\n<bash-stdout>port 22 open</bash-stdout>'),
+      asstText('a2', 'It is reachable — try the default creds next.'),
+    ]
+    expect(lastTurnTextFromRawLines(lines)).toEqual({
+      userMessage: 'here is the output, what now?\n<bash-stdout>port 22 open</bash-stdout>',
+      assistantText: 'It is reachable — try the default creds next.',
+    })
+  })
+
   it('skips compact metadata, platform prompts, and tool_result user echoes', () => {
     const lines = [
       line({ type: 'system', subtype: 'compact_boundary', compactMetadata: { trigger: 'auto' } }),
@@ -162,6 +192,28 @@ describe('turn close on terminal stop reasons', () => {
     lineToEvents(asstToolUse('a1', 't1', 'Bash'), state) // adds t1 to pendingTools
     const events = lineToEvents(asstStop('a2', 'done', 'end_turn'), state)
     expect(events).not.toContainEqual({ type: 'turn_ended', payload: {} })
+    expect(state.turnOpen).toBe(true)
+  })
+})
+
+describe('bash-mode lines are not turns', () => {
+  it('a !command line opens no turn and leaves an open one untouched', () => {
+    const state = newTurnState()
+    // A bash-only line before any prompt: nothing opens.
+    expect(lineToEvents(userPrompt('b0', '<bash-input>ls</bash-input>'), state)).toEqual([])
+    expect(state.turnOpen).toBe(false)
+    // Open a real turn, then a bash exchange mid-turn: it neither ends nor starts a turn.
+    lineToEvents(userPrompt('u1', 'scan the network'), state)
+    expect(state.turnOpen).toBe(true)
+    expect(lineToEvents(userPrompt('b1', '<bash-input>ssh box echo hi</bash-input>'), state)).toEqual([])
+    expect(lineToEvents(userPrompt('b2', '<bash-stdout>hi</bash-stdout><bash-stderr></bash-stderr>'), state)).toEqual([])
+    expect(state.turnOpen).toBe(true)
+  })
+
+  it('a line with real prose beside a bash block still starts a turn', () => {
+    const state = newTurnState()
+    const events = lineToEvents(userPrompt('u1', 'what does this mean?\n<bash-stderr>boom</bash-stderr>'), state)
+    expect(events).toContainEqual({ type: 'turn_started', payload: { userMessage: 'what does this mean?\n<bash-stderr>boom</bash-stderr>' } })
     expect(state.turnOpen).toBe(true)
   })
 })
