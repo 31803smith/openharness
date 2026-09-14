@@ -1,20 +1,25 @@
-import 'package:flutter/foundation.dart' show listEquals;
+import 'package:flutter/foundation.dart' show listEquals, setEquals;
 
 import '../core/fuzzy_match.dart';
 import '../core/models.dart';
 import 'app_state.dart';
+import 'pane_arrangement.dart';
 import 'swarm.dart';
 import 'swarm_catalog.dart';
+import 'terminal_pane.dart';
 
 String swarmDestinationId(String id) => 'swarm:$id';
 String agentDestinationId(String machineId, String agentId) =>
     'agent:$machineId\u0000$agentId';
+String agentLocationId(String swarmId, int paneId) =>
+    'location:$swarmId\u0000$paneId';
 
 /// Session-local history contains identities only, never terminal buffers or
 /// controllers. Repeated discovery/output notifications do not reorder it.
 class SwarmNavigationHistory {
   static const capacity = 64;
   final _recent = <String>[];
+  final _recentLocations = <String>[];
   (String, int?)? _location;
   final _trail = <(String, int?)>[];
   int _cursor = -1;
@@ -23,6 +28,7 @@ class SwarmNavigationHistory {
   List<Object?>? _menuPresentation;
   List<SwarmDestination> _menuDestinations = const [];
   List<String> get recent => List.unmodifiable(_recent);
+  List<String> get recentLocations => List.unmodifiable(_recentLocations);
 
   void record(AppNotifier app) {
     final location = (app.activeSwarmId, app.focusedPaneId);
@@ -41,6 +47,12 @@ class SwarmNavigationHistory {
     if (pane?.agentId != null) {
       _remember(agentDestinationId(pane!.machineId, pane.agentId!));
     }
+    final destination = pane?.agentId != null
+        ? agentLocationId(location.$1, pane!.id)
+        : swarmDestinationId(location.$1);
+    _recentLocations.remove(destination);
+    _recentLocations.insert(0, destination);
+    if (_recentLocations.length > capacity) _recentLocations.removeLast();
     _location = location;
   }
 
@@ -113,7 +125,11 @@ class SwarmNavigationHistory {
     if (listEquals(_menuPresentation, presentation)) return _menuDestinations;
     _menuPresentation = presentation;
     final catalog = {
-      for (final entry in swarmDestinations(app, recent: _recent))
+      for (final entry in swarmDestinations(
+        app,
+        recent: _recent,
+        openOnly: true,
+      ))
         if (entry.hasView) entry.id: entry,
     };
     return _menuDestinations = List.unmodifiable([
@@ -138,6 +154,8 @@ class SwarmDestination {
     this.closedId,
     this.commandId,
     this.shortcut,
+    this.paneId,
+    this.swarmName = '',
     this.projectId,
     this.members = const {},
     Iterable<String?> searchFields = const [],
@@ -150,6 +168,10 @@ class SwarmDestination {
   final String? swarmId, machineId, agentId, engine;
   final String? closedId;
   final String? commandId, shortcut;
+
+  /// An exact navigation location. Never fall back to a different swarm.
+  final int? paneId;
+  final String swarmName;
   bool get isCommand => commandId != null;
   final String? projectId;
   final Set<String> members;
@@ -168,10 +190,50 @@ class SwarmSearchSelection {
   const SwarmSearchSelection(
     this.destination, [
     this.action = SwarmSearchAction.open,
-  ]);
+  ]) : agents = const [];
+
+  SwarmSearchSelection.multiple(List<SwarmDestination> agents)
+    : assert(agents.isNotEmpty),
+      destination = agents.first,
+      action = SwarmSearchAction.addHere,
+      agents = List.unmodifiable(agents);
   final SwarmDestination destination;
   final SwarmSearchAction action;
+  final List<SwarmDestination> agents;
 }
+
+List<Object?> _catalogPresentation(
+  AppNotifier app,
+  List<SavedSwarmProject> projects, {
+  List<String> recent = const [],
+}) => [
+  app.activeSwarmId,
+  app.focusedPaneId,
+  ...recent,
+  ...projects,
+  for (final swarm in app.swarms) ...[
+    swarm.id,
+    swarm.name,
+    for (final pane in swarm.panes)
+      (
+        pane.id,
+        pane.machineId,
+        pane.agentId,
+        pane.session?.agentName,
+        pane.session?.engineId,
+      ),
+  ],
+  for (final machine in app.machineStates.values)
+    (
+      machine.machine,
+      machine.nodeOnline,
+      machine.needsLink,
+      machine.agents,
+      machine.agents.length,
+      machine.localEndpoint?.agentProjects,
+      machine.localProjects,
+    ),
+];
 
 /// One catalog for all search entry points. Terminal output leaves these
 /// normalized snapshots intact; only discovery, membership or metadata changes
@@ -185,28 +247,7 @@ class SwarmSearchCatalog {
     List<SavedSwarmProject> projects, {
     List<String> recent = const [],
   }) {
-    final presentation = <Object?>[
-      app.activeSwarmId,
-      app.focusedPaneId,
-      ...recent,
-      ...projects,
-      for (final swarm in app.swarms) ...[
-        swarm.id,
-        swarm.name,
-        for (final pane in swarm.panes)
-          (pane.id, pane.machineId, pane.agentId, pane.session?.agentName),
-      ],
-      for (final machine in app.machineStates.values)
-        (
-          machine.machine,
-          machine.nodeOnline,
-          machine.needsLink,
-          machine.agents,
-          machine.agents.length,
-          machine.localEndpoint?.agentProjects,
-          machine.localProjects,
-        ),
-    ];
+    final presentation = _catalogPresentation(app, projects, recent: recent);
     if (listEquals(_presentation, presentation)) return _entries;
     _presentation = presentation;
     final entries = swarmDestinations(app, recent: recent);
@@ -279,13 +320,168 @@ class SwarmSearchCatalog {
   }
 }
 
+/// Global navigation lists places that already exist. The same runtime has a
+/// separate location in every swarm; discovery alone never creates a result
+/// whose activation would add membership. Output reuses the cached snapshot.
+class SwarmLocationCatalog {
+  List<Object?>? _presentation;
+  List<SwarmDestination> _entries = const [];
+
+  List<SwarmDestination> read(
+    AppNotifier app,
+    List<SavedSwarmProject> projects,
+  ) {
+    final presentation = _catalogPresentation(app, projects);
+    if (listEquals(presentation, _presentation)) return _entries;
+    _presentation = presentation;
+    // Resolve metadata once, and format only open locations. Navigation does
+    // not need the Add catalog's thousands of unused agents or project groups.
+    final agents = {
+      for (final machine in app.machineStates.entries)
+        for (final agent in machine.value.agents)
+          (machine.key, agent.id): agent,
+    };
+    return _entries = List.unmodifiable([
+      for (final swarm in app.swarms) ...[
+        _swarm(app, swarm),
+        for (final pane in swarm.panes)
+          if (pane.agentId != null)
+            _location(
+              app,
+              swarm,
+              pane,
+              agents[(pane.machineId, pane.agentId!)],
+            ),
+      ],
+    ]);
+  }
+
+  SwarmDestination _swarm(AppNotifier app, Swarm swarm) {
+    final machineLabel = _swarmMachineLabel(app, [
+      for (final pane in swarm.panes)
+        if (pane.agentId != null) pane.machineId,
+    ]);
+    return SwarmDestination(
+      id: swarmDestinationId(swarm.id),
+      title: swarm.name,
+      detail: _agentCountLabel(swarm.panes.map((pane) => pane.agentId)),
+      machineLabel: machineLabel,
+      swarmId: swarm.id,
+      swarmName: swarm.name,
+      current: swarm.id == app.activeSwarmId,
+      searchFields: [machineLabel],
+    );
+  }
+
+  SwarmDestination _location(
+    AppNotifier app,
+    Swarm swarm,
+    TerminalPane pane,
+    Agent? agent,
+  ) {
+    final machine = app.machineStates[pane.machineId];
+    final project = agent == null ? null : machine?.projectOf(agent);
+    final machineLabel = machine?.machine.displayName ?? pane.machineId;
+    final engine = agent?.engine ?? pane.session?.engineId;
+    final detail = [
+      machineLabel,
+      project?.name,
+      project?.branch,
+      if (machine?.nodeOnline == false) 'Offline',
+    ].whereType<String>().where((s) => s.isNotEmpty).toSet().join(' · ');
+    return SwarmDestination(
+      id: agentLocationId(swarm.id, pane.id),
+      title: agent?.name ?? pane.session?.agentName ?? pane.agentId!,
+      detail: detail,
+      swarmId: swarm.id,
+      swarmName: swarm.name,
+      paneId: pane.id,
+      machineId: pane.machineId,
+      machineLabel: machineLabel,
+      agentId: pane.agentId,
+      engine: engine,
+      current: swarm.id == app.activeSwarmId && pane.id == app.focusedPaneId,
+      searchFields: [detail, project?.cwd, engine, swarm.name],
+    );
+  }
+}
+
+/// Each swarm is one selectable parent, followed by its matching agent views.
+/// Keep the parent even when only an agent matches, so its destination is clear.
+/// Order groups by their best match/previous place, and agents by match within it.
+List<SwarmDestination> rankSwarmLocations(
+  List<SwarmDestination> all,
+  String query, {
+  List<String> recent = const [],
+}) {
+  final groups = <String, List<SwarmDestination>>{};
+  final parents = {
+    for (final row in all)
+      if (row.agentId == null) row.swarmId!: row,
+  };
+  for (final row in rankSwarmDestinations(all, query, recent: recent)) {
+    (groups[row.swarmId!] ??= []).add(row);
+  }
+  return [
+    for (final group in groups.entries) ...[
+      ?parents[group.key],
+      ...group.value.where((row) => row.agentId != null),
+    ],
+  ];
+}
+
 Future<bool> activateSwarmSearchSelection(
   AppNotifier app,
   SwarmSearchSelection selection, {
   required String destinationSwarmId,
   List<SavedSwarmProject> projects = const [],
+  PaneSplitRequest? split,
 }) async {
   final destination = selection.destination;
+  if (selection.agents.isNotEmpty) {
+    final target = app.swarms
+        .where((swarm) => swarm.id == destinationSwarmId)
+        .firstOrNull;
+    if (target == null || split != null) return false;
+    final catalog = SwarmSearchCatalog().read(app, projects);
+    final byId = {for (final row in catalog) row.id: row};
+    final members = <SwarmDestination>[];
+    final seen = <String>{};
+    for (final chosen in selection.agents) {
+      final row = byId[chosen.id];
+      if (row?.agentId == null ||
+          !(app.machineStates[row!.machineId]?.agents.any(
+                (agent) => agent.id == row.agentId,
+              ) ??
+              false)) {
+        return false;
+      }
+      if (seen.add(row.id) &&
+          !target.panes.any(
+            (pane) =>
+                pane.machineId == row.machineId && pane.agentId == row.agentId,
+          )) {
+        members.add(row);
+      }
+    }
+    if (members.isEmpty ||
+        target.panes.length + members.length > AppNotifier.maxPanes) {
+      return false;
+    }
+    // Validate the complete selection before recording any membership. Every
+    // add records its destination synchronously, before attachment can wait.
+    await Future.wait([
+      for (final row in members)
+        app.addAgentToSwarm(row.machineId!, row.agentId!, swarmId: target.id),
+    ]);
+    return app.swarms.contains(target) &&
+        members.every(
+          (row) => target.panes.any(
+            (pane) =>
+                pane.machineId == row.machineId && pane.agentId == row.agentId,
+          ),
+        );
+  }
   if (selection.action == SwarmSearchAction.open && !destination.isGroup) {
     return activateSwarmDestination(
       app,
@@ -294,7 +490,60 @@ Future<bool> activateSwarmSearchSelection(
     );
   }
   if (selection.action == SwarmSearchAction.addHere) {
+    if (destination.agentId == null) {
+      if (split != null || destination.isCommand) return false;
+      final target = app.swarms
+          .where((swarm) => swarm.id == destinationSwarmId)
+          .firstOrNull;
+      final catalog = SwarmSearchCatalog().read(app, projects);
+      final live = catalog.where((row) => row.id == destination.id).firstOrNull;
+      if (target == null ||
+          live == null ||
+          !setEquals(destination.members, live.members)) {
+        return false;
+      }
+      final members = catalog
+          .where(
+            (row) =>
+                destination.members.contains(row.id) &&
+                !target.panes.any(
+                  (pane) =>
+                      pane.machineId == row.machineId &&
+                      pane.agentId == row.agentId,
+                ),
+          )
+          .toList();
+      if (members.isEmpty ||
+          target.panes.length + members.length > AppNotifier.maxPanes ||
+          members.any(
+            (row) =>
+                !(app.machineStates[row.machineId]?.agents.any(
+                      (agent) => agent.id == row.agentId,
+                    ) ??
+                    false),
+          )) {
+        return false;
+      }
+      if (target.panes.isEmpty && target.name == 'New swarm') {
+        app.renameSwarm(target.id, destination.title);
+      }
+      // Every membership is recorded before awaiting any attachment. A slow
+      // machine cannot retarget the add or hold up the other agents.
+      await Future.wait([
+        for (final row in members)
+          app.addAgentToSwarm(row.machineId!, row.agentId!, swarmId: target.id),
+      ]);
+      return members.every(
+        (row) => target.panes.any(
+          (pane) =>
+              pane.machineId == row.machineId && pane.agentId == row.agentId,
+        ),
+      );
+    }
     if (destination.agentId == null ||
+        (split != null &&
+            (split.swarmId != destinationSwarmId ||
+                !app.isPaneSplitCurrent(split))) ||
         !app.swarms.any((s) => s.id == destinationSwarmId)) {
       return false;
     }
@@ -302,10 +551,12 @@ Future<bool> activateSwarmSearchSelection(
         .where((e) => e.id == destination.id)
         .firstOrNull;
     if (live == null) return false;
-    await app.addAgentToSwarm(
+    await app.assignAgentToPane(
+      null,
       destination.machineId!,
       destination.agentId!,
       swarmId: destinationSwarmId,
+      split: split,
     );
     if (app.activeSwarmId == destinationSwarmId) {
       app.revealAgentView(
@@ -447,6 +698,7 @@ List<SwarmDestination> closedWorkDestinations(AppNotifier app) => [
 List<SwarmDestination> swarmDestinations(
   AppNotifier app, {
   List<String> recent = const [],
+  bool openOnly = false,
 }) {
   final owners = <String, List<Swarm>>{};
   final agents = <String, (MachineState, Agent)>{};
@@ -485,13 +737,21 @@ List<SwarmDestination> swarmDestinations(
             if (pane.agentId != null) pane.machineId,
         ]),
         detail: _agentCountLabel(swarm.panes.map((pane) => pane.agentId)),
+        members: {
+          for (final pane in swarm.panes)
+            if (pane.agentId != null)
+              agentDestinationId(pane.machineId, pane.agentId!),
+        },
         swarmId: swarm.id,
         current: swarm.id == app.activeSwarmId,
         searchFields: context.toSet(),
       ),
     );
   }
-  for (final id in {...owners.keys, ...agents.keys}) {
+  // History refreshes on focus changes, but only offers existing views. Keep
+  // their normal owner/metadata resolution without formatting every unopened
+  // runtime in discovery. Add agent continues to include those runtimes.
+  for (final id in {...owners.keys, if (!openOnly) ...agents.keys}) {
     final memberships = owners[id] ?? const <Swarm>[];
     final row = agents[id];
     if (memberships.isEmpty && row?.$2.terminalAvailable != true) continue;
@@ -647,6 +907,23 @@ Future<bool> activateSwarmDestination(
   if (destination.isCommand) return false;
   if (destination.closedId != null) {
     return app.reopenClosed(historyId: destination.closedId);
+  }
+  if (destination.paneId != null) {
+    final swarm = app.swarms
+        .where((s) => s.id == destination.swarmId)
+        .firstOrNull;
+    final pane = swarm?.panes
+        .where(
+          (p) =>
+              p.id == destination.paneId &&
+              p.machineId == destination.machineId &&
+              p.agentId == destination.agentId,
+        )
+        .firstOrNull;
+    if (swarm == null || pane == null) return false;
+    app.selectSwarm(swarm.id, attachPending: false);
+    app.focusPane(pane.id, reveal: true);
+    return true;
   }
   if (destination.isSwarm) {
     if (!app.swarms.any((s) => s.id == destination.swarmId)) return false;

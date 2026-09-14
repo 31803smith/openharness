@@ -18,6 +18,7 @@ class SwarmSearchInput extends StatelessWidget {
     required this.onClose,
     required this.onChanged,
     this.onOpen,
+    this.onNewAgent,
     this.groupId,
     this.onTapOutside,
     this.showClose = false,
@@ -32,6 +33,7 @@ class SwarmSearchInput extends StatelessWidget {
   final VoidCallback onClose;
   final ValueChanged<String> onChanged;
   final VoidCallback? onOpen;
+  final VoidCallback? onNewAgent;
   final Object? groupId;
   final VoidCallback? onTapOutside;
   final bool showClose, autofocus;
@@ -46,12 +48,13 @@ class SwarmSearchInput extends StatelessWidget {
       ),
       borderSide: BorderSide(color: open ? Colors.transparent : Colors.white24),
     );
-    return SwarmSearchKeys(
+    final input = SwarmSearchKeys(
       search: search,
       editing: controller,
       onChoose: onChoose,
       onClose: onClose,
       onOpen: onOpen,
+      onNewAgent: onNewAgent,
       child: TextField(
         key: inputKey,
         groupId: groupId ?? EditableText,
@@ -66,8 +69,7 @@ class SwarmSearchInput extends StatelessWidget {
         cursorColor: grid.AppPalette.swarmAccent,
         textAlignVertical: TextAlignVertical.center,
         decoration: InputDecoration(
-          hintText:
-              search?.hint ?? 'Search agents, swarms, machines, projects…',
+          hintText: search?.hint ?? 'Search agents to add…',
           hintStyle: const TextStyle(fontSize: 16, color: Colors.white60),
           prefixIcon: const Icon(Icons.search, size: 20, color: Colors.white60),
           prefixIconConstraints: const BoxConstraints(
@@ -101,6 +103,35 @@ class SwarmSearchInput extends StatelessWidget {
           focusedBorder: border,
         ),
       ),
+    );
+    if (!showClose || search?.adding != true || onNewAgent == null) {
+      return input;
+    }
+    return Row(
+      children: [
+        Expanded(child: input),
+        Padding(
+          padding: const EdgeInsets.only(left: 4, right: 14),
+          child: FilledButton.icon(
+            key: const ValueKey('swarm-search-new-agent'),
+            onPressed: search!.canCreate ? onNewAgent : null,
+            style: FilledButton.styleFrom(
+              backgroundColor: grid.AppPalette.swarmAccent,
+              foregroundColor: grid.AppPalette.swarmField,
+              minimumSize: const Size(148, 42),
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            icon: const Icon(Icons.add, size: 20),
+            label: const Text(
+              'New agent',
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

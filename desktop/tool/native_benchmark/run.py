@@ -3,9 +3,10 @@
 import argparse
 import json
 from pathlib import Path
-import plistlib
 import subprocess
 import sys
+
+from isolation import conflicting_previews, validate_benchmark_bundle
 
 
 parser = argparse.ArgumentParser(description=__doc__)
@@ -21,17 +22,20 @@ if not app.is_relative_to(temporary) or not output.is_relative_to(temporary):
     parser.error('The benchmark app and output must be under /private/tmp')
 if not 1 <= args.samples <= 500:
     parser.error('Use between 1 and 500 samples per operation/load')
-with (app / 'Contents/Info.plist').open('rb') as source:
-    info = plistlib.load(source)
-if info.get('CFBundleIdentifier') != 'ai.autonomous.harness.benchmark':
-    parser.error('Refusing to launch a bundle other than the isolated fixture')
+try:
+    validate_benchmark_bundle(app)
+except (OSError, ValueError) as error:
+    parser.error(str(error))
 log = output.with_suffix('.log')
 if output.exists() or log.exists():
     parser.error('Choose fresh result and log paths')
-processes = subprocess.check_output(['ps', '-axo', 'command='], text=True)
-for name in ('Harness Benchmark', 'Harness V2'):
-    if f'/{name}.app/Contents/MacOS/{name}' in processes:
-        parser.error(f'Normally close {name} before measuring; this runner never quits other apps')
+processes = subprocess.check_output(['ps', '-axo', 'comm='], text=True)
+try:
+    conflicts = conflicting_previews(processes)
+except ValueError as error:
+    parser.error(str(error))
+if conflicts:
+    parser.error(f'Normally close {", ".join(conflicts)} before measuring; this runner never quits other apps')
 output.parent.mkdir(parents=True, exist_ok=True)
 command = [
     'open', '-n', '-W', '-o', str(log), '--stderr', str(log),

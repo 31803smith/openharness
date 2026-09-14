@@ -25,7 +25,6 @@ Future<SwarmSearchSelection?> showSwarmHistory(
       context: context,
       transitionDuration: Duration.zero,
       veilBlur: 0,
-      veilTint: const Color(0x66000000),
       builder: (_) => _SwarmHistory(search: search),
     );
   } finally {
@@ -113,6 +112,7 @@ class SwarmSearchKeys extends StatelessWidget {
     required this.onChoose,
     required this.onClose,
     this.onOpen,
+    this.onNewAgent,
     required this.child,
   });
   final SwarmSearchController? search;
@@ -123,6 +123,7 @@ class SwarmSearchKeys extends StatelessWidget {
   /// A focused field may be ready for typing while its suggestions are closed.
   /// The first navigation/accept key reveals them without choosing unseen work.
   final VoidCallback? onOpen;
+  final VoidCallback? onNewAgent;
   final Widget child;
 
   @override
@@ -154,14 +155,16 @@ class SwarmSearchKeys extends StatelessWidget {
         contextKind: KeymapContext.picker,
         composing: composing,
         actions: {
+          if (onNewAgent != null) 'agent.new': () => run(onNewAgent!),
           if (search != null || onOpen != null) ...{
+            if (search?.multiSelect == true)
+              'picker.toggle_selection': () => run(search!.toggle),
             'picker.accept': () => choose(false),
             'picker.add_here': () => choose(true),
             'picker.next': () => move(1),
             'picker.previous': () => move(-1),
-            if (search != null) 'picker.preview': search.togglePreview,
             'picker.cancel': onClose,
-            if (search?.history == null)
+            if (search == null || search.allowsCommands)
               'navigation.commands': () {
                 editing.value = const TextEditingValue(
                   text: '> ',
@@ -182,6 +185,21 @@ class SwarmSearchKeys extends StatelessWidget {
       bindings: search == null && onOpen == null
           ? {}
           : {
+              if (search?.multiSelect == true)
+                const SingleActivator(
+                  LogicalKeyboardKey.enter,
+                  shift: true,
+                  includeRepeats: false,
+                ): () =>
+                    run(search!.toggle),
+              if (onNewAgent != null)
+                const SingleActivator(
+                  LogicalKeyboardKey.keyN,
+                  meta: true,
+                  shift: true,
+                  includeRepeats: false,
+                ): () =>
+                    run(onNewAgent!),
               const SingleActivator(
                 LogicalKeyboardKey.enter,
                 includeRepeats: false,
@@ -207,13 +225,6 @@ class SwarmSearchKeys extends StatelessWidget {
               const SingleActivator(LogicalKeyboardKey.arrowDown): () =>
                   move(1),
               const SingleActivator(LogicalKeyboardKey.arrowUp): () => move(-1),
-              if (search != null)
-                const SingleActivator(
-                  LogicalKeyboardKey.keyI,
-                  meta: true,
-                  includeRepeats: false,
-                ): () =>
-                    run(search.togglePreview),
               const SingleActivator(
                 LogicalKeyboardKey.keyN,
                 control: true,
@@ -258,9 +269,10 @@ double swarmSearchResultsHeight(
 ) =>
     search.rows.length.clamp(4, 7) *
         swarmSearchRowHeight(scale, commands: search.isCommandMode) +
-    52;
+    52 +
+    (search.hasSelection ? 48 : 0);
 
-/// Shared results for the title bar, New swarm field and History.
+/// Shared Add agent results, also used for commands and History.
 class SwarmSearchResults extends StatefulWidget {
   const SwarmSearchResults({
     super.key,
@@ -278,6 +290,9 @@ class SwarmSearchResults extends StatefulWidget {
 }
 
 class _SwarmSearchResultsState extends State<SwarmSearchResults> {
+  // Keep a small set of recently built rows, not the whole search catalog.
+  // A new highlight only changes two rows; their neighbors keep their widgets.
+  final _rowWidgets = <String, ({Object presentation, Widget child})>{};
   final _scroll = ScrollController();
   double _rowHeight = 56;
   bool _revealScheduled = false;
@@ -341,15 +356,17 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
     );
     return LayoutBuilder(
       builder: (context, constraints) {
+        final horizontal = constraints.maxWidth >= 600 * scale.scale(14) / 14;
         final showPreview =
-            search.previewVisible && constraints.maxWidth >= 600;
+            search.previewVisible || (search.adding && !search.isCommandMode);
         return Semantics(
           container: true,
           label: 'Search results',
           child: Column(
             children: [
               Expanded(
-                child: Row(
+                child: Flex(
+                  direction: horizontal ? Axis.horizontal : Axis.vertical,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Expanded(
@@ -359,6 +376,10 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                               child: Text(
                                 search.isCommandMode
                                     ? 'No matching commands'
+                                    : search.adding && search.query.isEmpty
+                                    ? 'Choose New agent to start fresh.'
+                                    : search.adding
+                                    ? 'No matching agents'
                                     : 'No matching results',
                                 style: const TextStyle(
                                   fontSize: 14,
@@ -374,13 +395,46 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                               itemExtent: _rowHeight,
                               itemBuilder: (context, index) {
                                 final row = search.rows[index];
+                                final highlighted = index == search.cursor;
+                                final canSubmit = search.canSubmit(row);
+                                final multiSelect = search.multiSelect;
+                                final checked =
+                                    multiSelect && search.isChecked(row);
+                                final canToggle =
+                                    multiSelect && search.canToggle(row);
+                                final alreadyHere = search.alreadyHere(row);
+                                final presentation = (
+                                  row,
+                                  search.query,
+                                  highlighted,
+                                  canSubmit,
+                                  multiSelect,
+                                  checked,
+                                  canToggle,
+                                  alreadyHere,
+                                  highlighted
+                                      ? (
+                                          search.canAccept,
+                                          search.actionLabel(row),
+                                        )
+                                      : null,
+                                  _rowHeight,
+                                  scale.scale(11),
+                                  grid.AppTheme.palette.value,
+                                );
+                                final previous = _rowWidgets.remove(row.id);
+                                if (previous?.presentation == presentation) {
+                                  _rowWidgets[row.id] = previous!;
+                                  return previous.child;
+                                }
                                 final matches = searchResultMatches(row, terms);
-                                return ListTile(
+                                final tile = ListTile(
                                   key: ValueKey(row.id),
                                   minTileHeight: _rowHeight,
-                                  enabled: search.canSubmit(row),
-                                  selected: index == search.cursor,
+                                  enabled: canSubmit,
+                                  selected: highlighted,
                                   selectedColor: Colors.white,
+                                  hoverColor: Colors.transparent,
                                   selectedTileColor: Colors.white.withValues(
                                     alpha: .075,
                                   ),
@@ -390,22 +444,52 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                                   contentPadding: const EdgeInsets.symmetric(
                                     horizontal: 12,
                                   ),
-                                  leading: row.isCommand
-                                      ? const Icon(
-                                          Icons.keyboard_command_key,
-                                          size: 20,
-                                          color: Colors.white60,
-                                        )
-                                      : row.agentId != null
-                                      ? EngineMark(
-                                          engine: row.engine,
-                                          size: 22,
-                                          enabled: search.canSubmit(row),
-                                        )
-                                      : const SwarmIcon(
-                                          size: 22,
-                                          color: Colors.white60,
+                                  leading: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      if (multiSelect) ...[
+                                        SizedBox(
+                                          width: 28,
+                                          child: Tooltip(
+                                            message: checked
+                                                ? 'Deselect ${row.title}'
+                                                : 'Select ${row.title}',
+                                            child: Checkbox(
+                                              key: ValueKey('select:${row.id}'),
+                                              value: checked,
+                                              onChanged: canToggle
+                                                  ? (_) {
+                                                      search.toggle(row);
+                                                      widget.onRefocus();
+                                                    }
+                                                  : null,
+                                              activeColor:
+                                                  grid.AppPalette.swarmAccent,
+                                              checkColor:
+                                                  grid.AppPalette.swarmField,
+                                            ),
+                                          ),
                                         ),
+                                        const SizedBox(width: 10),
+                                      ],
+                                      row.isCommand
+                                          ? const Icon(
+                                              Icons.keyboard_command_key,
+                                              size: 20,
+                                              color: Colors.white60,
+                                            )
+                                          : row.agentId != null
+                                          ? EngineMark(
+                                              engine: row.engine,
+                                              size: 22,
+                                              enabled: canSubmit,
+                                            )
+                                          : const SwarmIcon(
+                                              size: 22,
+                                              color: Colors.white60,
+                                            ),
+                                    ],
+                                  ),
                                   title: SearchResultText(
                                     row.title,
                                     matches: matches.where(
@@ -425,7 +509,36 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                                             color: Colors.white60,
                                           ),
                                         ),
-                                  trailing: row.shortcut == null
+                                  trailing: alreadyHere
+                                      ? const Text(
+                                          'In this swarm',
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            color: Colors.white38,
+                                          ),
+                                        )
+                                      : search.adding && highlighted
+                                      ? ConstrainedBox(
+                                          constraints: BoxConstraints(
+                                            maxWidth:
+                                                170 * scale.scale(11) / 11,
+                                          ),
+                                          child: TextButton(
+                                            key: const ValueKey(
+                                              'swarm-row-action',
+                                            ),
+                                            onPressed: search.canAccept
+                                                ? _submit
+                                                : null,
+                                            style: TextButton.styleFrom(
+                                              foregroundColor: Colors.white,
+                                            ),
+                                            child: SwarmSearchActionLabel(
+                                              search.actionLabel(row),
+                                            ),
+                                          ),
+                                        )
+                                      : row.shortcut == null
                                       ? null
                                       : Text(
                                           row.shortcut!,
@@ -434,26 +547,100 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                                             color: Colors.white60,
                                           ),
                                         ),
-                                  onTap: search.canSubmit(row)
-                                      ? () => _submit(row)
+                                  onTap: canSubmit
+                                      ? () => search.hasSelection
+                                            ? search.toggle(row)
+                                            : _submit(row)
                                       : null,
                                 );
+                                _rowWidgets[row.id] = (
+                                  presentation: presentation,
+                                  child: tile,
+                                );
+                                if (_rowWidgets.length > 48) {
+                                  _rowWidgets.remove(_rowWidgets.keys.first);
+                                }
+                                return tile;
                               },
                             ),
                     ),
                     if (showPreview) ...[
-                      const VerticalDivider(width: 1, color: Colors.white12),
+                      if (horizontal)
+                        const VerticalDivider(width: 1, color: Colors.white12)
+                      else
+                        const Divider(height: 1, color: Colors.white12),
                       Expanded(
                         flex: 4,
                         child: _OutputPreview(
-                          row: selected!,
+                          row: selected,
                           text: search.preview?.text ?? '',
+                          members: search.previewMembers,
                         ),
                       ),
                     ],
                   ],
                 ),
               ),
+              if (search.hasSelection) ...[
+                const Divider(height: 1, color: Colors.white12),
+                SizedBox(
+                  height: 46,
+                  child: Row(
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        child: Text(
+                          '${search.checkedCount} selected',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Colors.white70,
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        child: ListView(
+                          key: const ValueKey('swarm-selected-agents'),
+                          scrollDirection: Axis.horizontal,
+                          children: [
+                            for (final agent in search.checked)
+                              Padding(
+                                padding: const EdgeInsets.only(right: 6),
+                                child: InputChip(
+                                  label: ConstrainedBox(
+                                    constraints: const BoxConstraints(
+                                      maxWidth: 180,
+                                    ),
+                                    child: Text(
+                                      agent.title,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(fontSize: 11),
+                                    ),
+                                  ),
+                                  onDeleted: () {
+                                    search.removeChecked(agent.id);
+                                    widget.onRefocus();
+                                  },
+                                  deleteButtonTooltipMessage:
+                                      'Remove ${agent.title}',
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: search.clearChecked,
+                        style: TextButton.styleFrom(
+                          foregroundColor: Colors.white70,
+                        ),
+                        child: const Text(
+                          'Clear',
+                          style: TextStyle(fontSize: 12),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
               const Divider(height: 1, color: Colors.white12),
               SizedBox(
                 height: 48,
@@ -473,12 +660,16 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                             style: TextStyle(fontSize: 12),
                           ),
                         ),
-                      if (selected != null && !search.canSubmit(selected))
+                      if ((search.hasSelection && !search.canSubmitSelection) ||
+                          (selected != null && !search.canSubmit(selected)) ||
+                          search.adding && !search.canCreate)
                         Expanded(
                           child: Text(
-                            selected.isGroup &&
-                                    selected.members.length >
-                                        AppNotifier.maxPanes
+                            search.adding
+                                ? search.unavailableMessage
+                                : selected!.isGroup &&
+                                      selected.members.length >
+                                          AppNotifier.maxPanes
                                 ? 'A swarm supports up to ${AppNotifier.maxPanes} agents'
                                 : 'No room to open this ${selected.isSwarm || selected.isGroup ? 'swarm' : 'agent'}',
                             maxLines: 1,
@@ -491,56 +682,27 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                         )
                       else
                         const Spacer(),
-                      if (constraints.maxWidth >= 600 &&
-                          (search.canPreview ||
-                              search.previewEnabled && !search.isCommandMode))
-                        IconButton(
-                          key: const ValueKey('swarm-search-preview-toggle'),
-                          tooltip: [
-                            search.previewEnabled
-                                ? 'Hide preview'
-                                : 'Show preview',
-                            if (effectiveCommandHint(
-                                  context,
-                                  'picker.preview',
-                                  contextKind: KeymapContext.picker,
-                                )
-                                case final hint?)
-                              '($hint)',
-                          ].join(' '),
-                          onPressed: () {
-                            search.togglePreview();
-                            widget.onRefocus();
-                          },
-                          icon: Icon(
-                            search.previewEnabled
-                                ? Icons.visibility_outlined
-                                : Icons.visibility_off_outlined,
-                            size: 18,
-                            color: Colors.white60,
-                          ),
-                          visualDensity: VisualDensity.compact,
-                        ),
-                      if (search.canAdd(selected))
+                      if (!search.adding &&
+                          search.canAdd(selected) &&
+                          constraints.maxWidth >= 900)
                         TextButton(
                           onPressed: () => widget.onChoose(search.addHere()!),
                           style: TextButton.styleFrom(
                             foregroundColor: Colors.white70,
                           ),
-                          child: const _SearchActionLabel(
+                          child: const SwarmSearchActionLabel(
                             'Add to this swarm',
                             command: 'picker.add_here',
                           ),
                         ),
                       TextButton(
-                        onPressed: search.canSubmit(selected) ? _submit : null,
+                        key: const ValueKey('swarm-search-accept'),
+                        onPressed: search.canAccept ? _submit : null,
                         style: TextButton.styleFrom(
                           foregroundColor: Colors.white,
                         ),
-                        child: _SearchActionLabel(
-                          selected == null
-                              ? 'Go to'
-                              : SwarmSearchController.action(selected),
+                        child: SwarmSearchActionLabel(
+                          search.actionLabel(selected),
                         ),
                       ),
                     ],
@@ -555,8 +717,12 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
   }
 }
 
-class _SearchActionLabel extends StatelessWidget {
-  const _SearchActionLabel(this.label, {this.command = 'picker.accept'});
+class SwarmSearchActionLabel extends StatelessWidget {
+  const SwarmSearchActionLabel(
+    this.label, {
+    super.key,
+    this.command = 'picker.accept',
+  });
   final String label;
   final String command;
 
@@ -570,7 +736,14 @@ class _SearchActionLabel extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text(label, style: const TextStyle(fontSize: 11)),
+        Flexible(
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 11),
+          ),
+        ),
         if (hint != null) ...[
           const SizedBox(width: 8),
           if (RegExp(r'^[⌃⌥⇧⌘]*↵$').hasMatch(hint)) ...[
@@ -600,86 +773,152 @@ class _SearchActionLabel extends StatelessWidget {
 }
 
 class _OutputPreview extends StatelessWidget {
-  const _OutputPreview({required this.row, required this.text});
-  final SwarmDestination row;
+  const _OutputPreview({
+    required this.row,
+    required this.text,
+    required this.members,
+  });
+  final SwarmDestination? row;
   final String text;
+  final List<SwarmDestination> members;
 
   @override
-  Widget build(BuildContext context) => Container(
-    key: const ValueKey('swarm-search-preview'),
-    color: Colors.black.withValues(alpha: 0.10),
-    padding: const EdgeInsets.all(20),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          row.agentId == null ? 'SWARM PREVIEW' : 'AGENT PREVIEW',
-          style: const TextStyle(
-            fontSize: 10,
-            letterSpacing: 1.3,
-            color: Colors.white54,
+  Widget build(BuildContext context) {
+    final row = this.row;
+    if (row == null) {
+      return const Center(
+        key: ValueKey('swarm-search-preview'),
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Text(
+            'Choose an agent to preview its work.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.white38, fontSize: 13, height: 1.5),
           ),
         ),
-        const SizedBox(height: 18),
-        Row(
+      );
+    }
+    return Container(
+      key: const ValueKey('swarm-search-preview'),
+      color: Colors.black.withValues(alpha: .10),
+      child: SingleChildScrollView(
+        primary: false,
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (row.agentId == null)
-              const SwarmIcon(size: 20, color: Colors.white70)
-            else
-              EngineMark(engine: row.engine, size: 20),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                row.title,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w500,
-                  color: Colors.white,
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (row.agentId == null)
+                  const SwarmIcon(size: 24, color: Colors.white70)
+                else
+                  EngineMark(engine: row.engine, size: 24),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    row.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      height: 1.35,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white,
+                    ),
+                  ),
                 ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Text(
+              row.detail,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 12,
+                height: 1.5,
+                color: Colors.white54,
               ),
             ),
+            const SizedBox(height: 24),
+            Text(
+              row.agentId != null
+                  ? 'Recent output'
+                  : row.isProject
+                  ? 'Agents in this project'
+                  : row.isMachine
+                  ? 'Agents on this machine'
+                  : 'Agents in this swarm',
+              style: const TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w500,
+                color: Colors.white54,
+              ),
+            ),
+            const SizedBox(height: 10),
+            if (row.agentId != null)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: .035),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: .06),
+                  ),
+                ),
+                child: Text(
+                  text.isEmpty ? 'No recent output yet.' : text,
+                  maxLines: 12,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontFamily: grid.AppFont.sans,
+                    fontFamilyFallback: grid.AppFont.sansFallback,
+                    fontSize: 13,
+                    height: 1.6,
+                    color: text.isEmpty
+                        ? Colors.white54
+                        : Colors.white.withValues(alpha: .82),
+                  ),
+                ),
+              )
+            else if (members.isEmpty)
+              const Text(
+                'No agents yet.',
+                style: TextStyle(fontSize: 13, color: Colors.white54),
+              )
+            else ...[
+              for (final member in members.take(5))
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Row(
+                    children: [
+                      EngineMark(engine: member.engine, size: 18),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          member.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            color: Colors.white70,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              if (members.length > 5)
+                Text(
+                  '+ ${members.length - 5} more',
+                  style: const TextStyle(fontSize: 12, color: Colors.white54),
+                ),
+            ],
           ],
         ),
-        const SizedBox(height: 8),
-        Text(
-          row.detail,
-          maxLines: 3,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-            fontSize: 12,
-            height: 1.5,
-            color: Colors.white60,
-          ),
-        ),
-        const SizedBox(height: 24),
-        Expanded(
-          child: SingleChildScrollView(
-            primary: false,
-            child: Text(
-              row.agentId == null
-                  ? 'Work with the agents in this swarm side by side.'
-                  : text.isEmpty
-                  ? 'No recent output available.'
-                  : text,
-              style: TextStyle(
-                fontFamily: text.isEmpty
-                    ? grid.AppFont.sans
-                    : grid.AppFont.mono,
-                fontFamilyFallback: text.isEmpty
-                    ? grid.AppFont.sansFallback
-                    : grid.AppFont.monoFallback,
-                fontSize: 12,
-                height: 1.65,
-                color: text.isEmpty
-                    ? Colors.white60
-                    : Colors.white.withValues(alpha: .85),
-              ),
-            ),
-          ),
-        ),
-      ],
-    ),
-  );
+      ),
+    );
+  }
 }

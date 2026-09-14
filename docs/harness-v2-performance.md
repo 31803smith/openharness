@@ -10,6 +10,197 @@ flutter test --no-pub --reporter expanded test/benchmarks/swarm_benchmark.dart
 
 It prints `SWARM_BENCH` JSON records. Its filename deliberately does not end in `_test.dart`, so ordinary correctness runs do not include timing measurements.
 
+## Current continuation benchmark (2026-09-14)
+
+### Add picker frame work and keyboard focus
+
+Add now reuses up to 48 recently built result rows. Moving the highlight rebuilds
+the old/new selection and newly revealed rows; unchanged neighbors keep their
+widgets. Query, metadata, availability, selection, palette and text-size changes
+still refresh their presentation. The overlay header rebuilds when its hint or
+creation availability changes, rather than on every controller notification.
+
+The new explicit `test/benchmarks/swarm_add_benchmark.dart` measures an input
+operation plus one Flutter frame pump. It uses 2,000 discovered agents on one
+machine, 50 projects, five retained terminals with 1,000 lines each, and a
+1280×800 viewport. Each distribution has 20 warmups and 100 measured samples;
+the native bridge is stubbed. Runs were sequential in the headless debug runner
+without overlapping this session's tests/builds. These are CPU observations,
+not native input-to-display measurements.
+
+| Operation | Before median / p95 / p99 | Final median / p95 / p99 |
+| --- | ---: | ---: |
+| Cmd-N open + frame | 26.106 / 33.320 / 73.743 ms | 26.686 / 35.267 / 79.533 ms |
+| Query edit + frame | 11.398 / 17.790 / 19.785 ms | 11.193 / 16.182 / 18.320 ms |
+| Arrow selection + frame | 8.592 / 10.188 / 10.713 ms | 4.714 / 5.978 / 10.209 ms |
+
+Arrow selection's median fell about 45%; opening did not improve, and its tail
+was worse in the final run. JIT/shared-host variation limits tail conclusions.
+A single scrolling-arrow rebuild observation went from 19 ListTiles and one
+TextField to three ListTiles and zero TextFields. The regression with no scroll
+observes just the two changed rows. An intermediate run before the focus fix
+measured arrow selection at 4.985 / 7.655 / 8.457 ms; all three runs are retained
+at `/private/tmp/harness-add-frame-{baseline,after,final}.log`.
+
+A separate failing-before regression reproduced a completed background addition
+taking keyboard focus away from the picker. A persistent canvas focus boundary
+now prevents panes requesting Flutter focus while Add/Navigate is open. It is
+released synchronously on close. Opening New agent restores the original focus
+before its dialog opens, so Cancel returns to that terminal. The tests also
+cover live capacity changes and palette/text scaling with a checked selection.
+All 1,302 desktop tests pass with one existing skip; analysis has zero errors
+or warnings and 14 existing infos. The normal macOS arm64 Release build also
+succeeds; no running app was restarted. Logs:
+`/private/tmp/harness-add-render-{full-tests,final-analyze}.log`.
+Build log: `/private/tmp/harness-add-render-release-build.log`.
+After integrating the team's update-flag cleanup in `56143bd`, the combined
+source passes the same 1,302 tests, analysis and Release build. Logs:
+`/private/tmp/harness-add-render-integrated-{tests,analyze,build}.log`.
+
+### Native fixture after the public bundle-ID change
+
+The team's `76a469b` gave the workspace preview the installed app's
+`ai.autonomous.harness` identity. Two regressions reproduced the resulting
+benchmark problems: the builder rejected current source, and preflight mistook
+a development copy for the exempt installed app. The builder now accepts the
+current and legacy source identities but still produces only the distinct
+`Harness Benchmark` product. Preflight additionally requires the release
+identity to be in `/Applications` or the current user's `Applications` folder
+before exempting it. Unknown identities, development copies, legacy previews
+and other benchmark processes remain blocked.
+
+Nine isolated Python tests pass. The identity-fix disposable arm64 Release fixture
+built at `/private/tmp/harness-native-benchmark-7hv6voyr`. Its actual runner
+correctly refused the still-running workspace preview at its exact build path;
+the installed copy is classified separately. No native samples were taken.
+The session requested a brief preview-close/idle window for calibration and
+continues independent performance work while that request is pending.
+Rebuild the fixture before measuring the newer Add frame/focus changes above.
+Artifacts: `/private/tmp/harness-native-identity-{before,tests,prepare,preflight}.log`.
+
+### History focus hot path
+
+History now formats only agents with open views. Previously each focus change
+formatted all discovered agents before discarding unopened ones. Add still
+includes the full discovery inventory. A regression failed with 12 unnecessary
+project reads before the fix and now observes zero, while preserving History's
+current destination and ordering.
+
+The expanded seven-case benchmark ran sequentially before and after this change
+on the same shared M2 Max, in the headless debug runner. History has 2,000
+discovered agents, 50 open locations in 12 swarms and 60 menu entries. The new
+frame cases run production native-tab serialization with the AppKit method
+channel receiver mocked; they do not measure AppKit or physical display latency.
+
+| Operation | Before median / p95 / p99 | After median / p95 / p99 |
+| --- | ---: | ---: |
+| History snapshot after focus | 1.863 / 2.344 / 2.737 ms | 0.334 / 0.358 / 0.388 ms |
+| Native bridge stub: switch/pump, 16 retained terminals | 8.262 / 9.341 / 11.797 ms | 6.113 / 6.977 / 8.298 ms |
+| Native bridge stub: focus/pump, 16 retained terminals | 4.217 / 4.815 / 6.131 ms | 2.498 / 3.337 / 3.523 ms |
+| Native bridge stub: switch/pump, 48 retained terminals | 8.214 / 8.940 / 9.038 ms | 6.467 / 7.482 / 7.629 ms |
+| Native bridge stub: focus/pump, 48 retained terminals | 4.329 / 4.849 / 5.513 ms | 2.783 / 3.512 / 4.403 ms |
+| Flutter tabs: switch/pump, 16 retained terminals | 13.698 / 20.591 / 24.499 ms | 13.151 / 22.382 / 24.439 ms |
+| Flutter tabs: focus/pump, 16 retained terminals | 5.632 / 6.629 / 6.901 ms | 6.153 / 7.202 / 7.618 ms |
+| Flutter tabs: switch/pump, 48 retained terminals | 10.913 / 12.465 / 13.061 ms | 10.596 / 12.296 / 18.970 ms |
+| Flutter tabs: focus/pump, 48 retained terminals | 5.599 / 7.345 / 8.597 ms | 6.080 / 7.705 / 8.308 ms |
+
+History's median CPU cost fell about 82%; unchanged snapshots stayed at 0.002 ms.
+Rebuild counts did not change. The native-bridge fixtures discover 2,000 agents;
+the older Flutter-tab fixtures discover 70, so do not compare these modes as
+equivalent workloads. Flutter-tab tails remain variable and some worsened.
+There are 100 History samples and 60 frame samples, with 1,000 retained lines per
+terminal at 1280×800. JIT and shared-host load limit tail conclusions. Native
+input-to-display and remote round-trip latency remain unmeasured.
+
+Both seven-case benchmark runs passed, as did 39 affected behavior tests.
+Analyzer: zero errors/warnings, 14 existing informational diagnostics. The
+normal macOS arm64 Release target built successfully. Logs:
+`/private/tmp/harness-history-benchmark-{before,after}.log`,
+`/private/tmp/harness-history-focused-tests.log`,
+`/private/tmp/harness-history-analyze.log`, and
+`/private/tmp/harness-history-release-build.log`.
+
+### Earlier integrated-main observation
+
+After integrating updated main, the five explicit benchmark cases passed on
+production source at `0b3b343`. They ran sequentially (`--concurrency=1`) after
+the builds and correctness checks finished, on the same shared M2 Max workstation.
+This is a fresh headless debug observation, not a paired before/after experiment
+or a native input-to-display measurement.
+
+| Operation | Median | p95 | p99 |
+| --- | ---: | ---: | ---: |
+| Navigate catalog: 50 locations / 12 swarms | 0.188 ms | 0.259 ms | 0.491 ms |
+| Navigate query | 0.020 ms | 0.028 ms | 0.134 ms |
+| Add query `agent`: 2,000 agents | 0.959 ms | 1.005 ms | 1.076 ms |
+| Add contextual query | 0.779 ms | 0.864 ms | 0.868 ms |
+| Add fuzzy query | 0.725 ms | 0.809 ms | 0.824 ms |
+| Decode/parse 16 KiB ASCII | 0.523 ms | 0.689 ms | 1.010 ms |
+| Decode/parse 16 KiB Unicode | 0.332 ms | 0.461 ms | 1.602 ms |
+| Switch/pump: 16 retained terminals | 13.056 ms | 20.293 ms | 30.776 ms |
+| Switch/pump: 48 retained terminals | 10.426 ms | 11.991 ms | 12.328 ms |
+| Focus/pump: 16 retained terminals | 5.802 ms | 6.949 ms | 7.493 ms |
+| Focus/pump: 48 retained terminals | 5.578 ms | 7.297 ms | 8.863 ms |
+
+Catalog/output operations have 100 measured samples; frame workloads have 60,
+with 1,000 retained lines per terminal at 1280×800. A p99 from 60 observations is
+effectively a maximum, not a well-established tail estimate. Host load and JIT
+remain sources of variation; the 48-terminal case being faster does not mean
+more terminals improve performance. The 16-terminal switch still has a much
+slower tail than its median. These numbers do not qualify native responsiveness.
+Raw log: `/private/tmp/harness-onboarding-main-benchmark.log`.
+
+## Distinct Navigate and Add agent continuation
+
+Navigate now indexes only existing swarm locations. The initial implementation
+built Add's full discovered-agent/project catalog first, even when only a few
+locations were open. It now indexes agent identities once and formats just the
+open locations. Add filtering also checks membership without allocating a new
+set for every candidate on every query. Both catalogs reuse unchanged snapshots;
+terminal output does not rebuild or rerank their results. Previews read a bounded
+excerpt only when the selected identity changes.
+
+The updated explicit benchmark exercises the actual two controllers. Add has
+2,000 discovered agents on eight machines, 50 projects and 2,059 entries.
+Navigate has the same discovery inventory, with 50 agent locations across 12
+swarms (62 entries), including one agent in three swarms. Each CPU distribution
+has 20 warmups and 100 samples. Runs were sequential without overlapping other
+checks, on the same shared workstation in the headless debug runner.
+
+| Operation | Initial median / p95 | Final median / p95 |
+| --- | ---: | ---: |
+| Build navigation location catalog | 4.095 / 4.833 ms | 0.194 / 0.264 ms |
+| Open/dispose navigation controller | 4.108 / 4.667 ms | 0.192 / 0.224 ms |
+| Navigate query `agent 0 machine 0` | 0.021 / 0.029 ms | 0.021 / 0.024 ms |
+| Add query `agent` | 1.206 / 1.312 ms | 1.025 / 1.083 ms |
+| Add query `agent 12 machine 3` | 0.992 / 1.141 ms | 0.782 / 0.877 ms |
+| Add fuzzy query `agn12` | 0.927 / 1.043 ms | 0.718 / 0.813 ms |
+| Add query `project 12 main` | 1.321 / 1.464 ms | 1.096 / 1.200 ms |
+
+Navigation catalog construction fell about 95% in this fixture. The unchanged
+catalog check measured 0.006 ms for Navigate and 0.002 ms for Add (median and
+p95). Add's final full catalog construction was 3.057 / 3.438 ms and its
+controller open/dispose cycle 4.336 / 4.694 ms. Host load and JIT also affect these
+observations; they do not establish a fixed saving on every machine.
+
+The full benchmark before the final catalog-only optimization also measured:
+
+| Terminal workload | Median | p95 |
+| --- | ---: | ---: |
+| Decode and parse a 16 KiB ASCII frame | 0.555 ms | 0.776 ms |
+| Decode and parse a 16 KiB Unicode frame | 0.346 ms | 0.421 ms |
+| Tab switch and pump: 4 swarms / 16 terminals | 16.445 ms | 24.666 ms |
+| Tab switch and pump: 12 swarms / 48 terminals | 13.066 ms | 15.784 ms |
+| Pane focus and pump: 16 terminals | 6.861 ms | 9.278 ms |
+| Pane focus and pump: 48 terminals | 7.090 ms | 8.850 ms |
+
+Five benchmark cases passed, followed by the final catalog case. The widget
+workloads retain 1,000 scrollback lines per terminal in a 1280×800 fixture, with
+60 measured samples. These are CPU/frame-pump costs, not native input handling,
+physical keypress-to-display or remote round-trip latency. The calibration gap
+below remains open. Logs: `/private/tmp/harness-two-pickers-benchmark.log` and
+`/private/tmp/harness-two-pickers-benchmark-final.log`.
+
 ## Concurrent machine discovery (2026-09-13)
 
 Agent inventory and terminal capability requests now start together after the machine handshake. The small capability request is sent first because the CLI dispatches frames through a per-client FIFO; it can answer that request before assembling project metadata for the agent list. The list becomes visible as soon as it arrives. Existing panes attach only when both inventory and protocol information are available, without changing focus or membership.
@@ -66,6 +257,32 @@ The cache still holds at most 256 working folders. Each entry watches at most th
 Reads traverse at most 32 ancestors and request at most 64 KiB plus one byte per metadata file, rejecting oversized/invalid text. They open no Git processes, read no terminal output, send no input/network traffic and perform no work on the render path. This limited compatibility reader does not replace Git's full config/environment resolution or richer daemon metadata.
 
 All three stale-cache regressions failed on the earlier code. The final focused run passed 38 tests, including directory and common-path changes, ended/failed/unsupported watches, missed events, deletion, same-path replacement, serialized slow reads and disposal. The preexisting real temporary-filesystem worktree watch also passes; synthetic watchers cover failure ordering without relying on OS timing. Logs: `/private/tmp/harness-v2-git-watch-{before,tests,analyze}.log`. This establishes recovery and bounded work; it is not a new native latency measurement.
+
+## Native benchmark tooling repair (2026-09-14)
+
+The saved benchmark assumed the old Harness V2 name and requested initial focus
+on a wrapper view. Its builder now replaces exactly one recognized product-name
+and bundle-ID assignment in the disposable copy, and verifies the built app's
+name, executable and isolated identity. The runner reads executable paths and
+bundle IDs so the renamed Harness preview is distinguished from the installed
+Harness app. Unknown/unreadable Harness identities stop preflight. Initial focus
+uses the Flutter controller, matching the production titlebar, while foreground
+and key-window requirements remain intact and report their actual state.
+
+Six isolated Python checks pass. A new macOS arm64 Release fixture built at
+`/private/tmp/harness-native-benchmark-x227eh35`, with the expected
+`ai.autonomous.harness.benchmark` bundle ID and `Harness Benchmark` executable.
+The actual runner then correctly refused to start alongside the known running
+workspace preview and wrote no timing result. That is preflight validation,
+not a new input-latency sample. The workspace preview remains running; Computer
+Use still cannot capture it by its exact path.
+
+Artifacts: `/private/tmp/harness-native-isolation-tests.log`,
+`/private/tmp/harness-native-prepare-current.log`, the disposable `build.log`,
+and `/private/tmp/harness-native-current-preflight-check.log`. Use the updated
+[benchmark instructions](../desktop/tool/native_benchmark/README.md) once the
+preview can be normally closed and the isolated window can acquire valid
+foreground/key status. No p50/p95/p99 native result is accepted yet.
 
 ## Native calibration remains unmeasured (2026-09-13)
 

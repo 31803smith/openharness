@@ -201,6 +201,9 @@ class KeymapConfig {
         );
       }
       final command = row['command'];
+      // Output preview is now always visible in Add. An old customization of
+      // its removed toggle must not invalidate the rest of the user's keymap.
+      if (command == 'picker.preview' && !commands.contains(command)) continue;
       if (command != null &&
           (command is! String || !commands.contains(command))) {
         throw FormatException('Unknown command in bindings[$i]: $command');

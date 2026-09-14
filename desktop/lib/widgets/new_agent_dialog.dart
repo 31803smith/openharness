@@ -55,7 +55,6 @@ Future<void> showNewAgentDialog(
     context: context,
     transitionDuration: Duration.zero,
     veilBlur: 0,
-    veilTint: const Color(0x66000000),
     builder: (context) => _NewAgentDialog(
       notifier: notifier,
       machineId: machineId,
@@ -527,37 +526,42 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const FieldLabel('Machine'),
-        AppSelectField<String>(
-          key: const Key('new-agent-machine-field'),
-          value: _machineId,
-          options: [
-            for (final machine in widget.notifier.machineStates.values)
-              SelectOption(
-                value: machine.machine.machineId,
-                label: machine.isLocalMachine
-                    ? 'This computer'
-                    : machine.machine.displayName,
-                note: machine.nodeOnline == false
-                    ? 'Offline'
-                    : machine.needsLink
-                    ? 'Link required'
-                    : null,
-              ),
-          ],
-          onChanged: (id) {
-            setState(() {
-              _machineRevision++;
-              _machineId = id;
-              _folder = null;
-              _codexProfile = null;
-              _codexProfilesBusy = true;
-              _error = null;
-            });
-            unawaited(_probeEngines());
-          },
-        ),
-        const SizedBox(height: _gapField),
+        if (widget.notifier.machineStates.length != 1 ||
+            !_machineIsThisComputer ||
+            widget.notifier.machineStates[_machineId]?.nodeOnline == false ||
+            widget.notifier.machineStates[_machineId]?.needsLink == true) ...[
+          const FieldLabel('Machine'),
+          AppSelectField<String>(
+            key: const Key('new-agent-machine-field'),
+            value: _machineId,
+            options: [
+              for (final machine in widget.notifier.machineStates.values)
+                SelectOption(
+                  value: machine.machine.machineId,
+                  label: machine.isLocalMachine
+                      ? 'This computer'
+                      : machine.machine.displayName,
+                  note: machine.nodeOnline == false
+                      ? 'Offline'
+                      : machine.needsLink
+                      ? 'Link required'
+                      : null,
+                ),
+            ],
+            onChanged: (id) {
+              setState(() {
+                _machineRevision++;
+                _machineId = id;
+                _folder = null;
+                _codexProfile = null;
+                _codexProfilesBusy = true;
+                _error = null;
+              });
+              unawaited(_probeEngines());
+            },
+          ),
+          const SizedBox(height: _gapField),
+        ],
         Row(
           children: [
             const Expanded(child: FieldLabel('Working folder')),

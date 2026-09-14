@@ -1,4 +1,5 @@
 node_modules/
+.vite/
 dist/
 .tsbuildinfo
 .DS_Store
@@ -87,6 +88,7 @@ Desktop.ini
 *.keystore
 key.properties
 secrets/
+.secrets
 service-account*.json
 
 # Local scratch — notes, experiments, throwaway scripts

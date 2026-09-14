@@ -14,7 +14,8 @@
  */
 import type { IncomingMessage } from 'http'
 import type { Duplex } from 'stream'
-import { WebSocketServer, WebSocket, type RawData } from 'ws'
+import { WebSocket, type RawData } from 'ws'
+import { createWss, WS_LIMITS } from './wsServer.js'
 import { prisma } from './prisma.js'
 import {
   publishUp, claimMachineOwner, releaseMachineOwner, publishDeviceE2eePair,
@@ -22,6 +23,7 @@ import {
   setMachineAppState, clearMachineAppState,
 } from './bus.js'
 import { trackSocketLiveness } from './hub.js'
+import { guardedSend, guardedSendJson } from './wsSend.js'
 import { attachNodeRole, PRESENCE_TTL_SEC } from './nodeRole.js'
 import { recordCreatedAgent, recordDeletedAgent } from './agentTracker.js'
 import type { Frame } from './tunnel.js'
@@ -49,13 +51,7 @@ import {
   terminalP2pPolicy,
 } from './p2pSignaling.js'
 
-const wss = new WebSocketServer({
-  noServer: true,
-  handleProtocols: (protocols) => {
-    const first = [...protocols][0]
-    return first ?? false
-  },
-})
+const wss = createWss(WS_LIMITS.adapter, { echoFirstProtocol: true })
 
 // machineId → the current adapter socket. One writer per machineId: down:{machineId} must have exactly
 // one consumer, so a reconnecting adapter supersedes its predecessor (same as attachNode does).
@@ -172,8 +168,9 @@ async function attachAdapter(ws: WebSocket, machineId: string, userId: string, c
   // stale local socket on a same-computer reconnect landing on this worker.
   owners.get(machineId)?.close(4000, 'superseded')
   owners.set(machineId, ws)
+  const send = (obj: unknown): boolean => guardedSendJson(ws, obj, 'must', { machineId, kind: 'adapter' })
   logger.info('adapter connected', { machineId, computer: label })
-  try { ws.send(JSON.stringify({ t: 'connected', machineId })) } catch { /* ignore */ }
+  send({ t: 'connected', machineId })
 
   // Last desktop-app state THIS socket asserted. Socket-scoped on purpose: a new adapter connection
   // starts with no claim and must re-assert, so a fresh value can never renew a stale one.
@@ -217,9 +214,7 @@ async function attachAdapter(ws: WebSocket, machineId: string, userId: string, c
   }
   // Tell the adapter its machine's display name (it mirrors it locally for `harness status`); null when
   // unnamed so a stale mirror clears. Renames while connected arrive the same way (machine_meta).
-  try {
-    ws.send(JSON.stringify({ t: 'down', connId: '', frame: { type: 'machine_meta', payload: { name: currentName?.trim() || seededName } } }))
-  } catch { /* ignore */ }
+  send({ t: 'down', connId: '', frame: { type: 'machine_meta', payload: { name: currentName?.trim() || seededName } } })
 
   // The node role — down subscription, presence, `__clients` resync, node_status — is shared with
   // every other backer of a machine and lives in nodeRole.ts. Only the delivery and teardown are
@@ -230,7 +225,7 @@ async function attachAdapter(ws: WebSocket, machineId: string, userId: string, c
     offlineReason: 'remote computer offline',
     deliver: (msg) => {
       if (ws.readyState !== WebSocket.OPEN) return
-      try { ws.send(JSON.stringify({ t: 'down', connId: msg.connId, frame: msg.frame })) } catch { /* ignore */ }
+      send({ t: 'down', connId: msg.connId, frame: msg.frame })
       // `machine_revoked` used to be pushed and nothing more, leaving the socket open and the machine
       // still serving if the client ignored it — an old CLI, a dropped frame. Close it ourselves right
       // after the send so revocation does not depend on the client cooperating. Same shape as
@@ -252,8 +247,8 @@ async function attachAdapter(ws: WebSocket, machineId: string, userId: string, c
     },
   })
   const terminalDownUnsub = await subscribeTerminalDown(machineId, (packet) => {
-    if (ws.readyState !== WebSocket.OPEN) return
-    try { ws.send(packet) } catch { /* ignore */ }
+    // Terminal input toward the adapter is 'must': dropping keystrokes is not recoverable client-side.
+    guardedSend(ws, packet, 'must', { machineId, kind: 'adapter' })
   })
 
   // Liveness. The previous implementation pinged every 25 s and terminated on a single missed PONG —

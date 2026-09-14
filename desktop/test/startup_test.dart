@@ -11,6 +11,7 @@ import 'package:harness/shared/theme/appearance_prefs_store.dart';
 import 'package:harness/shared/theme/color_palette.dart';
 import 'package:harness/stats/harness_stats.dart';
 import 'package:harness/terminal/terminal_font_store.dart';
+import 'package:harness/terminal/terminal_theme_store.dart';
 import 'package:harness/terminal/terminal_typography.dart';
 
 class _GatedSettings extends Fake implements BatchLocalKeyValueStore {
@@ -40,6 +41,7 @@ void main() {
   late HarnessFileStore storage;
   late FileSnapshotStore statsStorage;
   late TerminalFontStore font;
+  late TerminalThemeStore scheme;
   late AppearancePrefsStore appearance;
   late HarnessStats stats;
 
@@ -48,12 +50,14 @@ void main() {
     storage = HarnessFileStore(directory: Directory('${dir.path}/settings'));
     statsStorage = FileSnapshotStore('stats', directory: dir);
     font = TerminalFontStore(storage: storage);
+    scheme = TerminalThemeStore(storage: storage);
     appearance = AppearancePrefsStore(storage: storage);
     stats = HarnessStats(store: statsStorage);
   });
 
   tearDown(() async {
     font.dispose();
+    scheme.dispose();
     appearance.dispose();
     stats.dispose();
     await dir.delete(recursive: true);
@@ -64,6 +68,7 @@ void main() {
     // Write through the real setters so the persisted formats are exercised.
     await font.setFamily(TerminalFontChoice.menlo);
     await font.setSize(17);
+    await scheme.set(TerminalThemeChoice.tango);
     await appearance.setUiFamily('Helvetica Neue');
     await appearance.setUiSize(16);
     await appearance.setPalette(HarnessPalette.forest);
@@ -78,21 +83,25 @@ void main() {
 
     final reopened = HarnessFileStore(directory: storage.directory);
     final nextFont = TerminalFontStore(storage: reopened);
+    final nextScheme = TerminalThemeStore(storage: reopened);
     final nextAppearance = AppearancePrefsStore(storage: reopened);
     final nextStats = HarnessStats(
       store: FileSnapshotStore('stats', directory: dir),
     );
     addTearDown(nextFont.dispose);
+    addTearDown(nextScheme.dispose);
     addTearDown(nextAppearance.dispose);
     addTearDown(nextStats.dispose);
     await loadPersistedSettings(
       terminalFont: nextFont,
+      terminalTheme: nextScheme,
       appearance: nextAppearance,
       stats: nextStats,
     );
 
     expect(nextFont.family, TerminalFontChoice.menlo);
     expect(nextFont.size, 17);
+    expect(nextScheme.value, TerminalThemeChoice.tango);
     expect(
       nextAppearance.value,
       const AppearancePrefs(
@@ -110,11 +119,13 @@ void main() {
   test('a first launch restores defaults from empty isolated stores', () async {
     await loadPersistedSettings(
       terminalFont: font,
+      terminalTheme: scheme,
       appearance: appearance,
       stats: stats,
     );
     expect(font.family, TerminalFontChoice.defaultForPlatform);
     expect(font.size, terminalFontSize);
+    expect(scheme.value, TerminalThemeChoice.fallback);
     expect(appearance.value, const AppearancePrefs());
     expect(stats.summary.isEmpty, isTrue);
     expect(await storage.stateFile.exists(), isFalse);
@@ -125,23 +136,30 @@ void main() {
     'independent loads overlap but readiness waits for every store',
     () async {
       final fontStorage = _GatedSettings();
+      final schemeStorage = _GatedSettings();
       final appearanceStorage = _GatedSettings();
       final counters = _GatedSnapshot();
       final font = TerminalFontStore(storage: fontStorage);
+      final scheme = TerminalThemeStore(storage: schemeStorage);
       final appearance = AppearancePrefsStore(storage: appearanceStorage);
       final stats = HarnessStats(store: counters);
       addTearDown(font.dispose);
+      addTearDown(scheme.dispose);
       addTearDown(appearance.dispose);
       addTearDown(stats.dispose);
       var finished = false;
       final loading = loadPersistedSettings(
         terminalFont: font,
+        terminalTheme: scheme,
         appearance: appearance,
         stats: stats,
       ).then((_) => finished = true);
 
       expect(fontStorage.requests, [
         {'terminal_font_family', 'terminal_font_size'},
+      ]);
+      expect(schemeStorage.requests, [
+        {'terminal_theme'},
       ]);
       expect(appearanceStorage.requests, [
         {'app_ui_font_family', 'app_ui_font_size', 'app_color_palette'},
@@ -165,6 +183,11 @@ void main() {
       await Future<void>.delayed(Duration.zero);
       expect(font.family, TerminalFontChoice.menlo);
       expect(font.size, 17);
+      expect(finished, isFalse);
+
+      schemeStorage.ready.complete({'terminal_theme': 'tango'});
+      await Future<void>.delayed(Duration.zero);
+      expect(scheme.value, TerminalThemeChoice.tango);
       expect(
         finished,
         isFalse,
@@ -183,14 +206,17 @@ void main() {
     final broken = _GatedSettings();
     final counters = _GatedSnapshot();
     final font = TerminalFontStore(storage: broken);
+    final scheme = TerminalThemeStore(storage: broken);
     final appearance = AppearancePrefsStore(storage: broken);
     final stats = HarnessStats(store: counters);
     addTearDown(font.dispose);
+    addTearDown(scheme.dispose);
     addTearDown(appearance.dispose);
     addTearDown(stats.dispose);
     var finished = false;
     final loading = loadPersistedSettings(
       terminalFont: font,
+      terminalTheme: scheme,
       appearance: appearance,
       stats: stats,
     ).then((_) => finished = true);
@@ -198,6 +224,7 @@ void main() {
     await Future<void>.delayed(Duration.zero);
     expect(finished, isFalse);
     expect(font.family, TerminalFontChoice.defaultForPlatform);
+    expect(scheme.value, TerminalThemeChoice.fallback);
     expect(appearance.value, const AppearancePrefs());
     counters.ready.complete(jsonEncode({'version': 1, 'agentsSpawned': 5}));
     await loading;

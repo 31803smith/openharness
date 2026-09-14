@@ -8,7 +8,7 @@ import '../state/app_state.dart';
 
 /// What the overflow menu can run when the strip is too narrow to show the
 /// actions as buttons.
-enum _StripAction { newSwarm, search, newAgent }
+enum _StripAction { newSwarm, navigate, settings }
 
 /// The swarm tabs, and the shell's global actions beside them.
 ///
@@ -25,8 +25,8 @@ enum _StripAction { newSwarm, search, newAgent }
 ///  * A tab shrinks, from [maxTabWidth] down to [minTabWidth], before the strip
 ///    starts scrolling. A window with room for full-width tabs is laid out
 ///    exactly as it was, so nothing changes on the size this was drawn for.
-///  * At [WindowSizeClass.compact] the three actions that are only shortcuts
-///    for something reachable elsewhere fold into one overflow button.
+///  * At [WindowSizeClass.compact] the actions that are only shortcuts for
+///    something reachable elsewhere fold into one overflow button.
 ///    Notifications stays out, because its badge is the only part of this strip
 ///    that carries state the user cannot see anywhere else.
 class SwarmTabStrip extends StatelessWidget {
@@ -35,9 +35,9 @@ class SwarmTabStrip extends StatelessWidget {
     required this.notifier,
     required this.attention,
     required this.onRename,
-    required this.onSearch,
-    required this.onNewAgent,
+    required this.onNavigate,
     required this.onNotifications,
+    required this.onSettings,
   });
 
   /// Unchanged by width — only what sits in the strip moves, never its height.
@@ -53,9 +53,9 @@ class SwarmTabStrip extends StatelessWidget {
   final AppNotifier notifier;
   final int attention;
   final ValueChanged<String> onRename;
-  final VoidCallback onSearch;
-  final VoidCallback onNewAgent;
+  final VoidCallback onNavigate;
   final VoidCallback onNotifications;
+  final VoidCallback onSettings;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -159,21 +159,11 @@ class SwarmTabStrip extends StatelessWidget {
         key: const ValueKey('swarm-search-button'),
         tooltip: withEffectiveShortcutHint(
           context,
-          'Search',
+          'Navigate',
           ShortcutAction.switchAgent,
         ),
-        onPressed: onSearch,
-        icon: const Icon(Icons.search, size: 20),
-      ),
-      IconButton(
-        key: const ValueKey('swarm-new-agent-button'),
-        tooltip: withEffectiveShortcutHint(
-          context,
-          'New agent',
-          ShortcutAction.newAgent,
-        ),
-        onPressed: onNewAgent,
-        icon: const Icon(Icons.add, size: 20),
+        onPressed: onNavigate,
+        icon: const Icon(Icons.explore_outlined, size: 20),
       ),
     ],
     IconButton(
@@ -189,6 +179,21 @@ class SwarmTabStrip extends StatelessWidget {
         child: const Icon(Icons.notifications_none, size: 20),
       ),
     ),
+    // Last, after the ones that act on THIS swarm. Settings is the one action
+    // here that leaves the swarm behind, so it keeps the edge rather than
+    // sitting among them — and it folds away with the rest, since the overflow
+    // menu carries it too and two ways to the same screen is one too many.
+    if (!size.isCompact)
+      IconButton(
+        key: const ValueKey('swarm-settings-button'),
+        tooltip: withEffectiveShortcutHint(
+          context,
+          'Settings',
+          ShortcutAction.showSettings,
+        ),
+        onPressed: onSettings,
+        icon: const Icon(Icons.settings_outlined, size: 20),
+      ),
     if (size.isCompact) _overflow(),
   ];
 
@@ -204,22 +209,22 @@ class SwarmTabStrip extends StatelessWidget {
         child: const Text('New swarm'),
       ),
       const PopupMenuItem(
-        value: _StripAction.search,
-        child: Text('Search'),
+        value: _StripAction.navigate,
+        child: Text('Navigate'),
       ),
       const PopupMenuItem(
-        value: _StripAction.newAgent,
-        child: Text('New agent'),
+        value: _StripAction.settings,
+        child: Text('Settings'),
       ),
     ],
     onSelected: (action) {
       switch (action) {
         case _StripAction.newSwarm:
           notifier.newSwarm();
-        case _StripAction.search:
-          onSearch();
-        case _StripAction.newAgent:
-          onNewAgent();
+        case _StripAction.navigate:
+          onNavigate();
+        case _StripAction.settings:
+          onSettings();
       }
     },
   );

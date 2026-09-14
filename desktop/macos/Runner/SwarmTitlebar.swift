@@ -92,7 +92,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
   }
 
   private func sendTabAction(_ method: String, arguments: Any?) {
-    guard ["select", "close", "new", "rename", "jump", "commands", "notifications", "newAgent", "splitRight", "splitDown", "zoomPane", "pinPane"].contains(method) else {
+    guard ["select", "close", "new", "rename", "jump", "commands", "notifications", "addAgent", "newAgent", "splitRight", "splitDown", "zoomPane", "pinPane"].contains(method) else {
       channel.invokeMethod(method, arguments: arguments)
       return
     }
@@ -111,9 +111,11 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
   private func setKeymap(_ map: HarnessNativeKeymap) {
     keymap = map
     let hint = map.hint(for: "navigation.quick_open", context: "workspace")
-    strip.searchButton.toolTip = hint.map { "Search (\($0))" } ?? "Search"
-    let newHint = map.hint(for: "agent.new", context: "workspace")
-    strip.newAgentButton.toolTip = newHint.map { "New agent (\($0))" } ?? "New agent"
+    strip.searchButton.toolTip = hint.map { "Navigate (\($0))" } ?? "Navigate"
+    // The ⌘, baked into the button at construction is only the factory binding;
+    // once a keymap arrives the tooltip has to say what THIS user's key is.
+    let settingsHint = map.hint(for: "app.settings", context: "workspace")
+    strip.settingsButton.toolTip = settingsHint.map { "Settings (\($0))" } ?? "Settings"
     if let main = NSApp.mainMenu, let window {
       let menu = main as? HarnessKeymapMenu ?? HarnessKeymapMenu.replacing(main)
       if NSApp.mainMenu !== menu { NSApp.mainMenu = menu }
@@ -207,7 +209,8 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     add(swarm, "Add Project…", "", "addProject")
     install(swarm, at: 1)
     let agent = NSMenu(title: "Agent")
-    add(agent, "New Agent…", "n", "newAgent")
+    add(agent, "Add Agent…", "n", "addAgent")
+    add(agent, "New Agent…", "n", "newAgent", [.command, .shift])
     agent.addItem(.separator())
     add(agent, "Split Right…", "", "splitRight")
     add(agent, "Split Down…", "", "splitDown")
@@ -219,13 +222,12 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     install(agent, at: 2)
 
     rebuildHistoryMenu()
-    let windowIndex = main.items.firstIndex(where: { $0.title == "Window" }) ?? main.numberOfItems
-    install(historyMenu, at: windowIndex)
+    install(historyMenu, at: 3)
 
     // Native menu hints mirror Flutter; the shared picker owns all editing.
     if let edit = main.item(withTitle: "Edit")?.submenu {
       edit.addItem(.separator())
-      add(edit, "Search Agents and Swarms…", "p", "jump")
+      add(edit, "Navigate to Agent or Swarm…", "p", "jump")
       add(edit, "Search Commands…", "p", "commands", [.command, .shift])
     }
     if let view = main.item(withTitle: "View")?.submenu {
@@ -235,7 +237,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     modelsMenu.autoenablesItems = false
     modelsMenu.delegate = self
     rebuildModelsMenu()
-    install(modelsMenu, at: windowIndex + 1)
+    install(modelsMenu, at: 3)
     installTerminalFindMenu(main)
   }
 
@@ -662,8 +664,8 @@ private final class SwarmTabStrip: NSView {
   private let document = NSView()
   private let newButton = NSButton()
   fileprivate let searchButton = NSButton()
-  fileprivate let newAgentButton = NSButton()
   fileprivate let notificationButton = SwarmNotificationButton()
+  fileprivate let settingsButton = NSButton()
   private var tabs: [SwarmTabButton] = []
   private var activeId = ""
   private var revealActiveAfterLayout = false
@@ -694,14 +696,13 @@ private final class SwarmTabStrip: NSView {
     }
     button(newButton, "plus", "New swarm (⌘T)", #selector(newSwarm))
     newButton.isEnabled = false
-    button(searchButton, "magnifyingglass", "Search (⌘P)", #selector(openSearch))
-    button(newAgentButton, "plus", "New agent (⌘N)", #selector(newAgent))
-    newAgentButton.imagePosition = .imageOnly
-    newAgentButton.setAccessibilityLabel("New agent")
-    newAgentButton.isEnabled = false
+    button(searchButton, "safari", "Navigate (⌘P)", #selector(openSearch))
+    searchButton.setAccessibilityLabel("Navigate")
     button(notificationButton, "bell", "Notifications", #selector(openNotifications))
+    button(settingsButton, "gearshape", "Settings (⌘,)", #selector(openSettings))
     searchButton.isEnabled = false
     notificationButton.isEnabled = false
+    settingsButton.isEnabled = false
     registerForDraggedTypes([swarmPasteboardType])
   }
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -711,8 +712,8 @@ private final class SwarmTabStrip: NSView {
     guard nextPalette != palette else { return }
     palette = nextPalette
     searchButton.contentTintColor = palette.accent
-    newAgentButton.contentTintColor = palette.accent
     notificationButton.contentTintColor = palette.accent
+    settingsButton.contentTintColor = palette.accent
     newButton.contentTintColor = palette.accent
     for tab in tabs { tab.palette = palette }
     needsDisplay = true
@@ -754,8 +755,8 @@ private final class SwarmTabStrip: NSView {
     document.setAccessibilityChildren(tabs)
     newButton.isEnabled = actionsEnabled && tabs.count < 24
     searchButton.isEnabled = actionsEnabled
-    newAgentButton.isEnabled = actionsEnabled
     notificationButton.isEnabled = actionsEnabled
+    settingsButton.isEnabled = actionsEnabled
     let attention = state["attention"] as? Int ?? 0
     notificationButton.hasAttention = attention > 0
     notificationButton.toolTip = attention > 0 ? "\(attention) agents need input" : "Notifications"
@@ -781,6 +782,9 @@ private final class SwarmTabStrip: NSView {
     let activeWasVisible = active.map { scroll.documentVisibleRect.intersects($0.frame) } ?? false
     let previousScrollSize = scroll.frame.size
     let previousDocumentSize = document.frame.size
+    // 164, not 124: the right-hand controls are three buttons on a 40pt pitch
+    // now, and this is what keeps the tab scroller from sliding under them. A
+    // button added below without widening this is a tab clipped by a gear.
     let available = max(132, bounds.width - 164)
     let width = min(220, max(132, available / CGFloat(max(1, tabs.count))))
     let occupied = min(available, CGFloat(tabs.count) * width)
@@ -793,8 +797,8 @@ private final class SwarmTabStrip: NSView {
     let buttonY = (bounds.height - 28) / 2
     newButton.frame = NSRect(x: occupied + 4, y: buttonY, width: 28, height: 28)
     searchButton.frame = NSRect(x: bounds.width - 120, y: buttonY, width: 28, height: 28)
-    newAgentButton.frame = NSRect(x: bounds.width - 80, y: buttonY, width: 28, height: 28)
-    notificationButton.frame = NSRect(x: bounds.width - 40, y: buttonY, width: 28, height: 28)
+    notificationButton.frame = NSRect(x: bounds.width - 80, y: buttonY, width: 28, height: 28)
+    settingsButton.frame = NSRect(x: bounds.width - 40, y: buttonY, width: 28, height: 28)
     let geometryChanged = scroll.frame.size != previousScrollSize || document.frame.size != previousDocumentSize
     if let active, revealActiveAfterLayout || (activeWasVisible && (geometryChanged || tabOrderChanged)) {
       document.scrollToVisible(active.frame)
@@ -823,10 +827,16 @@ private final class SwarmTabStrip: NSView {
     if actionsEnabled { emit?("notifications", nil) }
   }
 
-  @objc private func newAgent() {
-    guard actionsEnabled else { return }
-    emit?("newAgent", nil)
+  // "settings" deliberately stays OUT of sendTabAction's focus-restore list,
+  // unlike its neighbours here. Flutter's `case 'settings'` AWAITS the whole
+  // Settings screen, so the acknowledgement this button waits on would not
+  // arrive until Settings closed — and the responder it then grabbed would be
+  // taken from whatever the user had moved on to. The app menu's ⌘, has always
+  // used this same plain path.
+  @objc private func openSettings() {
+    if actionsEnabled { emit?("settings", nil) }
   }
+
 
   private func draggedTab(_ sender: NSDraggingInfo) -> SwarmTabButton? {
     guard actionsEnabled, sender.draggingSourceOperationMask.contains(.move),

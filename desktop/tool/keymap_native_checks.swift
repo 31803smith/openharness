@@ -37,8 +37,8 @@ try checkKeymap(changed.match([stroke("down")], context: "picker").binding == ni
   "Picker unbinding removes the original arrow action")
 try checkKeymap(changed.match([stroke("ctrl+j")], context: "picker").binding?.command == "picker.previous",
   "Picker remapping wins")
-try checkKeymap(defaults.match([stroke("cmd+i")], context: "picker").binding?.command == "picker.preview",
-  "The shipped optional-preview shortcut joins the catalog")
+try checkKeymap(defaults.match([stroke("cmd+i")], context: "picker").binding == nil,
+  "Always-on preview does not consume a hide-preview shortcut")
 
 let dispatcher = HarnessNativeKeyDispatch(changed)
 let field = NSObject(), otherField = NSObject()

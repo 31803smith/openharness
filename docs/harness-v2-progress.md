@@ -1,10 +1,169 @@
 # Harness App V2 — development handoff
 
-Updated 2026-09-13 for transfer to another computer/session. This is a working preview, not a release.
+Updated 2026-09-14 after integrating the continuation into main. This is a working preview, not a release.
 
 **Resume with [Harness v2: goal, plan, and continuation handoff](harness-v2-handoff.md).** It records the latest approved design, acceptance criteria, next-work order, and portable drafts. The checkpoints below are historical; the current handoff supersedes their conflicting toolbar, picker, preview, menu, and onboarding directions.
 
-## Cross-computer checkpoint
+## Continue directly on main
+
+- Improved Add's arrow-key frame work by reusing unchanged result rows and
+  leaving the text editor alone when only the highlight changes. In the paired
+  2,000-agent headless fixture, arrow selection median fell 8.592 to 4.714 ms;
+  opening time did not improve. The full distributions and scope are in the
+  [performance record](harness-v2-performance.md). Fixed a reproduced case of a
+  background agent addition taking focus from the picker, while preserving
+  New agent cancellation focus. All **1,302 desktop tests** pass with one
+  existing skip; analysis has zero errors/warnings and 14 existing infos.
+  The normal macOS arm64 Release build succeeds. Test/analysis/build artifacts
+  use `/private/tmp/harness-add-render-*.log`; no running app was restarted.
+  Saved as `e71e0ca`, then preserved the team's `cdb876e` update-flag cleanup in
+  merge `56143bd`. Integrated tests still pass all 1,302 with one skip, and
+  analysis remains at zero errors/warnings and 14 existing infos. The combined
+  Release build succeeds too; logs:
+  `/private/tmp/harness-add-render-integrated-{tests,analyze,build}.log`.
+- `fe42f2e` repairs the isolated native benchmark for the team's public bundle
+  identity change. Nine isolation checks pass and the disposable Release
+  fixture builds. Its runner correctly refuses the running workspace preview;
+  native latency remains unmeasured. `56f9d2a` preserves the team's concurrent
+  `9e2e4be` branding/update changes. A brief preview-close calibration request
+  is pending; no running app or real agent has been stopped for these checks.
+- Saved the Add/shortcut checkpoint as `5f3ecae`, then merged the team's
+  current main through `76a469b` as `f514140`. The merge was clean and preserves
+  its Settings toolbar button, independent terminal schemes, dial changes,
+  error messages and public bundle-name cleanup. All **1,299 desktop tests**
+  pass after integration, with one existing skip. Analysis remains at zero
+  errors/warnings and 14 existing infos; 51 decoder and 347 native AppKit
+  checks pass against the combined sources. Logs:
+  `/private/tmp/harness-revised-add-integrated-{tests,analyze,native}.log`.
+  The integrated macOS arm64 Release build also succeeds with the renamed
+  bundle ID (`/private/tmp/harness-revised-add-integrated-build.log`). The app
+  was not restarted; real native timing/reconnect qualification remains open.
+- Corrected Navigate's hierarchy: each swarm appears once as a selectable
+  parent, with matching agents indented below it. Agent-only queries retain
+  their swarm context and keep the best matching agent selected for Enter.
+  Empty swarms appear once. Removed the 68px pane inset that reserved a footer
+  for the floating +; panes now use the normal 10px edge spacing beneath it.
+  All 33 affected navigation/Add/focus tests pass.
+- The user chose instant first-agent startup after reconsidering a draft-list
+  flow. Welcome search/Enter and suggestions open one agent directly; there is
+  no Create swarm step. Machines/projects stay visible as one-click starters.
+  Shared Add now supports optional checkboxes/Shift+Enter across queries,
+  removable selected-agent chips, and Add N agents. Whole-selection validation
+  rejects stale members or insufficient capacity before adding any membership;
+  source swarms and retained sessions stay intact. Splits choose one agent.
+- The user's latest shortcut choice is **Cmd-N for Add**, with **Shift-Cmd-N
+  for fresh New agent** and Cmd-P unchanged for Navigate. The filled + New agent
+  button is beside Add's search field. Only the highlighted result shows its
+  action/Return hint. The floating + overlays the panes, now 28px from both
+  bottom and right edges; its tooltip shows the resolved Add shortcut.
+- Full desktop checks: **1,295 passed, one existing skip**. Analyzer: zero
+  errors/warnings, 14 existing informational diagnostics. Synthetic real-font
+  captures of the starters, Add, optional multi-select and Navigate were
+  reviewed at 1280×800 and 880×560 with 2× text. Fresh five-pane/latest-output
+  regressions pass, including delayed snapshots. These are not native display
+  latency or real remote reconnect measurements.
+- Native validation passes 51 keymap decoder and 347 AppKit assertions with
+  the resolved Dart binding payload. The normal arm64 macOS Release build
+  succeeds. No running-app restart was needed or performed. Logs:
+  `/private/tmp/harness-revised-add-{full-tests-final,analyze-final,keymap-native,release-build}.log`.
+- The user confirms the current menu and Navigate changes are visible. No
+  further app restart or inspection is needed for that confirmation.
+- History focus updates now skip formatting unopened agents. A failing-before
+  regression passes; 39 affected tests, all seven expanded benchmark cases,
+  analysis (zero errors/warnings) and the arm64 Release build pass. History
+  snapshot CPU median fell 1.863 to 0.334 ms in the 2,000-agent fixture.
+  Full paired timings, including variable/worse fallback-tab tails, are in
+  [the performance record](harness-v2-performance.md). Native latency is still
+  unmeasured.
+- The user now wants all subsequent work, commits and pushes on **main**.
+  This supersedes the earlier fresh-feature-branch workflow. Only consolidate
+  this user's own branches; other contributors' branches and PRs are excluded.
+- PR #31 had merged the original app-v2 checkpoint, but the six newer
+  navigation, onboarding and performance commits were still on swarm-onboarding.
+  Merged them into main as `ccd1f35`, preserved the team's concurrent `4b2f783`
+  update in `fd3ced0`, and pushed normally. GitHub marks PR #34 merged.
+- Verified the pushed main contains the exact continuation tip `23d511e`,
+  deleted swarm-onboarding remotely with an exact-tip lease, and removed its
+  merged local branch. The only local branch is main. No teammate branch or
+  separate PR was merged or deleted. The author's remaining remote history and
+  the account's PRs contain no additional unmerged work.
+- Performance investigation remains active. An earlier rebuild trace reproduced
+  620/964 widget rebuilds per focus change with 16/48 retained terminals and
+  identified fallback tab-button work in those totals. The paired follow-up
+  separated native/fallback tab configurations and led to the History snapshot
+  improvement above; the performance record retains the variable fallback tails.
+  Trace source/log: `/private/tmp/harness-swarm-rebuild-trace.{dart,log}`.
+  The diagnostic source is outside the repository; generated Vite caches are
+  now ignored alongside other build caches.
+
+## Common empty-swarm onboarding continuation (previous checkpoint)
+
+- Repaired the saved native benchmark for current Harness branding, bundle-ID
+  preflight and the production Flutter-controller focus target. Six Python
+  isolation checks pass and the disposable arm64 Release fixture builds.
+  The real runner refuses the still-running workspace preview and writes no
+  timing result. Native latency remains unmeasured; details are in the
+  [performance record](harness-v2-performance.md).
+- GitHub verification found PR #31 merged at `cb24361`, with `744c1fe` as its
+  app-v2 head. The later Navigate/Add commits were not in that merge. Saved the
+  onboarding work as `e122b63`, created **swarm-onboarding** from updated main
+  (`0b9ac72`), and carried the full unmerged continuation forward in `a2888ef`.
+  Newer main/device changes are retained. Continue on the fresh branch.
+- Pushed the continuation and opened draft [PR #34](https://github.com/autonomous-ai/autonomous-harness/pull/34).
+  Confirmed the pushed branch contains all old app-v2 commits and no old-branch
+  PR remains open, then deleted app-v2 remotely with an exact-tip lease and
+  locally. The branch lifecycle follows the user's requested practice.
+- After integration with updated main, **1,271 desktop tests passed with one
+  existing skip**. Analyzer reports zero errors/warnings and 14 informational
+  diagnostics (12 vendored, two inherited from main). Logs:
+  `/private/tmp/harness-onboarding-main-{tests,analyze}.log`.
+- The current five-case CPU benchmark passed after all builds/tests finished.
+  Navigate catalog: 0.188 ms median / 0.259 ms p95; Add's 2,000-agent query:
+  0.959 / 1.005 ms. Tab/frame pump: 13.056 / 20.293 ms for 16 terminals and
+  10.426 / 11.991 ms for 48. The 16-terminal p99 was 30.776 ms; retain that
+  slower tail. These headless observations do not measure native display
+  latency. Full scope/raw log are in the performance record.
+- One start page serves every empty swarm. With no existing work it leads with
+  **Start with one agent**, a static side-by-side example, **Choose folder…** and
+  separate **Clone repository…**. With existing work it offers shared Add search,
+  three direct agent choices and New agent. Saved projects stay visible, while
+  Browse reveals the full machine/project catalog.
+- A usable local computer retains the direct folder path even if another
+  computer is offline. New agent skips the Machine dropdown for a single usable
+  local target. Offline/linking/loading states offer their next action. The
+  form now uses the darker shared modal veil; the welcome surfaces need no
+  backdrop filters, and the layout stacks with larger text.
+- A regression caught Enter doing nothing when first discovery finished after
+  the initial disabled action. The newly enabled action now receives default
+  focus in the welcome scope, while an explicit focus on another control wins.
+  Tests also cover offline retry, saved-project routing/visibility in later
+  tabs, clone cancellation and the existing creation/recovery paths.
+- **1,262 desktop tests passed, one existing skip**; analyzer: zero errors or
+  warnings, 12 existing vendored infos. Actual screen/form renders with real
+  fonts were reviewed at 1280×800 and 880×560 with 2× text. Logs:
+  `/private/tmp/harness-onboarding-{full-tests-final,analyze-clean}.log`.
+- The [onboarding notes](harness-v2-appearance-onboarding.md) record the source
+  research, current behavior and remaining qualification. The archived welcome
+  draft is superseded. Real first-install/provider sign-in, time to useful work,
+  native event-to-display latency and remote reconnect remain unverified.
+- The macOS arm64 Release build succeeded with the normal `lib/main.dart`
+  target (`/private/tmp/harness-onboarding-release-build.log`). Exact-path native
+  capture still returns `cgWindowNotFound`; the new binary has not been confirmed
+  loaded in the running preview. No native visual or latency result is claimed.
+- The integrated fresh branch also has a successful Release build:
+  `/private/tmp/harness-onboarding-main-release-build.log`.
+
+## Navigate and Add agent continuation (previous checkpoint)
+
+- Implemented distinct UIs: a compact compass/Navigate directory lists every existing swarm location for a matching agent; New swarm, bottom-right floating +, and both splits share Add results with an always-on preview and New agent action. Navigate does not mutate membership. Add reuses the session and preserves source swarms, avoids duplicates, and keeps the chosen split position.
+- Every empty swarm now offers the same existing-agent suggestions, including after closing earlier swarms. Removed the first-use-only gate and “Go to an agent” heading. Broader onboarding simplification remains next work.
+- Cleaner bounded previews join wrapped prose, remove separator/recap decorations, and use a reading card. Removed the eye toggle, darkened shared modal veils, removed the top-right New agent +, and reordered native menus. Cmd-N and customized picker keys retain their behavior; entering/leaving command mode keeps the editor mounted to avoid losing the very next key.
+- Native checks: 51 keyboard decoder + 344 AppKit assertions. Desktop: **1,256 passed, one existing skip**; analyzer: zero errors/warnings, 12 existing vendored infos. Synthetic real-font renders reviewed at 1280×800 and 880×560. Logs: `/private/tmp/harness-two-pickers-{full-tests-final,analyze-clean,native,visual-final}.log`.
+- Avoided building unused agent/project metadata for Navigate and allocating membership sets for every Add candidate. Navigation catalog setup measured 4.095 → 0.194 ms median for 50 agent locations across 12 swarms. Add's 2,000-agent query measured 1.025 ms median / 1.083 ms p95. See [performance measurements and limits](harness-v2-performance.md); these are headless CPU observations, not native keypress-to-screen latency.
+- Pushed implementation checkpoint **`2d3c024`** to `app-v2`. Its macOS Release build succeeded, the prior workspace preview was quit normally, and the rebuilt bundle was verified running as PID 15377. Computer Use's exact-path capture returned `cgWindowNotFound`; bundle-ID lookup is ambiguous with an old Debug copy. Native visual/latency review remains unverified. Build log: `/private/tmp/harness-two-pickers-release-build.log`.
+- The archived picker draft is superseded; do not reapply it. Its onboarding companion remains unapplied. Next: improve genuine first use and qualify native responsiveness plus local/remote reconnect workflows. Draft PR #31 remains draft.
+
+## Cross-computer checkpoint (historical)
 
 - Saved `26a372e`: preserve captured terminal rows until the remote resized keyframe, avoiding deletion of the latest output when a tall TUI enters a smaller pane. Fresh five-pane and delayed-snapshot regressions reach the bottom; revisited scrolled views retain their place. The user's exact live screenshot still needs rechecking.
 - Also committed the existing first-agent naming work: default empty New swarms adopt the first agent's name, preserving custom names and close/reopen behavior.
@@ -574,7 +733,7 @@ npx vitest run src/lib/agentFrame.spec.ts src/lib/agentProject.spec.ts
 
 Some tests require permission to bind disposable loopback sockets. Inject memory/temp stores, skip real credential/usage pollers using `kUnderTest`, and never treat a real Harness home as a fixture. Keep patched `desktop/third_party/xterm`, not pub.dev xterm.
 
-The real review app uses `/Users/ab/code/autonomous-harness/desktop/build/macos/Build/Products/Release/Harness.app`, with the separate V2 bundle identity and saved V2 state. Its previous optimized local build was launched and verified running; the handoff's latest terminal change has not been rebuilt into that preview. Production Harness remains separate. Never automatically take over its terminals or use a real Harness home as a test fixture.
+The real review app uses `/Users/ab/code/autonomous-harness/desktop/build/macos/Build/Products/Release/Harness.app`, with the separate V2 bundle identity and saved V2 state. The Release build at `2d3c024`, including the terminal and Navigate/Add changes, was launched and its process verified running. Live window inspection remains unverified. Production Harness remains separate. Never automatically take over its terminals or use a real Harness home as a test fixture.
 
 ## Publishing boundaries
 

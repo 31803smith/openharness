@@ -29,6 +29,14 @@ describe('deskRing', () => {
     expect(ring.offRing).toEqual([])
   })
 
+  it('walks NOTHING when a present window says its desk is empty', () => {
+    // A fresh swarm has no panes. The window is there and describing it, so an empty carousel is the
+    // truth — the agents stay counted and listed, they are simply not what was chosen to look at.
+    const ring = deskRing(FLAT, [], true)
+    expect(ring.order).toEqual([])
+    expect(ring.offRing).toEqual(FLAT)
+  })
+
   it('ignores tiles this daemon has never heard of', () => {
     // A tile can name an agent on a machine that has gone quiet. The ring is no place to learn that,
     // and a walk that stepped onto an id nothing can be looked up by lands on a blank tile.

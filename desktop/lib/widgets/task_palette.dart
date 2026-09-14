@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import '../core/models.dart';
 import '../shared/theme/app_theme.dart' as grid;
+import '../shared/widgets/app_dialog.dart';
 import '../state/app_state.dart';
 import 'engine_identity.dart';
 
@@ -113,7 +114,7 @@ abstract final class _D {
   static const innerLight = Color(0x0FFFFFFF);
 
   /// The veil.
-  static const veil = Color(0xBD000000); // rgba(0,0,0,.74)
+  static const veil = kDialogVeilTint;
   static const veilBlur = 3.0;
 
   /// ABOVE the middle, deliberately: the list grows downwards, and a box pinned to the centre would

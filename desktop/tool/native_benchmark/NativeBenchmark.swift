@@ -28,10 +28,19 @@ private enum NativeBenchmark {
           "os": ProcessInfo.processInfo.operatingSystemVersionString,
         ])
       case "begin":
-        guard window.isKeyWindow, NSApp.isActive,
-              let view = window.contentViewController?.view,
-              window.makeFirstResponder(view) else {
-          result(FlutterError(code: "inactive", message: "Benchmark content must own initial focus", details: nil))
+        guard window.isKeyWindow, NSApp.isActive else {
+          result(FlutterError(code: "inactive", message: "Benchmark window must be active and key", details: [
+            "key": window.isKeyWindow,
+            "active": NSApp.isActive,
+            "visible": window.isVisible,
+          ]))
+          return
+        }
+        // Match the production titlebar's responder. The Flutter controller
+        // accepts keyboard focus; its wrapper NSView may reject it.
+        guard let controller = window.contentViewController as? FlutterViewController,
+              window.makeFirstResponder(controller) else {
+          result(FlutterError(code: "focus", message: "Flutter controller must own initial focus", details: nil))
           return
         }
         // Once, after the synthetic UI is mounted. Never reset native or Dart

@@ -1253,9 +1253,22 @@ async function fallbackRegister(input, engine, tmuxPane) {
     const agentId = typeof existing?.agentId === 'string' && existing.agentId ? existing.agentId : randomUUID()
     const runtimes = mergeRuntimes(existing?.runtimes, observedRuntimes)
     const tmuxProjection = runtimes.find((runtime) => runtime.backend === 'tmux')?.paneId || ''
+    // What the daemon chose for this agent at launch and cannot re-derive from the process — the
+    // grid launch (credential included), the Codex profile, the bypass flag, the observed grid and
+    // gateway — is carried forward exactly as `registry.register()` does. A hook arriving while the
+    // daemon is down must not be the one write that strips the row of them. `launch` is not: like
+    // there, a hook means the engine is up, whatever the launch was.
+    const carried = {
+      gateway: existing?.gateway === 'ori' ? 'ori' : null,
+      grid: existing?.grid ?? null,
+      ...(existing && Object.hasOwn(existing, 'gridLaunch') ? { gridLaunch: existing.gridLaunch ?? null } : {}),
+      codexHome: typeof existing?.codexHome === 'string' && existing.codexHome ? existing.codexHome : null,
+      ...(existing?.bypassPermission === true ? { bypassPermission: true } : {}),
+    }
     const entry = {
       schemaVersion: 2,
       active: true,
+      ...carried,
       agentId,
       sessionId,
       engine,

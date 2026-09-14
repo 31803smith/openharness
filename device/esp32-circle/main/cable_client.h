@@ -128,6 +128,24 @@ void cable_client_select_machine(const char *machine_id);
 // against, and what a select of the local row sends.
 const char *cable_client_machine_id(void);
 
+// ── swarms ──────────────────────────────────────────────────────────────────────────────────────────
+// The window's swarms: named groups of agents, one of them on screen. The daemon relays the whole list
+// in one `swarms` frame whenever it changes, and relays a pick back to the window — which switches, and
+// re-describes its desk. The dial never answers a swarm frame; the next `swarms` + agent list IS the
+// answer. No window → an empty list, and the tile draws no swarm line.
+#define SWARM_ID_MAX 32
+#define SWARMS_MAX   24   // the window's own ceiling (AppNotifier.maxSwarms)
+typedef struct {
+    char id[SWARM_ID_MAX];
+    char name[NAME_MAX];
+    int  agents;          // how many agents it holds — drawn as a count, never as members
+} cable_swarm_t;
+
+// The user tapped a swarm. Not answered — see above.
+void cable_client_select_swarm(const char *swarm_id);
+// Re-ask for the list (a screen that just opened wants it fresh).
+void cable_client_list_swarms(void);
+
 // Send what the user asked for, into `agent_id`. Fire-and-forget: everything after this arrives back as
 // `turn.started` / `turn.done`, or as `turn.error` in words a person can act on.
 void cable_client_send_turn(const char *agent_id, const char *text);

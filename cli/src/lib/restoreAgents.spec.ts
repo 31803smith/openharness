@@ -1,7 +1,15 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { AgentLaunch, ProcessIdentity, RegisteredSession } from './registry.js'
 import type { TerminalRuntimeRef, TmuxRuntimeRef } from './terminalTypes.js'
-import { restoreAgents, type RestoreAgentsDeps, type RestoreLaunch } from './restoreAgents.js'
+import { GRID_CREDENTIAL_REQUIRED, restoreAgents, type RestoreAgentsDeps, type RestoreLaunch } from './restoreAgents.js'
+import type { GridLaunchOverride } from './gridLaunch.js'
+
+const GRID: GridLaunchOverride = {
+  networkId: 'grid-abc',
+  networkName: 'Team grid',
+  baseUrl: 'https://grid.example/grid-abc/relay/v1',
+  apiKey: 'gridkey-abc123',
+}
 
 const identity = (pid: number): ProcessIdentity => ({ pid, executable: 'claude', startMarker: `start ${pid}` })
 
@@ -38,6 +46,8 @@ interface Harness {
   calls: string[]
   rows: Map<string, RegisteredSession>
   launches: Array<{ agentId: string; resumeSessionId?: string }>
+  /** What createPane / respawn were handed, per agent — the env is where a grid's key travels. */
+  launched: Array<{ agentId: string; launch: RestoreLaunch }>
   /** Per-pane scripted answers for probeProcess; shifted on each call. */
   probes: Map<string, Array<ProcessIdentity | null>>
   states: Map<string, Array<{ dead: boolean } | null>>
@@ -48,11 +58,12 @@ interface Harness {
   released: string[]
 }
 
-function harness(rows: RegisteredSession[], opts: { livePanes?: string[]; failCreate?: boolean; budgetMs?: number; settleMs?: number } = {}): Harness {
+function harness(rows: RegisteredSession[], opts: { livePanes?: string[]; failCreate?: boolean; refuseLaunch?: boolean; budgetMs?: number; settleMs?: number } = {}): Harness {
   const h: Harness = {
     calls: [],
     rows: new Map(rows.map((r) => [r.agentId, r])),
     launches: [],
+    launched: [],
     probes: new Map(),
     states: new Map(),
     nextPane: ['%0', '%1', '%2'],
@@ -89,18 +100,31 @@ function harness(rows: RegisteredSession[], opts: { livePanes?: string[]; failCr
       inheritName: (from, to) => { note(`inheritName:${from}->${to}`) },
     },
     liveProcess: async (_entry, runtime) => live.has(runtime.paneId) ? identity(1000 + Number(runtime.paneId.slice(1))) : null,
-    buildLaunch: (entry, o) => {
+    buildLaunch: async (entry, o) => {
       h.launches.push({ agentId: entry.agentId, ...(o.resumeSessionId ? { resumeSessionId: o.resumeSessionId } : {}) })
-      const launch: RestoreLaunch = { argv: [entry.engine, ...(o.resumeSessionId ? ['--resume', o.resumeSessionId] : [])] }
+      if (opts.refuseLaunch) return { error: 'GRID_ENGINE_UNSUPPORTED', detail: 'no way to point it at a grid' }
+      // The shape cli.ts builds: a grid's env and argv when the row kept its launch, a profile's
+      // CODEX_HOME otherwise. Only the presence matters here; gridLaunch.ts specs the contents.
+      const grid = entry.gridLaunch
+      const launch: RestoreLaunch = {
+        argv: [entry.engine, ...(o.resumeSessionId ? ['--resume', o.resumeSessionId] : []), ...(grid ? ['--grid', grid.networkId] : [])],
+        ...(grid ? { env: { GRID_API_KEY: grid.apiKey } } : entry.codexHome ? { env: { CODEX_HOME: entry.codexHome } } : {}),
+      }
       return launch
     },
-    createPane: async (entry) => {
+    createPane: async (entry, launch) => {
       note(`createPane:${entry.agentId}`)
+      h.launched.push({ agentId: entry.agentId, launch })
       h.paneCreates++
       if (opts.failCreate) return { ok: false, reason: 'tmux said no' }
       return { ok: true, runtime: { backend: 'tmux', paneId: h.nextPane.shift() ?? '%99' } }
     },
-    respawn: async (runtime, launch) => { note(`respawn:${runtime.paneId}:${launch.argv.join(' ')}`); h.respawns++; return { ok: true } },
+    respawn: async (runtime, launch) => {
+      note(`respawn:${runtime.paneId}:${launch.argv.join(' ')}`)
+      h.launched.push({ agentId: 'respawn', launch })
+      h.respawns++
+      return { ok: true }
+    },
     probeProcess: async (runtime) => {
       const queue = h.probes.get(runtime.paneId) ?? []
       return queue.length ? queue.shift()! : null
@@ -179,17 +203,61 @@ describe('restoreAgents — which agents get a pane back', () => {
     expect(h.calls).toEqual([])
   })
 
-  it('skips herdr-only rows, failed launches and grid agents, saying why', async () => {
+  it('skips herdr-only rows and failed launches, saying why', async () => {
     const h = harness([
       row({ agentId: 'herdr', runtimes: [{ backend: 'herdr', sessionName: 's', paneId: 'p' } as unknown as TerminalRuntimeRef] }),
       row({ agentId: 'broken', launch: { state: 'failed', error: 'START_TIMEOUT' } }),
-      row({ agentId: 'gridded', grid: { baseUrl: 'https://grid.example/relay', model: null } }),
     ])
     const summary = await restoreAgents(h.deps)
     expect(summary.restored).toEqual([])
-    expect(summary.skipped.map((s) => s.agentId)).toEqual(['herdr', 'broken', 'gridded'])
-    expect(summary.skipped[2].reason).toMatch(/grid/)
+    expect(summary.skipped.map((s) => s.agentId)).toEqual(['herdr', 'broken'])
     expect(h.paneCreates).toBe(0)
+  })
+
+  it('puts a grid agent back on its grid, key and all, when the row kept its launch', async () => {
+    const h = harness([row({ agentId: 'gridded', grid: { baseUrl: GRID.baseUrl, model: null }, gridLaunch: GRID })])
+    h.probes.set('%0', [identity(7)])
+    const summary = await restoreAgents(h.deps)
+    expect(summary).toEqual({ restored: ['gridded'], skipped: [], failed: [] })
+    expect(h.launched).toEqual([{ agentId: 'gridded', launch: { argv: ['claude', '--resume', 'session-a', '--grid', 'grid-abc'], env: { GRID_API_KEY: 'gridkey-abc123' } } }])
+    await settled(h, 1, 1)
+  })
+
+  it('the fresh fallback of a grid agent is a grid launch too', async () => {
+    const h = harness([row({ agentId: 'gridded', grid: { baseUrl: GRID.baseUrl, model: null }, gridLaunch: GRID })])
+    h.states.set('%0', [{ dead: true }])
+    h.probes.set('%0', [null, identity(8)])
+    await restoreAgents(h.deps)
+    await settled(h, 1, 1)
+    expect(h.launched.map((l) => l.launch.env)).toEqual([{ GRID_API_KEY: 'gridkey-abc123' }, { GRID_API_KEY: 'gridkey-abc123' }])
+    expect(h.launched[1].launch.argv).toEqual(['claude', '--grid', 'grid-abc'])
+  })
+
+  it('does not relaunch a grid agent whose credential was never persisted, and marks it so', async () => {
+    // A row written before `gridLaunch` existed: it knows WHERE it pointed and nothing else. On the
+    // engine's own login it would spend the wrong account while looking identical.
+    const h = harness([row({ agentId: 'legacy', grid: { baseUrl: 'https://grid.example/relay', model: null } })])
+    const summary = await restoreAgents(h.deps)
+    expect(summary.restored).toEqual([])
+    expect(summary.skipped).toEqual([{ agentId: 'legacy', reason: expect.stringMatching(/credential not persisted/) }])
+    expect(h.paneCreates).toBe(0)
+    expect(h.calls).toEqual([`setLaunch:legacy:failed:${GRID_CREDENTIAL_REQUIRED}`])
+  })
+
+  it('a launch the machine cannot build fails the row instead of opening a pane on the wrong login', async () => {
+    const h = harness([row({ agentId: 'gridded', grid: { baseUrl: GRID.baseUrl, model: null }, gridLaunch: GRID })], { refuseLaunch: true })
+    const summary = await restoreAgents(h.deps)
+    expect(summary.failed).toEqual([{ agentId: 'gridded', reason: 'no way to point it at a grid' }])
+    expect(h.paneCreates).toBe(0)
+    expect(h.calls).toEqual(['clearIdentity:gridded@tx', 'setLaunch:gridded:failed:GRID_ENGINE_UNSUPPORTED@tx'])
+  })
+
+  it('a Codex profile agent comes back under its own CODEX_HOME', async () => {
+    const h = harness([row({ agentId: 'profiled', engine: 'codex', codexHome: '/home/u/.codex-work' })])
+    h.probes.set('%0', [identity(9)])
+    await restoreAgents(h.deps)
+    expect(h.launched[0].launch.env).toEqual({ CODEX_HOME: '/home/u/.codex-work' })
+    await settled(h, 1, 1)
   })
 
   it('records a pane that could not be opened and leaves the row untouched', async () => {

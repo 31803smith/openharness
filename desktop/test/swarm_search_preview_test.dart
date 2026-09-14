@@ -11,6 +11,28 @@ import 'swarm_screen_test.dart' show mount, terminal;
 import 'swarm_state_test.dart' show createApp;
 
 void main() {
+  test('preview joins wrapped prose and omits terminal decorations', () {
+    final terminal = Terminal()..resize(42, 18);
+    terminal.write(
+      '> Simplify setup\r\n\r\n'
+      '  Keep the working folder and agent choice when creation fails.\r\n'
+      '  The retry can then start from the same place.\r\n\r\n'
+      '— Worked for 2m 05s ─────────────────────\r\n'
+      '— Conversation recap ───────────────────\r\n'
+      '  Setup now preserves your choices.\r\n'
+      '> ',
+    );
+    final before = terminal.buffer.getText();
+    expect(
+      SearchOutputPreview.capture(terminal).text,
+      '> Simplify setup\n\n'
+      'Keep the working folder and agent choice when creation fails. '
+      'The retry can then start from the same place.\n\n'
+      'Setup now preserves your choices.',
+    );
+    expect(terminal.buffer.getText(), before);
+  });
+
   test(
     'preview bounds scrollback, rows and columns without altering Unicode',
     () {
@@ -28,7 +50,11 @@ void main() {
       final before = terminal.buffer.getText();
       final position = (terminal.buffer.cursorX, terminal.buffer.cursorY);
       final snapshot = SearchOutputPreview.capture(terminal).text;
-      expect(snapshot.split('\n').length, SearchOutputPreview.shownLines);
+      expect(snapshot.split('\n\n').length, lessThanOrEqualTo(3));
+      expect(
+        snapshot.runes.length,
+        lessThanOrEqualTo(SearchOutputPreview.shownCharacters + 1),
+      );
       expect(snapshot, contains('木' * 96));
       expect(snapshot, isNot(contains('木' * 97)));
       expect(snapshot, contains('Recent result 😀'));
@@ -42,43 +68,38 @@ void main() {
     },
   );
 
-  test(
-    'preview is lazy and cached for the selection, with explicit refresh',
-    () {
-      final app = createApp();
-      addTearDown(app.dispose);
-      final output = terminal('a0', []);
-      output.terminal.write('Original context');
-      final pane = app.adoptSessionForTest(output);
-      final search = SwarmSearchController(app, []);
-      addTearDown(search.dispose);
-      search.setQuery('Agent 0');
-      expect(search.preview, isNull);
-      search.togglePreview();
-      final first = search.preview;
-      expect(first!.text, contains('Original context'));
-      output.terminal.write('\r\nNew output');
-      for (final query in ['Agent', 'Agent 0', 'Test host Agent 0']) {
-        search.setQuery(query);
-        expect(search.preview, same(first));
-      }
-      search.togglePreview();
-      expect(search.preview, isNull);
-      search.togglePreview();
-      expect(search.preview!.text, contains('New output'));
-      expect(pane.session, same(output));
-      search.setQuery('Agent 1');
-      expect(search.preview!.text, isEmpty);
-      expect(app.allPanes, [pane]);
-      search.setQuery('>');
-      expect(search.previewVisible, isFalse);
-      expect(search.preview, isNull);
-    },
-  );
+  test('preview is always on and cached until selection changes', () {
+    final app = createApp();
+    addTearDown(app.dispose);
+    final output = terminal('a0', []);
+    output.terminal.write('Original context');
+    final pane = app.adoptSessionForTest(output);
+    final search = SwarmSearchController(app, []);
+    addTearDown(search.dispose);
+    search.setQuery('Agent 0');
+    expect(search.previewVisible, isTrue);
+    final first = search.preview;
+    expect(first!.text, contains('Original context'));
+    output.terminal.write('\r\nNew output');
+    for (final query in ['Agent', 'Agent 0', 'Test host Agent 0']) {
+      search.setQuery(query);
+      expect(search.preview, same(first));
+    }
+    search.setQuery('Agent 1');
+    search.setQuery('Agent 0');
+    expect(search.preview!.text, contains('New output'));
+    expect(pane.session, same(output));
+    search.setQuery('Agent 1');
+    expect(search.preview!.text, isEmpty);
+    expect(app.allPanes, [pane]);
+    search.setQuery('>');
+    expect(search.previewVisible, isFalse);
+    expect(search.preview, isNull);
+  });
 
   for (final inline in [false, true]) {
     testWidgets(
-      'optional preview keeps ${inline ? 'New swarm' : 'titlebar'} input and go-to action',
+      'always-on preview keeps ${inline ? 'New swarm' : 'floating Add'} input and add action',
       (tester) async {
         final app = createApp();
         app.machineStates['m']!.nodeOnline = true;
@@ -86,7 +107,7 @@ void main() {
         final output = terminal('a0', frames);
         output.terminal.write('Checking the build\r\nOne useful clue\r\n');
         final original = app.adoptSessionForTest(output);
-        if (inline) app.newSwarm();
+        app.newSwarm();
         final target = app.activeSwarm;
         await mount(tester, app);
         final input = find.byKey(
@@ -95,7 +116,9 @@ void main() {
           ),
         );
         if (!inline) {
-          await tester.tap(find.byKey(const ValueKey('swarm-search-button')));
+          await tester.tap(
+            find.byKey(const ValueKey('swarm-add-agent-button')),
+          );
           await tester.pump();
         }
         await tester.tap(input);
@@ -105,15 +128,11 @@ void main() {
           find.byKey(const ValueKey('swarm-search-preview')),
           findsOneWidget,
         );
-        await chord(tester, LogicalKeyboardKey.keyI);
-        await tester.pump();
         expect(
-          find.byKey(const ValueKey('swarm-search-preview')),
+          find.byKey(const ValueKey('swarm-search-preview-toggle')),
           findsNothing,
         );
         final field = tester.widget<TextField>(input);
-        final controller = field.controller!;
-        final focus = field.focusNode!;
         await chord(tester, LogicalKeyboardKey.keyI);
         await tester.pump();
         expect(
@@ -121,41 +140,10 @@ void main() {
           findsOneWidget,
         );
         expect(find.textContaining('One useful clue'), findsOneWidget);
-        expect(controller.text, 'Agent 0');
-        expect(focus.hasFocus, isTrue);
+        expect(field.controller!.text, 'Agent 0');
+        expect(field.focusNode!.hasFocus, isTrue);
         expect(app.activeSwarm, same(target));
         expect(frames, isEmpty);
-
-        // Mouse toggling also keeps editing in the field that opened search.
-        await tester.tap(
-          find.byKey(const ValueKey('swarm-search-preview-toggle')),
-        );
-        await tester.pump();
-        expect(
-          find.byKey(const ValueKey('swarm-search-preview')),
-          findsNothing,
-        );
-        expect(focus.hasFocus, isTrue);
-        controller.value = const TextEditingValue(
-          text: 'Agent 0',
-          composing: TextRange(start: 0, end: 7),
-        );
-        await chord(tester, LogicalKeyboardKey.keyI);
-        await tester.pump();
-        expect(
-          find.byKey(const ValueKey('swarm-search-preview')),
-          findsNothing,
-        );
-        controller.value = const TextEditingValue(
-          text: 'Agent 0',
-          selection: TextSelection.collapsed(offset: 7),
-        );
-        await chord(tester, LogicalKeyboardKey.keyI);
-        await tester.pump();
-        expect(
-          find.byKey(const ValueKey('swarm-search-preview')),
-          findsOneWidget,
-        );
         await tester.sendKeyEvent(LogicalKeyboardKey.enter);
         await tester.pump();
         expect(app.focusedPaneId, original.id);

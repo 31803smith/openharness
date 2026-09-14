@@ -12,8 +12,8 @@ import '../state/swarm_search.dart';
 import 'swarm_switcher.dart';
 import 'swarm_search_input.dart';
 
-/// New swarm owns its input and caret. Only the catalog and result actions are
-/// shared with the title bar; typing here never activates the native field.
+/// New swarm owns its input and caret, sharing the same Add agent results and
+/// actions as the floating button and splits.
 class SwarmInlineSearch extends StatefulWidget {
   const SwarmInlineSearch({
     super.key,
@@ -22,12 +22,14 @@ class SwarmInlineSearch extends StatefulWidget {
     required this.recent,
     required this.onChoose,
     this.commands,
+    this.onNewAgent,
   });
 
   final AppNotifier app;
   final SwarmProjectStore projects;
   final List<String> recent;
   final List<SwarmDestination> Function()? commands;
+  final VoidCallback? onNewAgent;
   final void Function(SwarmSearchSelection choice, String target) onChoose;
 
   @override
@@ -73,7 +75,7 @@ class _SwarmInlineSearchState extends State<SwarmInlineSearch> {
       widget.recent,
       projects: widget.projects,
       commands: widget.commands,
-      previewInitiallyEnabled: true,
+      adding: true,
     )..setQuery(_text.text);
     _search!.addListener(_changed);
     _overlay.show();
@@ -106,6 +108,12 @@ class _SwarmInlineSearchState extends State<SwarmInlineSearch> {
     if (target == null) return;
     _close();
     widget.onChoose(choice, target);
+  }
+
+  void _newAgent() {
+    if (_search?.canCreate == false) return;
+    _close();
+    widget.onNewAgent?.call();
   }
 
   @override
@@ -178,6 +186,7 @@ class _SwarmInlineSearchState extends State<SwarmInlineSearch> {
         onChoose: _choose,
         onClose: _close,
         onOpen: _begin,
+        onNewAgent: widget.onNewAgent == null ? null : _newAgent,
         onTapOutside: _close,
         onChanged: (value) {
           _begin();

@@ -15,7 +15,6 @@ Future<SwarmAttentionEntry?> showSwarmAttention(
   context: context,
   transitionDuration: Duration.zero,
   veilBlur: 0,
-  veilTint: const Color(0x66000000),
   builder: (_) => _SwarmAttention(app: app, recent: history.recent),
 );
 

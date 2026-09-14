@@ -16,7 +16,7 @@ Finder get jumpField => find.byWidgetPredicate(
   (w) =>
       w is TextField &&
       w.key == const ValueKey('swarm-search-input') &&
-      w.decoration?.hintText == 'Search agents, swarms, machines, projects…',
+      w.decoration?.hintText == 'Find an agent or swarm…',
 );
 Finder get selectedRow =>
     find.byWidgetPredicate((w) => w is ListTile && w.selected);
@@ -132,7 +132,7 @@ void main() {
   });
 
   testWidgets(
-    'search opens in one frame, owns typing, cancels, and replaces the separate Add picker',
+    'navigation opens in one frame, owns typing, cancels, and stays distinct from Add',
     (tester) async {
       final app = createApp();
       app.adoptSessionForTest(terminal('a0', []));
@@ -149,10 +149,10 @@ void main() {
       expect(field.focusNode!.hasFocus, isTrue);
       final controller = field.controller;
       final results = tester.getRect(
-        find.byKey(const ValueKey('swarm-search-result-list')),
+        find.byKey(const ValueKey('swarm-navigation-locations')),
       );
       final bar = tester.getRect(input);
-      expect(results.top, inInclusiveRange(bar.bottom, bar.bottom + 12));
+      expect(results.top, inInclusiveRange(bar.bottom, bar.bottom + 30));
       final picker = tester.getRect(
         find.byKey(const ValueKey('swarm-search-results')),
       );
@@ -241,9 +241,13 @@ void main() {
     'keyboard selection scrolls, survives discovery, and explicitly opens a view',
     (tester) async {
       final app = createApp();
-      app.adoptSessionForTest(terminal('a0', []));
+      for (var i = 0; i < 18; i++) {
+        app.adoptSessionForTest(terminal('a$i', []));
+      }
       await mount(tester, app);
       await chord(tester, LogicalKeyboardKey.keyP);
+      await tester.enterText(jumpField, 'Agent');
+      await tester.pump();
       for (var i = 0; i < 12; i++) {
         await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
         await tester.pump();
@@ -273,15 +277,12 @@ void main() {
       await tester.pump();
       await tester.pump();
       expect(tester.widget<ListTile>(selectedRow).key, ValueKey(selectedId));
-      expect(find.text('Go to agent'), findsOneWidget);
+      expect(find.text('Go to'), findsOneWidget);
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pump();
-      expect(app.panes, hasLength(2));
+      expect(app.panes, hasLength(18));
       expect(
-        agentDestinationId(
-          app.focusedPane!.machineId,
-          app.focusedPane!.agentId!,
-        ),
+        agentLocationId(app.activeSwarmId, app.focusedPane!.id),
         selectedId,
       );
       await tester.pumpWidget(const SizedBox());

@@ -26,6 +26,7 @@ import '../terminal/remote_media_download.dart';
 import '../terminal/terminal_links.dart';
 import '../terminal/terminal_session.dart';
 import '../terminal/terminal_theme.dart';
+import '../terminal/terminal_theme_store.dart';
 import '../terminal/terminal_viewport.dart';
 import '../shared/theme/app_theme.dart' as grid;
 import '../theme/app_theme.dart';
@@ -174,6 +175,10 @@ class _TerminalPanelState extends State<TerminalPanel>
     widget.session.attachViewport(this);
     widget.session.addListener(_onSessionChanged);
     terminalFontStore.addListener(_onFontChanged);
+    // Colours repaint the view in place — no relayout, no resize frame — but
+    // they still need a rebuild to reach it, and this widget reads the store
+    // directly rather than through a builder.
+    terminalThemeStore.addListener(_onFontChanged);
     _afterTerminalMounted();
   }
 
@@ -271,6 +276,7 @@ class _TerminalPanelState extends State<TerminalPanel>
     widget.session.removeListener(_onSessionChanged);
     widget.session.detachViewport(this);
     terminalFontStore.removeListener(_onFontChanged);
+    terminalThemeStore.removeListener(_onFontChanged);
     _cancelDialInertia();
     _cursorBlinkTimer?.cancel();
     _focusNode.removeListener(_handleFocusChange);
@@ -1125,7 +1131,10 @@ class _TerminalPanelState extends State<TerminalPanel>
                           focusNode: _focusNode,
                           autofocus: widget.focused && !showComposer,
                           readOnly: widget.readOnly || !session.acceptsInput,
-                          theme: terminalThemeFor(grid.AppTheme.palette.value),
+                          theme: terminalThemeFor(
+                            grid.AppTheme.palette.value,
+                            terminalThemeStore.value,
+                          ),
                           padding: const EdgeInsets.all(10),
                           textStyle: terminalFontStore.value,
                           // ⚠️ The terminal is NOT app chrome, and the user said so:

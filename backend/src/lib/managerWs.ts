@@ -12,7 +12,8 @@
 import type { IncomingMessage } from 'http'
 import type { Duplex } from 'stream'
 import { randomUUID } from 'crypto'
-import { WebSocketServer, WebSocket, type RawData } from 'ws'
+import { WebSocket, type RawData } from 'ws'
+import { createWss, WS_LIMITS } from './wsServer.js'
 import { prisma } from './prisma.js'
 import {
   publishUp,
@@ -34,11 +35,13 @@ import { deliverUpLocal, recomputeAndSendClients, CLIENTS_DIRTY } from './hub.js
 import { recordCreatedAgent, recordDeletedAgent } from './agentTracker.js'
 import type { ManagerFrame, DownBusMsg } from './tunnel.js'
 import { logger } from '../utils/logger.js'
+import { fireAndForget } from '../utils/async.js'
+import { guardedSendJson } from './wsSend.js'
 import { getMachineLifecycleState } from './machineLifecycle.js'
 
 const PRESENCE_TTL_SEC = 30
 
-const wss = new WebSocketServer({ noServer: true })
+const wss = createWss(WS_LIMITS.manager)
 
 /** Fastify/http upgrade hook for `/api/manager-ws`. Auth = manager apiKey (`x-api-key`) + `managerId`. */
 export function handleManagerUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
@@ -62,6 +65,8 @@ export function attachManager(ws: WebSocket, managerId: string, poolKind: 'contr
   // for presence + provisioning placement.
   const connKey = `${managerId}#${randomUUID()}`
   registry.addManager(connKey, ws)
+  // A manager that stops reading must not be allowed to pin unbounded down-frames in our heap either.
+  const send = (obj: unknown): boolean => guardedSendJson(ws, obj, 'must', { managerId, connKey, pool: poolKind })
   logger.info('manager connected', { managerId, connKey, pool: poolKind })
 
   // machineId → unsubscribe for its down:{machineId} subscription (this instance is B_m for that agent).
@@ -95,7 +100,7 @@ export function attachManager(ws: WebSocket, managerId: string, poolKind: 'contr
       const cmd = msg as { requestId?: string; cmd?: 'create' | 'start' | 'stop' | 'destroy' | 'app_create' | 'app_delete'; payload?: Record<string, unknown> }
       if (!cmd?.requestId || !cmd.cmd) return
       if (ws.readyState === WebSocket.OPEN) {
-        try { ws.send(JSON.stringify({ t: 'provision', requestId: cmd.requestId, cmd: cmd.cmd, payload: cmd.payload ?? {} })) } catch { /* ignore */ }
+        send({ t: 'provision', requestId: cmd.requestId, cmd: cmd.cmd, payload: cmd.payload ?? {} })
       }
     }).then((u) => { unsubMgr = u }).catch((err) => logger.error('manager-ws subscribeMgr failed', err, { managerId }))
   }
@@ -139,7 +144,7 @@ export function attachManager(ws: WebSocket, managerId: string, poolKind: 'contr
         if ((msg.frame as { type?: string })?.type === CLIENTS_DIRTY) { void recomputeAndSendClients(machineId); return }
         // Forward a client message down this manager socket → manager → node.
         if (ws.readyState === WebSocket.OPEN) {
-          try { ws.send(JSON.stringify({ t: 'down', machineId: machineId, connId: msg.connId, frame: msg.frame })) } catch { /* ignore */ }
+          send({ t: 'down', machineId: machineId, connId: msg.connId, frame: msg.frame })
         }
       }).then((unsub) => {
         downSubPending.delete(machineId)
@@ -166,7 +171,7 @@ export function attachManager(ws: WebSocket, managerId: string, poolKind: 'contr
     if (unsub) { unsub(); downSubs.delete(machineId) }
     void clearAgentPresence(machineId)
     // Intentional manual/idle stop is a first-class lifecycle state; unexpected detach remains `offline`.
-    void getMachineLifecycleState(machineId).then(({ status: rawStatus, stopReason }) => {
+    fireAndForget(getMachineLifecycleState(machineId).then(({ status: rawStatus, stopReason }) => {
       const stopped = rawStatus === 'stopping' || rawStatus === 'stopped'
       return publishUp(machineId, {
         webEligible: true,
@@ -178,7 +183,7 @@ export function attachManager(ws: WebSocket, managerId: string, poolKind: 'contr
             : { online: false, status: 'offline', reason: 'node offline' },
         },
       })
-    })
+    }), 'manager-ws unregister node_status', { managerId, machineId })
     logger.info('node unregistered', { managerId, machineId })
   }
 
@@ -194,7 +199,7 @@ export function attachManager(ws: WebSocket, managerId: string, poolKind: 'contr
       appDownSubPending.add(machineId)
       void subscribeAppDown(machineId, (frame) => {
         if (ws.readyState === WebSocket.OPEN) {
-          try { ws.send(JSON.stringify(frame)) } catch { /* ignore */ }
+          send(frame)
         }
       }).then((unsub) => {
         appDownSubPending.delete(machineId)
@@ -218,55 +223,56 @@ export function attachManager(ws: WebSocket, managerId: string, poolKind: 'contr
 
   ws.on('message', (raw: RawData) => {
     lastSeen = Date.now()
-    let env: ManagerFrame
-    try { env = JSON.parse(raw.toString()) as ManagerFrame } catch { return }
-    switch (env.t) {
+    const rawBytes = Buffer.isBuffer(raw) ? raw.length : Array.isArray(raw) ? raw.reduce((n, b) => n + b.length, 0) : raw.byteLength
+    let frame: ManagerFrame
+    try { frame = JSON.parse(raw.toString()) as ManagerFrame } catch { return }
+    switch (frame.t) {
       case 'up': {
         // Tap project lifecycle to maintain machine_agents (plan cap) — replaces the old /proxy
         // response tap; works for BOTH web and device WS create/delete.
-        const f = env.frame as { type?: string; payload?: { agent?: { id?: unknown; name?: unknown }; agentId?: unknown; machineId?: unknown } }
+        const f = frame.frame as { type?: string; payload?: { agent?: { id?: unknown; name?: unknown }; agentId?: unknown; machineId?: unknown } }
         if (f?.type === 'agent_synced') {
-          void recordCreatedAgent(env.machineId, f.payload?.agent).catch(() => { /* best effort */ })
+          void recordCreatedAgent(frame.machineId, f.payload?.agent).catch(() => { /* best effort */ })
         } else if (f?.type === 'agent_deleted' && typeof f.payload?.agentId === 'string') {
           // See adapterWs.ts: producers send `agentId`, so reading `machineId` recorded nothing.
-          void recordDeletedAgent(env.machineId, f.payload.agentId).catch(() => { /* best effort */ })
+          void recordDeletedAgent(frame.machineId, f.payload.agentId).catch(() => { /* best effort */ })
         }
         const upMsg = {
-          excludeConnId: env.excludeConnId,
-          webEligible: env.webEligible,
-          commanderEligible: env.commanderEligible,
-          frame: env.frame,
+          excludeConnId: frame.excludeConnId,
+          webEligible: frame.webEligible,
+          commanderEligible: frame.commanderEligible,
+          frame: frame.frame,
           originPid: registry.PROCESS_ID,
         }
         // Fast-path: hand straight to THIS instance's local clients (no Redis round-trip); the tagged
         // publish still fans out to clients on other instances, which won't double-deliver here.
-        deliverUpLocal(env.machineId, upMsg)
-        void publishUp(env.machineId, upMsg)
+        deliverUpLocal(frame.machineId, upMsg)
+        void publishUp(frame.machineId, upMsg)
         break
       }
       case 'register':
-        register(env.machineId)
+        register(frame.machineId)
         break
       case 'unregister':
-        unregister(env.machineId)
+        unregister(frame.machineId)
         break
       case 'app_register':
-        appRegister(env.machineId)
+        appRegister(frame.machineId)
         break
       case 'app_unregister':
-        appUnregister(env.machineId)
+        appUnregister(frame.machineId)
         break
       case 'hello':
         // capacity advertised for placement; presence refreshed opportunistically. Only the pool's
         // CONTROL socket subscribes provisioning (so a provision command isn't forwarded N times).
-        if (env.control) subscribeProvisioning()
+        if (frame.control) subscribeProvisioning()
         refreshPresence()
         break
       case 'ping':
         refreshPresence()
         break
       case 'provision_result':
-        void publishReply(env.requestId, { ok: env.ok, data: env.data, error: env.error })
+        void publishReply(frame.requestId, { ok: frame.ok, data: frame.data, error: frame.error })
         break
       case 'app_res':
       case 'app_body':
@@ -276,7 +282,16 @@ export function attachManager(ws: WebSocket, managerId: string, poolKind: 'contr
       case 'app_abort':
         // App-proxy tunnel app→client frame. Fast-path: if the origin client stream is on THIS instance
         // (co-located), hand it straight to the local handler — no Redis. Else republish by streamId.
-        if (!deliverAppUpLocal(env.streamId, env)) void publishAppUp(env.streamId, env)
+        if (deliverAppUpLocal(frame.streamId, frame)) break
+        // Cross-instance goes through Redis pub/sub, where one oversized message can get the subscriber
+        // disconnected (client-output-buffer-limit). Abort this stream instead of risking every stream
+        // on that connection; the public side answers 502 / closes 1011 for it.
+        if (rawBytes > env.APP_PROXY_MAX_RELAY_FRAME_BYTES) {
+          logger.warn('app-tunnel frame too large for cross-instance relay — aborting stream', { managerId, streamId: frame.streamId, bytes: rawBytes })
+          void publishAppUp(frame.streamId, { t: 'app_abort', streamId: frame.streamId, reason: 'frame_too_large' })
+          break
+        }
+        void publishAppUp(frame.streamId, frame)
         break
       default:
         break

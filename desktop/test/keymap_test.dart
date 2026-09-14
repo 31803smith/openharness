@@ -18,6 +18,14 @@ KeymapMatch match(
 ]) => map.match(context, keys.split(' ').map(KeyStroke.parse));
 
 void main() {
+  test('a retired preview binding does not break other custom shortcuts', () {
+    final config = KeymapConfig.parse('''{"bindings":[
+      {"keys":"cmd+i","command":"picker.preview","when":"picker"},
+      {"keys":"cmd+ctrl+h","command":"pane.focus_left"}
+    ]}''', commands: commands);
+    expect(config.bindings.single.command, 'pane.focus_left');
+  });
+
   test('dotfile accepts comments, aliases and trailing commas', () {
     final config = KeymapConfig.parse('''
       // Keep the defaults and add my preferred movement key.

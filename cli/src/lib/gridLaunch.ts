@@ -6,6 +6,11 @@
  * reaches an engine by itself: this CLI is what spawns the engine, so this module turns that payload
  * into the launch — environment, and where the vendor demands it, argv.
  *
+ * The one place that payload is kept is the registry row (`RegisteredSession.gridLaunch`, in a 0600
+ * file this daemon owns) — so a restart, or a pane recreated after a reboot, relaunches onto the SAME
+ * grid with the SAME key rather than silently coming back on the engine's own login. Nothing THIS
+ * module writes (argv, a config directory) ever carries the key; that rule is unchanged.
+ *
  * ## Every entry here is the vendor's own documented contract
  *
  * The relay speaks two dialects — Anthropic Messages at `<grid>/relay`, and OpenAI
@@ -84,7 +89,8 @@ export interface GridLaunchOverride {
    * Per-engine forms are derived from this; see [relayBaseUrl] and [anthropicBaseUrl].
    */
   baseUrl: string
-  /** Short-lived, minted per launch. Never logged, and never placed in argv. */
+  /** Short-lived, minted per launch. Never logged, never placed in argv; persisted only in the registry
+   *  row (see the module header), so a relaunch can repeat this launch. */
   apiKey: string
   /** Absent means "whatever the engine asks for" — the relay's own default. */
   model?: string

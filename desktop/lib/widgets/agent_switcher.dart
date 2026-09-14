@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import '../core/models.dart';
 import '../core/fuzzy_match.dart';
 import '../shared/theme/app_theme.dart' as grid;
+import '../shared/widgets/app_dialog.dart';
 import '../state/app_state.dart';
 import 'engine_identity.dart';
 
@@ -42,7 +43,7 @@ Future<void> showAgentSwitcher(BuildContext context, AppNotifier notifier) {
   _switcherOpen = true;
   return showDialog<void>(
     context: context,
-    barrierColor: Colors.black.withValues(alpha: 0.3),
+    barrierColor: kDialogVeilTint,
     builder: (context) => _AgentSwitcher(notifier: notifier),
   ).whenComplete(() => _switcherOpen = false);
 }

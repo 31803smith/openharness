@@ -27,7 +27,7 @@ Future<void> _mount(
   WidgetTester tester,
   AppNotifier app,
   double width, {
-  VoidCallback? onNewAgent,
+  VoidCallback? onSettings,
 }) async {
   tester.view.devicePixelRatio = 1;
   tester.view.physicalSize = Size(width, 200);
@@ -43,9 +43,9 @@ Future<void> _mount(
             notifier: app,
             attention: 0,
             onRename: (_) {},
-            onSearch: () {},
-            onNewAgent: onNewAgent ?? () {},
+            onNavigate: () {},
             onNotifications: () {},
+            onSettings: onSettings ?? () {},
           ),
         ),
       ),
@@ -88,20 +88,17 @@ void main() {
     expect(_tabWidth(tester, app), SwarmTabStrip.minTabWidth);
   });
 
-  testWidgets('a wide strip keeps all four actions out as buttons', (
+  testWidgets('a wide strip keeps every action out as a button', (
     tester,
   ) async {
     await _mount(tester, _appWith(2), 1400);
 
     expect(find.byKey(const ValueKey('swarm-search-button')), findsOneWidget);
     expect(
-      find.byKey(const ValueKey('swarm-new-agent-button')),
-      findsOneWidget,
-    );
-    expect(
       find.byKey(const ValueKey('swarm-notifications-button')),
       findsOneWidget,
     );
+    expect(find.byKey(const ValueKey('swarm-settings-button')), findsOneWidget);
     expect(find.byKey(const ValueKey('swarm-overflow-button')), findsNothing);
   });
 
@@ -111,7 +108,7 @@ void main() {
     await _mount(tester, _appWith(2), WindowSizeClass.compactMax - 1);
 
     expect(find.byKey(const ValueKey('swarm-search-button')), findsNothing);
-    expect(find.byKey(const ValueKey('swarm-new-agent-button')), findsNothing);
+    expect(find.byKey(const ValueKey('swarm-settings-button')), findsNothing);
     expect(
       find.byKey(const ValueKey('swarm-notifications-button')),
       findsOneWidget,
@@ -122,14 +119,14 @@ void main() {
   testWidgets('the folded actions still run from the overflow menu', (
     tester,
   ) async {
-    var newAgents = 0;
-    await _mount(tester, _appWith(2), 420, onNewAgent: () => newAgents++);
+    var settingsOpened = 0;
+    await _mount(tester, _appWith(2), 420, onSettings: () => settingsOpened++);
 
     await tester.tap(find.byKey(const ValueKey('swarm-overflow-button')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('New agent'));
+    await tester.tap(find.text('Settings'));
     await tester.pumpAndSettle();
 
-    expect(newAgents, 1);
+    expect(settingsOpened, 1);
   });
 }

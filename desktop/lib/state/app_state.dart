@@ -18,7 +18,6 @@ import '../bootstrap/environment_provisioner.dart';
 import '../core/viewer_mode.dart';
 import '../core/config.dart';
 import '../core/agent_preference.dart';
-import '../core/build_identity.dart';
 import '../core/engine_availability.dart';
 import '../core/local_hostname.dart';
 import '../core/local_git_projects.dart';
@@ -1173,7 +1172,8 @@ class AppNotifier extends ChangeNotifier {
         ? send(machineId, agentId)
         : _pool?[machineId]?.sendTerminalFrame('app_focus', {
             'agentId': agentId,
-            if (_deviceFocusRevision != null) 'focusRevision': _deviceFocusRevision,
+            if (_deviceFocusRevision != null)
+              'focusRevision': _deviceFocusRevision,
           });
     if (pending != null) unawaited(pending.catchError((_) => false));
   }
@@ -1196,12 +1196,31 @@ class AppNotifier extends ChangeNotifier {
     final pool = _pool;
     if (pool == null) return;
     final agentIds = <String>[for (final pane in panes) ?pane.agentId];
+    // The swarms travel with the tiles: the dial names the one on screen above the agent and offers
+    // the others, and a pick there comes back as `dial_swarm`. Names and member ids only — the layout
+    // inside a swarm is this window's business.
+    final swarmRows = [
+      for (final swarm in swarms)
+        {
+          'id': swarm.id,
+          'name': swarm.name,
+          'agentIds': [for (final pane in swarm.panes) ?pane.agentId],
+        },
+    ];
     for (final machineId in machineStates.keys) {
       final connection = pool[machineId];
       if (connection == null) continue;
       unawaited(
         connection
             .sendTerminalFrame('app_panes', {'agentIds': agentIds})
+            .catchError((_) => false),
+      );
+      unawaited(
+        connection
+            .sendTerminalFrame('app_swarms', {
+              'active': activeSwarmId,
+              'swarms': swarmRows,
+            })
             .catchError((_) => false),
       );
     }
@@ -1812,7 +1831,7 @@ class AppNotifier extends ChangeNotifier {
       await refreshMachines();
     } catch (error) {
       if (!_authWorkCurrent(revision)) return;
-      _lastError = 'Could not load machines: $error';
+      _lastError = 'Could not load machines: ${describeApiError(error)}';
       _lastErrorRetryable = true;
     }
     if (_authWorkCurrent(revision)) notifyListeners();
@@ -2000,13 +2019,10 @@ class AppNotifier extends ChangeNotifier {
   }
 
   void _startUpdateChecking() {
-    if (isHarnessV2 && desktopUpdater == null) return;
     _updateCheckTimer ??= (desktopUpdater ?? DesktopUpdater()).startChecking(
       onUpdateAvailable: _handleBackgroundUpdate,
     );
   }
-
-  bool get desktopUpdatesEnabled => !isHarnessV2 || desktopUpdater != null;
 
   void _handleBackgroundUpdate(UpdateInfo info) {
     if (_disposed) return;
@@ -2020,7 +2036,6 @@ class AppNotifier extends ChangeNotifier {
   /// A manual check deliberately returns a skipped version too, so the user
   /// can choose to install it from the account menu after changing their mind.
   Future<ManualUpdateCheck> checkForUpdates() async {
-    if (isHarnessV2 && desktopUpdater == null) return const ManualUpdateCheck();
     if (isCheckingForUpdate) {
       return ManualUpdateCheck(update: availableUpdate);
     }
@@ -2063,7 +2078,6 @@ class AppNotifier extends ChangeNotifier {
   /// Downloads, verifies, and installs only after an explicit user action.
   /// A failed operation leaves the running app untouched and retryable.
   Future<bool> installAvailableUpdate() async {
-    if (isHarnessV2 && desktopUpdater == null) return false;
     final info = availableUpdate;
     if (info == null || isInstallingUpdate) return false;
     isInstallingUpdate = true;
@@ -2742,7 +2756,7 @@ class AppNotifier extends ChangeNotifier {
       _lastError = null;
     } catch (error) {
       if (!_authWorkCurrent(revision)) return;
-      _lastError = 'Could not load machines: $error';
+      _lastError = 'Could not load machines: ${describeApiError(error)}';
       _lastErrorRetryable = true;
       notifyListeners();
       return;
@@ -4926,6 +4940,13 @@ class AppNotifier extends ChangeNotifier {
             ),
           );
         }
+        break;
+      case 'dial_swarm':
+        // The dial picked a swarm from its own list. The ordinary switch, exactly as ⌘] or a click on
+        // the tab: the desk changes, `_persistLayout` re-describes it, and the dial's ring and swarm
+        // line follow from that — nothing is answered to the dial directly.
+        final swarmId = payload['swarmId'];
+        if (swarmId is String && swarmId.isNotEmpty) selectSwarm(swarmId);
         break;
       case 'dial_open':
         // A notification was tapped on the dial. Unlike `dial_focus` this asks for a tile of its own —

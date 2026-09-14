@@ -9,8 +9,10 @@ import '../../shared/widgets/app_select_field.dart';
 import '../../shared/widgets/section_scaffold.dart';
 import '../../shared/widgets/setting_row.dart';
 import '../../terminal/terminal_font_store.dart';
+import '../../terminal/terminal_theme.dart';
+import '../../terminal/terminal_theme_store.dart';
 
-/// Settings ▸ Terminal: the face the agent's output is drawn in.
+/// Settings ▸ Terminal: the colours and the face the agent's output is drawn in.
 ///
 /// Laid out in the app's own [SettingRow]s rather than in bare Material, for
 /// the same reason Appearance is: a preference reads as a preference here or it
@@ -27,45 +29,100 @@ class TerminalSection extends StatelessWidget {
     return SectionScaffold(
       title: 'Terminal',
       subtitle:
-          "The font every terminal pane is drawn in, at its own size — the "
-          "app's UI scale never reaches it. ⌘+ and ⌘- resize without leaving "
-          "this screen.",
+          "The colours and font every terminal pane is drawn in, at its own "
+          "size — the app's UI scale never reaches it. ⌘+ and ⌘- resize "
+          "without leaving this screen.",
       // A SingleChildScrollView, never a ListView — same reason as Appearance:
       // a lazy list keeps children across a rebuild and strands them on the
       // palette they first mounted with.
       child: SingleChildScrollView(
         child: ValueListenableBuilder<TerminalStyle>(
           valueListenable: terminalFontStore,
-          builder: (context, style, _) => Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              SettingRow(
-                title: 'Font',
-                detail:
-                    'Monospaced faces only — a proportional one misaligns '
-                    'every column an agent draws',
-                control: _FamilyField(family: terminalFontStore.family),
+          // Nested rather than merged into one builder: the two stores change
+          // independently, and this is the pane that has to show both at once.
+          builder: (context, style, _) =>
+              ValueListenableBuilder<TerminalThemeChoice>(
+                valueListenable: terminalThemeStore,
+                builder: (context, scheme, _) =>
+                    _Controls(style: style, scheme: scheme),
               ),
-              const SizedBox(height: 10),
-              SettingRow(
-                title: 'Size',
-                detail:
-                    '${TerminalFontStore.minSize.round()}–'
-                    '${TerminalFontStore.maxSize.round()}pt. A change '
-                    "re-derives the grid and resizes the agent's terminal",
-                control: _SizeStepper(size: style.fontSize),
-              ),
-              const SizedBox(height: 14),
-              _Preview(style: style),
-              const SizedBox(height: 12),
-              const _ResetRow(),
-              // Room under the last control so a scrolled-to-bottom pane does
-              // not end flush against the window edge.
-              const SizedBox(height: 8),
-            ],
-          ),
         ),
       ),
+    );
+  }
+}
+
+class _Controls extends StatelessWidget {
+  const _Controls({required this.style, required this.scheme});
+
+  final TerminalStyle style;
+  final TerminalThemeChoice scheme;
+
+  @override
+  Widget build(BuildContext context) {
+    grid.AppTheme.watch(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Colour first, then face, then size: the scheme is the change a
+        // person notices from across the room, and it is the one that
+        // makes the two rows under it look different while they choose.
+        SettingRow(
+          title: 'Colours',
+          detail: scheme.detail,
+          control: _SchemeField(scheme: scheme),
+        ),
+        const SizedBox(height: 10),
+        SettingRow(
+          title: 'Font',
+          detail:
+              'Monospaced faces only — a proportional one misaligns '
+              'every column an agent draws',
+          control: _FamilyField(family: terminalFontStore.family),
+        ),
+        const SizedBox(height: 10),
+        SettingRow(
+          title: 'Size',
+          detail:
+              '${TerminalFontStore.minSize.round()}–'
+              '${TerminalFontStore.maxSize.round()}pt. A change '
+              "re-derives the grid and resizes the agent's terminal",
+          control: _SizeStepper(size: style.fontSize),
+        ),
+        const SizedBox(height: 14),
+        _Preview(style: style, scheme: scheme),
+        const SizedBox(height: 12),
+        const _ResetRow(),
+        // Room under the last control so a scrolled-to-bottom pane does
+        // not end flush against the window edge.
+        const SizedBox(height: 8),
+      ],
+    );
+  }
+}
+
+/// The colour-scheme picker.
+///
+/// Same control as the face picker below it, for the same reason — see
+/// [_FamilyField]. Unlike that one this list needs no per-platform guard:
+/// colours resolve identically everywhere, so every value is always offered.
+class _SchemeField extends StatelessWidget {
+  const _SchemeField({required this.scheme});
+
+  final TerminalThemeChoice scheme;
+
+  @override
+  Widget build(BuildContext context) {
+    grid.AppTheme.watch(context);
+    return AppSelectField<TerminalThemeChoice>(
+      key: const Key('terminal-colour-scheme-dropdown'),
+      width: SettingRow.controlWidth,
+      value: scheme,
+      options: [
+        for (final choice in TerminalThemeChoice.values)
+          SelectOption(value: choice, label: choice.label),
+      ],
+      onChanged: (choice) => unawaited(terminalThemeStore.set(choice)),
     );
   }
 }
@@ -174,9 +231,10 @@ class _SizeStepper extends StatelessWidget {
 /// terminal's own ground ([grid.AppPalette.windowBg], recessed inside the
 /// card) so what you are judging is the thing itself.
 class _Preview extends StatelessWidget {
-  const _Preview({required this.style});
+  const _Preview({required this.style, required this.scheme});
 
   final TerminalStyle style;
+  final TerminalThemeChoice scheme;
 
   /// The cell the renderer would derive from this style.
   ///
@@ -229,7 +287,7 @@ class _Preview extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 10),
-          _Screen(style: style),
+          _Screen(style: style, scheme: scheme),
         ],
       ),
     );
@@ -237,21 +295,29 @@ class _Preview extends StatelessWidget {
 }
 
 class _Screen extends StatelessWidget {
-  const _Screen({required this.style});
+  const _Screen({required this.style, required this.scheme});
 
   final TerminalStyle style;
+  final TerminalThemeChoice scheme;
 
   @override
   Widget build(BuildContext context) {
     grid.AppTheme.watch(context);
-    final base = style.toTextStyle(color: grid.AppPalette.textPrimary);
-    final dim = style.toTextStyle(color: grid.AppPalette.textSecondary);
-    final ok = style.toTextStyle(color: grid.AppPalette.online);
+    // ⚠️ Drawn from the TERMINAL's resolved theme, not from the app's tokens.
+    // This sample used to borrow `AppPalette` — fine while the terminal always
+    // borrowed it too, and a lie the moment a scheme of its own could be
+    // chosen: a user picking Tango would have been shown Harness's ground and
+    // told that was the result. `terminalThemeFor` is the same call the real
+    // pane makes, so what is judged here is what will be rendered.
+    final theme = terminalThemeFor(grid.AppTheme.palette.value, scheme);
+    final base = style.toTextStyle(color: theme.foreground);
+    final dim = style.toTextStyle(color: theme.brightBlack);
+    final ok = style.toTextStyle(color: theme.green);
 
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
-        color: grid.AppPalette.windowBg,
+        color: theme.background,
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: grid.AppGlass.hair),
       ),
@@ -296,6 +362,13 @@ class _ResetRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     grid.AppTheme.watch(context);
+    // ⚠️ Typography only — NOT the colour scheme, even though that row sits on
+    // this screen too. The ⌘0 printed beside this button is the shortcut that
+    // does the same thing, and ⌘0 in a terminal means "reset the zoom"
+    // everywhere; making the button do more than the key it advertises is how
+    // the two stop being the same control. The scheme needs no reset of its
+    // own: its default is a named option the user can pick straight from the
+    // list ('Match app appearance').
     final atDefault = terminalFontStore.isDefault;
     return Row(
       mainAxisAlignment: MainAxisAlignment.end,

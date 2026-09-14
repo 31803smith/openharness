@@ -60,6 +60,12 @@ COPY --from=builder /app/dist ./dist
 ENV NODE_ENV=production
 # Role selector. Override to `job` on the worker Deployment (replicas: 1).
 ENV APP=api
+# Each pod is one node process (no pm2 cluster here), so cap V8's old space explicitly: without it V8
+# sizes the heap from the NODE's RAM, not the pod's cgroup limit, and a leak becomes an OOM-kill of the
+# whole pod instead of a bounded GC. Set the pod's memory limit to ~1.5x this. Override per Deployment
+# (the api role streams to many sockets and wants more headroom than the job role). Merge, don't clobber,
+# any NODE_OPTIONS a manifest already sets.
+ENV NODE_OPTIONS=--max-old-space-size=1024
 
 USER backend
 
@@ -68,6 +74,7 @@ USER backend
 EXPOSE 8085 8087
 
 # `exec` replaces the shell, so node ends up as PID 1 and receives SIGTERM directly; both entry
-# points shut down on it (server.ts closes the listeners; worker.ts stops the billing loop and hard-
-# exits after 5s, so give the worker terminationGracePeriodSeconds >= 10).
+# points shut down on it (server.ts closes the listeners, then DRAINS open websockets with a 1012
+# close + ~4s grace before quitting Redis, so give the api terminationGracePeriodSeconds >= 10 too;
+# worker.ts stops the billing loop and hard-exits after 5s, so the job also needs >= 10).
 CMD ["sh", "-c", "case \"$APP\" in api) exec node dist/server.js ;; job) exec node dist/worker.js ;; *) echo \"FATAL: unknown APP='$APP' (expected 'api' or 'job')\" >&2; exit 1 ;; esac"]

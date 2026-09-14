@@ -105,6 +105,8 @@ needs no machine component and events for a machine that is not selected are dro
 | `agents.list` | — | Send me the tiles. |
 | `machines.list` | — | Send me the machine wheel. |
 | `machine.select` | `machineId` | The user tapped a row. Always answered — see Machines. |
+| `swarms.list` | — | Send me the window's swarms. |
+| `swarm.select` | `swarmId` | The user picked a swarm. NOT answered directly — see Swarms. |
 | `focus` | `agentId` | The carousel settled here. A statement about where the user is LOOKING, not a request to run anything. |
 | `scroll` | `phase`, `dy`, `v?` | A finger on the glass, in pieces. The dial is a TOUCHPAD here: it reports MOVEMENT, because it cannot know how tall the window at the other end is. `v` travels only on `up`, and becomes the fling. |
 | `turn.send` | `agentId`, `text` | The user asked for something. |
@@ -126,6 +128,7 @@ needs no machine component and events for a machine that is not selected are dro
 | `machine.selected` | `machineId` — the switch happened; that machine's agents follow |
 | `machine.error` | `machineId`, `code`, `message` — the switch did NOT happen; the selection is unchanged |
 | `machine.updated` | one row changed — liveness, a rename, a count |
+| `swarms` | `selected`, `items[]` of `{id,name,agents}` — the window's tabs, whole, whenever they change; empty with no window |
 | `ping` | — the heartbeat |
 | `agents.begin` / `agent` / `agents.end` | the list, streamed — one agent per message |
 | `agent.updated` | one agent changed; the dial re-asks |
@@ -238,6 +241,26 @@ The summaries are on the daemon's disk (`summaries.json` and `summaries-history.
 reattaches after a reboot, a replug or a daemon restart gets its tiles back with the work they belong to.
 Up to three turns per agent are kept: enough for the voice router to tell one agent's subject from
 another's, few enough that one chatty agent cannot crowd the others out of the decision.
+
+## 2b. Swarms
+
+A swarm is one of the desktop window's tabs: a named group of agents arranged on one grid. The window
+owns them — they live in its state file and nowhere else, and the daemon has no opinion about their
+contents. What crosses this wire is the list of names, which one is on screen, and a pick.
+
+The carousel does not need a swarm to walk one. The daemon's ring is already the window's open panes
+(`app_panes` on the local socket → `agents.end.ring`), and the window's open panes ARE the active swarm's,
+so switching tabs in the window has always re-shaped the ring. `swarms` adds the NAME of that tab, drawn
+above the agent on every tile, and `swarm.select` adds the way to pick another from the glass.
+
+`swarm.select` is relayed to the window as `dial_swarm` on the local socket, and the window switches by
+the same path a ⌘] takes. Nothing is answered on the cable: the window re-describes its desk, and the
+`swarms` frame (new `selected`) and the agent list (new ring) that follow are the answer. The dial writes
+nothing optimistically, for the reason the machine wheel's ✓ waits for `machine.selected`.
+
+With a window present, an EMPTY desk means an empty ring — a fresh swarm has no panes, and the carousel
+shows none rather than every agent the window is deliberately not showing. With no window (no `app_swarms`
+ever received, or the socket closed) the old fallback holds: the ring is the whole list.
 
 ## 3. The session, and how each side knows the other is gone
 

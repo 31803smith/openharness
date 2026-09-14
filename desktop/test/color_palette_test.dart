@@ -13,6 +13,7 @@ import 'package:harness/shared/theme/color_palette.dart';
 import 'package:harness/state/swarm_catalog.dart';
 import 'package:harness/terminal/terminal_binary.dart';
 import 'package:harness/terminal/terminal_theme.dart';
+import 'package:harness/terminal/terminal_theme_store.dart';
 import 'package:xterm/xterm.dart';
 
 import 'swarm_screen_test.dart' show terminal;
@@ -78,9 +79,23 @@ void main() {
           reason: palette.name,
         );
       }
-      expect(terminalThemeFor(palette), same(terminalThemeFor(palette)));
-      expect(terminalThemeFor(palette).background, palette.background);
-      expect(terminalThemeFor(palette).selection.a, lessThan(.5));
+      const matchApp = TerminalThemeChoice.matchApp;
+      expect(
+        terminalThemeFor(palette, matchApp),
+        same(terminalThemeFor(palette, matchApp)),
+      );
+      expect(
+        terminalThemeFor(palette, matchApp).background,
+        palette.background,
+      );
+      expect(terminalThemeFor(palette, matchApp).selection.a, lessThan(.5));
+      // A scheme of its own ignores the palette entirely — that is what makes
+      // it a scheme rather than a tint of the app's.
+      expect(
+        terminalThemeFor(palette, TerminalThemeChoice.tango).background,
+        const Color(0xff300a24),
+        reason: 'Tango does not follow ${palette.name}',
+      );
     }
   });
 
@@ -110,7 +125,9 @@ void main() {
       await tester.ensureVisible(find.byKey(const ValueKey('palette-forest')));
       expect(
         tester
-            .getSemantics(find.bySemanticsLabel('Forest palette. Quiet evergreen'))
+            .getSemantics(
+              find.bySemanticsLabel('Forest palette. Quiet evergreen'),
+            )
             .getSemanticsData()
             .hasAction(SemanticsAction.tap),
         isTrue,

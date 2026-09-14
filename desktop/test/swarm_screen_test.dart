@@ -8,6 +8,7 @@ import 'package:harness/screens/swarm_screen.dart';
 import 'package:harness/shared/theme/app_theme.dart' as grid;
 import 'package:harness/state/app_state.dart';
 import 'package:harness/state/swarm_catalog.dart';
+import 'package:harness/state/swarm_navigation.dart';
 import 'package:harness/terminal/terminal_binary.dart';
 import 'package:harness/terminal/terminal_session.dart';
 import 'package:harness/widgets/pane_grid.dart';
@@ -18,7 +19,12 @@ import 'package:xterm/xterm.dart';
 import 'swarm_state_test.dart' show createApp;
 import 'swarm_interactions_test.dart' show chord;
 
-Future<void> mount(WidgetTester tester, AppNotifier app) async {
+Future<void> mount(
+  WidgetTester tester,
+  AppNotifier app, {
+  SwarmProjectStore? projects,
+  bool nativeTabs = false,
+}) async {
   tester.view.devicePixelRatio = 1;
   tester.view.physicalSize = const Size(1280, 800);
   addTearDown(tester.view.resetPhysicalSize);
@@ -28,8 +34,8 @@ Future<void> mount(WidgetTester tester, AppNotifier app) async {
       theme: grid.buildAppTheme(brightness: Brightness.dark),
       home: SwarmScreen(
         notifier: app,
-        nativeTabs: false,
-        projectStore: SwarmProjectStore(),
+        nativeTabs: nativeTabs,
+        projectStore: projects ?? SwarmProjectStore(),
       ),
     ),
   );
@@ -77,9 +83,15 @@ void main() {
         '/work/existing',
       );
       await tester.pump();
-      expect(find.widgetWithText(ListTile, 'Agent 0'), findsOneWidget);
-      expect(find.widgetWithText(ListTile, 'Agent 1'), findsOneWidget);
-      expect(find.text('Agent 2'), findsNothing);
+      expect(
+        find.byKey(ValueKey(agentDestinationId('m', 'a0'))),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(ValueKey(agentDestinationId('m', 'a1'))),
+        findsOneWidget,
+      );
+      expect(find.byKey(ValueKey(agentDestinationId('m', 'a2'))), findsNothing);
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
       await tester.pump();
       await tester.tap(find.text('Existing project'));
@@ -109,7 +121,7 @@ void main() {
       );
       await tester.pump();
       expect(find.text('Agent 1').last, findsOneWidget);
-      await tester.tap(find.widgetWithText(ListTile, 'Agent 1'));
+      await tester.tap(find.byKey(ValueKey(agentDestinationId('m', 'a1'))));
       await tester.pump();
       await app.addAgentToSwarm('m', 'a2');
       app.toggleZoomPane();

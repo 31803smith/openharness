@@ -12,7 +12,8 @@ import 'package:xterm/xterm.dart';
 import 'swarm_interactions_test.dart' show chord;
 import 'swarm_screen_test.dart' show mount, terminal;
 import 'swarm_state_test.dart' show createApp;
-import 'swarm_switcher_test.dart' show jumpField;
+
+final jumpField = find.byKey(const ValueKey('swarm-search-input'));
 
 void main() {
   testWidgets(
@@ -266,7 +267,7 @@ void main() {
     },
   );
 
-  testWidgets('clicking a machine result directly opens all agents', (
+  testWidgets('Add imports all agents from a machine into this swarm', (
     tester,
   ) async {
     final app = createApp();
@@ -274,7 +275,7 @@ void main() {
         .take(3)
         .toList();
     await mount(tester, app);
-    await tester.tap(find.byKey(const ValueKey('swarm-search-button')));
+    await tester.tap(find.byKey(const ValueKey('swarm-add-agent-button')));
     await tester.pump();
     await tester.enterText(jumpField, 'Test host');
     await tester.pump();
@@ -289,71 +290,87 @@ void main() {
     app.dispose();
   });
 
-  testWidgets(
-    'the secondary action adds a shared view here and the first key reaches it',
-    (tester) async {
-      final app = createApp();
-      app.machineStates['m']!.nodeOnline = true;
-      final firstInputs = <TerminalBinaryFrame>[];
-      final secondInputs = <TerminalBinaryFrame>[];
-      final firstSession = terminal('a0', firstInputs);
-      final shared = app.adoptSessionForTest(firstSession);
-      final original = app.activeSwarm;
-      app.newSwarm(name: 'Review');
-      app.adoptSessionForTest(terminal('a1', secondInputs));
-      final target = app.activeSwarm;
-      await mount(tester, app);
-      await chord(tester, LogicalKeyboardKey.keyP);
-      await tester.enterText(jumpField, 'Agent 0');
-      await tester.pump();
-      expect(find.text('Add to this swarm'), findsOneWidget);
-      await chord(tester, LogicalKeyboardKey.enter);
-      expect(find.byType(Dialog), findsNothing);
-      expect(app.activeSwarm, same(target));
-      expect(target.panes.last, same(shared));
-      expect(original.panes, [shared]);
-      final view = tester.widget<TerminalView>(
-        find.byWidgetPredicate(
-          (w) =>
-              w is TerminalView && identical(w.terminal, firstSession.terminal),
-        ),
-      );
-      expect(view.focusNode!.hasFocus, isTrue);
-      await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
-      await tester.pump(const Duration(milliseconds: 10));
-      expect(firstInputs.single.bytes, [27, 91, 68]);
-      expect(secondInputs, isEmpty);
-      await tester.pumpWidget(const SizedBox());
-      app.dispose();
-    },
-  );
+  testWidgets('Add keeps a shared view here and the first key reaches it', (
+    tester,
+  ) async {
+    final app = createApp();
+    app.machineStates['m']!.nodeOnline = true;
+    final firstInputs = <TerminalBinaryFrame>[];
+    final secondInputs = <TerminalBinaryFrame>[];
+    final firstSession = terminal('a0', firstInputs);
+    final shared = app.adoptSessionForTest(firstSession);
+    final original = app.activeSwarm;
+    app.newSwarm(name: 'Review');
+    app.adoptSessionForTest(terminal('a1', secondInputs));
+    final target = app.activeSwarm;
+    await mount(tester, app);
+    await tester.tap(find.byKey(const ValueKey('swarm-add-agent-button')));
+    await tester.pump();
+    await tester.enterText(jumpField, 'Agent 0');
+    await tester.pump();
+    expect(find.byKey(const ValueKey('swarm-row-action')), findsOneWidget);
+    expect(find.text('Add to this swarm'), findsNWidgets(2));
+    await chord(tester, LogicalKeyboardKey.enter);
+    expect(find.byType(Dialog), findsNothing);
+    expect(app.activeSwarm, same(target));
+    expect(target.panes.last, same(shared));
+    expect(original.panes, [shared]);
+    final view = tester.widget<TerminalView>(
+      find.byWidgetPredicate(
+        (w) =>
+            w is TerminalView && identical(w.terminal, firstSession.terminal),
+      ),
+    );
+    expect(view.focusNode!.hasFocus, isTrue);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+    await tester.pump(const Duration(milliseconds: 10));
+    expect(firstInputs.single.bytes, [27, 91, 68]);
+    expect(secondInputs, isEmpty);
+    await tester.pumpWidget(const SizedBox());
+    app.dispose();
+  });
 
-  testWidgets(
-    'Return does not open a result while the search has composing text',
-    (tester) async {
-      final app = createApp();
-      await mount(tester, app);
-      await chord(tester, LogicalKeyboardKey.keyP);
-      await tester.enterText(jumpField, 'Agent 0');
-      await tester.pump();
-      final controller = tester.widget<TextField>(jumpField).controller!;
-      controller.value = controller.value.copyWith(
-        composing: const TextRange(start: 0, end: 7),
-      );
-      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-      await tester.pump();
-      expect(
-        find.byKey(const ValueKey('swarm-search-results')),
-        findsOneWidget,
-      );
-      expect(find.byType(Dialog), findsNothing);
-      expect(app.panes, isEmpty);
-      controller.clearComposing();
-      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-      await tester.pump();
-      expect(app.panes.single.agentId, 'a0');
-      await tester.pumpWidget(const SizedBox());
-      app.dispose();
-    },
-  );
+  for (final adding in [false, true]) {
+    testWidgets(
+      'Return waits for composing text in ${adding ? 'Add' : 'Navigate'}',
+      (tester) async {
+        final app = createApp();
+        app.adoptSessionForTest(terminal('a0', []));
+        final original = app.activeSwarm;
+        app.newSwarm();
+        final target = app.activeSwarm;
+        await mount(tester, app);
+        if (adding) {
+          await tester.tap(
+            find.byKey(const ValueKey('swarm-add-agent-button')),
+          );
+          await tester.pump();
+        } else {
+          await chord(tester, LogicalKeyboardKey.keyP);
+        }
+        await tester.enterText(jumpField, 'Agent 0');
+        await tester.pump();
+        final controller = tester.widget<TextField>(jumpField).controller!;
+        controller.value = controller.value.copyWith(
+          composing: const TextRange(start: 0, end: 7),
+        );
+        await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+        await tester.pump();
+        expect(
+          find.byKey(const ValueKey('swarm-search-results')),
+          findsOneWidget,
+        );
+        expect(find.byType(Dialog), findsNothing);
+        expect(app.panes, isEmpty);
+        controller.clearComposing();
+        await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+        await tester.pump();
+        expect(app.panes.single.agentId, 'a0');
+        expect(app.activeSwarm, same(adding ? target : original));
+        expect(original.panes, hasLength(1));
+        await tester.pumpWidget(const SizedBox());
+        app.dispose();
+      },
+    );
+  }
 }

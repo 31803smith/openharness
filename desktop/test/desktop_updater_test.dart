@@ -173,31 +173,28 @@ void main() {
     expect(await explicitlyOff.checkOnce(currentVersion: '1.0.0'), isNull);
   });
 
-  test(
-    'V2 disables checks, downloads and applying even in release mode',
-    () async {
-      final updater = DesktopUpdater(releaseMode: true);
-      const info = UpdateInfo(
-        version: '9.9.9',
-        url: 'https://fixture.invalid/update.zip',
-        sha256: 'unused',
-        size: 1,
-      );
-      expect(await updater.checkOnce(currentVersion: '1.0.0'), isNull);
-      expect(await updater.downloadAndStage(info), isNull);
-      expect(
-        await updater.applyStaged(
-          const StagedUpdate(
-            version: '9.9.9',
-            bundlePath: '/nonexistent/fixture.app',
-            stagingDirPath: '/nonexistent',
-          ),
-          selfPid: 1,
+  test('a disabled updater skips checks, downloads and applying even in release mode', () async {
+    final updater = DesktopUpdater(enabled: false, releaseMode: true);
+    const info = UpdateInfo(
+      version: '9.9.9',
+      url: 'https://fixture.invalid/update.zip',
+      sha256: 'unused',
+      size: 1,
+    );
+    expect(await updater.checkOnce(currentVersion: '1.0.0'), isNull);
+    expect(await updater.downloadAndStage(info), isNull);
+    expect(
+      await updater.applyStaged(
+        const StagedUpdate(
+          version: '9.9.9',
+          bundlePath: '/nonexistent/fixture.app',
+          stagingDirPath: '/nonexistent',
         ),
-        isFalse,
-      );
-    },
-  );
+        selfPid: 1,
+      ),
+      isFalse,
+    );
+  });
 
   test('checkOnce returns null when the running version is already current or newer', () async {
     final url = await serveMetadataAndZip(manifestVersion: '1.0.0');
