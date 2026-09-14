@@ -34,7 +34,11 @@ import { AgentCreationReceipts, AgentCreationReceiptError, creationFingerprint, 
 import { engineInstallRecipe } from './lib/engineInstall.js'
 import { parseProjectFolder, prepareProjectFolder, ProjectFolderError } from './lib/projectFolder.js'
 import { projectPreview } from './lib/projectPreview.js'
-import { agentFrame, type AgentFrame } from './lib/agentFrame.js'
+import { agentFrame, type AgentDshContext, type AgentFrame } from './lib/agentFrame.js'
+import { installedDsh, listInstalledDsh } from './dsh/installed.js'
+import { DSH_ID_RE, dshTier } from './dsh/manifest.js'
+import { bundledDshRegistry } from './dsh/registry.js'
+import type { DshInstallProgress } from './dsh/install.js'
 import { routeVoiceTask } from './lib/voiceRouter.js'
 import { tailFile } from './lib/sessions.js'
 import { messagesToEvents, windowRawLines, subagentStatsFromRawLines, type SessionEvent } from './lib/normalize.js'
@@ -332,8 +336,15 @@ export class BackendSocket {
     grid: GridLaunchOverride | null
     /** A Codex CODEX_HOME folder to launch this agent against instead of `~/.codex`; codex only. */
     codexHome: string | null
+    /** The domain-specific harness to create this agent as (installed here, base engine = `engine`). */
+    dsh: string | null
   }) =>
     Promise<{ ok: true; session: RegisteredSession } | { ok: false; error: string; detail?: string }>) | null = null
+  /** Called on `dsh_install` — cli.ts clones/sets up/doctors the harness and reports each phase. */
+  onDshInstall: ((input: { id?: string; url?: string; ref?: string }, progress: (p: DshInstallProgress) => void) =>
+    Promise<{ ok: true; id: string } | { ok: false; error: string; detail: string }>) | null = null
+  /** What the daemon knows about an agent's DSH companions (viewer URL, verdict); null when nothing. */
+  dshFrameProvider: ((session: RegisteredSession) => AgentDshContext | null) | null = null
   private readonly agentCreations = new AgentCreationReceipts(join(env.ADAPTER_DATA_DIR, 'agent-creations'))
   /** Injectable for queue-isolation tests; production uses the machine-local probe. */
   engineProbeProvider: typeof probeEngines = probeEngines
@@ -1453,6 +1464,57 @@ export class BackendSocket {
           return
         }
 
+        case 'dsh_list': {
+          // Which domain-specific harnesses this machine has, plus what the bundled registry offers —
+          // answered here, on the machine in question, for the same reason `engines_probe` is.
+          const installed = listInstalledDsh()
+          const seen = new Set<string>()
+          const rows: Record<string, unknown>[] = []
+          for (const entry of installed) {
+            seen.add(entry.id)
+            rows.push({
+              id: entry.id,
+              name: entry.manifest.name,
+              description: entry.manifest.description ?? null,
+              engine: entry.manifest.engine,
+              installed: true,
+              viewer: !!entry.manifest.viewer,
+              tier: dshTier(entry.manifest),
+              verified: bundledDshRegistry().some((known) => known.id === entry.id && known.verified === true),
+            })
+          }
+          for (const entry of bundledDshRegistry()) {
+            if (seen.has(entry.id)) continue
+            rows.push({
+              id: entry.id,
+              name: entry.name,
+              description: entry.description ?? null,
+              engine: entry.engine,
+              installed: false,
+              viewer: (entry.tier ?? 0) >= 2,
+              tier: entry.tier ?? 0,
+              verified: entry.verified === true,
+            })
+          }
+          reply(type, requestId, { dsh: rows })
+          return
+        }
+
+        case 'dsh_install': {
+          // Clone, set up and doctor a harness on THIS machine. Long — minutes, for a toolchain — so
+          // it is detached from the ordered RPC chain like `engines_probe`, and progress travels as
+          // `dsh_install_status` pushes the app renders in the create dialog.
+          if (!this.onDshInstall) { reply(type, requestId, { error: 'UNSUPPORTED_ON_REMOTE' }); return }
+          const id = typeof payload.id === 'string' && DSH_ID_RE.test(payload.id) ? payload.id : undefined
+          const url = typeof payload.url === 'string' && payload.url.length <= 2048 && !/[\x00-\x1f\x7f]/.test(payload.url) ? payload.url : undefined
+          const ref = typeof payload.ref === 'string' && payload.ref.length <= 200 ? payload.ref : undefined
+          if (!id && !url) { reply(type, requestId, { error: 'INVALID_DSH', detail: 'dsh_install needs an id or a url' }); return }
+          void this.onDshInstall({ id, url, ref }, (p) => this.send({ type: 'dsh_install_status', payload: { ...p, id: p.id ?? id ?? null } }))
+            .then((result) => reply(type, requestId, result.ok ? { ok: true, id: result.id } : { error: result.error, detail: result.detail }))
+            .catch((error) => reply(type, requestId, { error: 'INTERNAL', detail: error instanceof Error ? error.message : String(error) }))
+          return
+        }
+
         case 'engines_probe': {
           // Which engines this machine has, asked BEFORE a create rather than discovered by one
           // failing. Answered here — on the machine in question — because a Mac and the Docker rig
@@ -1619,12 +1681,29 @@ export class BackendSocket {
             reply(type, requestId, { error: 'INVALID_CODEX_HOME', detail: 'codexHome is only valid for codex, without a grid' })
             return
           }
+          // A DSH is refused, never approximated: an agent created as its plain base engine would look
+          // like it worked and have none of the skills the user picked the tile for.
+          let dsh: string | null = null
+          if (payload.dsh !== undefined && payload.dsh !== null) {
+            if (typeof payload.dsh !== 'string' || !DSH_ID_RE.test(payload.dsh)) {
+              reply(type, requestId, { error: 'INVALID_DSH', detail: 'dsh must be an owner/name id' }); return
+            }
+            const installed = installedDsh(payload.dsh)
+            if (!installed) {
+              reply(type, requestId, { error: 'INVALID_DSH', detail: `${payload.dsh} is not installed on this machine` }); return
+            }
+            if (installed.manifest.engine !== engine) {
+              reply(type, requestId, { error: 'INVALID_DSH', detail: `${payload.dsh} runs on ${installed.manifest.engine}, not ${engine}` }); return
+            }
+            dsh = installed.id
+          }
           const input = {
             engine,
             cwd: typeof cwd === 'string' ? cwd : '',
             bypassPermission: payload.bypassPermission === true,
             grid: grid.state === 'ok' ? grid.override : null,
             codexHome,
+            dsh,
           }
           if (creationId !== undefined) {
             // Reserve before spawning. A transport retry carries the SAME creationId; a deliberate
@@ -1906,6 +1985,7 @@ export class BackendSocket {
     return agentFrame(s, {
       selectedModel: this.runtimeProfileProvider?.(s) ?? null,
       terminalAvailable: registry.terminalAvailable(s.agentId),
+      dsh: this.dshFrameProvider?.(s) ?? null,
     })
   }
 }
