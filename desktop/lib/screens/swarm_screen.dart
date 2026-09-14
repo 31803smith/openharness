@@ -520,6 +520,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
     bool chooseFolderFirst = false,
     bool cloneRepositoryFirst = false,
     String returnToAddQuery = '',
+    ({SwarmSearchDraft search, TextEditingValue editing})? returnToAdd,
   }) async {
     final targetId = swarmId ?? app.activeSwarmId;
     NewAgentDialogResult? result;
@@ -625,11 +626,22 @@ class _SwarmScreenState extends State<SwarmScreen> {
         offerFindExisting: true,
       );
     });
-    if (!mounted || result != NewAgentDialogResult.findExisting) return;
+    final findingExisting = result == NewAgentDialogResult.findExisting;
+    final returningToAdd = result == null && returnToAdd != null;
+    if (!mounted || (!findingExisting && !returningToAdd)) return;
     // The pop result arrives before the screen observes its current route.
     // Let that frame release modal keyboard ownership before opening Add.
     await WidgetsBinding.instance.endOfFrame;
-    if (!mounted || !_routeIsCurrent) return;
+    if (!mounted ||
+        !_routeIsCurrent ||
+        _dialogOpen ||
+        _spokenPaletteOpen ||
+        _search != null) {
+      return;
+    }
+    // Cancel restores the prior picker only while its swarm remains current.
+    // An explicit Find existing action can return to the original destination.
+    if (returningToAdd && app.activeSwarmId != targetId) return;
     final targetExists = app.swarms.any((swarm) => swarm.id == targetId);
     final splitChanged = split != null && !app.isPaneSplitCurrent(split);
     if (!targetExists || splitChanged) {
@@ -647,7 +659,15 @@ class _SwarmScreenState extends State<SwarmScreen> {
     if (app.activeSwarmId != targetId) {
       app.selectSwarm(targetId, attachPending: false);
     }
-    _openSearch(adding: true, split: split, query: returnToAddQuery);
+    _openSearch(
+      adding: true,
+      split: split,
+      query: returnToAddQuery,
+      draft: returnToAdd?.search,
+    );
+    if (returnToAdd != null && _search?.targetId == targetId) {
+      _searchText.value = returnToAdd.editing;
+    }
   }
 
   Future<void> _splitAgent(PaneResizeAxis axis) async {
@@ -706,6 +726,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
     bool adding = false,
     PaneSplitRequest? split,
     String query = '',
+    SwarmSearchDraft? draft,
   }) {
     if (_search != null ||
         !mounted ||
@@ -732,6 +753,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
       catalog: _searchCatalog,
       locations: _locationCatalog,
     )..setQuery(query);
+    if (draft != null) _search!.restoreDraft(draft);
     _search!.addListener(_syncSearch);
     _searchOverlay = OverlayEntry(builder: _buildSearchOverlay);
     Overlay.of(context).insert(_searchOverlay!);
@@ -815,11 +837,22 @@ class _SwarmScreenState extends State<SwarmScreen> {
     final target = search.targetId;
     final split = search.split;
     final query = search.query;
+    final draft = search.adding
+        ? (
+            search: search.draft,
+            editing: _searchText.value.copyWith(composing: TextRange.empty),
+          )
+        : null;
     // Let the creation dialog remember the original focus for Cancel. Blocking
     // canvas focus during the picker intentionally cleared route focus history.
     _closeSearch();
     FocusManager.instance.applyFocusChangesIfNeeded();
-    await _newAgent(swarmId: target, split: split, returnToAddQuery: query);
+    await _newAgent(
+      swarmId: target,
+      split: split,
+      returnToAddQuery: query,
+      returnToAdd: draft,
+    );
   }
 
   void _addFromNavigation() {

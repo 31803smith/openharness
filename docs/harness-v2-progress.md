@@ -6,6 +6,23 @@ Updated 2026-09-14 after integrating the continuation into main. This is a worki
 
 ## Continue directly on main
 
+- Preserved Add while trying New agent. Cancel/Escape from centered Add or either
+  split returns to the same query, caret/selection, highlighted result and
+  checked agents. Find existing after an uncertain creation also retains those
+  choices. Successful creation opens the new agent without reopening Add.
+  Changed/closed targets do not redirect cancellation, and stale splits are
+  explained. Fresh catalog validation drops already-added memberships while
+  leaving missing checked agents visible for removal. The affected workflow
+  suite passes 76 checks plus one real-font render check at 880×560 and 2× text;
+  analysis has zero errors/warnings and 14 existing infos. Logs:
+  `/private/tmp/harness-add-return-final-{tests,analyze}.log`. Nine new checks
+  cover the return path and recovery boundaries; the first three reproduced
+  the lost-search behavior. A second Escape returns actual fixture keyboard
+  input to the original terminal. Native Shift-Enter and inline New swarm's
+  optional selection continuity remain to be verified/improved; benchmarking
+  stays deferred. The normal arm64 Release build succeeds at
+  `/private/tmp/harness-add-return-release/Build/Products/Release/Harness.app`;
+  log: `/private/tmp/harness-add-return-release.log`. It was not launched.
 - Fixed first-launch installation at minimum window size: Install/Retry/Check
   again stay visible outside the scrollable tool list, and Enter can start or
   retry the current step. Manual Retry now performs a read-only check instead of

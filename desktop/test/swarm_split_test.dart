@@ -200,7 +200,7 @@ void main() {
   }
 
   testWidgets(
-    'split command inherits folder and machine, and cancel keeps the workspace',
+    'split creation returns through Add before restoring terminal input',
     (tester) async {
       final connection = _Creation();
       final app = createApp(connectionForTest: (_) => connection);
@@ -235,10 +235,15 @@ void main() {
       expect(app.panes, [pane]);
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
       await tester.pump();
+      await tester.pump();
       expect(find.byType(AlertDialog), findsNothing);
       expect(app.panes, [pane]);
       expect(connection.calls, isNot(contains('agent_create')));
       expect(frames, isEmpty);
+      expect(find.byKey(const ValueKey('swarm-search-input')), findsOneWidget);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
+      expect(find.byKey(const ValueKey('swarm-search-input')), findsNothing);
       await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
       await tester.pump(const Duration(milliseconds: 10));
       expect(frames.single.bytes, [27, 91, 67]);

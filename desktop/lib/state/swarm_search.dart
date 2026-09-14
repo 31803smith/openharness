@@ -8,6 +8,20 @@ import 'pane_arrangement.dart';
 import 'swarm_catalog.dart';
 import 'swarm_navigation.dart';
 
+/// An in-memory Add draft for a temporary detour into New agent. Membership and
+/// availability are revalidated against a fresh catalog when the picker returns.
+class SwarmSearchDraft {
+  const SwarmSearchDraft._(
+    this.targetId,
+    this.query,
+    this.selectedId,
+    this.checked,
+  );
+  final String targetId, query;
+  final String? selectedId;
+  final List<SwarmDestination> checked;
+}
+
 /// One search session, shared by the native/Flutter input and its results.
 /// Keystrokes only filter the cached catalog; they never query a machine.
 class SwarmSearchController extends ChangeNotifier {
@@ -65,6 +79,29 @@ class SwarmSearchController extends ChangeNotifier {
   int get checkedCount => _checked.length;
   bool get multiSelect => adding && split == null && !isCommandMode;
   bool get hasSelection => multiSelect && _checked.isNotEmpty;
+
+  SwarmSearchDraft get draft =>
+      SwarmSearchDraft._(targetId, query, selected?.id, checked);
+
+  void restoreDraft(SwarmSearchDraft draft) {
+    if (!adding || draft.targetId != targetId) return;
+    query = draft.query;
+    _selectedId = draft.selectedId;
+    cursor = 0;
+    _checked.clear();
+    if (split == null) {
+      final current = {for (final row in _catalog) row.id: row};
+      for (final row in draft.checked) {
+        if (!_presentIds.contains(row.id)) {
+          // Keep unavailable choices visible for removal instead of silently
+          // accepting a smaller set. Activation still checks the entire set.
+          _checked[row.id] = current[row.id] ?? row;
+        }
+      }
+    }
+    _filter();
+    notifyListeners();
+  }
 
   int get capacity {
     final target = app.swarms

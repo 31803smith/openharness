@@ -40,6 +40,14 @@ query back to Add and retains its original swarm/split. A closed swarm or change
 split gets an explanation instead of redirecting the addition. A background
 empty tab cannot take focus from the open creation dialog.
 
+Opening **New agent** from centered Add or either split now preserves that
+picker for cancellation. Cancel/Escape restores the query, text selection,
+highlighted result, checked agents and original split. **Find existing agent…**
+also preserves that draft. A successful creation leaves Add closed. Cancel does
+not return to a swarm that is no longer current; stale splits get an explanation.
+Returning revalidates membership/capacity and keeps unavailable checked agents
+visible for removal. This is an in-memory picker draft, not saved creation intent.
+
 Browser sign-in now offers **Open browser**, **Copy link** and immediate **Cancel**
 while waiting for authorization. Reopening uses the current link without starting
 another CLI login. Cancel works even before the CLI finishes starting; late URLs,
@@ -87,7 +95,21 @@ Research must lead to justified improvements, not feature accumulation.
 - Continue on **`main`**, tracking `origin/main`. The user's latest instruction
   is to work, commit, and push directly on main from now on. This supersedes
   the earlier preference for creating a fresh feature branch after each merge.
-- First-launch installation passes 59 affected workflow checks and one real-font
+- The Add-to-New-agent return flow passes 76 affected workflow checks and one
+  real-font render check (77 total). Nine new checks cover cancel/Escape,
+  successful and uncertain creation, checked agents, changed targets and draft
+  revalidation. The three cancellation regressions failed before the fix. The
+  existing split check now verifies both return to Add and the next terminal
+  key after dismissing Add. Analysis has zero errors/warnings and 14 existing
+  infos. Logs: `/private/tmp/harness-add-return-final-{tests,analyze}.log`.
+  The isolated minimum-size/2× text renders preserve the returned selection and
+  preview. Shift-Enter passes through the production Dart keyboard dispatcher
+  in those fixtures; that is not direct verification of the user's native issue.
+  The normal arm64 Release build succeeds at
+  `/private/tmp/harness-add-return-release/Build/Products/Release/Harness.app`;
+  log: `/private/tmp/harness-add-return-release.log`. It was not launched and no
+  real agent was created/stopped. Benchmarking stays deferred.
+- **`3ab66ca`** fixes first-launch installation, passing 59 affected workflow checks and one real-font
   render check (60 total). Six new regressions cover minimum-size/2× text action
   visibility, Enter/retry, manual-mode focus and read-only retry, and diagnostics.
   The original action-visibility and Enter regressions failed before the fix.
@@ -569,6 +591,10 @@ that its isolated window can become active/key.
    CLI and a changed original swarm. A status check must remain read-only. A
    durable desktop pending-creations list and crash-window registry reconciliation
    are still future work; the current dialog cannot resume its intent after closure.
+   The centered Add/split picker now survives a New agent cancellation with its
+   selection intact. The inline New swarm field retains text, but its optional
+   checked selection is still discarded when focus leaves; improve that
+   continuation without changing immediate single-agent startup.
 3. **Recheck fresh terminal positioning and real workflows** on disposable
    local/remote agents: startup, delayed snapshots, resizing, returning to a
    scrolled view, reconnect, paste, selection, and IME.

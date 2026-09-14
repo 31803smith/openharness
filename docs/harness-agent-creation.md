@@ -70,6 +70,20 @@ and asks the user to choose a destination again. The modal handoff waits for
 the route to return keyboard ownership. An empty tab appearing behind the
 dialog cannot take that focus for its welcome search.
 
+When creation started from centered Add or a split, **Cancel** or **Escape** now
+returns to that picker with its query, text selection, highlighted result and
+checked agents intact. **Find existing agent…** restores those choices too.
+Successful creation keeps the picker closed. Ordinary cancellation never selects
+a different swarm to resurrect its picker; a changed split gets an explanation
+instead of a different insertion position. A second Escape closes Add and
+restores the original terminal's keyboard input.
+
+The restored draft reads the current catalog. Agents already added to the target
+leave the checked list, and missing choices stay visible for explicit removal.
+It cannot silently submit a smaller set, exceed capacity or restore its choices
+into a different swarm. The draft exists only for this temporary detour; it does
+not persist a pending creation receipt or survive an app restart.
+
 Recovery opens the returned agent in the original swarm/position and counts the
 creation once. If that destination changed or closed, the runtime remains in
 the catalog for Add agent without opening a different tab or deleting anything.
@@ -107,3 +121,17 @@ The normal arm64 Release build also passes with the production entry point at
 `/private/tmp/harness-find-created-release/Build/Products/Release/Harness.app`;
 log: `/private/tmp/harness-find-created-release.log`. The app was not launched
 and the user's running app and agents were not restarted.
+
+The subsequent Add-return continuation passes 76 affected workflow checks and
+one real-font render check at minimum window size and normal/2× text. Nine new
+checks cover cancellation, successful/uncertain creation, stale destinations
+and selection revalidation. Three reproduced the original loss of the picker;
+the split input check also confirms the next key reaches the original terminal
+after Add is dismissed. Analysis has no errors/warnings and 14 existing infos.
+Logs: `/private/tmp/harness-add-return-final-{tests,analyze}.log`. These use
+synthetic agents/replies, including the production Dart keyboard dispatcher;
+native Shift-Enter still needs direct verification. Inline New swarm retains
+its text but still drops optional checked selections on focus loss.
+The normal arm64 Release build succeeds at
+`/private/tmp/harness-add-return-release/Build/Products/Release/Harness.app`;
+log: `/private/tmp/harness-add-return-release.log`. It was not launched.

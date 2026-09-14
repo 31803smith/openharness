@@ -86,6 +86,40 @@ void main() {
   );
 
   test(
+    'returning Add drafts revalidate membership, missing agents and target',
+    () async {
+      final app = createApp();
+      addTearDown(app.dispose);
+      final target = app.activeSwarm;
+      final search = SwarmSearchController(app, [], adding: true);
+      search.setQuery('Agent 0');
+      search.toggle();
+      search.setQuery('Agent 1');
+      search.toggle();
+      final draft = search.draft;
+      search.dispose();
+      app.adoptSessionForTest(terminal('a0', []));
+      app.machineStates['m']!.agents.removeWhere((agent) => agent.id == 'a1');
+      final restored = SwarmSearchController(app, [], adding: true)
+        ..restoreDraft(draft);
+      addTearDown(restored.dispose);
+      expect(restored.checked.map((row) => row.agentId), ['a1']);
+      expect(restored.query, 'Agent 1');
+      expect(restored.canAccept, isFalse);
+      expect(restored.submit(), isNull);
+      expect(restored.unavailableMessage, contains('unavailable'));
+      expect(target.panes.map((pane) => pane.agentId), ['a0']);
+      app.newSwarm();
+      final elsewhere = SwarmSearchController(app, [], adding: true)
+        ..restoreDraft(draft);
+      addTearDown(elsewhere.dispose);
+      expect(elsewhere.checked, isEmpty);
+      expect(elsewhere.query, isEmpty);
+      expect(app.panes, isEmpty);
+    },
+  );
+
+  test(
     'a stale selection cannot partially add its remaining available agents',
     () async {
       final app = createApp();
