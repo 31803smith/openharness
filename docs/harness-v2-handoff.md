@@ -28,8 +28,9 @@ Research must lead to justified improvements, not feature accumulation.
 
 - Repository: <https://github.com/autonomous-ai/autonomous-harness>.
 - Continue on **`swarm-onboarding`**, created from updated `origin/main`
-  (`0b9ac72`) after PR #31 merged. Publish/checkpoint this branch; do not resume
-  feature work on `app-v2`.
+  (`0b9ac72`) after PR #31 merged, tracking `origin/swarm-onboarding`.
+- Draft [PR #34 — Separate navigation from adding agents and simplify first use](https://github.com/autonomous-ai/autonomous-harness/pull/34)
+  is open against main. Keep it draft while qualification remains incomplete.
 - [PR #31 — Harness: swarm workspaces for AI agents](https://github.com/autonomous-ai/autonomous-harness/pull/31)
   merged at `cb24361` on September 14, 2026 (02:56 UTC), with `744c1fe` as its
   app-v2 head. Its merge did **not** include the later Navigate/Add commits.
@@ -49,8 +50,9 @@ Research must lead to justified improvements, not feature accumulation.
   without rewriting them, preserving newer main changes including device focus.
 - The user explicitly authorized frequent public repository checkpoints and
   requested deleting merged branches, then starting fresh from updated main.
-  Preserve the unmerged continuation on the new remote branch before retiring
-  app-v2. Keep the follow-up PR draft while qualification remains incomplete.
+  The new remote branch preserves every app-v2 commit. After verifying that
+  ancestry and that no app-v2 PR remained open, app-v2 was deleted remotely with
+  an exact-tip lease and then deleted locally. Do not recreate it.
 
 Start with a clean checkout of the remote branch and inspect its latest commit.
 On an existing checkout, preserve local work before updating; use a fast-forward
@@ -205,24 +207,31 @@ the common page, without adding another first-tab-only component.
 **Latest verification:** after integration with updated main, 1,271 desktop
 tests passed with one existing skip. Analyzer reports zero errors/warnings and
 14 informational diagnostics (12 vendored, two inherited from main). The last
-native checks passed 51 keymap decoder and 344 AppKit assertions; this onboarding
-pass changes no native source. Synthetic start-page/form captures with real
+native checks passed 51 keymap decoder and 344 AppKit assertions; the production
+native sources still match that checkpoint. Synthetic start-page/form captures with real
 fonts were reviewed at 1280×800 and 880×560 with 2× text; they are not a real
 native-session visual or latency measurement. Logs:
 `/private/tmp/harness-onboarding-main-{tests,analyze}.log`.
 Navigate/Add timings and their exact scope are in
 [the performance record](harness-v2-performance.md). The new navigation catalog
-build measured 0.194 ms median / 0.264 ms p95 for 50 locations across 12 swarms.
-Logs: `/private/tmp/harness-two-pickers-{full-tests-final,analyze-clean,native}.log`.
+build measured 0.188 ms median / 0.259 ms p95 in the latest integrated run for
+50 locations across 12 swarms. Add's 2,000-agent query measured 0.959 ms median /
+1.005 ms p95. The five benchmark cases passed; native event-to-display remains
+unmeasured. Log: `/private/tmp/harness-onboarding-main-benchmark.log`.
 
 **Also saved:** [native benchmark tooling](../desktop/tool/native_benchmark/README.md)
 and [shared-swarm collaboration research](harness-collaboration-design.md), which
 were existing uncommitted work. Collaboration is a separate proposal/prototype,
 not implemented multiplayer or a prerequisite for finishing this desktop pass.
-The benchmark still needs compatibility fixes before another run: its prepare
-script assumes the old `Harness V2` product name, its process check uses that
-name, and its native initial-responder logic is the older version. Preserve its
-isolation/focus guards. The performance notes explain the failed calibration.
+The benchmark's product-name, process-identity and initial-responder compatibility
+issues are now repaired. Six isolated Python checks pass, and a read-only check
+recognizes the running renamed preview by its bundle ID. Preserve its isolation
+and foreground/key-window guards. The performance notes explain the earlier
+failed calibration; these tooling fixes provide no new latency measurements.
+The disposable Release build succeeded at
+`/private/tmp/harness-native-benchmark-x227eh35`. Its actual runner correctly
+refused to start while the workspace preview was running, writing no timing
+result. The [performance record](harness-v2-performance.md) has the artifacts.
 
 ## Previous terminal fix and verification
 
@@ -259,9 +268,10 @@ Historical checks for that terminal checkpoint:
   51 keymap decoder + 343 AppKit checks before it was parked. Those results
   apply to the old draft only. Its final visual treatment still needs review.
 
-The common onboarding continuation's macOS arm64 **Release build succeeded**
+The `swarm-onboarding` continuation's macOS arm64 **Release build succeeded**
+after integration with updated main,
 with `FLUTTER_TARGET=lib/main.dart`. Log:
-`/private/tmp/harness-onboarding-release-build.log`. Computer Use still returns
+`/private/tmp/harness-onboarding-main-release-build.log`. Computer Use still returns
 `cgWindowNotFound` for the exact workspace bundle path. The new binary is built;
 it has not been confirmed loaded in the running preview or visually verified
 through native capture. Preserve this distinction when resuming.
@@ -282,8 +292,8 @@ that its isolated window can become active/key.
 
 ## Plan for the next session
 
-1. **Confirm the latest source/build checkpoint.** The common onboarding
-   continuation has a successful Release build; its running-window revision is
+1. **Confirm the latest source/build checkpoint.** The fresh-branch continuation
+   has a successful Release build; its running-window revision is
    not confirmed. The last confirmed relaunch was `2d3c024`. Review
    Navigate, Add, command mode, and the fresh terminal position in the native app
    when computer-use access works. Preserve real running agents and input.

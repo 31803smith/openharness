@@ -6,15 +6,31 @@ Updated 2026-09-14 after the common empty-swarm onboarding continuation and bran
 
 ## Common empty-swarm onboarding continuation
 
+- Repaired the saved native benchmark for current Harness branding, bundle-ID
+  preflight and the production Flutter-controller focus target. Six Python
+  isolation checks pass and the disposable arm64 Release fixture builds.
+  The real runner refuses the still-running workspace preview and writes no
+  timing result. Native latency remains unmeasured; details are in the
+  [performance record](harness-v2-performance.md).
 - GitHub verification found PR #31 merged at `cb24361`, with `744c1fe` as its
   app-v2 head. The later Navigate/Add commits were not in that merge. Saved the
   onboarding work as `e122b63`, created **swarm-onboarding** from updated main
   (`0b9ac72`), and carried the full unmerged continuation forward in `a2888ef`.
   Newer main/device changes are retained. Continue on the fresh branch.
+- Pushed the continuation and opened draft [PR #34](https://github.com/autonomous-ai/autonomous-harness/pull/34).
+  Confirmed the pushed branch contains all old app-v2 commits and no old-branch
+  PR remains open, then deleted app-v2 remotely with an exact-tip lease and
+  locally. The branch lifecycle follows the user's requested practice.
 - After integration with updated main, **1,271 desktop tests passed with one
   existing skip**. Analyzer reports zero errors/warnings and 14 informational
   diagnostics (12 vendored, two inherited from main). Logs:
   `/private/tmp/harness-onboarding-main-{tests,analyze}.log`.
+- The current five-case CPU benchmark passed after all builds/tests finished.
+  Navigate catalog: 0.188 ms median / 0.259 ms p95; Add's 2,000-agent query:
+  0.959 / 1.005 ms. Tab/frame pump: 13.056 / 20.293 ms for 16 terminals and
+  10.426 / 11.991 ms for 48. The 16-terminal p99 was 30.776 ms; retain that
+  slower tail. These headless observations do not measure native display
+  latency. Full scope/raw log are in the performance record.
 - One start page serves every empty swarm. With no existing work it leads with
   **Start with one agent**, a static side-by-side example, **Choose folder…** and
   separate **Clone repository…**. With existing work it offers shared Add search,
@@ -42,6 +58,8 @@ Updated 2026-09-14 after the common empty-swarm onboarding continuation and bran
   target (`/private/tmp/harness-onboarding-release-build.log`). Exact-path native
   capture still returns `cgWindowNotFound`; the new binary has not been confirmed
   loaded in the running preview. No native visual or latency result is claimed.
+- The integrated fresh branch also has a successful Release build:
+  `/private/tmp/harness-onboarding-main-release-build.log`.
 
 ## Navigate and Add agent continuation (previous checkpoint)
 
