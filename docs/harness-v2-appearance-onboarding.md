@@ -1,5 +1,7 @@
 # Appearance and first use
 
+For the current goal, approved Navigate/Add separation, first-use plan, and acceptance criteria, start with [the continuation handoff](harness-v2-handoff.md). The earlier onboarding implementation below did not resolve the user's first-impression concerns. A further welcome draft is preserved in the handoff archive but remains unverified and unapplied.
+
 Research and implementation notes, 2026-09-13. The product decisions below are Harness adaptations, not claims that the referenced tools endorse them.
 
 ## Palette selection

@@ -1,6 +1,18 @@
 # Harness App V2 — development handoff
 
-Updated 2026-09-13 with coordinated palettes, Models, combined closed-work History and faster unified search. This is a working preview, not a release.
+Updated 2026-09-13 for transfer to another computer/session. This is a working preview, not a release.
+
+**Resume with [Harness v2: goal, plan, and continuation handoff](harness-v2-handoff.md).** It records the latest approved design, acceptance criteria, next-work order, and portable drafts. The checkpoints below are historical; the current handoff supersedes their conflicting toolbar, picker, preview, menu, and onboarding directions.
+
+## Cross-computer checkpoint
+
+- Saved `26a372e`: preserve captured terminal rows until the remote resized keyframe, avoiding deletion of the latest output when a tall TUI enters a smaller pane. Fresh five-pane and delayed-snapshot regressions reach the bottom; revisited scrolled views retain their place. The user's exact live screenshot still needs rechecking.
+- Also committed the existing first-agent naming work: default empty New swarms adopt the first agent's name, preserving custom names and close/reopen behavior.
+- Full desktop suite: **1,244 passed, one existing skip**. Analyzer: zero errors/warnings, 12 existing vendored infos. Logs on the original computer: `/private/tmp/harness-handoff-full-tests.log` and `/private/tmp/harness-handoff-analyze.log`.
+- Latest approved UX is **two distinct experiences**: top-right global Navigate/Cmd-P with an explicit choice of every swarm containing a matching agent; bottom-right floating +, New swarm, and Split right/down share one local Add interface for existing or new agents. This is the next implementation step, not shipped UI.
+- Saved earlier picker/onboarding work under [docs/handoff/app-v2-2026-09-13](handoff/app-v2-2026-09-13/README.md), including new Dart files. Do not blindly reapply the older combined picker; reconcile it with the two-UI decision. Both patches check individually; their combined application and onboarding behavior remain unverified.
+- The handoff also saves the previously untracked native benchmark and collaboration design. Benchmark calibration is still unmeasured and its old product-name/focus assumptions need updating; collaboration is a proposal, not implemented multiplayer.
+- Draft [PR #31](https://github.com/autonomous-ai/autonomous-harness/pull/31) is still open, `app-v2` to `main`. The user requested committing/pushing all work and transferring ownership. No new app rebuild/restart is part of this checkpoint.
 
 ## Search, creation and workspace controls checkpoint
 
@@ -245,6 +257,8 @@ Updated 2026-09-13 with coordinated palettes, Models, combined closed-work Histo
 
 ## Resume here
 
+Historical environment snapshot below. Start with [the current cross-computer handoff](harness-v2-handoff.md); local paths/PIDs and older design decisions here may be stale.
+
 - Repository: https://github.com/autonomous-ai/autonomous-harness
 - Branch: `app-v2`, tracking `origin/app-v2` in that repository.
 - Resume folder: `/Users/ab/code/autonomous-harness`.
@@ -280,6 +294,8 @@ The preview was developed from monorepo commit `9bd8cf1667310def711e8c491c9e6b31
 The former preview folder `/Users/ab/code/harness-app-v2` is retained as a backup and contains the already-built app. Its `origin` now also points at the monorepo; the old personal fork remains under remote name `fork`. The old GitHub fork has not been deleted and is no longer the working destination. The existing `/Users/ab/code/autonomous-harness` checkout was clean before switching from `main` to `app-v2`.
 
 ## Product contract and design reference
+
+This section preserves the earlier contract. Current Navigate/Add, Models, palettes, and onboarding decisions are in [the handoff](harness-v2-handoff.md).
 
 Harness is one place to work with all your agents. Swarms are named, chosen collections of agent terminal views across machines and projects, shown as real native window tabs on macOS.
 
@@ -496,6 +512,8 @@ Earlier logs contain superseded failures. Temporary logs and toolchains are loca
 
 ## Remaining work
 
+The immediate priority is the approved distinct Navigate surface and shared local Add interface, followed by first-use clarity. Use [the current plan and acceptance criteria](harness-v2-handoff.md#plan-for-the-next-session) before this older qualification backlog.
+
 1. Measure native terminal input and tab-switch responsiveness under output load, including p50/p95/p99 and cold/warm paths. Calibration is paused until there is new evidence that the isolated window can become active/key; do not bypass its focus guard. Earlier live Cmd+P destination focus/quick return, branch headers, project associations, New swarm cleanup and native History were verified. Keep typing/transport measurements in disposable fixtures; the user's real agent terminals are not test inputs.
 2. Native overflow, drop ownership/bounds, close-last-tab, rename and keyboard/accessibility control focus are now covered by isolated AppKit/Flutter regressions. Live pointer dragging and VoiceOver still need a foreground-capable disposable window. Keep any integration runner separate and out of the foreground review app; preserve saved agent memberships.
 3. Verify real remote reconnect, agent input, paste, selection and IME against disposable local/remote processes. The AppNotifier/keyframe and stale completion regressions now pass; they do not prove every network or native editing condition. Preserve immediate first-input flush and shared retained renderers.
@@ -532,7 +550,7 @@ XDG_CONFIG_HOME=/private/tmp/harness-v2-tool-config xcodebuild \
   -derivedDataPath build/macos -destination 'platform=macOS,arch=arm64' \
   CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= \
   OTHER_CODE_SIGN_FLAGS= ENABLE_HARDENED_RUNTIME=NO build
-open -n 'build/macos/Build/Products/Release/Harness V2.app'
+open -n 'build/macos/Build/Products/Release/Harness.app'
 ```
 
 Quit an existing V2 preview normally before rebuilding its bundle. Flutter's asynchronous termination may make AppleScript report `User canceled (-128)` even though the process exits; verify the process state before interpreting that as a refused quit. The final optimized preview was launched and its process verified running. Do not launch a second V2 instance while one remains active.
@@ -556,10 +574,10 @@ npx vitest run src/lib/agentFrame.spec.ts src/lib/agentProject.spec.ts
 
 Some tests require permission to bind disposable loopback sockets. Inject memory/temp stores, skip real credential/usage pollers using `kUnderTest`, and never treat a real Harness home as a fixture. Keep patched `desktop/third_party/xterm`, not pub.dev xterm.
 
-The real review app uses `/Users/ab/code/autonomous-harness/desktop/build/macos/Build/Products/Release/Harness V2.app`, with the separate V2 bundle identity and saved V2 state. Its optimized local build has been launched and verified running. The earlier debug build remains in the sibling `Debug/` directory. Production Harness remains separate. Never automatically take over its terminals or use a real Harness home as a test fixture.
+The real review app uses `/Users/ab/code/autonomous-harness/desktop/build/macos/Build/Products/Release/Harness.app`, with the separate V2 bundle identity and saved V2 state. Its previous optimized local build was launched and verified running; the handoff's latest terminal change has not been rebuilt into that preview. Production Harness remains separate. Never automatically take over its terminals or use a real Harness home as a test fixture.
 
 ## Publishing boundaries
 
-The user authorized publishing branch `app-v2` in `autonomous-ai/autonomous-harness` for later merging. This is not authorization to merge, release/tag, publish binaries, run production E2E, update/restart the production CLI, or delete the old fork. No PR is needed yet.
+The user explicitly authorized frequent pushes to branch `app-v2` in public `autonomous-ai/autonomous-harness`, including all workspace work for this handoff. Draft PR #31 is open for later merging; keep it draft while qualification is incomplete. Release/tag publishing, production E2E and production CLI changes are separate tasks. After the PR merges, delete `app-v2`, update `main`, and create a fresh branch for the next change.
 
 Workflow triggers were checked: CI runs for PRs/manual calls; internal desktop builds for `internal/**`; release/deployment for suffixed tags. A plain `app-v2` push does not trigger those release workflows. Keep future work/pushes on `app-v2` unless the user changes that instruction.

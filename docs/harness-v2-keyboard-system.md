@@ -1,5 +1,7 @@
 # A coherent keyboard system for Harness
 
+Current continuation: [goal, plan, and acceptance criteria](harness-v2-handoff.md). The latest user decision separates global Navigate (Cmd-P) from local Add agent; earlier descriptions of identical direct-open behavior in both search fields are superseded. Cmd-Shift-P remains command mode. The new separation is approved but not yet implemented at this handoff.
+
 Updated 2026-09-13 after the user's review. **The earlier proposed modifier-heavy defaults are withdrawn.** The user explicitly chose to retain Cmd-H/J/K/L and Cmd-arrows for pane movement, Cmd-S for layout, Cmd-R for refresh, and Cmd-B for Boss mode. Cmd-L stays move right. File remapping is available; menus and help reflect the effective bindings.
 
 ## Product contract
@@ -18,8 +20,9 @@ Keep ordinary typing and editing predictable inside the actual agent CLI, search
 | Layout | Keep Cmd-S. The user explicitly resolved the Cmd-L conflict in favor of the complete H/J/K/L family. |
 | Refresh machines/agents | Keep Cmd-R. The user considered using it for relayout and chose to preserve refresh. |
 | Boss mode / task routing | Keep Cmd-B. |
-| Search and open agents/swarms | Keep Cmd-P and the same direct-open behavior in both search fields. |
-| Machine/project search result | Open its swarm directly; no intermediate Browse agents step. |
+| Navigate agents/swarms | Keep Cmd-P. Show every swarm destination for agents with multiple memberships; choosing one focuses that exact view. New design pending implementation. |
+| Local Add agent | New swarm, floating +, and Split share existing-agent search and New agent creation. Keep the target swarm/position; this is a separate UI from Navigate. |
+| Machine/project results | Their effect depends on the entry point; never silently navigate away from a local Add flow. Bulk addition seeds membership once. Final presentation belongs to the new Navigate/Add implementation. |
 | Other existing shortcuts | Preserve until a concrete problem justifies a reviewed change. Do not silently switch Cmd-number navigation, zoom, tab traversal, or closing to the earlier proposed alternatives. |
 | File customization | One commented config file with reload; menus, help and dispatch must agree. |
 | Commands in search | Approved: Cmd-Shift-P opens `>` command mode, following the later user decision. Pin remains available in the Agent menu, pane menu, commands and custom bindings. |
