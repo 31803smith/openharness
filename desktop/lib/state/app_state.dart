@@ -3008,7 +3008,11 @@ class AppNotifier extends ChangeNotifier {
           prev.launchDetail != agent.launchDetail ||
           prev.status != agent.status ||
           prev.terminalAvailable != agent.terminalAvailable ||
-          prev.terminalUnavailableReason != agent.terminalUnavailableReason) {
+          prev.terminalUnavailableReason != agent.terminalUnavailableReason ||
+          prev.dsh != agent.dsh ||
+          prev.dshName != agent.dshName ||
+          prev.viewerUrl != agent.viewerUrl ||
+          prev.verdict != agent.verdict) {
         return false;
       }
     }
@@ -5276,7 +5280,7 @@ class AppNotifier extends ChangeNotifier {
           historyId: 'closed-${_nextClosedHistoryId++}',
           name: agent?.name ?? pane.session?.agentName ?? pane.agentId!,
           machineName: machine?.machine.displayName ?? pane.machineId,
-          engine: agent?.engine ?? pane.session?.engineId,
+          engine: agent?.identityEngine ?? pane.session?.engineId,
         ),
       );
     }

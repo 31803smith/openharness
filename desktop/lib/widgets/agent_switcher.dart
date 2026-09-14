@@ -332,11 +332,7 @@ class _Row extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
         child: Row(
           children: [
-            EngineMark(
-              engine: entry.agent.engine,
-              displayName: entry.agent.engineDisplayName,
-              size: 15,
-            ),
+            EngineMark.forAgent(entry.agent, size: 15),
             const SizedBox(width: 11),
             Expanded(
               child: Text(

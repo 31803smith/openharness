@@ -284,7 +284,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
             ?.agents
             .where((agent) => agent.id == pane.agentId)
             .firstOrNull
-            ?.engine ??
+            ?.identityEngine ??
         pane.session?.engineId;
   }
 

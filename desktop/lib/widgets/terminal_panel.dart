@@ -1513,7 +1513,28 @@ class _TerminalHeader extends StatelessWidget {
           child: LayoutBuilder(
             builder: (context, constraints) => Row(
               children: [
-                EngineMark(engine: session.engineId, size: 17),
+                if (agent != null)
+                  EngineMark.forAgent(agent, size: 17)
+                else
+                  EngineMark(engine: session.engineId, size: 17),
+                // A harness agent is drawn as its harness, but the process in the pane is still
+                // Claude or Codex — and that is the account being spent, so it stays visible: a
+                // small base-engine mark tucked against the harness's own.
+                if (agent?.dsh != null) ...[
+                  const SizedBox(width: 3),
+                  Tooltip(
+                    message:
+                        'Runs on ${engineIdentity(session.engineId).label}',
+                    child: Opacity(
+                      opacity: .75,
+                      child: EngineMark(
+                        key: const ValueKey('pane-header-base-engine'),
+                        engine: session.engineId,
+                        size: 11,
+                      ),
+                    ),
+                  ),
+                ],
                 const SizedBox(width: 10),
                 Expanded(
                   child: Row(
