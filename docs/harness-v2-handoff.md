@@ -9,6 +9,13 @@ right side for muted actions on hover. **Cmd-1…Cmd-9** select tabs in visual o
 **Cmd-H/J/K/L** and **Cmd-arrows** focus panes. This supersedes older
 swarm/onboarding and numbered-pane notes.
 
+The current workspace Release preview was rebuilt from main `44d6540` and reopened
+at `desktop/build/macos/Build/Products/Release/Harness.app`. PID 79285 was confirmed
+active; recheck the process before future app actions. The installed app remained
+running separately. Build log: `/private/tmp/harness-new-harness-release.log`.
+Both the built and copied bundles passed code-signature verification. This is a
+UI/build checkpoint, with native latency benchmarking still deferred.
+
 Updated September 14, 2026. **Read this first when resuming on another computer.**
 This is the current product contract and next-work order. It supersedes conflicting
 historical checkpoints in [the progress log](harness-v2-progress.md). The user

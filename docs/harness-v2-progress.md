@@ -6,6 +6,16 @@ Updated 2026-09-14 after integrating the continuation into main. This is a worki
 
 ## Continue directly on main
 
+- Built the combined New Harness/header/picker/menu and numbered-tab changes
+  from main `44d6540` in Release. Code-signature verification passed before and
+  after copying the bundle. Normally quit only workspace preview PID 18687,
+  replaced that workspace bundle and reopened it; PID 79285 was confirmed
+  active. The installed app remained PID 98999. The previous workspace bundle
+  is at `/private/tmp/harness-preview-before-new-harness-hz81dcel/Harness.app`.
+  Build log: `/private/tmp/harness-new-harness-release.log`. This checkpoint
+  completes the current UI requests. The broader goal and native latency work
+  remain deferred; review the current entry, header and tab interactions in
+  the reopened preview before choosing further product work.
 - Command-number now selects **tabs 1–9** in their current visible order.
   Command-H/J/K/L and Command-arrows continue to move between panes. Switching
   tabs restores their focused pane, reordered tabs use their new positions, and
@@ -31,8 +41,8 @@ Updated 2026-09-14 after integrating the continuation into main. This is a worki
   real-font renders cover the welcome page and 280/430/720px headers at normal
   and large text. Analysis reports zero errors/warnings and 14 existing infos.
   Logs: `/private/tmp/harness-new-harness-*.log` and
-  `/private/tmp/harness-header-render.log`. The next bounded request is to make
-  Command-number select tabs; build/reopen follows that keyboard change.
+  `/private/tmp/harness-header-render.log`. The following checkpoint moves
+  Command-number to tabs and rebuilds/reopens the combined preview.
 - Added hover split controls inside the right and bottom pane edges. Each **+**
   opens shared Add Agent at that position; existing-agent reuse and Create Agent
   both remain available. Headers retain only Zoom, Delete and Close. Hover is
