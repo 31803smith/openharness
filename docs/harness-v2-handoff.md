@@ -350,10 +350,14 @@ that its isolated window can become active/key.
    local/remote agents: startup, delayed snapshots, resizing, returning to a
    scrolled view, reconnect, paste, selection, and IME.
 4. **Measure native responsiveness** under representative retained/output load,
-   first updating the isolated benchmark's identity checks for the team's
-   new `ai.autonomous.harness` macOS bundle identifier (Linux now uses
-   `com.autonomous.harness` and executable `harness`). Earlier compatibility
-   checks used the old internal `.v2` identifier; do not reuse that calibration.
+   using the repaired benchmark identity checks for the team's new
+   `ai.autonomous.harness` macOS bundle identifier (Linux now uses
+   `com.autonomous.harness` and executable `harness`). Nine isolation tests pass;
+   a current disposable Release fixture is ready at
+   `/private/tmp/harness-native-benchmark-7hv6voyr`. Its runner correctly refuses
+   the running workspace preview. A request to briefly close/reopen that preview
+   for calibration is pending; elapsed time is not approval. No native samples
+   have been accepted. See the current performance record for exact artifacts.
    Then close remaining visual/platform/release qualification gaps. Maintain
    the main-branch handoff and keep it honest about what's still unverified.
 

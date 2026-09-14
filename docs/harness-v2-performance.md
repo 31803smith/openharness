@@ -12,6 +12,26 @@ It prints `SWARM_BENCH` JSON records. Its filename deliberately does not end in 
 
 ## Current continuation benchmark (2026-09-14)
 
+### Native fixture after the public bundle-ID change
+
+The team's `76a469b` gave the workspace preview the installed app's
+`ai.autonomous.harness` identity. Two regressions reproduced the resulting
+benchmark problems: the builder rejected current source, and preflight mistook
+a development copy for the exempt installed app. The builder now accepts the
+current and legacy source identities but still produces only the distinct
+`Harness Benchmark` product. Preflight additionally requires the release
+identity to be in `/Applications` or the current user's `Applications` folder
+before exempting it. Unknown identities, development copies, legacy previews
+and other benchmark processes remain blocked.
+
+Nine isolated Python tests pass. The current disposable arm64 Release fixture
+built at `/private/tmp/harness-native-benchmark-7hv6voyr`. Its actual runner
+correctly refused the still-running workspace preview at its exact build path;
+the installed copy is classified separately. No native samples were taken.
+The session requested a brief preview-close/idle window for calibration and
+continues independent performance work while that request is pending.
+Artifacts: `/private/tmp/harness-native-identity-{before,tests,prepare,preflight}.log`.
+
 ### History focus hot path
 
 History now formats only agents with open views. Previously each focus change

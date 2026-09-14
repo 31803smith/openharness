@@ -15,7 +15,7 @@ def benchmark_configuration(source):
     """Replace exactly one known product/identifier in the copied config."""
     replacements = (
         ('PRODUCT_NAME', ('Harness', 'Harness V2'), BENCHMARK_NAME),
-        ('PRODUCT_BUNDLE_IDENTIFIER', (PREVIEW_ID,), BENCHMARK_ID),
+        ('PRODUCT_BUNDLE_IDENTIFIER', (PREVIEW_ID, RELEASE_ID), BENCHMARK_ID),
     )
     for key, expected, replacement in replacements:
         pattern = re.compile(rf'^{key}[ \t]*=[ \t]*(.*)$', re.MULTILINE)
@@ -40,7 +40,7 @@ def validate_benchmark_bundle(app):
 
 
 def conflicting_previews(executable_paths):
-    """Read bundle identities, since the installed app and preview share a name."""
+    """Identify builds by bundle and location; production now shares their ID."""
     conflicts = []
     for line in executable_paths.splitlines():
         executable = Path(line.strip())
@@ -55,6 +55,16 @@ def conflicting_previews(executable_paths):
             raise ValueError(f'Cannot identify running {app.name}: {error}') from error
         if identifier in (PREVIEW_ID, BENCHMARK_ID):
             conflicts.append(str(app))
-        elif identifier != RELEASE_ID:
+        elif identifier == RELEASE_ID:
+            installed_directories = {
+                Path('/Applications').resolve(),
+                (Path.home() / 'Applications').resolve(),
+            }
+            # A renamed development build must not become exempt merely by
+            # gaining the installed app's bundle identifier. Standard install
+            # locations remain allowed, as before; report other copies.
+            if app.parent.resolve() not in installed_directories:
+                conflicts.append(str(app))
+        else:
             raise ValueError(f'Unrecognized running Harness identity: {identifier}')
     return conflicts

@@ -1,11 +1,14 @@
 # Native Release interaction benchmark
 
 **Status, September 14, 2026:** the builder supports the current Harness name,
-validates the copied product identity and verifies the resulting bundle. The
-runner identifies current/legacy previews by bundle ID, and initial native
-focus uses the same Flutter controller as the production titlebar. Six Python
-isolation checks cover current/legacy names, unknown/duplicate configuration,
-running previews and the built bundle identity. See the
+validates the copied product identity and verifies the resulting bundle. It
+accepts both the current `ai.autonomous.harness` and legacy `.v2` source IDs.
+Since the preview and installed app now share their ID, the runner also checks
+bundle location: only the release identity in `/Applications` or the current
+user's `Applications` folder is exempt. Development copies, legacy previews
+and other benchmark processes still stop preflight. Initial native focus uses
+the same Flutter controller as the production titlebar. Nine Python isolation
+checks include the actual production config and this renamed-build regression. See the
 [handoff](../../../docs/harness-v2-handoff.md) and
 [failed calibration notes](../../../docs/harness-v2-performance.md#native-calibration-remains-unmeasured-2026-09-13).
 Foreground/key-window guards remain intact; no p50/p95/p99 result has been accepted.
@@ -15,7 +18,7 @@ screen, terminal session parser and Flutter renderer. It runs as **Harness
 Benchmark**, in an isolated copy with its own bundle ID, synthetic transports,
 blocked HTTP and temporary state. It never reads the user's saved Swarms or sends
 input to an agent. The benchmark bridge is appended only to the copied native
-host; it is absent from the production Runner and V2 bundle.
+host; it is absent from the production Runner and Harness bundle.
 
 From `desktop/`, build with a compatible Flutter SDK and Xcode:
 
@@ -27,8 +30,9 @@ Use the `BENCHMARK_APP` path printed by the build. Normally close the workspace 
 other builds/tests first. Keep this fixture in the foreground during a run; it
 exits on focus loss instead of reclaiming focus between observations. The runner
 refuses to start alongside another preview or benchmark process and never quits
-them. Its error names the exact bundle path: the installed Harness app and the
-workspace preview share the name Harness but have distinct bundle identities.
+them. Its error names the exact bundle path. A development copy outside the
+standard installation folders is not exempt just because it shares the installed
+Harness app's name and bundle identifier.
 The installed app may remain open; record other app activity and host load when
 reporting timings. That is not a guarantee of an otherwise idle workstation.
 
@@ -47,7 +51,7 @@ python3 tool/native_benchmark/run.py \
 
 Repeat with `--terminals 48` and a fresh output path. Use `--samples 3` only for
 calibration, not percentile claims. The fixture closes itself normally when it
-finishes; reopen V2 afterward. Launch through `run.py`, which uses Launch Services
+finishes; reopen the workspace preview afterward. Launch through `run.py`, which uses Launch Services
 and supplies the required environment. Opening the fixture without that
 environment fails immediately.
 

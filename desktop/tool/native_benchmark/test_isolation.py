@@ -2,6 +2,7 @@ from pathlib import Path
 import plistlib
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from isolation import (
     BENCHMARK_ID, BENCHMARK_NAME, PREVIEW_ID, RELEASE_ID,
@@ -25,17 +26,23 @@ class IsolationTests(unittest.TestCase):
 
     def test_current_and_legacy_product_names_are_replaced(self):
         for name in ('Harness', 'Harness V2'):
-            with self.subTest(name=name):
-                source = f'// product\nPRODUCT_NAME = {name}\nPRODUCT_BUNDLE_IDENTIFIER = {PREVIEW_ID}\n'
-                result = benchmark_configuration(source)
-                self.assertIn(f'PRODUCT_NAME = {BENCHMARK_NAME}\n', result)
-                self.assertIn(f'PRODUCT_BUNDLE_IDENTIFIER = {BENCHMARK_ID}\n', result)
-                self.assertTrue(result.startswith('// product\n'))
+            for identifier in (PREVIEW_ID, RELEASE_ID):
+                with self.subTest(name=name, identifier=identifier):
+                    source = f'// product\nPRODUCT_NAME = {name}\nPRODUCT_BUNDLE_IDENTIFIER = {identifier}\n'
+                    result = benchmark_configuration(source)
+                    self.assertIn(f'PRODUCT_NAME = {BENCHMARK_NAME}\n', result)
+                    self.assertIn(f'PRODUCT_BUNDLE_IDENTIFIER = {BENCHMARK_ID}\n', result)
+                    self.assertTrue(result.startswith('// product\n'))
+
+    def test_production_configuration_can_build_an_isolated_benchmark(self):
+        source = Path(__file__).resolve().parents[2] / 'macos/Runner/Configs/AppInfo.xcconfig'
+        result = benchmark_configuration(source.read_text())
+        self.assertIn(f'PRODUCT_BUNDLE_IDENTIFIER = {BENCHMARK_ID}\n', result)
 
     def test_unknown_or_duplicate_configuration_fails_closed(self):
         known = f'PRODUCT_NAME = Harness\nPRODUCT_BUNDLE_IDENTIFIER = {PREVIEW_ID}\n'
         for source in (known.replace('Harness', 'Other'),
-                       known.replace(PREVIEW_ID, RELEASE_ID),
+                       known.replace(PREVIEW_ID, 'unknown.harness'),
                        known + 'PRODUCT_NAME = Harness\n',
                        known.replace('PRODUCT_NAME = Harness\n', '')):
             with self.subTest(source=source), self.assertRaises(ValueError):
@@ -49,8 +56,21 @@ class IsolationTests(unittest.TestCase):
                 self.assertEqual(conflicting_previews(str(binary)), [str(bundle)])
 
     def test_installed_app_and_non_app_commands_are_not_preview_processes(self):
-        _, binary = self.app('installed', 'Harness', RELEASE_ID)
-        self.assertEqual(conflicting_previews(f'{binary}\n/usr/bin/python3\n/bin/zsh'), [])
+        _, binary = self.app('Applications', 'Harness', RELEASE_ID)
+        with patch('isolation.Path.home', return_value=self.root):
+            self.assertEqual(conflicting_previews(f'{binary}\n/usr/bin/python3\n/bin/zsh'), [])
+
+    def test_renamed_development_build_is_not_mistaken_for_installed_app(self):
+        bundle, binary = self.app('code/desktop/build/macos/Build/Products/Release',
+                                  'Harness', RELEASE_ID)
+        with patch('isolation.Path.home', return_value=self.root):
+            self.assertEqual(conflicting_previews(str(binary)), [str(bundle)])
+
+    def test_install_location_cannot_exempt_legacy_or_benchmark_identity(self):
+        for name, identifier in (('Harness V2', PREVIEW_ID), (BENCHMARK_NAME, BENCHMARK_ID)):
+            bundle, binary = self.app('Applications', name, identifier)
+            with patch('isolation.Path.home', return_value=self.root):
+                self.assertEqual(conflicting_previews(str(binary)), [str(bundle)])
 
     def test_unknown_or_unreadable_running_harness_fails_closed(self):
         bundle, binary = self.app('unknown', 'Harness', 'unexpected')
