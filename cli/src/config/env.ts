@@ -331,6 +331,7 @@ const envSchema = z.object({
   // what it did, not as a fragment; costs the one-shot's latency per turn. `local`: no model in the loop,
   // the answer's first sentence is excerpted — instant, but every recap stands alone.
   SUMMARY_MODE: z.enum(['model', 'local']).default('model'),
+  RECAP_WITHOUT_DEVICE: z.string().default('true').transform((v) => v !== 'false'),
   // Model for the voice router one-shot classifier (Overview voice → pick the agent). Small/fast by default.
   VOICE_ROUTE_MODEL: z.string().default('haiku'),
   // Test override: run the recap even with no device connected (mirrors node isRecapForced()).

@@ -1935,6 +1935,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     },
     dataDir: env.ADAPTER_DATA_DIR,
     recapForce: env.RECAP_FORCE,
+    alwaysGenerate: env.RECAP_WITHOUT_DEVICE,
   })
   // Recaps are STORED under the engine session id — that is what lets `--resume` bring the last recap
   // back under a brand-new agent — but they are ASKED FOR by agent id, which is the only id the device
