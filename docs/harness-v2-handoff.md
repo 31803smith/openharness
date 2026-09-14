@@ -1,6 +1,6 @@
 # Harness v2: goal, plan, and continuation handoff
 
-Updated September 13, 2026. **Read this first when resuming on another computer.**
+Updated September 14, 2026. **Read this first when resuming on another computer.**
 This is the current product contract and next-work order. It supersedes conflicting
 historical checkpoints in [the progress log](harness-v2-progress.md). The user
 requested a portable checkpoint, then asked this session to resume building;
@@ -27,10 +27,13 @@ Research must lead to justified improvements, not feature accumulation.
 ## Repository and checkpoint
 
 - Repository: <https://github.com/autonomous-ai/autonomous-harness>.
-- Continue on **`app-v2`**, tracking `origin/app-v2`.
-- Draft [PR #31 — Harness: swarm workspaces for AI agents](https://github.com/autonomous-ai/autonomous-harness/pull/31)
-  is open from `app-v2` to `main`; verified at this handoff. Keep it draft while
-  qualification remains incomplete.
+- Continue on **`swarm-onboarding`**, created from updated `origin/main`
+  (`0b9ac72`) after PR #31 merged. Publish/checkpoint this branch; do not resume
+  feature work on `app-v2`.
+- [PR #31 — Harness: swarm workspaces for AI agents](https://github.com/autonomous-ai/autonomous-harness/pull/31)
+  merged at `cb24361` on September 14, 2026 (02:56 UTC), with `744c1fe` as its
+  app-v2 head. Its merge did **not** include the later Navigate/Add commits.
+  This was verified from GitHub's merge metadata and the fetched main history.
 - Previous UI checkpoint: `ac443eb`, following `2e8d69d` (search/menu controls),
   `4154cf6` (Harness branding/account labels), and `06ba77c` (agent creation).
 - Previous code checkpoint: **`26a372e`**, terminal viewport preservation and naming
@@ -40,10 +43,14 @@ Research must lead to justified improvements, not feature accumulation.
 - **`2d3c024`** implements distinct Navigate/Add experiences,
   consistent empty-swarm starters, command-mode focus preservation, and the
   navigation catalog performance improvement described below.
-- The user explicitly authorized pushing everything to this public repository
-  on `app-v2`; do not ask again for routine checkpoint pushes there.
-- After the PR is merged, delete its branch, update `main`, and create a fresh
-  branch for the next change. Do not delete `app-v2` while its draft PR is active.
+- **`e122b63`** saves the common empty-swarm start page, folder/clone entry points,
+  loading/focus recovery and simplified single-local-machine form.
+- **`a2888ef`** carries `2d3c024`, `ed9151a` and `e122b63` onto the fresh branch
+  without rewriting them, preserving newer main changes including device focus.
+- The user explicitly authorized frequent public repository checkpoints and
+  requested deleting merged branches, then starting fresh from updated main.
+  Preserve the unmerged continuation on the new remote branch before retiring
+  app-v2. Keep the follow-up PR draft while qualification remains incomplete.
 
 Start with a clean checkout of the remote branch and inspect its latest commit.
 On an existing checkout, preserve local work before updating; use a fast-forward
@@ -195,13 +202,14 @@ unverified; do not infer them from these UI changes.
 **Archived drafts:** both are superseded. The onboarding ideas were adapted into
 the common page, without adding another first-tab-only component.
 
-**Latest verification:** 1,262 desktop tests passed with one existing skip;
-analyzer reports zero errors/warnings and 12 existing vendored infos. The last
+**Latest verification:** after integration with updated main, 1,271 desktop
+tests passed with one existing skip. Analyzer reports zero errors/warnings and
+14 informational diagnostics (12 vendored, two inherited from main). The last
 native checks passed 51 keymap decoder and 344 AppKit assertions; this onboarding
 pass changes no native source. Synthetic start-page/form captures with real
 fonts were reviewed at 1280×800 and 880×560 with 2× text; they are not a real
 native-session visual or latency measurement. Logs:
-`/private/tmp/harness-onboarding-{full-tests-final,analyze-clean}.log`.
+`/private/tmp/harness-onboarding-main-{tests,analyze}.log`.
 Navigate/Add timings and their exact scope are in
 [the performance record](harness-v2-performance.md). The new navigation catalog
 build measured 0.194 ms median / 0.264 ms p95 for 50 locations across 12 swarms.
@@ -399,6 +407,6 @@ agent's prompt as a test input.
 
 Keep tests/benchmarks isolated with temporary stores and synthetic/disposable
 transports. Do not upgrade or restart the user's production CLI/daemon for
-qualification. Follow the requested `app-v2` checkpoint workflow; publishing a
-release, merging the draft, and production end-to-end operations are separate
+qualification. Follow the fresh-branch checkpoint workflow; publishing a
+release, merging the follow-up draft, and production end-to-end operations are separate
 tasks. Keep handoff notes current as work progresses.

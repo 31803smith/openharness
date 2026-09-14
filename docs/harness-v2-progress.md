@@ -1,11 +1,20 @@
 # Harness App V2 — development handoff
 
-Updated 2026-09-13 after the common empty-swarm onboarding continuation. This is a working preview, not a release.
+Updated 2026-09-14 after the common empty-swarm onboarding continuation and branch handoff. This is a working preview, not a release.
 
 **Resume with [Harness v2: goal, plan, and continuation handoff](harness-v2-handoff.md).** It records the latest approved design, acceptance criteria, next-work order, and portable drafts. The checkpoints below are historical; the current handoff supersedes their conflicting toolbar, picker, preview, menu, and onboarding directions.
 
 ## Common empty-swarm onboarding continuation
 
+- GitHub verification found PR #31 merged at `cb24361`, with `744c1fe` as its
+  app-v2 head. The later Navigate/Add commits were not in that merge. Saved the
+  onboarding work as `e122b63`, created **swarm-onboarding** from updated main
+  (`0b9ac72`), and carried the full unmerged continuation forward in `a2888ef`.
+  Newer main/device changes are retained. Continue on the fresh branch.
+- After integration with updated main, **1,271 desktop tests passed with one
+  existing skip**. Analyzer reports zero errors/warnings and 14 informational
+  diagnostics (12 vendored, two inherited from main). Logs:
+  `/private/tmp/harness-onboarding-main-{tests,analyze}.log`.
 - One start page serves every empty swarm. With no existing work it leads with
   **Start with one agent**, a static side-by-side example, **Choose folder…** and
   separate **Clone repository…**. With existing work it offers shared Add search,
