@@ -67,19 +67,26 @@ class _NewAgentPageState extends State<NewAgentPage> {
     return byPath.values.toList();
   }
 
-  /// Engines to offer: what the machine reported, else what its agents run.
-  List<String> get _engines {
+  /// Every engine Harness knows, the way the desktop dialog offers them.
+  ///
+  /// Offered, not filtered to what is installed: an engine Harness can install
+  /// is installed on launch, and hiding the rest would make a machine that has
+  /// not answered the probe yet look like it runs one engine. The row carries
+  /// the caveat instead — see [_engineNote].
+  List<EngineIdentity> get _engines => allEngines;
+
+  /// The one caveat worth printing beside an engine's name, or none.
+  ///
+  /// Absent and installable earns nothing: Harness puts it there before it
+  /// launches. Absent and NOT installable is the one state nobody else can fix,
+  /// so it keeps words. An unanswered probe says nothing at all — a row must
+  /// not call an engine missing on the strength of an answer that never came.
+  String? _engineNote(String engine) {
     final machine = _machine;
-    if (machine == null) return const [];
-    final reported = machine.engines.byEngine.values
-        .where((entry) => entry.installed)
-        .map((entry) => entry.engine);
-    // An agent's engine is nullable — one whose engine the machine never named
-    // has nothing to offer here.
-    final running = machine.agents
-        .map((agent) => agent.engine)
-        .whereType<String>();
-    return {...reported, ...running}.toList()..sort();
+    if (machine == null || !machine.engines.loaded) return null;
+    final entry = machine.engines[engine];
+    if (entry == null || entry.installed || entry.installable) return null;
+    return 'not installed';
   }
 
   Future<void> _browse() async {
@@ -182,23 +189,16 @@ class _NewAgentPageState extends State<NewAgentPage> {
                     const SettingsCaption('ENGINE'),
                     SettingsGroup(
                       children: [
-                        for (final engine in _engines)
+                        for (final identity in _engines)
                           SettingsRow(
-                            title: engineIdentity(engine).label,
-                            leading: EngineMark(engine: engine, size: 18),
-                            trailing: _check(_engine == engine),
+                            title: identity.label,
+                            detail: _engineNote(identity.id),
+                            leading: EngineMark(engine: identity.id, size: 18),
+                            trailing: _check(_engine == identity.id),
                             onTap: () => setState(() {
-                              _engine = engine;
+                              _engine = identity.id;
                               _error = null;
                             }),
-                          ),
-                        if (_engines.isEmpty)
-                          SettingsRow(
-                            title: 'No engines reported',
-                            detail:
-                                'This machine has not answered which engines '
-                                'it has. Start one agent from Harness there '
-                                'and it will be offered here.',
                           ),
                       ],
                     ),
