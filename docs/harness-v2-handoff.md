@@ -1,5 +1,29 @@
 # Harness v2: goal, plan, and continuation handoff
 
+**Latest continuation checkpoint:** `87706a3` fixes command-mode entry from the
+collapsed/focused start-page field and keeps its displayed mode synchronized.
+`2aaa48a` stops search subscriptions and catalog work while that picker is
+dismissed; reopening preserves query/selection and reads current results. Both
+are pushed to main. The regressions reproduced incorrect command entry, a catalog
+being constructed only to dispose an unused page, and command refreshes after
+dismissal. **28 affected checks** pass in `/private/tmp/harness-start-idle-after.log`;
+the keyboard host checks also passed in `/private/tmp/harness-inline-commands-after.log`.
+The existing guarantee that arrow navigation rebuilds only changed rows remains
+verified. Analysis of the five changed source/test files reports no issues in
+`/private/tmp/harness-start-search-analyze.log`.
+
+The new Release build succeeds in `/private/tmp/harness-start-search-release.log`.
+Its framework and full bundle signatures verify at
+`/private/tmp/harness-pane-controls-release/Build/Products/Release/Harness.app`.
+**This newer bundle has not replaced the running preview yet.** Two exact-path
+CUA lookups returned `cgWindowNotFound`; the preview process was confirmed running
+(PID 92821, recheck) and the console reports `CGSSessionScreenIsLocked = Yes`.
+Do not treat that as a stopped app or launch an old fixture. When accessible,
+use Quit and Keep Windows, replace only the current checkout's preview with the
+verified bundle, and check inline command entry/reopen. The visual and terminal
+checks below describe the preceding `b4baf68` preview. Native latency benchmarking
+remains deferred.
+
 **Latest UI direction:** [Harness entry and pane controls](harness-agent-first-tabs.md)
 is the current contract. **New and Open Harness are separate actions and popups.**
 The titlebar has the bell beside the traffic lights and readable New Harness / Open
