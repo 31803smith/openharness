@@ -12,7 +12,7 @@ useful separation and add an explicit way to finish work for now.
 
 | Action | Meaning |
 | --- | --- |
-| Remove from swarm | Remove this view only. The agent and its other swarm memberships keep working. This clarifies today's Close agent label. |
+| Remove from swarm | Remove this view only. The agent and its other swarm memberships keep working. This is the existing view action, now labeled consistently in the pane menu, native menu and keyboard help. |
 | Archive agent | Stop its runtime, preserve its conversation reference and launch context, and move it out of the active collection. This affects the agent across swarms, not only one pane. |
 | Resume | Restore the archived conversation in a runtime and add it to the chosen swarm. Reuse the same Harness agent identity. |
 | Delete agent | Keep the separate explicit removal action. Do not treat ordinary closure or archiving as permission to delete project files or provider transcripts. |
@@ -33,6 +33,17 @@ useful separation and add an explicit way to finish work for now.
 - Start with deliberate archive/resume and bulk cleanup. Automatic inactivity
   policies can come later. Quiet terminal output does not establish that an
   agent has finished working.
+
+## Existing view recovery
+
+The September 14 continuation clarifies the existing removal action and fixes
+partial History recovery. If someone reopens an individual agent before its
+original swarm, reopening that swarm restores only its missing views into the
+same tab. It preserves the current name, focus, presets, pins and shared live
+sessions rather than creating another same-named swarm. Recovery checks available
+pane capacity before making any change and keeps the history entry if it cannot
+fit. This does not archive, stop, or restart agent runtimes; Archive/Resume above
+remains a proposal.
 
 ## What implementation must preserve
 

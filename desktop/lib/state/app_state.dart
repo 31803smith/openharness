@@ -373,9 +373,11 @@ class AppNotifier extends ChangeNotifier {
       List.unmodifiable(_closedHistory.reversed);
   List<ClosedSwarm> get closedSwarms =>
       List.unmodifiable(_closedHistory.reversed.whereType<ClosedSwarm>());
-  bool get canReopenClosedSwarm =>
-      _closedHistory.any((entry) => entry is ClosedSwarm) &&
-      swarms.length < maxSwarms;
+  bool get canReopenClosedSwarm {
+    final saved = _closedHistory.whereType<ClosedSwarm>().lastOrNull;
+    return saved != null && _canReopenSwarm(saved);
+  }
+
   bool get canReopenLastClosed =>
       _closedHistory.isNotEmpty &&
       canReopenClosed(_closedHistory.last.historyId);
@@ -385,7 +387,7 @@ class AppNotifier extends ChangeNotifier {
     final entry = _closedHistory
         .where((entry) => entry.historyId == historyId)
         .firstOrNull;
-    if (entry is ClosedSwarm) return swarms.length < maxSwarms;
+    if (entry is ClosedSwarm) return _canReopenSwarm(entry);
     if (entry is! ClosedAgent) return false;
     final target = swarms.where((s) => s.id == entry.swarmId).firstOrNull;
     return target == null
@@ -396,6 +398,21 @@ class AppNotifier extends ChangeNotifier {
                     p.machineId == entry.machineId &&
                     p.agentId == entry.agentId,
               );
+  }
+
+  bool _canReopenSwarm(ClosedSwarm saved) {
+    if (_disposed) return false;
+    final target = swarms.where((swarm) => swarm.id == saved.id).firstOrNull;
+    if (target == null) return swarms.length < maxSwarms;
+    final present = {
+      for (final pane in target.panes) (pane.machineId, pane.agentId),
+    };
+    final missing = {
+      for (final pane in saved.panes)
+        if (!present.contains((pane.machineId, pane.agentId)))
+          (pane.machineId, pane.agentId),
+    };
+    return target.panes.length + missing.length <= maxPanes;
   }
 
   void _rememberClosed(ClosedWork entry) {
@@ -543,25 +560,57 @@ class AppNotifier extends ChangeNotifier {
   }
 
   void reopenClosedSwarm({String? historyId}) {
-    if (_disposed || !canReopenClosedSwarm) return;
+    if (_disposed) return;
     final index = _closedHistory.lastIndexWhere(
       (entry) =>
           entry is ClosedSwarm &&
           (historyId == null || entry.historyId == historyId),
     );
     if (index < 0) return;
-    final saved = _closedHistory.removeAt(index) as ClosedSwarm;
+    final saved = _closedHistory[index] as ClosedSwarm;
+    if (!_canReopenSwarm(saved)) return;
+    _closedHistory.removeAt(index);
     if (swarms.length == 1 && saved.replacesUntouchedWelcome(swarms.single)) {
       swarms.clear();
     }
     final pool = {
       for (final pane in allPanes) (pane.machineId, pane.agentId): pane,
     };
-    var id = saved.id;
-    while (swarms.any((swarm) => swarm.id == id)) {
-      id = 'swarm-${_nextSwarmId++}';
+    final target = swarms.where((swarm) => swarm.id == saved.id).firstOrNull;
+    if (target != null) {
+      // Reopening an individual agent may have restored this swarm already.
+      // Reunite its missing views without cloning the tab or overwriting edits
+      // made since then. Live peers keep their terminal, draft and selection.
+      final present = {
+        for (final pane in target.panes) (pane.machineId, pane.agentId),
+      };
+      final previousCount = target.panes.length;
+      for (final entry in saved.panes) {
+        if (!present.add((entry.machineId, entry.agentId))) continue;
+        target.panes.add(
+          pool.putIfAbsent(
+            (entry.machineId, entry.agentId),
+            () => TerminalPane(
+              id: _nextPaneId++,
+              machineId: entry.machineId,
+              agentId: entry.agentId,
+            )..composerVisible = entry.composerVisible,
+          ),
+        );
+      }
+      if (target.panes.length != previousCount) {
+        // An old manual shape for this count describes different membership.
+        // Keep current presets/pins and use the normal layout for added views.
+        target.paneSizes.remove('${target.panes.length}:manual');
+        target.arranged = null;
+        target.arrangedKey = null;
+      }
+      target.focusedPaneId ??= target.panes.firstOrNull?.id;
+      _paneFocusRequest++;
+      selectSwarm(target.id);
+      return;
     }
-    final restored = Swarm(id: id, name: saved.name)
+    final restored = Swarm(id: saved.id, name: saved.name)
       ..gridColumns = saved.gridColumns
       ..presets.addAll(saved.presets)
       ..paneSizes.addAll(saved.paneSizes);

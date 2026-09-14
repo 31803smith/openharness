@@ -214,7 +214,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     add(agent, "Zoom Agent", "", "zoomPane")
     add(agent, "Pin or Unpin Agent", "", "pinPane")
     agent.addItem(.separator())
-    add(agent, "Close Agent", "w", "closePane", [.command, .shift])
+    add(agent, "Remove Agent from Swarm", "w", "closePane", [.command, .shift])
     install(agent, at: 2)
 
     rebuildHistoryMenu()
