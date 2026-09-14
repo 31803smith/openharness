@@ -10,6 +10,87 @@ flutter test --no-pub --reporter expanded test/benchmarks/swarm_benchmark.dart
 
 It prints `SWARM_BENCH` JSON records. Its filename deliberately does not end in `_test.dart`, so ordinary correctness runs do not include timing measurements.
 
+## Current continuation benchmark (2026-09-14)
+
+After integrating updated main, the five explicit benchmark cases passed on
+production source at `0b3b343`. They ran sequentially (`--concurrency=1`) after
+the builds and correctness checks finished, on the same shared M2 Max workstation.
+This is a fresh headless debug observation, not a paired before/after experiment
+or a native input-to-display measurement.
+
+| Operation | Median | p95 | p99 |
+| --- | ---: | ---: | ---: |
+| Navigate catalog: 50 locations / 12 swarms | 0.188 ms | 0.259 ms | 0.491 ms |
+| Navigate query | 0.020 ms | 0.028 ms | 0.134 ms |
+| Add query `agent`: 2,000 agents | 0.959 ms | 1.005 ms | 1.076 ms |
+| Add contextual query | 0.779 ms | 0.864 ms | 0.868 ms |
+| Add fuzzy query | 0.725 ms | 0.809 ms | 0.824 ms |
+| Decode/parse 16 KiB ASCII | 0.523 ms | 0.689 ms | 1.010 ms |
+| Decode/parse 16 KiB Unicode | 0.332 ms | 0.461 ms | 1.602 ms |
+| Switch/pump: 16 retained terminals | 13.056 ms | 20.293 ms | 30.776 ms |
+| Switch/pump: 48 retained terminals | 10.426 ms | 11.991 ms | 12.328 ms |
+| Focus/pump: 16 retained terminals | 5.802 ms | 6.949 ms | 7.493 ms |
+| Focus/pump: 48 retained terminals | 5.578 ms | 7.297 ms | 8.863 ms |
+
+Catalog/output operations have 100 measured samples; frame workloads have 60,
+with 1,000 retained lines per terminal at 1280×800. A p99 from 60 observations is
+effectively a maximum, not a well-established tail estimate. Host load and JIT
+remain sources of variation; the 48-terminal case being faster does not mean
+more terminals improve performance. The 16-terminal switch still has a much
+slower tail than its median. These numbers do not qualify native responsiveness.
+Raw log: `/private/tmp/harness-onboarding-main-benchmark.log`.
+
+## Distinct Navigate and Add agent continuation
+
+Navigate now indexes only existing swarm locations. The initial implementation
+built Add's full discovered-agent/project catalog first, even when only a few
+locations were open. It now indexes agent identities once and formats just the
+open locations. Add filtering also checks membership without allocating a new
+set for every candidate on every query. Both catalogs reuse unchanged snapshots;
+terminal output does not rebuild or rerank their results. Previews read a bounded
+excerpt only when the selected identity changes.
+
+The updated explicit benchmark exercises the actual two controllers. Add has
+2,000 discovered agents on eight machines, 50 projects and 2,059 entries.
+Navigate has the same discovery inventory, with 50 agent locations across 12
+swarms (62 entries), including one agent in three swarms. Each CPU distribution
+has 20 warmups and 100 samples. Runs were sequential without overlapping other
+checks, on the same shared workstation in the headless debug runner.
+
+| Operation | Initial median / p95 | Final median / p95 |
+| --- | ---: | ---: |
+| Build navigation location catalog | 4.095 / 4.833 ms | 0.194 / 0.264 ms |
+| Open/dispose navigation controller | 4.108 / 4.667 ms | 0.192 / 0.224 ms |
+| Navigate query `agent 0 machine 0` | 0.021 / 0.029 ms | 0.021 / 0.024 ms |
+| Add query `agent` | 1.206 / 1.312 ms | 1.025 / 1.083 ms |
+| Add query `agent 12 machine 3` | 0.992 / 1.141 ms | 0.782 / 0.877 ms |
+| Add fuzzy query `agn12` | 0.927 / 1.043 ms | 0.718 / 0.813 ms |
+| Add query `project 12 main` | 1.321 / 1.464 ms | 1.096 / 1.200 ms |
+
+Navigation catalog construction fell about 95% in this fixture. The unchanged
+catalog check measured 0.006 ms for Navigate and 0.002 ms for Add (median and
+p95). Add's final full catalog construction was 3.057 / 3.438 ms and its
+controller open/dispose cycle 4.336 / 4.694 ms. Host load and JIT also affect these
+observations; they do not establish a fixed saving on every machine.
+
+The full benchmark before the final catalog-only optimization also measured:
+
+| Terminal workload | Median | p95 |
+| --- | ---: | ---: |
+| Decode and parse a 16 KiB ASCII frame | 0.555 ms | 0.776 ms |
+| Decode and parse a 16 KiB Unicode frame | 0.346 ms | 0.421 ms |
+| Tab switch and pump: 4 swarms / 16 terminals | 16.445 ms | 24.666 ms |
+| Tab switch and pump: 12 swarms / 48 terminals | 13.066 ms | 15.784 ms |
+| Pane focus and pump: 16 terminals | 6.861 ms | 9.278 ms |
+| Pane focus and pump: 48 terminals | 7.090 ms | 8.850 ms |
+
+Five benchmark cases passed, followed by the final catalog case. The widget
+workloads retain 1,000 scrollback lines per terminal in a 1280×800 fixture, with
+60 measured samples. These are CPU/frame-pump costs, not native input handling,
+physical keypress-to-display or remote round-trip latency. The calibration gap
+below remains open. Logs: `/private/tmp/harness-two-pickers-benchmark.log` and
+`/private/tmp/harness-two-pickers-benchmark-final.log`.
+
 ## Concurrent machine discovery (2026-09-13)
 
 Agent inventory and terminal capability requests now start together after the machine handshake. The small capability request is sent first because the CLI dispatches frames through a per-client FIFO; it can answer that request before assembling project metadata for the agent list. The list becomes visible as soon as it arrives. Existing panes attach only when both inventory and protocol information are available, without changing focus or membership.
@@ -66,6 +147,32 @@ The cache still holds at most 256 working folders. Each entry watches at most th
 Reads traverse at most 32 ancestors and request at most 64 KiB plus one byte per metadata file, rejecting oversized/invalid text. They open no Git processes, read no terminal output, send no input/network traffic and perform no work on the render path. This limited compatibility reader does not replace Git's full config/environment resolution or richer daemon metadata.
 
 All three stale-cache regressions failed on the earlier code. The final focused run passed 38 tests, including directory and common-path changes, ended/failed/unsupported watches, missed events, deletion, same-path replacement, serialized slow reads and disposal. The preexisting real temporary-filesystem worktree watch also passes; synthetic watchers cover failure ordering without relying on OS timing. Logs: `/private/tmp/harness-v2-git-watch-{before,tests,analyze}.log`. This establishes recovery and bounded work; it is not a new native latency measurement.
+
+## Native benchmark tooling repair (2026-09-14)
+
+The saved benchmark assumed the old Harness V2 name and requested initial focus
+on a wrapper view. Its builder now replaces exactly one recognized product-name
+and bundle-ID assignment in the disposable copy, and verifies the built app's
+name, executable and isolated identity. The runner reads executable paths and
+bundle IDs so the renamed Harness preview is distinguished from the installed
+Harness app. Unknown/unreadable Harness identities stop preflight. Initial focus
+uses the Flutter controller, matching the production titlebar, while foreground
+and key-window requirements remain intact and report their actual state.
+
+Six isolated Python checks pass. A new macOS arm64 Release fixture built at
+`/private/tmp/harness-native-benchmark-x227eh35`, with the expected
+`ai.autonomous.harness.benchmark` bundle ID and `Harness Benchmark` executable.
+The actual runner then correctly refused to start alongside the known running
+workspace preview and wrote no timing result. That is preflight validation,
+not a new input-latency sample. The workspace preview remains running; Computer
+Use still cannot capture it by its exact path.
+
+Artifacts: `/private/tmp/harness-native-isolation-tests.log`,
+`/private/tmp/harness-native-prepare-current.log`, the disposable `build.log`,
+and `/private/tmp/harness-native-current-preflight-check.log`. Use the updated
+[benchmark instructions](../desktop/tool/native_benchmark/README.md) once the
+preview can be normally closed and the isolated window can acquire valid
+foreground/key status. No p50/p95/p99 native result is accepted yet.
 
 ## Native calibration remains unmeasured (2026-09-13)
 

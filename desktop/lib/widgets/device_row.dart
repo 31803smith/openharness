@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../shared/theme/app_theme.dart' as grid;
+import '../shared/widgets/app_dialog.dart';
 import '../state/app_state.dart';
 import '../state/dial_status.dart';
 
@@ -166,7 +167,7 @@ class _DeviceRowState extends State<DeviceRow> {
   Future<void> _showStatus(BuildContext context) {
     return showDialog<void>(
       context: context,
-      barrierColor: Colors.black.withValues(alpha: 0.42),
+      barrierColor: kDialogVeilTint,
       builder: (context) => _DeviceStatusCard(notifier: widget.notifier),
     );
   }

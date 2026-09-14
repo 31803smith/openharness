@@ -40,7 +40,7 @@ private extension SwarmTabStrip {
     try checkTitlebar(palette == expected && searchButton.contentTintColor == expected.accent && notificationButton.contentTintColor == expected.accent &&
       newButton.contentTintColor == expected.accent,
       "Initial search and new-swarm colors use the saved palette")
-    try checkTitlebar(tabs.isEmpty && !actionsEnabled && !newButton.isEnabled && !newAgentButton.isEnabled && !searchButton.isEnabled && !notificationButton.isEnabled,
+    try checkTitlebar(tabs.isEmpty && !actionsEnabled && !newButton.isEnabled && !searchButton.isEnabled && !notificationButton.isEnabled,
       "Initial palette setup does not create or enable workspace controls")
   }
 
@@ -125,14 +125,12 @@ private extension SwarmTabStrip {
     try checkTitlebar(newButton.isEnabled, "New tab returns below capacity")
     try checkTitlebar(searchButton.toolTip?.contains("⌘P") == true, "Search advertises its keyboard shortcut")
     try checkTitlebar(newButton.frame.maxX + 12 <= searchButton.frame.minX, "New swarm leaves space before the search icon")
-    try checkTitlebar(searchButton.frame.maxX < newAgentButton.frame.minX && newAgentButton.frame.maxX < notificationButton.frame.minX, "Search, new agent and bell have separate targets in order")
-    try checkTitlebar(newAgentButton.title.isEmpty && newAgentButton.accessibilityLabel() == "New agent", "New agent uses an icon with an accessible label")
+    try checkTitlebar(searchButton.frame.maxX < notificationButton.frame.minX, "Search and bell have separate targets in order")
     try checkTitlebar(!subviews.contains(where: { $0 is NSTextField }), "The titlebar has no competing text editor")
     events.removeAll()
     searchButton.performClick(nil)
-    newAgentButton.performClick(nil)
     notificationButton.performClick(nil)
-    try checkTitlebar(events == ["jump", "newAgent", "notifications"], "Each toolbar icon opens its shared Flutter surface once")
+    try checkTitlebar(events == ["jump", "notifications"], "Each toolbar icon opens its shared Flutter surface once")
     try checkTitlebar(notificationButton.hasAttention, "The bell represents pending agent attention")
     let oldButton = searchButton
     var themedState = state([["id": "swarm-0", "name": "Renamed tab"]], active: "swarm-0")
@@ -150,10 +148,9 @@ private extension SwarmTabStrip {
     events.removeAll()
     update(state([["id": "swarm-0", "name": "Renamed tab"]], active: "swarm-0", enabled: false))
     try original.checkEnabled(false)
-    try checkTitlebar(!newButton.isEnabled && !newAgentButton.isEnabled && !searchButton.isEnabled && !notificationButton.isEnabled, "Titlebar actions disable with a modal")
+    try checkTitlebar(!newButton.isEnabled && !searchButton.isEnabled && !notificationButton.isEnabled, "Titlebar actions disable with a modal")
     original.clickBothActions()
     newButton.performClick(nil)
-    newAgentButton.performClick(nil)
     searchButton.performClick(nil)
     notificationButton.performClick(nil)
     try checkTitlebar(events.isEmpty, "Disabled controls emit no actions")
@@ -222,7 +219,7 @@ private extension SwarmTabStrip {
     messenger.finishNextReply()
     try checkTitlebar(window.firstResponder === window.contentViewController,
       "The latest acknowledged tab action restores content focus")
-    for (button, method) in [(newAgentButton, "newAgent"), (notificationButton, "notifications")] {
+    for (button, method) in [(notificationButton, "notifications")] {
       window.makeFirstResponder(button)
       let before = messenger.calls.count
       button.performClick(nil)
@@ -232,7 +229,7 @@ private extension SwarmTabStrip {
         "The toolbar waits for Flutter's destination focus tree")
       messenger.finishNextReply()
       try checkTitlebar(window.firstResponder === window.contentViewController,
-        "New-agent and notification controls return keyboard ownership to Flutter")
+        "Notification control returns keyboard ownership to Flutter")
     }
     messenger.holdReplies = false
   }
@@ -391,7 +388,8 @@ private extension SwarmTitlebar {
       "The menu yields the remapped search shortcut to Flutter")
     try checkTitlebar(!main.performKeyEquivalent(with: open), "Menu equivalents defer before input dispatch")
     setKeymap(defaults)
-    try checkTitlebar(strip.searchButton.toolTip == "Search (⌘P)", "Reload refreshes the search button hint")
+    try checkTitlebar(strip.searchButton.toolTip == "Navigate (⌘P)", "Reload refreshes the navigation button hint")
+    try checkTitlebar(strip.searchButton.accessibilityLabel() == "Navigate", "The compass announces global navigation")
     try checkTitlebar(main.defersToInput(event("p", 35, .command)), "Command-P reaches the shared Flutter picker")
     try checkTitlebar(main.defersToInput(event("p", 35, [.command, .shift])), "Command-Shift-P reaches command search")
     flutterKeyContext = "picker"
@@ -445,7 +443,7 @@ private extension SwarmTitlebar {
     try strip.checkStartupPalette(startupPalette)
     try checkTitlebar(window.firstResponder === window.contentViewController,
       "Adding toolbar buttons does not take initial keyboard focus from the workspace")
-    try checkTitlebar(main.items.map(\.title) == ["Harness", "Swarm", "Agent", "Edit", "View", "History", "Models", "Window", "Help"], "Swarm and Agent replace File without duplicate menus")
+    try checkTitlebar(main.items.map(\.title) == ["Harness", "Swarm", "Agent", "Models", "History", "Edit", "View", "Window", "Help"], "Swarm and Agent replace File without duplicate menus")
     let settings = appItem.submenu!.items[0]
     try checkTitlebar(settings.title == "Settings…" && settings.representedObject as? String == "settings", "Settings stays in the application menu")
     let swarm = main.item(withTitle: "Swarm")!.submenu!

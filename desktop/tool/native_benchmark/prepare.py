@@ -7,6 +7,8 @@ import shutil
 import subprocess
 import tempfile
 
+from isolation import benchmark_configuration, validate_benchmark_bundle
+
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--flutter', required=True, type=Path)
 args = parser.parse_args()
@@ -23,7 +25,7 @@ code = code.replace(marker, '    NativeBenchmark.install(window: self, messenger
 code += '\n' + (source / 'tool/native_benchmark/NativeBenchmark.swift').read_text()
 window.write_text(code)
 info = desktop / 'macos/Runner/Configs/AppInfo.xcconfig'
-info.write_text(info.read_text().replace('PRODUCT_NAME = Harness V2', 'PRODUCT_NAME = Harness Benchmark').replace('ai.autonomous.harness.v2', 'ai.autonomous.harness.benchmark'))
+info.write_text(benchmark_configuration(info.read_text()))
 env = dict(os.environ, XDG_CONFIG_HOME=str(root / 'tool-config'))
 flutter = str(args.flutter / 'bin/flutter')
 log = root / 'build.log'
@@ -38,4 +40,5 @@ with log.open('w') as output:
 app = desktop / 'build/macos/Build/Products/Release/Harness Benchmark.app'
 if not app.exists():
     raise RuntimeError('Expected isolated bundle was not built')
+validate_benchmark_bundle(app)
 print(f'BENCHMARK_APP={app}', flush=True)

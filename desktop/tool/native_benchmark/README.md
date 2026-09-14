@@ -1,13 +1,14 @@
 # Native Release interaction benchmark
 
-**Handoff status, September 13, 2026:** this previously untracked fixture is saved
-for continuation, not a validated measurement result. Before building/running,
-update the old `Harness V2` product-name replacement in `prepare.py`, the process
-name check in `run.py`, and the initial native responder selection. See the
+**Status, September 14, 2026:** the builder supports the current Harness name,
+validates the copied product identity and verifies the resulting bundle. The
+runner identifies current/legacy previews by bundle ID, and initial native
+focus uses the same Flutter controller as the production titlebar. Six Python
+isolation checks cover current/legacy names, unknown/duplicate configuration,
+running previews and the built bundle identity. See the
 [handoff](../../../docs/harness-v2-handoff.md) and
 [failed calibration notes](../../../docs/harness-v2-performance.md#native-calibration-remains-unmeasured-2026-09-13).
-Keep isolation and foreground/key-window guards intact; no p50/p95/p99 result
-has been accepted.
+Foreground/key-window guards remain intact; no p50/p95/p99 result has been accepted.
 
 This macOS fixture measures AppKit-queued input through the production Swarm
 screen, terminal session parser and Flutter renderer. It runs as **Harness
@@ -22,10 +23,20 @@ From `desktop/`, build with a compatible Flutter SDK and Xcode:
 python3 tool/native_benchmark/prepare.py --flutter /path/to/flutter
 ```
 
-Use the `BENCHMARK_APP` path printed by the build. Normally close V2 and finish
+Use the `BENCHMARK_APP` path printed by the build. Normally close the workspace preview and finish
 other builds/tests first. Keep this fixture in the foreground during a run; it
 exits on focus loss instead of reclaiming focus between observations. The runner
-refuses to start alongside another V2 or benchmark process and never quits them.
+refuses to start alongside another preview or benchmark process and never quits
+them. Its error names the exact bundle path: the installed Harness app and the
+workspace preview share the name Harness but have distinct bundle identities.
+The installed app may remain open; record other app activity and host load when
+reporting timings. That is not a guarantee of an otherwise idle workstation.
+
+Run preflight checks without launching an app:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tool/native_benchmark -p 'test_*.py' -v
+```
 
 ```sh
 python3 tool/native_benchmark/run.py \

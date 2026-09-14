@@ -27,14 +27,9 @@ import 'package:flutter/services.dart';
 /// still reads as the window.
 const double kDialogVeilBlur = 7;
 
-/// The tint over that blur.
-///
-/// `rgba(0,0,0,.64)` — deeper than Material's own 54% black barrier looks over
-/// a light page, because this one is laid over a dark one, where the same alpha
-/// barely registers. Read against the panel's own fill rather than picked off a
-/// scale: the dialog has to sit clearly in front of the veil, and the veil
-/// clearly in front of the window.
-const Color kDialogVeilTint = Color(0xA3000000);
+/// Shared dark backdrop for dialogs and centered pickers. Terminal output
+/// stays in the background while the active surface has the user's attention.
+const Color kDialogVeilTint = Color(0xC7000000);
 
 /// The app's dialog barrier: a blur, then a tint, then whatever opened.
 ///

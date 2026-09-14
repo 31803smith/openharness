@@ -4,6 +4,7 @@ import 'package:xterm/xterm.dart';
 import '../terminal/search_output_preview.dart';
 
 import 'app_state.dart';
+import 'pane_arrangement.dart';
 import 'swarm_catalog.dart';
 import 'swarm_navigation.dart';
 
@@ -16,9 +17,10 @@ class SwarmSearchController extends ChangeNotifier {
     this.projects,
     this.history,
     this.commands,
-    bool previewInitiallyEnabled = false,
-  }) : previewEnabled = previewInitiallyEnabled,
-       targetId = app.activeSwarmId,
+    this.adding = false,
+    this.navigating = false,
+    this.split,
+  }) : targetId = app.activeSwarmId,
        targetName = app.activeSwarm.name {
     _refresh();
     app.addListener(_refresh);
@@ -33,31 +35,47 @@ class SwarmSearchController extends ChangeNotifier {
   /// Availability is read from workspace state and rechecked at activation.
   /// Commands never enter the ordinary agent/swarm catalog or History.
   final List<SwarmDestination> Function()? commands;
-  bool get isCommandMode => history == null && query.trimLeft().startsWith('>');
+  final bool adding;
+  final bool navigating;
+  final PaneSplitRequest? split;
+  bool get allowsCommands => split == null && history == null;
+  bool get isCommandMode => allowsCommands && query.trimLeft().startsWith('>');
   final String targetId, targetName;
   final _cache = SwarmSearchCatalog();
+  final _locations = SwarmLocationCatalog();
   List<SwarmDestination> _catalog = const [];
   Set<String> _commandIds = const {};
   List<SwarmDestination> rows = const [];
   String query = '';
   String? _selectedId;
   int cursor = 0;
-  bool previewEnabled;
   SearchOutputPreview? preview;
   String? _previewId;
+  bool? _splitCurrent;
+  Set<String> _presentIds = const {};
 
   bool get canPreview =>
+      !navigating &&
       !isCommandMode &&
       history == null &&
       selected != null &&
       selected?.closedId == null;
-  bool get previewVisible => previewEnabled && canPreview;
+  bool get previewVisible => canPreview;
 
-  void togglePreview() {
-    if (!previewEnabled && !canPreview) return;
-    previewEnabled = !previewEnabled;
-    _updatePreview();
-    notifyListeners();
+  List<SwarmDestination> get previewMembers {
+    final row = selected;
+    if (row == null || row.agentId != null) return const [];
+    final memberIds = row.isGroup
+        ? row.members
+        : {
+            for (final swarm in app.swarms.where(
+              (swarm) => swarm.id == row.swarmId,
+            ))
+              for (final pane in swarm.panes)
+                if (pane.agentId != null)
+                  agentDestinationId(pane.machineId, pane.agentId!),
+          };
+    return _catalog.where((entry) => memberIds.contains(entry.id)).toList();
   }
 
   void _updatePreview() {
@@ -68,8 +86,8 @@ class SwarmSearchController extends ChangeNotifier {
     }
     final row = selected!;
     // Keep a snapshot while this selection stays put. Query edits and output
-    // traffic do not read the buffers again. A new selection or re-enabling
-    // preview captures fresh context, including any replacement session.
+    // traffic do not read the buffers again. Choosing another result
+    // captures fresh context, including any replacement session.
     if (_previewId == row.id) return;
     final terminal = app.allPanes
         .where(
@@ -88,14 +106,66 @@ class SwarmSearchController extends ChangeNotifier {
       ? 'Search commands…'
       : history != null
       ? 'Search history…'
+      : adding
+      ? 'Search agents to add…'
+      : navigating
+      ? 'Find an agent or swarm…'
       : 'Search agents, swarms, machines, projects…';
 
+  bool get canCreate =>
+      history == null &&
+      app.swarms.any(
+        (swarm) =>
+            swarm.id == targetId && swarm.panes.length < AppNotifier.maxPanes,
+      ) &&
+      (split == null || app.isPaneSplitCurrent(split!));
+
+  String get primaryAction => switch (split?.axis) {
+    PaneResizeAxis.x => 'Split right',
+    PaneResizeAxis.y => 'Split down',
+    null => 'Add to this swarm',
+  };
+
+  String actionLabel(SwarmDestination? row) => row?.isCommand == true
+      ? action(row!)
+      : adding
+      ? row != null &&
+                row.agentId == null &&
+                split == null &&
+                _missingIds(row).length > 1
+            ? 'Add ${_missingIds(row).length} agents'
+            : primaryAction
+      : row == null
+      ? 'Go to'
+      : action(row);
+
+  String get unavailableMessage =>
+      split != null && !app.isPaneSplitCurrent(split!)
+      ? 'The layout changed. Split the agent again.'
+      : selected != null && alreadyHere(selected!)
+      ? 'This agent is already in this swarm.'
+      : 'This swarm has no room for another agent.';
+
   void _refresh() {
-    final next = history == null
+    final next = navigating
+        ? _locations.read(app, projects?.projects ?? const [])
+        : history == null
         ? _cache.read(app, projects?.projects ?? const [], recent: recent)
         : [...history!.menuDestinations(app), ...closedWorkDestinations(app)];
-    if (identical(next, _catalog) && !isCommandMode) return;
+    final splitCurrent = split == null || app.isPaneSplitCurrent(split!);
+    if (identical(next, _catalog) &&
+        !isCommandMode &&
+        splitCurrent == _splitCurrent) {
+      return;
+    }
     _catalog = next;
+    _splitCurrent = splitCurrent;
+    _presentIds = {
+      for (final swarm in app.swarms.where((s) => s.id == targetId))
+        for (final pane in swarm.panes)
+          if (pane.agentId != null)
+            agentDestinationId(pane.machineId, pane.agentId!),
+    };
     _filter();
     notifyListeners();
   }
@@ -116,7 +186,22 @@ class SwarmSearchController extends ChangeNotifier {
             availableCommands,
             query.trimLeft().substring(1).trimLeft(),
           )
-        : rankSwarmDestinations(_catalog, query, recent: recent);
+        : navigating
+        ? rankSwarmLocations(_catalog, query, recent: recent)
+        : rankSwarmDestinations(
+            adding
+                ? _catalog
+                      .where(
+                        (row) =>
+                            (split == null || row.agentId != null) &&
+                            (_hasMissing(row) ||
+                                (query.isNotEmpty && row.agentId != null)),
+                      )
+                      .toList()
+                : _catalog,
+            query,
+            recent: recent,
+          );
     final index = rows.indexWhere((row) => row.id == _selectedId);
     cursor = rows.isEmpty
         ? 0
@@ -152,29 +237,47 @@ class SwarmSearchController extends ChangeNotifier {
             false)) {
       return null;
     }
-    return SwarmSearchSelection(destination);
+    return SwarmSearchSelection(
+      destination,
+      adding ? SwarmSearchAction.addHere : SwarmSearchAction.open,
+    );
   }
 
   bool canSubmit(SwarmDestination? row) =>
       row != null &&
+      (!adding || row.isCommand || canAdd(row)) &&
       (!row.isCommand || (isCommandMode && _commandIds.contains(row.id))) &&
-      (!row.isGroup ||
+      (adding ||
+          !row.isGroup ||
           canOpenSwarmGroup(app, row, destinationSwarmId: targetId)) &&
       (row.closedId == null || app.canReopenClosed(row.closedId!));
 
+  Set<String> _missingIds(SwarmDestination row) {
+    final members = row.agentId == null ? row.members : {row.id};
+    return members.difference(_presentIds);
+  }
+
+  bool _hasMissing(SwarmDestination row) => row.agentId != null
+      ? !_presentIds.contains(row.id)
+      : row.members.any((id) => !_presentIds.contains(id));
+
+  bool alreadyHere(SwarmDestination row) =>
+      adding && row.agentId != null && _presentIds.contains(row.id);
+
   bool canAdd(SwarmDestination? row) =>
+      !navigating &&
       history == null &&
-      row?.agentId != null &&
-      row!.hasView &&
+      row != null &&
+      !row.isCommand &&
+      row.closedId == null &&
+      _missingIds(row).isNotEmpty &&
+      (split == null || row.agentId != null) &&
+      (split == null || app.isPaneSplitCurrent(split!)) &&
       app.swarms.any(
         (swarm) =>
             swarm.id == targetId &&
-            swarm.panes.length < AppNotifier.maxPanes &&
-            !swarm.panes.any(
-              (pane) =>
-                  pane.machineId == row.machineId &&
-                  pane.agentId == row.agentId,
-            ),
+            swarm.panes.length + _missingIds(row).length <=
+                AppNotifier.maxPanes,
       );
 
   SwarmSearchSelection? addHere() => canAdd(selected)

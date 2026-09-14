@@ -1,6 +1,6 @@
 # Appearance and first use
 
-For the current goal, approved Navigate/Add separation, first-use plan, and acceptance criteria, start with [the continuation handoff](harness-v2-handoff.md). The earlier onboarding implementation below did not resolve the user's first-impression concerns. A further welcome draft is preserved in the handoff archive but remains unverified and unapplied.
+For the current goal, approved Navigate/Add separation, first-use plan, and acceptance criteria, start with [the continuation handoff](harness-v2-handoff.md). The common empty-swarm start page below supersedes the earlier first-workspace-only behavior. The archived welcome draft is historical; useful ideas were adapted into the shared production page rather than adding a second onboarding surface.
 
 Research and implementation notes, 2026-09-13. The product decisions below are Harness adaptations, not claims that the referenced tools endorse them.
 
@@ -40,7 +40,56 @@ Fourteen isolated profile/startup lifecycle checks and the existing first-run/ma
 
 The next discovery stage now overlaps agent inventory and terminal capabilities after the machine handshake. Agents become visible when their list arrives, while existing panes wait for both prerequisites before attaching. A combined app/WebSocket fixture verifies that both requests reach a loopback peer before either reply, including visible inventory while capabilities remain pending. This removes another serial dependency without shortening the existing connection/reply budgets or moving keyboard focus.
 
-## Onboarding evidence and direction
+## Common empty-swarm start page
+
+The same `SwarmWelcome` now handles every empty swarm. Its next action depends on
+available work, not whether this is the first tab or whether another swarm was
+previously closed. This removes the first/second-tab inconsistency the user
+reported.
+
+- With no existing agent views, **Start with one agent** explains the immediate
+  value and shows a clearly labeled static example of two agents working side
+  by side. **Choose folder…** opens the native chooser directly when a usable
+  local computer is known. **Clone repository…** opens the separate clone form.
+  Both lead to the ordinary New agent form, preserving the folder and original
+  target. No example task or agent is started automatically.
+- With discovered or retained work, **Start a swarm** offers the shared Add
+  search, three existing-agent shortcuts, and **New agent**. Adding keeps the
+  user in this swarm and preserves source memberships. Offline retained work
+  remains discoverable. No global-navigation action is introduced here.
+- Saved projects stay visible without expanding a catalog, including projects
+  with no agents. **Browse machines and projects** reveals the complete catalog
+  and its existing linking/project-management actions. Another offline computer
+  no longer hides a ready local computer's folder-first path.
+- A single usable local computer no longer occupies a Machine dropdown in New
+  agent. Multiple targets, remote targets, offline state and linking issues keep
+  that choice visible. Agent selection, Advanced settings, explicit permission
+  options and failure recovery keep their existing behavior.
+- No machines during discovery shows a disabled progress action. No linked
+  computer offers **Link a machine**; offline machines offer **Reconnect**, with
+  repeat activation guarded while the retry is pending. A delayed first discovery
+  gives the enabled folder action keyboard focus unless the user has already
+  moved to another welcome control. Enter opens the chooser without an extra Tab.
+- The example, search/action row and catalog stack with larger system text.
+  New agent now uses the same darker shared modal veil. Welcome cards use plain
+  tinted surfaces; the former backdrop filters are removed.
+
+The source recheck used [Cursor's quickstart](https://cursor.com/docs/get-started/quickstart)
+and [VS Code's agent tutorial](https://code.visualstudio.com/docs/agents/agents-tutorial).
+Both move from a folder into useful agent work and subsequent review. Harness's
+adaptation is one concrete starting action, an honest workspace example, and
+contextual introduction of multiple agents. It is not an added mandatory tour.
+
+Validation uses the actual screen and form with isolated machines, folder
+selection and transports. It covers delayed discovery and explicit focus,
+offline retry, saved-project visibility and folder routing, first/later/closed
+empty swarms, clone cancellation, installed defaults, keyboard creation,
+pending/failing launches, late choices and stale destinations. Real-font renders
+were inspected at 1280×800 and at 880×560 with 2× text. These are synthetic UI
+checks; first-install/provider-sign-in observation and measured time to a useful
+real agent remain release qualification work.
+
+## Earlier onboarding evidence and direction (historical)
 
 | Primary source | Observed behavior | Harness adaptation |
 | --- | --- | --- |

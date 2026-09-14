@@ -317,7 +317,7 @@ void main() {
       await tester.pump();
       await settings;
 
-      // Native search opens the same centered Flutter editor and preview.
+      // Native navigation opens the centered editor and exact locations.
       final jumping = native('jump');
       await tester.pump();
       expect(
@@ -338,10 +338,7 @@ void main() {
         picker.center.dx,
         tester.view.physicalSize.width / tester.view.devicePixelRatio / 2,
       );
-      expect(
-        find.byKey(const ValueKey('swarm-search-preview')),
-        findsOneWidget,
-      );
+      expect(find.byKey(const ValueKey('swarm-search-preview')), findsNothing);
       expect(otherInput, isEmpty);
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pump();
