@@ -63,6 +63,7 @@ class _Connection extends WsConn {
     Duration timeout = const Duration(seconds: 20),
   }) {
     if (type == 'engines_probe') return Future.value({'engines': []});
+    if (type == 'dsh_list') return Future.value({'dsh': []});
     if (type == 'codex_profiles_list') return Future.value({'profiles': []});
     final request = _Request(type, Map.of(payload));
     calls.add(request);
