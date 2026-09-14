@@ -21,10 +21,8 @@ import 'swarm_interactions_test.dart' show chord;
 import 'keymap_host_test.dart' show MemoryKeymap;
 import 'keymap_runtime_test.dart' as runtime;
 
-final _newHarness = find.descendant(
-  of: find.byKey(const ValueKey('swarm-search-new-agent')),
-  matching: find.text('New Harness'),
-);
+final _newHarness = find.byKey(const ValueKey('harness-start-new'));
+final _startInput = find.byKey(const ValueKey('harness-start-search'));
 
 class _FirstUseApp extends AppNotifier {
   _FirstUseApp()
@@ -48,18 +46,10 @@ class _FirstUseApp extends AppNotifier {
 
   Completer<void>? probe;
   var probes = 0;
-  Completer<void>? reconnect;
-  var reconnects = 0;
   Completer<String?>? creation;
   final launches =
       <({String machine, String engine, String folder, bool bypass})>[];
   final input = <TerminalBinaryFrame>[];
-
-  @override
-  Future<void> retryMachines() async {
-    reconnects++;
-    await reconnect?.future;
-  }
 
   @override
   Future<void> probeEngines(String machineId, {bool force = false}) async {
@@ -109,38 +99,35 @@ class _FolderPicker extends FileSelectorPlatform {
 }
 
 void main() {
-  testWidgets(
-    'first use opens the shared picker without a separate start page',
-    (tester) async {
-      final app = _FirstUseApp();
-      final projects = SwarmProjectStore();
-      await projects.add(
-        const SavedSwarmProject(
-          machineId: 'm',
-          path: '/work/saved-project',
-          name: 'Saved project',
-        ),
-      );
-      await mount(tester, app, projects: projects);
-      expect(find.byKey(const ValueKey('swarm-search-input')), findsOneWidget);
-      expect(_newHarness, findsOneWidget);
-      expect(find.byKey(const ValueKey('swarm-search-input')), findsOneWidget);
-      expect(
-        find.byKey(const ValueKey('swarm-search-new-agent')),
-        findsOneWidget,
-      );
-      expect(find.text('Machines'), findsNothing);
-      expect(find.text('Projects'), findsNothing);
-      expect(find.text('Saved project'), findsNothing);
-      expect(find.byKey(const ValueKey('swarm-start-clone')), findsNothing);
-      expect(app.launches, isEmpty);
-      await tester.pumpWidget(const SizedBox());
-      projects.dispose();
-      app.dispose();
-    },
-  );
+  testWidgets('first use starts idle with separate Open and New actions', (
+    tester,
+  ) async {
+    final app = _FirstUseApp();
+    final projects = SwarmProjectStore();
+    await projects.add(
+      const SavedSwarmProject(
+        machineId: 'm',
+        path: '/work/saved-project',
+        name: 'Saved project',
+      ),
+    );
+    await mount(tester, app, projects: projects);
+    expect(_startInput, findsOneWidget);
+    expect(_newHarness, findsOneWidget);
+    expect(find.byKey(const ValueKey('harness-start-open')), findsOneWidget);
+    expect(tester.widget<TextField>(_startInput).focusNode!.hasFocus, isFalse);
+    expect(find.byType(ListTile), findsNothing);
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.text('Saved project'), findsNothing);
+    expect(find.byKey(const ValueKey('harness-device-link')), findsOneWidget);
+    expect(app.launches, isEmpty);
+    expect(app.probes, 0);
+    await tester.pumpWidget(const SizedBox());
+    projects.dispose();
+    app.dispose();
+  });
 
-  testWidgets('first discovery enables the new-agent action below search', (
+  testWidgets('first discovery keeps entry idle until New is chosen', (
     tester,
   ) async {
     final app = _FirstUseApp();
@@ -151,55 +138,38 @@ void main() {
     FileSelectorPlatform.instance = picker;
     addTearDown(() => FileSelectorPlatform.instance = oldPicker);
     await mount(tester, app);
-    expect(find.text('Finding computers…'), findsOneWidget);
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pump();
     expect(picker.opened, 0);
+    expect(app.probes, 0);
+    expect(find.byType(AlertDialog), findsNothing);
     app.machineStates['m'] = local;
     app.machinesLoading = false;
     app.dismissError();
     await tester.pump();
-    expect(_newHarness, findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('swarm-search-new-agent')));
+    expect(tester.widget<TextField>(_startInput).focusNode!.hasFocus, isFalse);
+    await tester.tap(_newHarness);
     await tester.pump();
-    expect(picker.opened, 1);
+    expect(picker.opened, 0);
     expect(find.byType(AlertDialog), findsOneWidget);
-    expect(find.text('/work/my-project'), findsOneWidget);
-    expect(app.launches, isEmpty);
-    await tester.tap(find.text('Back to Search'));
-    await tester.pumpWidget(const SizedBox());
-    app.dispose();
-  });
-
-  testWidgets('offline start retries once and retains its empty swarm', (
-    tester,
-  ) async {
-    final app = _FirstUseApp()..reconnect = Completer<void>();
-    app.machineStates['m']!.nodeOnline = false;
-    final original = app.activeSwarm;
-    await mount(tester, app);
-    expect(find.text('Reconnect'), findsOneWidget);
-    await tester.tap(find.text('Reconnect'));
-    await tester.pump();
-    expect(find.text('Finding computers…'), findsOneWidget);
+    expect(app.probes, 1);
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pump();
-    expect(app.reconnects, 1);
+    expect(picker.opened, 1);
+    expect(find.text('/work/my-project'), findsOneWidget);
     expect(app.launches, isEmpty);
-    expect(app.activeSwarm, same(original));
-    app.reconnect!.complete();
-    await tester.pumpAndSettle();
-    expect(find.text('Reconnect'), findsOneWidget);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pump();
     await tester.pumpWidget(const SizedBox());
     app.dispose();
   });
 
-  testWidgets('discovery preserves the focused agent search', (tester) async {
+  testWidgets('discovery preserves the focused harness search', (tester) async {
     final app = _FirstUseApp();
     final local = app.machineStates.remove('m')!;
     app.machinesLoading = true;
     await mount(tester, app);
-    final browsing = find.byKey(const ValueKey('swarm-search-input'));
+    final browsing = _startInput;
     final focus = tester.widget<TextField>(browsing).focusNode!;
     focus.requestFocus();
     await tester.pump();
@@ -235,7 +205,10 @@ void main() {
       await mount(tester, app);
       expect(_newHarness, findsOneWidget);
       expect(find.text('Machines'), findsNothing);
-      await tester.tap(find.byKey(const ValueKey('swarm-search-new-agent')));
+      await tester.tap(_newHarness);
+      await tester.pump();
+      expect(picker.opened, 0);
+      await tester.tap(find.byKey(const Key('new-agent-folder')));
       await tester.pump();
       expect(picker.opened, 1);
       expect(find.text('/work/my-project'), findsOneWidget);
@@ -258,7 +231,7 @@ void main() {
         'Remote computer — Remote — Offline',
       );
       expect(app.launches, isEmpty);
-      await tester.tap(find.text('Back to Search'));
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
       await tester.pump();
       await tester.pumpWidget(const SizedBox());
       app.dispose();
@@ -331,7 +304,7 @@ void main() {
 
   for (final native in [false, true]) {
     testWidgets(
-      'new agent ${native ? 'native menu' : 'floating picker'} defaults to this computer',
+      'New Harness ${native ? 'native menu' : 'header'} defaults to this computer',
       (tester) async {
         tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
           const MethodChannel('harness/swarm_tabs'),
@@ -389,24 +362,23 @@ void main() {
           await tester.pump();
           await opening;
         } else {
-          final search = find.byKey(const ValueKey('swarm-new-agent-button'));
-          final add = find.byKey(const ValueKey('swarm-add-agent-button'));
+          final newButton = find.byKey(
+            const ValueKey('swarm-new-harness-button'),
+          );
+          final openButton = find.byKey(
+            const ValueKey('swarm-open-harness-button'),
+          );
           final bell = find.byKey(const ValueKey('swarm-notifications-button'));
           expect(
-            tester.getRect(search).right,
-            lessThanOrEqualTo(tester.getRect(bell).left),
+            tester.getRect(bell).right,
+            lessThan(tester.getRect(newButton).left),
           );
-          expect(tester.getRect(add).left, greaterThan(1000));
           expect(
-            tester.getRect(add).top,
-            lessThan(tester.getRect(find.byKey(pane.cellKey)).bottom),
+            tester.getRect(newButton).right,
+            lessThanOrEqualTo(tester.getRect(openButton).left),
           );
-          await tester.tap(add);
-          await tester.pump();
-          expect(find.byType(AlertDialog), findsNothing);
-          await tester.tap(
-            find.byKey(const ValueKey('swarm-search-new-agent')),
-          );
+          expect(find.byType(FloatingActionButton), findsNothing);
+          await tester.tap(newButton);
           await tester.pump();
         }
         expect(find.byType(AlertDialog), findsOneWidget);
@@ -431,17 +403,13 @@ void main() {
         expect(app.panes, [pane]);
         expect(app.launches, isEmpty);
         expect(app.input, isEmpty);
-        await tester.tap(find.text(native ? 'Cancel' : 'Back to Search'));
+        expect(find.text('Cancel'), findsNothing);
+        expect(find.text('Back to Search'), findsNothing);
+        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
         await tester.pump();
         await tester.pump();
         expect(find.byType(AlertDialog), findsNothing);
-        if (!native) {
-          final search = find.byKey(const ValueKey('swarm-search-input'));
-          expect(search, findsOneWidget);
-          expect(tester.widget<TextField>(search).focusNode!.hasFocus, isTrue);
-          await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-          await tester.pump();
-        }
+        expect(find.byKey(const ValueKey('swarm-search-input')), findsNothing);
         expect(
           tester
               .widget<TerminalView>(find.byType(TerminalView))
@@ -575,15 +543,9 @@ void main() {
     expect(find.text('Machines'), findsNothing);
     expect(find.text('Projects'), findsNothing);
     expect(app.launches, isEmpty);
-    expect(find.byKey(const ValueKey('swarm-search-input')), findsOneWidget);
-    expect(
-      tester
-          .widget<TextField>(find.byKey(const ValueKey('swarm-search-input')))
-          .focusNode!
-          .hasFocus,
-      isTrue,
-    );
-    await tester.tap(find.byKey(const ValueKey('swarm-search-new-agent')));
+    expect(_startInput, findsOneWidget);
+    expect(tester.widget<TextField>(_startInput).focusNode!.hasFocus, isFalse);
+    await tester.tap(_newHarness);
     await tester.pump();
     final engine = tester.widget<AppSelectField<String>>(
       find.byKey(const Key('new-agent-engine-field')),
@@ -594,6 +556,9 @@ void main() {
       tester.getTopLeft(find.text('Working folder')).dy,
       lessThan(tester.getTopLeft(find.text('Agent')).dy),
     );
+    expect(picker.opened, 0);
+    await tester.tap(find.byKey(const Key('new-agent-folder')));
+    await tester.pump();
     expect(picker.opened, 1);
     expect(app.probes, 1);
     expect(find.text('/work/my-project'), findsOneWidget);
@@ -617,7 +582,7 @@ void main() {
     app.dispose();
   });
 
-  testWidgets('every empty swarm offers the same existing-agent addition', (
+  testWidgets('every empty page opens existing work through the same search', (
     tester,
   ) async {
     final app = _FirstUseApp();
@@ -631,12 +596,10 @@ void main() {
     ];
     await mount(tester, app);
     expect(app.panes, isEmpty);
-    expect(find.byKey(const ValueKey('swarm-search-input')), findsOneWidget);
+    expect(_startInput, findsOneWidget);
     expect(find.text('Go to an agent'), findsNothing);
-    await tester.enterText(
-      find.byKey(const ValueKey('swarm-search-input')),
-      'My ongoing work',
-    );
+    await tester.tap(_startInput);
+    await tester.enterText(_startInput, 'My ongoing work');
     await tester.pump();
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pump();
@@ -646,13 +609,11 @@ void main() {
     app.newSwarm();
     await tester.pump();
     await tester.pump();
-    expect(find.byKey(const ValueKey('swarm-search-input')), findsOneWidget);
+    expect(_startInput, findsOneWidget);
     expect(_newHarness, findsOneWidget);
     expect(find.text('Go to an agent'), findsNothing);
-    await tester.enterText(
-      find.byKey(const ValueKey('swarm-search-input')),
-      'My ongoing work',
-    );
+    await tester.tap(_startInput);
+    await tester.enterText(_startInput, 'My ongoing work');
     await tester.pump();
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pump();
@@ -664,7 +625,7 @@ void main() {
     await tester.pump();
     await tester.pump();
     expect(app.closedHistory, isNotEmpty);
-    expect(find.byKey(const ValueKey('swarm-search-input')), findsOneWidget);
+    expect(_startInput, findsOneWidget);
     expect(app.launches, isEmpty);
     expect(find.text('Go to an agent'), findsNothing);
     expect(tester.takeException(), isNull);
@@ -673,7 +634,7 @@ void main() {
   });
 
   testWidgets(
-    'first-folder selection reuses discovery and ignores repeated activation',
+    'folder selection reuses discovery and ignores repeated activation',
     (tester) async {
       final app = _FirstUseApp()..probe = Completer<void>();
       final oldPicker = FileSelectorPlatform.instance;
@@ -684,10 +645,14 @@ void main() {
 
       await tester.tap(_newHarness);
       await tester.pump();
+      expect(find.byType(AlertDialog), findsOneWidget);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await chord(tester, LogicalKeyboardKey.keyN);
       expect(picker.opened, 1);
       expect(app.probes, 1);
-      expect(find.byType(AlertDialog), findsNothing);
+      expect(find.byType(AlertDialog), findsOneWidget);
       expect(app.launches, isEmpty);
 
       app.machineStates['m']!.engines.replace(const [
@@ -699,7 +664,6 @@ void main() {
       picker.pending!.complete('/work/chosen');
       await tester.pump();
       await tester.pump();
-      expect(find.byType(AlertDialog), findsOneWidget);
       expect(find.text('/work/chosen'), findsOneWidget);
       expect(
         tester
@@ -717,17 +681,9 @@ void main() {
     },
   );
 
-  for (final change in [
-    'cancel',
-    'swarm',
-    'machine',
-    'remote',
-    'offline',
-    'link',
-  ]) {
-    testWidgets('first-folder result is discarded after $change', (
-      tester,
-    ) async {
+  testWidgets(
+    'late folder completion cannot revive a disposed creation dialog',
+    (tester) async {
       final app = _FirstUseApp();
       final oldPicker = FileSelectorPlatform.instance;
       final picker = _FolderPicker()..pending = Completer<String?>();
@@ -736,36 +692,22 @@ void main() {
       await mount(tester, app);
       await tester.tap(_newHarness);
       await tester.pump();
-      switch (change) {
-        case 'swarm':
-          app.newSwarm();
-        case 'machine':
-          app.machineStates['m'] = MachineState(app.machines.single)
-            ..localOnly = true;
-        case 'remote':
-          app.machineStates['m']!.localOnly = false;
-        case 'offline':
-          app.machineStates['m']!.nodeOnline = false;
-        case 'link':
-          app.machineStates['m']!.needsLink = true;
-      }
-      picker.pending!.complete(change == 'cancel' ? null : '/work/stale');
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      expect(picker.opened, 1);
+      await tester.pumpWidget(const SizedBox());
+      picker.pending!.complete('/work/stale');
       await tester.pump();
       await tester.pump();
       expect(find.byType(AlertDialog), findsNothing);
       expect(app.allPanes, isEmpty);
       expect(app.launches, isEmpty);
       expect(app.input, isEmpty);
-      // Dismissing the native chooser also releases the ordinary New agent
-      // command; no abandoned pending flag should trap the workspace.
-      await chord(tester, LogicalKeyboardKey.keyN);
-      expect(find.byType(AlertDialog), findsOneWidget);
-      expect(find.text('/work/stale'), findsNothing);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());
       app.dispose();
-    });
-  }
+    },
+  );
 
   testWidgets(
     'a late probe uses an installed agent without overriding a choice',

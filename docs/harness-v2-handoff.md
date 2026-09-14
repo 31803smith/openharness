@@ -1,13 +1,21 @@
 # Harness v2: goal, plan, and continuation handoff
 
-**Creation recovery audit:** The recovery tests now exercise the current separate
+**First-use audit:** All **16 current-flow checks** now pass in
+`/private/tmp/harness-current-first-use.log`, with no analysis issues in
+`/private/tmp/harness-current-first-use-analyze.log`. They cover the idle start
+page, deliberate discovery/creation, local-machine defaults from header and native
+menu, immediate keyboard creation, error/cancel retry, duplicate chooser suppression,
+late probe choices, and disposal while the native folder request is pending. The
+retired combined picker and automatic folder-first launch are no longer test
+expectations. This does not qualify real first use on a clean native machine.
+
+**Creation recovery audit:** `b26424e` updates recovery tests for the current separate
 New/Open flow, including header/Cmd-N/start-page entry, single dismissal, explicit
 split creation, and uncertain replies after the destination changes. All **32
 checks** pass in `/private/tmp/harness-current-creation-recovery-after.log`.
 Recovery guidance now points to **Open Harness**, including when the original
 tab was closed or its split became stale. The check still uses the original
-receipt and never submits another launch. The first-workspace fixture audit is
-still in progress. Analysis reports only two existing brace-style infos in
+receipt and never submits another launch. Analysis reports only two existing brace-style infos in
 unchanged `app_state.dart` lines (2264 and 2932), with no errors or warnings;
 see `/private/tmp/harness-current-creation-recovery-analyze.log`.
 These changes are newer than the prepared Release bundle
