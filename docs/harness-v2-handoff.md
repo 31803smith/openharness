@@ -1,5 +1,24 @@
 # Harness v2: goal, plan, and continuation handoff
 
+**Workspace event isolation:** Routine heartbeats and dial scroll no longer
+rebuild the surrounding workspace or visit every retained terminal's JSON
+dispatcher. In the current 16-terminal/four-workspace fixture, 16 heartbeats went
+from 16 workspace builds and 256 irrelevant terminal calls to zero; a dial stroke
+went from 18 builds and 288 irrelevant calls to zero. Scroll and next-key routing
+stay with the focused pane. The busy indicator still publishes first activity,
+turn end and watchdog expiry; hidden ready replies and machine-wide transport
+failures remain covered. Device status continues through its own notifier.
+
+All **83 affected checks** pass in `/private/tmp/harness-workspace-events-final-checks.log`.
+The full desktop suite passes **1,431 checks**, with one optional media placeholder
+skipped, in `/private/tmp/harness-workspace-events-full.log`. Analysis has no errors
+or warnings and two existing brace-style infos in unchanged `app_state.dart`
+lines, recorded in `/private/tmp/harness-workspace-events-analyze.log`.
+[Performance evidence](harness-v2-performance.md) records deterministic work
+counts, not native latency. The prepared Release below predates this correction;
+its refresh is pending. The running preview remains unchanged while the console
+is locked, and native benchmarking remains deferred.
+
 **Layout keyboard and rendering correction:** `d5756ab` is pushed. The current workspace keymap blocked
 a second Layout chord once the dialog opened, and Cmd-number fell through as a
 plain layout choice. Layout now owns its configured cycling command while other

@@ -12,6 +12,34 @@ It prints `SWARM_BENCH` JSON records. Its filename deliberately does not end in 
 
 ## Current continuation benchmark (2026-09-14)
 
+### Routine events leave the surrounding workspace idle
+
+The current New/Open UI was exercised with 16 retained terminals across four
+workspaces. A normal heartbeat from an already-busy agent rebuilt the workspace;
+dial scroll did the same. Both also visited every retained terminal's JSON
+dispatcher before reaching their destination. The dispatcher now sends only
+`terminal_` protocol events through that pool. Dial scroll goes directly to the
+focused viewport, device status updates its own listeners, and heartbeats renew
+the watchdog without publishing an unchanged busy state.
+
+| Isolated event sequence | Workspace builds, before → after | Irrelevant terminal dispatches, before → after |
+| --- | ---: | ---: |
+| 16 routine heartbeats, a frame after each | 16 → 0 | 256 → 0 |
+| Dial down, 16 moves, up, a frame after each | 18 → 0 | 288 → 0 |
+
+These are deterministic work counts from the headless widget runner, not elapsed
+time or native latency measurements. The same checks preserve the other panes'
+scroll positions, focus and next-key routing. First activity and watchdog expiry
+still notify; ready replies and transport failures reach hidden terminals on the
+correct machine. All **83 affected checks** pass in
+`/private/tmp/harness-workspace-events-final-checks.log`; the failing-before
+reproduction is `/private/tmp/harness-workspace-events-before.log`.
+Analysis has no errors or warnings and two existing brace-style infos in unchanged
+lines of `app_state.dart`, recorded in `/private/tmp/harness-workspace-events-analyze.log`.
+Native latency benchmarking remains deferred. The older timing measurements below
+describe their recorded UI revisions; the current entry contract is in
+[the handoff](harness-v2-handoff.md).
+
 ### Warm picker reopening
 
 Add and Navigate no longer rebuild the unchanged Swarm screen when their

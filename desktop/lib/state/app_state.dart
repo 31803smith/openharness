@@ -3496,8 +3496,8 @@ class AppNotifier extends ChangeNotifier {
   String _turnActivityKey(String machineId, String agentId) =>
       '$machineId\u0000$agentId';
 
-  void _markAgentProcessing(MachineState machine, String agentId) {
-    machine.processingAgentIds.add(agentId);
+  bool _markAgentProcessing(MachineState machine, String agentId) {
+    final changed = machine.processingAgentIds.add(agentId);
     final key = _turnActivityKey(machine.machine.machineId, agentId);
     _turnActivityWatchdogs.remove(key)?.cancel();
     _turnActivityWatchdogs[key] = Timer(turnActivityTimeout, () {
@@ -3510,6 +3510,7 @@ class AppNotifier extends ChangeNotifier {
       if (!identical(current, machine)) return;
       if (machine.processingAgentIds.remove(agentId)) notifyListeners();
     });
+    return changed;
   }
 
   /// Whether this agent is mid-turn, by the app's own reckoning.
@@ -5174,29 +5175,16 @@ class AppNotifier extends ChangeNotifier {
     if (machine == null) return;
     final type = event['type'] as String? ?? '';
     final payload = (event['payload'] as Map<String, dynamic>?) ?? {};
-    // EVERY tile on this machine sees the frame, and each decides for itself.
-    //
-    // Not a routing choice — a correctness one. `handleFrame` answers "this was
-    // a terminal frame", NOT "this was mine": a session that is not the one
-    // being addressed still returns true so the app-level switch skips it. With
-    // one terminal those two meanings were the same sentence. With four they
-    // are not, and stopping at the first `true` would have let whichever tile
-    // happened to be first swallow another tile's `terminal_ready` — the reply
-    // is matched by requestId AND agentId inside the session, so only the right
-    // one acts on it, but only if it is allowed to see it.
-    //
-    // It also fixes a fault that was invisible at one tile: a
-    // `terminal_transport_error` describes the whole connection, and every
-    // session must learn the transport died. Stopping early would have told one
-    // tile and left the rest showing a terminal that can no longer receive
-    // anything.
-    var consumedByTerminal = false;
-    for (final pane in panesFor(machineId).toList()) {
-      final session = pane.session;
-      if (session == null) continue;
-      if (await session.handleFrame(type, payload)) consumedByTerminal = true;
+    // Only terminal protocol frames visit the session pool. Heartbeats, dial
+    // scroll and discovery events must not await every retained terminal.
+    // Each session still sees terminal frames: ready replies match their own
+    // request/agent, while transport errors must reach the whole machine.
+    if (type.startsWith('terminal_')) {
+      for (final pane in panesFor(machineId).toList()) {
+        await pane.session?.handleFrame(type, payload);
+      }
+      return;
     }
-    if (consumedByTerminal) return;
     switch (type) {
       // ── the dial, over the cable, forwarded by the local daemon ──────────────────────────────────
       // Local-only frames (backend.sendLocal in the harness CLI): they describe a hand at THIS desk, so
@@ -5205,7 +5193,7 @@ class AppNotifier extends ChangeNotifier {
         // The dial came, went, or started taking an update. Its own notifier —
         // see [dial] — so nothing else in the window rebuilds for it.
         dial.apply(DialStatus.fromJson(payload));
-        break;
+        return;
       case 'dial_scroll':
         // Straight through, including the reports carrying no travel — the ends of a stroke are the point
         // of the message. The window does no arithmetic here; the terminal that owns the scrollback does.
@@ -5219,7 +5207,7 @@ class AppNotifier extends ChangeNotifier {
           (payload['dy'] as num?)?.round() ?? 0,
           (payload['velocity'] as num?)?.round() ?? 0,
         );
-        break;
+        return;
       case 'device_focus':
         unawaited(ensureDeviceFocus(payload));
         break;
@@ -5397,9 +5385,10 @@ class AppNotifier extends ChangeNotifier {
         // turn already under way, which for an agent this app merely reconnected
         // to is work nobody here just asked for.
         if (type == 'turn_started') _reportFirstMessage();
+        var changed = false;
         final agentId = _eventAgentId(machine, event, payload);
         if (agentId != null) {
-          _markAgentProcessing(machine, agentId);
+          changed = _markAgentProcessing(machine, agentId);
           // Only a START opens a stats turn, for the reason above: a heartbeat
           // is a turn already under way, and counting one would report an agent
           // this app merely reconnected to as work somebody just asked for.
@@ -5411,9 +5400,12 @@ class AppNotifier extends ChangeNotifier {
         } else {
           final sessionId = _eventSessionId(event, payload);
           if (sessionId != null) {
-            machine.pendingProcessingSessions.add(sessionId);
+            changed = machine.pendingProcessingSessions.add(sessionId);
           }
         }
+        // Renew the watchdog on every heartbeat, but redraw only when the
+        // agent first becomes busy. Expiry and turn end publish separately.
+        if (!changed) return;
         break;
       case 'turn_ended':
         final agentId = _eventAgentId(machine, event, payload);
