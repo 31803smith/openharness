@@ -1,10 +1,19 @@
 # Harness App V2 — development handoff
 
-Updated 2026-09-13 for transfer to another computer/session. This is a working preview, not a release.
+Updated 2026-09-13 after resuming the Navigate/Add implementation. This is a working preview, not a release.
 
 **Resume with [Harness v2: goal, plan, and continuation handoff](harness-v2-handoff.md).** It records the latest approved design, acceptance criteria, next-work order, and portable drafts. The checkpoints below are historical; the current handoff supersedes their conflicting toolbar, picker, preview, menu, and onboarding directions.
 
-## Cross-computer checkpoint
+## Navigate and Add agent continuation
+
+- Implemented distinct UIs: a compact compass/Navigate directory lists every existing swarm location for a matching agent; New swarm, bottom-right floating +, and both splits share Add results with an always-on preview and New agent action. Navigate does not mutate membership. Add reuses the session and preserves source swarms, avoids duplicates, and keeps the chosen split position.
+- Every empty swarm now offers the same existing-agent suggestions, including after closing earlier swarms. Removed the first-use-only gate and “Go to an agent” heading. Broader onboarding simplification remains next work.
+- Cleaner bounded previews join wrapped prose, remove separator/recap decorations, and use a reading card. Removed the eye toggle, darkened shared modal veils, removed the top-right New agent +, and reordered native menus. Cmd-N and customized picker keys retain their behavior; entering/leaving command mode keeps the editor mounted to avoid losing the very next key.
+- Native checks: 51 keyboard decoder + 344 AppKit assertions. Desktop: **1,256 passed, one existing skip**; analyzer: zero errors/warnings, 12 existing vendored infos. Synthetic real-font renders reviewed at 1280×800 and 880×560. Logs: `/private/tmp/harness-two-pickers-{full-tests-final,analyze-clean,native,visual-final}.log`.
+- Avoided building unused agent/project metadata for Navigate and allocating membership sets for every Add candidate. Navigation catalog setup measured 4.095 → 0.194 ms median for 50 agent locations across 12 swarms. Add's 2,000-agent query measured 1.025 ms median / 1.083 ms p95. See [performance measurements and limits](harness-v2-performance.md); these are headless CPU observations, not native keypress-to-screen latency.
+- The archived picker draft is superseded; do not reapply it. Its onboarding companion remains unapplied. Next: build/reopen the tested release preview, improve genuine first use, and qualify native responsiveness plus local/remote reconnect workflows. Draft PR #31 remains draft.
+
+## Cross-computer checkpoint (historical)
 
 - Saved `26a372e`: preserve captured terminal rows until the remote resized keyframe, avoiding deletion of the latest output when a tall TUI enters a smaller pane. Fresh five-pane and delayed-snapshot regressions reach the bottom; revisited scrolled views retain their place. The user's exact live screenshot still needs rechecking.
 - Also committed the existing first-agent naming work: default empty New swarms adopt the first agent's name, preserving custom names and close/reopen behavior.

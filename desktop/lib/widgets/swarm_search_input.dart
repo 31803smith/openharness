@@ -18,6 +18,7 @@ class SwarmSearchInput extends StatelessWidget {
     required this.onClose,
     required this.onChanged,
     this.onOpen,
+    this.onNewAgent,
     this.groupId,
     this.onTapOutside,
     this.showClose = false,
@@ -32,6 +33,7 @@ class SwarmSearchInput extends StatelessWidget {
   final VoidCallback onClose;
   final ValueChanged<String> onChanged;
   final VoidCallback? onOpen;
+  final VoidCallback? onNewAgent;
   final Object? groupId;
   final VoidCallback? onTapOutside;
   final bool showClose, autofocus;
@@ -52,6 +54,7 @@ class SwarmSearchInput extends StatelessWidget {
       onChoose: onChoose,
       onClose: onClose,
       onOpen: onOpen,
+      onNewAgent: onNewAgent,
       child: TextField(
         key: inputKey,
         groupId: groupId ?? EditableText,
@@ -66,8 +69,7 @@ class SwarmSearchInput extends StatelessWidget {
         cursorColor: grid.AppPalette.swarmAccent,
         textAlignVertical: TextAlignVertical.center,
         decoration: InputDecoration(
-          hintText:
-              search?.hint ?? 'Search agents, swarms, machines, projects…',
+          hintText: search?.hint ?? 'Search agents to add…',
           hintStyle: const TextStyle(fontSize: 16, color: Colors.white60),
           prefixIcon: const Icon(Icons.search, size: 20, color: Colors.white60),
           prefixIconConstraints: const BoxConstraints(

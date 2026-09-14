@@ -159,7 +159,7 @@ void main() {
 
   for (final native in [false, true]) {
     testWidgets(
-      'new agent toolbar ${native ? 'native' : 'Flutter'} action inherits the focused working folder',
+      'new agent ${native ? 'native menu' : 'floating picker'} action inherits the focused working folder',
       (tester) async {
         tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
           const MethodChannel('harness/swarm_tabs'),
@@ -193,17 +193,23 @@ void main() {
           await opening;
         } else {
           final search = find.byKey(const ValueKey('swarm-search-button'));
-          final add = find.byKey(const ValueKey('swarm-new-agent-button'));
+          final add = find.byKey(const ValueKey('swarm-add-agent-button'));
           final bell = find.byKey(const ValueKey('swarm-notifications-button'));
           expect(
             tester.getRect(search).right,
-            lessThanOrEqualTo(tester.getRect(add).left),
-          );
-          expect(
-            tester.getRect(add).right,
             lessThanOrEqualTo(tester.getRect(bell).left),
           );
+          expect(tester.getRect(add).left, greaterThan(1000));
+          expect(
+            tester.getRect(add).top,
+            greaterThan(tester.getRect(find.byKey(pane.cellKey)).bottom),
+          );
           await tester.tap(add);
+          await tester.pump();
+          expect(find.byType(AlertDialog), findsNothing);
+          await tester.tap(
+            find.byKey(const ValueKey('swarm-search-new-agent')),
+          );
           await tester.pump();
         }
         expect(find.byType(AlertDialog), findsOneWidget);
@@ -417,7 +423,7 @@ void main() {
     app.dispose();
   });
 
-  testWidgets('existing agents open directly from an empty workspace', (
+  testWidgets('every empty swarm offers the same existing-agent addition', (
     tester,
   ) async {
     final app = _FirstUseApp();
@@ -431,9 +437,28 @@ void main() {
     ];
     await mount(tester, app);
     expect(app.panes, isEmpty);
+    expect(find.text('Add an existing agent'), findsOneWidget);
+    expect(find.text('Go to an agent'), findsNothing);
     await tester.tap(find.byKey(const ValueKey('welcome-agent:m:existing')));
     await tester.pump();
     expect(app.panes.single.agentId, 'existing');
+    final source = app.activeSwarm;
+    final pane = app.panes.single;
+    app.newSwarm();
+    await tester.pump();
+    expect(find.text('Add an existing agent'), findsOneWidget);
+    expect(find.text('New agent'), findsOneWidget);
+    expect(find.text('Go to an agent'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('welcome-agent:m:existing')));
+    await tester.pump();
+    expect(app.panes.single, same(pane));
+    expect(source.panes.single, same(pane));
+    final used = app.activeSwarmId;
+    await app.closeSwarm(used);
+    app.newSwarm();
+    await tester.pump();
+    expect(app.closedHistory, isNotEmpty);
+    expect(find.text('Add an existing agent'), findsOneWidget);
     expect(app.launches, isEmpty);
     expect(find.text('Go to an agent'), findsNothing);
     expect(tester.takeException(), isNull);

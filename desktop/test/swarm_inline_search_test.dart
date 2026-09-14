@@ -183,14 +183,15 @@ void main() {
   );
 
   testWidgets(
-    'inline selection opens the existing agent and hands it the next key',
+    'inline selection adds the existing agent here and hands it the next key',
     (tester) async {
       final app = createApp();
       app.machineStates['m']!.nodeOnline = true;
       final frames = <TerminalBinaryFrame>[];
       final pane = app.adoptSessionForTest(terminal('a0', frames));
-      final original = app.activeSwarmId;
+      final original = app.activeSwarm;
       app.newSwarm();
+      final destination = app.activeSwarmId;
       await mount(tester, app);
       await tester.tap(_input);
       await tester.enterText(_input, 'Agent 0');
@@ -198,7 +199,8 @@ void main() {
       expect(frames, isEmpty);
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pump();
-      expect(app.activeSwarmId, original);
+      expect(app.activeSwarmId, destination);
+      expect(original.panes.single, same(pane));
       expect(app.panes.single, same(pane));
       expect(_results, findsNothing);
       expect(

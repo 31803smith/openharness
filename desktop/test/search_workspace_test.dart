@@ -4,7 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/terminal/terminal_binary.dart';
 import 'package:harness/widgets/swarm_icon.dart';
-import 'package:harness/widgets/swarm_search_input.dart';
+import 'package:harness/widgets/swarm_navigator.dart';
 
 import 'keymap_host_test.dart' show MemoryKeymap, key;
 import 'keymap_runtime_test.dart' show mount;
@@ -41,7 +41,7 @@ void main() {
         await key(tester, LogicalKeyboardKey.keyP, cmd: true);
         await tester.pump();
         expect(field, findsOneWidget);
-        expect(find.byType(SwarmSearchInput), findsOneWidget);
+        expect(find.byType(SwarmNavigator), findsOneWidget);
         final controller = tester.widget<TextField>(field).controller!;
         final focus = tester.widget<TextField>(field).focusNode!;
         expect(focus.hasFocus, isTrue);
@@ -55,15 +55,14 @@ void main() {
         expect(tester.widget<ListTile>(selected).key, first);
         await tester.enterText(field, 'Agent 0');
         await tester.pump();
-        final results = tester.getRect(
-          find.byKey(const ValueKey('swarm-search-result-list')),
+        expect(
+          find.byKey(const ValueKey('swarm-navigation-locations')),
+          findsOneWidget,
         );
-        final preview = tester.getRect(
+        expect(
           find.byKey(const ValueKey('swarm-search-preview')),
+          findsNothing,
         );
-        expect(preview.left, greaterThanOrEqualTo(results.right));
-        expect(preview.top, results.top);
-        expect(find.textContaining('All checks passed'), findsOneWidget);
         await key(tester, LogicalKeyboardKey.keyA, cmd: true);
         expect(controller.selection.textInside(controller.text), 'Agent 0');
         await key(tester, LogicalKeyboardKey.backspace);
@@ -87,6 +86,22 @@ void main() {
         expect(input, isEmpty);
         await key(tester, LogicalKeyboardKey.escape);
         expect(field, findsNothing);
+        await tester.tap(find.byKey(const ValueKey('swarm-add-agent-button')));
+        await tester.pump();
+        await tester.enterText(field, 'Agent 0');
+        await tester.pump();
+        final results = tester.getRect(
+          find.byKey(const ValueKey('swarm-search-result-list')),
+        );
+        final preview = tester.getRect(
+          find.byKey(const ValueKey('swarm-search-preview')),
+        );
+        expect(preview.left, greaterThanOrEqualTo(results.right));
+        expect(preview.top, results.top);
+        expect(find.textContaining('All checks passed'), findsOneWidget);
+        expect(tester.widget<TextField>(field).focusNode!.hasFocus, isTrue);
+        expect(input, isEmpty);
+        await key(tester, LogicalKeyboardKey.escape);
         await tester.pumpWidget(const SizedBox());
         app.dispose();
         map.dispose();

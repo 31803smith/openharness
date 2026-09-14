@@ -41,12 +41,10 @@ class SwarmWelcome extends StatelessWidget {
     grid.AppTheme.watch(context);
     final app = notifier;
     final groups = swarmProjects(app, projects);
-    final firstWorkspace =
-        app.swarms.every((swarm) => swarm.panes.isEmpty) &&
-        app.closedHistory.isEmpty;
-    final agents = firstWorkspace ? swarmAgents(app) : const <SwarmAgentRef>[];
+    // Every empty swarm offers the same actions. Available inventory can change
+    // its guidance; whether another swarm was used must not change the product.
+    final agents = swarmAgents(app);
     final noAgents =
-        firstWorkspace &&
         !app.machinesLoading &&
         agents.isEmpty &&
         groups.isEmpty &&
@@ -105,7 +103,7 @@ class SwarmWelcome extends StatelessWidget {
                       Text(
                         noAgents
                             ? 'Choose a project folder and an agent. Add more whenever you want to work side by side.'
-                            : 'A swarm keeps related agents together. Open a machine or project to bring its agents into this tab.',
+                            : 'Bring existing agents together, or start a new one. Work with them side by side in this tab.',
                         style: const TextStyle(
                           fontSize: 13,
                           color: Color(0xffe0dce3),
@@ -151,7 +149,7 @@ class SwarmWelcome extends StatelessWidget {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 const Text(
-                                  'Go to an agent',
+                                  'Add an existing agent',
                                   style: TextStyle(
                                     fontSize: 13,
                                     fontWeight: FontWeight.w600,
