@@ -14,7 +14,6 @@ import '../auth/cli_login.dart';
 import '../bootstrap/environment_provisioner.dart';
 import '../core/config.dart';
 import '../core/agent_preference.dart';
-import '../core/build_identity.dart';
 import '../core/engine_availability.dart';
 import '../core/local_hostname.dart';
 import '../core/local_git_projects.dart';
@@ -1975,13 +1974,10 @@ class AppNotifier extends ChangeNotifier {
   }
 
   void _startUpdateChecking() {
-    if (isHarnessV2 && desktopUpdater == null) return;
     _updateCheckTimer ??= (desktopUpdater ?? DesktopUpdater()).startChecking(
       onUpdateAvailable: _handleBackgroundUpdate,
     );
   }
-
-  bool get desktopUpdatesEnabled => !isHarnessV2 || desktopUpdater != null;
 
   void _handleBackgroundUpdate(UpdateInfo info) {
     if (_disposed) return;
@@ -1995,7 +1991,6 @@ class AppNotifier extends ChangeNotifier {
   /// A manual check deliberately returns a skipped version too, so the user
   /// can choose to install it from the account menu after changing their mind.
   Future<ManualUpdateCheck> checkForUpdates() async {
-    if (isHarnessV2 && desktopUpdater == null) return const ManualUpdateCheck();
     if (isCheckingForUpdate) {
       return ManualUpdateCheck(update: availableUpdate);
     }
@@ -2038,7 +2033,6 @@ class AppNotifier extends ChangeNotifier {
   /// Downloads, verifies, and installs only after an explicit user action.
   /// A failed operation leaves the running app untouched and retryable.
   Future<bool> installAvailableUpdate() async {
-    if (isHarnessV2 && desktopUpdater == null) return false;
     final info = availableUpdate;
     if (info == null || isInstallingUpdate) return false;
     isInstallingUpdate = true;

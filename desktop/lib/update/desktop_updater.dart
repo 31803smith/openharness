@@ -7,7 +7,6 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
 import '../core/app_version.dart';
-import '../core/build_identity.dart';
 
 /// Published by `scripts/upload-desktop.sh` (`make upload-desktop`) — see
 /// `RELEASE.md` for the full publish-side design this mirrors.
@@ -151,7 +150,7 @@ class DesktopUpdater {
   final String _architecture;
 
   DesktopUpdater({
-    this._enabled = !isHarnessV2,
+    this._enabled = true,
     Dio? dio,
     Future<void> Function(String command)? launchDetached,
     // Defaults to the real manifest (or the --dart-define build-time override — see RELEASE.md's
