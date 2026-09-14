@@ -86,6 +86,23 @@ RUN mkdir -p /home/node/work \
      > /home/node/.claude.json \
   && chown -R node:node /home/node/.claude.json /home/node/work
 
+# ── A global npm prefix the `node` user can actually write to ─────────────────────────────────────
+#
+# An engine the daemon cannot find is installed on the spot, in the agent's own terminal: see
+# `lib/engineInstall.ts`, which shells out to `npm install -g <pkg>` for codex, opencode, pi, kilo,
+# copilot and the rest. npm's prefix here is /usr/local, which belongs to root — and this image runs
+# as `node` (see the header), so every one of those installs died with EACCES and left the agent
+# staring at an npm stack trace instead of an engine. Pre-baking one package would fix codex and
+# nothing else; a writable prefix fixes the mechanism, for every engine the CLI knows how to install.
+#
+# Deliberately NOT under /home/node/.harness: that volume outlives an image rebuild, so an engine
+# cached there would survive the very rebuild meant to change it — the staleness note 1 exists to
+# prevent. Re-fetching an engine when the box is recreated is the correct cost. Claude Code above
+# stays in /usr/local, baked and pinned, untouched by this.
+ENV NPM_CONFIG_PREFIX=/home/node/.npm-global
+ENV PATH=/home/node/.npm-global/bin:$PATH
+RUN mkdir -p /home/node/.npm-global/bin && chown -R node:node /home/node/.npm-global
+
 COPY --chown=node:node docker/remote-machine/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod 755 /usr/local/bin/entrypoint.sh
 
