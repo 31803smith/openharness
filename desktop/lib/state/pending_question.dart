@@ -13,7 +13,7 @@
 /// dial cabled to this computer, and every one of those arrives back here down
 /// the same path — so the ring cannot outlive a dialog somebody else closed.
 ///
-/// The tile's amber ring is the only thing that reads this.
+/// The tile's amber ring and Needs input picker read this same live state.
 class PendingQuestion {
   PendingQuestion({
     required this.machineId,
@@ -42,8 +42,8 @@ class PendingQuestion {
   final String prompt;
   final List<String> options;
 
-  /// Whether the dialog takes more than one option. Parsed because the frame
-  /// carries it; nothing acts on it while the ring is the only surface.
+  /// Whether the terminal dialog takes more than one option. Navigation does
+  /// not answer it; the original terminal still owns that interaction.
   final bool multi;
 
   /// When this window first heard about it. Not when the agent actually

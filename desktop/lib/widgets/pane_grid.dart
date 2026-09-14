@@ -14,6 +14,7 @@ import '../shared/theme/app_theme.dart' as grid;
 import '../shortcuts/app_shortcuts.dart' hide TerminalKey;
 import '../state/app_state.dart';
 import '../state/pane_preset.dart';
+import '../state/pane_arrangement.dart';
 import '../state/terminal_pane.dart';
 import '../terminal/terminal_binary.dart';
 import '../terminal/terminal_font_store.dart';
@@ -23,72 +24,53 @@ import 'agent_drag.dart';
 import 'harness_join_guide_screen.dart';
 import 'new_agent_dialog.dart';
 import 'terminal_panel.dart';
+import 'pane_resize_handle.dart';
 
-/// The terminals, as up to four tiles.
-///
-/// Fixed shapes rather than a splittable tree. A binary layout tree is what
-/// tmux and herdr give you, and it earns its complexity — drag handles, sibling
-/// ordering, a serialised shape — only once the count is open-ended. Capped at
-/// four, every arrangement anyone would build by hand is already one of the
-/// four below, and none of that machinery has to exist or be maintained.
-///
-/// The shapes are fixed; the DIVIDERS are not. Each one can be dragged and its
-/// position is remembered per pane count (see [PaneSplits]) — which is the part
-/// of a split tree people actually reach for, without the tree.
+/// Terminal views arranged by the chosen preset. Swarms keep each view under
+/// one stable parent as its rectangle, visibility and keyboard focus change.
 class PaneGrid extends StatelessWidget {
-  const PaneGrid({super.key, required this.notifier});
+  const PaneGrid({
+    super.key,
+    required this.notifier,
+    this.swarmMode = false,
+    this.empty,
+    this.onSplit,
+  });
 
   final AppNotifier notifier;
+  final bool swarmMode;
+  final Widget? empty;
+  final void Function(int paneId, PaneResizeAxis axis)? onSplit;
 
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<AgentDragRef?>(
       valueListenable: agentDrag,
       builder: (context, dragging, _) {
-        final panes = notifier.panes;
-        if (panes.isEmpty) {
-          return _DropZone(
+        if (swarmMode) {
+          return _SwarmCanvas(
             notifier: notifier,
-            paneId: null,
             dragging: dragging,
-            child: _EmptyGrid(notifier: notifier),
+            empty: empty,
+            onSplit: onSplit,
           );
         }
-        // ZOOM SHORT-CIRCUITS THE SHAPE, it does not add one.
-        //
-        // tmux's `prefix z` is not a layout — it is the same pane list with one
-        // of them taking the room. Building it as a seventh arrangement would
-        // have meant every shape below learning about it; returning early means
-        // none of them do, and the grid comes back exactly as it was because it
-        // was never rearranged.
-        //
-        // The cell keeps its `cellKey`, so the terminal inside is the SAME
-        // widget — no detach, no reflow of the pty, no scrollback lost. A
-        // zoomed pane is one that moved, not one that was rebuilt.
+        final panes = notifier.panes;
         final zoomed = notifier.zoomedPaneId;
-        if (zoomed != null && panes.length > 1) {
-          for (final pane in panes) {
-            if (pane.id != zoomed) continue;
-            return _PaneCell(
-              key: pane.cellKey,
-              notifier: notifier,
-              pane: pane,
-              dragging: dragging,
-            );
-          }
-        }
+        final visible = zoomed == null
+            ? panes
+            : panes.where((p) => p.id == zoomed).toList();
+        Widget cell(TerminalPane pane, {bool visible = true}) => _PaneCell(
+          key: pane.cellKey,
+          notifier: notifier,
+          pane: pane,
+          dragging: dragging,
+          visible: visible,
+          swarmMode: swarmMode,
+        );
         final cells = <Widget>[
-          for (final pane in panes)
-            _PaneCell(
-              key: pane.cellKey,
-
-              notifier: notifier,
-              pane: pane,
-              dragging: dragging,
-            ),
-          // Revealed only mid-drag: a permanent "add a tile" cell would halve a
-          // single terminal for the whole session to advertise itself.
-          if (dragging != null && notifier.canAddPane)
+          for (final pane in visible) cell(pane),
+          if (!swarmMode && dragging != null && notifier.canAddPane)
             _DropZone(
               notifier: notifier,
               paneId: null,
@@ -96,19 +78,9 @@ class PaneGrid extends StatelessWidget {
               child: const _AddSlot(),
             ),
         ];
-        // WRAPPED HERE, not inside one of the shapes.
-        //
-        // It was in the >4 branch, which is one of six: _arrange returns a
-        // different tree for one tile, two, three, four, five-with-a-main, and
-        // the lattice beyond that. The gaps come from _Axis and so appeared in
-        // all six; the field and the outer margin came from that one branch and
-        // so appeared in one. Two tiles — the common case — showed gaps the
-        // exact colour of the tiles either side of them, which is no gap at all.
-        // JUST THE TILES. The field behind them and the margin around them belong to the content row
-        // now (see home_screen), because the rail is a card on that same field — a gradient that
-        // started where the rail ended would be two backgrounds meeting at a seam, which is the thing
-        // being fixed.
-        return _arrange(cells);
+        return panes.isEmpty
+            ? empty ?? _EmptyGrid(notifier: notifier)
+            : _arrange(cells);
       },
     );
   }
@@ -229,6 +201,460 @@ class PaneGrid extends StatelessWidget {
         );
     }
   }
+}
+
+/// Switching layouts must not reparent terminal subtrees. GlobalKey grafting
+/// preserves State but invalidates inherited dependencies throughout each view.
+/// This canvas changes rectangles under a single Stack instead, including when
+/// a large Swarm needs to scroll. Unvisited views remain unmounted.
+class _SwarmCanvas extends StatefulWidget {
+  const _SwarmCanvas({
+    required this.notifier,
+    required this.dragging,
+    this.empty,
+    this.onSplit,
+  });
+  final AppNotifier notifier;
+  final AgentDragRef? dragging;
+  final Widget? empty;
+  final void Function(int paneId, PaneResizeAxis axis)? onSplit;
+  @override
+  State<_SwarmCanvas> createState() => _SwarmCanvasState();
+}
+
+class _SwarmCanvasState extends State<_SwarmCanvas> {
+  final _scroll = ScrollController(keepScrollOffset: false);
+  final _offsets = <String, double>{};
+  final _resizeFocus = FocusNode(debugLabel: 'Resize focused agent');
+  final _resizeHelp = OverlayPortalController();
+  late int _resizeRequest = widget.notifier.paneResizeRequest;
+  late String _activeId = widget.notifier.activeSwarmId;
+  late int _focusRequest = widget.notifier.paneFocusRequest;
+  Size? _viewportSize;
+  bool _focusRevealPending = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.notifier.addListener(_onAppChanged);
+    terminalFontStore.addListener(_onFontChanged);
+  }
+
+  @override
+  void didUpdateWidget(_SwarmCanvas oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.notifier, widget.notifier)) {
+      oldWidget.notifier.removeListener(_onAppChanged);
+      widget.notifier.addListener(_onAppChanged);
+      _offsets.clear();
+      _activeId = widget.notifier.activeSwarmId;
+      _focusRequest = widget.notifier.paneFocusRequest;
+      if (_scroll.hasClients) _scroll.jumpTo(0);
+    }
+  }
+
+  void _onAppChanged() {
+    final app = widget.notifier;
+    if (_resizeRequest != app.paneResizeRequest) {
+      _resizeRequest = app.paneResizeRequest;
+      _resizeFocus.requestFocus();
+      _resizeHelp.show();
+    }
+    if (_activeId != app.activeSwarmId) {
+      if (_resizeHelp.isShowing) _resizeHelp.hide();
+      if (_scroll.hasClients) _offsets[_activeId] = _scroll.offset;
+      _activeId = app.activeSwarmId;
+      // The notification precedes the frame. Restore before layout/paint so
+      // switching never briefly displays the previous Swarm's scroll offset.
+      if (_scroll.hasClients) _scroll.jumpTo(_offsets[_activeId] ?? 0);
+      final open = app.swarms.map((s) => s.id).toSet();
+      _offsets.removeWhere((id, _) => !open.contains(id));
+    }
+    if (_focusRequest != app.paneFocusRequest) {
+      _focusRequest = app.paneFocusRequest;
+      _focusRevealPending = true;
+      _revealFocusedPane();
+    }
+    setState(() {});
+  }
+
+  void _revealFocusedPane({bool correctingLayout = false}) {
+    final viewport = _viewportSize;
+    if (viewport == null || !_scroll.hasClients) return;
+    final app = widget.notifier;
+    final panes = app.panes
+        .where((p) => app.zoomedPaneId == null || p.id == app.zoomedPaneId)
+        .toList();
+    final index = panes.indexWhere((p) => p.id == app.focusedPaneId);
+    if (index < 0) return;
+    final geometry = _SwarmGeometry(
+      count: panes.length,
+      viewport: viewport,
+      preset: app.presetFor(panes.length),
+      minimum: _MinTile.of(),
+      sizes: app.activeSwarm.paneSizes,
+    );
+    final rect = geometry.rectangles[index];
+    final current = _scroll.offset;
+    final offset = rect.top < current || rect.height > viewport.height
+        ? rect.top
+        : rect.bottom > current + viewport.height
+        ? rect.bottom - viewport.height
+        : current;
+    final target = offset.clamp(
+      0.0,
+      (geometry.height - viewport.height).clamp(0.0, double.infinity),
+    );
+    if (target != current) {
+      if (correctingLayout) {
+        // The incoming viewport size will lay out the scroll view immediately
+        // after this LayoutBuilder. Correct without notifying during layout.
+        _scroll.position.correctPixels(target);
+      } else {
+        _scroll.jumpTo(target);
+      }
+    }
+  }
+
+  void _onFontChanged() => setState(() {});
+
+  @override
+  void dispose() {
+    widget.notifier.removeListener(_onAppChanged);
+    terminalFontStore.removeListener(_onFontChanged);
+    _resizeFocus.dispose();
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  /// Cache retained terminal presentation, including read-only output.
+  /// Never-attached connection/setup views still read their complete state.
+  /// Theme/font dependencies continue updating retained descendants directly.
+  Object? _presentation(TerminalPane pane, bool visible) {
+    if (!visible) return null;
+    final app = widget.notifier;
+    final machine = app.stateOf(pane.machineId);
+    final agent = machine?.agents
+        .where((a) => a.id == pane.agentId)
+        .firstOrNull;
+    final session = pane.session;
+    if (session == null) return Object();
+    return (
+      notifier: app,
+      machine: machine?.machine,
+      local: machine?.isLocalMachine,
+      online: machine?.nodeOnline,
+      needsLink: machine?.needsLink,
+      localTransport: machine?.usesLocalTransport,
+      agent: agent,
+      project: agent == null ? null : machine?.projectOf(agent),
+      session: session,
+      terminal: session.terminal,
+      name: session.agentName,
+      status: session.status,
+      error: session.errorMessage ?? session.errorCode,
+      link: session.linkMode,
+      upload: session.uploadProgress,
+      focused: app.isPaneFocused(pane.id),
+      focusRequest: app.isPaneFocused(pane.id) ? app.paneFocusRequest : 0,
+      single: app.panes.length == 1,
+      pinned: app.isPanePinned(pane),
+      zoomed: app.zoomedPaneId == pane.id,
+      canSplit: app.canAddPane,
+      composer: pane.composerVisible,
+      blocked:
+          app.questionFor(pane.machineId, pane.agentId ?? session.agentId) !=
+          null,
+      dragging: widget.dragging,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final app = widget.notifier;
+      final viewportChanged = _viewportSize != constraints.biggest;
+      _viewportSize = constraints.biggest;
+      if (_focusRevealPending && viewportChanged) {
+        _revealFocusedPane(correctingLayout: true);
+      }
+      _focusRevealPending = false;
+      final visible = [
+        for (final pane in app.panes)
+          if (app.zoomedPaneId == null || pane.id == app.zoomedPaneId) pane,
+      ];
+      final layout = _SwarmGeometry(
+        count: visible.length,
+        viewport: constraints.biggest,
+        preset: app.presetFor(visible.length),
+        minimum: _MinTile.of(),
+        sizes: app.activeSwarm.paneSizes,
+      );
+      if (app.zoomedPaneId == null) {
+        app.activeSwarm.arranged = layout.arrangement;
+        app.activeSwarm.arrangedKey = layout.key;
+        final minimum = _MinTile.of();
+        app.activeSwarm.arrangedMinimum = Size(
+          (minimum.width + kPaneGap) / (constraints.maxWidth + kPaneGap),
+          (minimum.height + kPaneGap) / (layout.height + kPaneGap),
+        );
+      }
+      if (layout.columns != null) app.gridColumns = layout.columns;
+      final rectangles = {
+        for (var i = 0; i < visible.length; i++)
+          visible[i].id: layout.rectangles[i],
+      };
+      // The scroll view stays mounted even when content fits. Its maximum
+      // extent is then zero; keeping its ancestry is what avoids grafting.
+      return SingleChildScrollView(
+        controller: _scroll,
+        child: SizedBox(
+          width: constraints.maxWidth,
+          height: layout.height,
+          child: Stack(
+            children: [
+              if (visible.isEmpty)
+                Positioned.fill(
+                  child: widget.empty ?? _EmptyGrid(notifier: app),
+                ),
+              for (final pane in app.allPanes)
+                if (rectangles.containsKey(pane.id) ||
+                    pane.lastViewSize != null)
+                  Positioned.fromRect(
+                    key: ValueKey(pane.id),
+                    rect:
+                        rectangles[pane.id] ?? Offset.zero & pane.lastViewSize!,
+                    child: _PaneLayer(
+                      session: pane.session,
+                      visible: rectangles.containsKey(pane.id),
+                      presentation: _presentation(
+                        pane,
+                        rectangles.containsKey(pane.id),
+                      ),
+                      child: _PaneCell(
+                        key: pane.cellKey,
+                        notifier: app,
+                        pane: pane,
+                        dragging: widget.dragging,
+                        visible: rectangles.containsKey(pane.id),
+                        swarmMode: true,
+                        onSplit: widget.onSplit,
+                      ),
+                    ),
+                  ),
+              if (app.zoomedPaneId == null &&
+                  layout.arrangement?.dividers.isNotEmpty == true)
+                Positioned.fill(
+                  child: _resizeLayer(layout, constraints.biggest),
+                ),
+            ],
+          ),
+        ),
+      );
+    },
+  );
+
+  Widget _resizeLayer(_SwarmGeometry layout, Size viewport) {
+    final app = widget.notifier;
+    final swarmId = app.activeSwarmId;
+    final arrangement = layout.arrangement!;
+    final focused = app.panes.indexWhere(
+      (pane) => pane.id == app.focusedPaneId,
+    );
+    final preferred = arrangement.dividers
+        .where((divider) => divider.touches(focused))
+        .firstOrNull;
+    final extent = Size(viewport.width + kPaneGap, layout.height + kPaneGap);
+    final floor = _MinTile.of();
+    final minimum = Size(
+      (floor.width + kPaneGap) / extent.width,
+      (floor.height + kPaneGap) / extent.height,
+    );
+    return OverlayPortal(
+      controller: _resizeHelp,
+      overlayChildBuilder: (context) => Positioned(
+        bottom: 24,
+        left: 24,
+        right: 24,
+        child: IgnorePointer(
+          child: Center(
+            child: Container(
+              key: const ValueKey('pane-resize-hint'),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                border: Border.all(color: AppColors.borderStrong),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                'Arrow keys resize · Shift for larger steps · Tab next divider · Esc done',
+                style: TextStyle(fontSize: 13, color: AppColors.textSoft),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ),
+        ),
+      ),
+      child: FocusScope(
+        onFocusChange: (focused) {
+          if (!focused && _resizeHelp.isShowing) _resizeHelp.hide();
+        },
+        child: Stack(
+          children: [
+            for (final divider in arrangement.dividers)
+              Positioned.fromRect(
+                key: ValueKey('resize:$swarmId:${layout.key}:${divider.id}'),
+                rect: divider.axis == PaneResizeAxis.x
+                    ? Rect.fromLTWH(
+                        divider.position * extent.width - kPaneGap,
+                        divider.start * extent.height,
+                        kPaneGap,
+                        (divider.end - divider.start) * extent.height -
+                            kPaneGap,
+                      )
+                    : Rect.fromLTWH(
+                        divider.start * extent.width,
+                        divider.position * extent.height - kPaneGap,
+                        (divider.end - divider.start) * extent.width - kPaneGap,
+                        kPaneGap,
+                      ),
+                child: PaneResizeHandle(
+                  arrangement: arrangement,
+                  divider: divider,
+                  extent: extent,
+                  minimum: minimum,
+                  focusNode: identical(divider, preferred)
+                      ? _resizeFocus
+                      : null,
+                  onChanged: (next, persist) => app.resizePanes(
+                    swarmId,
+                    layout.key!,
+                    next,
+                    persist: persist,
+                  ),
+                  onLeave: () {
+                    final id = app.focusedPaneId;
+                    if (id != null) app.focusPane(id, reveal: true);
+                  },
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Convert the same unit rectangles used by the layout picker and keyboard
+/// navigation to pixels. A boundary at fraction f maps to f * (extent + gap);
+/// subtracting one gap from each tile preserves spanning and nested cuts.
+class _SwarmGeometry {
+  _SwarmGeometry({
+    required int count,
+    required Size viewport,
+    required PanePreset? preset,
+    required Size minimum,
+    Map<String, PaneArrangement> sizes = const {},
+  }) : height = viewport.height {
+    if (count == 0) return;
+    if (count == 1) {
+      rectangles = [Offset.zero & viewport];
+      arrangement = PaneArrangement(const [Rect.fromLTRB(0, 0, 1, 1)]);
+      key = '1:single';
+      return;
+    }
+    var shape = preset ?? PanePreset.defaultFor(count)!;
+    if (shape == PanePreset.splitLong && viewport.height > viewport.width) {
+      shape = PanePreset.rows;
+    }
+    final manual = sizes['$count:manual'];
+    if (manual == null &&
+        (shape == PanePreset.auto || shape.statedColumns != null)) {
+      columns =
+          (shape.statedColumns ?? (viewport.width / minimum.width).floor())
+              .clamp(1, count);
+      final rows = (count / columns!).ceil();
+      height = (rows * minimum.height + kPaneGap * (rows - 1)).clamp(
+        viewport.height,
+        double.infinity,
+      );
+    }
+    key = manual != null
+        ? '$count:manual'
+        : '$count:${(preset ?? PanePreset.defaultFor(count))!.id}:${columns ?? 0}:${shape.id}';
+    arrangement =
+        sizes[key] ?? PaneArrangement(shape.tilesFor(count, columns: columns));
+    for (final tile in arrangement!.tiles) {
+      height = ((minimum.height + kPaneGap) / tile.height - kPaneGap).clamp(
+        height,
+        double.infinity,
+      );
+    }
+    rectangles = [
+      for (final tile in arrangement!.tiles)
+        Rect.fromLTWH(
+          tile.left * (viewport.width + kPaneGap),
+          tile.top * (height + kPaneGap),
+          (tile.width * (viewport.width + kPaneGap) - kPaneGap).clamp(
+            0,
+            double.infinity,
+          ),
+          (tile.height * (height + kPaneGap) - kPaneGap).clamp(
+            0,
+            double.infinity,
+          ),
+        ),
+    ];
+  }
+  String? key;
+  PaneArrangement? arrangement;
+  double height;
+  int? columns;
+  List<Rect> rectangles = const [];
+}
+
+/// A hidden view retains its last configuration and geometry. Status changes
+/// update a replaced session; showing it applies fresh machine/agent metadata.
+class _PaneLayer extends StatefulWidget {
+  const _PaneLayer({
+    required this.session,
+    required this.visible,
+    required this.presentation,
+    required this.child,
+  });
+
+  final TerminalSession? session;
+  final bool visible;
+  final Object? presentation;
+  final Widget child;
+
+  @override
+  State<_PaneLayer> createState() => _PaneLayerState();
+}
+
+class _PaneLayerState extends State<_PaneLayer> {
+  late Widget _layer = _buildLayer();
+
+  @override
+  void didUpdateWidget(_PaneLayer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.visible != widget.visible ||
+        oldWidget.presentation != widget.presentation ||
+        !identical(oldWidget.session, widget.session)) {
+      _layer = _buildLayer();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => _layer;
+
+  Widget _buildLayer() => Offstage(
+    offstage: !widget.visible,
+    child: TickerMode(
+      enabled: widget.visible,
+      child: ExcludeFocus(excluding: !widget.visible, child: widget.child),
+    ),
+  );
 }
 
 /// Five or more tiles: a grid, sized by what a terminal actually needs.
@@ -370,12 +796,12 @@ class _Axis extends StatelessWidget {
 ///
 /// The font is one process-wide setting, so one measurement serves every tile.
 class _MinTile {
-  static double _forSize = -1;
+  static TerminalStyle? _forStyle;
   static Size _cached = Size.zero;
 
   static Size of() {
     final style = terminalFontStore.value;
-    if (style.fontSize == _forSize) return _cached;
+    if (identical(style, _forStyle)) return _cached;
     // The renderer measures its cell by laying out ten 'm' and dividing; do the
     // same here rather than inventing a second idea of how wide a column is.
     final painter = TextPainter(
@@ -392,7 +818,8 @@ class _MinTile {
     )..layout();
     final cellW = painter.width / 10;
     final cellH = painter.height;
-    _forSize = style.fontSize;
+    painter.dispose();
+    _forStyle = style;
     // 46 is the pane header, which is chrome the terminal never gets.
     _cached = Size(40 * cellW + 16, 46 + 12 * cellH + 8);
     return _cached;
@@ -514,18 +941,31 @@ class _PaneCell extends StatelessWidget {
     required this.notifier,
     required this.pane,
     required this.dragging,
+    this.visible = true,
+    this.swarmMode = false,
+    this.onSplit,
   });
 
   final AppNotifier notifier;
   final TerminalPane pane;
   final AgentDragRef? dragging;
+  final bool visible;
+  final bool swarmMode;
+  final void Function(int paneId, PaneResizeAxis axis)? onSplit;
 
   bool get _single => notifier.panes.length == 1;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      if (visible) pane.lastViewSize = constraints.biggest;
+      return _build(context);
+    },
+  );
+
+  Widget _build(BuildContext context) {
     grid.AppTheme.watch(context);
-    final focused = notifier.isPaneFocused(pane.id);
+    final focused = visible && notifier.isPaneFocused(pane.id);
     final agentId = pane.agentId;
     final blocked =
         agentId != null &&
@@ -617,6 +1057,9 @@ class _PaneCell extends StatelessWidget {
                       notifier: notifier,
                       pane: pane,
                       single: _single,
+                      visible: visible,
+                      swarmMode: swarmMode,
+                      onSplit: onSplit,
                     ),
                   ),
                 ),
@@ -634,59 +1077,144 @@ class _PaneContent extends StatelessWidget {
     required this.notifier,
     required this.pane,
     required this.single,
+    required this.visible,
+    required this.swarmMode,
+    this.onSplit,
   });
 
   final AppNotifier notifier;
   final TerminalPane pane;
   final bool single;
+  final bool visible;
+  final bool swarmMode;
+  final void Function(int paneId, PaneResizeAxis axis)? onSplit;
 
   @override
   Widget build(BuildContext context) {
     final machine = notifier.stateOf(pane.machineId);
-    void close() => notifier.closePane(pane.id);
-
+    final session = pane.session;
     final wantedAgentId = pane.agentId;
+    final agent = machine?.agents
+        .where((agent) => agent.id == wantedAgentId)
+        .firstOrNull;
+    final agentName = agent?.name;
+    void close() => notifier.closePane(pane.id);
+    final needsLink =
+        machine != null &&
+        machine.isRemote &&
+        !machine.isLocalMachine &&
+        machine.needsLink;
+    final offline =
+        machine != null &&
+        (machine.nodeOnline == false ||
+            (machine.isLocalMachine && !machine.usesLocalTransport));
 
+    // Availability changes the header and input permission, never the renderer's
+    // ancestry. Retained output, selection, scroll and Find stay in this view.
+    if (session != null) {
+      final TerminalNotice? notice;
+      if (machine == null) {
+        notice = (
+          label: 'Unavailable',
+          icon: Icons.cloud_off,
+          detail: 'Waiting for this machine. Retained output is read only.',
+        );
+      } else if (needsLink) {
+        notice = (
+          label: 'Link required',
+          icon: Icons.link_off,
+          detail:
+              '${machine.machine.displayName} needs linking. Retained output is read only.',
+        );
+      } else if (offline) {
+        notice = (
+          label: 'Offline',
+          icon: Icons.cloud_off,
+          detail:
+              '${machine.machine.displayName} is offline. Retained output is read only.',
+        );
+      } else if (agent == null || !agent.terminalAvailable) {
+        notice = (
+          label: 'Unavailable',
+          icon: Icons.terminal,
+          detail:
+              agent?.terminalUnavailableReason ??
+              'This agent is unavailable on ${machine.machine.displayName}. Retained output is read only.',
+        );
+      } else if (agent.launchState == 'failed') {
+        notice = (
+          label: 'Start failed',
+          icon: Icons.error_outline,
+          detail:
+              agent.launchDetail ??
+              'The engine failed to start. Terminal output is preserved.',
+        );
+      } else {
+        notice = null;
+      }
+      return LayoutBuilder(
+        builder: (context, constraints) => TerminalPanel(
+          notifier: notifier,
+          session: session,
+          focused: visible && notifier.isPaneFocused(pane.id),
+          focusRequest: notifier.isPaneFocused(pane.id)
+              ? notifier.paneFocusRequest
+              : 0,
+          visible: visible,
+          compactHeader: swarmMode,
+          composerVisible: pane.composerVisible,
+          readOnly: notice != null,
+          notice: notice,
+          onToggleComposer: () => notifier.toggleComposer(pane.id),
+          onClose: single && !swarmMode ? null : close,
+          pinned: notifier.isPanePinned(pane),
+          onTogglePin: single ? null : () => notifier.togglePinPane(pane.id),
+          zoomed: notifier.zoomedPaneId == pane.id,
+          onToggleZoom: swarmMode
+              ? () {
+                  notifier.focusPane(pane.id);
+                  notifier.toggleZoomPane();
+                }
+              : null,
+          onSplitRight: onSplit == null || !notifier.canAddPane
+              ? null
+              : () => onSplit!(pane.id, PaneResizeAxis.x),
+          onSplitDown: onSplit == null || !notifier.canAddPane
+              ? null
+              : () => onSplit!(pane.id, PaneResizeAxis.y),
+          onRendererFocus: () => notifier.focusPane(pane.id),
+          paneDrag: single
+              ? null
+              : PaneDragHandle(
+                  ref: PaneDragRef(paneId: pane.id),
+                  size: constraints.biggest,
+                ),
+        ),
+      );
+    }
+
+    // A never-attached view has no output to preserve: keep its setup guidance.
     if (machine == null) {
-      // The ordinary state of a restored tile for the first moments of a launch,
-      // and of a tile whose machine is briefly out of the list.
       return _PaneStatus(
         title: wantedAgentId ?? pane.machineId,
         icon: Icons.hourglass_empty,
         message: 'Waiting for this machine to answer…',
-        onClose: single ? null : close,
+        onClose: single && !swarmMode ? null : close,
         busy: true,
       );
     }
-
-    final agent = wantedAgentId == null
-        ? null
-        : machine.agents
-              .where((agent) => agent.id == wantedAgentId)
-              .firstOrNull;
-    final agentName = agent?.name;
-
-    // Deliberately NOT gated on isLinkPromptDismissed: dismissing only suppresses the popup (see
-    // showLinkMachineScreenDialog / HomeScreen._maybeShowLinkDialog) — the tile's own status stays
-    // honest about the machine actually being unlinked regardless.
-    final needsLink =
-        machine.isRemote && !machine.isLocalMachine && machine.needsLink;
     if (needsLink) {
       return _PaneStatus(
         title: agentName ?? machine.machine.displayName,
         icon: Icons.link_off,
         message:
             '${machine.machine.displayName} is not linked to this computer yet.',
-        onClose: single ? null : close,
+        onClose: single && !swarmMode ? null : close,
       );
     }
-
-    final offline =
-        machine.nodeOnline == false ||
-        (machine.isLocalMachine && !machine.usesLocalTransport);
     if (offline) {
       return _Guide(
-        single: single,
+        single: single && !swarmMode,
         onClose: close,
         title: agentName ?? machine.machine.displayName,
         compactMessage: machine.isLocalMachine
@@ -700,10 +1228,6 @@ class _PaneContent extends StatelessWidget {
         ),
       );
     }
-
-    // A machine tile that has nothing left to report. It arrived to carry a
-    // link prompt or a setup form; once those are answered it has said all it
-    // has to say, and the person can drag an agent into it.
     if (wantedAgentId == null) {
       return _PaneStatus(
         title: machine.machine.displayName,
@@ -712,7 +1236,6 @@ class _PaneContent extends StatelessWidget {
         onClose: close,
       );
     }
-
     if (agentName == null) {
       return _PaneStatus(
         title: wantedAgentId,
@@ -721,89 +1244,24 @@ class _PaneContent extends StatelessWidget {
         onClose: close,
       );
     }
-
-    final session = pane.session;
-    if (session == null) {
+    if (agent != null && !agent.terminalAvailable) {
       return _PaneStatus(
         title: agentName,
-        icon: Icons.hourglass_empty,
-        message: 'Attaching…',
-        onClose: single ? null : close,
-        busy: true,
+        icon: Icons.terminal,
+        message:
+            agent.terminalUnavailableReason ??
+            'This agent has no available terminal.',
+        onClose: close,
       );
     }
-
-    // LayoutBuilder ONLY to learn this tile's size, for the drag ghost to be
-    // cut to. Asking the render object instead — `key.currentContext.size` —
-    // is what Flutter refuses outright during build: "the size getter should
-    // only be called from paint callbacks or interaction event handlers", and
-    // it does not warn, it throws, so every pane became a red error box.
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final launchFailed = agent?.launchState == 'failed';
-        final terminal = TerminalPanel(
-          notifier: notifier,
-          session: session,
-          focused: notifier.isPaneFocused(pane.id),
-          composerVisible: !launchFailed && pane.composerVisible,
-          readOnly: launchFailed,
-          onToggleComposer: launchFailed
-              ? null
-              : () => notifier.toggleComposer(pane.id),
-          onClose: single ? null : close,
-          pinned: pane.isPinned,
-          onTogglePin: single ? null : () => notifier.togglePinPane(pane.id),
-          onRendererFocus: () => notifier.focusPane(pane.id),
-          paneDrag: single
-              ? null
-              : PaneDragHandle(
-                  ref: PaneDragRef(paneId: pane.id),
-                  size: constraints.biggest,
-                ),
-        );
-        if (agent?.launchState != 'failed') return terminal;
-        return Column(
-          children: [
-            _LaunchFailureBanner(
-              message: agent?.launchDetail ?? 'The engine failed to start. Terminal output is preserved below.',
-            ),
-            Expanded(child: terminal),
-          ],
-        );
-      },
+    return _PaneStatus(
+      title: agentName,
+      icon: Icons.hourglass_empty,
+      message: 'Attaching…',
+      onClose: single && !swarmMode ? null : close,
+      busy: true,
     );
   }
-}
-
-class _LaunchFailureBanner extends StatelessWidget {
-  const _LaunchFailureBanner({required this.message});
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) => Container(
-    width: double.infinity,
-    color: Theme.of(context).colorScheme.errorContainer,
-    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-    child: Row(
-      children: [
-        Icon(
-          Icons.error_outline,
-          size: 16,
-          color: Theme.of(context).colorScheme.onErrorContainer,
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text(
-            message,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: Theme.of(context).colorScheme.onErrorContainer,
-            ),
-          ),
-        ),
-      ],
-    ),
-  );
 }
 
 /// Where an OS file (from Finder/Nautilus, not an in-app drag) may be dropped onto this pane.
@@ -1149,7 +1607,8 @@ class _Guide extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final roomForCard =
-            constraints.maxWidth >= 520 && constraints.maxHeight >= 430;
+            constraints.maxWidth >= 520 &&
+            constraints.maxHeight >= (single ? 500 : 546);
         if (roomForCard) {
           if (single) return full;
           return Column(

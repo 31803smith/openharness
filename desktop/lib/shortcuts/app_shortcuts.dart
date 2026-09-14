@@ -3,48 +3,25 @@ import 'package:flutter/widgets.dart';
 
 import '../logging/debug_surface.dart';
 
-/// Every keyboard shortcut in the app, declared once.
+/// Harness uses Command as a direct prefix for frequent workspace actions.
+/// H/J/K/L and arrows focus panes, B routes a task, S changes layout and R
+/// refreshes discovery. The same definitions feed live keys, help and search.
 ///
-/// One list feeds both the live bindings and the ⌘/ sheet, so a shortcut can
-/// never work without being documented or be documented without working.
-///
-/// ## Why every one of these is ⌘, and none is Ctrl
-///
-/// The main pane is a real terminal running a real TUI, and three layers below
-/// this app are already holding keys:
-///
-/// * **The engine's TUI** — `Esc` interrupts, `⇧Tab` cycles permission modes,
-///   `⌥⏎` inserts a newline.
-/// * **tmux** — agents are attached to tmux panes, whose default prefix is
-///   `Ctrl+B`.
-/// * **The shell** — `Ctrl+C`, `Ctrl+D`, `Ctrl+R`, `Ctrl+A`, `Ctrl+E`, `Ctrl+L`.
-///
-/// On macOS the Command key never reaches the pty, so it is the only modifier
-/// this app can spend. `⌥` is NOT available: terminals send it as a Meta/ESC
-/// prefix, which is why `⌥⏎` reaches the engine at all. `⌘⌥` together is safe.
-///
-/// Claude Code Desktop binds `Ctrl+Tab`, ``Ctrl+` `` and `Ctrl+O`. It can — its
-/// main pane is a chat. Copying that here would break the terminal, so this
-/// list deliberately diverges.
-///
-/// Three more keys are spoken for by `package:xterm` itself on macOS — `⌘C`,
-/// `⌘V`, `⌘A` (copy, paste, select all) — and must stay with it.
-///
-/// ⚠️ THAT ONLY BECAME TRUE ONCE THE MENU LET GO OF THEM. Flutter's macOS
-/// template ships `MainMenu.xib` with a full Edit menu, and `Cut`/`Copy`/
-/// `Paste`/`Select All` carried `keyEquivalent` — so AppKit matched ⌘X/⌘C/⌘V/⌘A
-/// in `performKeyEquivalent:`, which runs BEFORE keyDown reaches the responder
-/// chain, and dispatched `cut:`/`copy:`/`paste:`/`selectAll:` up it instead.
-/// xterm's paste is a Shortcuts→Actions binding driven by a KEY EVENT, so it
-/// never saw the keystroke: ⌘V did nothing in a terminal pane and the only way
-/// to paste was whatever the engine's own TUI happened to bind.
-///
-/// Those four `keyEquivalent`s are now stripped from the xib. The menu items
-/// stay — clicked, they still work through the responder chain — and text
-/// fields keep their shortcuts from Flutter's own `DefaultTextEditingShortcuts`,
-/// which binds the same four on macOS. Do not put them back.
+/// Unclaimed input stays with the focused agent or text field. Composition,
+/// copy/paste and the coding agent's own prompt editing must keep working.
+/// AppKit's Edit menu has no competing equivalents for C/V/X/A, and Hide has
+/// no H equivalent: Flutter owns editing and Harness owns Command-H movement.
+/// Menu clicks still use their usual responder-chain actions.
 
 enum ShortcutAction {
+  newSwarm,
+  closeSwarm,
+  reopenClosedSwarm,
+  showHistory,
+  renameSwarm,
+  nextSwarm,
+  previousSwarm,
+  showSettings,
   toggleRail,
   nextAgent,
   previousAgent,
@@ -65,6 +42,16 @@ enum ShortcutAction {
 
   /// Jump to any agent by name, on any machine.
   switchAgent,
+
+  /// Find a live question and jump to the agent waiting for input.
+  showAttention,
+
+  findTerminal,
+  findNext,
+  findPrevious,
+
+  /// Add an agent to the current swarm, independently of navigation.
+  addAgent,
 
   closePane,
   newAgent,
@@ -101,29 +88,32 @@ class AppShortcut {
 }
 
 const List<AppShortcut> kAppShortcuts = [
+  AppShortcut(
+    action: ShortcutAction.findTerminal,
+    activator: SingleActivator(LogicalKeyboardKey.keyF, meta: true),
+    label: 'Find in the focused terminal',
+    group: ShortcutGroup.navigate,
+  ),
+  AppShortcut(
+    action: ShortcutAction.findNext,
+    activator: SingleActivator(LogicalKeyboardKey.keyG, meta: true),
+    label: 'Next terminal match',
+    group: ShortcutGroup.navigate,
+  ),
+  AppShortcut(
+    action: ShortcutAction.findPrevious,
+    activator: SingleActivator(
+      LogicalKeyboardKey.keyG,
+      meta: true,
+      shift: true,
+    ),
+    label: 'Previous terminal match',
+    group: ShortcutGroup.navigate,
+  ),
   // --- navigate -------------------------------------------------------------
   //
-  // ONE MOTION, TWO SPELLINGS. Every direction is bound as both `⌘`+arrow and
-  // `⌘`+hjkl, live at the same time and with no mode to switch between them —
-  // which is what zellij does with Alt, and for the same reason: a person who
-  // reaches for hjkl and a person who reaches for the arrows are not two
-  // populations to be asked about, they are two hands on the same keyboard.
-  //
-  // ⌘, NOT Ctrl, and that is forced. `vim-tmux-navigator` — the thing vim users
-  // actually have in their fingers — binds Ctrl+hjkl, and it works there because
-  // tmux ASKS whether the focused pane is running vim and forwards the key only
-  // then. Nothing here can ask: the pane is always a terminal running a TUI, and
-  // Ctrl-h/j/k/l are backspace, newline, kill-line and clear — keys the agent
-  // needs. Taking them would break the terminal for everyone to please one half
-  // of the room. See this file's header for why ⌥ is out too.
-  //
-  // ⌘H WAS MACOS'S. `MainMenu.xib` carried `keyEquivalent="h"` on Hide, matched
-  // in `performKeyEquivalent:` before Flutter ever sees the key — the same trap
-  // the header describes for ⌘C/⌘V/⌘A, and answered the same way: the
-  // keyEquivalent is stripped, the menu item stays and still works when clicked.
-  // ⌘J (Jump to Selection) and ⌘; (Check Document Now) went with it; this app
-  // has no Find and no spell-checked field. The cost is real and worth saying:
-  // Hide is no longer a keystroke in this app.
+  // Both letter and arrow directions are available without a mode switch.
+  // The macOS Hide menu keeps its click action but releases Command-H.
   AppShortcut(
     action: ShortcutAction.focusPaneLeft,
     activator: SingleActivator(LogicalKeyboardKey.keyH, meta: true),
@@ -290,18 +280,6 @@ const List<AppShortcut> kAppShortcuts = [
     group: ShortcutGroup.panes,
   ),
   AppShortcut(
-    action: ShortcutAction.pinPane,
-    // ⇧⌘P: plain ⌘P is the switcher now, which is the key people reach for far
-    // more often. Same letter, so the pair stays learnable.
-    activator: SingleActivator(
-      LogicalKeyboardKey.keyP,
-      meta: true,
-      shift: true,
-    ),
-    label: 'Hold this pane in its slot',
-    group: ShortcutGroup.panes,
-  ),
-  AppShortcut(
     action: ShortcutAction.showLayout,
     activator: SingleActivator(LogicalKeyboardKey.keyS, meta: true),
     label: 'Choose the grid layout',
@@ -310,20 +288,18 @@ const List<AppShortcut> kAppShortcuts = [
 
   // --- agents ---------------------------------------------------------------
   //
-  // THE BRACKETS MEAN ONE THING NOW. They used to carry three: ⌘[ ] walked
-  // panes, ⇧⌘[ ] walked agents and ⌥⌘[ ] moved panes — three verbs told apart
-  // only by which modifiers were down. Panes moved to hjkl and arrows, so the
-  // brackets keep the one job they are good at: stepping along a list.
+  // In Swarms, brackets follow Chrome's Back/Forward history. Directional
+  // pane movement keeps its own keys; Shift-brackets step through tabs.
   AppShortcut(
     action: ShortcutAction.previousAgent,
     activator: SingleActivator(LogicalKeyboardKey.bracketLeft, meta: true),
-    label: 'Previous agent',
+    label: 'Back',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
     action: ShortcutAction.nextAgent,
     activator: SingleActivator(LogicalKeyboardKey.bracketRight, meta: true),
-    label: 'Next agent',
+    label: 'Forward',
     group: ShortcutGroup.navigate,
   ),
   // ⌘P — "go to", the way VS Code's quick-open spells it, because that is what
@@ -420,9 +396,129 @@ const AppShortcut kDebugShortcut = AppShortcut(
 /// The one list the bindings, the ⌘/ sheet and the tooltips all read, so a
 /// build cannot bind a key it does not document or document one it does not
 /// bind.
-List<AppShortcut> appShortcuts() => [
-  ...kAppShortcuts,
+List<AppShortcut> appShortcuts({bool swarmMode = true}) => [
+  for (final shortcut in kAppShortcuts)
+    if (!swarmMode ||
+        (!const {
+              ShortcutAction.toggleRail,
+              ShortcutAction.closePane,
+              ShortcutAction.switchAgent,
+            }.contains(shortcut.action) &&
+            !shortcut.activator.control))
+      shortcut,
+  if (swarmMode) ...kSwarmShortcuts,
   if (kDebugSurfaceEnabled) kDebugShortcut,
+];
+
+/// Swarm bindings replace the old workspace navigation in the retained legacy
+/// screen. Live Swarm bindings, tooltips, and help all use this same catalog.
+const kSwarmShortcuts = [
+  AppShortcut(
+    action: ShortcutAction.showHistory,
+    activator: SingleActivator(LogicalKeyboardKey.keyY, meta: true),
+    label: 'Show full history',
+    group: ShortcutGroup.navigate,
+  ),
+  AppShortcut(
+    action: ShortcutAction.newSwarm,
+    activator: SingleActivator(LogicalKeyboardKey.keyT, meta: true),
+    label: 'New swarm',
+    group: ShortcutGroup.navigate,
+  ),
+  AppShortcut(
+    action: ShortcutAction.reopenClosedSwarm,
+    activator: SingleActivator(
+      LogicalKeyboardKey.keyT,
+      meta: true,
+      shift: true,
+    ),
+    label: 'Reopen last closed agent or swarm',
+    group: ShortcutGroup.navigate,
+  ),
+  AppShortcut(
+    action: ShortcutAction.closeSwarm,
+    activator: SingleActivator(LogicalKeyboardKey.keyW, meta: true),
+    label: 'Close this swarm',
+    group: ShortcutGroup.navigate,
+  ),
+  AppShortcut(
+    action: ShortcutAction.renameSwarm,
+    activator: SingleActivator(
+      LogicalKeyboardKey.keyR,
+      meta: true,
+      shift: true,
+    ),
+    label: 'Rename this swarm',
+    group: ShortcutGroup.navigate,
+  ),
+  AppShortcut(
+    action: ShortcutAction.nextSwarm,
+    activator: SingleActivator(
+      LogicalKeyboardKey.bracketRight,
+      meta: true,
+      shift: true,
+    ),
+    label: 'Next swarm',
+    group: ShortcutGroup.navigate,
+  ),
+  AppShortcut(
+    action: ShortcutAction.previousSwarm,
+    activator: SingleActivator(
+      LogicalKeyboardKey.bracketLeft,
+      meta: true,
+      shift: true,
+    ),
+    label: 'Previous swarm',
+    group: ShortcutGroup.navigate,
+  ),
+  AppShortcut(
+    action: ShortcutAction.nextSwarm,
+    activator: SingleActivator(LogicalKeyboardKey.tab, control: true),
+    label: 'Next swarm',
+    group: ShortcutGroup.navigate,
+  ),
+  AppShortcut(
+    action: ShortcutAction.previousSwarm,
+    activator: SingleActivator(
+      LogicalKeyboardKey.tab,
+      control: true,
+      shift: true,
+    ),
+    label: 'Previous swarm',
+    group: ShortcutGroup.navigate,
+  ),
+  AppShortcut(
+    action: ShortcutAction.switchAgent,
+    activator: SingleActivator(LogicalKeyboardKey.keyP, meta: true),
+    label: 'Search agents, swarms, machines and projects',
+    group: ShortcutGroup.navigate,
+  ),
+  AppShortcut(
+    action: ShortcutAction.showAttention,
+    activator: SingleActivator(
+      LogicalKeyboardKey.keyI,
+      meta: true,
+      shift: true,
+    ),
+    label: 'Show agents needing input',
+    group: ShortcutGroup.navigate,
+  ),
+  AppShortcut(
+    action: ShortcutAction.closePane,
+    activator: SingleActivator(
+      LogicalKeyboardKey.keyW,
+      meta: true,
+      shift: true,
+    ),
+    label: 'Remove the focused agent from this swarm',
+    group: ShortcutGroup.panes,
+  ),
+  AppShortcut(
+    action: ShortcutAction.showSettings,
+    activator: SingleActivator(LogicalKeyboardKey.comma, meta: true),
+    label: 'Open Settings',
+    group: ShortcutGroup.actions,
+  ),
 ];
 
 /// `⌘1`…`⌘9` jump to the nth TILE on the grid.
@@ -532,13 +628,12 @@ class TerminalKey {
 /// "why is there no shortcut for X" is answered by seeing that X already
 /// belongs to something.
 const List<TerminalKey> kTerminalOwnedKeys = [
-  TerminalKey(['⌘', 'C'], 'Copy — xterm\'s own'),
+  TerminalKey(['⌘', 'C'], 'Copy'),
   TerminalKey(['⌘', 'V'], 'Paste'),
   TerminalKey(['⌘', 'A'], 'Select all'),
   TerminalKey(['esc'], 'Interrupt the engine'),
   TerminalKey(['⌥', '⏎'], "Newline in the engine's prompt"),
-  TerminalKey(['⌃', 'B'], 'tmux prefix'),
-  TerminalKey(['⌃', 'C'], "The shell's own keys"),
+  TerminalKey(['⌃', 'C'], 'Cancel / interrupt in the agent'),
 ];
 
 /// Turns the declared shortcuts into the map [CallbackShortcuts] wants.
@@ -549,9 +644,10 @@ const List<TerminalKey> kTerminalOwnedKeys = [
 Map<ShortcutActivator, VoidCallback> buildShortcutBindings({
   required Map<ShortcutAction, VoidCallback> handlers,
   void Function(int index)? onSelectPaneIndex,
+  bool swarmMode = true,
 }) {
   final bindings = <ShortcutActivator, VoidCallback>{};
-  for (final shortcut in appShortcuts()) {
+  for (final shortcut in appShortcuts(swarmMode: swarmMode)) {
     final handler = handlers[shortcut.action];
     if (handler != null) bindings[shortcut.activator] = handler;
   }
@@ -601,15 +697,19 @@ String _keyLabel(LogicalKeyboardKey key) {
 ///
 /// Tooltips read this instead of spelling the keys out, so a rebinding cannot
 /// leave a button advertising a key that no longer works.
-String? shortcutHintFor(ShortcutAction action) {
-  for (final shortcut in appShortcuts()) {
+String? shortcutHintFor(ShortcutAction action, {bool swarmMode = true}) {
+  for (final shortcut in appShortcuts(swarmMode: swarmMode)) {
     if (shortcut.action == action) return describeShortcut(shortcut.activator);
   }
   return null;
 }
 
 /// "Reload machines  ⌘R"
-String withShortcutHint(String tooltip, ShortcutAction action) {
-  final hint = shortcutHintFor(action);
+String withShortcutHint(
+  String tooltip,
+  ShortcutAction action, {
+  bool swarmMode = true,
+}) {
+  final hint = shortcutHintFor(action, swarmMode: swarmMode);
   return hint == null ? tooltip : '$tooltip  $hint';
 }

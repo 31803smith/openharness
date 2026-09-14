@@ -14,6 +14,11 @@ import '../state/app_state.dart';
 import 'agent_drag.dart';
 import 'rename_agent_dialog.dart';
 import 'terminal_composer.dart';
+import '../shortcuts/app_keymap.dart';
+import '../shortcuts/keymap.dart';
+import 'terminal_find_bar.dart';
+import '../terminal/terminal_search.dart';
+import '../terminal/terminal_snapshot.dart';
 import '../terminal/terminal_binary.dart';
 import '../terminal/terminal_font_store.dart';
 import '../terminal/terminal_link_opener.dart';
@@ -25,9 +30,12 @@ import '../terminal/terminal_viewport.dart';
 import '../shared/theme/app_theme.dart' as grid;
 import '../theme/app_theme.dart';
 import 'engine_identity.dart';
+import 'pane_actions_menu.dart';
 
 /// The pane header's own horizontal inset.
 const double _stripPadding = 14;
+
+typedef TerminalNotice = ({String label, String detail, IconData icon});
 
 class TerminalPanel extends StatefulWidget {
   final AppNotifier notifier;
@@ -41,16 +49,22 @@ class TerminalPanel extends StatefulWidget {
   /// control that changes that. Null where there is no grid to hold a slot in.
   final bool pinned;
   final VoidCallback? onTogglePin;
+  final VoidCallback? onToggleZoom, onSplitRight, onSplitDown;
+  final bool zoomed;
 
   /// This native terminal took the keyboard, so its grid tile becomes focused.
   final VoidCallback? onRendererFocus;
 
   /// Only the focused grid tile may claim keyboard focus on mount/rebuild.
   final bool focused;
+  final bool visible;
+  final bool compactHeader;
+  final int focusRequest;
 
   /// Whether this tile's composer textbox is showing. Only consulted for a remote machine.
   final bool composerVisible;
   final bool readOnly;
+  final TerminalNotice? notice;
 
   /// Flips [composerVisible]. Null where there is no composer to toggle.
   final VoidCallback? onToggleComposer;
@@ -68,12 +82,20 @@ class TerminalPanel extends StatefulWidget {
     required this.notifier,
     required this.session,
     required this.focused,
+    this.visible = true,
+    this.compactHeader = false,
+    this.focusRequest = 0,
     this.composerVisible = false,
     this.readOnly = false,
+    this.notice,
     this.onToggleComposer,
     this.onClose,
     this.pinned = false,
     this.onTogglePin,
+    this.onToggleZoom,
+    this.onSplitRight,
+    this.onSplitDown,
+    this.zoomed = false,
     this.onRendererFocus,
     this.paneDrag,
     this.linkOpener,
@@ -85,6 +107,7 @@ class TerminalPanel extends StatefulWidget {
 }
 
 class _TerminalPanelState extends State<TerminalPanel>
+    with WidgetsBindingObserver
     implements TerminalViewport {
   static const _dialScale = 2.5;
   static const _dialStopVelocity = 40.0;
@@ -94,10 +117,25 @@ class _TerminalPanelState extends State<TerminalPanel>
   final ScrollController _scrollController = ScrollController();
   final FocusNode _focusNode = FocusNode();
   final FocusNode _composerFocus = FocusNode();
+  final _findBarKey = GlobalKey<TerminalFindBarState>();
+  TerminalSearch? _find;
+  String _lastFindQuery = '';
+  bool _lastFindCaseSensitive = false;
+  CellAnchor? _lastFindAnchor;
+  Buffer? _lastFindBuffer;
+  TerminalHighlight? _findHighlight;
+  Buffer? _findPaintedBuffer;
+  BufferRangeLine? _findPaintedRange;
+  Buffer? _findOriginBuffer;
+  CellAnchor? _findOriginLine;
+  double _findOriginFraction = 0;
+  bool _findOriginAtEnd = false;
+  bool _findRevealPending = false;
   late Terminal _viewTerminal;
   late GlobalKey<TerminalViewState> _terminalViewKey;
   Timer? _dialInertiaTimer;
   Timer? _cursorBlinkTimer;
+  ValueListenable<TickerModeData>? _tickerMode;
   double _dialVelocity = 0;
   bool _cursorBlinkVisible = true;
   double _alternateScrollRemainder = 0;
@@ -108,9 +146,12 @@ class _TerminalPanelState extends State<TerminalPanel>
   String? _pressedLink;
   bool _openingLink = false;
   bool _linkRefreshPending = false;
+  bool _observingLinkModifiers = false;
   late final RemoteMediaDownloader _mediaDownloader;
   MediaDownloadCancellation? _previewCancellation;
   RemoteMediaProgress? _previewProgress;
+  Object? _headerPresentation;
+  Widget? _header;
 
   @override
   void initState() {
@@ -121,13 +162,9 @@ class _TerminalPanelState extends State<TerminalPanel>
     _terminalViewKey = GlobalKey<TerminalViewState>();
     _linkOpener = widget.linkOpener ?? TerminalLinkOpener();
     _mediaDownloader = widget.mediaDownloader ?? RemoteMediaDownloader();
-    HardwareKeyboard.instance.addHandler(_onLinkModifierChanged);
     _focusNode.addListener(_handleFocusChange);
     _composerFocus.addListener(_handleComposerFocusChange);
-    _cursorBlinkTimer = Timer.periodic(
-      const Duration(milliseconds: 500),
-      (_) => _advanceCursorBlink(),
-    );
+    WidgetsBinding.instance.addObserver(this);
     widget.session.attachViewport(this);
     widget.session.addListener(_onSessionChanged);
     terminalFontStore.addListener(_onFontChanged);
@@ -135,9 +172,43 @@ class _TerminalPanelState extends State<TerminalPanel>
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _updateTickerMode();
+  }
+
+  @override
+  void activate() {
+    super.activate();
+    _updateTickerMode();
+  }
+
+  @override
+  void deactivate() {
+    _stopCursorBlink();
+    super.deactivate();
+  }
+
+  void _updateTickerMode() {
+    final mode = TickerMode.getValuesNotifier(context);
+    if (!identical(mode, _tickerMode)) {
+      _tickerMode?.removeListener(_syncCursorBlink);
+      _tickerMode = mode..addListener(_syncCursorBlink);
+    }
+    _syncCursorBlink();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) =>
+      _syncCursorBlink();
+
+  @override
   void didUpdateWidget(TerminalPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (!identical(oldWidget.session, widget.session)) {
+      _closeFind(restore: false, focus: false, rebuild: false);
+      _clearLastFind();
+      _lastFindQuery = '';
       _previewCancellation?.cancel();
       _previewProgress = null;
       oldWidget.session.setCursorBlinkPhase(true);
@@ -153,12 +224,23 @@ class _TerminalPanelState extends State<TerminalPanel>
       _viewTerminal.addListener(_scheduleLinkRefresh);
       _pressedLink = null;
       _hoveredLink = null;
+      _observeLinkModifiers(false);
       _terminalViewKey = GlobalKey<TerminalViewState>();
       _cursorBlinkVisible = true;
       widget.session.setCursorBlinkPhase(true);
       _afterTerminalMounted();
     }
-    if (!oldWidget.focused && widget.focused) {
+    if (oldWidget.visible && !widget.visible) {
+      _focusNode.unfocus();
+      _composerFocus.unfocus();
+      _cancelDialInertia();
+      _linkPointerPosition = null;
+      _hoveredLink = null;
+      _pressedLink = null;
+      _observeLinkModifiers(false);
+    }
+    if (widget.focused &&
+        (!oldWidget.focused || oldWidget.focusRequest != widget.focusRequest)) {
       _claimFocusAfterFrame();
     }
     // Showing or hiding the box changes how many rows the terminal has. Re-measure so the remote
@@ -166,14 +248,19 @@ class _TerminalPanelState extends State<TerminalPanel>
     if (oldWidget.composerVisible != widget.composerVisible) {
       _afterTerminalMounted();
     }
+    _syncCursorBlink();
   }
 
   @override
   void dispose() {
+    _closeFind(restore: false, focus: false, rebuild: false);
+    _clearLastFind();
+    WidgetsBinding.instance.removeObserver(this);
+    _tickerMode?.removeListener(_syncCursorBlink);
     _previewCancellation?.cancel();
     _viewTerminal.removeListener(_scheduleLinkRefresh);
     _scrollController.removeListener(_scheduleLinkRefresh);
-    HardwareKeyboard.instance.removeHandler(_onLinkModifierChanged);
+    _observeLinkModifiers(false);
     widget.session.setCursorBlinkPhase(true);
     widget.session.removeListener(_onSessionChanged);
     widget.session.detachViewport(this);
@@ -201,10 +288,7 @@ class _TerminalPanelState extends State<TerminalPanel>
   /// one, which is what puts it on the loopback transport.
   bool get _showsComposer {
     final machineState = widget.notifier.stateOf(widget.session.machineId);
-    return machineState != null &&
-        !machineState.isLocalMachine &&
-        !widget.readOnly &&
-        widget.composerVisible;
+    return machineState?.isLocalMachine != true && widget.composerVisible;
   }
 
   /// The composer refuses focus while it is disabled, which it is until the stream goes live. When
@@ -213,12 +297,14 @@ class _TerminalPanelState extends State<TerminalPanel>
   bool _composerFocusPending = false;
 
   void _onSessionChanged() {
-    if (!mounted || !_composerFocusPending) return;
+    if (!mounted) return;
+    _syncCursorBlink();
+    if (!_composerFocusPending) return;
     if (!widget.focused || !_showsComposer) {
       _composerFocusPending = false;
       return;
     }
-    if (!widget.session.acceptsInput) return;
+    if (widget.readOnly || !widget.session.acceptsInput) return;
     _composerFocusPending = false;
     // Deferred a frame on purpose. This panel registers its session listener before the composer
     // registers its own (a parent's initState runs first), so at this instant the field is still
@@ -226,7 +312,7 @@ class _TerminalPanelState extends State<TerminalPanel>
     // composer rebuilds in is what makes the claim actually land.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !widget.focused || !_showsComposer) return;
-      if (!widget.session.acceptsInput) return;
+      if (widget.readOnly || !widget.session.acceptsInput) return;
       _composerFocus.requestFocus();
     });
   }
@@ -240,6 +326,44 @@ class _TerminalPanelState extends State<TerminalPanel>
 
   void _syncTerminal(Terminal terminal) {
     if (identical(_viewTerminal, terminal)) return;
+    final previous = _viewTerminal.buffer;
+    final next = terminal.buffer;
+    final render = _laidOutTerminalView()?.renderTerminal;
+    final lineHeight = render?.lineHeight;
+    final position = _scrollController.hasClients
+        ? _scrollController.position
+        : null;
+    final viewportRow = position != null && lineHeight != null
+        ? (position.pixels / lineHeight).floor()
+        : null;
+    final viewportFraction = position != null && lineHeight != null
+        ? position.pixels / lineHeight - viewportRow!
+        : 0.0;
+    final atEnd =
+        position == null || position.maxScrollExtent - position.pixels < 1;
+    final originRow = _findOriginLine?.attached == true
+        ? _findOriginLine!.y
+        : null;
+    final originFraction = _findOriginFraction;
+    final originAtEnd = _findOriginAtEnd;
+    final match =
+        _find?.match?.begin ??
+        (_lastFindAnchor?.attached == true ? _lastFindAnchor!.offset : null);
+    final selection = _controller.selection;
+    final selectedText = selection == null ? null : previous.getText(selection);
+    final locations = remapTerminalRows(previous, next, [
+      if (!atEnd) ?viewportRow,
+      ?originRow,
+      ?match?.y,
+      ?selection?.begin.y,
+      ?selection?.end.y,
+    ]);
+    int row(int old) => locations[old] ?? old.clamp(0, next.lines.length - 1);
+    CellOffset location(CellOffset old) =>
+        CellOffset(old.x.clamp(0, terminal.viewWidth - 1), row(old.y));
+    final wasFinding = _find != null;
+    _closeFind(restore: false, focus: false, rebuild: false);
+    _clearLastFind();
     // Selection anchors belong to a specific circular buffer. Detach them
     // before the TerminalView starts laying out the replacement terminal.
     _controller.clearSelection();
@@ -248,12 +372,53 @@ class _TerminalPanelState extends State<TerminalPanel>
     _viewTerminal.addListener(_scheduleLinkRefresh);
     _pressedLink = null;
     _hoveredLink = null;
-    _terminalViewKey = GlobalKey<TerminalViewState>();
+    _observeLinkModifiers(false);
     _cancelDialInertia();
     _alternateScrollRemainder = 0;
     _cursorBlinkVisible = true;
     widget.session.setCursorBlinkPhase(true);
-    _afterTerminalMounted(clearSelection: true);
+    if (position != null &&
+        lineHeight != null &&
+        !atEnd &&
+        viewportRow != null) {
+      // Correct before the retained renderer lays out the replacement, so its
+      // first frame already shows the reader's location without a scroll flash.
+      position.correctPixels(
+        (row(viewportRow) + viewportFraction) * lineHeight,
+      );
+    }
+    if (match != null) {
+      _lastFindBuffer = next;
+      _lastFindAnchor = next.createAnchorFromOffset(location(match));
+    }
+    if (selection != null &&
+        locations.containsKey(selection.begin.y) &&
+        locations.containsKey(selection.end.y)) {
+      final range = selection is BufferRangeBlock
+          ? BufferRangeBlock(location(selection.begin), location(selection.end))
+          : BufferRangeLine(location(selection.begin), location(selection.end));
+      if (next.getText(range) == selectedText) {
+        _controller.setSelection(
+          next.createAnchorFromOffset(range.begin),
+          next.createAnchorFromOffset(range.end),
+        );
+      }
+    }
+    if (wasFinding) {
+      _findOriginBuffer = next;
+      _findOriginAtEnd = originAtEnd;
+      _findOriginFraction = originFraction;
+      if (originRow != null) {
+        _findOriginLine = next.createAnchor(0, row(originRow));
+      }
+      _findRevealPending = true;
+      _find = TerminalSearch(
+        terminal,
+        origin: match == null ? null : location(match),
+      )..addListener(_onFindChanged);
+      _find!.setQuery(_lastFindQuery, caseSensitive: _lastFindCaseSensitive);
+    }
+    _afterTerminalMounted(scrollToEnd: false);
   }
 
   /// Typing in the composer focuses the tile, exactly like clicking into the terminal does.
@@ -262,13 +427,10 @@ class _TerminalPanelState extends State<TerminalPanel>
   }
 
   void _handleFocusChange() {
+    _syncCursorBlink();
     if (_focusNode.hasFocus) {
       widget.onRendererFocus?.call();
-      return;
     }
-    _cursorBlinkVisible = true;
-    widget.session.setCursorBlinkPhase(true);
-    _repaintTerminalCursor();
   }
 
   /// Re-establishes the native text-input connection after a rail selection.
@@ -280,10 +442,15 @@ class _TerminalPanelState extends State<TerminalPanel>
   /// focus when needed, or opens the connection immediately when focus stayed
   /// on this tile. That is essential for ordinary keys and IMEs alike.
   void _claimFocus(TerminalViewState view) {
-    if (!mounted || !widget.focused || _composerFocus.hasFocus) return;
+    if (!mounted || !widget.focused || !widget.visible) return;
+    if (_find != null) {
+      _findBarKey.currentState?.focusSearch(selectAll: false);
+      return;
+    }
+    if (_composerFocus.hasFocus) return;
     // On a remote pane the box gets the caret, not the terminal. Landing in the terminal would
     // hand the user the per-keystroke path by default — the exact cost the box exists to avoid.
-    if (_showsComposer) {
+    if (_showsComposer && !widget.readOnly) {
       if (widget.session.acceptsInput) {
         _composerFocus.requestFocus();
       } else {
@@ -302,13 +469,46 @@ class _TerminalPanelState extends State<TerminalPanel>
     });
   }
 
-  void _advanceCursorBlink() {
-    if (!mounted) return;
-    final shouldBlink = _focusNode.hasFocus && widget.session.acceptsInput;
-    final next = shouldBlink ? !_cursorBlinkVisible : true;
-    if (next == _cursorBlinkVisible) return;
-    _cursorBlinkVisible = next;
-    widget.session.setCursorBlinkPhase(next);
+  /// Retaining a renderer must not retain a polling loop. Only the focused,
+  /// interactive terminal in the active window needs a cursor clock. Observe
+  /// ticker mode without rebuilding the subtree when a route covers it.
+  void _syncCursorBlink() {
+    final lifecycle = WidgetsBinding.instance.lifecycleState;
+    final findEnabled =
+        mounted &&
+        widget.visible &&
+        (_tickerMode?.value.enabled ?? false) &&
+        (lifecycle == null || lifecycle == AppLifecycleState.resumed);
+    _find?.setEnabled(findEnabled);
+    if (!findEnabled) _clearFindHighlight();
+    final enabled =
+        mounted &&
+        widget.visible &&
+        !widget.readOnly &&
+        _focusNode.hasFocus &&
+        widget.session.acceptsInput &&
+        (_tickerMode?.value.enabled ?? false) &&
+        (lifecycle == null || lifecycle == AppLifecycleState.resumed);
+    if (!enabled) {
+      _stopCursorBlink();
+      return;
+    }
+    _cursorBlinkTimer ??= Timer.periodic(
+      const Duration(milliseconds: 500),
+      (_) => _setCursorBlinkVisible(!_cursorBlinkVisible),
+    );
+  }
+
+  void _stopCursorBlink() {
+    _cursorBlinkTimer?.cancel();
+    _cursorBlinkTimer = null;
+    _setCursorBlinkVisible(true);
+  }
+
+  void _setCursorBlinkVisible(bool visible) {
+    if (visible == _cursorBlinkVisible) return;
+    _cursorBlinkVisible = visible;
+    widget.session.setCursorBlinkPhase(visible);
     _repaintTerminalCursor();
   }
 
@@ -343,9 +543,12 @@ class _TerminalPanelState extends State<TerminalPanel>
     }
   }
 
-  void _afterTerminalMounted({bool clearSelection = false}) {
+  void _afterTerminalMounted({
+    bool clearSelection = false,
+    bool scrollToEnd = true,
+  }) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
+      if (!mounted || !widget.visible) return;
       if (clearSelection) _controller.clearSelection();
       final view = _laidOutTerminalView();
       if (view == null) return;
@@ -358,13 +561,166 @@ class _TerminalPanelState extends State<TerminalPanel>
           renderSize.height ~/ cellSize.height,
         );
       }
-      if (_scrollController.hasClients) {
+      if (scrollToEnd && _scrollController.hasClients) {
         _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
       }
       // Never over the composer: a rebuild that re-focuses this tile while someone is typing into
       // the box would pull the caret out from under them mid-sentence.
       _claimFocus(view);
+      if (_find != null) _onFindChanged();
+      if (_linkPointerPosition != null) _hoverLink(_linkPointerPosition);
     });
+  }
+
+  @override
+  void find(TerminalFindAction action) {
+    if (!mounted || !widget.visible || !widget.focused) return;
+    final wasClosed = _find == null;
+    if (wasClosed) {
+      final view = _laidOutTerminalView();
+      if (view == null || !_scrollController.hasClients) return;
+      final position = _scrollController.position;
+      final height = view.renderTerminal.lineHeight;
+      final row = (position.pixels / height).floor().clamp(
+        0,
+        _viewTerminal.buffer.lines.length - 1,
+      );
+      _findOriginBuffer = _viewTerminal.buffer;
+      _findOriginLine = _findOriginBuffer!.createAnchor(0, row);
+      _findOriginFraction = position.pixels / height - row;
+      _findOriginAtEnd = position.maxScrollExtent - position.pixels < 1;
+      var origin = CellOffset(0, row);
+      if (action != TerminalFindAction.open &&
+          _lastFindAnchor?.attached == true &&
+          identical(_lastFindBuffer, _viewTerminal.buffer)) {
+        final last = _lastFindAnchor!.offset;
+        origin = CellOffset(
+          last.x + (action == TerminalFindAction.next ? 1 : 0),
+          last.y,
+        );
+      }
+      _find = TerminalSearch(_viewTerminal, origin: origin)
+        ..addListener(_onFindChanged);
+      _findRevealPending = true;
+      _find!.setQuery(_lastFindQuery, caseSensitive: _lastFindCaseSensitive);
+      setState(() {});
+    } else if (action == TerminalFindAction.open) {
+      _findBarKey.currentState?.focusSearch();
+    }
+    if (action != TerminalFindAction.open &&
+        !(wasClosed && action == TerminalFindAction.next)) {
+      _stepFind(action == TerminalFindAction.next ? 1 : -1);
+    }
+  }
+
+  void _queryFind(String query, bool caseSensitive) {
+    _lastFindQuery = query;
+    _lastFindCaseSensitive = caseSensitive;
+    _findRevealPending = true;
+    _find?.setQuery(query, caseSensitive: caseSensitive);
+  }
+
+  void _stepFind(int delta) {
+    _findRevealPending = true;
+    _find?.step(delta);
+  }
+
+  void _onFindChanged() {
+    final search = _find;
+    if (!mounted || search == null || !widget.visible) return;
+    final range = search.match;
+    if (range != _findPaintedRange ||
+        !identical(_findPaintedBuffer, _viewTerminal.buffer)) {
+      _clearFindHighlight();
+      if (range != null) {
+        _findPaintedBuffer = _viewTerminal.buffer;
+        _findPaintedRange = range;
+        _findHighlight = _controller.highlight(
+          p1: _viewTerminal.buffer.createAnchorFromOffset(range.begin),
+          p2: _viewTerminal.buffer.createAnchorFromOffset(range.end),
+          color: const Color(0x99cf8e25),
+        );
+      }
+    }
+    if (_findRevealPending && search.hasSnapshot && range != null) {
+      final render = _laidOutTerminalView()?.renderTerminal;
+      if (render == null || !_scrollController.hasClients) return;
+      _findRevealPending = false;
+      final position = _scrollController.position;
+      final top = range.begin.y * render.lineHeight + 10;
+      final bottom = (range.end.y + 1) * render.lineHeight + 10;
+      final safeTop = position.pixels + 10;
+      final safeBottom = position.pixels + position.viewportDimension - 10;
+      final offset = top < safeTop
+          ? top - 10
+          : bottom > safeBottom
+          ? bottom - position.viewportDimension + 10
+          : position.pixels;
+      final target = offset.clamp(
+        position.minScrollExtent,
+        position.maxScrollExtent,
+      );
+      if (target != position.pixels) position.jumpTo(target);
+    }
+  }
+
+  void _clearFindHighlight() {
+    final highlight = _findHighlight;
+    _findHighlight = null;
+    _findPaintedBuffer = null;
+    _findPaintedRange = null;
+    if (highlight == null) return;
+    highlight.dispose();
+    highlight.p1.dispose();
+    highlight.p2.dispose();
+  }
+
+  void _clearLastFind() {
+    _lastFindAnchor?.dispose();
+    _lastFindAnchor = null;
+    _lastFindBuffer = null;
+  }
+
+  void _closeFind({
+    bool restore = true,
+    bool focus = true,
+    bool rebuild = true,
+  }) {
+    final search = _find;
+    if (search == null) return;
+    final match = search.match;
+    if (match != null) {
+      _clearLastFind();
+      _lastFindAnchor = _viewTerminal.buffer.createAnchorFromOffset(
+        match.begin,
+      );
+      _lastFindBuffer = _viewTerminal.buffer;
+    }
+    _find = null;
+    search.removeListener(_onFindChanged);
+    search.dispose();
+    _clearFindHighlight();
+    if (restore &&
+        identical(_findOriginBuffer, _viewTerminal.buffer) &&
+        _scrollController.hasClients) {
+      final height = _laidOutTerminalView()?.renderTerminal.lineHeight;
+      final position = _scrollController.position;
+      if (height != null) {
+        final offset = _findOriginAtEnd
+            ? position.maxScrollExtent
+            : _findOriginLine?.attached == true
+            ? (_findOriginLine!.y + _findOriginFraction) * height
+            : 0.0;
+        position.jumpTo(
+          offset.clamp(position.minScrollExtent, position.maxScrollExtent),
+        );
+      }
+    }
+    _findOriginLine?.dispose();
+    _findOriginLine = null;
+    _findOriginBuffer = null;
+    if (rebuild && mounted) setState(() {});
+    if (focus) _claimFocusAfterFrame();
   }
 
   @override
@@ -543,12 +899,29 @@ class _TerminalPanelState extends State<TerminalPanel>
     return false; // Modifier observation never consumes a terminal key.
   }
 
+  /// Modifier keys only change the pointer over a link. Do not fan every key
+  /// out to the retained terminal pool when no pointer feedback can change.
+  void _observeLinkModifiers(bool enabled) {
+    if (_observingLinkModifiers == enabled) return;
+    _observingLinkModifiers = enabled;
+    final keyboard = HardwareKeyboard.instance;
+    if (enabled) {
+      keyboard.addHandler(_onLinkModifierChanged);
+    } else {
+      keyboard.removeHandler(_onLinkModifierChanged);
+    }
+  }
+
   void _scheduleLinkRefresh() {
-    if (_linkPointerPosition == null || _linkRefreshPending) return;
+    if (!widget.visible ||
+        _linkPointerPosition == null ||
+        _linkRefreshPending) {
+      return;
+    }
     _linkRefreshPending = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _linkRefreshPending = false;
-      if (mounted) _hoverLink(_linkPointerPosition);
+      if (mounted && widget.visible) _hoverLink(_linkPointerPosition);
     });
   }
 
@@ -562,10 +935,11 @@ class _TerminalPanelState extends State<TerminalPanel>
   }
 
   void _hoverLink(Offset? globalPosition) {
-    _linkPointerPosition = globalPosition;
-    final target = globalPosition == null
+    _linkPointerPosition = widget.visible ? globalPosition : null;
+    final target = _linkPointerPosition == null
         ? null
-        : _linkAtPointer(globalPosition);
+        : _linkAtPointer(_linkPointerPosition!);
+    _observeLinkModifiers(target != null);
     if (target != _hoveredLink) setState(() => _hoveredLink = target);
   }
 
@@ -651,152 +1025,267 @@ class _TerminalPanelState extends State<TerminalPanel>
     final machineState = widget.notifier.stateOf(session.machineId);
     final remote = machineState != null && !machineState.isLocalMachine;
     final showComposer = _showsComposer;
-    return ColoredBox(
-      color: grid.AppPalette.windowBg,
-      child: Column(
-        children: [
-          _TerminalHeader(
-            notifier: widget.notifier,
-            session: session,
-            onClose: widget.onClose,
-            pinned: widget.pinned,
-            onTogglePin: widget.onTogglePin,
-            paneDrag: widget.paneDrag,
-          ),
-
-          Divider(height: 1, color: AppColors.border),
-          Expanded(
-            child: Stack(
+    return KeymapRegion(
+      contextKind: KeymapContext.terminal,
+      composing: () =>
+          _focusNode.hasFocus &&
+          _terminalViewKey.currentState?.isComposing == true,
+      child: ColoredBox(
+        color: grid.AppPalette.windowBg,
+        child: Column(
+          children: [
+            Stack(
               children: [
-                Positioned.fill(
-                  child: MouseRegion(
-                    onEnter: (event) => _hoverLink(event.position),
-                    onHover: (event) => _hoverLink(event.position),
-                    onExit: (_) => _hoverLink(null),
-                    child: Tooltip(
-                      message: _hoveredLink == null
-                          ? ''
-                          : '${defaultTargetPlatform == TargetPlatform.macOS ? '⌘' : 'Ctrl'}-click to open\n$_hoveredLink',
-                      child: TerminalView(
-                        session.terminal,
-                        key: _terminalViewKey,
-                        controller: _controller,
-                        scrollController: _scrollController,
-                        focusNode: _focusNode,
-                        autofocus: widget.focused && !showComposer,
-                        readOnly: widget.readOnly || !session.acceptsInput,
-                        theme: darkTerminalTheme,
-                        padding: const EdgeInsets.all(10),
-                        textStyle: terminalFontStore.value,
-                        // ⚠️ The terminal is NOT app chrome, and the user said so:
-                        // it carries its own font settings (Settings ▸ Terminal,
-                        // [terminalFontStore]) precisely because its type is a grid
-                        // a remote program is drawing into, not a label.
-                        //
-                        // Without this, `TerminalView` falls back to
-                        // `MediaQuery.textScalerOf(context)` (xterm's
-                        // terminal_view.dart:257), so the app-wide UI size would
-                        // change the cell size — and a changed cell size is not
-                        // cosmetic here: it re-derives `rows`, which fires
-                        // `Terminal.resize` → `session.resize` → a `terminal_resize`
-                        // frame on the wire and a real SIGWINCH at the far end.
-                        //
-                        // Read in `createRenderObject`, not only on update, so this
-                        // holds from the very first frame — no scaled first paint
-                        // and no startup resize.
-                        textScaler: TextScaler.noScaling,
-                        onKeyEvent: _onTerminalKey,
-                        onTapDown: _onLinkTapDown,
-                        onTapUp: _onLinkTapUp,
-                        mouseCursor:
-                            _hoveredLink != null && _linkModifierPressed
-                            ? SystemMouseCursors.click
-                            : SystemMouseCursors.text,
-                        onSecondaryTapDown: (_, _) => _copyOrPaste(),
-
-                        onAltBufferScroll: session.scrollViaTmuxCopyMode
-                            ? (up) => session.sendScrollCommand(up, 1)
-                            : null,
-                      ),
-                    ),
-                  ),
+                Visibility(
+                  visible: _find == null,
+                  maintainSize: true,
+                  maintainAnimation: true,
+                  maintainState: true,
+                  child: _buildHeader(context, remote: remote),
                 ),
-                if (session.status == TerminalSessionStatus.opening ||
-                    session.status == TerminalSessionStatus.resyncing)
-                  Positioned(
-                    top: 12,
-                    right: 14,
-                    child: _OverlayBadge(
-                      label: session.status == TerminalSessionStatus.opening
-                          ? 'ATTACHING'
-                          : 'RESYNCING',
-                      spinning: true,
-                    ),
-                  ),
-                if (session.status == TerminalSessionStatus.error ||
-                    session.status == TerminalSessionStatus.takenOver)
+                if (_find != null)
                   Positioned.fill(
-                    child: _FrozenOverlay(
-                      session: session,
-                      onRetry: () => widget.notifier.selectAgent(
-                        session.machineId,
-                        session.agentId,
+                    child: LayoutBuilder(
+                      builder: (context, constraints) => Row(
+                        children: [
+                          if (constraints.maxWidth > 520)
+                            Expanded(
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: _stripPadding,
+                                ),
+                                child: Text(
+                                  session.agentName,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    color: Colors.white70,
+                                  ),
+                                ),
+                              ),
+                            )
+                          else
+                            const Spacer(),
+                          SizedBox(
+                            width: math.min(constraints.maxWidth, 380),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 4,
+                              ),
+                              child: TerminalFindBar(
+                                key: _findBarKey,
+                                search: _find!,
+                                readOnly:
+                                    widget.readOnly || !session.acceptsInput,
+                                onQuery: _queryFind,
+                                onStep: _stepFind,
+                                onClose: _closeFind,
+                                onFocus: () => widget.onRendererFocus?.call(),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                    ),
-                  ),
-                // Bottom, not top-right alongside ATTACHING/RESYNCING: the two are not mutually
-                // exclusive (a reconnect can happen mid-upload) and must not overlap each other.
-                if (session.uploadProgress != null || _previewProgress != null)
-                  Positioned(
-                    left: 14,
-                    right: 14,
-                    bottom: 12,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (session.uploadProgress != null)
-                          _TransferProgressBadge(
-                            label: 'Uploading ${session.uploadProgress!.label}',
-                            fraction: session.uploadProgress!.percent,
-                            onCancel: () => unawaited(session.cancelUpload()),
-                          ),
-                        if (session.uploadProgress != null &&
-                            _previewProgress != null)
-                          const SizedBox(height: 8),
-                        if (_previewProgress != null)
-                          _TransferProgressBadge(
-                            label: _previewProgress!.totalBytes == null
-                                ? 'Preparing preview…'
-                                : 'Downloading ${_previewProgress!.filename}',
-                            fraction: _previewProgress!.fraction,
-                            onCancel: () => _previewCancellation?.cancel(),
-                          ),
-                      ],
                     ),
                   ),
               ],
             ),
-          ),
-          // The grip is shown whether or not the box is: collapsed, it is the only way back.
-          if (remote && widget.onToggleComposer != null)
-            ComposerGrip(
-              expanded: widget.composerVisible,
-              onPressed: widget.onToggleComposer!,
+
+            Divider(height: 1, color: AppColors.border),
+            Expanded(
+              child: Stack(
+                children: [
+                  Positioned.fill(
+                    child: MouseRegion(
+                      onEnter: (event) => _hoverLink(event.position),
+                      onHover: (event) => _hoverLink(event.position),
+                      onExit: (_) => _hoverLink(null),
+                      child: Tooltip(
+                        message: _hoveredLink == null
+                            ? ''
+                            : '${defaultTargetPlatform == TargetPlatform.macOS ? '⌘' : 'Ctrl'}-click to open\n$_hoveredLink',
+                        child: TerminalView(
+                          session.terminal,
+                          key: _terminalViewKey,
+                          controller: _controller,
+                          autoResize: widget.visible,
+                          resizeBuffer: false,
+                          renderingEnabled: widget.visible,
+                          scrollController: _scrollController,
+                          focusNode: _focusNode,
+                          autofocus: widget.focused && !showComposer,
+                          readOnly: widget.readOnly || !session.acceptsInput,
+                          theme: terminalThemeFor(grid.AppTheme.palette.value),
+                          padding: const EdgeInsets.all(10),
+                          textStyle: terminalFontStore.value,
+                          // ⚠️ The terminal is NOT app chrome, and the user said so:
+                          // it carries its own font settings (Settings ▸ Terminal,
+                          // [terminalFontStore]) precisely because its type is a grid
+                          // a remote program is drawing into, not a label.
+                          //
+                          // Without this, `TerminalView` falls back to
+                          // `MediaQuery.textScalerOf(context)` (xterm's
+                          // terminal_view.dart:257), so the app-wide UI size would
+                          // change the cell size — and a changed cell size is not
+                          // cosmetic here: it re-derives `rows`, which fires
+                          // `Terminal.resize` → `session.resize` → a `terminal_resize`
+                          // frame on the wire and a real SIGWINCH at the far end.
+                          //
+                          // Read in `createRenderObject`, not only on update, so this
+                          // holds from the very first frame — no scaled first paint
+                          // and no startup resize.
+                          textScaler: TextScaler.noScaling,
+                          onKeyEvent: _onTerminalKey,
+                          onTapDown: _onLinkTapDown,
+                          onTapUp: _onLinkTapUp,
+                          mouseCursor:
+                              _hoveredLink != null && _linkModifierPressed
+                              ? SystemMouseCursors.click
+                              : SystemMouseCursors.text,
+                          onSecondaryTapDown: (_, _) => _copyOrPaste(),
+
+                          onAltBufferScroll: session.scrollViaTmuxCopyMode
+                              ? (up) => session.sendScrollCommand(up, 1)
+                              : null,
+                        ),
+                      ),
+                    ),
+                  ),
+                  if (session.uploadProgress != null ||
+                      _previewProgress != null)
+                    Positioned(
+                      left: 14,
+                      right: 14,
+                      bottom: 12,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (session.uploadProgress != null)
+                            _TransferProgressBadge(
+                              label:
+                                  'Uploading ${session.uploadProgress!.label}',
+                              fraction: session.uploadProgress!.percent,
+                              onCancel: () => unawaited(session.cancelUpload()),
+                            ),
+                          if (session.uploadProgress != null &&
+                              _previewProgress != null)
+                            const SizedBox(height: 8),
+                          if (_previewProgress != null)
+                            _TransferProgressBadge(
+                              label: _previewProgress!.totalBytes == null
+                                  ? 'Preparing preview…'
+                                  : 'Downloading ${_previewProgress!.filename}',
+                              fraction: _previewProgress!.fraction,
+                              onCancel: () => _previewCancellation?.cancel(),
+                            ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
             ),
-          if (showComposer)
-            TerminalComposer(session: session, focusNode: _composerFocus),
-        ],
+            // The grip is shown whether or not the box is: collapsed, it is the only way back.
+            if (!widget.compactHeader &&
+                remote &&
+                widget.onToggleComposer != null)
+              ComposerGrip(
+                expanded: widget.composerVisible,
+                onPressed: widget.onToggleComposer!,
+              ),
+            if (showComposer)
+              TerminalComposer(
+                session: session,
+                focusNode: _composerFocus,
+                inputEnabled: !widget.readOnly,
+              ),
+          ],
+        ),
       ),
     );
+  }
+
+  /// Visibility and focus affect the renderer, not its title and controls.
+  /// Retain that subtree until its presentation changes. Callback wrappers
+  /// resolve the current widget so cached controls never retain an old action.
+  Widget _buildHeader(BuildContext context, {required bool remote}) {
+    final session = widget.session;
+    final machine = widget.notifier.stateOf(session.machineId);
+    final agent = machine?.agents
+        .where((a) => a.id == session.agentId)
+        .firstOrNull;
+    final canToggleComposer =
+        remote && !widget.readOnly && widget.onToggleComposer != null;
+    final presentation = (
+      theme: Theme.of(context),
+      brightness: grid.AppTheme.brightness.value,
+      fontFamily: AppFonts.sans,
+      notifier: widget.notifier,
+      session: session,
+      name: session.agentName,
+      status: session.status,
+      notice: widget.notice,
+      readOnly: widget.readOnly,
+      error: session.errorMessage ?? session.errorCode,
+      link: session.linkMode,
+      machine: machine?.machine,
+      agent: agent,
+      project: agent == null ? null : machine?.projectOf(agent),
+      compact: widget.compactHeader,
+      pinned: widget.pinned,
+      close: widget.onClose != null,
+      pin: widget.onTogglePin != null,
+      zoomed: widget.zoomed,
+      zoom: widget.onToggleZoom != null,
+      splitRight: widget.onSplitRight != null,
+      splitDown: widget.onSplitDown != null,
+      composer: canToggleComposer,
+      composerVisible: widget.composerVisible,
+      dragId: widget.paneDrag?.ref.paneId,
+      dragSize: widget.paneDrag?.size,
+    );
+    if (_headerPresentation != presentation) {
+      _headerPresentation = presentation;
+      _header = _TerminalHeader(
+        notifier: widget.notifier,
+        session: session,
+        notice: widget.notice,
+        readOnly: widget.readOnly,
+        compact: widget.compactHeader,
+        zoomed: widget.zoomed,
+        onToggleZoom: widget.onToggleZoom,
+        onSplitRight: widget.onSplitRight,
+        onSplitDown: widget.onSplitDown,
+        onClose: widget.onClose == null ? null : () => widget.onClose?.call(),
+        pinned: widget.pinned,
+        onTogglePin: widget.onTogglePin == null
+            ? null
+            : () => widget.onTogglePin?.call(),
+        onToggleComposer: canToggleComposer
+            ? () => widget.onToggleComposer?.call()
+            : null,
+        composerVisible: widget.composerVisible,
+        paneDrag: widget.paneDrag,
+      );
+    }
+    return _header!;
   }
 }
 
 class _TerminalHeader extends StatelessWidget {
   final AppNotifier notifier;
   final TerminalSession session;
+  final TerminalNotice? notice;
+  final bool readOnly;
   final VoidCallback? onClose;
   final bool pinned;
+  final bool compact;
   final VoidCallback? onTogglePin;
+  final VoidCallback? onToggleZoom, onSplitRight, onSplitDown;
+  final bool zoomed;
+  final VoidCallback? onToggleComposer;
+  final bool composerVisible;
 
   /// This strip's drag gesture, or null when there is nothing to drag.
   ///
@@ -811,9 +1300,18 @@ class _TerminalHeader extends StatelessWidget {
   const _TerminalHeader({
     required this.notifier,
     required this.session,
+    this.notice,
+    this.readOnly = false,
     this.onClose,
     this.pinned = false,
+    this.compact = false,
     this.onTogglePin,
+    this.onToggleZoom,
+    this.onSplitRight,
+    this.onSplitDown,
+    this.zoomed = false,
+    this.onToggleComposer,
+    this.composerVisible = false,
     this.paneDrag,
   });
 
@@ -833,108 +1331,260 @@ class _TerminalHeader extends StatelessWidget {
         .where((agent) => agent.id == session.agentId)
         .firstOrNull
         ?.codexHome;
-    final statusLabel = switch (session.status) {
-      TerminalSessionStatus.controlling => 'controlling',
-      TerminalSessionStatus.opening => 'attaching',
-      TerminalSessionStatus.resyncing => 'resyncing',
-      TerminalSessionStatus.takenOver => 'taken over',
-      TerminalSessionStatus.error => 'error',
-      TerminalSessionStatus.closed => 'closed',
-    };
-    final statusMark = switch (session.status) {
-      TerminalSessionStatus.opening ||
-      TerminalSessionStatus.resyncing => SizedBox(
-        width: 13,
-        height: 13,
-        child: CircularProgressIndicator(strokeWidth: 1.7, color: color),
-      ),
-      TerminalSessionStatus.controlling ||
-      TerminalSessionStatus.takenOver ||
-      TerminalSessionStatus.error ||
-      TerminalSessionStatus.closed => Container(
-        width: 8,
-        height: 8,
-        decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-      ),
-    };
+    final status =
+        notice ??
+        switch (session.status) {
+          TerminalSessionStatus.controlling => null,
+          TerminalSessionStatus.opening => (
+            label: 'Connecting',
+            icon: Icons.sync,
+            detail:
+                'Connecting to this terminal. Retained output is read only.',
+          ),
+          TerminalSessionStatus.resyncing => (
+            label: 'Restoring',
+            icon: Icons.sync,
+            detail: 'Restoring this terminal. Retained output is read only.',
+          ),
+          TerminalSessionStatus.takenOver => (
+            label: 'Take control',
+            icon: Icons.lock_outline,
+            detail: 'Read only: another app controls this terminal. Take control moves input ownership to this app.',
+          ),
+          TerminalSessionStatus.error || TerminalSessionStatus.closed => (
+            label: 'Reconnect',
+            icon: Icons.refresh,
+            detail:
+                session.errorMessage ??
+                session.errorCode ??
+                'This stream is closed. Retained output is read only.',
+          ),
+        };
+    final canReconnect =
+        notice == null &&
+        !readOnly &&
+        (session.status == TerminalSessionStatus.error ||
+            session.status == TerminalSessionStatus.closed ||
+            session.status == TerminalSessionStatus.takenOver);
+    final machine = notifier.stateOf(session.machineId);
+    final agent = machine?.agents
+        .where((a) => a.id == session.agentId)
+        .firstOrNull;
+    final project = agent == null ? null : machine?.projectOf(agent);
+    final machineName = machine?.machine.displayName ?? session.machineId;
+    final identityDetail = [
+      session.agentName,
+      machineName,
+      if (project != null) project.cwd,
+      if (project?.branch != null) 'Branch: ${project!.branch}',
+      if (profile != null) 'Codex profile: $profile',
+      'Double-click to rename',
+    ].join('\n');
     final strip = SizedBox(
-      height: 46,
+      height: compact ? 38 : 46,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: _stripPadding),
-        child: Row(
-          children: [
-            EngineMark(engine: session.engineId, size: 17),
-            const SizedBox(width: 8),
-            Expanded(
-              // Double click the NAME to rename — the same dialog the rail's
-              // row opens, so one name has one way to change wherever it is
-              // shown. Scoped to the text rather than the whole strip: the
-              // strip is the drag handle, and a double click that both renamed
-              // and looked like the start of a drag would be two answers to one
-              // gesture.
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onDoubleTap: () => unawaited(
-                  showAgentRenameDialog(
-                    context,
-                    notifier,
-                    session.machineId,
-                    session.agentId,
-                    session.agentName,
+        child: LayoutBuilder(
+          builder: (context, constraints) => Row(
+            children: [
+              EngineMark(engine: session.engineId, size: 17),
+              const SizedBox(width: 10),
+              Expanded(
+                // Double click the NAME to rename — the same dialog the rail's
+                // row opens, so one name has one way to change wherever it is
+                // shown. Scoped to the text rather than the whole strip: the
+                // strip is the drag handle, and a double click that both renamed
+                // and looked like the start of a drag would be two answers to one
+                // gesture.
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onDoubleTap: () => unawaited(
+                    showAgentRenameDialog(
+                      context,
+                      notifier,
+                      session.machineId,
+                      session.agentId,
+                      session.agentName,
+                    ),
                   ),
-                ),
-                child: Tooltip(
-                  message: profile == null
-                      ? 'Double-click to rename'
-                      : 'Codex profile: $profile\nDouble-click to rename',
-                  waitDuration: const Duration(milliseconds: 700),
-                  child: Text(
-                    // The profile path's basename used to trail the name here, but for the
-                    // default profile that basename is literally the hidden `.codex` folder —
-                    // meaningless clutter on every ordinary codex agent. The tooltip above still
-                    // carries the full path for whoever actually needs it.
-                    session.agentName,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: AppColors.text,
-                      fontFamily: AppFonts.sans,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
+                  child: Tooltip(
+                    message: identityDetail,
+                    waitDuration: const Duration(milliseconds: 700),
+                    child: Text(
+                      // The profile path's basename used to trail the name here, but for the
+                      // default profile that basename is literally the hidden `.codex` folder —
+                      // meaningless clutter on every ordinary codex agent. The tooltip above still
+                      // carries the full path for whoever actually needs it.
+                      session.agentName,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: AppColors.text,
+                        fontFamily: AppFonts.sans,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
-            const SizedBox(width: 6),
-            if (session.status == TerminalSessionStatus.controlling)
-              Padding(padding: const EdgeInsets.all(4), child: statusMark)
-            else
-              Tooltip(
-                message: statusLabel,
-                child: Padding(
-                  padding: const EdgeInsets.all(4),
-                  child: statusMark,
+              if (compact && status == null && project?.branch != null) ...[
+                const SizedBox(width: 16),
+                Tooltip(
+                  message: '${project!.branch}\n${project.cwd}',
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        LucideIcons.gitBranch,
+                        size: 12,
+                        color: AppColors.mutedStrong,
+                      ),
+                      const SizedBox(width: 5),
+                      ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxWidth: math.min(112, constraints.maxWidth * .22),
+                        ),
+                        child: Text(
+                          project.branch!,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: AppColors.textSoft,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            // Which of the three paths carries this pane's bytes. Absent for a local machine's own
-            // terminal, which has no such distinction and so gets no badge.
-            //
-            // The wire word and the word a person reads differ for the middle state, deliberately:
-            // the CLI sends 'turn' (it is a TURN allocation) but both middle and last are relays to
-            // a reader, so they read as "relay" and "ws". 'relay' on the wire kept its original
-            // meaning — the backend WebSocket — so an older CLI is never mislabelled.
-            if (session.linkMode case final mode?)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 2),
-                child: _LinkModeMark(mode: mode),
-              ),
-            // Before the close button: pinning is the rarer act, and a control
-            // that appears to the LEFT of the one people aim for by muscle
-            // memory cannot shift it under their pointer.
-            if (onTogglePin case final toggle?)
-              PanePinButton(pinned: pinned, onPressed: toggle),
-            if (onClose != null) PaneCloseButton(onPressed: onClose!),
-          ],
+              ],
+              if (compact && status == null) ...[
+                const SizedBox(width: 16),
+                ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: math.min(156, constraints.maxWidth * .28),
+                  ),
+                  child: Tooltip(
+                    message: machineName,
+                    child: constraints.maxWidth < 380 && project?.branch != null
+                        ? Icon(
+                            machine?.isLocalMachine == true
+                                ? Icons.laptop_mac
+                                : Icons.desktop_mac,
+                            size: 14,
+                            color: AppColors.mutedStrong,
+                          )
+                        : Text(
+                            machineName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: AppColors.mutedStrong,
+                            ),
+                          ),
+                  ),
+                ),
+              ],
+              const SizedBox(width: 8),
+              if (status != null)
+                ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: constraints.maxWidth * .42,
+                  ),
+                  child: Align(
+                    alignment: Alignment.centerRight,
+                    child: Tooltip(
+                      message: status.detail,
+                      child: TextButton(
+                        onPressed: canReconnect
+                            ? () => notifier.selectAgent(
+                                session.machineId,
+                                session.agentId,
+                              )
+                            : null,
+                        style: TextButton.styleFrom(
+                          foregroundColor: color,
+                          disabledForegroundColor: AppColors.textSoft,
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 4,
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(status.icon, size: 14),
+                            const SizedBox(width: 6),
+                            Flexible(
+                              child: Text(
+                                status.label,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontSize: 11),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                )
+              else if (!compact)
+                Padding(
+                  padding: const EdgeInsets.all(4),
+                  child: Icon(Icons.circle, size: 8, color: color),
+                ),
+              // Which of the three paths carries this pane's bytes. Absent for a local machine's own
+              // terminal, which has no such distinction and so gets no badge.
+              //
+              // The wire word and the word a person reads differ for the middle state, deliberately:
+              // the CLI sends 'turn' (it is a TURN allocation) but both middle and last are relays to
+              // a reader, so they read as "relay" and "ws". 'relay' on the wire kept its original
+              // meaning — the backend WebSocket — so an older CLI is never mislabelled.
+              if (!compact && session.linkMode != null)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 2),
+                  child: _LinkModeMark(mode: session.linkMode!),
+                ),
+              // Before the close button: pinning is the rarer act, and a control
+              // that appears to the LEFT of the one people aim for by muscle
+              // memory cannot shift it under their pointer.
+              if (!compact && onTogglePin != null)
+                PanePinButton(pinned: pinned, onPressed: onTogglePin!),
+              if (compact) ...[
+                if (onToggleZoom != null)
+                  IconButton(
+                    tooltip: zoomed
+                        ? 'Restore agents'
+                        : 'Zoom ${session.agentName}',
+                    onPressed: onToggleZoom,
+                    icon: Icon(
+                      zoomed ? Icons.fullscreen_exit : Icons.fullscreen,
+                      size: 18,
+                    ),
+                    constraints: const BoxConstraints.tightFor(
+                      width: 28,
+                      height: 28,
+                    ),
+                    padding: EdgeInsets.zero,
+                  ),
+                PaneActionsMenu(
+                  name: session.agentName,
+                  onSplitRight: onSplitRight,
+                  onSplitDown: onSplitDown,
+                  onTogglePin: onTogglePin,
+                  pinned: pinned,
+                  onToggleComposer: onToggleComposer,
+                  composerVisible: composerVisible,
+                  onClose: onClose,
+                ),
+              ] else if (onClose != null)
+                PaneCloseButton(onPressed: onClose!),
+            ],
+          ),
         ),
       ),
     );
@@ -995,54 +1645,7 @@ class _LinkModeMark extends StatelessWidget {
   }
 }
 
-class _OverlayBadge extends StatelessWidget {
-  final String label;
-  final bool spinning;
-  const _OverlayBadge({required this.label, required this.spinning});
-
-  @override
-  Widget build(BuildContext context) {
-    grid.AppTheme.watch(context);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
-      decoration: BoxDecoration(
-        color: grid.AppPalette.panelBg.withValues(alpha: 0.93),
-        border: Border.all(color: AppColors.borderStrong),
-        // Left at 4 on purpose. This badge is drawn INSIDE a terminal pane, and
-        // the pane is off-limits to the app-wide design pass — it is reviewed
-        // with the terminal, not with the app's chrome.
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (spinning) ...[
-            const SizedBox(
-              width: 11,
-              height: 11,
-              child: CircularProgressIndicator(strokeWidth: 1.5),
-            ),
-            const SizedBox(width: 7),
-          ],
-          Text(
-            label,
-            style: TextStyle(
-              color: AppColors.textSoft,
-              fontFamily: AppFonts.sans,
-              fontSize: 10,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Shown while an image/file drag-drop upload is in flight — see [TerminalSession.uploadProgress].
-/// Same container language as [_OverlayBadge] (panelBg@0.93, borderStrong border, radius 4,
-/// textSoft label) with a thin [LinearProgressIndicator] in place of a spinner, plus a Cancel
-/// affordance.
+/// Image/file transfer progress with a cancel action, kept in the pane's corner.
 class _TransferProgressBadge extends StatelessWidget {
   final String label;
   final double? fraction;
@@ -1110,67 +1713,6 @@ class _TransferProgressBadge extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _FrozenOverlay extends StatelessWidget {
-  final TerminalSession session;
-  final VoidCallback onRetry;
-  const _FrozenOverlay({required this.session, required this.onRetry});
-
-  @override
-  Widget build(BuildContext context) {
-    grid.AppTheme.watch(context);
-    final takenOver = session.status == TerminalSessionStatus.takenOver;
-    final accent = takenOver ? AppColors.warning : AppColors.danger;
-    return ColoredBox(
-      color: grid.AppPalette.windowBg.withValues(alpha: 0.67),
-      child: Center(
-        child: Container(
-          constraints: const BoxConstraints(maxWidth: 440),
-          padding: const EdgeInsets.all(18),
-          decoration: BoxDecoration(
-            color: grid.AppPalette.panelBg,
-            border: Border.all(color: const Color(0xff7f1d1d)),
-            borderRadius: BorderRadius.circular(6),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                'TERMINAL FROZEN',
-                style: TextStyle(
-                  color: accent,
-                  fontFamily: AppFonts.sans,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                takenOver
-                    ? 'Another app is controlling this terminal.'
-                    : session.errorMessage ??
-                          session.errorCode ??
-                          'Stream closed',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: AppColors.textSoft,
-                  fontFamily: AppFonts.sans,
-                  fontSize: 11,
-                ),
-              ),
-              const SizedBox(height: 14),
-              OutlinedButton.icon(
-                onPressed: onRetry,
-                icon: Icon(takenOver ? Icons.link : Icons.refresh, size: 16),
-                label: Text(takenOver ? 'CONNECT' : 'ATTACH NEW STREAM'),
-              ),
-            ],
-          ),
-        ),
       ),
     );
   }

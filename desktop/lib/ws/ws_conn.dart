@@ -101,11 +101,39 @@ class WsConn {
   String? _tokenUsed;
   bool _forceRelayReconnect = false;
   final _pending = <String, _PendingRpc>{};
+  final _readinessWaiters = <Completer<void>>{};
   final _queue = <Map<String, dynamic>>[];
   Future<void> _outboundTail = Future<void>.value();
   Future<void> _inboundTail = Future<void>.value();
 
   bool get isReady => _ready && _channel != null;
+
+  /// Wait for this machine's handshake without queuing a request or changing
+  /// its timeout. Callers can then start independent RPCs with their own budgets.
+  Future<void> waitUntilReady({required Duration timeout}) {
+    if (isReady) return Future<void>.value();
+    if (_closing) return Future<void>.error(StateError('WS closed'));
+    final ready = Completer<void>();
+    _readinessWaiters.add(ready);
+    return ready.future
+        .timeout(
+          timeout,
+          onTimeout: () => throw const WsRequestTimeout('machine_select'),
+        )
+        .whenComplete(() => _readinessWaiters.remove(ready));
+  }
+
+  void _settleReadiness([String? failure]) {
+    final waiters = _readinessWaiters.toList();
+    _readinessWaiters.clear();
+    for (final waiter in waiters) {
+      if (failure == null) {
+        waiter.complete();
+      } else {
+        waiter.completeError(StateError(failure));
+      }
+    }
+  }
 
   /// True once this connection has permanently given up (a deliberate [close], or a non-retryable
   /// local failure like NO_PEER_LINK) — [WsPool] must not hand a closed connection back out.
@@ -219,6 +247,7 @@ class WsConn {
         _attempt = 0;
         onStatus(ConnectionStatus.connected);
         _flushQueue();
+        _settleReadiness();
       }
       return;
     }
@@ -514,6 +543,7 @@ class WsConn {
   }
 
   void _rejectPending(String reason) {
+    _settleReadiness(reason);
     for (final pending in _pending.values) {
       pending.timer.cancel();
       if (!pending.completer.isCompleted) {

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../core/desktop_window.dart';
 import '../state/app_state.dart';
+import '../terminal/terminal_viewport.dart';
 import '../shared/theme/app_theme.dart' as grid;
 import '../theme/app_theme.dart';
 import '../usage/usage_controller.dart';
@@ -213,6 +214,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _maybeShowLinkDialog(notifier);
         return CallbackShortcuts(
           bindings: buildShortcutBindings(
+            swarmMode: false,
             handlers: {
               ShortcutAction.toggleRail: () =>
                   setState(() => _collapsed = !_collapsed),
@@ -246,6 +248,12 @@ class _HomeScreenState extends State<HomeScreen> {
                   notifier.movePaneDirection(dx: 0, dy: -1),
               ShortcutAction.movePaneDown: () =>
                   notifier.movePaneDirection(dx: 0, dy: 1),
+              ShortcutAction.findTerminal: () =>
+                  notifier.focusedPane?.session?.find(TerminalFindAction.open),
+              ShortcutAction.findNext: () =>
+                  notifier.focusedPane?.session?.find(TerminalFindAction.next),
+              ShortcutAction.findPrevious: () => notifier.focusedPane?.session
+                  ?.find(TerminalFindAction.previous),
               ShortcutAction.lastPane: notifier.focusLastPane,
               ShortcutAction.zoomPane: notifier.toggleZoomPane,
               ShortcutAction.switchAgent: () =>

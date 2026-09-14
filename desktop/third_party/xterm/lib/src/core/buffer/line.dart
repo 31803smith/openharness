@@ -33,6 +33,11 @@ class BufferLine with IndexedItem {
 
   int get length => _length;
 
+  /// Local text caches can reuse an unchanged line without rereading its cells.
+  /// Color-only changes do not invalidate text; wrapping is tracked separately.
+  int get textVersion => _textVersion;
+  int _textVersion = 0;
+
   final _anchors = <CellAnchor>[];
 
   List<CellAnchor> get anchors => _anchors;
@@ -70,6 +75,7 @@ class BufferLine with IndexedItem {
   }
 
   CellData createCellData(int index) {
+    _textVersion++;
     final cellData = CellData.empty();
     final offset = index * _cellSize;
     _data[offset + _cellForeground] = cellData.foreground;
@@ -92,6 +98,7 @@ class BufferLine with IndexedItem {
   }
 
   void setContent(int index, int value) {
+    _textVersion++;
     _data[index * _cellSize + _cellContent] = value;
   }
 
@@ -101,6 +108,7 @@ class BufferLine with IndexedItem {
   }
 
   void setCell(int index, int char, int witdh, CursorStyle style) {
+    _textVersion++;
     final offset = index * _cellSize;
     _data[offset + _cellForeground] = style.foreground;
     _data[offset + _cellBackground] = style.background;
@@ -109,6 +117,7 @@ class BufferLine with IndexedItem {
   }
 
   void setCellData(int index, CellData cellData) {
+    _textVersion++;
     final offset = index * _cellSize;
     _data[offset + _cellForeground] = cellData.foreground;
     _data[offset + _cellBackground] = cellData.background;
@@ -117,6 +126,7 @@ class BufferLine with IndexedItem {
   }
 
   void eraseCell(int index, CursorStyle style) {
+    _textVersion++;
     final offset = index * _cellSize;
     _data[offset + _cellForeground] = style.foreground;
     _data[offset + _cellBackground] = style.background;
@@ -125,6 +135,7 @@ class BufferLine with IndexedItem {
   }
 
   void resetCell(int index) {
+    _textVersion++;
     final offset = index * _cellSize;
     _data[offset + _cellForeground] = 0;
     _data[offset + _cellBackground] = 0;
@@ -246,6 +257,7 @@ class BufferLine with IndexedItem {
       }
     }
 
+    _textVersion++;
     _length = length;
 
     for (var i = 0; i < _anchors.length; i++) {
@@ -287,6 +299,7 @@ class BufferLine with IndexedItem {
   /// Copies [len] cells from [src] starting at [srcCol] to [dstCol] at this
   /// line.
   void copyFrom(BufferLine src, int srcCol, int dstCol, int len) {
+    _textVersion++;
     resize(dstCol + len);
 
     // data.setRange(

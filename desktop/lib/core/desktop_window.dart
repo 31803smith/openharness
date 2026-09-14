@@ -1,33 +1,36 @@
 import 'dart:io' show Platform;
-import 'dart:ui' show Size;
 
 import 'package:window_manager/window_manager.dart';
+import 'package:flutter/services.dart';
 
-/// Puts the window into the same shape Grid's uses, before the first frame.
+import '../shared/theme/color_palette.dart';
+import 'build_identity.dart';
+
+/// Configures the native window before the first Flutter frame.
 ///
-/// On macOS the title bar is hidden and the traffic lights float over the
-/// rail, which leaves room for them (see `railTopInset` in
-/// `widgets/window_chrome.dart`) and doubles as the drag handle. Windows and
-/// Linux keep their native caption bar: they draw no controls over a hidden
-/// one, so hiding it would leave a window with no close button.
-///
-/// The sizes are Grid's too, so the two apps open to the same frame on a desk
-/// where both are running.
-Future<void> configureDesktopWindow() async {
+/// On macOS, AppKit places Swarm tabs beside the system traffic lights in a
+/// compact unified title bar. Flutter starts below that row. Windows and Linux
+/// keep their native caption bar and use the Flutter Swarm-tab fallback.
+Future<void> configureDesktopWindow({
+  HarnessPalette palette = HarnessPalette.graphite,
+}) async {
   await windowManager.ensureInitialized();
   final options = WindowOptions(
     size: const Size(1280, 800),
     minimumSize: const Size(880, 560),
-    title: 'Harness',
+    title: desktopAppName,
     center: true,
-    titleBarStyle: Platform.isMacOS
-        ? TitleBarStyle.hidden
-        : TitleBarStyle.normal,
+    titleBarStyle: TitleBarStyle.normal,
   );
-  await windowManager.waitUntilReadyToShow(options, () async {
-    await windowManager.show();
-    await windowManager.focus();
-  });
+  // The plugin's optional callback is a VoidCallback: an async callback would
+  // return before native setup finishes and detach any error from this future.
+  await windowManager.waitUntilReadyToShow(options);
+  if (Platform.isMacOS) {
+    await const MethodChannel('harness/swarm_tabs')
+        .invokeMethod('configure', {'palette': palette.nativeColors});
+  }
+  await windowManager.show();
+  await windowManager.focus();
 }
 
 /// Bring the window to the front, wherever it was.

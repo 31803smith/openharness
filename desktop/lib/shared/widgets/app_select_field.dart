@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../theme/app_theme.dart';
 import 'app_menu.dart';
@@ -71,6 +72,8 @@ class AppSelectField<T> extends StatefulWidget {
     required this.options,
     required this.onChanged,
     this.width,
+    this.height = AppControl.height,
+    this.trigger,
   });
 
   final T value;
@@ -80,6 +83,11 @@ class AppSelectField<T> extends StatefulWidget {
   /// Fixed width, so a column of these lines up on one right edge. Null lets it
   /// take whatever its parent gives.
   final double? width;
+  final double height;
+
+  /// An alternate compact trigger, such as the agent picker's More button.
+  /// Selection, keyboard navigation and menu rows remain shared.
+  final Widget? trigger;
 
   @override
   State<AppSelectField<T>> createState() => _AppSelectFieldState<T>();
@@ -87,7 +95,25 @@ class AppSelectField<T> extends StatefulWidget {
 
 class _AppSelectFieldState<T> extends State<AppSelectField<T>> {
   final _controller = MenuController();
+  final _fieldFocus = FocusNode(debugLabel: 'Select field');
+  final _selectedFocus = FocusNode(debugLabel: 'Selected option');
   bool _hovered = false;
+  bool _focused = false;
+
+  @override
+  void dispose() {
+    _fieldFocus.dispose();
+    _selectedFocus.dispose();
+    super.dispose();
+  }
+
+  void _open() {
+    if (widget.options.isEmpty || _controller.isOpen) return;
+    _controller.open();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _controller.isOpen) _selectedFocus.requestFocus();
+    });
+  }
 
   /// How tall this panel may draw.
   ///
@@ -151,6 +177,7 @@ class _AppSelectFieldState<T> extends State<AppSelectField<T>> {
   Widget _anchor(SelectOption<T>? current, double? panelWidth) {
     return MenuAnchor(
       controller: _controller,
+      childFocusNode: _fieldFocus,
       // Below the control, by the app's one menu gap — and the panel takes its
       // fill, rim and radius from [AppMenu], the app's single panel recipe.
       alignmentOffset: const Offset(0, AppControl.menuGap),
@@ -176,6 +203,11 @@ class _AppSelectFieldState<T> extends State<AppSelectField<T>> {
               // control, it is read down rather than glanced at, and it is the
               // only place these choices are ever shown.
               metrics: AppMenuRowMetrics.roomy,
+              focusNode:
+                  option == current ||
+                      (current == null && option == widget.options.first)
+                  ? _selectedFocus
+                  : null,
               selected: option.value == widget.value,
               label: option.label,
               note: option.note,
@@ -184,6 +216,7 @@ class _AppSelectFieldState<T> extends State<AppSelectField<T>> {
               trailing: option.trailing?.call(),
               onPressed: () {
                 _controller.close();
+                _fieldFocus.requestFocus();
                 if (option.value != widget.value) {
                   widget.onChanged(option.value);
                 }
@@ -195,77 +228,93 @@ class _AppSelectFieldState<T> extends State<AppSelectField<T>> {
         cursor: SystemMouseCursors.click,
         onEnter: (_) => setState(() => _hovered = true),
         onExit: (_) => setState(() => _hovered = false),
-        child: GestureDetector(
-          onTap: () =>
-              controller.isOpen ? controller.close() : controller.open(),
-          behavior: HitTestBehavior.opaque,
-          child: AnimatedContainer(
-            duration: AppMotion.hover,
-            curve: AppMotion.curve,
-            width: widget.width,
-            height: AppControl.height,
-            padding: const EdgeInsets.only(left: 10, right: 8),
-            decoration: BoxDecoration(
-              // A recessed well rather than a bordered box: §1, depth from fill.
-              color: _hovered || controller.isOpen
-                  ? AppSurface.recessHover
-                  : AppSurface.recess,
-              borderRadius: BorderRadius.circular(AppControl.radius),
-            ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Row(
+        child: CallbackShortcuts(
+          bindings: {
+            const SingleActivator(LogicalKeyboardKey.arrowDown): _open,
+            const SingleActivator(LogicalKeyboardKey.arrowUp): _open,
+          },
+          child: InkWell(
+            focusNode: _fieldFocus,
+            onFocusChange: (value) => setState(() => _focused = value),
+            onTap: () => controller.isOpen ? controller.close() : _open(),
+            splashFactory: NoSplash.splashFactory,
+            hoverColor: Colors.transparent,
+            focusColor: Colors.transparent,
+            borderRadius: BorderRadius.circular(AppControl.radius),
+            child: AnimatedContainer(
+              duration: AppMotion.hover,
+              curve: AppMotion.curve,
+              width: widget.width,
+              height: widget.height,
+              padding: const EdgeInsets.only(left: 10, right: 8),
+              decoration: BoxDecoration(
+                color: _hovered || _focused || controller.isOpen
+                    ? AppSurface.recessHover
+                    : AppSurface.recess,
+                borderRadius: BorderRadius.circular(AppControl.radius),
+                border: Border.all(
+                  color: _focused
+                      ? AppPalette.accentOnSurface
+                      : Colors.transparent,
+                ),
+              ),
+              child:
+                  widget.trigger ??
+                  Row(
                     children: [
-                      if (current?.leading != null) ...[
-                        current!.leading!(),
-                        const SizedBox(width: 8),
-                      ],
-                      Flexible(
-                        child: Text(
-                          current?.label ?? '—',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontFamily: AppFont.sans,
-                            fontFamilyFallback: AppFont.sansFallback,
-                            fontSize: AppControl.fontSize,
-                            fontWeight: AppControl.fontWeight,
-                            letterSpacing: AppFont.trackingFor(
-                              AppControl.fontSize,
+                      Expanded(
+                        child: Row(
+                          children: [
+                            if (current?.leading != null) ...[
+                              current!.leading!(),
+                              const SizedBox(width: 8),
+                            ],
+                            Flexible(
+                              child: Text(
+                                current?.label ?? '—',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontFamily: AppFont.sans,
+                                  fontFamilyFallback: AppFont.sansFallback,
+                                  fontSize: AppControl.fontSize,
+                                  fontWeight: AppControl.fontWeight,
+                                  letterSpacing: AppFont.trackingFor(
+                                    AppControl.fontSize,
+                                  ),
+                                  color: AppPalette.textPrimary,
+                                ),
+                              ),
                             ),
-                            color: AppPalette.textPrimary,
-                          ),
+                            if (current?.note != null) ...[
+                              const SizedBox(width: 8),
+                              Flexible(
+                                child: Text(
+                                  current!.note!,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontFamily: AppFont.sans,
+                                    fontFamilyFallback: AppFont.sansFallback,
+                                    fontSize: 11.5,
+                                    color: AppPalette.textFaint,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
                         ),
                       ),
-                      if (current?.note != null) ...[
-                        const SizedBox(width: 8),
-                        Flexible(
-                          child: Text(
-                            current!.note!,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontFamily: AppFont.sans,
-                              fontFamilyFallback: AppFont.sansFallback,
-                              fontSize: 11.5,
-                              color: AppPalette.textFaint,
-                            ),
-                          ),
-                        ),
-                      ],
+                      const SizedBox(width: 6),
+                      Icon(
+                        Icons.expand_more_rounded,
+                        size: AppControl.iconSize,
+                        color: _hovered || controller.isOpen
+                            ? AppPalette.textPrimary
+                            : AppPalette.textSecondary,
+                      ),
                     ],
                   ),
-                ),
-                const SizedBox(width: 6),
-                Icon(
-                  Icons.expand_more_rounded,
-                  size: AppControl.iconSize,
-                  color: _hovered || controller.isOpen
-                      ? AppPalette.textPrimary
-                      : AppPalette.textSecondary,
-                ),
-              ],
             ),
           ),
         ),

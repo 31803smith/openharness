@@ -26,7 +26,7 @@ void main() {
       environment: {'HOME': '/Users/tester'},
     );
 
-    expect(path, '/Users/tester/.harness/desktop-app');
+    expect(path, '/Users/tester/.harness/desktop-app-v2');
   }, skip: Platform.isWindows);
 
   test(
@@ -94,6 +94,57 @@ void main() {
       (await reopenedConfig.load()).apiBaseUrl,
       'https://harness-api.example.test',
     );
+  });
+
+  test('batch reads select keys and respect intervening writes', () async {
+    final first = HarnessFileStore(directory: dataDirectory);
+    final second = HarnessFileStore(directory: dataDirectory);
+    await first.write('preference', 'before');
+    await first.write('credential', 'synthetic-secret');
+
+    final keys = ['preference', 'missing', 'preference'];
+    final before = first.readMany(keys);
+    keys.add('credential'); // An enqueued request owns its original key set.
+    final write = second.write('preference', 'after');
+    final after = first.readMany(['preference', 'missing']);
+    expect(await before, {'preference': 'before', 'missing': null});
+    await write;
+    expect(await after, {'preference': 'after', 'missing': null});
+
+    await second.delete('preference');
+    expect(await first.readMany(['preference']), {'preference': null});
+    expect(await second.read('credential'), 'synthetic-secret');
+  });
+
+  test('an empty batch does not create storage', () async {
+    final store = HarnessFileStore(directory: dataDirectory);
+    expect(await store.readMany([]), isEmpty);
+    expect(await dataDirectory.exists(), isFalse);
+  });
+
+  test('batch reads retain corruption and future-schema recovery', () async {
+    final store = HarnessFileStore(directory: dataDirectory);
+    await store.write('seed', 'value');
+    await store.stateFile.writeAsString('{broken');
+    expect(await store.readMany(['seed']), {'seed': null});
+    expect(await store.stateFile.exists(), isFalse);
+    final backups = await dataDirectory
+        .list()
+        .where((entry) => entry.path.contains('state.corrupt-'))
+        .toList();
+    expect(backups, hasLength(1));
+    expect(await File(backups.single.path).readAsString(), '{broken');
+
+    final futureDocument = jsonEncode({
+      'version': HarnessFileStore.schemaVersion + 1,
+      'values': {'seed': 'future'},
+    });
+    await store.stateFile.writeAsString(futureDocument);
+    await expectLater(
+      store.readMany(['seed']),
+      throwsA(isA<UnsupportedStateVersionException>()),
+    );
+    expect(await store.stateFile.readAsString(), futureDocument);
   });
 
   test('quarantines malformed JSON and starts with empty state', () async {

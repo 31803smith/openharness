@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../shared/theme/app_theme.dart' as grid;
 import '../shared/widgets/app_dialog.dart';
 import '../shortcuts/shortcuts_list.dart';
+import '../shortcuts/keymap.dart';
+import '../shortcuts/keymap_settings.dart';
 
 /// The ⌘/ sheet — [ShortcutsList] in a dialog.
 ///
@@ -15,8 +17,15 @@ Future<void> showShortcutsSheet(BuildContext context) {
   );
 }
 
-class _ShortcutsSheet extends StatelessWidget {
+class _ShortcutsSheet extends StatefulWidget {
   const _ShortcutsSheet();
+
+  @override
+  State<_ShortcutsSheet> createState() => _ShortcutsSheetState();
+}
+
+class _ShortcutsSheetState extends State<_ShortcutsSheet> {
+  KeymapContext _contextKind = KeymapContext.workspace;
 
   @override
   Widget build(BuildContext context) {
@@ -46,7 +55,17 @@ class _ShortcutsSheet extends StatelessWidget {
             Flexible(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.fromLTRB(18, 8, 18, 16),
-                child: const ShortcutsList(),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    KeymapSettings(
+                      contextKind: _contextKind,
+                      onContextChanged: (value) =>
+                          setState(() => _contextKind = value),
+                    ),
+                    ShortcutsList(contextKind: _contextKind),
+                  ],
+                ),
               ),
             ),
             Container(
@@ -59,6 +78,9 @@ class _ShortcutsSheet extends StatelessWidget {
                 alignment: Alignment.centerRight,
                 child: TextButton(
                   onPressed: () => Navigator.of(context).pop(),
+                  style: TextButton.styleFrom(
+                    foregroundColor: grid.AppPalette.textSecondary,
+                  ),
                   child: const Text('Close'),
                 ),
               ),

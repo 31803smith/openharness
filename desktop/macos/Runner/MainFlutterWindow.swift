@@ -15,6 +15,7 @@ private let kMenuChannel = "harness/app_menu"
 private let kClipboardImageChannel = "harness/clipboard_image"
 
 class MainFlutterWindow: NSWindow {
+  private var swarmTitlebar: SwarmTitlebar?
   private var menuChannel: FlutterMethodChannel?
   private var clipboardImageChannel: FlutterMethodChannel?
 
@@ -30,6 +31,7 @@ class MainFlutterWindow: NSWindow {
       name: kMenuChannel,
       binaryMessenger: flutterViewController.engine.binaryMessenger
     )
+    swarmTitlebar = SwarmTitlebar(window: self, messenger: flutterViewController.engine.binaryMessenger)
     installClipboardImageChannel(messenger: flutterViewController.engine.binaryMessenger)
 
     // Harness Desktop is dark-only. Flutter's own theme does not reach AppKit —
@@ -117,15 +119,7 @@ class MainFlutterWindow: NSWindow {
       ),
       at: at + 2
     )
-    appMenu.insertItem(
-      menuItem(
-        title: "Check for Updates…",
-        action: #selector(checkForUpdates(_:)),
-        symbol: "arrow.down.circle",
-        tag: updateMenuItemTag
-      ),
-      at: at + 3
-    )
+
   }
 
   /// The Safari/Chrome/Terminal.app "Font" convention, in the SAME menu and the SAME order those
@@ -237,6 +231,10 @@ class MainFlutterWindow: NSWindow {
     )
     item.target = self
     item.tag = tag
+    if tag == shortcutsMenuItemTag || tag == layoutMenuItemTag {
+      let command = tag == shortcutsMenuItemTag ? "showShortcuts" : "layout"
+      item.identifier = NSUserInterfaceItemIdentifier(HarnessKeymapMenu.actionPrefix + command)
+    }
     // Every other row in this menu carries a glyph, so one without reads as
     // unfinished — the gutter stays but nothing sits in it.
     item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)

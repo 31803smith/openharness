@@ -271,7 +271,7 @@ void main() {
       );
     });
 
-    test('the brackets mean exactly one thing', () {
+    test('brackets walk agents, and Shift walks swarms', () {
       // They used to carry three verbs told apart only by modifiers: ⌘[ ] walked
       // panes, ⇧⌘[ ] walked agents, ⌥⌘[ ] moved panes. Panes went to hjkl, so
       // the brackets keep the one job a bracket is good at.
@@ -283,6 +283,8 @@ void main() {
       expect(bracketed, {
         ShortcutAction.previousAgent,
         ShortcutAction.nextAgent,
+        ShortcutAction.previousSwarm,
+        ShortcutAction.nextSwarm,
       });
     });
 
@@ -290,6 +292,12 @@ void main() {
       expect(chordsFor(ShortcutAction.zoomPane), contains('⌘⏎'));
       expect(chordsFor(ShortcutAction.lastPane), contains('⌘;'));
       expect(chordsFor(ShortcutAction.switchAgent), contains('⌘P'));
+      expect(chordsFor(ShortcutAction.switchAgent), isNot(contains('⇧⌘F')));
+      expect(chordsFor(ShortcutAction.addAgent), isEmpty);
+      expect(chordsFor(ShortcutAction.showAttention), ['⇧⌘I']);
+      expect(chordsFor(ShortcutAction.findTerminal), ['⌘F']);
+      expect(chordsFor(ShortcutAction.findNext), ['⌘G']);
+      expect(chordsFor(ShortcutAction.findPrevious), ['⇧⌘G']);
     });
 
     test(
@@ -320,9 +328,9 @@ void main() {
         ['⌘', '→'],
       ]);
 
-      final next = rows.firstWhere((row) => row.label == 'Next agent');
+      final next = rows.firstWhere((row) => row.label == 'Next swarm');
       expect(next.chords, [
-        ['⌘', ']'],
+        ['⇧', '⌘', ']'],
         ['⌃', '⇥'],
       ]);
     });

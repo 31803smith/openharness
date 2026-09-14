@@ -5,6 +5,7 @@ import '../shared/theme/app_theme.dart' as grid;
 import '../state/app_state.dart';
 import '../widgets/window_chrome.dart';
 import 'sections/about_section.dart';
+import 'sections/account_section.dart';
 import 'sections/appearance_section.dart';
 import 'sections/debug_section.dart';
 import 'sections/devices_section.dart';
@@ -44,13 +45,8 @@ Future<void> showSettingsScreen(
         initialSection: initialSection,
         source: source,
       ),
-      transitionsBuilder: (context, animation, _, child) =>
-          FadeTransition(opacity: animation, child: child),
-      // A cross-fade, not a slide. A screen that slides in from the right reads
-      // as a phone pushing a detail view; Settings arriving in place reads as
-      // the window changing what it is showing.
-      transitionDuration: const Duration(milliseconds: 170),
-      reverseTransitionDuration: const Duration(milliseconds: 120),
+      transitionDuration: Duration.zero,
+      reverseTransitionDuration: Duration.zero,
     ),
   );
 }
@@ -147,8 +143,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
 /// The screen behind a [SettingsSection].
 ///
-/// Cross-fades rather than cuts: the rail's own row highlight animates, and a
-/// pane that appears the instant you click reads as a jolt beside it.
+/// Switch immediately, disposing the previous section instead of retaining it
+/// for a cross-fade while the new section starts its work.
 class _SettingsBody extends StatelessWidget {
   const _SettingsBody({required this.section, required this.notifier});
 
@@ -158,6 +154,7 @@ class _SettingsBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final screen = switch (section) {
+      SettingsSection.account => AccountSection(notifier: notifier),
       SettingsSection.appearance => const AppearanceSection(),
       SettingsSection.terminal => const TerminalSection(),
       SettingsSection.usage => const UsageSection(),
@@ -167,16 +164,6 @@ class _SettingsBody extends StatelessWidget {
       SettingsSection.tracking => const TrackingSection(),
       SettingsSection.about => AboutSection(notifier: notifier),
     };
-    return AnimatedSwitcher(
-      // The exit is the shorter half — waiting on it is what makes a cross-fade
-      // feel sluggish.
-      duration: const Duration(milliseconds: 200),
-      reverseDuration: const Duration(milliseconds: 90),
-      switchInCurve: Curves.easeOutCubic,
-      switchOutCurve: Curves.easeIn,
-      // Keyed by section, not by widget type: that is what tells the switcher a
-      // *different screen* arrived.
-      child: KeyedSubtree(key: ValueKey(section), child: screen),
-    );
+    return KeyedSubtree(key: ValueKey(section), child: screen);
   }
 }

@@ -9,6 +9,7 @@ import 'package:harness/state/app_state.dart';
 import 'package:harness/state/pane_layout_store.dart';
 import 'package:harness/state/terminal_pane.dart';
 import 'package:harness/terminal/terminal_session.dart';
+import 'package:harness/ws/ws_conn.dart';
 
 /// In-memory stand-in so a layout test never reaches the developer's own
 /// ~/.harness state file.
@@ -25,12 +26,38 @@ class _MemoryStore implements LocalKeyValueStore {
   Future<void> delete(String key) async => values.remove(key);
 }
 
-AppNotifier _notifier({PaneLayoutStore? layout}) => AppNotifier(
+AppNotifier _notifier({
+  PaneLayoutStore? layout,
+  WsConn Function(String)? connectionForTest,
+}) => AppNotifier(
   config: AppConfig.dev,
   authSession: AuthSession(),
   configStore: null,
   paneLayoutStore: layout,
+  connectionForTest: connectionForTest,
 );
+
+class _TerminalConnection extends WsConn {
+  _TerminalConnection()
+    : super(
+        wsBaseUrl: 'ws://fixture.invalid',
+        autonomousEnv: 'test',
+        machineId: 'm1',
+        accessTokenProvider: (_, _) async => '',
+        onAuthFailure: (_) {},
+        onEvent: (_) {},
+        onStatus: (_) {},
+      );
+  final sent = <String>[];
+  @override
+  Future<bool> sendTerminalFrame(
+    String type,
+    Map<String, dynamic> payload,
+  ) async {
+    sent.add(type);
+    return true;
+  }
+}
 
 Agent _agent(String id) => Agent.fromJson({
   'id': id,
@@ -155,7 +182,11 @@ void main() {
 
     await app.selectAgent('m1', 'a');
     await app.selectAgent('m1', 'b');
-    expect(app.panes.length, 1, reason: 'a click replaces, it does not add');
+    expect(
+      app.panes.length,
+      2,
+      reason: 'selecting adds a view without replacing the existing one',
+    );
 
     await app.assignAgentToPane(null, 'm1', 'a');
     expect(app.panes.length, 2);
@@ -281,7 +312,8 @@ void main() {
     // Let the fire-and-forget writes land.
     await Future<void>.delayed(Duration.zero);
 
-    final saved = jsonDecode(storage.values['terminal_pane_layout']!) as List;
+    final layout = jsonDecode(storage.values['swarm_layout_v1']!);
+    final saved = layout['swarms'][0]['panes'] as List;
     expect(saved.length, 2, reason: 'the prompt tile is a moment, not a desk');
     expect(saved.map((e) => e['agentId']), ['a', 'b']);
     app.dispose();
@@ -339,7 +371,7 @@ void main() {
   );
 
   test(
-    'a pane keeps its identity when reassigned, so the grid cell survives',
+    'replacing a view gives the new session its own controller identity',
     () async {
       final app = _notifier();
       _machine(app, 'm1', ['a', 'b']);
@@ -347,7 +379,7 @@ void main() {
       final id = app.panes.single.id;
 
       await app.assignAgentToPane(id, 'm1', 'b');
-      expect(app.panes.single.id, id);
+      expect(app.panes.single.id, isNot(id));
       expect(app.panes.single.agentId, 'b');
       app.dispose();
     },
@@ -442,25 +474,48 @@ void main() {
     },
   );
 
-  test('selecting an agent whose stream died rebuilds it, not just the ring', () async {
-    final app = _notifier();
-    _machine(app, 'm1', ['a']);
-    final pane = app.adoptSessionForTest(_session('m1', 'a'));
-    final dead = pane.session!;
-    dead.transportLost('Harness reconnected; restoring terminal…');
+  test(
+    'retry preserves offline output and opens a new stream only when ready',
+    () async {
+      final connection = _TerminalConnection();
+      final app = _notifier(connectionForTest: (_) => connection);
+      final machine = _machine(app, 'm1', ['a']);
+      machine.nodeOnline = true;
+      machine.terminalCapabilityAvailable = true;
+      final attaching = app.addAgentToSwarm('m1', 'a');
+      final pane = app.panes.single;
+      pane.session!.reportViewport(120, 40);
+      await attaching;
+      expect(
+        connection.sent.where((type) => type == 'terminal_open'),
+        hasLength(1),
+      );
+      connection.sent.clear();
+      final dead = pane.session!;
+      dead.transportLost('Harness reconnected; restoring terminal…');
+      machine.nodeOnline = false;
 
-    // What the tile's own retry button does. An early return on "already on
-    // screen" made that button move a focus ring and nothing else, leaving the
-    // frozen overlay exactly where it was.
-    await app.selectAgent('m1', 'a');
-
-    expect(
-      identical(app.panes.single.session, dead),
-      isFalse,
-      reason: 'the dead session must be replaced, not re-focused',
-    );
-    app.dispose();
-  });
+      dead.terminal.write('Last useful result');
+      await app.selectAgent('m1', 'a');
+      expect(pane.session, same(dead));
+      expect(dead.terminal.buffer.getText(), contains('Last useful result'));
+      expect(connection.sent, isEmpty);
+      machine.nodeOnline = true;
+      machine.terminalCapabilityAvailable = true;
+      final retry = app.selectAgent('m1', 'a');
+      await Future<void>.delayed(Duration.zero);
+      expect(pane.session, same(dead));
+      pane.session!.reportViewport(120, 40);
+      await retry;
+      expect(
+        connection.sent.where((type) => type == 'terminal_open'),
+        hasLength(1),
+      );
+      expect(pane.session!.status, TerminalSessionStatus.opening);
+      app.dispose();
+      await connection.close();
+    },
+  );
 
   test('the composer toggle is remembered across a restart', () async {
     final storage = _MemoryStore();
@@ -477,8 +532,8 @@ void main() {
     expect(app.panes.single.composerVisible, isTrue);
     await Future<void>.delayed(Duration.zero);
 
-    final restored = await PaneLayoutStore(storage: storage).load();
-    expect(restored.single.composerVisible, isTrue);
+    final restored = await PaneLayoutStore(storage: storage).loadSwarms();
+    expect(restored!['swarms'][0]['panes'][0]['composerVisible'], isTrue);
     app.dispose();
   });
 

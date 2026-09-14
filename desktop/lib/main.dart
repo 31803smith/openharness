@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' show AppExitResponse;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -7,7 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'analytics/analytics_lifecycle.dart';
 import 'core/crash_log.dart';
 import 'core/desktop_window.dart';
-import 'screens/home_screen.dart';
+import 'screens/swarm_screen.dart';
 import 'screens/login_screen.dart';
 import 'state/app_state.dart';
 import 'shared/theme/app_theme.dart' as grid;
@@ -21,6 +22,7 @@ import 'widgets/flash_firmware_dialog.dart';
 import 'core/startup.dart';
 import 'logging/app_log.dart';
 import 'logging/install.dart';
+import 'shortcuts/app_keymap.dart';
 import 'widgets/shortcuts_sheet.dart';
 import 'widgets/update_notice.dart';
 import 'widgets/window_chrome.dart';
@@ -32,15 +34,18 @@ Future<void> main() async {
   installFileLogs();
   CrashLog.install();
   appLog.info('app', 'launched');
-  await loadPersistedSettings();
-  // After the settings: the window shows itself once it is ready, and the
-  // first frame it shows must already wear the saved theme.
-  await configureDesktopWindow();
-  runApp(const ProviderScope(child: DesktopApp()));
+  final keymap = AppKeymap(store: AppKeymap.fileStore());
+  // Keyboard configuration has its own file and watchers. It can load beside
+  // the appearance, but both must be ready before the window becomes usable.
+  await Future.wait([loadPersistedSettings(), keymap.start()]);
+  // Apply the saved palette to native chrome as well as the Flutter theme.
+  await configureDesktopWindow(palette: appearancePrefsStore.value.palette);
+  runApp(ProviderScope(child: DesktopApp(keymap: keymap)));
 }
 
 class DesktopApp extends StatelessWidget {
-  const DesktopApp({super.key});
+  const DesktopApp({super.key, this.keymap});
+  final AppKeymap? keymap;
 
   @override
   Widget build(BuildContext context) {
@@ -57,6 +62,7 @@ class DesktopApp extends StatelessWidget {
   }
 
   Widget _app(AppearancePrefs prefs) {
+    grid.AppTheme.palette.value = prefs.palette;
     // ⚠️ ORDER MATTERS, and it is why this is a statement rather than something
     // tucked into the tree below: `buildAppTheme` reads `AppFont.sans` and
     // `AppControl.*Scaled`, so the settings have to be on `AppFont` BEFORE the
@@ -77,6 +83,7 @@ class DesktopApp extends StatelessWidget {
     );
     return MaterialApp(
       title: 'Harness',
+      debugShowCheckedModeBanner: false,
       // The design system's own `buildAppTheme` — see the note where a second,
       // hand-written `ThemeData` used to shadow it, in `lib/theme/app_theme.dart`.
       // Harness Desktop is dark-only: one theme, no `darkTheme`/`themeMode` to
@@ -105,7 +112,14 @@ class DesktopApp extends StatelessWidget {
       builder: (context, child) => MediaQuery.withClampedTextScaling(
         minScaleFactor: scale,
         maxScaleFactor: scale,
-        child: _GridTokenScope(child: child ?? const SizedBox.shrink()),
+        child: _GridTokenScope(
+          child: keymap == null
+              ? child ?? const SizedBox.shrink()
+              : KeymapProvider(
+                  keymap: keymap!,
+                  child: child ?? const SizedBox.shrink(),
+                ),
+        ),
       ),
       home: const AnalyticsLifecycle(child: RootShell()),
     );
@@ -147,38 +161,73 @@ class RootShell extends ConsumerStatefulWidget {
   ConsumerState<RootShell> createState() => _RootShellState();
 }
 
-class _RootShellState extends ConsumerState<RootShell> {
+class _RootShellState extends ConsumerState<RootShell>
+    with WidgetsBindingObserver {
+  bool _menuDialogOpen = false;
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _appMenuChannel.setMethodCallHandler(_onAppMenu);
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _appMenuChannel.setMethodCallHandler(null);
     super.dispose();
   }
 
+  @override
+  Future<AppExitResponse> didRequestAppExit() async {
+    // Save the final arrangement, with a bound so an unavailable disk cannot
+    // trap the user in the app. Input and tab switching never wait for disk.
+    await ref
+        .read(appStateProvider)
+        .flushPaneLayout()
+        .timeout(const Duration(seconds: 1), onTimeout: () {});
+    return AppExitResponse.exit;
+  }
+
   Future<void> _onAppMenu(MethodCall call) async {
+    if (!mounted) return;
     switch (call.method) {
       case 'checkForUpdates':
         final app = ref.read(appStateProvider);
-        final result = await app.checkForUpdates();
-        if (!mounted) return;
-        await showUpdateCheckDialog(context, app, result);
+        if (!app.desktopUpdatesEnabled) return;
+        await _menuDialog(() async {
+          final result = await app.checkForUpdates();
+          if (!mounted) return;
+          await showUpdateCheckDialog(context, app, result);
+        });
       case 'flashFirmware':
-        await showFlashFirmwareDialog(context);
+        await _menuDialog(() => showFlashFirmwareDialog(context));
       case 'showLayout':
-        await showLayoutPalette(context, ref.read(appStateProvider));
+        if (advanceLayoutPalette()) return;
+        await _menuDialog(
+          () => showLayoutPalette(context, ref.read(appStateProvider)),
+        );
       case 'showShortcuts':
-        await showShortcutsSheet(context);
+        await _menuDialog(() => showShortcutsSheet(context));
       case 'increaseTerminalFontSize':
         await terminalFontStore.increaseSize();
       case 'decreaseTerminalFontSize':
         await terminalFontStore.decreaseSize();
       case 'resetTerminalFontSize':
         await terminalFontStore.reset();
+    }
+  }
+
+  Future<void> _menuDialog(Future<void> Function() action) async {
+    if (_menuDialogOpen || ModalRoute.isCurrentOf(context) == false) return;
+    // Reserve before the first frame too: held menu shortcuts can arrive
+    // before the new dialog has changed the route's current state.
+    _menuDialogOpen = true;
+    try {
+      await action();
+    } finally {
+      _menuDialogOpen = false;
     }
   }
 
@@ -216,7 +265,7 @@ class _RootShellState extends ConsumerState<RootShell> {
           case AppStatus.unauthenticated:
             screen = LoginScreen(notifier: app);
           case AppStatus.authenticated:
-            screen = HomeScreen(notifier: app);
+            screen = SwarmScreen(notifier: app);
         }
         // Only the home shell carries its own drag handle and traffic-light
         // clearance (the rail's head). Every other screen fills the window

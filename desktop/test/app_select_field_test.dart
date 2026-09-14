@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:harness/shared/theme/app_theme.dart' as grid;
@@ -47,6 +48,57 @@ Future<void> _open(WidgetTester tester) async {
 
 void main() {
   tearDown(() => grid.AppTheme.brightness.value = Brightness.light);
+
+  testWidgets(
+    'Tab, Enter, arrows and Escape operate the picker',
+    (tester) async {
+      String? picked = 'unset';
+      await tester.pumpWidget(
+        _host(
+          AppSelectField<String?>(
+            value: 'Helvetica Neue',
+            options: _options,
+            onChanged: (value) => picked = value,
+            width: 240,
+          ),
+        ),
+      );
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      final anchor = tester.widget<InkWell>(
+        find.descendant(of: _field, matching: find.byType(InkWell)),
+      );
+      expect(anchor.focusNode!.hasPrimaryFocus, isTrue);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(find.byType(AppMenuItem), findsNWidgets(3));
+      final selected = tester.widget<AppMenuItem>(
+        find.widgetWithText(AppMenuItem, 'Helvetica Neue'),
+      );
+      expect(selected.focusNode!.hasPrimaryFocus, isTrue);
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(picked, 'Menlo');
+      expect(find.byType(AppMenuItem), findsNothing);
+      expect(anchor.focusNode!.hasPrimaryFocus, isTrue);
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pumpAndSettle();
+      expect(find.byType(AppMenuItem), findsNWidgets(3));
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.byType(AppMenuItem), findsNothing);
+      expect(anchor.focusNode!.hasPrimaryFocus, isTrue);
+      expect(picked, 'Menlo');
+      expect(tester.takeException(), isNull);
+    },
+    variant: const TargetPlatformVariant({
+      TargetPlatform.macOS,
+      TargetPlatform.linux,
+      TargetPlatform.windows,
+    }),
+  );
 
   testWidgets('an unpicked row draws NO glyph — not an empty checkbox', (
     tester,

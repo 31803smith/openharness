@@ -33,6 +33,8 @@ class TerminalView extends StatefulWidget {
     this.padding,
     this.scrollController,
     this.autoResize = true,
+    this.resizeBuffer = true,
+    this.renderingEnabled = true,
     this.backgroundOpacity = 1,
     this.focusNode,
     this.autofocus = false,
@@ -76,6 +78,17 @@ class TerminalView extends StatefulWidget {
   /// Should this widget automatically notify the underlying terminal when its
   /// size changes. [true] by default.
   final bool autoResize;
+
+  /// Resize the emulator together with the viewport. Set false for a remote
+  /// grid: report the requested size through Terminal.onResize and retain the
+  /// captured cells until the remote side supplies its resized screen.
+  final bool resizeBuffer;
+
+  /// Whether output should schedule renderer layout/paint work. Disable while
+  /// retaining a hidden view; the terminal buffer continues receiving output.
+  /// Re-enabling reconciles geometry and scroll position on the next layout.
+  /// An enclosing disabled [TickerMode] also suspends rendering updates.
+  final bool renderingEnabled;
 
   /// Opacity of the terminal background. Set to 0 to make the terminal
   /// background transparent.
@@ -260,6 +273,8 @@ class TerminalViewState extends State<TerminalView> {
           offset: offset,
           padding: MediaQuery.of(context).padding,
           autoResize: widget.autoResize,
+          resizeBuffer: widget.resizeBuffer,
+          renderingEnabled: widget.renderingEnabled,
           textStyle: widget.textStyle,
           textScaler: widget.textScaler ?? MediaQuery.textScalerOf(context),
           theme: widget.theme,
@@ -472,6 +487,15 @@ class TerminalViewState extends State<TerminalView> {
   @visibleForTesting
   String? get debugComposingText => _composingText;
 
+  /// Live input-client composition, independent of its visual preview (which
+  /// may already match echoed terminal cells). Workspace shortcuts must let
+  /// the IME finish its marked text before claiming a key.
+  bool get isComposing {
+    final range =
+        _customTextEditKey.currentState?.currentTextEditingValue?.composing;
+    return range != null && range.isValid && !range.isCollapsed;
+  }
+
   KeyEventResult _handleKeyEvent(FocusNode focusNode, KeyEvent event) {
     final resultOverride = widget.onKeyEvent?.call(focusNode, event);
     if (resultOverride != null && resultOverride != KeyEventResult.ignored) {
@@ -631,6 +655,8 @@ class _TerminalView extends LeafRenderObjectWidget {
     required this.offset,
     required this.padding,
     required this.autoResize,
+    required this.resizeBuffer,
+    required this.renderingEnabled,
     required this.textStyle,
     required this.textScaler,
     required this.theme,
@@ -651,6 +677,10 @@ class _TerminalView extends LeafRenderObjectWidget {
   final EdgeInsets padding;
 
   final bool autoResize;
+
+  final bool resizeBuffer;
+
+  final bool renderingEnabled;
 
   final TerminalStyle textStyle;
 
@@ -678,6 +708,9 @@ class _TerminalView extends LeafRenderObjectWidget {
       offset: offset,
       padding: padding,
       autoResize: autoResize,
+      resizeBuffer: resizeBuffer,
+      renderingEnabled:
+          renderingEnabled && TickerMode.valuesOf(context).enabled,
       textStyle: textStyle,
       textScaler: textScaler,
       theme: theme,
@@ -693,11 +726,14 @@ class _TerminalView extends LeafRenderObjectWidget {
   @override
   void updateRenderObject(BuildContext context, RenderTerminal renderObject) {
     renderObject
+      ..renderingEnabled =
+          renderingEnabled && TickerMode.valuesOf(context).enabled
       ..terminal = terminal
       ..controller = controller
       ..offset = offset
       ..padding = padding
       ..autoResize = autoResize
+      ..resizeBuffer = resizeBuffer
       ..textStyle = textStyle
       ..textScaler = textScaler
       ..theme = theme

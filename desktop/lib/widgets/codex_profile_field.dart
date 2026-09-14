@@ -5,6 +5,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../core/codex_profiles.dart';
 import '../state/app_state.dart';
+import '../shared/theme/app_theme.dart' as grid;
 import '../shared/widgets/app_select_field.dart';
 import '../shared/widgets/labeled_field.dart';
 import 'remote_folder_picker.dart';
@@ -43,6 +44,7 @@ class _CodexProfileFieldState extends State<CodexProfileField> {
   bool _hasChosenProfile = false;
   String? _error;
   int _loadGeneration = 0;
+  int _machineRevision = 0;
 
   @override
   void initState() {
@@ -53,7 +55,17 @@ class _CodexProfileFieldState extends State<CodexProfileField> {
   @override
   void didUpdateWidget(CodexProfileField oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!setEquals(oldWidget.observedPaths, widget.observedPaths)) _load();
+    if (oldWidget.machineId != widget.machineId ||
+        oldWidget.machineIsThisComputer != widget.machineIsThisComputer ||
+        oldWidget.notifier != widget.notifier) {
+      _machineRevision++;
+      _profiles = [];
+      _hasChosenProfile = false;
+      _linking = false;
+      _load();
+    } else if (!setEquals(oldWidget.observedPaths, widget.observedPaths)) {
+      _load();
+    }
   }
 
   Future<void> _load() async {
@@ -112,6 +124,9 @@ class _CodexProfileFieldState extends State<CodexProfileField> {
 
   Future<void> _link() async {
     if (_linking) return;
+    final machineId = widget.machineId;
+    final revision = _machineRevision;
+    bool current() => mounted && revision == _machineRevision;
     setState(() {
       _linking = true;
       _error = null;
@@ -130,15 +145,12 @@ class _CodexProfileFieldState extends State<CodexProfileField> {
           : await showRemoteFolderPicker(
               context,
               notifier: widget.notifier,
-              machineId: widget.machineId,
+              machineId: machineId,
               initialPath: widget.value?.path,
             );
-      if (path == null || !mounted) return;
-      final result = await widget.notifier.linkCodexProfile(
-        widget.machineId,
-        path,
-      );
-      if (!mounted) return;
+      if (path == null || !current()) return;
+      final result = await widget.notifier.linkCodexProfile(machineId, path);
+      if (!current()) return;
       final error = result['error'];
       if (error is String) {
         setState(
@@ -150,15 +162,15 @@ class _CodexProfileFieldState extends State<CodexProfileField> {
         Map<String, dynamic>.from(result['profile'] as Map),
       );
       await _load();
-      if (mounted) _select(profile);
+      if (current()) _select(profile);
     } catch (_) {
-      if (mounted) {
+      if (current()) {
         setState(
           () => _error = 'Could not link this profile folder. Check that it is accessible.',
         );
       }
     } finally {
-      if (mounted) {
+      if (current()) {
         setState(() => _linking = false);
         _reportBusy();
       }
@@ -168,13 +180,6 @@ class _CodexProfileFieldState extends State<CodexProfileField> {
   @override
   Widget build(BuildContext context) {
     // Default is launch behavior, not another discovered account folder.
-    final showPicker = _profiles.length >= 2;
-    final remainingProfile = _profiles.length == 1 ? _profiles.single : null;
-    final canChooseRemaining =
-        !showPicker &&
-        !_loading &&
-        _error == null &&
-        widget.value?.path != remainingProfile?.path;
     final choices = {
       for (final profile in _profiles) profile.path: profile,
       if (widget.value != null) widget.value!.path: widget.value!,
@@ -183,37 +188,41 @@ class _CodexProfileFieldState extends State<CodexProfileField> {
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (showPicker) ...[
-          const FieldLabel('Codex profile'),
-          AppSelectField<String>(
-            key: const Key('new-agent-codex-profile-field'),
-            value: widget.value?.path ?? '',
-            options: [
-              SelectOption(
-                value: '',
-                label: 'Default',
-                note: _loading ? 'loading profiles…' : null,
-                detail: 'Use this machine’s normal Codex launch.',
+        Row(
+          children: [
+            const Expanded(child: FieldLabel('Codex profile')),
+            Tooltip(
+              message:
+                  'A profile is the Codex folder containing your account and settings '
+                  '(CODEX_HOME). Profiles stay on the selected machine.',
+              child: Icon(
+                LucideIcons.info,
+                size: 14,
+                color: grid.AppPalette.textSecondary,
               ),
-              for (final profile in choices.values)
-                SelectOption(
-                  value: profile.path,
-                  label: profile.label,
-                  detail: profile.path,
-                ),
-            ],
-            onChanged: (value) => _select(choices[value]),
-          ),
-        ],
-        if (canChooseRemaining)
-          TextButton(
-            onPressed: _linking ? null : () => _select(remainingProfile),
-            child: Text(
-              remainingProfile == null
-                  ? 'Use default profile'
-                  : 'Use ${remainingProfile.label}',
             ),
-          ),
+          ],
+        ),
+        AppSelectField<String>(
+          key: const Key('new-agent-codex-profile-field'),
+          value: widget.value?.path ?? '',
+          options: [
+            SelectOption(
+              value: '',
+              label: 'Default profile',
+              note: _loading ? 'loading profiles…' : null,
+              detail: 'Use this machine’s normal Codex launch.',
+            ),
+            for (final profile in choices.values)
+              SelectOption(
+                value: profile.path,
+                label: profile.label,
+                detail: profile.path,
+              ),
+          ],
+          onChanged: (value) => _select(choices[value]),
+        ),
+        const SizedBox(height: 4),
         Row(
           children: [
             Expanded(
@@ -221,6 +230,14 @@ class _CodexProfileFieldState extends State<CodexProfileField> {
                 alignment: Alignment.centerLeft,
                 child: TextButton(
                   onPressed: _linking ? null : _link,
+                  style: TextButton.styleFrom(
+                    foregroundColor: grid.AppPalette.textSecondary,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 0,
+                      vertical: 6,
+                    ),
+                    minimumSize: const Size(0, 32),
+                  ),
                   child: Text(
                     _linking ? 'Linking profile…' : 'Link a profile folder…',
                   ),
@@ -233,10 +250,6 @@ class _CodexProfileFieldState extends State<CodexProfileField> {
               icon: const Icon(LucideIcons.refreshCw, size: 14),
             ),
           ],
-        ),
-        Text(
-          'Use the folder your Codex shortcut points to (CODEX_HOME).',
-          style: Theme.of(context).textTheme.bodySmall,
         ),
         if (_error != null)
           Text(

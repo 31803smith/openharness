@@ -1,6 +1,41 @@
 import 'package:flutter/material.dart';
 import 'package:xterm/xterm.dart';
 
+import '../shared/theme/color_palette.dart';
+
+/// Cached per palette. Switching colors repaints the existing terminal view;
+/// it does not replace its controller, buffer, input connection or font.
+TerminalTheme terminalThemeFor(HarnessPalette palette) => _palettes.putIfAbsent(
+  palette,
+  () => TerminalTheme(
+    cursor: palette.accent,
+    selection: palette.accent.withValues(alpha: 0.3),
+    foreground: palette.foreground,
+    background: palette.background,
+    black: darkTerminalTheme.black,
+    red: darkTerminalTheme.red,
+    green: darkTerminalTheme.green,
+    yellow: darkTerminalTheme.yellow,
+    blue: darkTerminalTheme.blue,
+    magenta: darkTerminalTheme.magenta,
+    cyan: darkTerminalTheme.cyan,
+    white: darkTerminalTheme.white,
+    brightBlack: darkTerminalTheme.brightBlack,
+    brightRed: darkTerminalTheme.brightRed,
+    brightGreen: darkTerminalTheme.brightGreen,
+    brightYellow: darkTerminalTheme.brightYellow,
+    brightBlue: darkTerminalTheme.brightBlue,
+    brightMagenta: darkTerminalTheme.brightMagenta,
+    brightCyan: darkTerminalTheme.brightCyan,
+    brightWhite: darkTerminalTheme.brightWhite,
+    searchHitBackground: darkTerminalTheme.searchHitBackground,
+    searchHitBackgroundCurrent: darkTerminalTheme.searchHitBackgroundCurrent,
+    searchHitForeground: darkTerminalTheme.searchHitForeground,
+  ),
+);
+
+final _palettes = <HarnessPalette, TerminalTheme>{};
+
 /// Harness owns the terminal's *default* appearance.
 ///
 /// Terminal streams provide ANSI attributes, not the source application's

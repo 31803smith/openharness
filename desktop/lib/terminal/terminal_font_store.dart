@@ -149,8 +149,9 @@ class TerminalFontStore extends ValueNotifier<TerminalStyle> {
   /// an unreadable state file is not a reason to refuse to start.
   Future<void> load() async {
     try {
-      final savedFamily = await _storage.read(_familyKey);
-      final savedSize = await _storage.read(_sizeKey);
+      final saved = await _storage.readMany([_familyKey, _sizeKey]);
+      final savedFamily = saved[_familyKey];
+      final savedSize = saved[_sizeKey];
       final choice = TerminalFontChoice.values
           .where((c) => c.name == savedFamily)
           .firstOrNull;

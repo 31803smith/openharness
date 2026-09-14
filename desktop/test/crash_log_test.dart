@@ -6,10 +6,15 @@ import 'package:harness/core/crash_log.dart';
 
 void main() {
   test('an error reaches the log with its stack', () {
-    final file = File(
-      '${Platform.environment['HOME']}/.harness/desktop-app/errors.log',
+    final directory = Directory.systemTemp.createTempSync(
+      'harness-v2-crash-test-',
     );
-    if (file.existsSync()) file.deleteSync();
+    final file = File('${directory.path}/errors.log');
+    CrashLog.testFile = file;
+    addTearDown(() {
+      CrashLog.testFile = null;
+      directory.deleteSync(recursive: true);
+    });
 
     CrashLog.record(
       TypeError(),

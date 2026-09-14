@@ -61,6 +61,7 @@ dependencies:
   # read".
   sqlite3: ^2.4.0
   desktop_drop: ^0.8.4
+  path: ^1.9.1
 
 dev_dependencies:
   flutter_test:
@@ -90,6 +91,7 @@ flutter:
   uses-material-design: true
   assets:
     - assets/engine-icons/
+    - assets/swarm-wallpapers/
     # The real app icon, shown in Settings ▸ About. Copied from the macOS
     # icon set (`macos/Runner/Assets.xcassets/AppIcon.appiconset`) rather than
     # loaded from the bundle: Flutter can't read an .icns, and About should show

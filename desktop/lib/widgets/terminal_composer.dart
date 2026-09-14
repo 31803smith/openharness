@@ -22,10 +22,12 @@ class TerminalComposer extends StatefulWidget {
     super.key,
     required this.session,
     required this.focusNode,
+    this.inputEnabled = true,
   });
 
   final TerminalSession session;
   final FocusNode focusNode;
+  final bool inputEnabled;
 
   @override
   State<TerminalComposer> createState() => _TerminalComposerState();
@@ -90,7 +92,9 @@ class _TerminalComposerState extends State<TerminalComposer> {
   bool _sending = false;
 
   Future<void> _submit() async {
-    if (_sending) return;
+    if (_sending || !widget.inputEnabled || !widget.session.acceptsInput) {
+      return;
+    }
     final text = _controller.text;
     if (text.isEmpty) return;
     _sending = true;
@@ -121,7 +125,7 @@ class _TerminalComposerState extends State<TerminalComposer> {
   @override
   Widget build(BuildContext context) {
     grid.AppTheme.watch(context);
-    final enabled = widget.session.acceptsInput;
+    final enabled = widget.inputEnabled && widget.session.acceptsInput;
     final focused = widget.focusNode.hasFocus;
     final terminalStyle = terminalFontStore.value;
     // No top border of its own: [ComposerGrip] is the line between this and the terminal.

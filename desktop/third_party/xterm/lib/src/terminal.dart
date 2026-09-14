@@ -346,9 +346,20 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
     return false;
   }
 
-  /// Resize the terminal screen. [newWidth] and [newHeight] should be greater
-  /// than 0. Text reflow is currently not implemented and will be avaliable in
-  /// the future.
+  Set<void Function()>? _resizeListeners;
+
+  /// Observes completed local buffer reflow without replacing the transport's
+  /// onResize callback. No observer set is retained when the last user leaves.
+  void addResizeListener(void Function() listener) {
+    (_resizeListeners ??= {}).add(listener);
+  }
+
+  void removeResizeListener(void Function() listener) {
+    _resizeListeners?.remove(listener);
+    if (_resizeListeners?.isEmpty == true) _resizeListeners = null;
+  }
+
+  /// Resize the screen and notify local observers after buffer reflow.
   @override
   void resize(
     int newWidth,
@@ -374,6 +385,9 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
 
     _altBuffer.resetVerticalMargins();
     _mainBuffer.resetVerticalMargins();
+    for (final listener in _resizeListeners ?? const <void Function()>{}) {
+      listener();
+    }
   }
 
   @override

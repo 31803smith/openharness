@@ -3,15 +3,13 @@ import 'package:flutter/material.dart';
 import '../shared/theme/app_theme.dart' as grid;
 import '../state/app_state.dart';
 import '../widgets/login_relay_diagram.dart';
+import '../widgets/welcome_workspace_preview.dart';
 
 /// The sign-in screen.
 ///
-/// This is the first thing a new install shows, and it is the only moment the
-/// user is asking themselves *what am I handing this thing?* — so it answers
-/// that, with the app's actual architecture, before asking for anything. The
-/// diagram is [LoginRelayDiagram]: your machines at one end, the window at the
-/// other, and a middle drawn wearing a blindfold because it genuinely cannot
-/// read what crosses it.
+/// Lead with the work: real coding agents together in one workspace. A static
+/// example explains a swarm before sign-in; the privacy guarantee stays in the
+/// quiet footer. The preview never creates agents or sends them a task.
 ///
 /// **All four states live here**, in one card, rather than the two screens this
 /// used to be. Pressing Sign in swapped the whole window for
@@ -60,7 +58,7 @@ class LoginScreen extends StatelessWidget {
           const Positioned.fill(child: LoginAurora()),
           Center(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 24),
+              padding: const EdgeInsets.all(24),
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: _cardWidth),
                 child: Container(
@@ -70,13 +68,11 @@ class LoginScreen extends StatelessWidget {
                     borderRadius: BorderRadius.circular(14),
                     boxShadow: grid.AppCard.shadow,
                   ),
-                  padding: const EdgeInsets.all(32),
+                  padding: const EdgeInsets.all(24),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       const _AppMark(),
-                      const SizedBox(height: 16),
-                      const LoginRelayDiagram(),
                       const SizedBox(height: 24),
                       Text(
                         'All your agents, on one screen',
@@ -85,11 +81,13 @@ class LoginScreen extends StatelessWidget {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        'Your agents keep running on your own machines. '
-                        'Harness gives you one window onto all of them.',
+                        'Work with Claude Code, Codex and other agents side by side. '
+                        'Keep related agents together in a swarm.',
                         textAlign: TextAlign.center,
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
+                      const SizedBox(height: 24),
+                      const WelcomeWorkspacePreview(),
                       const SizedBox(height: 24),
                       _Action(notifier: notifier, waiting: waiting),
                       if (notifier.lastError != null) ...[
@@ -139,7 +137,7 @@ class _Action extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           Text(
-            'Your browser opens for SSO, then this window continues.',
+            'Sign in through your browser. We’ll bring you back here.',
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.bodySmall,
           ),

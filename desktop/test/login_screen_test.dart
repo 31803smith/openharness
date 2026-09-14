@@ -8,7 +8,7 @@ import 'package:harness/core/config.dart';
 import 'package:harness/screens/login_screen.dart';
 import 'package:harness/shared/theme/app_theme.dart' as grid;
 import 'package:harness/state/app_state.dart';
-import 'package:harness/widgets/login_relay_diagram.dart';
+import 'package:harness/widgets/welcome_workspace_preview.dart';
 
 /// Wraps the screen in the same chrome `main.dart` gives it, at the app's
 /// minimum window size — 880×560 — because that is where a card gets cramped
@@ -75,14 +75,24 @@ void main() {
 
     expect(find.text('All your agents, on one screen'), findsOneWidget);
     expect(find.text('Sign in'), findsOneWidget);
-    expect(find.byType(LoginRelayDiagram), findsOneWidget);
+    expect(find.byType(WelcomeWorkspacePreview), findsOneWidget);
     // The real mark, from the bundle — `Icons.memory` used to stand here and
     // appeared nowhere else in the app.
-    final logo = tester.widget<Image>(find.byType(Image));
+    final logo = tester.widget<Image>(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is Image &&
+            widget.image is AssetImage &&
+            (widget.image as AssetImage).assetName == 'assets/app_icon.png',
+      ),
+    );
     expect((logo.image as AssetImage).assetName, 'assets/app_icon.png');
     // The promise the screen exists to make, in words with no jargon in them.
-    expect(find.textContaining('one window onto all of them'), findsOneWidget);
-    expect(find.textContaining('SSO'), findsOneWidget);
+    expect(
+      find.textContaining('Keep related agents together in a swarm'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Sign in through your browser'), findsOneWidget);
     expect(find.textContaining('End-to-end encrypted'), findsOneWidget);
   });
 
@@ -94,8 +104,8 @@ void main() {
     await tester.pumpWidget(_host(app));
     await tester.pump(const Duration(milliseconds: 100));
 
-    // Still the same card — the diagram never leaves, so the frame can't jump.
-    expect(find.byType(LoginRelayDiagram), findsOneWidget);
+    // Still the same card — the workspace example never leaves, so the frame can't jump.
+    expect(find.byType(WelcomeWorkspacePreview), findsOneWidget);
     expect(find.text('Waiting for your browser'), findsOneWidget);
     expect(find.text('Cancel'), findsOneWidget);
     // The idle label is gone, so the two states cannot both be on screen.
@@ -144,13 +154,12 @@ void main() {
   ) async {
     final app = _notifier(AppStatus.unauthenticated);
     await tester.pumpWidget(_host(app, reduceMotion: true));
-    // The one case that DOES settle: with animations disabled both clocks are
-    // parked, so there is no endless frame loop to wait on.
+    // The background animation is parked with reduced motion; the workspace
+    // example is static in both modes.
     await tester.pumpAndSettle();
 
-    // The point of the parked frame: it is mid-story, so a still viewer still
-    // sees packets on the wires rather than an empty diagram.
-    expect(find.byType(LoginRelayDiagram), findsOneWidget);
+    // The example stays visible without depending on animation.
+    expect(find.byType(WelcomeWorkspacePreview), findsOneWidget);
     expect(find.text('Sign in'), findsOneWidget);
   });
 
@@ -167,6 +176,11 @@ void main() {
 
     expect(tester.takeException(), isNull);
     expect(find.text('Sign in'), findsOneWidget);
+    expect(find.text('Sign in').hitTestable(), findsOneWidget);
+    expect(
+      tester.getRect(find.widgetWithText(FilledButton, 'Sign in')).bottom,
+      lessThan(tester.view.physicalSize.height),
+    );
   });
 
   test('the diagram\'s caption clears the body-text contrast floor', () {
@@ -220,21 +234,21 @@ void main() {
     // Just pressed: in flight, no URL yet.
     expect(app.pendingAuthorizeUrl, isNull);
     expect(find.text('Waiting for your browser'), findsOneWidget);
-    expect(find.byType(LoginRelayDiagram), findsOneWidget);
+    expect(find.byType(WelcomeWorkspacePreview), findsOneWidget);
 
     // The CLI hands one over; nothing about the screen should change.
     app.pendingAuthorizeUrl = 'https://auth.example/authorize';
     app.notifyListeners();
     await tester.pump(const Duration(milliseconds: 100));
     expect(find.text('Waiting for your browser'), findsOneWidget);
-    expect(find.byType(LoginRelayDiagram), findsOneWidget);
+    expect(find.byType(WelcomeWorkspacePreview), findsOneWidget);
 
     // Signed in: the URL goes while the restore is still running. The card has
     // to hold until the shell is actually ready.
     app.pendingAuthorizeUrl = null;
     app.notifyListeners();
     await tester.pump(const Duration(milliseconds: 100));
-    expect(find.byType(LoginRelayDiagram), findsOneWidget);
+    expect(find.byType(WelcomeWorkspacePreview), findsOneWidget);
   });
 
   test('every frame of the diagram carries a sealed packet', () {

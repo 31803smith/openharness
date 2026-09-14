@@ -124,6 +124,7 @@ class AppMenuItem extends StatefulWidget {
     this.detail,
     this.leading,
     this.trailing,
+    this.focusNode,
     this.metrics = AppMenuRowMetrics.compact,
   });
 
@@ -146,6 +147,7 @@ class AppMenuItem extends StatefulWidget {
   /// meeting it for the first time, and there is nowhere else in a menu row to
   /// put the sentence.
   final Widget? trailing;
+  final FocusNode? focusNode;
 
   /// A quiet SECOND LINE under the label, for a row whose label alone does not
   /// say what picking it does — "Most tokens read in the last 24h" under
@@ -216,12 +218,14 @@ class _AppMenuItemState extends State<AppMenuItem> {
         color: Colors.transparent,
         borderRadius: BorderRadius.circular(8),
         child: InkWell(
+          focusNode: widget.focusNode,
           onTap: widget.onPressed,
           onHover: (hovered) => setState(() => _hovered = hovered),
           borderRadius: BorderRadius.circular(8),
           hoverColor: widget.danger
               ? error.withValues(alpha: 0.09)
               : AppSurface.hoverFill,
+          focusColor: AppSurface.hoverFill,
           splashFactory: NoSplash.splashFactory,
           child: Ink(
             decoration: BoxDecoration(

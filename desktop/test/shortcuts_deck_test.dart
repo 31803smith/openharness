@@ -86,18 +86,18 @@ void main() {
       );
     }
 
-    // ⇧⌘] is three caps, not one glyph run.
+    // ⌘] is two caps. Ctrl+Tab switches swarms.
     final next = find.ancestor(
-      of: find.text('Next agent'),
+      of: find.text('Forward'),
       matching: find.byType(Row),
     );
     expect(
       find.descendant(of: next.first, matching: find.byType(KeyCap)),
-      findsNWidgets(3),
+      findsNWidgets(2),
     );
 
     // And the keys the app deliberately leaves alone are named too.
-    expect(find.text('The terminal keeps'.toUpperCase()), findsOneWidget);
+    expect(find.text('Agent input'.toUpperCase()), findsOneWidget);
     expect(find.text(kTerminalOwnedKeys.first.label), findsOneWidget);
   });
 
@@ -150,7 +150,7 @@ void main() {
 
     await pumpDeck(tester, 900);
 
-    final label = tester.renderObject<RenderBox>(find.text('Next agent'));
+    final label = tester.renderObject<RenderBox>(find.text('Forward'));
     expect(
       label.size.height,
       lessThan(KeyCap.height),
