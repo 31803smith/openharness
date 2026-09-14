@@ -17,6 +17,7 @@ import '../shared/widgets/skeleton.dart';
 import '../shortcuts/app_shortcuts.dart';
 import '../state/app_state.dart';
 import 'agent_drag.dart';
+import 'delete_agent_dialog.dart';
 import 'rename_agent_dialog.dart';
 import 'account_footer.dart';
 import 'device_row.dart';
@@ -1074,40 +1075,14 @@ class _AgentRowState extends State<_AgentRow> {
     agent.name,
   );
 
-  Future<void> _confirmDelete() async {
-    final confirmed = await showAppDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Delete agent'),
-        content: SizedBox(
-          width: 360,
-          child: Text(
-            "Delete “${agent.name}”? This can't be undone.",
-            style: TextStyle(fontFamily: grid.AppFont.sans, fontSize: 13.5),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(
-              backgroundColor: grid.AppPalette.dangerFill,
-            ),
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-    final error = await notifier.deleteAgent(state.machine.machineId, agent.id);
-    if (error != null && mounted) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(error)));
-    }
-  }
+  /// The row's way into the shared confirmation — see delete_agent_dialog.dart.
+  Future<void> _confirmDelete() => confirmDeleteAgent(
+    context,
+    notifier,
+    state.machine.machineId,
+    agent.id,
+    agent.name,
+  );
 
   // Restart is disruptive (it briefly kills the current process) but NOT destructive — the same
   // agent survives, resumed where possible — so unlike delete it fires straight away, no
