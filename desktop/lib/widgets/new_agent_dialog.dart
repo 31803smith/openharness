@@ -153,6 +153,9 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     // answer lands, so nothing blanks.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
+        // The modal's fallback focus can win autofocus. Claim the first
+        // actionable control once the route and its focus tree are mounted.
+        _folderFocus.requestFocus();
         unawaited(_probeEngines(initialProbe: widget.initialEngineProbe));
         unawaited(_loadAgentPreference());
       }
@@ -357,6 +360,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     // over there, so the agent would fail to start in a folder the user watched
     // themselves select. That case keeps the in-app browser, which walks the
     // remote filesystem over the `fs_list_dir` RPC.
+    var acceptedFolder = false;
     setState(() => _picking = true);
     final pickingRevision = _machineRevision;
     try {
@@ -376,6 +380,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
             pickingRevision == _machineRevision) {
           _folder = picked;
           _error = null;
+          acceptedFolder = true;
         }
       });
     } catch (error) {
@@ -391,8 +396,16 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted &&
               !_choicesLocked &&
+              !_picking &&
               pickingRevision == _machineRevision) {
-            _folderFocus.requestFocus();
+            // A confirmed folder makes the primary action the next step.
+            // Cancellation/failure keeps Enter on browsing, and a pending
+            // account choice must not focus a disabled submit button.
+            if (acceptedFolder && !_waitingForCodexProfile) {
+              _actionFocus.requestFocus();
+            } else {
+              _folderFocus.requestFocus();
+            }
           }
         });
       }
@@ -552,13 +565,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
             style: TextButton.styleFrom(
               foregroundColor: grid.AppPalette.textSecondary,
             ),
-            child: Text(
-              _confirmationPending
-                  ? 'Close'
-                  : widget.offerBackToSearch
-                  ? 'Back to Search'
-                  : 'Back to Search',
-            ),
+            child: Text(_confirmationPending ? 'Close' : 'Back to Search'),
           ),
         if (widget.offerFindExisting &&
             _confirmationPending &&

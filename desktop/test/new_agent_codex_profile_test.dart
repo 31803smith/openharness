@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:file_selector_platform_interface/file_selector_platform_interface.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/auth/auth_session.dart';
 import 'package:harness/core/config.dart';
@@ -236,10 +237,7 @@ void main() {
         find.byKey(const Key('new-agent-machine-field')),
       );
       expect(machineField.options.single.label, 'This Mac — Remote');
-      expect(
-        find.widgetWithText(FilledButton, 'New Harness'),
-        findsOneWidget,
-      );
+      expect(find.widgetWithText(FilledButton, 'New Harness'), findsOneWidget);
       expect(
         find.text(
           'This harness will run on This Mac. Its folders are browsed through '
@@ -292,14 +290,25 @@ void main() {
     final notifier = _Notifier(const ['/custom/work-login'])
       ..pending = Completer<void>();
     await open(tester, notifier: notifier);
-    await tester.tap(find.text('Browse…'));
+    final folderFocus = tester
+        .widget<InkWell>(find.byKey(const Key('new-agent-folder')))
+        .focusNode!;
+    folderFocus.requestFocus();
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pumpAndSettle();
     final createButton = find.widgetWithText(FilledButton, 'New Harness');
     expect(tester.widget<FilledButton>(createButton).onPressed, isNull);
+    expect(folderFocus.hasPrimaryFocus, isTrue);
     expect(notifier.calls, isEmpty);
     notifier.pending!.complete();
     await tester.pumpAndSettle();
     expect(tester.widget<FilledButton>(createButton).onPressed, isNotNull);
+    expect(
+      folderFocus.hasPrimaryFocus,
+      isTrue,
+      reason: 'A late account lookup must not steal keyboard focus',
+    );
     await tester.tap(createButton);
     await tester.pumpAndSettle();
     expect(notifier.calls.single['codexHome'], '/custom/work-login');

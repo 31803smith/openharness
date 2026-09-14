@@ -457,7 +457,7 @@ void main() {
   }
 
   testWidgets(
-    'new agent is keyboard accessible without hidden focus stops',
+    'new harness supports immediate keyboard creation',
     (tester) async {
       final app = _FirstUseApp();
       app.machineStates['m']!.engines.replace(const [
@@ -471,36 +471,11 @@ void main() {
       await chord(tester, LogicalKeyboardKey.keyN);
       await tester.pump();
 
-      bool fieldFocused(String key) => tester
-          .widget<InkWell>(
-            find.descendant(
-              of: find.byKey(Key(key)),
-              matching: find.byType(InkWell),
-            ),
-          )
-          .focusNode!
-          .hasPrimaryFocus;
-
-      expect(find.byKey(const Key('new-agent-machine-field')), findsNothing);
-      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
-      await tester.pump();
-      expect(
-        Focus.of(
-          tester.element(
-            find.descendant(
-              of: find.byType(AlertDialog),
-              matching: find.text('Clone repository'),
-            ),
-          ),
-        ).hasPrimaryFocus,
-        isTrue,
-      );
-      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
-      await tester.pump();
       final folder = tester.widget<InkWell>(
         find.byKey(const Key('new-agent-folder')),
       );
       expect(folder.focusNode!.hasPrimaryFocus, isTrue);
+      expect(picker.opened, 0);
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pump();
       expect(picker.opened, 1);
@@ -508,57 +483,22 @@ void main() {
       picker.pending!.complete('/work/my-project');
       await tester.pump();
       await tester.pump();
-      expect(folder.focusNode!.hasPrimaryFocus, isTrue);
       expect(find.text('/work/my-project'), findsOneWidget);
-
-      for (final id in ['codex', 'claude', 'cursor']) {
-        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
-        await tester.pump();
-        expect(
-          Focus.of(
-            tester.element(
-              find.descendant(
-                of: find.byKey(ValueKey('new-agent-quick-$id')),
-                matching: find.byType(Text),
-              ),
-            ),
-          ).hasPrimaryFocus,
-          isTrue,
-        );
-      }
-      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
-      await tester.pump();
-      expect(fieldFocused('new-agent-engine-field'), isTrue);
-      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
-      await tester.pump();
-      expect(
-        Focus.of(tester.element(find.text('Advanced'))).hasPrimaryFocus,
-        isTrue,
+      final submit = tester.widget<FilledButton>(
+        find.byKey(const ValueKey('create-agent-submit')),
       );
-      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
-      await tester.pump();
-      expect(
-        Focus.of(tester.element(find.text('Back to Search'))).hasPrimaryFocus,
-        isTrue,
-      );
-      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
-      await tester.pump();
-      expect(
-        Focus.of(
-          tester.element(
-            find.descendant(
-              of: find.byKey(const ValueKey('create-agent-submit')),
-              matching: find.text('Create Harness'),
-            ),
-          ),
-        ).hasPrimaryFocus,
-        isTrue,
-      );
+      expect(submit.focusNode!.hasPrimaryFocus, isTrue);
       expect(app.launches, isEmpty);
+      expect(find.text('Cancel'), findsNothing);
+      expect(find.text('Back to Search'), findsNothing);
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pump();
       expect(app.launches.single.folder, '/work/my-project');
+      expect(find.byType(AlertDialog), findsNothing);
       expect(app.input, isEmpty);
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pump();
+      expect(app.input.single.bytes, [27, 91, 66]);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());
       app.dispose();
@@ -566,9 +506,56 @@ void main() {
     variant: const TargetPlatformVariant({
       TargetPlatform.macOS,
       TargetPlatform.linux,
-      TargetPlatform.windows,
     }),
   );
+
+  for (final outcome in ['cancel', 'error']) {
+    testWidgets('keyboard folder $outcome restores the chooser, not submit', (
+      tester,
+    ) async {
+      final app = _FirstUseApp();
+      app.machineStates['m']!.engines.replace(const [
+        EngineAvailability(engine: 'claude', installed: true),
+      ]);
+      final oldPicker = FileSelectorPlatform.instance;
+      final picker = _FolderPicker();
+      FileSelectorPlatform.instance = picker;
+      addTearDown(() => FileSelectorPlatform.instance = oldPicker);
+      await mount(tester, app);
+      await chord(tester, LogicalKeyboardKey.keyN);
+      final field = find.byKey(const Key('new-agent-folder'));
+      await tester.tap(field);
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('/work/my-project'), findsOneWidget);
+      final folder = tester.widget<InkWell>(field).focusNode!;
+      folder.requestFocus();
+      await tester.pump();
+      picker.pending = Completer<String?>();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      expect(picker.opened, 2);
+      if (outcome == 'error') {
+        picker.pending!.completeError(StateError('Picker unavailable'));
+      } else {
+        picker.pending!.complete(null);
+      }
+      await tester.pump();
+      await tester.pump();
+      expect(folder.hasPrimaryFocus, isTrue);
+      expect(find.text('/work/my-project'), findsOneWidget);
+      expect(app.launches, isEmpty);
+      picker.pending = Completer<String?>();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      expect(picker.opened, 3, reason: 'Enter retries browsing, not creation');
+      expect(app.launches, isEmpty);
+      picker.pending!.complete(null);
+      await tester.pump();
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+    });
+  }
 
   testWidgets('fresh workspace reaches an agent with an installed default', (
     tester,

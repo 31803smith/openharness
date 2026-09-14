@@ -33,6 +33,11 @@ no Back to Search button in creation, and no stacked dialog on dismissal.
 The creation dialog title and CTA are **New Harness**. Cancel is removed; Escape
 and clicking outside dismiss it. Launch-in-progress and uncertain-outcome states
 retain their existing safeguards and recovery actions.
+The folder control receives initial keyboard focus, so Enter opens its chooser.
+A successful keyboard folder choice focuses the enabled New Harness action;
+cancellation or failure returns focus to the folder control. If a required Codex
+account lookup is still pending, focus stays on the folder instead of a disabled
+submit action. Completing that lookup does not steal focus.
 
 The Open popup keeps its full-width **Find a harness** field, single-choice
 results and 90% black backdrop. Only the highlighted row shows **Open Harness**,
