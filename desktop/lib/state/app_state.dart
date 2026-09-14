@@ -4,10 +4,10 @@ import 'dart:io' show exit, pid;
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../analytics/analytics.dart';
 import '../api/api_client.dart';
+import '../viewer/sign_in_browser.dart';
 import '../viewer/viewer_services.dart';
 import '../auth/auth_session.dart';
 import '../auth/peer_link_client.dart';
@@ -2105,12 +2105,11 @@ class AppNotifier extends ChangeNotifier {
           if (!_authWorkCurrent(revision)) return;
           pendingAuthorizeUrl = url;
           notifyListeners();
-          // Must be the system browser, not an embedded webview: this SSO page's Google button uses
-          // Google's popup-based Identity Services flow (a real popup window posts the result back to
-          // its opener), which only a real browser can satisfy.
-          unawaited(
-            launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
-          );
+          // Which browser, and why, is decided in `viewer/sign_in_browser.dart`:
+          // the system browser on a desktop, an in-app browser view on a phone,
+          // where handing the person to Safari would suspend this app and with
+          // it the loopback listener the page redirects back to.
+          unawaited(openSignInPage(Uri.parse(url)));
         },
       );
       if (!_authWorkCurrent(revision)) return;
@@ -2136,6 +2135,9 @@ class AppNotifier extends ChangeNotifier {
         error is CliNotAvailableException ? 'cli_missing' : 'failed',
       );
     } finally {
+      // Takes the in-app browser view down once the redirect has landed; a no-op
+      // where the page opened in a browser of its own.
+      unawaited(closeSignInPage());
       // Cleared last, and only here: everything above may still be running when the URL goes, and
       // dropping the flag any earlier is what put a bare spinner over the user's own screen.
       if (_authWorkCurrent(revision)) {
