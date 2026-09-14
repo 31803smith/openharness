@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import 'package:harness/core/codex_profiles.dart';
 import 'package:harness/core/models.dart';
 import 'package:harness/shared/theme/app_theme.dart';
 import 'package:harness/state/app_state.dart';
@@ -43,6 +44,13 @@ class _NewAgentPageState extends State<NewAgentPage> {
   String? _error;
   bool _creating = false;
 
+  /// Codex state folders this machine reported, and the one chosen. Null is the
+  /// machine's own default `CODEX_HOME`, which is what the desktop dialog calls
+  /// "default profile" and what it starts on.
+  List<LocalCodexProfile> _codexProfiles = const [];
+  LocalCodexProfile? _codexProfile;
+  bool _codexProfilesLoaded = false;
+
   @override
   void initState() {
     super.initState();
@@ -50,7 +58,35 @@ class _NewAgentPageState extends State<NewAgentPage> {
     // leaves the list to the engines its own agents are already running, and a
     // machine with neither still gets the browse-and-create path.
     unawaited(widget.notifier.probeEngines(widget.machineId));
+    unawaited(_loadCodexProfiles());
   }
+
+  /// Discovery runs on the MACHINE, never on this device — the phone has no
+  /// Codex config of its own and the agent will not run here anyway.
+  Future<void> _loadCodexProfiles() async {
+    final result = await widget.notifier.listCodexProfiles(widget.machineId);
+    if (!mounted) return;
+    final raw = result['profiles'] as List<dynamic>? ?? const [];
+    final loaded = raw.map(
+      (entry) =>
+          LocalCodexProfile.fromJson(Map<String, dynamic>.from(entry as Map)),
+    );
+    // Keyed by path: the machine can report one folder under two labels.
+    final profiles = {for (final p in loaded) p.path: p}.values.toList();
+    setState(() {
+      _codexProfiles = profiles;
+      _codexProfilesLoaded = true;
+      // Exactly one, and there is nothing to choose between — the desktop
+      // dialog settles on it the same way.
+      if (profiles.length == 1) _codexProfile = profiles.single;
+    });
+  }
+
+  /// Codex can be pointed at a state folder; nothing else can, and the CLI has
+  /// to be new enough to be told.
+  bool get _showsCodexProfile =>
+      _engine == 'codex' &&
+      _machine?.engines['codex']?.supportsCodexHome == true;
 
   MachineState? get _machine => widget.notifier.stateOf(widget.machineId);
 
@@ -114,6 +150,9 @@ class _NewAgentPageState extends State<NewAgentPage> {
       widget.machineId,
       engine: engine,
       folder: folder,
+      // Only for Codex, and only when chosen: omitted, the machine launches
+      // with its own default CODEX_HOME.
+      codexHome: _showsCodexProfile ? _codexProfile?.path : null,
     );
     if (!mounted) return;
     if (error == null) {
@@ -202,6 +241,29 @@ class _NewAgentPageState extends State<NewAgentPage> {
                           ),
                       ],
                     ),
+                    if (_showsCodexProfile) ...[
+                      const SettingsCaption('CODEX PROFILE'),
+                      SettingsGroup(
+                        children: [
+                          SettingsRow(
+                            title: 'Default profile',
+                            detail: _codexProfilesLoaded
+                                ? null
+                                : 'Looking for others…',
+                            trailing: _check(_codexProfile == null),
+                            onTap: () => setState(() => _codexProfile = null),
+                          ),
+                          for (final profile in _codexProfiles)
+                            SettingsRow(
+                              title: profile.label,
+                              detail: profile.path,
+                              trailing: _check(_codexProfile == profile),
+                              onTap: () =>
+                                  setState(() => _codexProfile = profile),
+                            ),
+                        ],
+                      ),
+                    ],
                     if (_error != null)
                       Padding(
                         padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
