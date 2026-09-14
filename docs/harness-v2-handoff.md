@@ -37,7 +37,7 @@ Research must lead to justified improvements, not feature accumulation.
   an empty default swarm after its first agent.
 - `744c1fe` saved the portable handoff, pending UI drafts, native benchmark
   tooling, and collaboration design notes.
-- The current continuation implements distinct Navigate/Add experiences,
+- **`2d3c024`** implements distinct Navigate/Add experiences,
   consistent empty-swarm starters, command-mode focus preservation, and the
   navigation catalog performance improvement described below.
 - The user explicitly authorized pushing everything to this public repository
@@ -243,17 +243,24 @@ Historical checks for that terminal checkpoint:
   51 keymap decoder + 343 AppKit checks before it was parked. Those results
   apply to the old draft only. Its final visual treatment still needs review.
 
-The last verified workspace Release preview predates the terminal and current
-Navigate/Add changes; a new release build and normal relaunch are the immediate
-next step. Tests are not proof of native visual/input latency. Prior native
-computer-use inspection failed at pipe startup; calibration failed with an
-inactive/non-key benchmark window. Retry calibration only when new evidence
-establishes that its isolated window can become active/key.
+The workspace Release build at **`2d3c024` succeeded**. The old preview (PID 29025)
+was closed normally, then the exact workspace bundle was launched and verified
+running as PID 15377 with identity `ai.autonomous.harness.v2`. Those PIDs are only
+historical observations; recheck before any later process action. Build log:
+`/private/tmp/harness-two-pickers-release-build.log`.
+
+Live visual inspection remains unverified: Computer Use now lists the running
+app, but getting its exact bundle path returned `cgWindowNotFound`. A bundle-ID
+lookup is ambiguous with the old Debug copy in `/Users/ab/code/harness-app-v2`;
+always use the exact workspace path. The successful build/process check is not
+proof of native visual/input latency. Calibration previously failed with an
+inactive/non-key benchmark window. Retry it only when new evidence establishes
+that its isolated window can become active/key.
 
 ## Plan for the next session
 
-1. **Confirm the latest source/build checkpoint.** Build a release from the
-   tested source and normally relaunch only the exact workspace preview. Review
+1. **Confirm the latest source/build checkpoint.** The `2d3c024` release has been
+   built and its workspace process relaunched. Review
    Navigate, Add, command mode, and the fresh terminal position in the native app
    when computer-use access works. Preserve real running agents and input.
 2. **Improve genuine first use.** Start with no account/runtime/agents/projects

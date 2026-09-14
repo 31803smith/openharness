@@ -11,7 +11,8 @@ Updated 2026-09-13 after resuming the Navigate/Add implementation. This is a wor
 - Cleaner bounded previews join wrapped prose, remove separator/recap decorations, and use a reading card. Removed the eye toggle, darkened shared modal veils, removed the top-right New agent +, and reordered native menus. Cmd-N and customized picker keys retain their behavior; entering/leaving command mode keeps the editor mounted to avoid losing the very next key.
 - Native checks: 51 keyboard decoder + 344 AppKit assertions. Desktop: **1,256 passed, one existing skip**; analyzer: zero errors/warnings, 12 existing vendored infos. Synthetic real-font renders reviewed at 1280×800 and 880×560. Logs: `/private/tmp/harness-two-pickers-{full-tests-final,analyze-clean,native,visual-final}.log`.
 - Avoided building unused agent/project metadata for Navigate and allocating membership sets for every Add candidate. Navigation catalog setup measured 4.095 → 0.194 ms median for 50 agent locations across 12 swarms. Add's 2,000-agent query measured 1.025 ms median / 1.083 ms p95. See [performance measurements and limits](harness-v2-performance.md); these are headless CPU observations, not native keypress-to-screen latency.
-- The archived picker draft is superseded; do not reapply it. Its onboarding companion remains unapplied. Next: build/reopen the tested release preview, improve genuine first use, and qualify native responsiveness plus local/remote reconnect workflows. Draft PR #31 remains draft.
+- Pushed implementation checkpoint **`2d3c024`** to `app-v2`. Its macOS Release build succeeded, the prior workspace preview was quit normally, and the rebuilt bundle was verified running as PID 15377. Computer Use's exact-path capture returned `cgWindowNotFound`; bundle-ID lookup is ambiguous with an old Debug copy. Native visual/latency review remains unverified. Build log: `/private/tmp/harness-two-pickers-release-build.log`.
+- The archived picker draft is superseded; do not reapply it. Its onboarding companion remains unapplied. Next: improve genuine first use and qualify native responsiveness plus local/remote reconnect workflows. Draft PR #31 remains draft.
 
 ## Cross-computer checkpoint (historical)
 
@@ -583,7 +584,7 @@ npx vitest run src/lib/agentFrame.spec.ts src/lib/agentProject.spec.ts
 
 Some tests require permission to bind disposable loopback sockets. Inject memory/temp stores, skip real credential/usage pollers using `kUnderTest`, and never treat a real Harness home as a fixture. Keep patched `desktop/third_party/xterm`, not pub.dev xterm.
 
-The real review app uses `/Users/ab/code/autonomous-harness/desktop/build/macos/Build/Products/Release/Harness.app`, with the separate V2 bundle identity and saved V2 state. Its previous optimized local build was launched and verified running; the handoff's latest terminal change has not been rebuilt into that preview. Production Harness remains separate. Never automatically take over its terminals or use a real Harness home as a test fixture.
+The real review app uses `/Users/ab/code/autonomous-harness/desktop/build/macos/Build/Products/Release/Harness.app`, with the separate V2 bundle identity and saved V2 state. The Release build at `2d3c024`, including the terminal and Navigate/Add changes, was launched and its process verified running. Live window inspection remains unverified. Production Harness remains separate. Never automatically take over its terminals or use a real Harness home as a test fixture.
 
 ## Publishing boundaries
 
