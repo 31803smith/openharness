@@ -8,6 +8,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:flutter/services.dart';
 import 'package:xterm/xterm.dart';
 
+import '../core/host_platform.dart';
 import '../clipboard/native_clipboard.dart';
 import '../state/app_state.dart';
 
@@ -1131,6 +1132,13 @@ class _TerminalPanelState extends State<TerminalPanel>
                           focusNode: _focusNode,
                           autofocus: widget.focused && !showComposer,
                           readOnly: widget.readOnly || !session.acceptsInput,
+                          // A software keyboard sends no hardware delete event,
+                          // so without this backspace does nothing at all on a
+                          // phone — xterm's own doc calls it "preferred on
+                          // mobile platforms". Keyed on the platform rather than
+                          // exposed as a parameter: which events an IME emits is
+                          // a fact about the OS, not a choice either app makes.
+                          deleteDetection: isMobileHost,
                           theme: terminalThemeFor(
                             grid.AppTheme.palette.value,
                             terminalThemeStore.value,
