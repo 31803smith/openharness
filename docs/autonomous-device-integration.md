@@ -127,7 +127,7 @@ a duplicate may return any retained receipt state. Supported operations:
 |---|---|---|
 | `focus.ensure` | none | Same snapshot as `focus.get`; enable-time first-agent fallback acknowledged by Desktop |
 | `focus.get` | none | `focus:null\|{machineId,agentId,name?},focusRevision` |
-| `agents.list` | none | `machineId,agents:[{machineId,agentId,name,engine,state}]` |
+| `agents.list` | none | `machineId,agents:[{machineId,agentId,name,engine,state,recap?}]` — `recap` is the agent's newest turn headline (≤200 chars, the same string `recap` returns as `turns[0].recap`); absent until a turn has been summarised |
 | `status` | `machineId,agentId` | `machineId,agentId,state,openQuestion:null\|{requestId,questions}` |
 | `recap` | `machineId,agentId,n?` (default 3, integer 1–5) | `machineId,agentId,turns:[{kind,text,recap?,fullText?}]` |
 | `turn.send` | `machineId,agentId,idempotencyKey,text,focusRevision?` | `status,receipt` |
@@ -202,6 +202,10 @@ prefer `turns[].fullText`, then `turn.summary.fullText`, then `text`:
 | `recap` | 60 chars | the first prose sentence — a tile headline |
 | `text` | 250 chars | the answer flattened to one line and clipped — a glance |
 | `fullText` | 8192 bytes UTF-8 | the assistant's final message as shown on screen, markdown and line breaks intact |
+
+`agents.list` inlines only the first of the three, so a list view has a status line per agent without one
+`recap` round-trip each. Only the headline, by arithmetic again: the list is uncapped, and `text` or
+`fullText` on every row would put a machine with a few dozen agents over the socket's frame limit.
 
 `fullText` is optional and absent when no answer was recorded, so read it defensively. It holds only the
 final user-facing response — never tool transcripts, hidden reasoning or terminal output — and it costs
