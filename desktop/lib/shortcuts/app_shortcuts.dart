@@ -276,7 +276,7 @@ const List<AppShortcut> kAppShortcuts = [
   AppShortcut(
     action: ShortcutAction.closePane,
     activator: SingleActivator(LogicalKeyboardKey.keyW, meta: true),
-    label: 'Close the focused pane',
+    label: 'Remove the focused agent from this swarm',
     group: ShortcutGroup.panes,
   ),
   AppShortcut(

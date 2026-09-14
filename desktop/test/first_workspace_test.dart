@@ -13,6 +13,7 @@ import 'package:harness/state/app_state.dart';
 import 'package:harness/state/pane_arrangement.dart';
 import 'package:harness/state/swarm_catalog.dart';
 import 'package:harness/terminal/terminal_binary.dart';
+import 'package:harness/terminal/terminal_session.dart';
 import 'package:harness/widgets/clone_repository_dialog.dart';
 import 'package:xterm/xterm.dart';
 
@@ -71,6 +72,7 @@ class _FirstUseApp extends AppNotifier {
     String? codexHome,
     String? swarmId,
     PaneSplitRequest? split,
+    AgentCreationAttempt? attempt,
   }) async {
     launches.add((
       machine: machineId,
@@ -243,6 +245,16 @@ void main() {
             .value,
         'm',
       );
+      expect(
+        tester
+            .widget<AppSelectField<String>>(
+              find.byKey(const Key('new-agent-machine-field')),
+            )
+            .options
+            .last
+            .label,
+        'Remote computer — Remote — Offline',
+      );
       expect(app.launches, isEmpty);
       await tester.tap(find.text('Cancel'));
       await tester.pump();
@@ -339,7 +351,7 @@ void main() {
 
   for (final native in [false, true]) {
     testWidgets(
-      'new agent ${native ? 'native menu' : 'floating picker'} action inherits the focused working folder',
+      'new agent ${native ? 'native menu' : 'floating picker'} defaults to this computer',
       (tester) async {
         tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
           const MethodChannel('harness/swarm_tabs'),
@@ -356,16 +368,41 @@ void main() {
         app.machineStates['m']!.engines.replace(const [
           EngineAvailability(engine: 'codex', installed: true),
         ]);
-        app.machineStates['m']!.agents = const [
-          Agent(
-            id: 'existing',
-            name: 'Existing work',
-            engine: 'codex',
-            terminalAvailable: true,
-            project: AgentProject(name: 'Workspace', cwd: '/work/existing'),
-          ),
-        ];
-        final pane = app.adoptSessionForTest(terminal('existing', app.input));
+        const remote = Machine(
+          machineId: 'remote',
+          name: 'Remote computer',
+          authMode: MachineAuthMode.remote,
+        );
+        app.machines = [...app.machines, remote];
+        app.machineStates['remote'] = MachineState(remote)
+          ..nodeOnline = true
+          ..agentLoadStatus = AgentLoadStatus.loaded
+          ..agents = const [
+            Agent(
+              id: 'existing',
+              name: 'Existing work',
+              engine: 'codex',
+              terminalAvailable: true,
+              project: AgentProject(name: 'Workspace', cwd: '/work/existing'),
+            ),
+          ];
+        final pane = app.adoptSessionForTest(
+          TerminalSession(
+              machineId: 'remote',
+              agentId: 'existing',
+              agentName: 'Existing work',
+              engineId: 'codex',
+              send: (_, _) async => true,
+              sendBinary: (frame) async {
+                if (frame.kind == TerminalBinaryKind.input) {
+                  app.input.add(frame);
+                }
+                return true;
+              },
+            )
+            ..status = TerminalSessionStatus.controlling
+            ..streamId = 'stream-existing',
+        );
         await runtime.mount(tester, app, map, native: native);
         if (native) {
           final opening = runtime.native(tester, 'newAgent');
@@ -393,8 +430,16 @@ void main() {
           await tester.pump();
         }
         expect(find.byType(AlertDialog), findsOneWidget);
-        expect(find.text('/work/existing'), findsOneWidget);
-        expect(find.byKey(const Key('new-agent-machine-field')), findsNothing);
+        expect(find.text('/work/existing'), findsNothing);
+        expect(find.text('Choose a folder…'), findsOneWidget);
+        final machineField = tester.widget<AppSelectField<String>>(
+          find.byKey(const Key('new-agent-machine-field')),
+        );
+        expect(machineField.value, 'm');
+        expect(machineField.options.map((option) => option.label), [
+          'My computer — This computer',
+          'Remote computer — Remote',
+        ]);
         expect(
           tester
               .widget<AppSelectField<String>>(

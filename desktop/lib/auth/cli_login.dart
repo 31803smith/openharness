@@ -43,6 +43,7 @@ class CliNotAvailableException implements Exception {
 class CliLogin implements SignInClient {
   final HarnessCliRunner _runner;
   Process? _activeProcess;
+  int _loginRevision = 0;
 
   CliLogin({HarnessCliRunner? runner}) : _runner = runner ?? HarnessCliRunner();
 
@@ -70,11 +71,20 @@ class CliLogin implements SignInClient {
   Future<void> login({
     required void Function(String url) onAuthorizeUrl,
   }) async {
+    // A cancelled spawn can finish after a replacement login has started.
+    // Each process owns only its attempt, including its eventual cleanup.
+    final revision = ++_loginRevision;
     final Process process;
     try {
       process = await _runner.start(['login', '--force', '--json']);
     } catch (error) {
       throw CliNotAvailableException('Could not run the harness CLI: $error');
+    }
+    if (revision != _loginRevision) {
+      unawaited(process.stdout.drain<void>());
+      unawaited(process.stderr.drain<void>());
+      process.kill();
+      throw StateError('Sign-in was cancelled.');
     }
     _activeProcess = process;
     // Drained unconditionally: an unread stderr pipe can fill its OS buffer and block the child
@@ -88,6 +98,7 @@ class CliLogin implements SignInClient {
       var success = false;
       String? message;
       await for (final raw in lines) {
+        if (revision != _loginRevision) continue;
         final line = raw.trim();
         if (line.isEmpty) continue;
         Map<String, dynamic> json;
@@ -107,6 +118,9 @@ class CliLogin implements SignInClient {
         }
       }
       final exitCode = await process.exitCode;
+      if (revision != _loginRevision) {
+        throw StateError('Sign-in was cancelled.');
+      }
       if (!gotResult || !success) {
         throw StateError(
           message ??
@@ -116,14 +130,18 @@ class CliLogin implements SignInClient {
         );
       }
     } finally {
-      _activeProcess = null;
+      if (identical(_activeProcess, process)) _activeProcess = null;
     }
   }
 
-  /// Aborts an in-flight [login] — used by the embedded sign-in webview's close button.
+  /// Aborts this attempt even if its process has not finished starting yet —
+  /// reached from the embedded sign-in webview's close button.
   @override
   void cancel() {
-    _activeProcess?.kill();
+    ++_loginRevision;
+    final process = _activeProcess;
+    _activeProcess = null;
+    process?.kill();
   }
 
   @override

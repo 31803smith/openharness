@@ -77,6 +77,17 @@ private extension SwarmTabStrip {
     update(state(rows, active: "swarm-11"))
     let hover = NSEvent.mouseEvent(with: .mouseMoved, location: .zero, modifierFlags: [],
       timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, clickCount: 0, pressure: 0)!
+    func click(_ count: Int, at point: NSPoint, time: TimeInterval) -> NSEvent {
+      NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [],
+        timestamp: time, windowNumber: 0, context: nil, eventNumber: count,
+        clickCount: count, pressure: 1)!
+    }
+    try checkTitlebar(!ownsBackgroundDoubleClick(click(2, at: NSPoint(x: 40, y: 20), time: 1)),
+      "A second click displaced from a closed tab cannot zoom the window")
+    try checkTitlebar(!ownsBackgroundDoubleClick(click(1, at: NSPoint(x: 40, y: 20), time: 2)),
+      "The first titlebar-background click starts a local sequence")
+    try checkTitlebar(ownsBackgroundDoubleClick(click(2, at: NSPoint(x: 40, y: 20), time: 2.1)),
+      "A double-click wholly on titlebar background still zooms the window")
     try checkTitlebar(tabs[0].showsDivider && tabs[1].showsDivider, "Idle neighboring tabs have separators")
     tabs[1].mouseEntered(with: hover)
     try checkTitlebar(!tabs[0].showsDivider && !tabs[1].showsDivider, "Hover clears separators on both sides of the tab")
@@ -473,8 +484,10 @@ private extension SwarmTitlebar {
     try checkTitlebar(!validateMenuItem(create), "Native New Swarm respects the tab capacity")
     canCreateSwarm = true
     try checkTitlebar(validateMenuItem(create), "Native New Swarm returns below capacity")
-    let recentRows: [[String: Any]] = (0..<20).map {
-      ["id": "agent:\($0)", "title": "Agent \($0) — Machine", "detail": "Project \($0)", "current": $0 == 0, "engine": $0 == 0 ? "claude" : "codex"]
+    let recentRows: [[String: Any]] = (0..<20).map { index -> [String: Any] in
+      ["id": "agent:\(index)", "title": "Agent \(index) — Machine",
+       "detail": "Project \(index)", "current": index == 0,
+       "engine": index == 0 ? "claude" : "codex"]
     } + [["id": "swarm:recent", "title": "Recent Swarm", "swarm": true]]
     let closedRows: [[String: Any]] = (0..<14).map {
       ["id": "closed-\($0)", "title": "Closed Swarm \($0)", "detail": "3 agents", "swarm": true, "canReopen": true]

@@ -136,6 +136,15 @@ void main() {
         greaterThan(before),
       );
       expect(frames, isEmpty);
+      final resized = tester.getSize(find.byKey(left.cellKey)).width;
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+      await tester.pump();
+      expect(
+        tester.getSize(find.byKey(left.cellKey)).width,
+        greaterThan(resized),
+        reason: 'Relayout keeps subsequent arrow keys on the resize handle',
+      );
+      expect(frames, isEmpty);
       await chord(tester, LogicalKeyboardKey.keyH);
       await tester.pump();
       expect(app.focusedPaneId, left.id);

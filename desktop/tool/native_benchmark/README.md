@@ -26,8 +26,9 @@ From `desktop/`, build with a compatible Flutter SDK and Xcode:
 python3 tool/native_benchmark/prepare.py --flutter /path/to/flutter
 ```
 
-Use the `BENCHMARK_APP` path printed by the build. Normally close the workspace preview and finish
-other builds/tests first. Keep this fixture in the foreground during a run; it
+Use the `BENCHMARK_APP` path printed by the build. Unlock the Mac, normally close
+the workspace preview and finish other builds/tests first. A locked desktop
+cannot supply the active/key window required for valid samples. Keep this fixture in the foreground during a run; it
 exits on focus loss instead of reclaiming focus between observations. The runner
 refuses to start alongside another preview or benchmark process and never quits
 them. Its error names the exact bundle path. A development copy outside the

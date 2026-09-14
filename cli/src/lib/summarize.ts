@@ -1,9 +1,13 @@
 /**
- * Device turn-recap summarizer — self-contained port of the brain's `summarizeTurnText`
- * Summarizes one turn's assistant text into the
- * device's `recap\n\nsummary` shape (recap ≤15 words, summary ≤100) via a disposable one-shot
- * from the same CLI engine as the interactive session. Honors an AbortSignal so a newer turn can
- * supersede a stale recap.
+ * Device turn-recap summarizer — self-contained port of the brain's `summarizeTurnText`.
+ *
+ * Produces the device's `recap\n\ntext` shape for one turn. Only the RECAP — a one-line headline,
+ * ≤15 words — comes from a model (a disposable one-shot of the same CLI engine as the interactive
+ * session). The `text` under it is the answer itself, flattened and clipped locally
+ * (`deriveTurnBody`), the same excerpt `SUMMARY_MODE=local` shows: nothing on the dial reads a
+ * model-written body any more (the tile shows the headline, the reader is off), the device protocol
+ * defines `text` as an excerpt, and a paraphrase nobody sees cost output tokens on every turn.
+ * Honors an AbortSignal so a newer turn can supersede a stale recap.
  */
 
 import { existsSync, mkdirSync } from 'fs'
@@ -37,9 +41,11 @@ import {
   type OneShotOptions,
 } from './oneshot.js'
 
-const SUMMARY_MAX_WORDS = 120
 const RECAP_MAX_WORDS = 15 // ~12-15 words; ONE complete sentence (20 overflowed the device tile).
 const MAX_INPUT_CHARS = 50_000
+// The previous turn's `recap\n\ntext` is a ≤15-word headline over a ≤250-char excerpt by construction;
+// this is a guard against a stored summary from an older build, not a budget anyone is expected to hit.
+const PREVIOUS_RECAP_MAX_CHARS = 1_000
 const SUMMARY_SCRATCH = join(env.ADAPTER_DATA_DIR, 'summary-scratch')
 
 function ensureSummaryScratch(): string {
@@ -149,28 +155,6 @@ function languageDrifted(src: string, out: string): boolean {
   return false
 }
 
-/**
- * Cap the SUMMARY the way the recap is capped: never an ellipsis, always a finished sentence. Prefers to
- * cut at the last sentence terminator inside the budget — which works for any language that ends a sentence
- * with one — and only falls back to the clause/connector trim when there is none.
- */
-function capComplete(text: string, max: number): string {
-  let t = (text || '').replace(/…|\.{2,}/g, ' ').replace(/\s+/g, ' ').trim()
-  const words = t.split(/\s+/)
-  if (words.length > max) {
-    const head = words.slice(0, max).join(' ')
-    const m = [...head.matchAll(/[.!?。！？]/gu)].pop()
-    t = m && m.index !== undefined && m.index > head.length * 0.4
-      ? head.slice(0, m.index + 1)
-      : head
-  }
-  if (!/[.!?。！？]$/u.test(t)) {
-    let prev: string
-    do { prev = t; t = t.replace(DANGLING_TAIL, '').replace(/[\s,;:–—-]+$/, '').trim() } while (t !== prev)
-  }
-  return t
-}
-
 // Trailing connectors (VN + EN) a recap must never END on — cutting here would leave it dangling
 // ("…2-1, nhờ"). Stripped from the tail if a hard cut lands on one. Prefix with a separator rather
 // than \b: JS \b is ASCII-only, so it fails on a Vietnamese word ending in a diacritic (e.g. "nhờ").
@@ -241,7 +225,19 @@ export function deriveTurnSummary(text: string): string | null {
   const body = stripped.replace(/\s+/g, ' ').trim()
   if (!body) return null
   const recap = clip(firstProseLine(stripped) || body, RECAP_MAX_CHARS)
-  return `${recap}\n\n${clip(body, BODY_MAX_CHARS)}`
+  return `${recap}\n\n${deriveTurnBody(text)}`
+}
+
+/** The `text` under a recap: the answer flattened to one line and clipped — a glance, never a
+ *  paraphrase. Shared by both recap writers so the body reads the same whoever wrote the headline. */
+export function deriveTurnBody(text: string): string {
+  return clip(stripMarkdown(text).replace(/\s+/g, ' ').trim(), BODY_MAX_CHARS)
+}
+
+/** The headline in a one-shot's output: its first non-empty line. A model that still writes a second
+ *  paragraph is tolerated, not concatenated — and not judged for language drift either. */
+function headlineOf(output: string): string {
+  return output.split('\n').map((line) => line.trim()).find(Boolean) ?? ''
 }
 
 /** Cut to `max` characters on a word boundary, marking the cut. Never mid-word if it can be helped. */
@@ -304,16 +300,37 @@ function firstProseLine(stripped: string): string {
 /** Longer than this and a line is saying something, not naming a section. */
 const LABEL_MAX_CHARS = 24
 
+/**
+ * `recap = llm(instruct, previousRecap, userMessage, text)`.
+ *
+ * `previousRecap` is the stored summary of this agent's LAST turn. It is context, not content: it lets
+ * a turn whose answer is "Done — same change in the other two files" recap as what was done, instead of
+ * a fragment that names nothing. The prompt fences it off so it can only resolve references, never be
+ * reported as this turn's news. Absent on a session's first turn.
+ */
 export async function summarizeTurnText(
   text: string,
   signal?: AbortSignal,
   userMessage?: string,
   engine: AgentEngine = 'claude',
   gateway?: GatewayRuntime,
+  previousRecap?: string,
 ): Promise<string | null> {
   let last = (text || '').trim()
   if (!last) return null
   if (last.length > MAX_INPUT_CHARS) last = last.slice(-MAX_INPUT_CHARS)
+
+  // Continuity only. Flattened — the stored body carries line breaks the model would otherwise
+  // read as structure to preserve — and capped so an odd stored value cannot crowd out the turn.
+  const prev = (previousRecap || '').replace(/\s+/g, ' ').trim().slice(0, PREVIOUS_RECAP_MAX_CHARS)
+  const prevBlock = prev
+    ? `For continuity ONLY, the recap of this assistant's PREVIOUS turn was: «${prev}». Use it to ` +
+      `resolve references in this turn ("it", "that one", "the same fix", "as before", "the other file") ` +
+      `and to keep names and terms consistent — nothing more. Your recap describes THIS turn's message ` +
+      `alone: do NOT repeat, restate or merge in the previous recap, and do NOT report anything from it ` +
+      `as if it happened now. If this turn's message is complete on its own, ignore the previous recap ` +
+      `entirely.\n\n`
+    : ''
 
   // If we know the user's request for this turn, tell the recap to LEAD with the direct answer to it
   // (asked a price → give the price), not a generic characterization of the topic — the answer text
@@ -338,15 +355,17 @@ export async function summarizeTurnText(
     `turn and the assistant message between the --- markers below. If both are in English, output English. ` +
     `If they use another language, output that language. If they mix languages, preserve that mix naturally. ` +
     `Never switch to a language that does not appear in the user's request or the assistant message. Ignore ` +
-    `previous conversation, account locale, environment locale, and the language of these instructions.\n\n` +
+    `previous conversation (including the previous recap, if one is quoted below), account locale, ` +
+    `environment locale, and the language of these instructions.\n\n` +
+    prevBlock +
     askBlock +
     `Between the --- markers below is a message the assistant already sent to the user. Re-voice its ` +
     `CONTENT back to the user, in the FIRST PERSON as that same assistant (its own "I"). You are ONLY ` +
     `restating what the message says — you are NOT performing any task and NOT describing this ` +
     `summarizing job. NEVER write a meta or intent sentence such as "I need to…", "I will ` +
-    `summarize/convert/translate…", "let me…", or "the message is about…". Output ONLY these two parts ` +
-    `separated by a blank line, with no headings, labels or preamble:\n` +
-    `Part 1 (recap) — a NEWSPAPER HEADLINE for this turn: ONE punchy, self-contained line of at most ` +
+    `summarize/convert/translate…", "let me…", or "the message is about…". Output ONLY the one line ` +
+    `described below — nothing before it, nothing after it, no headings, labels or preamble:\n` +
+    `A NEWSPAPER HEADLINE for this turn: ONE punchy, self-contained line of at most ` +
     `${RECAP_MAX_WORDS} words. State the SINGLE most important thing the user needs from this turn — the ` +
     `direct answer, decision, result or recommendation to their request (what was said or done, NOT a plan ` +
     `of what you will do next, NOT a description of the topic) — and FRONT-LOAD it so the first few words ` +
@@ -357,29 +376,11 @@ export async function summarizeTurnText(
     `never end on a connector/preposition/unfinished clause, and NEVER use "…", "..." or any ellipsis or ` +
     `trailing dots. If you would run long, TIGHTEN the wording into a shorter headline — do not truncate. ` +
     `Do NOT enumerate long lists — give the gist (use counts like "4 forwards" instead of naming everyone). ` +
-    `PLAIN TEXT ONLY: no emoji, markdown, tables, bullets or URLs.\n` +
-    `Part 2 (after a blank line) — a fuller summary: present tense, condensed to the key ` +
-    `points, markedly shorter than the original; scale to the source (a short message → a ` +
-    `sentence or two, a long/detailed one → a short recap), never a full restatement, at most ` +
-    `${SUMMARY_MAX_WORDS} words. Here you MAY include the important specifics/lists that the ` +
-    `recap omitted. Like the recap it MUST read as finished: end on a COMPLETE sentence, never mid-idea or ` +
-    `on a dangling connector, and NEVER use "…", "..." or any ellipsis or trailing dots. If you would run ` +
-    `long, drop the least important detail — do not truncate.\n` +
-    `LAY PART 2 OUT SO IT CAN BE READ. Use LINE BREAKS, and let the SOURCE decide where they go — there ` +
-    `is no fixed template to fill:\n` +
-    `  • material that already has its own lines KEEPS them — a poem or lyric one line per line, steps ` +
-    `or a short list one per line. Never run such items together into a single sentence.\n` +
-    `  • a shift to a DIFFERENT point starts a new line.\n` +
-    `  • one continuous explanation of ONE thing stays as ONE block. Do not break for the sake of ` +
-    `breaking; a wrongly chopped paragraph is worse than an unbroken one.\n` +
-    `A LINE BREAK IS THE ONLY FORMATTING YOU HAVE. Still no markdown, no bullet characters, no "-" or ` +
-    `"*" or "1." at the start of a line, no headings, no tables, no emoji — they are shown literally, ` +
-    `as the characters you typed. Break the line and start the text.\n` +
-    `For both parts, restate the substance itself; do NOT narrate the process (avoid ` +
-    `"I wrote/did…").\n\n---\n${last}\n\n---\n` +
-    `IMPORTANT: before you answer, re-check the user's request and source message. Write BOTH parts — ` +
-    `INCLUDING the one-line recap — in their language and register. Do NOT translate or switch to any ` +
-    `language absent from those two inputs. Keep technical terms, code, and product names as-is.`
+    `PLAIN TEXT ONLY: no emoji, markdown, tables, bullets or URLs. Restate the substance itself; do NOT ` +
+    `narrate the process (avoid "I wrote/did…").\n\n---\n${last}\n\n---\n` +
+    `IMPORTANT: before you answer, re-check the user's request and source message. Write the headline ` +
+    `in their language and register. Do NOT translate or switch to any language absent from those two ` +
+    `inputs. Keep technical terms, code, and product names as-is.`
 
   const scratch = ensureSummaryScratch()
 
@@ -423,8 +424,8 @@ export async function summarizeTurnText(
   const effort = engine === 'cursor' ? 'model-defined' : env.SUMMARY_EFFORT
   console.log(
     gatewayKey
-      ? `[recap] openrouter ${engine} · model=${model} · inputChars=${last.length}${ask ? ' · withAsk' : ''}`
-      : `[recap] one-shot ${engine} · model=${model} · effort=${effort} · inputChars=${last.length}${ask ? ' · withAsk' : ''}`,
+      ? `[recap] openrouter ${engine} · model=${model} · inputChars=${last.length}${ask ? ' · withAsk' : ''}${prev ? ' · withPrev' : ''}`
+      : `[recap] one-shot ${engine} · model=${model} · effort=${effort} · inputChars=${last.length}${ask ? ' · withAsk' : ''}${prev ? ' · withPrev' : ''}`,
   )
   const runEngine = engine === 'claude'
     ? runClaudeOneShot
@@ -453,11 +454,11 @@ export async function summarizeTurnText(
                           : engine === 'copilot'
                             ? runCopilotOneShot
                       : runOpencodeOneShot
-  // One shape for both paths so the language-drift retry and the two-part capping below stay single-source.
+  // One shape for both paths so the language-drift retry and the headline cap below stay single-source.
   const run: (options: OneShotOptions) => Promise<{ text: string; sessionId: string | null }> = gatewayKey
     ? async (options) => ({
       text: await openRouterComplete({
-        prompt: options.prompt, model, apiKey: gatewayKey, signal: options.signal, maxTokens: 1_024,
+        prompt: options.prompt, model, apiKey: gatewayKey, signal: options.signal, maxTokens: 160,
       }) ?? '',
       sessionId: null,
     })
@@ -467,12 +468,12 @@ export async function summarizeTurnText(
   await cleanupRecapSession(engine, scratch, r.sessionId)
   // Language check without naming a language: compare the writing system of the output against the inputs
   // it was supposed to mirror. Works in both directions and for any language pair.
-  if (languageDrifted(`${ask} ${last}`, r.text || '')) {
+  if (languageDrifted(`${ask} ${last}`, headlineOf(r.text || ''))) {
     console.warn('[recap] one-shot language drift detected · retrying')
     r = await run({
       prompt: prompt + `\n\nRETRY: your previous output was NOT in the same language as the user's request ` +
         `and the assistant message. Rewrite it in exactly that language — same script and same diacritics — ` +
-        `preserving the required two-part format.`,
+        `as one line.`,
       model,
       effort: env.SUMMARY_EFFORT,
       cwd: scratch,
@@ -481,11 +482,10 @@ export async function summarizeTurnText(
     await cleanupRecapSession(engine, scratch, r.sessionId)
   }
 
-  // Cap the recap (complete-reading) and body independently.
-  const trimmed = (r.text || '').trim()
-  const nl = trimmed.indexOf('\n\n')
-  const recap = capRecap((nl >= 0 ? trimmed.slice(0, nl) : trimmed).trim(), RECAP_MAX_WORDS)
-  const body = capComplete((nl >= 0 ? trimmed.slice(nl + 2) : '').trim(), SUMMARY_MAX_WORDS)
+  const recap = capRecap(headlineOf(r.text || ''), RECAP_MAX_WORDS)
   if (!recap) { console.warn('[recap] one-shot produced no usable recap (empty after cap)'); return null }
+  // The body is the answer's own excerpt, never the model's — and of the whole answer (`text`), not
+  // the tail the prompt was fed (`last`), so a very long answer excerpts from its start like local mode.
+  const body = deriveTurnBody(text)
   return body ? `${recap}\n\n${body}` : recap
 }

@@ -8,6 +8,8 @@ export interface AutonomousDeviceReceipt {
   error: { code: string; message: string } | null; at: number
 }
 export interface AutonomousDeviceAgent { agentId: string; name: string; engine: string; state: string }
+
+const AGENT_RECAP_MAX_CHARS = 200
 export interface AutonomousDeviceDelivery { deliveryId: string; sessionId: string; state: ReceiptState; reason?: string }
 export interface AutonomousDeviceServiceOptions {
   machineId: string; serverInstanceId?: string; now?: () => number
@@ -112,6 +114,12 @@ export class AutonomousDeviceService {
     this.now = options.now ?? Date.now
   }
   private key(deviceId: string, key: string): string { return `${deviceId}:${key}` }
+  /** The newest `recap` turn's headline for an agent, or undefined when no turn has been summarised. */
+  private latestRecap(agentId: string): string | undefined {
+    const first = this.options.recent(agentId, 1)[0]
+    const recap = object(first) && typeof first.recap === 'string' ? first.recap.replace(/\s+/g, ' ').trim() : ''
+    return recap ? recap.slice(0, AGENT_RECAP_MAX_CHARS) : undefined
+  }
   receipt(deviceId: string, key: string): AutonomousDeviceReceipt | null {
     this.prune()
     const value = this.entries.get(this.key(deviceId, key))?.receipt
@@ -225,7 +233,12 @@ export class AutonomousDeviceService {
       if (type === 'focus.get') return response(this.focusSnapshot())
       if (type === 'focus.ensure') return response(await this.ensureFocus())
       if ('focusRevision' in req && (typeof req.focusRevision !== 'string' || !req.focusRevision)) fail('INVALID_REQUEST', 'focusRevision must be a nonempty string')
-      if (type === 'agents.list') return response({ machineId: this.options.machineId, agents: this.options.agents().map(a => ({ ...a, machineId: this.options.machineId })) })
+      if (type === 'agents.list') {
+        return response({ machineId: this.options.machineId, agents: this.options.agents().map(a => {
+          const recap = this.latestRecap(a.agentId)
+          return { ...a, machineId: this.options.machineId, ...(recap ? { recap } : {}) }
+        }) })
+      }
       if (typeof req.agentId !== 'string' || !req.agentId || typeof req.machineId !== 'string') fail('MISSING_TARGET', 'machineId and agentId are required')
       if (req.machineId !== this.options.machineId) fail('MACHINE_MISMATCH', 'Only the paired machine is available')
       const agentId = req.agentId as string

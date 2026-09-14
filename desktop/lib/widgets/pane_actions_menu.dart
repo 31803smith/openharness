@@ -74,10 +74,9 @@ class _PaneActionsMenuState extends State<PaneActionsMenu> {
           widget.onToggleComposer!,
         ),
       if (widget.onClose != null)
-        _action('Close agent', Icons.close, widget.onClose!),
-      // Last, after a line, and in the danger colour: Close puts the tile
-      // away and Delete ends the agent. Two verbs one row apart that both
-      // start with the pane vanishing need more between them than a label.
+        _action('Remove from swarm', Icons.close, widget.onClose!),
+      // Removing a view keeps the agent running. Separate the destructive
+      // agent operation with a divider and the danger colour.
       if (widget.onDelete != null) ...[
         const AppMenuDivider(),
         AppMenuItem(

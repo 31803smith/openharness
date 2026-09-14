@@ -1,4 +1,8 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:path/path.dart' as p;
 
 import '../shared/widgets/app_dialog.dart';
 import '../state/app_state.dart';
@@ -6,35 +10,32 @@ import '../theme/app_theme.dart';
 import '../shared/theme/app_theme.dart' as grid;
 import '../shared/widgets/skeleton.dart';
 
-/// Lets the user browse folders ON THE REMOTE MACHINE (via the `fs_list_dir` RPC) and returns the
-/// chosen absolute path, or null if cancelled. Desktop-app and the harness CLI usually run on two
-/// different computers, so this deliberately does not use a local native file picker.
+/// Browses the selected machine through fs_list_dir. The native folder chooser
+/// would return a path on this computer instead of the agent's machine.
 Future<String?> showRemoteFolderPicker(
   BuildContext context, {
   required AppNotifier notifier,
   required String machineId,
   String? initialPath,
-}) {
-  return showAppDialog<String>(
-    context: context,
-    builder: (context) => _RemoteFolderPickerDialog(
-      notifier: notifier,
-      machineId: machineId,
-      initialPath: initialPath,
-    ),
-  );
-}
+}) => showAppDialog<String>(
+  context: context,
+  builder: (context) => _RemoteFolderPickerDialog(
+    notifier: notifier,
+    machineId: machineId,
+    initialPath: initialPath,
+  ),
+);
 
 class _RemoteFolderPickerDialog extends StatefulWidget {
-  final AppNotifier notifier;
-  final String machineId;
-  final String? initialPath;
-
   const _RemoteFolderPickerDialog({
     required this.notifier,
     required this.machineId,
     this.initialPath,
   });
+
+  final AppNotifier notifier;
+  final String machineId;
+  final String? initialPath;
 
   @override
   State<_RemoteFolderPickerDialog> createState() =>
@@ -42,281 +43,518 @@ class _RemoteFolderPickerDialog extends StatefulWidget {
 }
 
 class _RemoteFolderPickerDialogState extends State<_RemoteFolderPickerDialog> {
-  String? _path;
-  List<Map<String, dynamic>> _entries = [];
-  bool _loading = true;
-  String? _error;
+  final _location = TextEditingController();
+  final _locationFocus = FocusNode(debugLabel: 'Remote folder path');
+  final _foldersFocus = FocusNode(debugLabel: 'Remote folders');
+  final _scroll = ScrollController();
+  String? _path, _requestedPath, _error;
+  List<String> _entries = [];
+  bool _loading = true, _truncated = false;
+  int _request = 0, _edit = 0, _selected = -1;
+  double _rowHeight = 36;
+
+  bool get _canSelect =>
+      !_loading &&
+      _error == null &&
+      _path != null &&
+      _location.text.trim() == _path;
+
+  // The remote machine may use different path separators than this desktop.
+  p.Context get _paths => p.Context(
+    style:
+        (_path?.startsWith(r'\\') ?? false) ||
+            RegExp(r'^[A-Za-z]:[/\\]').hasMatch(_path ?? '')
+        ? p.Style.windows
+        : p.Style.posix,
+  );
+
+  String? get _parentPath {
+    if (_path == null) return null;
+    final parent = _paths.dirname(_path!);
+    return parent == _path ? null : parent;
+  }
 
   @override
   void initState() {
     super.initState();
     _load(widget.initialPath);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _locationFocus.requestFocus();
+    });
   }
 
-  Future<void> _load(String? path) async {
+  @override
+  void dispose() {
+    _location.dispose();
+    _locationFocus.dispose();
+    _foldersFocus.dispose();
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load(String? path, {String? highlight}) async {
+    if (_loading && _request > 0 && path == _requestedPath) return;
+    final request = ++_request;
+    final edit = _edit;
     setState(() {
       _loading = true;
       _error = null;
+      _requestedPath = path;
+      if (_location.text != (path ?? '')) {
+        _location.text = path ?? '';
+        _location.selection = TextSelection.collapsed(
+          offset: _location.text.length,
+        );
+      }
     });
-    final result = await widget.notifier.listRemoteFolder(
-      widget.machineId,
-      path,
-    );
-    if (!mounted) return;
+    Map<String, dynamic> result;
+    try {
+      result = await widget.notifier.listRemoteFolder(widget.machineId, path);
+    } catch (_) {
+      result = {'error': 'UNREACHABLE'};
+    }
+    if (!mounted || request != _request) return;
+    final resolved = result['path'];
     final error = result['error'];
-    if (error is String) {
-      // Keep whatever `_path`/`_entries` was showing before the failed hop, so a bad click (e.g. a
-      // restricted folder) leaves the browser where the user was instead of collapsing to blank.
+    if (error != null || resolved is! String || resolved.isEmpty) {
       setState(() {
         _loading = false;
-        _error = error;
+        _error = edit != _edit
+            ? null
+            : error is String
+            ? error
+            : 'UNAVAILABLE';
       });
       return;
     }
     setState(() {
       _loading = false;
-      _path = result['path'] as String?;
-      _entries = (result['entries'] as List<dynamic>? ?? [])
-          .map((e) => Map<String, dynamic>.from(e as Map))
-          .toList();
+      _path = resolved;
+      _entries = [
+        for (final entry in result['entries'] as List? ?? const [])
+          if (entry is Map &&
+              entry['isDir'] != false &&
+              entry['name'] is String &&
+              (entry['name'] as String).isNotEmpty)
+            entry['name'] as String,
+      ];
+      _truncated = result['truncated'] == true;
+      _selected = _entries.isEmpty
+          ? -1
+          : math.max(0, _entries.indexOf(highlight ?? ''));
+      // A reply may canonicalize a path, but must not replace a newer draft or
+      // disturb a selection/caret when the field already contains that path.
+      if (edit == _edit && _location.text != resolved) {
+        _location.value = TextEditingValue(
+          text: resolved,
+          selection: TextSelection(
+            baseOffset: 0,
+            extentOffset: resolved.length,
+          ),
+        );
+      }
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && request == _request) _revealSelection();
     });
   }
 
-  List<String> get _segments =>
-      (_path ?? '').split('/').where((s) => s.isNotEmpty).toList();
-
-  String _pathUpTo(int index) {
-    final prefix = (_path ?? '').startsWith('/') ? '/' : '';
-    return prefix + _segments.sublist(0, index + 1).join('/');
+  void _openPath() {
+    final path = _location.text.trim();
+    if (path.isEmpty || (_loading && path == _requestedPath)) return;
+    _load(path);
   }
 
-  String? get _parentPath {
-    if (_segments.length <= 1) return null;
-    final prefix = (_path ?? '').startsWith('/') ? '/' : '';
-    return prefix + _segments.sublist(0, _segments.length - 1).join('/');
+  void _up() {
+    if (_loading) return;
+    final parent = _parentPath;
+    if (parent != null) _load(parent, highlight: _paths.basename(_path!));
   }
 
-  String _errorMessage(String code) {
-    switch (code) {
-      case 'FORBIDDEN':
-        return "Can't browse outside the home directory on this machine.";
-      case 'PERMISSION_DENIED':
-        return "Can't open this folder — permission denied.";
-      case 'NOT_A_DIRECTORY':
-        return 'That path is not a folder.';
-      case 'UNREACHABLE':
-        return 'Machine is unreachable.';
-      default:
-        return "Can't open this folder.";
+  void _select() {
+    if (_canSelect) Navigator.of(context).pop(_path);
+  }
+
+  void _openSelected() {
+    if (!_loading && _selected >= 0 && _selected < _entries.length) {
+      _load(_paths.join(_path!, _entries[_selected]));
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Choose a folder'),
-      content: SizedBox(
-        width: 440,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _Breadcrumbs(
-              segments: _segments,
-              onTap: (i) => _load(_pathUpTo(i)),
-            ),
-            const SizedBox(height: 10),
-            SizedBox(height: 260, child: _buildBody(context)),
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: _path == null
-              ? null
-              : () => Navigator.of(context).pop(_path),
-          child: const Text('Select this folder'),
-        ),
-      ],
-    );
+  void _revealSelection() {
+    if (!_scroll.hasClients || _selected < 0) return;
+    final top = _selected * _rowHeight;
+    final bottom = top + _rowHeight;
+    final position = _scroll.position;
+    final target = top < position.pixels
+        ? top
+        : bottom > position.pixels + position.viewportDimension
+        ? bottom - position.viewportDimension
+        : position.pixels;
+    _scroll.jumpTo(target.clamp(0.0, position.maxScrollExtent));
   }
 
-  Widget _buildBody(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: AppColors.background,
-        border: Border.all(color: AppColors.border),
-        borderRadius: BorderRadius.circular(6),
+  KeyEventResult _folderKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+    final keyboard = HardwareKeyboard.instance;
+    if (keyboard.isControlPressed ||
+        keyboard.isMetaPressed ||
+        keyboard.isAltPressed ||
+        keyboard.isShiftPressed) {
+      return KeyEventResult.ignored;
+    }
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.arrowLeft) {
+      _up();
+    } else if (key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.numpadEnter ||
+        key == LogicalKeyboardKey.arrowRight) {
+      _openSelected();
+    } else if (key == LogicalKeyboardKey.arrowDown ||
+        key == LogicalKeyboardKey.arrowUp ||
+        key == LogicalKeyboardKey.home ||
+        key == LogicalKeyboardKey.end) {
+      if (!_loading && _entries.isNotEmpty) {
+        setState(() {
+          _selected = switch (key) {
+            LogicalKeyboardKey.home => 0,
+            LogicalKeyboardKey.end => _entries.length - 1,
+            LogicalKeyboardKey.arrowUp => (_selected - 1).clamp(
+              0,
+              _entries.length - 1,
+            ),
+            _ => (_selected + 1).clamp(0, _entries.length - 1),
+          };
+        });
+        _revealSelection();
+      }
+    } else {
+      return KeyEventResult.ignored;
+    }
+    return KeyEventResult.handled;
+  }
+
+  String _errorMessage(String code) => switch (code) {
+    'FORBIDDEN' =>
+      'Choose a folder inside your home directory on this machine.',
+    'PERMISSION_DENIED' => 'You don’t have permission to open this folder.',
+    'NOT_A_DIRECTORY' => 'That path is not a folder.',
+    'NOT_FOUND' =>
+      'This folder could not be found. Check the path and try again.',
+    'INVALID_PATH' => 'Enter a full folder path on this machine.',
+    'UNREACHABLE' =>
+      'Couldn’t reach this machine. Check its connection and retry.',
+    _ => 'Couldn’t open this folder. Try again.',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    grid.AppTheme.watch(context);
+    final scale = MediaQuery.textScalerOf(context);
+    _rowHeight = math.max(36, scale.scale(14) * 1.35 + 16);
+    final listHeight =
+        (MediaQuery.sizeOf(context).height - 320 - scale.scale(50)).clamp(
+          120.0,
+          280.0,
+        );
+    final machine = widget.notifier
+        .stateOf(widget.machineId)
+        ?.machine
+        .displayName;
+    final mac = Theme.of(context).platform == TargetPlatform.macOS;
+    final actionStyle = ButtonStyle(
+      minimumSize: WidgetStatePropertyAll(
+        Size(
+          0,
+          math.max(
+            grid.AppControl.heightScaled,
+            scale.scale(grid.AppControl.fontSize) * 1.25 + 16,
+          ),
+        ),
       ),
-      child: _loading
-          // Every click into a folder passes through here, so the rows are
-          // drawn where rows will be rather than a spinner in the middle of
-          // a well that empties and refills on each step.
-          ? const _FolderRowsSkeleton(key: Key('folders-skeleton'))
-          : _error != null
-          ? Center(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Text(
-                  _errorMessage(_error!),
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: AppColors.danger,
-                    fontFamily: AppFonts.sans,
-                    fontSize: 11.2,
-                  ),
-                ),
-              ),
-            )
-          : _entries.isEmpty && _parentPath == null
-          ? Center(
-              child: Text(
-                'No subfolders here.',
-                style: TextStyle(
-                  color: AppColors.muted,
-                  fontFamily: AppFonts.sans,
-                  fontSize: 11.2,
-                ),
-              ),
-            )
-          : ListView(
+    );
+    return IconButtonTheme(
+      data: IconButtonThemeData(
+        style: ButtonStyle(
+          minimumSize: const WidgetStatePropertyAll(Size(32, 32)),
+          padding: const WidgetStatePropertyAll(EdgeInsets.all(6)),
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          shape: WidgetStatePropertyAll(
+            RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(grid.AppControl.radius),
+            ),
+          ),
+          overlayColor: WidgetStatePropertyAll(grid.AppSurface.hoverFill),
+          foregroundColor: WidgetStateProperty.resolveWith(
+            (states) => states.contains(WidgetState.disabled)
+                ? AppColors.muted
+                : states.contains(WidgetState.hovered) ||
+                      states.contains(WidgetState.focused)
+                ? AppColors.text
+                : AppColors.textSoft,
+          ),
+        ),
+      ),
+      child: CallbackShortcuts(
+        bindings: {
+          SingleActivator(
+            LogicalKeyboardKey.enter,
+            meta: mac,
+            control: !mac,
+            includeRepeats: false,
+          ): _select,
+          const SingleActivator(LogicalKeyboardKey.arrowUp, alt: true): _up,
+        },
+        child: AlertDialog(
+          title: const Text('Choose a folder'),
+          scrollable: true,
+          content: SizedBox(
+            width: 520,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                if (_parentPath != null)
-                  _FolderRow(
-                    icon: Icons.arrow_upward,
-                    label: '.. (up one level)',
-                    onTap: () => _load(_parentPath),
+                Text(
+                  'On ${machine ?? 'the remote machine'}',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 12),
+                Focus(
+                  onKeyEvent: (node, event) {
+                    if (event is KeyDownEvent &&
+                        event.logicalKey == LogicalKeyboardKey.arrowDown &&
+                        !HardwareKeyboard.instance.isAltPressed &&
+                        !HardwareKeyboard.instance.isControlPressed &&
+                        !HardwareKeyboard.instance.isMetaPressed &&
+                        !HardwareKeyboard.instance.isShiftPressed &&
+                        _location.value.composing.isCollapsed &&
+                        !_loading &&
+                        _entries.isNotEmpty) {
+                      _foldersFocus.requestFocus();
+                      _revealSelection();
+                      return KeyEventResult.handled;
+                    }
+                    return KeyEventResult.ignored;
+                  },
+                  child: TextField(
+                    key: const Key('remote-folder-path'),
+                    controller: _location,
+                    focusNode: _locationFocus,
+                    autofocus: true,
+                    style: grid.kFieldTextStyle,
+                    decoration: InputDecoration(
+                      labelText: 'Folder path',
+                      hintText: 'Enter a full folder path…',
+                      suffixIcon: IconButton(
+                        tooltip: 'Open path',
+                        onPressed:
+                            _location.text.trim().isEmpty ||
+                                (_loading &&
+                                    _location.text.trim() == _requestedPath)
+                            ? null
+                            : _openPath,
+                        icon: const Icon(Icons.arrow_forward, size: 18),
+                      ),
+                    ),
+                    onChanged: (_) => setState(() {
+                      _edit++;
+                      _error = null;
+                    }),
+                    onEditingComplete: () {},
+                    onSubmitted: (_) => _openPath(),
                   ),
-                for (final entry in _entries)
-                  _FolderRow(
-                    icon: Icons.folder_outlined,
-                    label: entry['name'] as String? ?? '',
-                    onTap: () => _load('${_path ?? ''}/${entry['name']}'),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        _path != null && _location.text.trim() != _path
+                            ? 'Showing $_path'
+                            : 'Folders',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.labelMedium,
+                      ),
+                    ),
+                    IconButton(
+                      key: const Key('remote-folder-home'),
+                      tooltip: 'Home folder on this machine',
+                      onPressed: () => _load(null),
+                      icon: const Icon(Icons.home_outlined, size: 18),
+                    ),
+                    IconButton(
+                      tooltip: mac
+                          ? 'Up one folder (⌥↑)'
+                          : 'Up one folder (Alt+↑)',
+                      onPressed: _loading || _parentPath == null ? null : _up,
+                      icon: const Icon(Icons.arrow_upward, size: 18),
+                    ),
+                  ],
+                ),
+                Focus(
+                  focusNode: _foldersFocus,
+                  onKeyEvent: _folderKey,
+                  onFocusChange: (_) => setState(() {}),
+                  child: Container(
+                    key: const Key('remote-folder-list'),
+                    height: listHeight,
+                    decoration: BoxDecoration(
+                      color: AppColors.background,
+                      border: Border.all(
+                        color: _foldersFocus.hasFocus
+                            ? AppColors.accent
+                            : AppColors.border,
+                      ),
+                      borderRadius: BorderRadius.circular(
+                        grid.AppCard.insetRadius,
+                      ),
+                    ),
+                    clipBehavior: Clip.antiAlias,
+                    child: _loading
+                        ? const _FolderRowsSkeleton()
+                        : _entries.isEmpty
+                        ? Center(
+                            child: Padding(
+                              padding: const EdgeInsets.all(16),
+                              child: Text(
+                                _path == null
+                                    ? 'Enter a path or open your home folder.'
+                                    : 'No subfolders here.',
+                                textAlign: TextAlign.center,
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                            ),
+                          )
+                        : ListView.builder(
+                            controller: _scroll,
+                            itemExtent: _rowHeight,
+                            itemCount: _entries.length,
+                            itemBuilder: (context, index) => Semantics(
+                              selected: index == _selected,
+                              child: Material(
+                                color:
+                                    index == _selected && _foldersFocus.hasFocus
+                                    ? AppColors.selected
+                                    : Colors.transparent,
+                                child: InkWell(
+                                  canRequestFocus: false,
+                                  onTap: () {
+                                    _foldersFocus.requestFocus();
+                                    setState(() => _selected = index);
+                                    _openSelected();
+                                  },
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          Icons.folder_outlined,
+                                          size: 18,
+                                          color: AppColors.mutedStrong,
+                                        ),
+                                        const SizedBox(width: 10),
+                                        Expanded(
+                                          child: Text(
+                                            _entries[index],
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                        Icon(
+                                          Icons.chevron_right,
+                                          size: 16,
+                                          color: AppColors.mutedStrong,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
                   ),
+                ),
+                if (_error != null) ...[
+                  const SizedBox(height: 8),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Semantics(
+                          liveRegion: true,
+                          child: Text(
+                            _errorMessage(_error!),
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(color: AppColors.danger),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      TextButton(
+                        onPressed: () => _load(_requestedPath),
+                        child: const Text('Retry'),
+                      ),
+                    ],
+                  ),
+                ] else if (_truncated && !_loading) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    'More folders are available. Enter their full path to open them.',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
               ],
             ),
-    );
-  }
-}
-
-class _Breadcrumbs extends StatelessWidget {
-  final List<String> segments;
-  final ValueChanged<int> onTap;
-
-  const _Breadcrumbs({required this.segments, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: BoxDecoration(
-        color: AppColors.background,
-        border: Border.all(color: AppColors.border),
-        borderRadius: BorderRadius.circular(grid.AppCard.insetRadius),
-      ),
-      child: Wrap(
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: [
-          for (var i = 0; i < segments.length; i++) ...[
-            if (i > 0)
-              Padding(
-                padding: EdgeInsets.symmetric(horizontal: 2),
-                child: Text(
-                  '/',
-                  style: TextStyle(color: AppColors.borderStrong),
-                ),
-              ),
-            InkWell(
-              onTap: () => onTap(i),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 2),
-                child: Text(
-                  segments[i],
-                  style: TextStyle(
-                    fontFamily: AppFonts.sans,
-                    fontSize: 13.5,
-                    color: i == segments.length - 1
-                        ? AppColors.text
-                        : AppColors.mutedStrong,
-                  ),
-                ),
+          ),
+          actions: [
+            TextButton(
+              style: actionStyle,
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            Tooltip(
+              message: mac
+                  ? 'Select this folder (⌘↩)'
+                  : 'Select this folder (Ctrl+Enter)',
+              child: FilledButton(
+                style: actionStyle,
+                onPressed: _canSelect ? _select : null,
+                child: const Text('Select this folder'),
               ),
             ),
           ],
-        ],
+        ),
       ),
     );
   }
 }
 
-/// Five [_FolderRow]s with nothing in them: the glyph's square and a name of
-/// varying length, at the row's own padding.
 class _FolderRowsSkeleton extends StatelessWidget {
-  const _FolderRowsSkeleton({super.key});
-
-  static const _widths = [0.42, 0.28, 0.56, 0.34, 0.48];
+  const _FolderRowsSkeleton();
 
   @override
   Widget build(BuildContext context) => SkeletonList(
-    rows: _widths.length,
+    rows: 5,
     semanticsLabel: 'Loading folders',
     itemBuilder: (context, i) => Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       child: Row(
         children: [
-          const Skeleton(width: 14, height: 14, radius: 3),
-          const SizedBox(width: 9),
+          const Skeleton(width: 18, height: 18, radius: 3),
+          const SizedBox(width: 10),
           Expanded(
             child: SkeletonText(
-              style: TextStyle(fontFamily: AppFonts.sans, fontSize: 13.5),
-              widthFactor: _widths[i],
+              style: Theme.of(context).textTheme.bodyMedium!,
+              widthFactor: const [0.42, 0.28, 0.56, 0.34, 0.48][i],
             ),
           ),
         ],
       ),
     ),
   );
-}
-
-class _FolderRow extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-
-  const _FolderRow({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
-        child: Row(
-          children: [
-            Icon(icon, size: 14, color: AppColors.mutedStrong),
-            const SizedBox(width: 9),
-            Expanded(
-              child: Text(
-                label,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: AppColors.textSoft,
-                  fontFamily: AppFonts.sans,
-                  fontSize: 13.5,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }

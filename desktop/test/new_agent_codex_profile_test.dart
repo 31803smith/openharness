@@ -99,6 +99,7 @@ class _Notifier extends AppNotifier {
     String? codexHome,
     String? swarmId,
     PaneSplitRequest? split,
+    AgentCreationAttempt? attempt,
   }) async {
     calls.add({'engine': engine, 'codexHome': codexHome, 'folder': folder});
     return null;
@@ -230,6 +231,18 @@ void main() {
         tester,
         local: false,
         initialPaths: const ['/custom/work-login'],
+      );
+      final machineField = tester.widget<AppSelectField<String>>(
+        find.byKey(const Key('new-agent-machine-field')),
+      );
+      expect(machineField.options.single.label, 'This Mac — Remote');
+      expect(find.text('Create on This Mac'), findsOneWidget);
+      expect(
+        find.text(
+          'This agent will run on This Mac. Its folders are browsed through '
+          'the remote CLI.',
+        ),
+        findsOneWidget,
       );
       expect(
         find.byKey(const Key('new-agent-codex-profile-field')),
@@ -437,7 +450,7 @@ void main() {
         findsNothing,
       );
       expect(
-        find.text('Update Harness CLI to choose a local Codex profile.'),
+        find.text('Update Harness CLI on This Mac to choose a Codex profile.'),
         findsOneWidget,
       );
       await tester.tap(find.text('Browse…'));

@@ -130,6 +130,17 @@ describe('remote-password link + relay session crypto (interop with the real E2e
       expect(decrypted).not.toBeNull()
       expect((decrypted!.payload as Record<string, unknown>).foo).toBe('bar')
 
+      // Creation recovery must take the same encrypted route as creation; its result contains
+      // the agent's name and working folder. The relay sees neither the receipt nor those fields.
+      const checking = { requestId: 'check-1', creationId: 'creation-fixture-001' }
+      const statusRequest = crypto.wrapOutgoing({ type: 'agent_create_status', payload: checking })
+      expect(statusRequest.payload).not.toHaveProperty('creationId')
+      expect(manager.unwrapDown('session-conn', statusRequest)?.payload).toEqual(checking)
+      const status = { ...checking, state: 'created', agent: { id: 'agent-1', cwd: '/private/work' } }
+      const statusReply = manager.wrapTarget('session-conn', 'agent_create_status_result', status)!
+      expect(statusReply.payload).not.toHaveProperty('agent')
+      expect(crypto.unwrapIncoming(statusReply)?.payload).toEqual(status)
+
       const lowerDown = crypto.wrapOutgoing({ type: 'terminal_resize', payload: { streamId: 's', cols: 80 } })
       const higherDown = crypto.wrapOutgoing({ type: 'terminal_resize', payload: { streamId: 's', cols: 120 } })
       expect((manager.unwrapDown('session-conn', higherDown)?.payload as Record<string, unknown>).cols).toBe(120)

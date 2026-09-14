@@ -232,6 +232,9 @@ class _SwarmWelcomeState extends State<SwarmWelcome> {
     );
 
     return FocusScope(
+      // A tab can become empty while a dialog is open. Its new autofocus
+      // controls must not take keyboard input from that dialog.
+      canRequestFocus: ModalRoute.isCurrentOf(context) != false,
       child: LayoutBuilder(
         builder: (context, constraints) => SingleChildScrollView(
           child: ConstrainedBox(

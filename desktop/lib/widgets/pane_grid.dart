@@ -1157,6 +1157,7 @@ class _PaneContent extends StatelessWidget {
         builder: (context, constraints) => TerminalPanel(
           notifier: notifier,
           session: session,
+          viewportSize: constraints.biggest,
           focused: visible && notifier.isPaneFocused(pane.id),
           focusRequest: notifier.isPaneFocused(pane.id)
               ? notifier.paneFocusRequest
