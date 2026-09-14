@@ -52,7 +52,9 @@ export function newestArtifact(workspace: string, extensions: readonly string[])
         if (!isArtifactDirIgnored(name) && !name.startsWith('.')) walk(path, depth + 1)
         continue
       }
-      if (!st.isFile()) continue
+      // A hidden file is never the artifact: the 3D viewer keeps its inline GLB as `.model.step.glb`
+      // beside the STEP it was made from, and that is exactly the kind of file this must not pick.
+      if (!st.isFile() || name.startsWith('.')) continue
       const dot = name.lastIndexOf('.')
       if (dot < 0 || !wanted.has(name.slice(dot).toLowerCase())) continue
       if (!best || st.mtimeMs > best.mtimeMs) {
@@ -68,5 +70,7 @@ export function newestArtifact(workspace: string, extensions: readonly string[])
 export function isCandidateArtifact(path: string, extensions: readonly string[]): boolean {
   const lower = path.toLowerCase()
   if (!extensions.some((ext) => lower.endsWith(ext.toLowerCase()))) return false
-  return !path.split(/[\\/]/).slice(0, -1).some((segment) => isArtifactDirIgnored(segment))
+  const segments = path.split(/[\\/]/)
+  if (segments[segments.length - 1].startsWith('.')) return false
+  return !segments.slice(0, -1).some((segment) => isArtifactDirIgnored(segment))
 }

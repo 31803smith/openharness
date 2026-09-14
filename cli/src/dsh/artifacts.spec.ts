@@ -25,7 +25,8 @@ describe('newestArtifact', () => {
     touch('node_modules/lib/newest.step', 9_000)
     touch('__cadgen__/cache.step', 9_000)
     touch('.hidden/x.step', 9_000)
-    expect(newestArtifact(workspace, ['.step', '.stl'])?.path).toBe('models/new.STEP')
+    touch('models/.new.STEP.glb', 9_000)
+    expect(newestArtifact(workspace, ['.step', '.stl', '.glb'])?.path).toBe('models/new.STEP')
     expect(newestArtifact(workspace, ['.glb'])).toBeNull()
     expect(newestArtifact(workspace, [])).toBeNull()
   })
@@ -36,6 +37,7 @@ describe('isCandidateArtifact', () => {
     expect(isCandidateArtifact('/ws/models/a.step', ['.step'])).toBe(true)
     expect(isCandidateArtifact('/ws/a.txt', ['.step'])).toBe(false)
     expect(isCandidateArtifact('/ws/node_modules/a.step', ['.step'])).toBe(false)
+    expect(isCandidateArtifact('/ws/models/.a.step.glb', ['.glb'])).toBe(false)
   })
 })
 
