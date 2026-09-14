@@ -6,6 +6,7 @@ import { binaryOnPath } from './binaryOnPath.js'
 import { engineBin } from './engineBin.js'
 import type { EngineInstallRecipe } from './engineInstall.js'
 import { managedNodePath } from './nodeRuntime.js'
+import { RAISE_OPEN_FILES_SH } from './openFiles.js'
 
 /**
  * Best-effort "skip permission prompts" flag per engine, confirmed against each vendor's own docs.
@@ -200,7 +201,11 @@ export function buildEngineLaunchArgv(
     : opts.installFirst
       ? installThenExecScript(opts.installFirst)
       : 'exec "$@"'
-  return [interactive.path, ...interactive.args, prelude + cwdPrelude + body, 'harness-engine', ...(opts.cwd ? [opts.cwd] : []), ...command]
+  // The open-files raise goes ahead of everything, the installer included: a pane inherits the tmux
+  // SERVER's soft limit, which is launchd's 256 whenever the desktop app started the daemon that
+  // started the server, and an engine (Claude Code refuses outright) or an npm install under 256 is
+  // the failure the person then reads in the pane. See openFiles.ts.
+  return [interactive.path, ...interactive.args, RAISE_OPEN_FILES_SH + prelude + cwdPrelude + body, 'harness-engine', ...(opts.cwd ? [opts.cwd] : []), ...command]
 }
 
 /**

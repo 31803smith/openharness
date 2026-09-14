@@ -12,17 +12,18 @@ import {
 import { ENGINES } from '../engines/types.js'
 import { engineBin } from './engineBin.js'
 import type { EngineInstallRecipe } from './engineInstall.js'
+import { MIN_OPEN_FILES, RAISE_OPEN_FILES_SH } from './openFiles.js'
 
 describe('buildEngineLaunchArgv', () => {
   it('wraps zsh in its interactive login form and execs the resolved binary', () => {
     expect(buildEngineLaunchArgv('claude', {}, '/bin/zsh')).toEqual([
-      '/bin/zsh', '-lic', 'exec "$@"', 'harness-engine', engineBin('claude'),
+      '/bin/zsh', '-lic', `${RAISE_OPEN_FILES_SH}exec "$@"`, 'harness-engine', engineBin('claude'),
     ])
   })
 
   it('uses Ubuntu bash interactive startup files without making it a login shell', () => {
     expect(buildEngineLaunchArgv('claude', {}, '/bin/bash')).toEqual([
-      '/bin/bash', '-ic', 'exec "$@"', 'harness-engine', engineBin('claude'),
+      '/bin/bash', '-ic', `${RAISE_OPEN_FILES_SH}exec "$@"`, 'harness-engine', engineBin('claude'),
     ])
   })
 
@@ -30,9 +31,26 @@ describe('buildEngineLaunchArgv', () => {
     const argv = buildEngineLaunchArgv('claude', { cwd: '/work/project' }, '/bin/zsh')
     expect(argv).toEqual([
       '/bin/zsh', '-lic',
-      'if ! cd -- "$1"; then printf \'%s\\n\' \'harness: the selected working directory is unavailable.\' >&2; exit 1; fi\nshift\nexec "$@"',
+      `${RAISE_OPEN_FILES_SH}if ! cd -- "$1"; then printf '%s\\n' 'harness: the selected working directory is unavailable.' >&2; exit 1; fi\nshift\nexec "$@"`,
       'harness-engine', '/work/project', engineBin('claude'),
     ])
+  })
+
+  it('hands the engine a soft open-files limit fit for it, however low the pane started', async () => {
+    // A tmux server started by the desktop app passes launchd's 256 to every pane; Claude Code will
+    // not start under that. The pane's own shell lifts it before exec, so the server never has to.
+    const [shell, flag, paneScript] = buildEngineLaunchArgv('claude', {}, '/bin/sh')
+    const { execFile } = await import('node:child_process')
+    const seenByEngine = await new Promise<string>((resolve, reject) => {
+      execFile(
+        '/bin/sh',
+        ['-c', 'ulimit -S -n 256 || exit 99; exec "$@"', 'pane', shell, flag, paneScript, 'harness-engine', '/bin/sh', '-c', 'ulimit -S -n'],
+        { timeout: 10_000 },
+        (error, stdout, stderr) => (error ? reject(new Error(`${error.message}\n${stderr}`)) : resolve(stdout.trim())),
+      )
+    })
+    expect(seenByEngine).not.toBe('256')
+    expect(seenByEngine === 'unlimited' || Number(seenByEngine) >= Math.min(MIN_OPEN_FILES, 4096)).toBe(true)
   })
 
   it('falls back to direct execution when no absolute shell is available', () => {
@@ -165,7 +183,7 @@ describe('buildEngineLaunchArgv with installFirst', () => {
     buildEngineLaunchArgv('opencode', { installFirst: install }, '/bin/zsh')[2]
 
   it('leaves the plain launch alone when nothing has to be installed', () => {
-    expect(buildEngineLaunchArgv('opencode', {}, '/bin/zsh')[2]).toBe('exec "$@"')
+    expect(buildEngineLaunchArgv('opencode', {}, '/bin/zsh')[2]).toBe(`${RAISE_OPEN_FILES_SH}exec "$@"`)
   })
 
   it('keeps the engine argv positional, so the shell never re-parses a path or a flag', () => {
