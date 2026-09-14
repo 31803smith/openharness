@@ -74,7 +74,13 @@ void main() {
       await tester.pump();
       expect(find.text('⌘⇧P'), findsNothing);
       expect(find.text('⇧⌘P'), findsNothing);
-      expect(find.text('Add Harness'), findsNothing);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('swarm-search-results')),
+          matching: find.text('Open Harness'),
+        ),
+        findsNothing,
+      );
       expect(find.byKey(const ValueKey('command:pane.pin')), findsOneWidget);
       expect(app.isPanePinned(pane), isFalse);
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
@@ -111,7 +117,7 @@ void main() {
       final app = createApp();
       await mount(tester, app);
       final input = find.byKey(const ValueKey('swarm-search-input'));
-      await tester.tap(input);
+      await chord(tester, LogicalKeyboardKey.keyO);
       await tester.enterText(input, '> rename');
       await tester.pump();
       expect(

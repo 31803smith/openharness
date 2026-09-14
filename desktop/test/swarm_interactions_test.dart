@@ -70,7 +70,7 @@ void main() {
     (tester) async {
       final app = createApp();
       await mount(tester, app);
-      await tester.tap(find.byKey(const ValueKey('swarm-search-input')));
+      await chord(tester, LogicalKeyboardKey.keyO);
       await tester.pump();
       expect(app.panes, isEmpty);
       await tester.enterText(
@@ -282,7 +282,7 @@ void main() {
       expect(app.swarms, hasLength(1));
       expect(app.panes, isEmpty);
       expect(app.activeSwarmId, isNot(anyOf(first, second)));
-      expect(find.byKey(const ValueKey('swarm-search-input')), findsOneWidget);
+      expect(find.byKey(const ValueKey('harness-start-search')), findsOneWidget);
       final starter = app.activeSwarmId;
       await activate('new');
       expect(app.swarms, hasLength(1));

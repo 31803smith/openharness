@@ -17,7 +17,7 @@ Finder get selectedRow =>
 void main() {
   for (final nativeTabs in [false, true]) {
     testWidgets(
-      'New Agent opens existing work in a new view and preserves its runtime (native=$nativeTabs)',
+      'New Tab offers Open Harness and preserves the selected runtime (native=$nativeTabs)',
       (tester) async {
         const channel = MethodChannel('harness/swarm_tabs');
         tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
@@ -52,7 +52,7 @@ void main() {
           await opening;
         } else {
           await tester.tap(
-            find.byKey(const ValueKey('swarm-new-agent-button')),
+            find.byKey(const ValueKey('swarm-new-tab-button')),
           );
           await tester.pump();
         }
@@ -61,6 +61,7 @@ void main() {
         expect(opened.name, 'New Harness');
         expect(opened.panes, isEmpty);
         expect(find.byType(AlertDialog), findsNothing);
+        await chord(tester, LogicalKeyboardKey.keyO);
         final field = find.byKey(const ValueKey('swarm-search-input'));
         expect(tester.widget<TextField>(field).focusNode!.hasFocus, isTrue);
         await tester.enterText(field, 'Agent 0');
@@ -111,7 +112,7 @@ void main() {
     expect(app.activeSwarm.name, 'New Harness');
     expect(app.panes, isEmpty);
     expect(app.allPanes, contains(pane));
-    expect(find.byKey(const ValueKey('swarm-search-input')), findsOneWidget);
+    expect(find.byKey(const ValueKey('harness-start-search')), findsOneWidget);
     expect(frames, isEmpty);
     await tester.pumpWidget(const SizedBox());
     app.dispose();

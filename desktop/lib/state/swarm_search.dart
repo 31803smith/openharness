@@ -101,15 +101,13 @@ class SwarmSearchController extends ChangeNotifier {
       ) &&
       (split == null || app.isPaneSplitCurrent(split!));
 
-  bool get opensFirstAgent => adding && capacity == AppNotifier.maxPanes;
-  String get addVerb => opensFirstAgent ? 'Open' : 'Add';
   String get commandQuery =>
       query.trimLeft().replaceFirst(RegExp(r'^>\s*'), '');
 
   String get primaryAction => switch (split?.axis) {
     PaneResizeAxis.x => 'Split right',
     PaneResizeAxis.y => 'Split down',
-    null => opensFirstAgent ? 'Open Harness' : 'Add Harness',
+    null => 'Open Harness',
   };
 
   String actionLabel(SwarmDestination? row) => row?.isCommand == true
@@ -119,7 +117,7 @@ class SwarmSearchController extends ChangeNotifier {
                 row.agentId == null &&
                 split == null &&
                 _missingIds(row).length > 1
-            ? '$addVerb ${_missingIds(row).length} Harnesses'
+            ? 'Open ${_missingIds(row).length} Harnesses'
             : primaryAction
       : row == null
       ? 'Go to'

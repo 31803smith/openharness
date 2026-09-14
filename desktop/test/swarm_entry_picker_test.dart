@@ -10,177 +10,237 @@ import 'swarm_state_test.dart' show createApp, MemoryStore;
 
 final _input = find.byKey(const ValueKey('swarm-search-input'));
 final _results = find.byKey(const ValueKey('swarm-search-results'));
+final _startInput = find.byKey(const ValueKey('harness-start-search'));
 
 void main() {
-  for (final native in [false, true]) {
-    testWidgets(
-      'the starting picker cannot leave a blank page (native=$native)',
-      (tester) async {
-        const channel = MethodChannel('harness/swarm_tabs');
-        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
-          channel,
-          (_) async => true,
-        );
-        addTearDown(
-          () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
-            channel,
-            null,
-          ),
-        );
-        final app = createApp();
-        await mount(tester, app, nativeTabs: native);
-        void ready() {
-          expect(_results, findsOneWidget);
-          expect(
-            tester.widget<TextField>(_input).focusNode!.hasPrimaryFocus,
-            isTrue,
-          );
-          expect(find.byKey(const ValueKey('welcome-title')), findsNothing);
-          expect(find.text('> Commands'), findsNothing);
-          expect(
-            find.byKey(const ValueKey('swarm-search-new-agent')),
-            findsOneWidget,
-          );
-        }
-
-        ready();
-        final original = app.activeSwarmId;
-        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-        await tester.pump();
-        ready();
-        expect(find.text('esc'), findsNothing);
-        app.renameSwarm(original, 'Empty workspace');
-        await tester.pump();
-        ready();
-        expect(app.activeSwarmId, original);
-        await chord(tester, LogicalKeyboardKey.keyO);
-        ready();
-        expect(app.swarms, hasLength(1));
-        await chord(tester, LogicalKeyboardKey.keyT);
-        await tester.pump();
-        ready();
-        expect(app.swarms, hasLength(1));
-        expect(app.activeSwarmId, original);
-        expect(app.panes, isEmpty);
-        await tester.tapAt(const Offset(20, 200));
-        await tester.pump();
-        ready();
-        app.dismissError();
-        await tester.pump();
-        ready();
-        await tester.pumpWidget(const SizedBox());
-        app.dispose();
-        expect(tester.takeException(), isNull);
-      },
-    );
-
-    for (final dismissal in ['outside', 'escape']) {
-      testWidgets('cancel a new draft on $dismissal (native=$native)', (
-        tester,
-      ) async {
-        final app = createApp();
-        final frames = <TerminalBinaryFrame>[];
-        final pane = app.adoptSessionForTest(terminal('a0', frames));
-        final original = app.activeSwarmId;
-        await mount(tester, app, nativeTabs: native);
-        await chord(tester, LogicalKeyboardKey.keyT);
-        await tester.pump();
-        final draft = app.activeSwarmId;
-        expect(draft, isNot(original));
-        expect(app.isDraftSwarm(draft), isTrue);
-        expect(_results, findsOneWidget);
-        // Repeated New Harness reuses the untouched draft.
-        await chord(tester, LogicalKeyboardKey.keyT);
-        expect(app.swarms, hasLength(2));
-        if (dismissal == 'outside') {
-          await tester.tapAt(const Offset(20, 200));
-        } else {
-          await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-        }
-        await tester.pump();
-        expect(_results, findsNothing);
-        expect(app.activeSwarmId, original);
-        expect(app.swarms, hasLength(1));
-        expect(app.closedHistory, isEmpty);
-        expect(app.focusedPane, same(pane));
-        await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
-        await tester.pump();
-        expect(frames.single.bytes, [27, 91, 66]);
-        await tester.pumpWidget(const SizedBox());
-        app.dispose();
-        expect(tester.takeException(), isNull);
-      });
-    }
-  }
-
-  testWidgets('discovery preserves picker composition and Escape ownership', (
+  testWidgets('start-page results filter and open with arrows and Enter', (
     tester,
   ) async {
     final app = createApp();
     await mount(tester, app);
-    await tester.enterText(_input, 'Agent 12');
+    await tester.tap(_startInput);
+    await tester.enterText(_startInput, 'Agent 1');
     await tester.pump();
-    final text = tester.widget<TextField>(_input).controller!;
-    final composing = text.value.copyWith(
-      selection: const TextSelection.collapsed(offset: 7),
-      composing: const TextRange(start: 6, end: 8),
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pump();
+    final selected = find.byWidgetPredicate(
+      (widget) => widget is ListTile && widget.selected,
     );
-    text.value = composing;
-    app.renameSwarm(app.activeSwarmId, 'Updated in the background');
-    await tester.pump();
-    expect(text.value, composing);
-    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-    await tester.pump();
-    expect(_results, findsOneWidget);
-    text.clearComposing();
-    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-    await tester.pump();
-    expect(_results, findsOneWidget);
-    await chord(tester, LogicalKeyboardKey.keyP, shift: true);
-    expect(tester.widget<TextField>(_input).controller!.text, '> ');
     expect(
-      tester.widget<TextField>(_input).decoration!.hintText,
-      'Search commands…',
+      find.descendant(of: selected, matching: find.text('Agent 10')),
+      findsOneWidget,
     );
+    expect(
+      find.descendant(of: selected, matching: find.text('Open Harness')),
+      findsOneWidget,
+    );
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+    expect(app.panes.single.agentId, 'a10');
+    expect(_startInput, findsNothing);
     await tester.pumpWidget(const SizedBox());
     app.dispose();
   });
 
+  for (final native in [false, true]) {
+    testWidgets('start page separates Open and New Harness (native=$native)', (
+      tester,
+    ) async {
+      const channel = MethodChannel('harness/swarm_tabs');
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        channel,
+        (_) async => true,
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          channel,
+          null,
+        ),
+      );
+      final app = createApp();
+      await mount(tester, app, nativeTabs: native);
+      final original = app.activeSwarmId;
+      expect(_results, findsNothing);
+      expect(_startInput, findsOneWidget);
+      expect(find.byType(FloatingActionButton), findsNothing);
+      expect(tester.getSize(_startInput).width, lessThanOrEqualTo(640));
+      expect(
+        tester.widget<TextField>(_startInput).decoration!.hintText,
+        isEmpty,
+      );
+      expect(
+        tester.widget<TextField>(_startInput).focusNode!.hasFocus,
+        isFalse,
+      );
+      expect(find.byKey(const ValueKey('harness-device-link')), findsOneWidget);
+      expect(find.byType(ListTile), findsNothing);
+      await tester.tap(_startInput);
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('harness-start-results')),
+        findsOneWidget,
+      );
+      await tester.enterText(_startInput, 'Agent 1');
+
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('harness-start-results')),
+        findsOneWidget,
+      );
+      expect(_results, findsNothing);
+      expect(tester.widget<TextField>(_startInput).controller!.text, 'Agent 1');
+      expect(
+        find.byKey(const ValueKey('swarm-search-new-agent')),
+        findsNothing,
+      );
+      expect(find.text('> Commands'), findsNothing);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
+      expect(_results, findsNothing);
+      expect(_startInput, findsOneWidget);
+      expect(find.byKey(const ValueKey('harness-start-results')), findsNothing);
+      expect(
+        tester.widget<TextField>(_startInput).focusNode!.hasFocus,
+        isFalse,
+      );
+      expect(tester.widget<TextField>(_startInput).controller!.text, 'Agent 1');
+      expect(app.activeSwarmId, original);
+      app.renameSwarm(original, 'Background update');
+      await tester.pump();
+      expect(_results, findsNothing);
+      await tester.tap(find.byKey(const ValueKey('harness-start-new')));
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(find.byType(AlertDialog), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.widgetWithText(FilledButton, 'New Harness'),
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Back to Search'), findsNothing);
+      expect(find.text('Cancel'), findsNothing);
+      expect(_results, findsNothing);
+      await tester.tapAt(const Offset(20, 200));
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(_results, findsNothing);
+      expect(_startInput, findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+      expect(tester.takeException(), isNull);
+    });
+
+    for (final dismissal in ['outside', 'escape']) {
+      testWidgets(
+        'New Tab has a usable page after $dismissal (native=$native)',
+        (tester) async {
+          final app = createApp();
+          final frames = <TerminalBinaryFrame>[];
+          final pane = app.adoptSessionForTest(terminal('a0', frames));
+          final original = app.activeSwarmId;
+          await mount(tester, app, nativeTabs: native);
+          await chord(tester, LogicalKeyboardKey.keyT);
+          await tester.pump();
+          final page = app.activeSwarmId;
+          expect(page, isNot(original));
+          expect(_results, findsNothing);
+          expect(_startInput, findsOneWidget);
+          await chord(tester, LogicalKeyboardKey.keyO);
+          expect(_results, findsOneWidget);
+          if (dismissal == 'outside') {
+            await tester.tapAt(const Offset(20, 200));
+          } else {
+            await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+          }
+          await tester.pump();
+          expect(_results, findsNothing);
+          expect(_startInput, findsOneWidget);
+          expect(app.activeSwarmId, page);
+          await app.closeSwarm(page);
+          await tester.pump();
+          expect(app.activeSwarmId, original);
+          expect(app.closedHistory, isEmpty);
+          expect(app.focusedPane, same(pane));
+          await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+          await tester.pump();
+          expect(frames.single.bytes, [27, 91, 66]);
+          await tester.pumpWidget(const SizedBox());
+          app.dispose();
+        },
+      );
+    }
+  }
+
   testWidgets(
-    'a first selection opens here and hands the terminal its next key',
+    'discovery preserves search composition and Escape returns home',
     (tester) async {
       final app = createApp();
-      app.machineStates['m']!.nodeOnline = true;
-      final frames = <TerminalBinaryFrame>[];
-      final pane = app.adoptSessionForTest(terminal('a0', frames));
-      final original = app.activeSwarm;
-      app.newSwarm(draft: true);
-      final destination = app.activeSwarmId;
       await mount(tester, app);
-      await tester.enterText(_input, 'Agent 0');
+      await chord(tester, LogicalKeyboardKey.keyO);
+      await tester.enterText(_input, 'Agent 12');
       await tester.pump();
-      expect(frames, isEmpty);
-      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-      await tester.pump();
-      expect(app.activeSwarmId, destination);
-      expect(original.panes.single, same(pane));
-      expect(app.panes.single, same(pane));
-      expect(app.isDraftSwarm(destination), isFalse);
-      expect(_results, findsNothing);
-      expect(
-        tester
-            .widget<TerminalView>(find.byType(TerminalView))
-            .focusNode!
-            .hasFocus,
-        isTrue,
+      final text = tester.widget<TextField>(_input).controller!;
+      final composing = text.value.copyWith(
+        selection: const TextSelection.collapsed(offset: 7),
+        composing: const TextRange(start: 6, end: 8),
       );
-      await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
-      await tester.pump(const Duration(milliseconds: 10));
-      expect(frames.single.bytes, [27, 91, 68]);
+      text.value = composing;
+      app.renameSwarm(app.activeSwarmId, 'Updated in the background');
+      await tester.pump();
+      expect(text.value, composing);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
+      expect(_results, findsOneWidget);
+      text.clearComposing();
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
+      expect(_results, findsNothing);
+      expect(_startInput, findsOneWidget);
+      await chord(tester, LogicalKeyboardKey.keyP, shift: true);
+      expect(tester.widget<TextField>(_input).controller!.text, '> ');
+      expect(
+        tester.widget<TextField>(_input).decoration!.hintText,
+        'Search commands…',
+      );
       await tester.pumpWidget(const SizedBox());
       app.dispose();
     },
   );
+
+  testWidgets('Open reuses a session and hands the terminal its next key', (
+    tester,
+  ) async {
+    final app = createApp();
+    app.machineStates['m']!.nodeOnline = true;
+    final frames = <TerminalBinaryFrame>[];
+    final pane = app.adoptSessionForTest(terminal('a0', frames));
+    final original = app.activeSwarm;
+    app.newSwarm();
+    final destination = app.activeSwarmId;
+    await mount(tester, app);
+    await chord(tester, LogicalKeyboardKey.keyO);
+    await tester.enterText(_input, 'Agent 0');
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+    expect(app.activeSwarmId, destination);
+    expect(original.panes.single, same(pane));
+    expect(app.panes.single, same(pane));
+    expect(_results, findsNothing);
+    expect(
+      tester
+          .widget<TerminalView>(find.byType(TerminalView))
+          .focusNode!
+          .hasFocus,
+      isTrue,
+    );
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+    await tester.pump(const Duration(milliseconds: 10));
+    expect(frames.single.bytes, [27, 91, 68]);
+    await tester.pumpWidget(const SizedBox());
+    app.dispose();
+  });
 
   test(
     'drafts are omitted from persistence and cancellation history',

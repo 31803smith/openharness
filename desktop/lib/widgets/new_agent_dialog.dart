@@ -488,9 +488,9 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
 
     return AlertDialog(
       title: Text(switch (widget.split?.axis) {
-        PaneResizeAxis.x => 'Create Harness to the right',
-        PaneResizeAxis.y => 'Create Harness below',
-        null => 'Create Harness',
+        PaneResizeAxis.x => 'New Harness to the right',
+        PaneResizeAxis.y => 'New Harness below',
+        null => 'New Harness',
       }),
       titleTextStyle: Theme.of(context).textTheme.titleMedium,
       content: SizedBox(
@@ -540,25 +540,26 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
         ),
       ),
       actions: [
-        TextButton(
-          onPressed: _submitting
-              ? null
-              : () => Navigator.of(context).pop(
-                  widget.offerBackToSearch && !_confirmationPending
-                      ? NewAgentDialogResult.backToSearch
-                      : null,
-                ),
-          style: TextButton.styleFrom(
-            foregroundColor: grid.AppPalette.textSecondary,
+        if (_confirmationPending || widget.offerBackToSearch)
+          TextButton(
+            onPressed: _submitting
+                ? null
+                : () => Navigator.of(context).pop(
+                    widget.offerBackToSearch && !_confirmationPending
+                        ? NewAgentDialogResult.backToSearch
+                        : null,
+                  ),
+            style: TextButton.styleFrom(
+              foregroundColor: grid.AppPalette.textSecondary,
+            ),
+            child: Text(
+              _confirmationPending
+                  ? 'Close'
+                  : widget.offerBackToSearch
+                  ? 'Back to Search'
+                  : 'Back to Search',
+            ),
           ),
-          child: Text(
-            _confirmationPending
-                ? 'Close'
-                : widget.offerBackToSearch
-                ? 'Back to Search'
-                : 'Cancel',
-          ),
-        ),
         if (widget.offerFindExisting &&
             _confirmationPending &&
             (!_submitting || _checkingCreation))
@@ -600,7 +601,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                     ],
                   ),
                 )
-              : Text(_confirmationPending ? 'Check status' : 'Create Harness'),
+              : Text(_confirmationPending ? 'Check status' : 'New Harness'),
         ),
       ],
     );

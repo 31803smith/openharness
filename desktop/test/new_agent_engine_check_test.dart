@@ -184,7 +184,7 @@ void main() {
       findsOneWidget,
     );
     expect(app.launches, isEmpty);
-    await tester.tap(find.widgetWithText(FilledButton, 'Create Harness'));
+    await tester.tap(find.widgetWithText(FilledButton, 'New Harness'));
     await tester.pump();
     expect(app.launches.single, {
       'machine': 'machine-1',

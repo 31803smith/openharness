@@ -81,7 +81,7 @@ void main() {
       await mount(tester, app, nativeTabs: native);
       expect(tab.name, 'New Harness');
       expect(
-        find.byKey(const ValueKey('swarm-search-results')),
+        find.byKey(const ValueKey('harness-start-search')),
         findsOneWidget,
       );
 
@@ -139,7 +139,7 @@ void main() {
       );
       await mount(tester, app);
       expect(find.text('Existing project'), findsNothing);
-      await tester.tap(find.byKey(const ValueKey('swarm-search-input')));
+      await chord(tester, LogicalKeyboardKey.keyO);
       await tester.pump();
       await tester.enterText(
         find.byKey(const ValueKey('swarm-search-input')),
@@ -170,12 +170,12 @@ void main() {
       final app = createApp();
       await mount(tester, app);
       expect(
-        find.byKey(const ValueKey('swarm-search-results')),
+        find.byKey(const ValueKey('harness-start-search')),
         findsOneWidget,
       );
       expect(find.text('Models'), findsNothing);
       expect(find.text('Machines'), findsNothing);
-      await tester.tap(find.byKey(const ValueKey('swarm-search-input')));
+      await chord(tester, LogicalKeyboardKey.keyO);
       await tester.pump();
       await tester.enterText(
         find.byKey(const ValueKey('swarm-search-input')),
@@ -191,7 +191,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 200));
       final zoom = app.zoomedPaneId;
       final before = tester.getSize(find.byType(PaneGrid));
-      await tester.tap(find.byKey(const ValueKey('swarm-add-agent-button')));
+      await tester.tap(find.byKey(const ValueKey('swarm-open-harness-button')));
       await tester.pump(const Duration(milliseconds: 300));
       expect(
         find.byKey(const ValueKey('swarm-search-results')),

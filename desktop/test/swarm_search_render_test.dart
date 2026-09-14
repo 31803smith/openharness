@@ -333,20 +333,14 @@ void main() {
     await mount(tester, app);
     await chord(tester, LogicalKeyboardKey.keyO);
     final field = find.byKey(const ValueKey('swarm-search-input'));
-    final create = find.descendant(
-      of: find.byKey(const ValueKey('swarm-search-new-agent')),
-      matching: find.byWidgetPredicate((widget) => widget is ButtonStyleButton),
-    );
     await tester.enterText(field, 'Agent');
     await tester.pump();
     final editor = tester.widget<TextField>(field).controller;
-    expect(tester.widget<ButtonStyleButton>(create).onPressed, isNotNull);
     for (var i = 0; i < AppNotifier.maxPanes - 1; i++) {
       app.adoptSessionForTest(terminal('a$i', input));
     }
     app.dismissError(); // Publish the sessions assembled through the test seam.
     await tester.pump();
-    expect(tester.widget<ButtonStyleButton>(create).onPressed, isNull);
     final row = find.byKey(ValueKey(agentDestinationId('m', 'a0')));
     expect(tester.widget<ListTile>(row).enabled, isFalse);
     expect(
@@ -355,7 +349,6 @@ void main() {
     );
     await app.closePane(app.panes.last.id);
     await tester.pump();
-    expect(tester.widget<ButtonStyleButton>(create).onPressed, isNotNull);
     expect(tester.widget<TextField>(field).controller, same(editor));
     expect(editor!.text, 'Agent');
     expect(tester.widget<TextField>(field).focusNode!.hasFocus, isTrue);

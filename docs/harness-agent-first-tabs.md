@@ -5,54 +5,39 @@ one or several harnesses without a selection basket or a separate group-creation
 This is the latest product direction; it supersedes earlier swarm and multi-select
 proposals in the progress log.
 
-## New Harness
+## Open and New Harness
 
-The tab-bar plus and **Cmd-T / New Tab** open a draft workspace and immediately
-show the same centered picker as **Cmd-O / Find Harness** and floating +. First launch, reopening an
-empty workspace, and closing its last pane use this entry point too. There is no
-separate start page, inline search, or recent-work list to maintain.
+**Cmd-T / New Tab** and the tab-bar plus open the Harness start page. Its solid
+background matches the selected tab. The centered title and search controls sit
+lower with generous empty space. The field is no wider than 640 logical pixels,
+with **Open Harness** and accented **+ New Harness** buttons underneath.
 
-The picker has a full-width **Find a harness** field and single-choice results.
-A click or Enter opens one result immediately in the destination, reusing its
-runtime. Machine and project groups remain searchable as starting points. There
-is no checkbox, selection count, or separate group-creation step. Closing the
-picker discards an unused draft and returns to the previous harness. Drafts are
-not persisted or added to History. Selecting an existing harness or successfully
-creating one commits the draft. Repeated New Tab while the starter is empty reuses
-it. If no populated workspace exists, dismissal keeps the picker ready; the app
-never strands the user on a blank page. Named empty layouts are preserved.
+The field starts empty and unfocused. Clicking it or Open Harness reveals the
+same input, results, highlight, action arrow and keyboard navigation as Cmd-O.
+Typing filters immediately; arrows select and Enter opens. Escape or clicking
+outside closes the dropdown and hides the caret. The recent-agent list is removed.
+A small product image and introduction sit well below the controls and link to
+https://www.autonomous.ai/harness-device. The bundled image is the official
+product photo from https://cdn.autonomous.ai/production/ecm/260731/2.webp.
+Unused default-name empty pages are excluded from Recently Closed.
 
-Results show a prominent session name and secondary **project · branch · machine**
-metadata, omitting missing fields. The containing workspace name remains searchable
-but is omitted from the subtitle. Only the highlighted row shows **Open Harness**,
-**Add Harness**, or **Split right/down**, according to the destination. There is no
-Commands footer or repeated action. Unavailable results still explain why they
-cannot open. Command search remains available through Shift-Cmd-P and by typing
-`>` in ordinary search; the shortcuts guide documents it.
+The titlebar places the bell beside the traffic lights, then the tabs and tab
+plus. Explicit **New Harness** and **Open Harness** buttons sit on the right.
+There is no floating +. Cmd-N opens creation directly; Cmd-O opens existing-work
+search. Each has its own popup, with no creation CTA or “or” divider in search,
+no Back to Search button in creation, and no stacked dialog on dismissal.
+The creation dialog title and CTA are **New Harness**. Cancel is removed; Escape
+and clicking outside dismiss it. Launch-in-progress and uncertain-outcome states
+retain their existing safeguards and recovery actions.
 
-A short **or** divider and accented **+ New Harness** button sit outside and
-below the card. The divider spans 160 logical pixels, with 32 pixels of breathing
-room above and below. Popups use a 90% black overlay. The button starts fresh
-creation in the picker’s destination, including its split position. First-use
-folder selection, discovery, linking, reconnect and creation recovery remain
-available through this shared entry point.
-
-Clicking outside creation or pressing Escape dismisses the entire flow and
-restores terminal keyboard focus. **Back to Search** deliberately restores its
-query, text selection, highlighted row and split target. Direct creation retains
-**Cancel**; an uncertain request retains **Close** and explicit search recovery.
-A new empty workspace appearing behind a dialog cannot reopen search over it.
-Success opens the harness directly.
-
-**Harness** names the work users open, create, rename, and close. **Agent** names
-the engine inside it: Codex, Claude Code, Cursor, or another coding agent. The
-creation dialog is **Create Harness**, with the same CTA on every machine;
-**Clone repository** has no trailing ellipsis. Internal agent IDs, RPCs and stored
-session/layout schemas remain compatible.
-
-There is no Navigate action, compass button, or Cmd-P directory. Command search
-remains on Shift-Cmd-P and stays in command mode when its query is cleared.
-Typing `>` in harness search also finds commands.
+The Open popup keeps its full-width **Find a harness** field, single-choice
+results and 90% black backdrop. Only the highlighted row shows **Open Harness**,
+**Open N Harnesses**, or **Split right/down**, depending on context.
+Secondary text is **project · branch · machine**. Missing metadata is omitted
+and the containing workspace name is not repeated.
+The Commands footer stays removed; Shift-Cmd-P and typing `>` expose commands.
+An explicit Cmd-N while choosing a split replaces search with creation in that
+split position; dismissing creation still returns directly to the terminal.
 
 ## Tabs and menus
 
@@ -64,7 +49,7 @@ agent disappears from discovery. Tab names remain editable. Former default names
 the first agent's name when opened.
 
 The macOS menus are **Harness, File, Edit, View, History, Models, Machines,
-Window, Help**. File groups **New Tab, New Harness, Find Harness, Rename Harness, Close Harness**;
+Window, Help**. File groups **New Tab, New Harness, Open Harness, Rename Harness, Close Harness**;
 then **Split Right, Split Down, Zoom Pane, Close Pane**. Pin/Unpin and Add Project
 are removed from this menu. Machines starts with **Open Machines Manager**, then
 linked computers with their status, followed by Link Machine and Refresh Machines.
@@ -73,7 +58,7 @@ machine rename API. It reports failures inline and refreshes names in the menu
 and pane headers immediately after success. Selecting a computer opens the shared search with its
 name filled in; no agent is opened until the user chooses a result.
 
-**Cmd-T** opens a new tab with the shared picker, **Cmd-N** opens Create Harness
+**Cmd-T** opens the start page, **Cmd-N** opens New Harness
 directly, and **Cmd-O** finds an existing harness. **Cmd-S** opens Layout.
 **Cmd-H/J/K/L** and **Cmd-arrows** focus panes; **Shift-Cmd-arrows** move them.
 **Cmd-1…Cmd-9** select tabs in their visible order; missing numbers do nothing.
@@ -100,7 +85,7 @@ Close removes only this view. Keyboard toggles the remote message composer.
 
 Resize grips are invisible while idle and appear on divider hover, keyboard
 focus or active drag. Their hit targets and resize behavior stay the same. The
-right/bottom edge plus controls continue to open Add at that split position, and
+right/bottom edge plus controls continue to open search at that split position, and
 keyboard split commands remain available.
 
 ## Latest terminal output
@@ -117,3 +102,14 @@ Find keeps its selected match. Hidden terminals retain their renderer and consum
 output without scheduling paints. Regression fixtures cover delayed history and
 reconnects for local and remote sessions, multi-pane resize, retained-pane reuse,
 hidden output, and input arriving between output and the next layout.
+
+A relayout request also reaches panes whose dimensions are unchanged, including
+neighbors of an added pane and a reapplied preset. Returning to live output cancels
+in-flight scroll animation and dial inertia, so their next tick cannot pull the
+viewport back into history. Focused tests reproduce both failures before the fix.
+
+On macOS, Codex can clear history and repaint in several output frames after
+resize. The renderer now corrects the tail before publishing the shortened
+scroll extent, preventing the OS from starting a bounce toward the old origin.
+A platform-specific regression reproduces the jump to offset zero before this
+fix and passes for macOS and Linux afterward.

@@ -309,7 +309,13 @@ void main() {
     await tester.enterText(jumpField, 'Agent 0');
     await tester.pump();
     expect(find.byKey(const ValueKey('swarm-row-action')), findsOneWidget);
-    expect(find.text('Add Harness'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('swarm-row-action')),
+        matching: find.text('Open Harness'),
+      ),
+      findsOneWidget,
+    );
     await chord(tester, LogicalKeyboardKey.enter);
     expect(find.byType(Dialog), findsNothing);
     expect(app.activeSwarm, same(target));
@@ -340,7 +346,9 @@ void main() {
         app.newSwarm();
         final target = app.activeSwarm;
         await mount(tester, app);
-        final field = find.byKey(ValueKey('swarm-search-input'));
+        final field = find.byKey(
+          ValueKey(adding ? 'swarm-search-input' : 'harness-start-search'),
+        );
         if (adding) {
           await chord(tester, LogicalKeyboardKey.keyO);
           await tester.pump();
@@ -356,7 +364,12 @@ void main() {
         );
         await tester.sendKeyEvent(LogicalKeyboardKey.enter);
         await tester.pump();
-        expect(find.byKey(ValueKey('swarm-search-results')), findsOneWidget);
+        expect(
+          find.byKey(
+            ValueKey(adding ? 'swarm-search-results' : 'harness-start-results'),
+          ),
+          findsOneWidget,
+        );
         expect(find.byType(Dialog), findsNothing);
         expect(app.panes, isEmpty);
         controller.clearComposing();

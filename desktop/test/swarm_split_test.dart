@@ -111,7 +111,7 @@ void main() {
         expect(search, findsOneWidget);
         expect(
           find.byKey(const ValueKey('swarm-search-new-agent')),
-          findsOneWidget,
+          findsNothing,
         );
         expect(app.focusedPaneId, first.id);
         await tester.enterText(search, 'Existing helper');
@@ -329,9 +329,9 @@ void main() {
     expect(find.byKey(const ValueKey('swarm-row-action')), findsOneWidget);
     expect(find.text('Split right'), findsOneWidget);
     expect(find.byType(AlertDialog), findsNothing);
-    await tester.tap(find.byKey(const ValueKey('swarm-search-new-agent')));
+    await chord(tester, LogicalKeyboardKey.keyN);
     await tester.pump();
-    expect(find.text('Create Harness to the right'), findsOneWidget);
+    expect(find.text('New Harness to the right'), findsOneWidget);
     expect(find.text('/work/checkout'), findsOneWidget);
     expect(app.panes, [pane]);
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
