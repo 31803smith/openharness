@@ -17,10 +17,24 @@ EdgeInsets phoneListPadding(BuildContext context) =>
 /// A tappable row on the phone: a glass card that sinks a little under the finger. Without an
 /// [onTap] it is drawn dimmed and does not move.
 class PhoneCard extends StatefulWidget {
-  const PhoneCard({super.key, required this.child, this.onTap, this.border});
+  const PhoneCard({
+    super.key,
+    required this.child,
+    this.onTap,
+    this.onLongPress,
+    this.border,
+  });
 
   final Widget child;
   final VoidCallback? onTap;
+
+  /// The row's own `⋯` menu — a phone has no right-click, and a list row has nowhere to put a
+  /// button without crowding what the row is for.
+  ///
+  /// ⚠️ Deliberately independent of [onTap]: a row that cannot be OPENED can still be acted on,
+  /// and an agent whose terminal is gone is exactly the one somebody wants to delete. The dimming
+  /// below stays tied to [onTap] alone, because it says "this will not open", not "inert".
+  final VoidCallback? onLongPress;
 
   /// Overrides the card's hairline rim. Used to mark a row that needs attention — a waiting agent —
   /// so it is findable in a long list before a word of it is read. Null keeps the ordinary rim.
@@ -33,8 +47,10 @@ class PhoneCard extends StatefulWidget {
 class _PhoneCardState extends State<PhoneCard> {
   bool _pressed = false;
 
+  bool get _interactive => widget.onTap != null || widget.onLongPress != null;
+
   void _press(bool pressed) {
-    if (widget.onTap == null || _pressed == pressed) return;
+    if (!_interactive || _pressed == pressed) return;
     setState(() => _pressed = pressed);
   }
 
@@ -47,6 +63,14 @@ class _PhoneCardState extends State<PhoneCard> {
       onTapUp: (_) => _press(false),
       onTapCancel: () => _press(false),
       onTap: widget.onTap,
+      // Released here as well as in `onTapCancel`: the card must not stay sunk under the sheet
+      // this opens, which outlives the gesture that opened it.
+      onLongPress: widget.onLongPress == null
+          ? null
+          : () {
+              _press(false);
+              widget.onLongPress!();
+            },
       child: AnimatedScale(
         scale: _pressed ? 0.975 : 1,
         duration: AppMotion.press,

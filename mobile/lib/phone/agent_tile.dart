@@ -5,29 +5,34 @@ import 'package:harness/core/models.dart';
 import 'package:harness/shared/theme/app_theme.dart';
 import 'package:harness/state/app_state.dart';
 import 'package:harness/widgets/engine_identity.dart';
+
 import 'phone_card.dart';
 import 'phone_status.dart';
 import 'status_pill.dart';
 
 /// One agent on a machine's page: its engine, its name, and what it is doing. An agent with no
-/// terminal to attach is drawn dimmed and does not open.
+/// terminal to attach is drawn dimmed and does not open — but it can still be held for [onLongPress],
+/// which is the only way to reach an agent whose terminal has gone.
 class AgentTile extends StatelessWidget {
   const AgentTile({
     super.key,
     required this.machine,
     required this.agent,
     required this.onTap,
+    this.onLongPress,
   });
 
   final MachineState machine;
   final Agent agent;
   final VoidCallback onTap;
+  final VoidCallback? onLongPress;
 
   @override
   Widget build(BuildContext context) {
     AppTheme.watch(context);
     return PhoneCard(
       onTap: agent.terminalAvailable ? onTap : null,
+      onLongPress: onLongPress,
       child: Row(
         children: [
           PhoneCardGlyph(
