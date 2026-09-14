@@ -1,6 +1,20 @@
 # Harness v2: goal, plan, and continuation handoff
 
-**Current desktop regression checkpoint:** `67c20f4` is pushed. All **1,416 unit/widget checks** pass
+**Picker focus correction:** Tab could move from the search field into a result,
+outside its shortcut scope. Both Cmd-N and the native New Harness action then
+left the inline results underneath creation. The whole input/results surface now
+shares its keymap region, highlights the Tab-focused row, returns arrows/command
+entry to the editor, and clears picker focus on dismissal. A focused row can no
+longer bypass an unbound Enter or arrow with Flutter's default tile action.
+All **47 affected keyboard/search/history checks** pass in
+`/private/tmp/harness-picker-scope-after.log`, including the existing no-extra-editor
+rebuild checks. All five changed source/test files analyze cleanly in
+`/private/tmp/harness-picker-scope-analyze.log`. The full desktop suite passes
+**1,420 checks**, with the optional CLI-media placeholder skipped, in
+`/private/tmp/harness-picker-scope-full.log`. The prepared and running previews
+below still predate this correction until the next build refresh.
+
+**Previous desktop regression checkpoint:** `67c20f4` is pushed. All **1,416 unit/widget checks** pass
 in `/private/tmp/harness-current-full-suite-after.log`. The one optional remote
 media integration placeholder is skipped without its CLI environment. With the
 current CLI enabled, all **four media integration checks** also pass in

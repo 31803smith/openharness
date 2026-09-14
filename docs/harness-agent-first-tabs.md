@@ -49,8 +49,13 @@ and the containing workspace name is not repeated.
 The Commands footer stays removed; Shift-Cmd-P and typing `>` expose commands.
 An explicit Cmd-N while choosing a split replaces search with creation in that
 split position; dismissing creation still returns directly to the terminal.
-Native New Harness and Search Commands actions use the focused search field's
-actions too. Command search stays in that field, and creation closes its dropdown
+The input and result rows share one picker shortcut scope. Tab focus highlights
+the row that Enter will open. Arrow navigation and command-mode entry return
+focus to the input for continued typing; remapped or unbound navigation/Enter
+keys keep their meaning on a focused row. Closing the inline picker releases
+focus from the entire surface, so dismissing New Harness cannot restore a caret.
+Native New Harness and Search Commands actions use the focused picker's
+actions too. Command search stays in its field, and creation closes its dropdown
 before opening the form. Native actions wait for the destination focus tree before
 handing keyboard ownership back to Flutter and preserve in-progress search composition.
 

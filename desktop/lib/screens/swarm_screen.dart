@@ -868,78 +868,84 @@ class _SwarmScreenState extends State<SwarmScreen> {
     final commandsOnly = search.commandsOnly;
     return KeymapProvider(
       keymap: _keymap,
-      child: LayoutBuilder(
-        builder: (context, constraints) => Stack(
-          children: [
-            Positioned.fill(
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: _dismissSearch,
-                child: const ColoredBox(color: kDialogVeilTint),
+      child: SwarmSearchKeys(
+        search: search,
+        editing: _searchText,
+        onChoose: _chooseSearch,
+        onClose: _dismissSearch,
+        onNewAgent: () => _runShortcut('agent.new'),
+        onRefocus: _focusSearch,
+        child: LayoutBuilder(
+          builder: (context, constraints) => Stack(
+            children: [
+              Positioned.fill(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: _dismissSearch,
+                  child: const ColoredBox(color: kDialogVeilTint),
+                ),
               ),
-            ),
-            Align(
-              alignment: const Alignment(0, -0.12),
-              child: SizedBox(
-                width: (constraints.maxWidth - 64).clamp(280.0, 720.0),
-                height: (constraints.maxHeight - 96).clamp(220.0, 540.0),
-                child: Column(
-                  children: [
-                    Expanded(
-                      child: Material(
-                        key: const ValueKey('swarm-search-results'),
-                        elevation: 16,
-                        shadowColor: Colors.black54,
-                        color: grid.AppPalette.swarmSearchSurface,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          side: const BorderSide(color: Colors.white24),
-                        ),
-                        clipBehavior: Clip.antiAlias,
-                        child: Column(
-                          children: [
-                            if (commandsOnly)
-                              const Padding(
-                                padding: EdgeInsets.fromLTRB(20, 16, 20, 12),
-                                child: Align(
-                                  alignment: Alignment.centerLeft,
-                                  child: Text(
-                                    'Commands',
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w600,
+              Align(
+                alignment: const Alignment(0, -0.12),
+                child: SizedBox(
+                  width: (constraints.maxWidth - 64).clamp(280.0, 720.0),
+                  height: (constraints.maxHeight - 96).clamp(220.0, 540.0),
+                  child: Column(
+                    children: [
+                      Expanded(
+                        child: Material(
+                          key: const ValueKey('swarm-search-results'),
+                          elevation: 16,
+                          shadowColor: Colors.black54,
+                          color: grid.AppPalette.swarmSearchSurface,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            side: const BorderSide(color: Colors.white24),
+                          ),
+                          clipBehavior: Clip.antiAlias,
+                          child: Column(
+                            children: [
+                              if (commandsOnly)
+                                const Padding(
+                                  padding: EdgeInsets.fromLTRB(20, 16, 20, 12),
+                                  child: Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: Text(
+                                      'Commands',
+                                      style: TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w600,
+                                      ),
                                     ),
                                   ),
                                 ),
-                              ),
-                            SwarmSearchInput(
-                              inputKey: const ValueKey('swarm-search-input'),
-                              controller: _searchText,
-                              focusNode: _searchFocus,
-                              search: search,
-                              onChoose: _chooseSearch,
-                              onClose: _dismissSearch,
-                              onChanged: search.setQuery,
-                              showClose: _canDismissSearch || commandsOnly,
-                              onNewAgent: () => _runShortcut('agent.new'),
-                            ),
-                            const Divider(height: 1, color: Colors.white12),
-                            Expanded(
-                              child: SwarmSearchResults(
+                              SwarmSearchInput(
+                                inputKey: const ValueKey('swarm-search-input'),
+                                controller: _searchText,
+                                focusNode: _searchFocus,
                                 search: search,
-                                onChoose: _chooseSearch,
-                                onRefocus: _focusSearch,
+                                onClose: _dismissSearch,
+                                onChanged: search.setQuery,
+                                showClose: _canDismissSearch || commandsOnly,
                               ),
-                            ),
-                          ],
+                              const Divider(height: 1, color: Colors.white12),
+                              Expanded(
+                                child: SwarmSearchResults(
+                                  search: search,
+                                  onChoose: _chooseSearch,
+                                  onRefocus: _focusSearch,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -1485,10 +1491,8 @@ class _SwarmScreenState extends State<SwarmScreen> {
           minimumSize: Size(create ? 106 : 108, 28),
           padding: const EdgeInsets.symmetric(horizontal: 12),
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          textStyle: Theme.of(context).textTheme.labelLarge?.copyWith(
-            fontSize: 12,
-            fontWeight: FontWeight.w500,
-          ),
+          textStyle: Theme.of(context).textTheme.labelLarge
+              ?.copyWith(fontSize: 12, fontWeight: FontWeight.w500),
           backgroundColor: create
               ? grid.AppPalette.swarmAccent
               : grid.AppPalette.swarmSearchSurface,

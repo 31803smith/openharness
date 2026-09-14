@@ -60,44 +60,45 @@ class _SwarmHistoryState extends State<_SwarmHistory> {
       height: 480,
       child: Padding(
         padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            const Row(
-              children: [
-                Text(
-                  'History',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w500),
-                ),
-                Spacer(),
-                Text(
-                  'This session',
-                  style: TextStyle(fontSize: 11, color: Colors.white54),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            SwarmSearchKeys(
-              search: widget.search,
-              editing: _query,
-              onChoose: _choose,
-              onClose: () => Navigator.pop(context),
-              child: SwarmSearchField(
+        child: SwarmSearchKeys(
+          search: widget.search,
+          editing: _query,
+          onChoose: _choose,
+          onClose: () => Navigator.pop(context),
+          onRefocus: _focus.requestFocus,
+          child: Column(
+            children: [
+              const Row(
+                children: [
+                  Text(
+                    'History',
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.w500),
+                  ),
+                  Spacer(),
+                  Text(
+                    'This session',
+                    style: TextStyle(fontSize: 11, color: Colors.white54),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              SwarmSearchField(
                 controller: _query,
                 focusNode: _focus,
                 autofocus: true,
                 hintText: 'Search history…',
                 onChanged: widget.search.setQuery,
               ),
-            ),
-            const SizedBox(height: 8),
-            Expanded(
-              child: SwarmSearchResults(
-                search: widget.search,
-                onChoose: _choose,
-                onRefocus: _focus.requestFocus,
+              const SizedBox(height: 8),
+              Expanded(
+                child: SwarmSearchResults(
+                  search: widget.search,
+                  onChoose: _choose,
+                  onRefocus: _focus.requestFocus,
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     ),
@@ -114,6 +115,7 @@ class SwarmSearchKeys extends StatelessWidget {
     required this.onClose,
     this.onOpen,
     this.onNewAgent,
+    this.onRefocus,
     required this.child,
   });
   final SwarmSearchController? search;
@@ -125,6 +127,7 @@ class SwarmSearchKeys extends StatelessWidget {
   /// The first navigation/accept key reveals them without choosing unseen work.
   final VoidCallback? onOpen;
   final VoidCallback? onNewAgent;
+  final VoidCallback? onRefocus;
   final Widget child;
 
   @override
@@ -149,6 +152,7 @@ class SwarmSearchKeys extends StatelessWidget {
         onOpen?.call();
       } else {
         search.move(delta);
+        onRefocus?.call();
       }
     });
     if (KeymapTheme.of(context) != null) {
@@ -173,6 +177,7 @@ class SwarmSearchKeys extends StatelessWidget {
                   onOpen?.call();
                 } else {
                   search.setQuery('> ');
+                  onRefocus?.call();
                 }
               },
           },
@@ -271,7 +276,7 @@ double swarmSearchResultsHeight(
         swarmSearchRowHeight(scale, commands: search.isCommandMode) +
     (search.selected != null && !search.canAccept ? 48 : 0);
 
-/// Shared Add agent results, also used for commands and History.
+/// Shared harness search results, also used for commands and History.
 class SwarmSearchResults extends StatefulWidget {
   const SwarmSearchResults({
     super.key,
@@ -334,6 +339,15 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
     }
   }
 
+  void _focusResult(String id) {
+    // Tab focus must highlight the same row Enter will open.
+    // Look up the current position because cached rows can move after discovery.
+    final index = search.rows.indexWhere((row) => row.id == id);
+    if (index >= 0 && index != search.cursor) {
+      search.move(index - search.cursor);
+    }
+  }
+
   @override
   void dispose() {
     search.removeListener(_changed);
@@ -354,7 +368,7 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
     );
     return LayoutBuilder(
       builder: (context, constraints) {
-        return Semantics(
+        final results = Semantics(
           container: true,
           label: 'Search results',
           child: Column(
@@ -410,6 +424,9 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                             key: ValueKey(row.id),
                             minTileHeight: _rowHeight,
                             enabled: canSubmit,
+                            onFocusChange: (focused) {
+                              if (focused) _focusResult(row.id);
+                            },
                             selected: highlighted,
                             selectedColor: Colors.white,
                             hoverColor: Colors.transparent,
@@ -542,6 +559,19 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
               ],
             ],
           ),
+        );
+        if (KeymapTheme.of(context) == null) return results;
+        // The early keymap handler owns these keys across the whole picker.
+        // If unbound, do not fall through to ListTile's default activation or
+        // directional focus traversal and silently perform the removed action.
+        return Shortcuts(
+          shortcuts: const {
+            SingleActivator(LogicalKeyboardKey.enter): DoNothingIntent(),
+            SingleActivator(LogicalKeyboardKey.numpadEnter): DoNothingIntent(),
+            SingleActivator(LogicalKeyboardKey.arrowDown): DoNothingIntent(),
+            SingleActivator(LogicalKeyboardKey.arrowUp): DoNothingIntent(),
+          },
+          child: results,
         );
       },
     );

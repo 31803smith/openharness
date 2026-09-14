@@ -57,6 +57,18 @@ Future<void> native(WidgetTester tester, String method, [Object? arguments]) {
   return done.future;
 }
 
+Future<void> tabToResult(WidgetTester tester, {String? id}) async {
+  ListTile? focusedResult() => FocusManager.instance.primaryFocus?.context
+      ?.findAncestorWidgetOfExactType<ListTile>();
+  bool reached() => id == null
+      ? focusedResult() != null
+      : focusedResult()?.key == ValueKey(id);
+  for (var i = 0; i < 16 && !reached(); i++) {
+    await key(tester, LogicalKeyboardKey.tab);
+  }
+  expect(reached(), isTrue, reason: 'The result is reachable with Tab');
+}
+
 void main() {
   testWidgets('Command-T opens New Tab and Command-S opens Layout', (
     tester,
@@ -419,6 +431,7 @@ void main() {
       editing.clearComposing();
       await tester.enterText(field, 'Agent');
       await tester.pump();
+      await tabToResult(tester);
       calls.clear();
       final opening = native(tester, 'commands');
       await tester.pump();
@@ -435,6 +448,10 @@ void main() {
       expect(find.byKey(const ValueKey('swarm-search-input')), findsNothing);
       expect(tester.widget<TextField>(field).controller!.text, '> ');
       expect(
+        tester.widget<TextField>(field).focusNode!.hasPrimaryFocus,
+        isTrue,
+      );
+      expect(
         tester.widget<TextField>(field).decoration!.hintText,
         'Search commands…',
       );
@@ -450,9 +467,14 @@ void main() {
     },
   );
 
-  for (final fromMenu in [false, true]) {
+  for (final (fromMenu, resultFocused) in [
+    (false, false),
+    (true, false),
+    (false, true),
+    (true, true),
+  ]) {
     testWidgets(
-      'New closes inline search before opening its form (native=$fromMenu)',
+      'New closes inline search before opening its form (native=$fromMenu, result focused=$resultFocused)',
       (tester) async {
         tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
           nativeChannel,
@@ -472,6 +494,9 @@ void main() {
         await tester.enterText(field, 'Agent 12');
         await tester.pump();
         expect(find.byType(SwarmSearchResults), findsOneWidget);
+        if (resultFocused) {
+          await tabToResult(tester);
+        }
         if (fromMenu) {
           final opening = native(tester, 'newAgent');
           await tester.pump();
@@ -496,6 +521,73 @@ void main() {
         expect(tester.widget<TextField>(field).focusNode!.hasFocus, isFalse);
         expect(tester.widget<TextField>(field).controller!.text, 'Agent 12');
         expect(app.panes, isEmpty);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
+        app.dispose();
+        map.dispose();
+      },
+    );
+  }
+
+  for (final inline in [false, true]) {
+    testWidgets(
+      'focused results share picker selection and configured keys (inline=$inline)',
+      (tester) async {
+        final app = createApp();
+        app.machineStates['m']!.nodeOnline = true;
+        final firstInput = <TerminalBinaryFrame>[];
+        final secondInput = <TerminalBinaryFrame>[];
+        app.adoptSessionForTest(terminal('a0', firstInput));
+        final second = app.adoptSessionForTest(terminal('a1', secondInput));
+        app.newSwarm();
+        final target = app.activeSwarmId;
+        final map = MemoryKeymap()
+          ..apply('''{"bindings":[
+            {"keys":"down","command":null,"when":"picker"},
+            {"keys":"ctrl+g","command":"picker.next","when":"picker"},
+            {"keys":"enter","command":null,"when":"picker"},
+            {"keys":"alt+enter","command":"picker.accept","when":"picker"}
+          ]}''');
+        await mount(tester, app, map);
+        final field = find.byKey(
+          ValueKey(inline ? 'harness-start-search' : 'swarm-search-input'),
+        );
+        if (inline) {
+          await tester.tap(field);
+        } else {
+          await key(tester, LogicalKeyboardKey.keyO, cmd: true);
+        }
+        await tester.enterText(field, 'Agent');
+        await tester.pump();
+        final search = tester
+            .widget<SwarmSearchResults>(find.byType(SwarmSearchResults))
+            .search;
+        final secondRow = search.rows.firstWhere((row) => row.agentId == 'a1');
+        await tabToResult(tester, id: secondRow.id);
+        expect(search.selected, same(secondRow));
+        final next = search.rows[(search.cursor + 1) % search.rows.length];
+        await key(tester, LogicalKeyboardKey.arrowDown);
+        expect(search.selected, same(secondRow));
+        await key(tester, LogicalKeyboardKey.keyG, ctrl: true);
+        expect(search.selected, same(next));
+        expect(
+          tester.widget<TextField>(field).focusNode!.hasPrimaryFocus,
+          isTrue,
+        );
+        await tabToResult(tester, id: secondRow.id);
+        expect(search.selected, same(secondRow));
+        await key(tester, LogicalKeyboardKey.enter);
+        expect(find.byType(SwarmSearchResults), findsOneWidget);
+        expect(app.activeSwarm.panes, isEmpty);
+        await key(tester, LogicalKeyboardKey.enter, alt: true);
+        expect(find.byType(SwarmSearchResults), findsNothing);
+        expect(app.activeSwarmId, target);
+        expect(app.focusedPane, same(second));
+        expect(firstInput, isEmpty);
+        expect(secondInput, isEmpty);
+        await key(tester, LogicalKeyboardKey.arrowLeft);
+        expect(firstInput, isEmpty);
+        expect(secondInput.single.bytes, [27, 91, 68]);
         expect(tester.takeException(), isNull);
         await tester.pumpWidget(const SizedBox());
         app.dispose();

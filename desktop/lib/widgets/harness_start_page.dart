@@ -26,6 +26,10 @@ class HarnessStartPage extends StatefulWidget {
 class _HarnessStartPageState extends State<HarnessStartPage> {
   final _query = TextEditingController();
   final _focus = FocusNode(debugLabel: 'Start page search');
+  final _pickerFocus = FocusNode(
+    debugLabel: 'Start page picker',
+    canRequestFocus: false,
+  );
   final _searchGroup = Object();
   SwarmSearchController? _search;
   SwarmSearchDraft? _draft;
@@ -52,7 +56,7 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
       setState(() => _search = null);
       search.dispose();
     }
-    _focus.unfocus();
+    _pickerFocus.unfocus();
   }
 
   void _choose(SwarmSearchSelection selection) {
@@ -70,6 +74,7 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
     _search?.dispose();
     _query.dispose();
     _focus.dispose();
+    _pickerFocus.dispose();
     super.dispose();
   }
 
@@ -101,59 +106,73 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
                   const SizedBox(height: 32),
                   TextFieldTapRegion(
                     groupId: _searchGroup,
-                    child: Material(
-                      color: _showResults
-                          ? grid.AppPalette.swarmSearchSurface
-                          : Colors.transparent,
-                      elevation: _showResults ? 12 : 0,
-                      shadowColor: Colors.black54,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(
-                          _showResults ? 12 : 30,
-                        ),
-                        side: _showResults
-                            ? const BorderSide(color: Colors.white24)
-                            : BorderSide.none,
-                      ),
-                      clipBehavior: Clip.antiAlias,
-                      child: Column(
-                        children: [
-                          Semantics(
-                            label: 'Find a harness',
-                            child: SwarmSearchInput(
-                              inputKey: const ValueKey('harness-start-search'),
-                              controller: _query,
-                              focusNode: _focus,
-                              search: _search,
-                              onChoose: _choose,
-                              onClose: _close,
-                              onChanged: (_) => _open(),
-                              onOpen: _open,
-                              onNewAgent: _new,
-                              onTapOutside: _close,
-                              groupId: _searchGroup,
-                              autofocus: false,
-                              showClose: _showResults,
-                              hintText: '',
-                              rounded: true,
-                            ),
+                    child: Focus(
+                      focusNode: _pickerFocus,
+                      child: Material(
+                        color: _showResults
+                            ? grid.AppPalette.swarmSearchSurface
+                            : Colors.transparent,
+                        elevation: _showResults ? 12 : 0,
+                        shadowColor: Colors.black54,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(
+                            _showResults ? 12 : 30,
                           ),
-                          if (_showResults) ...[
-                            const Divider(height: 1, color: Colors.white12),
-                            SizedBox(
-                              height: (constraints.maxHeight * 0.4).clamp(
-                                168,
-                                336,
+                          side: _showResults
+                              ? const BorderSide(color: Colors.white24)
+                              : BorderSide.none,
+                        ),
+                        clipBehavior: Clip.antiAlias,
+                        child: SwarmSearchKeys(
+                          search: _search,
+                          editing: _query,
+                          onChoose: _choose,
+                          onClose: _close,
+                          onOpen: _open,
+                          onNewAgent: _new,
+                          onRefocus: _focus.requestFocus,
+                          child: Column(
+                            children: [
+                              Semantics(
+                                label: 'Find a harness',
+                                child: SwarmSearchInput(
+                                  inputKey: const ValueKey(
+                                    'harness-start-search',
+                                  ),
+                                  controller: _query,
+                                  focusNode: _focus,
+                                  search: _search,
+                                  onClose: _close,
+                                  onChanged: (_) => _open(),
+                                  onOpen: _open,
+                                  onTapOutside: _close,
+                                  groupId: _searchGroup,
+                                  autofocus: false,
+                                  showClose: _showResults,
+                                  hintText: '',
+                                  rounded: true,
+                                ),
                               ),
-                              child: SwarmSearchResults(
-                                key: const ValueKey('harness-start-results'),
-                                search: _search!,
-                                onChoose: _choose,
-                                onRefocus: _focus.requestFocus,
-                              ),
-                            ),
-                          ],
-                        ],
+                              if (_showResults) ...[
+                                const Divider(height: 1, color: Colors.white12),
+                                SizedBox(
+                                  height: (constraints.maxHeight * 0.4).clamp(
+                                    168,
+                                    336,
+                                  ),
+                                  child: SwarmSearchResults(
+                                    key: const ValueKey(
+                                      'harness-start-results',
+                                    ),
+                                    search: _search!,
+                                    onChoose: _choose,
+                                    onRefocus: _focus.requestFocus,
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
                       ),
                     ),
                   ),
