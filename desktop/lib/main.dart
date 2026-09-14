@@ -82,7 +82,7 @@ class DesktopApp extends StatelessWidget {
       codeSize: grid.AppFont.codeSize,
     );
     return MaterialApp(
-      title: 'Harness V2',
+      title: 'Harness',
       debugShowCheckedModeBanner: false,
       // The design system's own `buildAppTheme` — see the note where a second,
       // hand-written `ThemeData` used to shadow it, in `lib/theme/app_theme.dart`.

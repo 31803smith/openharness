@@ -137,7 +137,7 @@ class ModelsMenuController extends ChangeNotifier {
     // Use it consistently instead of mixing emails with fallback IDs.
     final key = reading.account;
     if (key != null && RegExp(r'^[0-9a-f]{16}$').hasMatch(key)) {
-      return 'Account ${key.substring(0, 6)}';
+      return key.substring(0, 6);
     }
     return '';
   }

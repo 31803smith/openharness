@@ -72,7 +72,7 @@ void main() {
     tester,
   ) async {
     final notifier = await pumpAbout(tester, updatesEnabled: false);
-    expect(find.text('Harness V2'), findsOneWidget);
+    expect(find.text('Harness'), findsOneWidget);
     expect(find.text('Preview · updates disabled'), findsOneWidget);
     expect(
       find.text(
@@ -93,7 +93,7 @@ void main() {
   ) async {
     await pumpAbout(tester);
 
-    expect(find.text('Harness V2'), findsOneWidget);
+    expect(find.text('Harness'), findsOneWidget);
     expect(find.text('1.0.0'), findsOneWidget);
     expect(find.text('Up to date'), findsOneWidget);
     // Secondary actions, never a filled one — the pane is read, not operated.
