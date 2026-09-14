@@ -171,6 +171,34 @@ describe('local CLI WebSocket', () => {
     ws.close()
   })
 
+  it('reports only explicit voice focus and clears by originating connection', async () => {
+    const backend = new FakeBackend()
+    const states: Array<{ machine: string; agent: string | null; conn: string }> = []
+    server = http.createServer((_req, res) => { res.statusCode = 404; res.end() })
+    local = attachLocalWsServer(server, {
+      machineId, backend,
+      onAppFocusState: (machine, agent, conn) => states.push({ machine, agent, conn }),
+    })
+    await new Promise<void>(resolve => server!.listen(0, '127.0.0.1', resolve))
+    const ws = new WebSocket(`ws://127.0.0.1:${(server.address() as AddressInfo).port}/api/local-ws`)
+    await onceOpen(ws)
+    const connected = onceMessage(ws)
+    ws.send(JSON.stringify({ type: 'machine_select', payload: { machineId, localProtocolVersion: 1 } }))
+    await connected
+    ws.send(JSON.stringify({ type: 'terminal_open', payload: { agentId: 'background' } }))
+    ws.send(JSON.stringify({ type: 'app_focus', payload: { agentId: 'focused' } }))
+    ws.send(JSON.stringify({ type: 'terminal_open', payload: { agentId: 'another-background' } }))
+    await vi.waitFor(() => expect(states).toHaveLength(1))
+    expect(states[0]).toMatchObject({ machine: machineId, agent: 'focused' })
+    ws.send(JSON.stringify({ type: 'app_focus', payload: { agentId: null } }))
+    await vi.waitFor(() => expect(states).toHaveLength(2))
+    expect(states[1]).toEqual({ ...states[0], agent: null })
+    expect(backend.frames.map(frame => frame.type)).toEqual(['terminal_open', 'terminal_open'])
+    ws.close()
+    await vi.waitFor(() => expect(states).toHaveLength(3))
+    expect(states[2]).toEqual(states[1])
+  })
+
   it('carries the window\'s answer about a spoken task, and keeps it off the wire', async () => {
     const backend = new FakeBackend()
     const replies: Array<{ voiceId: string; reply: unknown }> = []

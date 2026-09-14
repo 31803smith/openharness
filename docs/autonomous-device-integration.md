@@ -125,19 +125,37 @@ a duplicate may return any retained receipt state. Supported operations:
 
 | Operation | Additional request fields | Success fields |
 |---|---|---|
+| `focus.get` | none | `focus:null\|{machineId,agentId,name?},focusRevision` |
 | `agents.list` | none | `machineId,agents:[{machineId,agentId,name,engine,state}]` |
 | `status` | `machineId,agentId` | `machineId,agentId,state,openQuestion:null\|{requestId,questions}` |
 | `recap` | `machineId,agentId,n?` (default 3, integer 1–5) | `machineId,agentId,turns:[{kind,text,recap?,fullText?}]` |
-| `turn.send` | `machineId,agentId,idempotencyKey,text` | `status,receipt` |
+| `turn.send` | `machineId,agentId,idempotencyKey,text,focusRevision?` | `status,receipt` |
 | `turn.stop` | `machineId,agentId,idempotencyKey` | `status,receipt` |
-| `question.answer` | `machineId,agentId,idempotencyKey,questionRequestId,answers` | `status,receipt` |
+| `question.answer` | `machineId,agentId,idempotencyKey,questionRequestId,answers,focusRevision?` | `status,receipt` |
 | `receipt.get` | `idempotencyKey` | `receipt:null\|Receipt` |
 
 `idempotencyKey` matches `[A-Za-z0-9_-]{1,64}`. Prompt must be nonblank and ≤16 KiB UTF-8;
 it is never truncated. Answers is a nonempty object mapping question keys to string answers.
 Question ID must still be open. Question answering cannot approve tool permissions.
 Agent state currently derives `running`/`idle` from the local registry/turn tracker.
-There is no CLI selection operation: OS retains a validated explicit target.
+There is no CLI selection operation: the desktop app supplies the voice target through explicit
+local `app_focus {agentId}` frames. `app_focus {agentId:null}` clears the owning connection's focus;
+disconnecting that connection also clears it, but an older connection cannot clear a newer owner.
+Opening terminal streams does not establish voice focus. Before the first app focus, focus is null.
+`focus.get` is advertised in hello capabilities and requires only a request ID. `focus.changed`
+events carry the same `{focus,focusRevision}` snapshot in their payload. Revisions are opaque strings
+unique across server restarts; every change of focus changes the revision, including focus A→B→A. Reannouncing the same target
+keeps its revision stable while transferring ownership to the announcing connection.
+A removed local agent clears focus when the snapshot is read. Remote app focus is reported with its
+remote machine ID; this local-only device facade does not substitute a local target or relay dispatch.
+OS can display the snapshot on Monitor Pairing and poll it to recover missed events.
+
+Voice clients pass the snapshot's `focusRevision` with explicit `machineId,agentId` on `turn.send`
+and `question.answer`. After checking retained duplicates, the service synchronously verifies both
+revision and target before reserving or dispatching new work. Mismatch returns `FOCUS_CHANGED`
+without a receipt: that request did not dispatch. A duplicate keeps its original receipt even if
+focus moved. Requests without `focusRevision` retain legacy explicit-target behavior. `turn.stop`
+does not accept the field, so stopping an existing turn remains tied to its original target.
 
 Receipt:
 
@@ -203,7 +221,7 @@ delivered/started/completed means adopt; rejected means report; unknown/null mea
 before resending. Never automatically replay mutations on reconnect.
 
 Application errors include `INVALID_REQUEST`, `UNSUPPORTED_CAPABILITY`, `MISSING_TARGET`,
-`MACHINE_MISMATCH`, `AGENT_NOT_FOUND`, `PAYLOAD_TOO_LARGE`, `QUESTION_STALE`,
+`MACHINE_MISMATCH`, `AGENT_NOT_FOUND`, `FOCUS_CHANGED`, `PAYLOAD_TOO_LARGE`, `QUESTION_STALE`,
 `IDEMPOTENCY_CONFLICT`, `BACKPRESSURE`, `RATE_LIMITED`, `REVOKED`, `INTERNAL`.
 A per-relay-connection token bucket permits burst 20, refilling one request/second, with at most four async
 requests in flight; a new relay connection starts a new quota. Excess returns an error result.

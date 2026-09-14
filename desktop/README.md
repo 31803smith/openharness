@@ -180,3 +180,27 @@ Node runtime publishing, safe test releases, and rollback behavior.
 
 Pairing failures use the original Harness manager's validation and attempt limits.
 If the device code expires, start pairing again on the Autonomous device.
+
+## App focus and device voice routing
+
+The selected terminal pane is the source of agent focus for the CLI's paired-device
+voice mode and the OS Monitor Pairing page. Desktop announces `app_focus` with its
+`agentId` through the existing local CLI WebSocket, and reasserts the selected pane
+after reconnect. Opening an unrelated terminal or changing which macOS/Linux
+window is frontmost does not select another voice agent. Closing the selected pane
+announces the replacement pane; closing the last pane or selecting a machine-only
+pane sends `app_focus` with `agentId: null`. Switching machines clears the previous
+connection's focus before announcing the new target. This requires the CLI version
+that publishes app focus to paired devices; there is no separate voice-agent picker
+in Desktop.
+
+### Đồng bộ agent đang focus và giọng nói từ device
+
+Pane terminal đang được chọn là nguồn focus cho voice mode của device đã pair và
+trang Monitor Pairing của OS. Desktop gửi `app_focus` kèm `agentId` qua WebSocket
+local CLI hiện có, và gửi lại pane đang chọn sau khi kết nối lại. Mở terminal khác
+ở nền hoặc đổi cửa sổ macOS/Linux ở phía trước không chọn lại voice agent. Đóng
+pane đang chọn sẽ thông báo pane thay thế; đóng pane cuối hoặc chọn pane chỉ có
+machine sẽ gửi `app_focus` với `agentId: null`. Khi đổi machine, Desktop xóa focus
+trên kết nối trước rồi thông báo target mới. Cần phiên bản CLI có hỗ trợ chia sẻ
+app focus cho device đã pair; Desktop không có bộ chọn voice agent riêng.

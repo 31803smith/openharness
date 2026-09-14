@@ -74,6 +74,81 @@ TerminalSession _session(String machineId, String agentId) => TerminalSession(
 );
 
 void main() {
+  group('app focus reporting', () {
+    late AppNotifier app;
+    late List<(String, String?)> frames;
+
+    setUp(() {
+      app = _notifier();
+      _machine(app, 'm1', ['a', 'b']);
+      _machine(app, 'm2', ['c']);
+      frames = [];
+      app.focusFrameSenderForTest = (machineId, agentId) async {
+        frames.add((machineId, agentId));
+        return true;
+      };
+    });
+    tearDown(() => app.dispose());
+
+    test('closing focused pane selects replacement, then clears last pane', () async {
+      await app.assignAgentToPane(null, 'm1', 'a');
+      await app.assignAgentToPane(null, 'm1', 'b');
+      frames.clear();
+      await app.closePane(app.focusedPane!.id);
+      expect(frames, [('m1', 'a')]);
+      await app.closePane(app.focusedPane!.id);
+      expect(frames.last, ('m1', null));
+    });
+
+    test('closing background pane does not change the voice target', () async {
+      await app.assignAgentToPane(null, 'm1', 'a');
+      await app.assignAgentToPane(null, 'm1', 'b');
+      frames.clear();
+      await app.closePane(app.paneOfAgent('m1', 'a')!.id);
+      expect(frames, isEmpty);
+    });
+
+    test('switching machines clears previous owner before new focus', () async {
+      await app.assignAgentToPane(null, 'm1', 'a');
+      frames.clear();
+      await app.assignAgentToPane(null, 'm2', 'c');
+      expect(frames, [('m1', null), ('m2', 'c')]);
+    });
+
+    test('machine-only pane clears focus even without its own connection', () async {
+      await app.assignAgentToPane(null, 'm1', 'a');
+      frames.clear();
+      app.showMachinePane('m2');
+      expect(frames, [('m1', null)]);
+      app.focusPane(app.paneOfAgent('m1', 'a')!.id);
+      app.showMachinePane('m2');
+      expect(frames, [('m1', null), ('m1', 'a'), ('m1', null)]);
+    });
+
+    test('deleted focused agent reports replacement and clears when empty', () async {
+      await app.assignAgentToPane(null, 'm1', 'a');
+      await app.assignAgentToPane(null, 'm1', 'b');
+      frames.clear();
+      await app.handleMachineEventForTest('m1', {
+        'type': 'agent_deleted',
+        'payload': {'agentId': 'b'},
+      });
+      expect(frames, [('m1', 'a')]);
+      await app.handleMachineEventForTest('m1', {
+        'type': 'agent_deleted',
+        'payload': {'agentId': 'a'},
+      });
+      expect(frames.last, ('m1', null));
+    });
+
+    test('refocusing selected pane reasserts agent without opening terminal', () async {
+      await app.assignAgentToPane(null, 'm1', 'a');
+      frames.clear();
+      app.focusPane(app.focusedPane!.id);
+      expect(frames, [('m1', 'a')]);
+    });
+  });
+
   test('selecting an agent already on screen focuses it instead of reopening', () async {
     final app = _notifier();
     _machine(app, 'm1', ['a', 'b']);

@@ -1313,6 +1313,7 @@ async function runForeground(session: AuthSession): Promise<void> {
   }
   let autonomousDeviceDirect: AutonomousDeviceDirect | undefined
   let autonomousDeviceService: AutonomousDeviceService | undefined
+  let appVoiceFocus: { machineId: string; agentId: string; connId: string } | undefined
   let backendRef: BackendSocket | undefined
   let fullReconcile: (announceDevice?: boolean) => Promise<void> = async () => {}
 
@@ -2895,6 +2896,12 @@ async function runForeground(session: AuthSession): Promise<void> {
   const localWsServer = attachLocalWsServer(hookServer, {
     // The window and the dial are one desk: opening an agent in the app brings the dial to it, switching
     // the dial's machine first when the app moved to another one.
+    onAppFocusState: (machineId, agentId, connId) => {
+      if (agentId === null) {
+        if (appVoiceFocus?.connId === connId) appVoiceFocus = undefined
+      } else appVoiceFocus = { machineId, agentId, connId }
+      autonomousDeviceService?.appFocus(machineId, agentId, connId)
+    },
     onAppFocus: (machineId, agentId) => { void cableRef?.followApp(machineId, agentId) },
     // Agents the window has a tile for. A finished turn on one of these is
     // already in front of the person, so the dial updates its tile in silence
@@ -4201,6 +4208,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     fullText: id => mirror.lastFullText(registry.byAgent(id)?.sessionId ?? id),
     emit: frame => backend.emitAutonomousDeviceEvent(frame),
   })
+  if (appVoiceFocus) autonomousDeviceService.appFocus(appVoiceFocus.machineId, appVoiceFocus.agentId, appVoiceFocus.connId)
   backend.setAutonomousDeviceService(autonomousDeviceService)
   autonomousDeviceDirect = new AutonomousDeviceDirect({
     machineId: backend.machineId, label: hostname(),
