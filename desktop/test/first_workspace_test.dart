@@ -375,9 +375,15 @@ void main() {
           final search = find.byKey(const ValueKey('swarm-search-button'));
           final add = find.byKey(const ValueKey('swarm-add-agent-button'));
           final bell = find.byKey(const ValueKey('swarm-notifications-button'));
+          final settings = find.byKey(const ValueKey('swarm-settings-button'));
           expect(
             tester.getRect(search).right,
             lessThanOrEqualTo(tester.getRect(bell).left),
+          );
+          // Settings is last in the strip, past the two that act on this swarm.
+          expect(
+            tester.getRect(bell).right,
+            lessThanOrEqualTo(tester.getRect(settings).left),
           );
           expect(tester.getRect(add).left, greaterThan(1000));
           expect(

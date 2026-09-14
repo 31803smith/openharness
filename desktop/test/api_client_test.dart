@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:dio/dio.dart';
 import 'package:harness/api/api_client.dart';
 import 'package:harness/auth/auth_session.dart';
 import 'package:harness/core/config.dart';
@@ -54,5 +55,50 @@ void main() {
       await subscription.cancel();
       await server.close(force: true);
     }
+  });
+
+  group('describeApiError', () {
+    final options = RequestOptions(
+      path: '/api/machines',
+      receiveTimeout: const Duration(seconds: 30),
+    );
+    test('names the leg that failed instead of quoting Dio', () {
+      expect(
+        describeApiError(
+          DioException(
+            requestOptions: options,
+            type: DioExceptionType.receiveTimeout,
+            message:
+                'The request took longer than 0:00:30.000000 to receive data.',
+          ),
+        ),
+        'the local Harness service did not answer within 30s — the Harness '
+        'backend is probably slow right now. Retry in a moment.',
+      );
+      expect(
+        describeApiError(
+          DioException(
+            requestOptions: options,
+            type: DioExceptionType.connectionError,
+          ),
+        ),
+        startsWith('the local Harness service is not answering on its port.'),
+      );
+    });
+    test(
+      'passes the backend sentence the daemon forwarded straight through',
+      () {
+        expect(
+          describeApiError(
+            ApiException(
+              'The Harness backend did not answer GET /api/machines within 20s. Try again in a moment.',
+              status: 504,
+            ),
+          ),
+          'The Harness backend did not answer GET /api/machines within 20s. Try again in a moment.',
+        );
+        expect(describeApiError(StateError('odd')), 'Bad state: odd');
+      },
+    );
   });
 }

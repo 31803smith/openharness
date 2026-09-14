@@ -1,6 +1,7 @@
 import '../shared/theme/appearance_prefs_store.dart';
 import '../stats/harness_stats.dart';
 import '../terminal/terminal_font_store.dart';
+import '../terminal/terminal_theme_store.dart';
 
 /// Every preference that has to be in place BEFORE the first frame.
 ///
@@ -16,6 +17,7 @@ import '../terminal/terminal_font_store.dart';
 /// The parameters exist for tests; the app passes nothing and gets the singletons the widgets read.
 Future<void> loadPersistedSettings({
   TerminalFontStore? terminalFont,
+  TerminalThemeStore? terminalTheme,
   AppearancePrefsStore? appearance,
   HarnessStats? stats,
 }) async {
@@ -24,6 +26,10 @@ Future<void> loadPersistedSettings({
   // preferences as one snapshot. Stats uses a separate file and can overlap.
   await Future.wait([
     (terminalFont ?? terminalFontStore).load(),
+    // Beside the font, and for the same reason: loading the scheme after the
+    // first frame paints every pane on the default ground and then snaps it to
+    // the saved one, which reads as a flash of the wrong colour at every launch.
+    (terminalTheme ?? terminalThemeStore).load(),
     // Every control box uses these values. A late load would move the whole
     // window's geometry after its first frame, as well as changing its palette.
     (appearance ?? appearancePrefsStore).load(),

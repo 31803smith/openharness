@@ -332,6 +332,16 @@ export function startHookServer(
         res.writeHead(code, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify(body))
       }
+      // A handler that throws must still answer: this whole function is a void-discarded async, so
+      // a throw here is an unhandledRejection and a request that hangs until the caller gives up —
+      // which, for the desktop app, is a 30s timeout that names Dio instead of the fault.
+      const proxied = async (call: () => Promise<{ status: number; body: unknown }>): Promise<void> => {
+        try { const out = await call(); json(out.status, out.body) }
+        catch (e) {
+          console.error(`[hook] ${req.method} ${url} failed:`, e instanceof Error ? e.message : e)
+          json(502, { success: false, error: { code: 'PROXY_FAILED', message: e instanceof Error ? e.message : 'INTERNAL' } })
+        }
+      }
       // CSRF guard for mutating endpoints: a cross-origin browser page cannot set a custom header on a
       // simple request (it forces a CORS preflight we never allow), so only our same-origin dashboard
       // (and the CLI, which sends it too) can trigger actions. A local process could still call it —
@@ -586,29 +596,34 @@ export function startHookServer(
       // holds a bearer token itself — loopback trust does the authenticating. Reads are ungated (same
       // tier as /api/status); the rename/delete mutations are CSRF-guarded like every other local write.
       if (req.method === 'GET' && url === '/api/machines') {
-        if (!handlers.onMachinesList) { json(503, { error: 'UNAVAILABLE' }); return }
-        const out = await handlers.onMachinesList(); json(out.status, out.body); return
+        const list = handlers.onMachinesList
+        if (!list) { json(503, { error: 'UNAVAILABLE' }); return }
+        await proxied(list); return
       }
       if (req.method === 'GET' && url === '/api/auth/me') {
-        if (!handlers.onAuthMe) { json(503, { error: 'UNAVAILABLE' }); return }
-        const out = await handlers.onAuthMe(); json(out.status, out.body); return
+        const me = handlers.onAuthMe
+        if (!me) { json(503, { error: 'UNAVAILABLE' }); return }
+        await proxied(me); return
       }
       if (req.method === 'PATCH' && url.startsWith('/api/machines/')) {
         if (!localOk) { json(403, { error: 'FORBIDDEN' }); return }
-        if (!handlers.onMachineRename) { json(503, { error: 'UNAVAILABLE' }); return }
+        const rename = handlers.onMachineRename
+        if (!rename) { json(503, { error: 'UNAVAILABLE' }); return }
         const machineId = decodeURIComponent(url.slice('/api/machines/'.length))
         if (!machineId) { json(400, { error: 'MISSING_MACHINE_ID' }); return }
         let body: { name?: string }
         try { body = JSON.parse(await readBody(req)) as { name?: string } } catch { json(400, { error: 'bad json' }); return }
-        if (!body.name) { json(400, { error: 'MISSING_NAME' }); return }
-        const out = await handlers.onMachineRename(machineId, body.name); json(out.status, out.body); return
+        const name = body.name
+        if (!name) { json(400, { error: 'MISSING_NAME' }); return }
+        await proxied(() => rename(machineId, name)); return
       }
       if (req.method === 'DELETE' && url.startsWith('/api/machines/')) {
         if (!localOk) { json(403, { error: 'FORBIDDEN' }); return }
-        if (!handlers.onMachineDelete) { json(503, { error: 'UNAVAILABLE' }); return }
+        const remove = handlers.onMachineDelete
+        if (!remove) { json(503, { error: 'UNAVAILABLE' }); return }
         const machineId = decodeURIComponent(url.slice('/api/machines/'.length))
         if (!machineId) { json(400, { error: 'MISSING_MACHINE_ID' }); return }
-        const out = await handlers.onMachineDelete(machineId); json(out.status, out.body); return
+        await proxied(() => remove(machineId)); return
       }
 
       // `harness pairings` — list paired browsers.

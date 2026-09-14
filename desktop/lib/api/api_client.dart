@@ -92,3 +92,36 @@ class ApiException implements Exception {
 bool isUnauthorizedError(Object error) =>
     error is DioException && error.response?.statusCode == 401 ||
     error is ApiException && error.status == 401;
+
+/// The sentence a failed local-CLI call earns on an error strip. A raw
+/// `DioException` is a paragraph about `RequestOptions.receiveTimeout` — true,
+/// and useless to the person reading it: what they need is which leg failed.
+/// The daemon not listening, the daemon not answering (it proxies to the
+/// backend, so that is nearly always the backend being slow), or the backend
+/// answering with a sentence of its own, which the daemon forwards verbatim.
+String describeApiError(Object error) {
+  if (error is ApiException) return error.message;
+  if (error is DioException) {
+    switch (error.type) {
+      case DioExceptionType.connectionError:
+        return 'the local Harness service is not answering on its port. '
+            'It usually restarts on its own; retry in a moment.';
+      case DioExceptionType.connectionTimeout:
+      case DioExceptionType.sendTimeout:
+      case DioExceptionType.receiveTimeout:
+        final limit = error.requestOptions.receiveTimeout?.inSeconds;
+        return 'the local Harness service did not answer'
+            '${limit == null ? '' : ' within ${limit}s'} — the Harness '
+            'backend is probably slow right now. Retry in a moment.';
+      case DioExceptionType.badResponse:
+        return 'the local Harness service answered '
+            '${error.response?.statusCode ?? 'with an error'}.';
+      case DioExceptionType.badCertificate:
+      case DioExceptionType.cancel:
+      case DioExceptionType.transformTimeout:
+      case DioExceptionType.unknown:
+        return error.message ?? error.error?.toString() ?? 'request failed';
+    }
+  }
+  return '$error';
+}

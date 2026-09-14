@@ -137,6 +137,24 @@ describe('process-owned hook server', () => {
     expect(await response.json()).toEqual({ error: 'UNBOUND_HOOK' })
     expect(handler).not.toHaveBeenCalled()
   })
+
+  it('answers a proxied control-plane read whose handler throws, instead of hanging it', async () => {
+    // The handler is a void-discarded async: a throw used to be an unhandledRejection and a request
+    // with no response, which the desktop app reported 30s later as its own receive timeout.
+    const { base } = await start({ onMachinesList: async () => { throw new TypeError('fetch failed') } })
+    const response = await fetch(`${base}/api/machines`)
+    expect(response.status).toBe(502)
+    expect(await response.json()).toEqual({ success: false, error: { code: 'PROXY_FAILED', message: 'fetch failed' } })
+  })
+
+  it('forwards a proxied answer verbatim, status and body alike', async () => {
+    const { base } = await start({
+      onAuthMe: async () => ({ status: 504, body: { success: false, error: { code: 'BACKEND_TIMEOUT', message: 'slow' } } }),
+    })
+    const response = await fetch(`${base}/api/auth/me`)
+    expect(response.status).toBe(504)
+    expect(await response.json()).toEqual({ success: false, error: { code: 'BACKEND_TIMEOUT', message: 'slow' } })
+  })
 })
 
 describe('chooseHookAgent', () => {

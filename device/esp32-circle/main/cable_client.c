@@ -128,6 +128,21 @@ void cable_client_select_machine(const char *machine_id)
 
 const char *cable_client_machine_id(void) { return s_machine_id; }
 
+void cable_client_select_swarm(const char *swarm_id)
+{
+    if (!swarm_id || !swarm_id[0]) return;
+    cJSON *root = msg("swarm.select");
+    if (!root) return;
+    cJSON_AddStringToObject(root, "swarmId", swarm_id);
+    send_json(root);
+}
+
+void cable_client_list_swarms(void)
+{
+    send_json(msg("swarms.list"));
+}
+
+
 void cable_client_send_turn(const char *agent_id, const char *text)
 {
     if (!agent_id || !agent_id[0] || !text) return;
@@ -203,6 +218,7 @@ static SemaphoreHandle_t s_models_sem;
 static model_item_t     *s_models_out;
 static int               s_models_max;
 static int               s_models_n;
+
 
 static void handle_models(const cJSON *p)
 {
@@ -366,6 +382,27 @@ static const char *str_of(const cJSON *o, const char *key)
 {
     const cJSON *v = o ? cJSON_GetObjectItemCaseSensitive(o, key) : NULL;
     return cJSON_IsString(v) && v->valuestring ? v->valuestring : NULL;
+}
+
+// `swarms`: the whole list, replaced on arrival. Rows missing an id are dropped; a name is optional
+// (the window's default is "New swarm", but a blank one still has to be a row that can be picked).
+static void handle_swarms(const cJSON *p)
+{
+    static cable_swarm_t rows[SWARMS_MAX];   // static: 24 × ~76 B is too much for the reader task's stack
+    int n = 0;
+    const cJSON *it = NULL;
+    cJSON_ArrayForEach(it, cJSON_GetObjectItemCaseSensitive(p, "items")) {
+        if (n >= SWARMS_MAX) break;
+        const cJSON *id = cJSON_GetObjectItemCaseSensitive(it, "id");
+        if (!cJSON_IsString(id) || !id->valuestring[0]) continue;
+        snprintf(rows[n].id, sizeof(rows[n].id), "%s", id->valuestring);
+        const cJSON *name = cJSON_GetObjectItemCaseSensitive(it, "name");
+        snprintf(rows[n].name, sizeof(rows[n].name), "%s", cJSON_IsString(name) ? name->valuestring : "");
+        const cJSON *agents = cJSON_GetObjectItemCaseSensitive(it, "agents");
+        rows[n].agents = cJSON_IsNumber(agents) ? (int)agents->valuedouble : 0;
+        n++;
+    }
+    ui_swarms_replace(rows, n, str_of(p, "selected"));
 }
 
 static void session_up(const cJSON *p)
@@ -571,6 +608,7 @@ static void handle_message(const cJSON *root)
         return;
     }
     if (strcmp(t, "models") == 0) { handle_models(p); return; }
+    if (strcmp(t, "swarms") == 0) { handle_swarms(p); return; }
 
     if (strcmp(t, "agent.updated") == 0) {
         // One agent changed. Cheapest correct answer is to re-ask: the daemon is on the other end of a

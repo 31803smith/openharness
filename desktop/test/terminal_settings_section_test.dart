@@ -9,7 +9,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/settings/sections/terminal_section.dart';
 import 'package:harness/shared/theme/app_theme.dart';
+import 'package:harness/shared/widgets/app_select_field.dart';
 import 'package:harness/terminal/terminal_font_store.dart';
+import 'package:harness/terminal/terminal_theme_store.dart';
 
 /// The sample line inside the preview — the row of `m`s the renderer measures
 /// its cell with.
@@ -50,10 +52,36 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(tester.takeException(), isNull);
+    expect(find.text('Colours'), findsOneWidget);
     expect(find.text('Font'), findsOneWidget);
     expect(find.text('Size'), findsOneWidget);
     expect(find.text('Preview'), findsOneWidget);
     expect(_sample, findsOneWidget);
+  });
+
+  testWidgets('every colour scheme is offered, and the default is on', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(820 * 2, 700 * 2);
+    tester.view.devicePixelRatio = 2;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(_host());
+    await tester.pumpAndSettle();
+
+    // Unlike the font list, this one has no per-platform filter to get wrong:
+    // colours resolve the same everywhere, so every value must be reachable.
+    final field = tester.widget<AppSelectField<TerminalThemeChoice>>(
+      find.byKey(const Key('terminal-colour-scheme-dropdown')),
+    );
+    expect(
+      field.options.map((option) => option.value),
+      TerminalThemeChoice.values,
+    );
+    expect(field.value, terminalThemeStore.value);
+    // The store is the real singleton — see this file's header. Read only.
+    expect(terminalThemeStore.value, TerminalThemeChoice.fallback);
+    expect(find.text('Match app appearance'), findsWidgets);
   });
 
   testWidgets('the preview refuses the app-wide text scale', (tester) async {

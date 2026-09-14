@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import type { AppSwarms } from './cable/cableSession.js'
 import type http from 'node:http'
 import type { Socket } from 'node:net'
 import { WebSocket, WebSocketServer, type RawData } from 'ws'
@@ -45,6 +46,12 @@ export interface LocalWsServerOptions {
   onAppFocus?: (machineId: string, agentId: string) => void
   /** Every agent the window currently has a tile for, across all its machines. */
   onAppPanes?: (agentIds: string[]) => void
+  /**
+   * The window's swarms — its named groups of agents, one of them on screen. The whole list each time,
+   * and `null` when the window goes away, so the daemon never keeps describing tabs nobody can see.
+   * Consumed like app_panes: a fact about this desk, never forwarded to the machine.
+   */
+  onAppSwarms?: (swarms: AppSwarms | null) => void
   /**
    * The window asked WHICH AGENT a typed task belongs to (⌘K). Answers, and sends NOTHING.
    *
@@ -150,6 +157,31 @@ function jsonFrame(raw: RawData): Frame | null {
   }
 }
 
+/**
+ * The window's swarm list, checked field by field. Anything that is not an id, a name and a list of
+ * agent ids is dropped rather than trusted — the same stance app_panes takes with its ids — and a
+ * payload with no usable swarm at all is treated as not sent.
+ */
+function appSwarmsFrom(payload: unknown): AppSwarms | null {
+  if (!payload || typeof payload !== 'object') return null
+  const p = payload as Record<string, unknown>
+  const rows = Array.isArray(p.swarms) ? p.swarms : []
+  const swarms: AppSwarms['swarms'] = []
+  for (const row of rows) {
+    if (!row || typeof row !== 'object') continue
+    const r = row as Record<string, unknown>
+    if (typeof r.id !== 'string' || !r.id || typeof r.name !== 'string') continue
+    const agentIds = Array.isArray(r.agentIds)
+      ? r.agentIds.filter((id): id is string => typeof id === 'string' && id !== '')
+      : []
+    swarms.push({ id: r.id, name: r.name.slice(0, 80), agentIds })
+    if (swarms.length === 24) break   // the window's own ceiling
+  }
+  if (swarms.length === 0) return null
+  const active = typeof p.active === 'string' && swarms.some((s) => s.id === p.active) ? p.active : swarms[0].id
+  return { active, swarms }
+}
+
 function binaryBytes(raw: RawData): Uint8Array {
   if (Buffer.isBuffer(raw)) return new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength)
   if (raw instanceof ArrayBuffer) return new Uint8Array(raw)
@@ -195,6 +227,7 @@ export function attachLocalWsServer(server: http.Server, options: LocalWsServerO
     let relay: RelaySession | null = null
     /** Whether this connection ever reported a tile roster — only then is clearing it ours to do. */
     let sentPanes = false
+    let sentSwarms = false
     let alive = true
     let chain = Promise.resolve()
 
@@ -290,6 +323,14 @@ export function attachLocalWsServer(server: http.Server, options: LocalWsServerO
             const ids = Array.isArray(raw) ? raw.filter((id): id is string => typeof id === 'string' && id !== '') : []
             sentPanes = true
             options.onAppPanes(ids)
+            return
+          }
+        }
+        if (!isBinary && options.onAppSwarms) {
+          const frame = jsonFrame(raw)
+          if (frame?.type === 'app_swarms') {
+            const swarms = appSwarmsFrom(frame.payload)
+            if (swarms) { sentSwarms = true; options.onAppSwarms(swarms) }
             return
           }
         }
@@ -419,6 +460,7 @@ export function attachLocalWsServer(server: http.Server, options: LocalWsServerO
       // would keep silencing the dial for agents nobody can see any more —
       // exactly backwards, and permanently.
       if (sentPanes) options.onAppPanes?.([])
+      if (sentSwarms) options.onAppSwarms?.(null)
       if (relay) { relay.detach(); relay = null }
       else if (selected) void options.backend.unregisterLocalClient(connId)
       selected = false

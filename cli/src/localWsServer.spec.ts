@@ -136,6 +136,47 @@ describe('local CLI WebSocket', () => {
     await vi.waitFor(() => expect(rosters).toEqual([['a1', 'a2'], []]))
   })
 
+  it('takes the window\'s swarms, drops what is not a swarm, and forgets them on close', async () => {
+    const backend = new FakeBackend()
+    const seen: unknown[] = []
+    server = http.createServer((_req, res) => { res.statusCode = 404; res.end() })
+    local = attachLocalWsServer(server, {
+      machineId,
+      backend,
+      onAppSwarms: (swarms) => seen.push(swarms),
+    })
+    await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve))
+    const url = `ws://127.0.0.1:${(server.address() as AddressInfo).port}/api/local-ws`
+
+    const ws = new WebSocket(url)
+    await onceOpen(ws)
+    const connected = onceMessage(ws)
+    ws.send(JSON.stringify({ type: 'machine_select', payload: { machineId, localProtocolVersion: 1 } }))
+    await connected
+
+    ws.send(JSON.stringify({ type: 'app_swarms', payload: {
+      active: 's2',
+      swarms: [
+        { id: 's1', name: 'Workshop', agentIds: ['a1', '', 7, 'a2'] },
+        { id: '', name: 'no id' },
+        'junk',
+        { id: 's2', name: 'Launch' },
+      ],
+    } }))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(seen).toEqual([{ active: 's2', swarms: [
+      { id: 's1', name: 'Workshop', agentIds: ['a1', 'a2'] },
+      { id: 's2', name: 'Launch', agentIds: [] },
+    ] }])
+    // Like app_panes: a fact about this desk, so the machine never sees it.
+    expect(backend.frames.map((frame) => frame.type)).toEqual([])
+
+    ws.close()
+    // The window is gone, and so are its tabs.
+    await vi.waitFor(() => expect(seen).toHaveLength(2))
+    expect(seen[1]).toBeNull()
+  })
+
   it('follows an explicit app_focus, and keeps it off the wire', async () => {
     const backend = new FakeBackend()
     const moves: Array<{ machineId: string; agentId: string }> = []
