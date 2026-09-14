@@ -59,6 +59,11 @@ class TerminalPanel extends StatefulWidget {
   final bool focused;
   final bool visible;
   final bool compactHeader;
+
+  /// The tile's own header strip — engine, title, status, pin, close. Off on a
+  /// phone, whose page draws its own header and has no tile to pin, close or
+  /// drag (`phone/terminal_page.dart`).
+  final bool showHeader;
   final int focusRequest;
 
   /// Whether this tile's composer textbox is showing. Only consulted for a remote machine.
@@ -84,6 +89,7 @@ class TerminalPanel extends StatefulWidget {
     required this.focused,
     this.visible = true,
     this.compactHeader = false,
+    this.showHeader = true,
     this.focusRequest = 0,
     this.composerVisible = false,
     this.readOnly = false,
@@ -1041,7 +1047,9 @@ class _TerminalPanelState extends State<TerminalPanel>
                   maintainSize: true,
                   maintainAnimation: true,
                   maintainState: true,
-                  child: _buildHeader(context, remote: remote),
+                  child: widget.showHeader
+                      ? _buildHeader(context, remote: remote)
+                      : const SizedBox.shrink(),
                 ),
                 if (_find != null)
                   Positioned.fill(

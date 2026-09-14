@@ -1861,6 +1861,8 @@ class AppNotifier extends ChangeNotifier {
   }
 
   Future<void> ensureCliDaemonReady() async {
+    // A viewer has no daemon to start: it reaches every machine through the relay.
+    if (viewer != null) return;
     final revision = _authRevision;
     final discovery = _discovery;
     final probe = await discovery.ensureRunning();

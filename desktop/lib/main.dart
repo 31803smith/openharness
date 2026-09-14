@@ -8,6 +8,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'analytics/analytics_lifecycle.dart';
 import 'core/crash_log.dart';
 import 'core/desktop_window.dart';
+import 'phone/phone_layout.dart';
+import 'phone/phone_shell.dart';
 import 'screens/swarm_screen.dart';
 import 'screens/login_screen.dart';
 import 'state/app_state.dart';
@@ -265,7 +267,11 @@ class _RootShellState extends ConsumerState<RootShell>
           case AppStatus.unauthenticated:
             screen = LoginScreen(notifier: app);
           case AppStatus.authenticated:
-            screen = SwarmScreen(notifier: app);
+            // A phone gets one agent at a time, reached machine → agents → terminal:
+            // the desktop's tab strip above a grid of panes does not fit in its width.
+            screen = usePhoneLayout(context)
+                ? PhoneShell(notifier: app)
+                : SwarmScreen(notifier: app);
         }
         // Only the home shell carries its own drag handle and traffic-light
         // clearance (the rail's head). Every other screen fills the window
