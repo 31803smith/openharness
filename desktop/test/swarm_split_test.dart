@@ -225,6 +225,10 @@ void main() {
       await tester.pump();
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pump();
+      expect(find.text('Split right'), findsOneWidget);
+      expect(find.byType(AlertDialog), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('swarm-search-new-agent')));
+      await tester.pump();
       expect(find.text('New agent to the right'), findsOneWidget);
       expect(find.text('/work/checkout'), findsOneWidget);
       expect(app.panes, [pane]);

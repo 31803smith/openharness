@@ -49,7 +49,7 @@ Map<ShortcutAction, List<String>> _readWorkspaceKeys() {
 final harnessCommands = <HarnessCommand>[
   const HarnessCommand(
     'navigation.quick_open',
-    'Search agents, swarms, machines and projects',
+    'Navigate to an agent or swarm',
     ShortcutGroup.navigate,
     action: ShortcutAction.switchAgent,
     nativeAction: 'jump',
@@ -366,13 +366,6 @@ final harnessCommands = <HarnessCommand>[
     'Add the selected agent to this swarm',
     ShortcutGroup.actions,
     extraKeys: ['cmd+enter'],
-    context: KeymapContext.picker,
-  ),
-  const HarnessCommand(
-    'picker.preview',
-    'Toggle agent output preview',
-    ShortcutGroup.navigate,
-    extraKeys: ['cmd+i'],
     context: KeymapContext.picker,
   ),
   const HarnessCommand(

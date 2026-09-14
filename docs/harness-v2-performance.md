@@ -10,6 +10,57 @@ flutter test --no-pub --reporter expanded test/benchmarks/swarm_benchmark.dart
 
 It prints `SWARM_BENCH` JSON records. Its filename deliberately does not end in `_test.dart`, so ordinary correctness runs do not include timing measurements.
 
+## Distinct Navigate and Add agent continuation
+
+Navigate now indexes only existing swarm locations. The initial implementation
+built Add's full discovered-agent/project catalog first, even when only a few
+locations were open. It now indexes agent identities once and formats just the
+open locations. Add filtering also checks membership without allocating a new
+set for every candidate on every query. Both catalogs reuse unchanged snapshots;
+terminal output does not rebuild or rerank their results. Previews read a bounded
+excerpt only when the selected identity changes.
+
+The updated explicit benchmark exercises the actual two controllers. Add has
+2,000 discovered agents on eight machines, 50 projects and 2,059 entries.
+Navigate has the same discovery inventory, with 50 agent locations across 12
+swarms (62 entries), including one agent in three swarms. Each CPU distribution
+has 20 warmups and 100 samples. Runs were sequential without overlapping other
+checks, on the same shared workstation in the headless debug runner.
+
+| Operation | Initial median / p95 | Final median / p95 |
+| --- | ---: | ---: |
+| Build navigation location catalog | 4.095 / 4.833 ms | 0.194 / 0.264 ms |
+| Open/dispose navigation controller | 4.108 / 4.667 ms | 0.192 / 0.224 ms |
+| Navigate query `agent 0 machine 0` | 0.021 / 0.029 ms | 0.021 / 0.024 ms |
+| Add query `agent` | 1.206 / 1.312 ms | 1.025 / 1.083 ms |
+| Add query `agent 12 machine 3` | 0.992 / 1.141 ms | 0.782 / 0.877 ms |
+| Add fuzzy query `agn12` | 0.927 / 1.043 ms | 0.718 / 0.813 ms |
+| Add query `project 12 main` | 1.321 / 1.464 ms | 1.096 / 1.200 ms |
+
+Navigation catalog construction fell about 95% in this fixture. The unchanged
+catalog check measured 0.006 ms for Navigate and 0.002 ms for Add (median and
+p95). Add's final full catalog construction was 3.057 / 3.438 ms and its
+controller open/dispose cycle 4.336 / 4.694 ms. Host load and JIT also affect these
+observations; they do not establish a fixed saving on every machine.
+
+The full benchmark before the final catalog-only optimization also measured:
+
+| Terminal workload | Median | p95 |
+| --- | ---: | ---: |
+| Decode and parse a 16 KiB ASCII frame | 0.555 ms | 0.776 ms |
+| Decode and parse a 16 KiB Unicode frame | 0.346 ms | 0.421 ms |
+| Tab switch and pump: 4 swarms / 16 terminals | 16.445 ms | 24.666 ms |
+| Tab switch and pump: 12 swarms / 48 terminals | 13.066 ms | 15.784 ms |
+| Pane focus and pump: 16 terminals | 6.861 ms | 9.278 ms |
+| Pane focus and pump: 48 terminals | 7.090 ms | 8.850 ms |
+
+Five benchmark cases passed, followed by the final catalog case. The widget
+workloads retain 1,000 scrollback lines per terminal in a 1280×800 fixture, with
+60 measured samples. These are CPU/frame-pump costs, not native input handling,
+physical keypress-to-display or remote round-trip latency. The calibration gap
+below remains open. Logs: `/private/tmp/harness-two-pickers-benchmark.log` and
+`/private/tmp/harness-two-pickers-benchmark-final.log`.
+
 ## Concurrent machine discovery (2026-09-13)
 
 Agent inventory and terminal capability requests now start together after the machine handshake. The small capability request is sent first because the CLI dispatches frames through a per-client FIFO; it can answer that request before assembling project metadata for the agent list. The list becomes visible as soon as it arrives. Existing panes attach only when both inventory and protocol information are available, without changing focus or membership.

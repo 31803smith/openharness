@@ -13,6 +13,7 @@ import 'package:harness/state/app_state.dart';
 import 'package:harness/state/swarm_catalog.dart';
 import 'package:harness/terminal/terminal_binary.dart';
 import 'package:harness/widgets/swarm_switcher.dart';
+import 'package:harness/widgets/swarm_navigator.dart';
 import 'package:xterm/xterm.dart';
 
 import 'keymap_host_test.dart' show MemoryKeymap, key;
@@ -125,9 +126,7 @@ void main() {
         {"keys":"down","command":null,"when":"picker"},
         {"keys":"ctrl+j","command":"picker.previous","when":"picker"},
         {"keys":"enter","command":null,"when":"picker"},
-        {"keys":"alt+enter","command":"picker.accept","when":"picker"},
-        {"keys":"cmd+i","command":null,"when":"picker"},
-        {"keys":"ctrl+i","command":"picker.preview","when":"picker"}
+        {"keys":"alt+enter","command":"picker.accept","when":"picker"}
       ]}''');
         final app = createApp();
         app.machineStates['m']!.nodeOnline = true;
@@ -135,6 +134,7 @@ void main() {
         final pane = app.adoptSessionForTest(terminal('a0', frames));
         final original = app.activeSwarmId;
         app.newSwarm();
+        final addingTo = app.activeSwarmId;
         await mount(tester, app, map);
         final input = find.byKey(
           ValueKey(
@@ -148,9 +148,11 @@ void main() {
         }
         await tester.enterText(input, 'Agent');
         await tester.pump();
-        final search = tester
-            .widget<SwarmSearchResults>(find.byType(SwarmSearchResults))
-            .search;
+        final search = inline
+            ? tester
+                  .widget<SwarmSearchResults>(find.byType(SwarmSearchResults))
+                  .search
+            : tester.widget<SwarmNavigator>(find.byType(SwarmNavigator)).search;
         final initial = search.cursor;
         await key(tester, LogicalKeyboardKey.arrowDown);
         expect(search.cursor, initial);
@@ -158,16 +160,19 @@ void main() {
         expect(search.cursor, (initial - 1) % search.rows.length);
         await tester.enterText(input, 'Agent 0');
         await tester.pump();
-        expect(find.byTooltip('Hide preview (⌃I)'), findsOneWidget);
-        await key(tester, LogicalKeyboardKey.keyI, cmd: true);
-        expect(search.previewEnabled, isTrue);
-        await key(tester, LogicalKeyboardKey.keyI, ctrl: true);
-        expect(search.previewEnabled, isFalse);
+        expect(search.previewVisible, inline);
+        expect(
+          find.byKey(const ValueKey('swarm-search-preview-toggle')),
+          findsNothing,
+        );
         await key(tester, LogicalKeyboardKey.enter);
-        expect(find.byType(SwarmSearchResults), findsOneWidget);
+        expect(
+          find.byType(inline ? SwarmSearchResults : SwarmNavigator),
+          findsOneWidget,
+        );
         expect(frames, isEmpty);
         await key(tester, LogicalKeyboardKey.enter, alt: true);
-        expect(app.activeSwarmId, original);
+        expect(app.activeSwarmId, inline ? addingTo : original);
         expect(app.focusedPane, same(pane));
         expect(find.byType(SwarmSearchResults), findsNothing);
         await key(tester, LogicalKeyboardKey.arrowLeft);
@@ -402,15 +407,7 @@ void main() {
         'Agent 0',
       );
       await tester.pump();
-      await native(tester, 'keymapCommand', {'command': 'picker.preview'});
-      await tester.pump();
-      expect(find.byKey(const ValueKey('swarm-search-preview')), findsNothing);
-      await native(tester, 'keymapCommand', {'command': 'picker.preview'});
-      await tester.pump();
-      expect(
-        find.byKey(const ValueKey('swarm-search-preview')),
-        findsOneWidget,
-      );
+      expect(find.byType(SwarmNavigator), findsOneWidget);
       await native(tester, 'keymapCommand', {'command': 'picker.accept'});
       await tester.pump();
       expect(find.byType(SwarmSearchResults), findsNothing);

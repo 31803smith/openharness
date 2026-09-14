@@ -98,7 +98,7 @@ void main() {
     );
   }
 
-  test('large live catalog CPU benchmark', () {
+  test('large live catalog CPU benchmark', () async {
     final app = AppNotifier(config: AppConfig.dev, authSession: AuthSession());
     addTearDown(app.dispose);
     for (var machine = 0; machine < 8; machine++) {
@@ -145,12 +145,12 @@ void main() {
         swarmProjects(app, const []);
       })})}',
     );
-    // Exercise the current unified bar, including project/machine metadata,
-    // instead of using the older agent-only catalog as its performance proxy.
+    // Exercise Add agent with all discovered project/machine metadata. Global
+    // navigation is measured separately over exact, already-open locations.
     final cache = SwarmSearchCatalog();
     final entries = cache.read(app, const []);
     expect(entries, hasLength(2059));
-    final controller = SwarmSearchController(app, const []);
+    final controller = SwarmSearchController(app, const [], adding: true);
     addTearDown(controller.dispose);
     final queries = <String, Object>{};
     for (final query in [
@@ -166,21 +166,52 @@ void main() {
       );
       queries[query] = {...timing, 'results': controller.rows.length};
     }
-    controller.setQuery('');
-    controller.submit(entries.singleWhere((e) => e.id == 'machine:machine-3'));
-    expect(controller.rows, hasLength(250));
-    final scoped = measure(
-      () => controller.setQuery('agn12'),
-      setup: () => controller.setQuery(''),
-    );
     debugPrint(
-      'SWARM_BENCH ${jsonEncode({'kind': 'headless_debug_cpu', 'operation': 'unified_search', 'agents': 2000, 'machines': 8, 'projects': 50, 'entries': entries.length, 'coldCatalog': measure(() {
+      'SWARM_BENCH ${jsonEncode({'kind': 'headless_debug_cpu', 'operation': 'add_agent_search', 'agents': 2000, 'machines': 8, 'projects': 50, 'entries': entries.length, 'coldCatalog': measure(() {
         SwarmSearchCatalog().read(app, const []);
       }), 'unchangedCatalog': measure(() {
         cache.read(app, const []);
       }), 'openAndDisposeController': measure(() {
-        SwarmSearchController(app, const []).dispose();
-      }), 'queries': queries, 'scopedQuery': scoped})}',
+        SwarmSearchController(app, const [], adding: true).dispose();
+      }), 'queries': queries})}',
+    );
+    for (var swarm = 0; swarm < 12; swarm++) {
+      if (swarm != 0) app.newSwarm();
+      for (var pane = 0; pane < 4; pane++) {
+        app.adoptSessionForTest(
+          TerminalSession(
+            machineId: 'machine-${swarm % 8}',
+            agentId: 'agent-${swarm * 4 + pane}',
+            agentName: 'Agent ${swarm * 4 + pane}',
+            engineId: 'codex',
+            send: (_, _) async => true,
+            sendBinary: (_) async => true,
+          )..status = TerminalSessionStatus.controlling,
+        );
+      }
+      if (swarm == 1 || swarm == 2) {
+        await app.addAgentToSwarm('machine-0', 'agent-0');
+      }
+    }
+    final locations = SwarmLocationCatalog();
+    final open = locations.read(app, const []);
+    expect(open, hasLength(62));
+    expect(
+      open.where((r) => r.agentId == 'agent-0' && r.machineId == 'machine-0'),
+      hasLength(3),
+    );
+    final navigator = SwarmSearchController(app, const [], navigating: true);
+    addTearDown(navigator.dispose);
+    debugPrint(
+      'SWARM_BENCH ${jsonEncode({'kind': 'headless_debug_cpu', 'operation': 'navigation_locations', 'discoveredAgents': 2000, 'swarms': 12, 'agentLocations': 50, 'entries': open.length, 'coldCatalog': measure(() {
+        SwarmLocationCatalog().read(app, const []);
+      }), 'unchangedCatalog': measure(() {
+        locations.read(app, const []);
+      }), 'openAndDisposeController': measure(() {
+        SwarmSearchController(app, const [], navigating: true).dispose();
+      }), 'query': measure(() {
+        navigator.setQuery('agent 0 machine 0');
+      }, setup: () => navigator.setQuery(''))})}',
     );
   });
 
