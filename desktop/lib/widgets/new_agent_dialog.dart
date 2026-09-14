@@ -248,6 +248,14 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     return !machine.engines.loaded && machine.engines.error != null;
   }
 
+  bool get _checkingEngines =>
+      widget.notifier.stateOf(_machineId)?.engines.inFlight != null;
+
+  void _retryEngineCheck() {
+    if (_submitting || _checkingEngines) return;
+    unawaited(_probeEngines());
+  }
+
   /// The engine is missing but this machine cannot safely auto-install it — for
   /// example, an explicit ENGINE_PATH override points at a missing file, or an
   /// older CLI has no recipe. Stated rather than silently offered, because the
@@ -642,16 +650,31 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
         // managed to reach look exactly like one it has.
         if (_willInstall || _engineCheckFailed) ...[
           const SizedBox(height: 6),
-          Text(
-            _willInstall
-                ? 'Harness will install ${engineIdentity(_engine).label} before starting.'
-                : 'Couldn’t check whether ${engineIdentity(_engine).label} is installed. '
-                      'You can still try creating an agent.',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: _willInstall
-                  ? grid.AppPalette.accentOnSurface
-                  : grid.AppPalette.textSecondary,
-            ),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Text(
+                  _willInstall
+                      ? 'Harness will install ${engineIdentity(_engine).label} before starting.'
+                      : 'Couldn’t check whether ${engineIdentity(_engine).label} is installed. '
+                            'You can still try creating an agent.',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: _willInstall
+                        ? grid.AppPalette.accentOnSurface
+                        : grid.AppPalette.textSecondary,
+                  ),
+                ),
+              ),
+              if (_engineCheckFailed) ...[
+                const SizedBox(width: 12),
+                TextButton(
+                  key: const Key('new-agent-retry-check'),
+                  onPressed: _checkingEngines ? null : _retryEngineCheck,
+                  child: Text(_checkingEngines ? 'Checking…' : 'Retry'),
+                ),
+              ],
+            ],
           ),
         ],
         // THE FOLD. What is behind it is what most people never touch: a Codex
@@ -700,10 +723,10 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
               else
                 Text(
                   _availability('codex') == null
-                      ? _engineCheckFailed
-                            ? 'Could not check Codex profiles. Reopen this dialog to retry.'
-                            : 'Checking whether this computer supports Codex profiles…'
-                      : 'Update Harness CLI to choose a local Codex profile.',
+                      ? _engineCheckFailed && !_checkingEngines
+                            ? 'Retry the agent check above to load Codex profiles.'
+                            : 'Checking whether $_machineName supports Codex profiles…'
+                      : 'Update Harness CLI on $_machineName to choose a Codex profile.',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
             ],

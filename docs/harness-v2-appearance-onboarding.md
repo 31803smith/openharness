@@ -120,6 +120,23 @@ These are implementation and fixture results, not a measured conversion rate. A 
 
 ## First-agent recovery pass
 
+The September 14 feature continuation adds **Retry** beside a failed agent
+availability check. It rechecks the selected machine in the same New agent
+form, shows **Checking…** while pending, and keeps the working folder, explicit
+agent choice, permission setting and Advanced state. Successful recovery can
+load Codex profiles without closing the form; it never starts an agent itself.
+Switching machines while a retry is pending preserves the newer machine and
+agent choice. Profile guidance names the selected machine rather than calling
+a remote host “this computer.”
+
+The two new recovery regressions and the surrounding onboarding/Add/profile
+checks pass (47 tests). Analysis has zero errors/warnings and the same 14
+existing infos. Synthetic real-font renders were checked at 880×560 with
+normal and 2× text. Artifacts:
+`/private/tmp/harness-agent-check-retry-{verified,analyze,render}.log` and
+`/private/tmp/harness-agent-check-retry-{failed,checking,large-text}.png`.
+No provider installation, real agent launch or native benchmark was performed.
+
 Rechecked the primary-source guidance on 2026-09-13: [Zed's welcome page](https://zed.dev/docs/getting-started) disappears after a project opens; [VS Code's first-agent quickstart](https://code.visualstudio.com/docs/agents/quickstart) proceeds from a folder through a real task and verification. The useful adaptation here is to make the existing first-agent path dependable and explain recovery where it is needed. A compulsory tour or sample task is not needed to exercise it.
 
 The audit reproduced a pending-launch bug: Escape dismissed New agent despite its disabled Cancel button, leaving the request running without its outcome visible. The form now keeps the pending request visible with a readable “Creating agent…” state. It permits dismissal again when the request completes. A failed request retains the machine, folder and coding agent; selecting another folder or agent clears the obsolete error. Completion still opens the requested agent, with no automatic task input.

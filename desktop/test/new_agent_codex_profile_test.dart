@@ -437,7 +437,7 @@ void main() {
         findsNothing,
       );
       expect(
-        find.text('Update Harness CLI to choose a local Codex profile.'),
+        find.text('Update Harness CLI on This Mac to choose a Codex profile.'),
         findsOneWidget,
       );
       await tester.tap(find.text('Browse…'));
