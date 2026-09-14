@@ -117,8 +117,16 @@ correctly refused the still-running workspace preview at its exact build path;
 the installed copy is classified separately. No native samples were taken.
 The session requested a brief preview-close/idle window for calibration and
 continues independent performance work while that request is pending.
-Rebuild the fixture before measuring the newer Add frame/focus changes above.
 Artifacts: `/private/tmp/harness-native-identity-{before,tests,prepare,preflight}.log`.
+
+After the picker-opening continuation, a fresh isolated arm64 Release fixture
+built from production source at `339f008`:
+`/private/tmp/harness-native-benchmark-wt0_dt31/desktop/build/macos/Build/Products/Release/Harness Benchmark.app`.
+The four changed picker files match the checkout by SHA-256; the built app has
+the distinct `ai.autonomous.harness.benchmark` identity. Build receipt:
+`/private/tmp/harness-native-picker-prepare.log`. The workspace preview is still
+running and the close/reopen request is pending. This fixture was not launched;
+no native samples were collected. Rebuild it if production source changes.
 
 ### History focus hot path
 

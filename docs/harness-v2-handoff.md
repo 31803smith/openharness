@@ -30,7 +30,7 @@ Research must lead to justified improvements, not feature accumulation.
 - Continue on **`main`**, tracking `origin/main`. The user's latest instruction
   is to work, commit, and push directly on main from now on. This supersedes
   the earlier preference for creating a fresh feature branch after each merge.
-- The latest opening continuation keeps the retained canvas built while a
+- **`339f008`** saves the opening continuation: it keeps the retained canvas built while a
   picker opens/closes and shares validated catalogs across openings. Warm Add
   opening measured 22.006 ms median versus 26.273 ms in the same headless
   fixture; cold starts and native display latency are not established by it.
@@ -299,11 +299,14 @@ a distinct Harness Benchmark app. Nine isolated Python checks pass. Preflight
 distinguishes installed copies from workspace builds by exact location as well
 as identity. Preserve its isolation and foreground/key-window guards. The
 performance notes explain the earlier failed calibration; these tooling fixes
-provide no new latency measurements. The identity-fix disposable Release build
-succeeded at `/private/tmp/harness-native-benchmark-7hv6voyr`, before the newer
-Add frame/focus changes. Rebuild it for current-source timing. Its runner correctly
-refused to start while the workspace preview was running, writing no timing
-result. The [performance record](harness-v2-performance.md) has the artifacts.
+provide no new latency measurements. The current disposable Release build
+succeeded at `/private/tmp/harness-native-benchmark-wt0_dt31`, with production
+source at `339f008`. The four changed picker source files match by SHA-256;
+the built bundle is `ai.autonomous.harness.benchmark`. Build receipt:
+`/private/tmp/harness-native-picker-prepare.log`. The earlier identity-fix runner
+correctly refused the running workspace preview, writing no timing result.
+This session confirmed that preview is still running; the new fixture was not
+launched. The [performance record](harness-v2-performance.md) has the artifacts.
 
 ## Previous terminal fix and verification
 
@@ -383,10 +386,10 @@ that its isolated window can become active/key.
    using the repaired benchmark identity checks for the team's new
    `ai.autonomous.harness` macOS bundle identifier (Linux now uses
    `com.autonomous.harness` and executable `harness`). Nine isolation tests pass;
-   an identity-fix disposable Release fixture is available at
-   `/private/tmp/harness-native-benchmark-7hv6voyr`. Its runner correctly refuses
-   the running workspace preview. Rebuild it for the newer Add frame/focus
-   source. A request to briefly close/reopen that preview
+   a current disposable Release fixture is available at
+   `/private/tmp/harness-native-benchmark-wt0_dt31` from source `339f008`.
+   Rebuild it if production source changes. The workspace preview is still
+   running. A request to briefly close/reopen that preview
    for calibration is pending; elapsed time is not approval. No native samples
    have been accepted. See the current performance record for exact artifacts.
    Then close remaining visual/platform/release qualification gaps. Maintain

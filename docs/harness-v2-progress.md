@@ -17,6 +17,11 @@ Updated 2026-09-14 after integrating the continuation into main. This is a worki
   team's independent device UI change `5f8baac` by fast-forwarding main.
   The normal macOS arm64 Release build succeeds. Verification artifacts:
   `/private/tmp/harness-add-open-{full-tests,analyze,release-build}.log`.
+  Saved and pushed as `339f008`. A fresh isolated native Release fixture also
+  built at `/private/tmp/harness-native-benchmark-wt0_dt31`; its picker files
+  match this source and its bundle has the distinct benchmark identity. It was
+  not launched: the preview is still running and the brief close/reopen request
+  remains pending. Receipt: `/private/tmp/harness-native-picker-prepare.log`.
 - Improved Add's arrow-key frame work by reusing unchanged result rows and
   leaving the text editor alone when only the highlight changes. In the paired
   2,000-agent headless fixture, arrow selection median fell 8.592 to 4.714 ms;
