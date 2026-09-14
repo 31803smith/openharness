@@ -1483,13 +1483,16 @@ class AppNotifier extends ChangeNotifier {
 
   void _announceAppFocus() {
     final pane = focusedPane;
-    final machineId = pane?.agentId == null ? null : pane?.machineId;
+    // A viewer is its agent's, so focusing it is focusing that agent: the dial
+    // and the daemon see one agent at this desk, not a tile they cannot name.
+    final agentId = pane?.agentId ?? pane?.ownerAgentId;
+    final machineId = agentId == null ? null : pane?.machineId;
     final previousMachineId = _announcedFocusMachineId;
     _announcedFocusMachineId = machineId;
     if (previousMachineId != null && previousMachineId != machineId) {
       _sendAppFocus(previousMachineId, null);
     }
-    if (machineId != null) _sendAppFocus(machineId, pane!.agentId);
+    if (machineId != null) _sendAppFocus(machineId, agentId);
   }
 
   void _sendAppFocus(String machineId, String? agentId) {
@@ -3549,10 +3552,8 @@ class AppNotifier extends ChangeNotifier {
 
   Future<void> _probeDsh(MachineState machine) async {
     try {
-      final result = await _conn(machine.machine.machineId).request(
-        'dsh_list',
-        timeout: const Duration(seconds: 30),
-      );
+      final result = await _conn(machine.machine.machineId)
+          .request('dsh_list', timeout: const Duration(seconds: 30));
       final raw = result['dsh'];
       if (raw is! List) throw const FormatException('dsh_list: no list');
       machine.dsh.replace(raw.map(DshEntry.fromJson).whereType<DshEntry>());
@@ -3598,18 +3599,14 @@ class AppNotifier extends ChangeNotifier {
         );
       }
     } on WsRequestFailure catch (failure) {
-      return _finishInstall(
-        machine,
-        id,
-        switch (failure.code) {
-          'UNSUPPORTED' ||
-          'UNSUPPORTED_ON_REMOTE' =>
-            'Update the harness CLI on $machineName to install harnesses',
-          _ => failure.detail?.isNotEmpty == true
+      return _finishInstall(machine, id, switch (failure.code) {
+        'UNSUPPORTED' || 'UNSUPPORTED_ON_REMOTE' =>
+          'Update the harness CLI on $machineName to install harnesses',
+        _ =>
+          failure.detail?.isNotEmpty == true
               ? failure.detail!
               : 'Install failed on $machineName (${failure.code})',
-        },
-      );
+      });
     } on WsRequestTimeout {
       return _finishInstall(
         machine,
@@ -3785,6 +3782,9 @@ class AppNotifier extends ChangeNotifier {
       _markAgentProcessing(machine, agentId);
     }
     _warmPreviews(machine);
+    for (final agent in agents) {
+      _syncViewerPane(machine, agent);
+    }
   }
 
   void _upsertAgent(MachineState machine, Agent agent) {
@@ -3811,6 +3811,7 @@ class AppNotifier extends ChangeNotifier {
     }
     machine.agentLoadStatus = AgentLoadStatus.loaded;
     machine.agentsLoadError = null;
+    _syncViewerPane(machine, agent);
     if (agent.launchState == 'failed' && previous?.launchState != 'failed') {
       _lastError = agent.launchDetail ?? 'Failed to start ${agent.name}';
       // The launch already ran and failed (e.g. the engine's automatic
@@ -3848,14 +3849,94 @@ class AppNotifier extends ChangeNotifier {
     // already destroyed.
     final machineId = machine.machine.machineId;
     for (final pane in allPanes.toList()) {
-      if (pane.machineId != machineId || pane.agentId != agentId) continue;
+      final owned =
+          pane.machineId == machineId &&
+          (pane.agentId == agentId ||
+              (pane.isWeb && pane.ownerAgentId == agentId));
+      if (!owned) continue;
       await _detachSession(pane, sendClose: false);
       for (final swarm in swarms) {
         swarm.remove(pane);
       }
     }
+    _dismissedViewers.remove(_viewerKey(machineId, agentId));
     _persistLayout();
     _announceAppFocus();
+  }
+
+  // ── harness viewers ─────────────────────────────────────────────────────────
+
+  /// Viewer URLs the person closed, by `machine/agent`. A frame carrying the
+  /// same URL again leaves the tile closed; a different URL reopens it. Memory
+  /// only — a restart is a fresh look at whatever the agent is showing.
+  final _dismissedViewers = <String, String>{};
+
+  String _viewerKey(String machineId, String agentId) => '$machineId/$agentId';
+
+  /// Keep [agent]'s viewer tile in step with its frame.
+  ///
+  /// The daemon says where the harness's viewer is (`viewerUrl`); this puts a
+  /// web tile immediately to the RIGHT of the agent's terminal in whichever
+  /// swarm shows that terminal (the active one first), navigates an open tile
+  /// when the URL changes, and takes the tile down when the viewer goes away.
+  /// It never steals focus: the person is typing in the terminal the viewer
+  /// belongs to. Nothing is persisted — see [PaneKind.web].
+  void _syncViewerPane(MachineState machine, Agent agent) {
+    final machineId = machine.machine.machineId;
+    final url = agent.viewerUrl;
+    final open = <(Swarm, TerminalPane)>[
+      for (final swarm in swarms)
+        for (final pane in swarm.panes)
+          if (pane.isWeb &&
+              pane.machineId == machineId &&
+              pane.ownerAgentId == agent.id)
+            (swarm, pane),
+    ];
+    if (url == null) {
+      for (final (swarm, pane) in open) {
+        swarm.remove(pane);
+      }
+      if (open.isNotEmpty) _persistLayout();
+      return;
+    }
+    if (open.isNotEmpty) {
+      for (final (_, pane) in open) {
+        pane.url = url;
+      }
+      return;
+    }
+    if (_dismissedViewers[_viewerKey(machineId, agent.id)] == url) return;
+    // The swarm holding the agent's terminal — the active one when it does,
+    // else the first that does. No terminal on any desk, no viewer.
+    final ordered = [activeSwarm, ...swarms.where((s) => s != activeSwarm)];
+    for (final swarm in ordered) {
+      final at = swarm.panes.indexWhere(
+        (pane) =>
+            !pane.isWeb &&
+            pane.machineId == machineId &&
+            pane.agentId == agent.id,
+      );
+      if (at < 0) continue;
+      if (swarm.panes.length >= maxPanes) return;
+      final insertion = at + 1;
+      final pane = TerminalPane(
+        id: _nextPaneId++,
+        machineId: machineId,
+        kind: PaneKind.web,
+        url: url,
+        ownerAgentId: agent.id,
+      );
+      swarm.panes.insert(insertion, pane);
+      // The same bookkeeping a split does when it grows the grid by one:
+      // pins past the insertion slide right, and the shape is re-derived.
+      swarm.pinnedSlots.updateAll(
+        (_, slot) => slot >= insertion ? slot + 1 : slot,
+      );
+      swarm.arranged = null;
+      swarm.arrangedKey = null;
+      _persistLayout();
+      return;
+    }
   }
 
   String? _eventAgentId(
@@ -4850,7 +4931,12 @@ class AppNotifier extends ChangeNotifier {
     }
 
     final existing = panes
-        .where((pane) => pane.machineId == machineId && pane.agentId == null)
+        .where(
+          (pane) =>
+              pane.machineId == machineId &&
+              pane.agentId == null &&
+              !pane.isWeb,
+        )
         .firstOrNull;
     if (existing != null) {
       focusPane(existing.id);
@@ -4859,7 +4945,7 @@ class AppNotifier extends ChangeNotifier {
     }
 
     final target = focusedPane;
-    if (target != null && target.agentId == null) {
+    if (target != null && target.agentId == null && !target.isWeb) {
       target.machineId = machineId;
       focusPane(target.id);
       notifyListeners();
@@ -4977,6 +5063,9 @@ class AppNotifier extends ChangeNotifier {
     // duplicate with the inferred one is free: the daemon drops the second against where the dial
     // already is.
     if (target == activeSwarm) _announceAppFocus();
+    // The agent may already have a viewer the grid could not show until now,
+    // because this tile is what it hangs beside.
+    _syncViewerPane(machine, agent);
 
     if (machine.nodeOnline == false) {
       machine.pendingOfflineAgentId = agentId;
@@ -5387,6 +5476,15 @@ class AppNotifier extends ChangeNotifier {
   Future<void> closePane(int paneId, {bool persist = true}) async {
     final pane = panes.where((p) => p.id == paneId).firstOrNull;
     if (pane == null) return;
+    if (pane.isWeb) {
+      // A viewer closed by hand stays closed for THIS page: the agent's next
+      // frame carries the same URL and must not reopen it. A different URL —
+      // a new artifact, a restarted viewer — is news, and opens again.
+      final owner = pane.ownerAgentId;
+      if (owner != null && pane.url != null) {
+        _dismissedViewers[_viewerKey(pane.machineId, owner)] = pane.url!;
+      }
+    }
     if (pane.agentId != null) {
       final machine = stateOf(pane.machineId);
       final agent = machine?.agents
