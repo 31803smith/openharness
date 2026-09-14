@@ -78,6 +78,8 @@ class _SwarmScreenState extends State<SwarmScreen> {
     skipTraversal: true,
   );
   final _navigation = SwarmNavigationHistory();
+  final _searchCatalog = SwarmSearchCatalog();
+  final _locationCatalog = SwarmLocationCatalog();
   final _searchText = TextEditingController();
   final _searchFocus = FocusNode(debugLabel: 'Search agents and swarms');
   SwarmSearchController? _search;
@@ -695,12 +697,14 @@ class _SwarmScreenState extends State<SwarmScreen> {
       adding: adding,
       navigating: !adding,
       split: split,
+      catalog: _searchCatalog,
+      locations: _locationCatalog,
     )..setQuery(query);
     _search!.addListener(_syncSearch);
     _searchOverlay = OverlayEntry(builder: _buildSearchOverlay);
     Overlay.of(context).insert(_searchOverlay!);
     _syncSearch();
-    setState(() {});
+    // The overlay and focus nodes update independently of the retained canvas.
     _focusSearch();
   }
 
@@ -763,7 +767,6 @@ class _SwarmScreenState extends State<SwarmScreen> {
         _shellFocus.requestFocus();
       }
     }
-    if (mounted) setState(() {});
   }
 
   Future<void> _chooseSearch(SwarmSearchSelection choice) async {
@@ -1189,7 +1192,6 @@ class _SwarmScreenState extends State<SwarmScreen> {
                       onRename: _rename,
                       onNavigate: _jump,
                       onNotifications: _notifications,
-                      onSettings: _settings,
                     ),
                   if (_keymap.error != null)
                     Material(
@@ -1329,6 +1331,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                         app: app,
                                         projects: _projects,
                                         recent: _navigation.recent,
+                                        catalog: _searchCatalog,
                                         commands: _searchCommands,
                                         onChoose: _activateSearch,
                                         onNewAgent: _newAgent,

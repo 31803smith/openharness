@@ -12,6 +12,55 @@ It prints `SWARM_BENCH` JSON records. Its filename deliberately does not end in 
 
 ## Current continuation benchmark (2026-09-14)
 
+### Warm picker reopening
+
+Add and Navigate no longer rebuild the unchanged Swarm screen when their
+overlay opens or closes. Their focus nodes and overlay update independently.
+The workspace also retains its validated Add/location catalogs across openings;
+inline Add, the floating button and splits share the Add catalog. This retains
+normalized metadata only. Every read still checks discovery, project, location
+and membership identity; each new picker owns its query, checked selection and
+fresh output excerpt.
+
+The same 2,000-agent/five-terminal fixture below now separates keyboard dispatch
+and setup from the following frame pump. There are 20 warmups and 100 samples,
+with repeated opening/canceling on an unchanged workspace. This measures **warm
+reopening**, not app startup or a cold/invalidated catalog. Runs did not overlap
+this session's correctness checks or builds.
+
+| Operation | Before median / p95 / p99 | After median / p95 / p99 |
+| --- | ---: | ---: |
+| Warm Cmd-N open + frame | 26.273 / 32.719 / 73.537 ms | 22.006 / 27.653 / 52.138 ms |
+| Opening: dispatch and setup | 6.258 / 7.262 / 9.023 ms | 2.141 / 3.374 / 3.548 ms |
+| Opening: frame pump | 20.033 / 26.514 / 66.335 ms | 19.729 / 25.161 / 49.592 ms |
+| Query edit + frame | 10.779 / 15.600 / 19.924 ms | 11.784 / 16.763 / 20.294 ms |
+| Arrow selection + frame | 4.628 / 6.527 / 7.866 ms | 4.757 / 5.932 / 7.623 ms |
+
+Warm opening's median fell about 16%. Query timing was worse; no new query or
+arrow improvement is claimed. Removing the redundant canvas build alone had a
+25.608 ms opening median, before catalog reuse. Rebuild observations fell from
+950 to 877 on open and 100 to 27 on cancel; SwarmScreen, Scaffold and PaneGrid
+went from one to zero. Retained TerminalPanel/TerminalView builds stayed zero.
+Headless debug/JIT and shared-host variation limit conclusions about tails or
+native performance. These are not input-to-display latency measurements.
+
+Seven added regressions cover both picker kinds and chrome configurations,
+Escape/first-terminal-key ownership, fresh output with cleared canceled choices,
+and metadata/offline/membership changes while closed. An unchanged reopen makes
+zero project-metadata reads. All **1,309 desktop tests** pass with one existing
+skip; analysis has zero errors/warnings and 14 existing infos.
+The normal macOS arm64 Release build succeeds; no running app was restarted.
+Benchmark logs: `/private/tmp/harness-add-open-{stages-before,canvas-after,cache-after}.log`.
+Checks: `/private/tmp/harness-add-open-{full-tests,analyze,release-build}.log`.
+The initial unstaged trace is `/private/tmp/harness-add-open-before.log`.
+
+After merging the team's titlebar Settings-button removal in `3a7fe57`, all
+1,309 desktop tests, 51 native decoder checks and 347 AppKit assertions pass.
+Analysis remains at zero errors/warnings and 14 existing infos; the combined
+Release build succeeds. Logs:
+`/private/tmp/harness-add-open-titlebar-{tests,analyze,native,build}.log`.
+The later merge `51f62e7` only incorporates independent device firmware changes.
+
 ### Add picker frame work and keyboard focus
 
 Add now reuses up to 48 recently built result rows. Moving the highlight rebuilds
@@ -75,8 +124,18 @@ correctly refused the still-running workspace preview at its exact build path;
 the installed copy is classified separately. No native samples were taken.
 The session requested a brief preview-close/idle window for calibration and
 continues independent performance work while that request is pending.
-Rebuild the fixture before measuring the newer Add frame/focus changes above.
 Artifacts: `/private/tmp/harness-native-identity-{before,tests,prepare,preflight}.log`.
+
+After the picker-opening continuation, a fresh isolated arm64 Release fixture
+built from production source at `339f008`:
+`/private/tmp/harness-native-benchmark-wt0_dt31/desktop/build/macos/Build/Products/Release/Harness Benchmark.app`.
+The four changed picker files match the checkout by SHA-256; the built app has
+the distinct `ai.autonomous.harness.benchmark` identity. Build receipt:
+`/private/tmp/harness-native-picker-prepare.log`. The workspace preview is still
+running and the close/reopen request is pending. This fixture was not launched;
+no native samples were collected. Rebuild it if production source changes.
+The team's later native titlebar change in `51c0d27` now requires that rebuild
+before qualifying current main; the prepared fixture remains pinned to `339f008`.
 
 ### History focus hot path
 

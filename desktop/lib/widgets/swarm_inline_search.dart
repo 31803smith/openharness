@@ -23,6 +23,7 @@ class SwarmInlineSearch extends StatefulWidget {
     required this.onChoose,
     this.commands,
     this.onNewAgent,
+    this.catalog,
   });
 
   final AppNotifier app;
@@ -30,6 +31,7 @@ class SwarmInlineSearch extends StatefulWidget {
   final List<String> recent;
   final List<SwarmDestination> Function()? commands;
   final VoidCallback? onNewAgent;
+  final SwarmSearchCatalog? catalog;
   final void Function(SwarmSearchSelection choice, String target) onChoose;
 
   @override
@@ -41,6 +43,7 @@ class _SwarmInlineSearchState extends State<SwarmInlineSearch> {
   final _focus = FocusNode(debugLabel: 'New swarm search');
   final _overlay = OverlayPortalController();
   final _tapGroup = Object();
+  final _catalog = SwarmSearchCatalog();
   SwarmSearchController? _search;
   AppKeymap? _keymap;
 
@@ -76,6 +79,7 @@ class _SwarmInlineSearchState extends State<SwarmInlineSearch> {
       projects: widget.projects,
       commands: widget.commands,
       adding: true,
+      catalog: widget.catalog ?? _catalog,
     )..setQuery(_text.text);
     _search!.addListener(_changed);
     _overlay.show();

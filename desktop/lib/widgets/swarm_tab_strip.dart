@@ -8,7 +8,7 @@ import '../state/app_state.dart';
 
 /// What the overflow menu can run when the strip is too narrow to show the
 /// actions as buttons.
-enum _StripAction { newSwarm, navigate, settings }
+enum _StripAction { newSwarm, navigate }
 
 /// The swarm tabs, and the shell's global actions beside them.
 ///
@@ -37,7 +37,6 @@ class SwarmTabStrip extends StatelessWidget {
     required this.onRename,
     required this.onNavigate,
     required this.onNotifications,
-    required this.onSettings,
   });
 
   /// Unchanged by width — only what sits in the strip moves, never its height.
@@ -55,7 +54,6 @@ class SwarmTabStrip extends StatelessWidget {
   final ValueChanged<String> onRename;
   final VoidCallback onNavigate;
   final VoidCallback onNotifications;
-  final VoidCallback onSettings;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -179,21 +177,6 @@ class SwarmTabStrip extends StatelessWidget {
         child: const Icon(Icons.notifications_none, size: 20),
       ),
     ),
-    // Last, after the ones that act on THIS swarm. Settings is the one action
-    // here that leaves the swarm behind, so it keeps the edge rather than
-    // sitting among them — and it folds away with the rest, since the overflow
-    // menu carries it too and two ways to the same screen is one too many.
-    if (!size.isCompact)
-      IconButton(
-        key: const ValueKey('swarm-settings-button'),
-        tooltip: withEffectiveShortcutHint(
-          context,
-          'Settings',
-          ShortcutAction.showSettings,
-        ),
-        onPressed: onSettings,
-        icon: const Icon(Icons.settings_outlined, size: 20),
-      ),
     if (size.isCompact) _overflow(),
   ];
 
@@ -212,10 +195,6 @@ class SwarmTabStrip extends StatelessWidget {
         value: _StripAction.navigate,
         child: Text('Navigate'),
       ),
-      const PopupMenuItem(
-        value: _StripAction.settings,
-        child: Text('Settings'),
-      ),
     ],
     onSelected: (action) {
       switch (action) {
@@ -223,8 +202,6 @@ class SwarmTabStrip extends StatelessWidget {
           notifier.newSwarm();
         case _StripAction.navigate:
           onNavigate();
-        case _StripAction.settings:
-          onSettings();
       }
     },
   );

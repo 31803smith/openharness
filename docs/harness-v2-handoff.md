@@ -30,6 +30,17 @@ Research must lead to justified improvements, not feature accumulation.
 - Continue on **`main`**, tracking `origin/main`. The user's latest instruction
   is to work, commit, and push directly on main from now on. This supersedes
   the earlier preference for creating a fresh feature branch after each merge.
+- **`339f008`** saves the opening continuation: it keeps the retained canvas
+  built while a picker opens/closes and shares validated catalogs across openings. Warm Add
+  opening measured 22.006 ms median versus 26.273 ms in the same headless
+  fixture; cold starts and native display latency are not established by it.
+  Main includes the team's independent device change `5f8baac`. The complete
+  desktop suite passes 1,309 tests with one existing skip.
+- **`3a7fe57`** preserves the team's `51c0d27` titlebar Settings-button removal.
+  The combined desktop passes the same 1,309 tests, 51 native decoder checks,
+  347 AppKit assertions, analysis and a Release build. Settings remains in the
+  app menu/keyboard flow. **`51f62e7`** then preserves the team's independent
+  device-only changes through `22653fe`; desktop sources are unchanged.
 - **`e71e0ca`** saves Add's frame continuation: it reuses unchanged result rows
   and keeps background pane additions from taking the picker's Flutter focus.
   The full suite passes 1,302 tests. Native fixture identity repair is saved in
@@ -250,18 +261,19 @@ unverified; do not infer them from these UI changes.
 **Archived drafts:** both are superseded. The onboarding ideas were adapted into
 the common page, without adding another first-tab-only component.
 
-**Latest verification:** the Add frame/focus continuation on integrated main
-passes 1,302 desktop tests with one existing skip.
+**Latest verification:** the picker-opening continuation on main passes 1,309
+desktop tests with one existing skip.
 Analyzer reports zero errors/warnings and 14 existing informational diagnostics
 (12 vendored, two inherited from main). Logs:
-`/private/tmp/harness-add-render-integrated-{tests,analyze}.log`.
-The final macOS arm64 Release build also succeeds with
+`/private/tmp/harness-add-open-titlebar-{tests,analyze}.log`.
+The final macOS arm64 Release build succeeds with
 `FLUTTER_TARGET=lib/main.dart`; log:
-`/private/tmp/harness-add-render-integrated-build.log`. The running app was not
+`/private/tmp/harness-add-open-titlebar-build.log`. The running app was not
 restarted, so do not claim its process has loaded these source changes.
-The preceding Add/shortcut integration passed 51 native keymap decoder
+The combined titlebar/picker source passes 51 native keymap decoder
 and 347 AppKit assertions, including the exported Dart keymap and hidden window
-layout; no Swift changed in the frame/focus continuation. That integrated
+layout. Native log: `/private/tmp/harness-add-open-titlebar-native.log`.
+The preceding Add/shortcut integrated
 macOS arm64 Release build succeeded with
 `FLUTTER_TARGET=lib/main.dart`. Synthetic real-font captures of the visible
 starters, Add, multi-select and Navigate were reviewed at 1280×800 and 880×560
@@ -272,6 +284,11 @@ The integrated Release build uses the new `ai.autonomous.harness` bundle ID.
 Add's new full-frame fixture observes an arrow-selection median of 4.714 ms
 versus 8.592 ms before the change, with 2,000 agents and five retained terminals.
 Opening did not improve. This is headless debug CPU time, not displayed latency.
+The next paired opening pass reuses unchanged catalogs and removes redundant
+canvas builds: warm opening median is 22.006 ms versus 26.273 ms. Query timing
+was worse in that run. Reopening refreshes output and revalidates metadata and
+membership without retaining canceled queries/selections. See the current
+performance table before making a broader speed claim.
 Navigate/Add timings and their exact scope are in
 [the performance record](harness-v2-performance.md). The new navigation catalog
 build measured 0.188 ms median / 0.259 ms p95 in the earlier integrated run for
@@ -288,11 +305,16 @@ a distinct Harness Benchmark app. Nine isolated Python checks pass. Preflight
 distinguishes installed copies from workspace builds by exact location as well
 as identity. Preserve its isolation and foreground/key-window guards. The
 performance notes explain the earlier failed calibration; these tooling fixes
-provide no new latency measurements. The identity-fix disposable Release build
-succeeded at `/private/tmp/harness-native-benchmark-7hv6voyr`, before the newer
-Add frame/focus changes. Rebuild it for current-source timing. Its runner correctly
-refused to start while the workspace preview was running, writing no timing
-result. The [performance record](harness-v2-performance.md) has the artifacts.
+provide no new latency measurements. The current disposable Release build
+succeeded at `/private/tmp/harness-native-benchmark-wt0_dt31`, with production
+source at `339f008`. The four changed picker source files match by SHA-256;
+the built bundle is `ai.autonomous.harness.benchmark`. Build receipt:
+`/private/tmp/harness-native-picker-prepare.log`. The earlier identity-fix runner
+correctly refused the running workspace preview, writing no timing result.
+This session confirmed that preview is still running; the new fixture was not
+launched. The later titlebar change supersedes that fixture's native source;
+rebuild it before measuring current main. The [performance record](harness-v2-performance.md)
+has the artifacts.
 
 ## Previous terminal fix and verification
 
@@ -372,10 +394,11 @@ that its isolated window can become active/key.
    using the repaired benchmark identity checks for the team's new
    `ai.autonomous.harness` macOS bundle identifier (Linux now uses
    `com.autonomous.harness` and executable `harness`). Nine isolation tests pass;
-   an identity-fix disposable Release fixture is available at
-   `/private/tmp/harness-native-benchmark-7hv6voyr`. Its runner correctly refuses
-   the running workspace preview. Rebuild it for the newer Add frame/focus
-   source. A request to briefly close/reopen that preview
+   a disposable Release fixture is available at
+   `/private/tmp/harness-native-benchmark-wt0_dt31` from source `339f008`.
+   Rebuild it for the team's later titlebar change when the measurement window
+   is available. The workspace preview is still
+   running. A request to briefly close/reopen that preview
    for calibration is pending; elapsed time is not approval. No native samples
    have been accepted. See the current performance record for exact artifacts.
    Then close remaining visual/platform/release qualification gaps. Maintain

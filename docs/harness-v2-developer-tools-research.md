@@ -2,13 +2,31 @@
 
 Research and source audit: 2026-09-12. Recommendation for the existing `app-v2` build.
 
+**Historical audit:** the [current handoff](harness-v2-handoff.md) supersedes
+earlier menu, toolbar, picker, shortcut and onboarding experiments recorded here.
+
 Harness should make three things excellent: **keep work alive, reach any work instantly, and steer agents without losing concentration.** A developer should be able to spend a whole day here directing their existing agents.
 
 This is a qualitative sample of firsthand accounts and tool authors' documentation, not a survey of all exceptional developers. “World-class” has no objective tool list. Publication dates matter: several authors have changed their workflows. Product documentation establishes advertised behavior; it does not independently establish performance, reliability or developer affection.
 
-## Current implementation queue
+## Browser keyboard follow-up (2026-09-14)
 
-Updated 2026-09-13 after user review. Keep the existing simple Command shortcuts: H/J/K/L and arrows for movement, S for layout, B for Boss mode. The modifier-heavy proposal and general-purpose-terminal assumption are withdrawn. This is the working list; [the progress log](harness-v2-progress.md) records checks and remaining gaps.
+Safari and Chrome document explicit keyboard paths for focusing their search/
+address field, moving between tabs, reopening closed tabs, and finding within
+the current page. Those are separate operations, with different scopes.
+Sources: [Safari shortcuts](https://support.apple.com/guide/safari/keyboard-shortcuts-and-gestures-cpsh003/mac)
+and [Chrome shortcuts](https://support.google.com/chrome/answer/157179?co=GENIE.Platform%3DDesktop&hl=en).
+
+Our adaptation is to preserve Harness's agreed Navigate/Add distinction and
+bindings, with predictable focus when a temporary picker opens or is canceled.
+The current performance pass removes unchanged-canvas builds and repeated
+catalog formatting from that loop. The browser references establish advertised
+interaction conventions, not performance or usability evidence for Harness;
+the measured scope and unverified native checks stay in the performance record.
+
+## Historical implementation queue
+
+Recorded 2026-09-13 after user review. The simple Command shortcuts use H/J/K/L and arrows for movement, S for layout, B for Boss mode. The modifier-heavy proposal and general-purpose-terminal assumption were withdrawn. This historical list predates the latest Navigate/Add and Cmd-N decisions; use the current handoff above for implementation direction.
 
 | Status | Work |
 | --- | --- |

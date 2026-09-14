@@ -432,6 +432,7 @@ static int find_proj(const char *id);            // index of the project with th
 // moment a third owner existed and would have silently applied a language to an agent's runtime profile.
 #define PICK_OWNER_PROFILE 0   // Model / Effort — an agent_update RPC
 #define PICK_OWNER_LANG    1   // voice language — local, persisted to NVS
+#define PICK_OWNER_ACTION  2   // Voice / Goal / Loop — starts a turn on the active agent
 // Half the screen minus half a row: what lets the FIRST and LAST row reach the middle of the wheel.
 #define PICK_PAD_V         200
 // The wheel has TWO owners: the per-agent Model/Effort profile, and Settings > Voice language. It once
@@ -460,6 +461,7 @@ static void ev_card_free(lv_event_t *e); // free an event card's stored full tex
 static void open_reader_text(const char *full); // swipe-up → open the full-text reader (defined below)
 static void open_agent_detail(const char *proj_id); // notification tap → focus that agent AND open its detail
 static void reader_close(lv_event_t *e); // swipe-down at top → back to projects (defined below)
+static void reader_close_tap(lv_event_t *e); // the reader's X pill (defined below)
 static void voice_overlay_set(bool on);  // voice: dark overlay + free/restore tile content (RAM headroom)
 static void notif_pill_tap(lv_event_t *e);       // the bell → open the drawer (defined below)
 static void switch_close(void);                  // close the picker without picking (defined below)
@@ -2190,11 +2192,15 @@ void ui_init(void)
     scr_reader = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(scr_reader, COL_BG, 0);
     lv_obj_set_style_pad_hor(scr_reader, 46, 0);   // wider text column (was 68) — less empty side space
-    lv_obj_set_style_pad_top(scr_reader, 50, 0);   // name pill sits here, just under the top 🔔 arc
+    lv_obj_set_style_pad_top(scr_reader, 62, 0);   // the name pill sits here, under the X (16..48)
     lv_obj_set_style_pad_bottom(scr_reader, 64, 0);
     lv_obj_add_flag(scr_reader, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scroll_dir(scr_reader, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(scr_reader, LV_SCROLLBAR_MODE_OFF);
+    // The same X every other full-face screen wears (owner, 2026-09-14): a tap anywhere still closes the
+    // reader, as it always did, but that is a thing you have to know — the pill is the thing you can see.
+    // FLOATING and measured from the content box, so its y undoes the top padding (see picker_add_close).
+    make_close_pill(scr_reader, reader_close_tap, 16 - 62);
     // Stack the name pill over the full text (Figma "detail screen" adds the project name at the top).
     lv_obj_set_flex_flow(scr_reader, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(scr_reader, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
@@ -2905,7 +2911,18 @@ static bool agent_action_ready(void)
 // recap card owned the middle of the tile and there was room for nothing else. The card is gone
 // (mockup/recap-done.html), the space is back, and a wheel that costs a tap to reach a button that was
 // already on screen is a tax on the two actions people reach for least.
-static void agent_voice_tap(lv_event_t *e) { (void)e; if (agent_action_ready()) voice_start_impl(VOICE_CMD_NONE); }
+// The tile carries ONE action button, and tapping it asks which action (owner, 2026-09-14: "click vô nút
+// voice thì hiện ra 3 option Voice Goal Loop, default là Voice" — the wheel this tile had before the
+// three marks, brought back). It opens centred on Voice every time and never remembers the last pick:
+// the button under the finger has to mean the same thing each time it is reached for without looking.
+static void build_action_picker(void);
+static void agent_voice_tap(lv_event_t *e)
+{
+    (void)e;
+    if (!agent_action_ready()) return;
+    s_suppress_tap = true;   // this press opened a screen; it must not also open the detail reader
+    build_action_picker();
+}
 static __attribute__((unused)) void agent_goal_tap (lv_event_t *e) { (void)e; if (agent_action_ready()) voice_start_impl(VOICE_CMD_GOAL); }
 static __attribute__((unused)) void agent_loop_tap (lv_event_t *e) { (void)e; if (agent_action_ready()) voice_start_impl(VOICE_CMD_LOOP); }
 
@@ -3527,6 +3544,44 @@ static void settings_vlang_tap(lv_event_t *e)
     build_lang_picker();
 }
 
+// The agent tile's action wheel: Voice / Goal / Loop, in that order because Voice is the default and the
+// wheel opens centred on the first row. Same shell as the language picker — local choices, no backend
+// call, so it builds straight from the tap on the LVGL task.
+static void build_action_picker(void)
+{
+    static const char *const ACTIONS[] = { "Voice", "Goal", "Loop" };
+
+    display_lock();
+    lv_obj_clean(scr_picker);
+    lv_obj_t *band = lv_obj_create(scr_picker);
+    lv_obj_remove_style_all(band);
+    lv_obj_add_flag(band, LV_OBJ_FLAG_FLOATING);
+    lv_obj_clear_flag(band, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_SNAPPABLE);
+    lv_obj_set_size(band, lv_pct(88), PICK_ROW_H);
+    lv_obj_align(band, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_border_side(band, LV_BORDER_SIDE_TOP | LV_BORDER_SIDE_BOTTOM, 0);
+    lv_obj_set_style_border_width(band, 1, 0);
+    lv_obj_set_style_border_color(band, lv_color_hex(0x242424), 0);
+
+    s_pick_owner = PICK_OWNER_ACTION;
+    s_pick_agent[0] = '\0';     // acts on whichever tile is active; nothing may read this back
+    s_pick_count = 0;
+    s_pick_focus = -1;
+    s_pick_cur_idx = 0;         // Voice — the default, and never the last pick
+    memset(s_pick_rows, 0, sizeof(s_pick_rows));
+    for (int i = 0; i < (int)(sizeof(ACTIONS) / sizeof(ACTIONS[0])) && s_pick_count < PICK_MAX; i++) {
+        s_pick_rows[s_pick_count] = make_pick_row(scr_picker, ACTIONS[i], s_pick_count);
+        s_pick_count++;
+    }
+    picker_add_close();
+    lv_obj_scroll_to_y(scr_picker, s_pick_cur_idx * PICK_STEP, LV_ANIM_OFF);
+    lv_obj_update_layout(scr_picker);
+    s_pick_focus = -1;
+    picker_focus_apply();
+    lv_screen_load(scr_picker);
+    display_unlock();
+}
+
 bool ui_scroll_is_reversed(void) { return s_scroll_reversed; }
 
 static void settings_scroll_tap(lv_event_t *e)
@@ -3960,6 +4015,17 @@ static void pick_row_tap(lv_event_t *e)
     int idx = (int)(intptr_t)lv_event_get_user_data(e);
     s_suppress_tap = true;
     if (idx < 0 || idx >= s_pick_count) { display_lock(); lv_screen_load(scr_projects); display_unlock(); return; }
+    if (s_pick_owner == PICK_OWNER_ACTION) {
+        // Voice / Goal / Loop. Back to the carousel FIRST — the voice overlay lives on that screen, and
+        // starting a turn while the picker is loaded would record behind a screen nobody can see.
+        static const int cmds[] = { VOICE_CMD_NONE, VOICE_CMD_GOAL, VOICE_CMD_LOOP };
+        const int cmd = (idx >= 0 && idx < (int)(sizeof(cmds) / sizeof(cmds[0]))) ? cmds[idx] : VOICE_CMD_NONE;
+        display_lock();
+        lv_screen_load(scr_projects);
+        display_unlock();
+        if (agent_action_ready()) voice_start_impl(cmd);
+        return;
+    }
     if (s_pick_owner == PICK_OWNER_LANG) {
         // Voice language: purely local. Persist, repaint the Settings row in place, and go back to the
         // carousel — which is still parked on the Settings tile, so the user lands where they left.
@@ -5768,9 +5834,15 @@ static void swarm_picker_rebuild(void)
 {
     if (!s_swarm_list) return;
     lv_obj_clean(s_swarm_list);
+    int shown = 0;
     for (int i = 0; i < s_swarm_count; i++) {
         const cable_swarm_t *w = &s_swarms[i];
         bool here = strcmp(w->id, s_swarm_selected) == 0;
+        // An untouched welcome tab — the window's default name and nothing in it — is not a place the
+        // dial can go, so it is not a row (owner, 2026-09-14: "không có New swarm"). The one on screen
+        // is still listed, whatever it is called.
+        if (!here && w->agents == 0 && strcmp(w->name, "New swarm") == 0) continue;
+        shown++;
         lv_obj_t *row = lv_button_create(s_swarm_list);
         lv_obj_set_width(row, lv_pct(100));
         lv_obj_set_height(row, LV_SIZE_CONTENT);
@@ -5803,7 +5875,7 @@ static void swarm_picker_rebuild(void)
         lv_obj_set_style_text_align(sub, LV_TEXT_ALIGN_CENTER, 0);
         lv_label_set_text_fmt(sub, "%d agent%s", w->agents, w->agents == 1 ? "" : "s");
     }
-    if (s_swarm_count == 0) make_label(s_swarm_list, "No swarms — open the app", COL_MUTED, &geist_med_28);
+    if (shown == 0) make_label(s_swarm_list, "No swarms — open the app", COL_MUTED, &geist_med_28);
 }
 
 static void swarm_picker_build(void)
@@ -6049,13 +6121,22 @@ static void open_reader_text(const char *full)
     display_unlock();
 }
 
-// Close the reader → back to the projects view. Called by swipe-down at the reader's top.
+// Close the reader → back to the projects view. Called by the deferred tap (ui_tap) and by the X.
 static void reader_close(lv_event_t *e)
 {
     (void)e;
     display_lock();
     lv_screen_load(scr_projects);
     display_unlock();
+}
+
+// The X pill's tap. The press is also the deferred single tap's, which would close the reader on its
+// own a moment later — by then the carousel is up, and a tap it never saw the start of must not open
+// anything, hence the suppress.
+static void reader_close_tap(lv_event_t *e)
+{
+    s_suppress_tap = true;
+    reader_close(e);
 }
 
 // Marker + colour for a commander event kind. Markers are Unicode glyphs included in geist_reg_20
