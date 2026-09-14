@@ -1,5 +1,27 @@
 # Harness v2: goal, plan, and continuation handoff
 
+**Layout keyboard and rendering correction:** The current workspace keymap blocked
+a second Layout chord once the dialog opened, and Cmd-number fell through as a
+plain layout choice. Layout now owns its configured cycling command while other
+workspace actions stay blocked; modified digits/arrows do not choose a shape.
+Fast repeated chords within a frame are covered. Confirmation retains the selected
+agent, reveals the latest output in both panes, and returns the next key to that
+agent without input leaking during selection.
+
+The highlight no longer changes card/diagram bounds. An 880×560 render with 2×
+text reproduced a 27-pixel overflow and truncated labels. Cards and the dialog
+now expand with text, arrow steps use the actual wrapped columns, and the selected
+choice stays scroll-reachable. Repeated shortcut text is replaced by readable
+choice numbers and shorter instructions. Normal and 2× current renders were
+inspected in `/private/tmp/harness-layout-captures-final/`; all **56 affected checks**
+pass in `/private/tmp/harness-layout-final-checks.log`. Analysis of all four changed
+source/test files is clean in `/private/tmp/harness-layout-final-analyze.log`.
+The full desktop suite passes **1,426 checks**, with one optional media placeholder
+skipped, in `/private/tmp/harness-layout-final-full.log`. These are headless renders
+with metric-compatible fonts, not native platform or latency qualification.
+The build refresh is pending; the prepared preview below predates this correction
+and the running preview is unchanged while the console is locked.
+
 **Picker focus correction:** `0c240dd` is pushed. Tab could move from the search field into a result,
 outside its shortcut scope. Both Cmd-N and the native New Harness action then
 left the inline results underneath creation. The whole input/results surface now

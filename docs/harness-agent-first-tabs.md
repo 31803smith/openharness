@@ -80,6 +80,12 @@ name filled in; no agent is opened until the user chooses a result.
 
 **Cmd-T** opens the start page, **Cmd-N** opens New Harness
 directly, and **Cmd-O** finds an existing harness. **Cmd-S** opens Layout.
+Pressing the configured Layout key again cycles choices without applying them;
+Enter applies the highlighted choice and Escape cancels. Plain digits choose
+directly, while modified digits and arrows cannot accidentally apply a shape.
+Layout cards keep fixed diagram bounds as the highlight moves. Larger text gets
+wider cards and readable labels, with arrow navigation following the rendered
+rows and scrolling the selected choice into view when necessary.
 **Cmd-H/J/K/L** and **Cmd-arrows** focus panes; **Shift-Cmd-arrows** move them.
 **Cmd-1…Cmd-9** select tabs in their visible order; missing numbers do nothing.
 Cmd-W closes the tab, Shift-Cmd-W closes the focused pane, and Shift-Cmd-T

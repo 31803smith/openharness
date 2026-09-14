@@ -109,6 +109,28 @@ void main() {
     expect(find.byType(Dialog), findsOneWidget, reason: 'still open');
   });
 
+  testWidgets('moving the layout highlight keeps the diagrams in place', (
+    tester,
+  ) async {
+    final notifier = await _open(tester);
+    final choices = PanePreset.forCount(3);
+    List<Rect> rectangles() => [
+      for (final choice in choices)
+        tester.getRect(
+          find.ancestor(
+            of: find.text(choice.label),
+            matching: find.byType(Container),
+          ),
+        ),
+    ];
+    final before = rectangles();
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.pump();
+    expect(rectangles(), before);
+    await tester.pumpWidget(const SizedBox());
+    notifier.dispose();
+  });
+
   testWidgets('Enter takes the shape the arrows landed on', (tester) async {
     final notifier = await _open(tester);
     final choices = PanePreset.forCount(3);

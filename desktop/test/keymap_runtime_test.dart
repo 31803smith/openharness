@@ -10,6 +10,7 @@ import 'package:harness/shortcuts/app_keymap.dart';
 import 'package:harness/shortcuts/keymap.dart';
 import 'package:harness/shortcuts/shortcuts_list.dart';
 import 'package:harness/state/app_state.dart';
+import 'package:harness/state/pane_preset.dart';
 import 'package:harness/state/swarm_catalog.dart';
 import 'package:harness/terminal/terminal_binary.dart';
 import 'package:harness/widgets/swarm_switcher.dart';
@@ -70,6 +71,111 @@ Future<void> tabToResult(WidgetTester tester, {String? id}) async {
 }
 
 void main() {
+  for (final remapped in [false, true]) {
+    testWidgets(
+      'the configured Layout key cycles choices and returns to latest output (remapped=$remapped)',
+      (tester) async {
+        final app = createApp();
+        final map = MemoryKeymap();
+        if (remapped) {
+          map.apply('''{"bindings":[
+            {"keys":"cmd+s","command":null},
+            {"keys":"cmd+y","command":"pane.layout"}
+          ]}''');
+        }
+        final firstInput = <TerminalBinaryFrame>[];
+        final secondInput = <TerminalBinaryFrame>[];
+        final first = terminal('a0', firstInput);
+        final second = terminal('a1', secondInput);
+        app.adoptSessionForTest(first);
+        final focused = app.adoptSessionForTest(second);
+        await mount(tester, app, map);
+        for (final session in [first, second]) {
+          session.terminal.write(
+            List.generate(200, (i) => 'Output $i\r\n').join(),
+          );
+        }
+        await tester.pump();
+        final views = tester
+            .widgetList<TerminalView>(find.byType(TerminalView))
+            .toList();
+        for (final view in views) {
+          expect(
+            view.scrollController!.position.maxScrollExtent,
+            greaterThan(0),
+          );
+          view.scrollController!.jumpTo(0);
+        }
+        await tester.pump();
+        final before = app.presetFor(2);
+        final shortcut = remapped
+            ? LogicalKeyboardKey.keyY
+            : LogicalKeyboardKey.keyS;
+        await key(tester, shortcut, cmd: true);
+        await tester.pumpAndSettle();
+        if (remapped) await key(tester, LogicalKeyboardKey.keyS, cmd: true);
+        // Fast repeated chords can arrive before the next rendered frame.
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+        await tester.sendKeyEvent(shortcut);
+        await tester.sendKeyEvent(shortcut);
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+        await tester.pump();
+        expect(find.byType(Dialog), findsOneWidget);
+        expect(app.presetFor(2), before);
+        expect(app.focusedPane, same(focused));
+        for (final view in views) {
+          expect(view.scrollController!.offset, 0);
+        }
+        await key(tester, LogicalKeyboardKey.enter);
+        await tester.pumpAndSettle();
+        expect(app.presetFor(2), PanePreset.rows);
+        expect(find.byType(Dialog), findsNothing);
+        for (final view in views) {
+          expect(
+            view.scrollController!.offset,
+            view.scrollController!.position.maxScrollExtent,
+          );
+        }
+        expect(firstInput, isEmpty);
+        expect(secondInput, isEmpty);
+        await key(tester, LogicalKeyboardKey.arrowLeft);
+        expect(firstInput, isEmpty);
+        expect(secondInput.single.bytes, [27, 91, 68]);
+        await tester.pumpWidget(const SizedBox());
+        app.dispose();
+        map.dispose();
+      },
+    );
+  }
+
+  testWidgets('modified layout digits do not confirm a shape', (tester) async {
+    final app = createApp();
+    final map = MemoryKeymap();
+    app.adoptSessionForTest(terminal('a0', []));
+    app.adoptSessionForTest(terminal('a1', []));
+    await mount(tester, app, map);
+    final before = app.presetFor(2);
+    await key(tester, LogicalKeyboardKey.keyS, cmd: true);
+    await tester.pumpAndSettle();
+    for (final modifier in ['cmd', 'ctrl', 'alt', 'shift']) {
+      await key(
+        tester,
+        LogicalKeyboardKey.digit3,
+        cmd: modifier == 'cmd',
+        ctrl: modifier == 'ctrl',
+        alt: modifier == 'alt',
+        shift: modifier == 'shift',
+      );
+      expect(find.byType(Dialog), findsOneWidget);
+      expect(app.presetFor(2), before);
+    }
+    await key(tester, LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(const SizedBox());
+    app.dispose();
+    map.dispose();
+  });
+
   testWidgets('Command-T opens New Tab and Command-S opens Layout', (
     tester,
   ) async {
