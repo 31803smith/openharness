@@ -1,6 +1,6 @@
 # Harness v2: goal, plan, and continuation handoff
 
-**Terminal Find editor correction:** Ten live output updates previously rebuilt
+**Terminal Find editor correction:** `8b73106` is pushed. Ten live output updates previously rebuilt
 the Find text field ten times; the result controls now update around a retained
 editor, reducing that count to zero while keeping the selected match, caret,
 composition and focus. Enter/keypad Enter and Escape no longer navigate or close
@@ -14,8 +14,9 @@ Both changed files analyze cleanly in `/private/tmp/harness-find-editor-analyze.
 The full desktop suite passes **1,435 checks**, with one optional media placeholder
 skipped, in `/private/tmp/harness-find-editor-full.log`. These are widget work
 counts and composition-boundary checks, not native latency or live input-method
-qualification. The prepared Release below predates this correction; its refresh
-is pending. The running preview remains unchanged while the console is locked.
+qualification. The prepared Release below includes this correction and passes
+deep, strict signature verification. The running preview remains unchanged while
+the console is locked.
 
 **Workspace event isolation:** `99d1ac9` is pushed. Routine heartbeats and dial scroll no longer
 rebuild the surrounding workspace or visit every retained terminal's JSON
@@ -152,8 +153,8 @@ The existing guarantee that arrow navigation rebuilds only changed rows remains
 verified. Analysis of the five changed source/test files reports no issues in
 `/private/tmp/harness-start-search-analyze.log`.
 
-The latest Release build, through `99d1ac9`, succeeds in
-`/private/tmp/harness-workspace-events-release.log`. Both rebuilt frameworks verified
+The latest Release build, through `8b73106`, succeeds in
+`/private/tmp/harness-find-editor-release.log`. Both rebuilt frameworks verified
 before refreshing the outer ad-hoc signature; the full bundle then passed deep,
 strict signature verification at
 `/private/tmp/harness-pane-controls-release/Build/Products/Release/Harness.app`.
@@ -167,7 +168,8 @@ verified bundle, and check inline command entry/reopen from both keyboard and
 native menu, including after Tab focuses a result. Check New Harness dismissal
 from inline search, initial folder focus and folder cancellation. Check repeated
 Layout chords, confirmation returning focus to the same agent, and latest-output
-alignment after applying a layout. The visual and terminal checks below describe
+alignment after applying a layout. Check Find during live output and Enter/Escape
+with active text composition. The visual and terminal checks below describe
 the preceding `b4baf68` preview. Native latency benchmarking remains deferred.
 
 **Latest UI direction:** [Harness entry and pane controls](harness-agent-first-tabs.md)
