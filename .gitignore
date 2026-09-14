@@ -18,3 +18,5 @@ provider/example-provider/sessions.json
 .env
 .env.*
 !.env.example
+
+.secrets
