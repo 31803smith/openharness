@@ -76,13 +76,14 @@ are:
 
 ## Current source and verification
 
-The current continuation restores keyboard/text input immediately when Find
-closes. All affected checks, analysis and full desktop regressions pass. The
-prepared Release still contains **8b73106** and needs rebuilding for this change.
+**8d754db** restores keyboard/text input immediately when Find closes and is
+pushed to main. All affected checks, analysis and full desktop regressions pass.
+The prepared, verified Release now includes this change; the running preview
+remains unchanged while the console is locked.
 
 | Checkpoint | Verified change |
 | --- | --- |
-| **Current source** — Find dismissal | Escape or the close button previously lost an arrow key and text arriving before the next frame. Dismissal now immediately restores the retained terminal's input connection, or the visible composer's field and draft. The renderer and remembered Find query stay intact. |
+| **8d754db** — Find dismissal | Escape or the close button previously lost an arrow key and text arriving before the next frame. Dismissal now immediately restores the retained terminal's input connection, or the visible composer's field and draft. The renderer and remembered Find query stay intact. |
 | **8b73106** — terminal Find | Ten output updates now rebuild the editor zero times instead of ten. Results update around it while match, caret, composition and focus remain stable. Enter/keypad Enter and Escape return to the platform input method during composition; normal navigation/dismissal resumes afterward. |
 | **99d1ac9** — workspace events | Routine heartbeats and dial scrolling no longer rebuild the workspace or visit unrelated retained terminal JSON handlers. Busy-state transitions, watchdog expiry, dial status, hidden ready replies and machine transport failures retain their routing. |
 | **d5756ab** — Layout | Repeating the configured Layout chord cycles choices; modified digits/arrows cannot accidentally apply a shape. Highlighting preserves geometry. Large text gets readable, scrollable choices and navigation follows actual wrapped rows. Confirmation retains the agent and latest output. |
@@ -103,10 +104,10 @@ Current checks:
   **363 AppKit titlebar checks**, including hidden native window layout.
   Log: /private/tmp/harness-current-native-contract.log. The script completed;
   it displayed no windows and opened no agents.
-- The preceding arm64 **Release build succeeds** through 8b73106. Both rebuilt
+- The normal arm64 **Release build succeeds** through 8d754db. Both rebuilt
   frameworks verified before refreshing the outer ad-hoc signature; the full
   bundle passed deep, strict signature verification.
-  Build log: /private/tmp/harness-find-editor-release.log.
+  Build log: /private/tmp/harness-find-focus-release.log.
 - Four optional CLI-media checks previously passed at 67c20f4 in
   /private/tmp/harness-current-media-smoke.log. They use isolated identities,
   synthetic media, loopback transport and a stubbed OS launch boundary.
@@ -119,7 +120,7 @@ earlier counts separate.
 
 ### Prepared build versus running preview
 
-**Prepared, verified Release through 8b73106:**
+**Prepared, verified Release through 8d754db:**
 
 /private/tmp/harness-pane-controls-release/Build/Products/Release/Harness.app
 
