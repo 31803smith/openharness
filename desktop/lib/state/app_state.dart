@@ -1432,9 +1432,14 @@ class AppNotifier extends ChangeNotifier {
         api = _newApiClient();
         _skippedDesktopUpdateVersion = _store.skippedDesktopUpdateVersion;
       }
-      _startUpdateChecking();
-      final environmentReady = await _prepareEnvironment();
-      if (!environmentReady) return;
+      // A viewer installs nothing and is updated by its store: provisioning and the updater both
+      // serve a computer that runs the harness CLI. The updater is not merely useless there — it
+      // throws on an architecture it has no channel for (`ios_arm64`), from inside bootstrap.
+      if (viewer == null) {
+        _startUpdateChecking();
+        final environmentReady = await _prepareEnvironment();
+        if (!environmentReady) return;
+      }
       await _continueAfterEnvironmentReady();
     } catch (error, stack) {
       debugPrint('bootstrap: fallback to login after error: $error\n$stack');

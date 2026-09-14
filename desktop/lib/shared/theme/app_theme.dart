@@ -1,4 +1,4 @@
-import 'dart:io' show Platform;
+import '../../core/apple_fonts.dart';
 
 import 'package:flutter/material.dart';
 
@@ -1429,7 +1429,7 @@ abstract final class AppFont {
   /// they cost nothing and are the right answer the moment the engine can
   /// reach them; `Noto Sans` and `DejaVu Sans` are what actually carries it.
   static String get sansDefault =>
-      Platform.isMacOS ? _macSansDefault : _linuxSansDefault;
+      hasAppleFonts ? _macSansDefault : _linuxSansDefault;
 
   static const String _macSansDefault = '.AppleSystemUIFont';
   static const String _linuxSansDefault = 'Ubuntu Sans';
@@ -1446,7 +1446,7 @@ abstract final class AppFont {
       : [sansDefault, ..._sansFallbackDefault];
 
   static List<String> get _sansFallbackDefault =>
-      Platform.isMacOS ? _macSansFallback : _linuxSansFallback;
+      hasAppleFonts ? _macSansFallback : _linuxSansFallback;
 
   static const List<String> _macSansFallback = [
     'SF Pro Text',
@@ -1483,7 +1483,7 @@ abstract final class AppFont {
   /// was not monospaced at all. The Linux chain is the terminal's own default
   /// (see `lib/terminal/terminal_typography.dart` for why DejaVu leads).
   static String get monoDefault =>
-      Platform.isMacOS ? _macMonoDefault : _linuxMonoDefault;
+      hasAppleFonts ? _macMonoDefault : _linuxMonoDefault;
 
   static const String _macMonoDefault = '.AppleSystemUIFontMonospaced';
   static const String _linuxMonoDefault = 'DejaVu Sans Mono';
@@ -1497,7 +1497,7 @@ abstract final class AppFont {
       : [monoDefault, ..._monoFallbackDefault];
 
   static List<String> get _monoFallbackDefault =>
-      Platform.isMacOS ? _macMonoFallback : _linuxMonoFallback;
+      hasAppleFonts ? _macMonoFallback : _linuxMonoFallback;
 
   static const List<String> _macMonoFallback = [
     'Menlo',
