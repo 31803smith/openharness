@@ -1,6 +1,6 @@
 # Harness v2: goal, plan, and continuation handoff
 
-**First-use audit:** All **16 current-flow checks** now pass in
+**First-use audit:** `581d0a4` is pushed. All **16 current-flow checks** now pass in
 `/private/tmp/harness-current-first-use.log`, with no analysis issues in
 `/private/tmp/harness-current-first-use-analyze.log`. They cover the idle start
 page, deliberate discovery/creation, local-machine defaults from header and native
@@ -15,13 +15,18 @@ split creation, and uncertain replies after the destination changes. All **32
 checks** pass in `/private/tmp/harness-current-creation-recovery-after.log`.
 Recovery guidance now points to **Open Harness**, including when the original
 tab was closed or its split became stale. The check still uses the original
-receipt and never submits another launch. Analysis reports only two existing brace-style infos in
+receipt and never submits another launch. Analysis reports only two existing
+brace-style infos in
 unchanged `app_state.dart` lines (2264 and 2932), with no errors or warnings;
 see `/private/tmp/harness-current-creation-recovery-analyze.log`.
-These changes are newer than the prepared Release bundle
-described below; the console remains locked and the running preview is unchanged.
+The prepared Release bundle includes these changes through `581d0a4`; the console
+remains locked and the running preview is unchanged. The next fixture audit is
+`test/keymap_runtime_test.dart`, which still expects Cmd-T to autofocus the removed
+modal input. Update remaining assertions to the current start page and separate
+dialogs; do not restore the retired UI. A full current-suite pass is still needed
+before claiming release readiness.
 
-**Latest continuation checkpoint:** `98fc760` makes New Harness immediately usable
+**Keyboard creation checkpoint:** `98fc760` makes New Harness immediately usable
 from the keyboard. The folder control receives focus when the dialog mounts;
 Enter opens its chooser. A valid keyboard selection focuses the enabled New
 Harness action. Cancel/error returns to the chooser, and a pending Codex account
@@ -45,7 +50,7 @@ The existing guarantee that arrow navigation rebuilds only changed rows remains
 verified. Analysis of the five changed source/test files reports no issues in
 `/private/tmp/harness-start-search-analyze.log`.
 
-The new Release build succeeds in `/private/tmp/harness-creation-keyboard-release.log`.
+The latest Release build succeeds in `/private/tmp/harness-current-first-use-release.log`.
 Its framework and full bundle signatures verify at
 `/private/tmp/harness-pane-controls-release/Build/Products/Release/Harness.app`.
 **This newer bundle has not replaced the running preview yet.** Two exact-path
