@@ -3,6 +3,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/auth/auth_session.dart';
 import 'package:harness/core/config.dart';
@@ -213,91 +214,145 @@ void main() {
         navigator.setQuery('agent 0 machine 0');
       }, setup: () => navigator.setQuery(''))})}',
     );
+    final history = SwarmNavigationHistory();
+    for (final swarm in app.swarms) {
+      app.selectSwarm(swarm.id);
+      for (final pane in swarm.panes) {
+        app.focusPane(pane.id);
+        history.record(app);
+      }
+    }
+    expect(history.menuDestinations(app), hasLength(60));
+    debugPrint(
+      'SWARM_BENCH ${jsonEncode({'kind': 'headless_debug_cpu', 'operation': 'native_history_snapshot', 'discoveredAgents': 2000, 'swarms': 12, 'entries': 60, 'changedFocus': measure(() {
+        history.menuDestinations(app);
+      }, setup: () {
+        app.focusPaneBy(1);
+        history.record(app);
+      }), 'unchanged': measure(() {
+        history.menuDestinations(app);
+      })})}',
+    );
   });
 
-  for (final swarmCount in [4, 12]) {
-    testWidgets('tab-switch CPU benchmark with $swarmCount retained swarms', (
-      tester,
-    ) async {
-      final app = createApp();
-      app.machineStates['m']!.nodeOnline = true;
-      final first = app.activeSwarmId;
-      for (var swarm = 0; swarm < swarmCount; swarm++) {
-        if (swarm != 0) app.newSwarm();
-        for (var pane = 0; pane < 4; pane++) {
-          final id = 'a${swarm * 4 + pane}';
-          final session =
-              TerminalSession(
-                  machineId: 'm',
-                  agentId: id,
-                  agentName: 'Agent $id',
-                  engineId: 'codex',
-                  send: (_, _) async => true,
-                  sendBinary: (_) async => true,
-                )
-                ..status = TerminalSessionStatus.controlling
-                ..streamId = 'stream-$id';
-          session.terminal.write(
-            List.generate(
-              1000,
-              (line) =>
-                  '\x1b[32m$line\x1b[0m  terminal output with project context\r\n',
-            ).join(),
-          );
-          app.adoptSessionForTest(session);
+  for (final scenario in [
+    (swarms: 4, native: false),
+    (swarms: 12, native: false),
+    (swarms: 4, native: true),
+    (swarms: 12, native: true),
+  ]) {
+    final swarmCount = scenario.swarms;
+    final chrome = scenario.native ? 'native bridge' : 'Flutter tabs';
+    testWidgets(
+      'tab-switch CPU benchmark with $swarmCount retained swarms ($chrome)',
+      (tester) async {
+        final app = createApp();
+        app.machineStates['m']!.nodeOnline = true;
+        var nativeUpdates = 0;
+        if (scenario.native) {
+          // Exercise production History and bridge serialization without AppKit.
+          // This is still a headless CPU test, not native input/display timing.
+          const channel = MethodChannel('harness/swarm_tabs');
+          final messenger = tester.binding.defaultBinaryMessenger;
+          messenger.setMockMethodCallHandler(channel, (call) async {
+            if (call.method == 'update') nativeUpdates++;
+            return null;
+          });
+          addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+          app.machineStates['m']!.agents = [
+            for (var i = 0; i < 2000; i++)
+              Agent(
+                id: 'a$i',
+                name: 'Agent a$i',
+                engine: 'codex',
+                terminalAvailable: true,
+                project: AgentProject(
+                  name: 'Project ${i % 50}',
+                  cwd: '/work/project-${i % 50}',
+                  branch: 'main',
+                ),
+              ),
+          ];
         }
-      }
-      app.selectSwarm(first);
-      await mount(tester, app);
-      for (var warmup = 0; warmup < swarmCount * 3; warmup++) {
-        app.stepSwarm(1);
-        await tester.pump();
-      }
-      final times = <int>[];
-      for (var sample = 0; sample < 60; sample++) {
-        final watch = Stopwatch()..start();
-        app.stepSwarm(1);
-        await tester.pump();
-        times.add(watch.elapsedMicroseconds);
-      }
-      expect(find.byType(TerminalPanel), findsNWidgets(4));
-      expect(
-        find.byType(TerminalPanel, skipOffstage: false),
-        findsNWidgets(swarmCount * 4),
-      );
-      final rebuilds = <String, int>{};
-      debugOnRebuildDirtyWidget = (element, _) {
-        final type = element.widget.runtimeType.toString();
-        rebuilds.update(type, (count) => count + 1, ifAbsent: () => 1);
-      };
-      try {
-        app.stepSwarm(1);
-        await tester.pump();
-      } finally {
-        debugOnRebuildDirtyWidget = null;
-      }
-      final largest = rebuilds.entries.toList()
-        ..sort((a, b) => b.value.compareTo(a.value));
-      final focusTimes = <int>[];
-      for (var sample = 0; sample < 60; sample++) {
-        final watch = Stopwatch()..start();
-        app.focusPaneBy(1);
-        await tester.pump();
-        focusTimes.add(watch.elapsedMicroseconds);
-      }
-      var focusRebuilds = 0;
-      debugOnRebuildDirtyWidget = (_, _) => focusRebuilds++;
-      try {
-        app.focusPaneBy(1);
-        await tester.pump();
-      } finally {
-        debugOnRebuildDirtyWidget = null;
-      }
-      debugPrint(
-        'SWARM_BENCH ${jsonEncode({'kind': 'headless_debug_cpu', 'swarms': swarmCount, 'terminals': swarmCount * 4, 'scrollbackLinesPerTerminal': 1000, 'viewport': '1280x800', 'tabSwitchAndFrame': distribution(times), 'rebuildsPerSwitch': rebuilds.values.fold(0, (total, count) => total + count), 'focusAndFrame': distribution(focusTimes), 'rebuildsPerFocus': focusRebuilds, 'mostRebuiltWidgets': Map.fromEntries(largest.take(12))})}',
-      );
-      await tester.pumpWidget(const SizedBox());
-      app.dispose();
-    });
+        final first = app.activeSwarmId;
+        for (var swarm = 0; swarm < swarmCount; swarm++) {
+          if (swarm != 0) app.newSwarm();
+          for (var pane = 0; pane < 4; pane++) {
+            final id = 'a${swarm * 4 + pane}';
+            final session =
+                TerminalSession(
+                    machineId: 'm',
+                    agentId: id,
+                    agentName: 'Agent $id',
+                    engineId: 'codex',
+                    send: (_, _) async => true,
+                    sendBinary: (_) async => true,
+                  )
+                  ..status = TerminalSessionStatus.controlling
+                  ..streamId = 'stream-$id';
+            session.terminal.write(
+              List.generate(
+                1000,
+                (line) =>
+                    '\x1b[32m$line\x1b[0m  terminal output with project context\r\n',
+              ).join(),
+            );
+            app.adoptSessionForTest(session);
+          }
+        }
+        app.selectSwarm(first);
+        await mount(tester, app, nativeTabs: scenario.native);
+        for (var warmup = 0; warmup < swarmCount * 3; warmup++) {
+          app.stepSwarm(1);
+          await tester.pump();
+        }
+        final times = <int>[];
+        for (var sample = 0; sample < 60; sample++) {
+          final watch = Stopwatch()..start();
+          app.stepSwarm(1);
+          await tester.pump();
+          times.add(watch.elapsedMicroseconds);
+        }
+        expect(find.byType(TerminalPanel), findsNWidgets(4));
+        expect(
+          find.byType(TerminalPanel, skipOffstage: false),
+          findsNWidgets(swarmCount * 4),
+        );
+        final rebuilds = <String, int>{};
+        debugOnRebuildDirtyWidget = (element, _) {
+          final type = element.widget.runtimeType.toString();
+          rebuilds.update(type, (count) => count + 1, ifAbsent: () => 1);
+        };
+        try {
+          app.stepSwarm(1);
+          await tester.pump();
+        } finally {
+          debugOnRebuildDirtyWidget = null;
+        }
+        final largest = rebuilds.entries.toList()
+          ..sort((a, b) => b.value.compareTo(a.value));
+        final focusTimes = <int>[];
+        for (var sample = 0; sample < 60; sample++) {
+          final watch = Stopwatch()..start();
+          app.focusPaneBy(1);
+          await tester.pump();
+          focusTimes.add(watch.elapsedMicroseconds);
+        }
+        var focusRebuilds = 0;
+        debugOnRebuildDirtyWidget = (_, _) => focusRebuilds++;
+        try {
+          app.focusPaneBy(1);
+          await tester.pump();
+        } finally {
+          debugOnRebuildDirtyWidget = null;
+        }
+        if (scenario.native) expect(nativeUpdates, greaterThan(120));
+        debugPrint(
+          'SWARM_BENCH ${jsonEncode({'kind': 'headless_debug_cpu', 'chrome': scenario.native ? 'native_bridge_stubbed' : 'flutter_tabs', 'discoveredAgents': app.machineStates['m']!.agents.length, 'swarms': swarmCount, 'terminals': swarmCount * 4, 'scrollbackLinesPerTerminal': 1000, 'viewport': '1280x800', 'tabSwitchAndFrame': distribution(times), 'rebuildsPerSwitch': rebuilds.values.fold(0, (total, count) => total + count), 'focusAndFrame': distribution(focusTimes), 'rebuildsPerFocus': focusRebuilds, 'mostRebuiltWidgets': Map.fromEntries(largest.take(12))})}',
+        );
+        await tester.pumpWidget(const SizedBox());
+        app.dispose();
+      },
+    );
   }
 }

@@ -23,6 +23,7 @@ Future<void> mount(
   WidgetTester tester,
   AppNotifier app, {
   SwarmProjectStore? projects,
+  bool nativeTabs = false,
 }) async {
   tester.view.devicePixelRatio = 1;
   tester.view.physicalSize = const Size(1280, 800);
@@ -33,7 +34,7 @@ Future<void> mount(
       theme: grid.buildAppTheme(brightness: Brightness.dark),
       home: SwarmScreen(
         notifier: app,
-        nativeTabs: false,
+        nativeTabs: nativeTabs,
         projectStore: projects ?? SwarmProjectStore(),
       ),
     ),

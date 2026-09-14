@@ -1243,7 +1243,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
                         Padding(
                           padding: app.panes.isEmpty
                               ? EdgeInsets.zero
-                              : const EdgeInsets.fromLTRB(10, 10, 10, 68),
+                              : const EdgeInsets.all(10),
                           child: Stack(
                             children: [
                               Positioned.fill(

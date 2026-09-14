@@ -125,7 +125,11 @@ class SwarmNavigationHistory {
     if (listEquals(_menuPresentation, presentation)) return _menuDestinations;
     _menuPresentation = presentation;
     final catalog = {
-      for (final entry in swarmDestinations(app, recent: _recent))
+      for (final entry in swarmDestinations(
+        app,
+        recent: _recent,
+        openOnly: true,
+      ))
         if (entry.hasView) entry.id: entry,
     };
     return _menuDestinations = List.unmodifiable([
@@ -395,18 +399,28 @@ class SwarmLocationCatalog {
   }
 }
 
-/// Keep matching locations together under their swarm, ordered by the best
-/// match in each group. The first result remains the best match/previous place.
+/// Each swarm is one selectable parent, followed by its matching agent views.
+/// Keep the parent even when only an agent matches, so its destination is clear.
+/// Order groups by their best match/previous place, and agents by match within it.
 List<SwarmDestination> rankSwarmLocations(
   List<SwarmDestination> all,
   String query, {
   List<String> recent = const [],
 }) {
   final groups = <String, List<SwarmDestination>>{};
+  final parents = {
+    for (final row in all)
+      if (row.agentId == null) row.swarmId!: row,
+  };
   for (final row in rankSwarmDestinations(all, query, recent: recent)) {
     (groups[row.swarmId!] ??= []).add(row);
   }
-  return [for (final group in groups.values) ...group];
+  return [
+    for (final group in groups.entries) ...[
+      if (parents[group.key] case final parent?) parent,
+      ...group.value.where((row) => row.agentId != null),
+    ],
+  ];
 }
 
 Future<bool> activateSwarmSearchSelection(
@@ -633,6 +647,7 @@ List<SwarmDestination> closedWorkDestinations(AppNotifier app) => [
 List<SwarmDestination> swarmDestinations(
   AppNotifier app, {
   List<String> recent = const [],
+  bool openOnly = false,
 }) {
   final owners = <String, List<Swarm>>{};
   final agents = <String, (MachineState, Agent)>{};
@@ -682,7 +697,10 @@ List<SwarmDestination> swarmDestinations(
       ),
     );
   }
-  for (final id in {...owners.keys, ...agents.keys}) {
+  // History refreshes on focus changes, but only offers existing views. Keep
+  // their normal owner/metadata resolution without formatting every unopened
+  // runtime in discovery. Add agent continues to include those runtimes.
+  for (final id in {...owners.keys, if (!openOnly) ...agents.keys}) {
     final memberships = owners[id] ?? const <Swarm>[];
     final row = agents[id];
     if (memberships.isEmpty && row?.$2.terminalAvailable != true) continue;

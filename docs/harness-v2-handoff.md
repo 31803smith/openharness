@@ -124,6 +124,10 @@ flows** for these two jobs.
   swarm or hide the alternatives by deduplicating only on agent identity.
 - Selecting an agent location focuses that exact agent in the chosen swarm;
   selecting a swarm goes to that swarm. Navigation does not mutate membership.
+- Each swarm is one selectable top-level row, with its agents indented below.
+  Do not repeat the swarm as a heading plus a child result. Empty swarms appear
+  once. Agent-only searches retain the parent while selecting the best matching
+  agent for Enter.
 - Cmd-P remains the navigation shortcut. Cmd-Shift-P remains command mode.
   Native menu, tooltip, help, custom bindings, and actual dispatch must agree.
 - Agents with no open swarm belong to Add. Navigate's explicit “Add an agent…”
@@ -135,6 +139,15 @@ flows** for these two jobs.
 
 ### Add agent
 
+- Latest user approval: search and select one or several existing agents,
+  preserve that selection across queries, show a count with easy removal, then
+  add the selection to the target swarm. On New swarm, Search + Enter adds to
+  a draft list on the page; **Create swarm** opens the selected agents together.
+  Machine/project starters fill that draft list. Keep machines and projects visible
+  as swarm starters instead of hiding them behind Browse. New agent remains
+  the distinct action for a fresh runtime. This continuation is in progress.
+- The bottom-right + floats over the terminal canvas. Do not reserve a footer
+  or shorten every pane to make room for it.
 - Build one shared Add interface for **New swarm, the floating +, and both
   split directions**. It must support existing agents and a clearly visible
   **New agent** action. A split must not immediately force the creation form.

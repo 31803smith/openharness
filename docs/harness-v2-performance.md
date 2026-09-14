@@ -12,6 +12,50 @@ It prints `SWARM_BENCH` JSON records. Its filename deliberately does not end in 
 
 ## Current continuation benchmark (2026-09-14)
 
+### History focus hot path
+
+History now formats only agents with open views. Previously each focus change
+formatted all discovered agents before discarding unopened ones. Add still
+includes the full discovery inventory. A regression failed with 12 unnecessary
+project reads before the fix and now observes zero, while preserving History's
+current destination and ordering.
+
+The expanded seven-case benchmark ran sequentially before and after this change
+on the same shared M2 Max, in the headless debug runner. History has 2,000
+discovered agents, 50 open locations in 12 swarms and 60 menu entries. The new
+frame cases run production native-tab serialization with the AppKit method
+channel receiver mocked; they do not measure AppKit or physical display latency.
+
+| Operation | Before median / p95 / p99 | After median / p95 / p99 |
+| --- | ---: | ---: |
+| History snapshot after focus | 1.863 / 2.344 / 2.737 ms | 0.334 / 0.358 / 0.388 ms |
+| Native bridge stub: switch/pump, 16 retained terminals | 8.262 / 9.341 / 11.797 ms | 6.113 / 6.977 / 8.298 ms |
+| Native bridge stub: focus/pump, 16 retained terminals | 4.217 / 4.815 / 6.131 ms | 2.498 / 3.337 / 3.523 ms |
+| Native bridge stub: switch/pump, 48 retained terminals | 8.214 / 8.940 / 9.038 ms | 6.467 / 7.482 / 7.629 ms |
+| Native bridge stub: focus/pump, 48 retained terminals | 4.329 / 4.849 / 5.513 ms | 2.783 / 3.512 / 4.403 ms |
+| Flutter tabs: switch/pump, 16 retained terminals | 13.698 / 20.591 / 24.499 ms | 13.151 / 22.382 / 24.439 ms |
+| Flutter tabs: focus/pump, 16 retained terminals | 5.632 / 6.629 / 6.901 ms | 6.153 / 7.202 / 7.618 ms |
+| Flutter tabs: switch/pump, 48 retained terminals | 10.913 / 12.465 / 13.061 ms | 10.596 / 12.296 / 18.970 ms |
+| Flutter tabs: focus/pump, 48 retained terminals | 5.599 / 7.345 / 8.597 ms | 6.080 / 7.705 / 8.308 ms |
+
+History's median CPU cost fell about 82%; unchanged snapshots stayed at 0.002 ms.
+Rebuild counts did not change. The native-bridge fixtures discover 2,000 agents;
+the older Flutter-tab fixtures discover 70, so do not compare these modes as
+equivalent workloads. Flutter-tab tails remain variable and some worsened.
+There are 100 History samples and 60 frame samples, with 1,000 retained lines per
+terminal at 1280×800. JIT and shared-host load limit tail conclusions. Native
+input-to-display and remote round-trip latency remain unmeasured.
+
+Both seven-case benchmark runs passed, as did 39 affected behavior tests.
+Analyzer: zero errors/warnings, 14 existing informational diagnostics. The
+normal macOS arm64 Release target built successfully. Logs:
+`/private/tmp/harness-history-benchmark-{before,after}.log`,
+`/private/tmp/harness-history-focused-tests.log`,
+`/private/tmp/harness-history-analyze.log`, and
+`/private/tmp/harness-history-release-build.log`.
+
+### Earlier integrated-main observation
+
 After integrating updated main, the five explicit benchmark cases passed on
 production source at `0b3b343`. They ran sequentially (`--concurrency=1`) after
 the builds and correctness checks finished, on the same shared M2 Max workstation.
