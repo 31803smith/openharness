@@ -13,6 +13,44 @@ final _results = find.byKey(const ValueKey('swarm-search-results'));
 final _startInput = find.byKey(const ValueKey('harness-start-search'));
 
 void main() {
+  for (final expanded in [false, true]) {
+    testWidgets(
+      'inline command shortcut synchronizes input and results (expanded=$expanded)',
+      (tester) async {
+        final app = createApp();
+        await mount(tester, app);
+        if (expanded) {
+          await tester.tap(_startInput);
+        } else {
+          // Keyboard traversal can focus the field before suggestions open.
+          tester.widget<TextField>(_startInput).focusNode!.requestFocus();
+        }
+        await tester.pump();
+        await chord(tester, LogicalKeyboardKey.keyP, shift: true);
+        expect(tester.widget<TextField>(_startInput).controller!.text, '> ');
+        expect(find.text('Run command'), findsOneWidget);
+        expect(find.widgetWithText(ListTile, 'Agent 0'), findsNothing);
+        expect(
+          tester.widget<TextField>(_startInput).decoration!.hintText,
+          'Search commands…',
+        );
+        expect(_results, findsNothing);
+        await tester.enterText(_startInput, '> rename');
+        await tester.pump();
+        await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+        await tester.pump();
+        expect(find.byType(Dialog), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('harness-start-results')),
+          findsNothing,
+        );
+        expect(app.panes, isEmpty);
+        await tester.pumpWidget(const SizedBox());
+        app.dispose();
+      },
+    );
+  }
+
   testWidgets('start-page results filter and open with arrows and Enter', (
     tester,
   ) async {

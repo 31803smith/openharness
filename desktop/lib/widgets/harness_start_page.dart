@@ -31,6 +31,9 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
   bool _showResults = false;
 
   void _open() {
+    // Commands can replace the editor value without a TextField onChanged.
+    // Reveal results for the visible text, including on keyboard-only entry.
+    _search.setQuery(_query.text);
     if (!_showResults) setState(() => _showResults = true);
     _focus.requestFocus();
   }

@@ -5,7 +5,7 @@ import '../state/swarm_search.dart';
 import '../state/swarm_navigation.dart';
 import 'swarm_switcher.dart';
 
-/// The shared input for New Harness, Add and split searches.
+/// The shared input for the start page, Open Harness and split searches.
 /// Flutter owns the caret and result navigation; native chrome only opens it.
 class SwarmSearchInput extends StatelessWidget {
   const SwarmSearchInput({
@@ -43,7 +43,14 @@ class SwarmSearchInput extends StatelessWidget {
   final bool rounded;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => ListenableBuilder(
+    // Command mode changes with the editor value. Result highlights do not,
+    // so arrow navigation must not rebuild the text field.
+    listenable: controller,
+    builder: (context, _) => _buildInput(context),
+  );
+
+  Widget _buildInput(BuildContext context) {
     final open = search != null;
     final border = OutlineInputBorder(
       borderRadius: BorderRadius.vertical(

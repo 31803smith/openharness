@@ -664,18 +664,19 @@ that its isolated window can become active/key.
 
 ## Plan for the next session
 
-1. **Continue from updated main and this handoff.** The user confirmed the
-   current menus and Navigate are visible and explicitly said no further check
-   was needed. The later Add/shortcut/padding changes have a successful Release
-   build; this session did not restart the running app. Do not repeat a relaunch
-   just to reconfirm menus. Preserve real running agents and input during any
-   targeted native workflow verification.
-2. **Observe genuine first use of the common start page.** Start with no
-   account/runtime/agents/projects knowledge and record actual steps/errors to
-   a usable agent. The folder-first path, workspace example and visible
-   machine/project starters are implemented. Check fresh dependencies, provider sign-in, cloning,
-   first task and adding a second agent; improve what the observation exposes.
-   Preserve choices on failure and the distinction between Navigate and Add.
+1. **Continue from current main and the contract at the top of this file.**
+   The latest start page, separate New/Open popups and terminal relayout fix were
+   verified in this checkout's Release preview. Historical progress entries and
+   saved preview bundles are not the current UI. Preserve running agents and
+   input during targeted native verification; do not relaunch just to reconfirm
+   unchanged menus. Commit and push verified work frequently.
+2. **Complete the current keyboard and first-use paths.** Exercise the initially
+   unfocused start-page field, collapsed/expanded search, command-mode entry,
+   composition, keyboard selection and the first key after activation. Check
+   live discovery while reading results and avoid work for dismissed surfaces.
+   Observe fresh dependencies, provider sign-in, cloning, first task and opening
+   a second harness; record actual steps/errors to a usable agent. Preserve
+   choices on failure and the separate New Harness and Open Harness intentions.
    Browser reopen/copy/cancel recovery is implemented with isolated subprocess
    and platform fixtures. Check the real browser handoff and provider return;
    do not infer live sign-in success from fixture results.
@@ -686,9 +687,9 @@ that its isolated window can become active/key.
    CLI and a changed original swarm. A status check must remain read-only. A
    durable desktop pending-creations list and crash-window registry reconciliation
    are still future work; the current dialog cannot resume its intent after closure.
-   New Harness, Add and split now use one centered picker. Outside-click/Escape
-   dismisses creation completely; explicit Back to Search restores its draft.
-   Multi-select and the separate inline search have been removed.
+   The start page and Open popup share input/results components. New Harness
+   opens its own creation form. Outside-click/Escape dismisses creation completely;
+   no Back to Search, Cancel, floating +, Commands footer or multi-select returns.
 3. **Recheck fresh terminal positioning and real workflows** on disposable
    local/remote agents: startup, delayed snapshots, resizing, returning to a
    scrolled view, reconnect, paste, selection, and IME.
@@ -717,27 +718,31 @@ that its isolated window can become active/key.
 
 ### Navigation and adding
 
-- One agent in three swarms yields three explicit usable destinations. Enter
-  focuses the chosen pane in the chosen swarm without altering membership.
+- Cmd-T opens the current start page; Cmd-N opens New Harness and Cmd-O opens
+  existing-work search. Explicit titlebar buttons perform those same actions.
+- Open Harness and the inline field share result rendering, filtering, arrow
+  selection and Enter behavior. Ordinary search opens the chosen existing
+  session in the captured workspace; navigation/history chooses its destination.
 - The first character typed after navigation reaches only the selected agent.
   Hidden/offscreen/zoomed destinations are revealed while retained sessions and
-  reading positions survive switching away and back.
+  sessions survive switching away and back. Returning reveals the latest output.
 - Reopening one agent followed by its original swarm restores a single workspace
   with shared sessions, including at the tab limit. A full destination preserves
   its recovery entry until the entire missing membership can fit.
-- All three Add entry points can add an existing agent and create a new agent.
-  Both split directions preserve their exact original placement. Source swarms
-  remain intact, and existing-agent addition starts no duplicate runtime.
+- New and Open have separate popups. Both split directions preserve their exact
+  original placement, including Cmd-N from an active split picker. Source swarms
+  remain intact, and opening an existing agent starts no duplicate runtime.
 - Already-present, offline, removed, changed-membership, full-capacity, canceled,
   and failed asynchronous actions produce a clear result without modifying the
   wrong swarm or losing a draft. Late completion revalidates its destination.
 - Arrow keys, Enter, Escape, Cmd-A/Delete, paste, and IME work in each input.
   One selected result drives the preview; repeated output cannot steal focus.
-- The toolbar has Navigate and Notifications; only the tab-strip + creates a
-  swarm. The floating Add + is bottom right and does not cover the terminal prompt.
-- The Add preview is always present when meaningful, readable at small/large
-  window sizes, bounded, and useful for choosing an agent. No eye toggle, raw
-  overflow, or ambiguous “Go to agent” action in the local Add workflow.
+- Notifications sits beside the traffic lights. The tab-strip + opens New Tab;
+  New Harness and Open Harness are explicit buttons on the right. No floating +.
+- Search results show a prominent session title over project · branch · machine.
+  Only the selected row shows Open Harness / Open N Harnesses or the split action.
+  The popup has a dark backdrop and no footer or creation CTA. The start-page
+  dropdown uses the same rows and remains usable at small and large window sizes.
 
 ### First impression and visual quality
 
@@ -757,8 +762,9 @@ that its isolated window can become active/key.
 
 ### Correctness and performance
 
-- Fresh views land at the latest output, including tall/delayed snapshots and
-  five-agent project swarms. Revisited scrolled-up views retain their position.
+- Fresh and revisited views land at the latest output, including tall/delayed
+  snapshots, incremental resize redraws and multi-agent workspaces. Manual
+  scrollback within an unchanged pane and active Find retain their chosen position.
 - Shared agents retain one session/buffer/controller; hidden output does not
   repeatedly lay out/paint hidden terminals or reconstruct unchanged catalogs.
 - Report cold/warm p50/p95/p99 for native event-to-raster typing/focus/tab changes
@@ -781,7 +787,7 @@ that its isolated window can become active/key.
 | Workspace orchestration, picker routes, split/new-agent context | `desktop/lib/screens/swarm_screen.dart` |
 | Shared remote folder browsing and request ownership | `desktop/lib/widgets/remote_folder_picker.dart`, `desktop/test/remote_folder_picker_test.dart` |
 | Search data, actions, destinations | `desktop/lib/state/swarm_search.dart`, `swarm_navigation.dart`, `swarm_catalog.dart` |
-| Shared New Harness, Add and split picker | `desktop/lib/screens/swarm_screen.dart`, `desktop/lib/widgets/swarm_switcher.dart`, `swarm_search_input.dart`, `harness_creation_option.dart` |
+| Start page, Open/split search and separate creation | `desktop/lib/widgets/harness_start_page.dart`, `swarm_switcher.dart`, `swarm_search_input.dart`, `new_agent_dialog.dart` |
 | Preview extraction | `desktop/lib/terminal/search_output_preview.dart` |
 | Native tabs, toolbar, menus | `desktop/macos/Runner/SwarmTitlebar.swift` |
 | Key ownership and customization | `desktop/lib/shortcuts/`, `desktop/tool/check_keymap_native.sh` |
