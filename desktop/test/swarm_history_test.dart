@@ -17,7 +17,46 @@ import 'swarm_screen_test.dart' show terminal;
 import 'swarm_state_test.dart' show createApp;
 import 'swarm_switcher_test.dart' show jumpField;
 
+class _UnopenedAgent extends Agent {
+  _UnopenedAgent()
+    : super(id: 'unopened', name: 'Unopened', terminalAvailable: true);
+
+  int projectReads = 0;
+
+  @override
+  AgentProject? get project {
+    projectReads++;
+    return const AgentProject(name: 'Unopened project', cwd: '/work/unopened');
+  }
+}
+
 void main() {
+  test('History does not format unopened agents during focus changes', () {
+    final app = createApp();
+    addTearDown(app.dispose);
+    final unopened = _UnopenedAgent();
+    app.machineStates['m']!.agents = [
+      ...app.machineStates['m']!.agents,
+      unopened,
+    ];
+    final history = SwarmNavigationHistory();
+    app.addListener(() => history.record(app));
+    final first = app.adoptSessionForTest(terminal('a0', []));
+    final second = app.adoptSessionForTest(terminal('a1', []));
+    history.record(app);
+    history.menuDestinations(app);
+    unopened.projectReads = 0;
+    for (var i = 0; i < 12; i++) {
+      final pane = i.isEven ? first : second;
+      app.focusPane(pane.id);
+      final rows = history.menuDestinations(app);
+      expect(rows.first.agentId, pane.agentId);
+      expect(rows.first.current, isTrue);
+      expect(rows.any((row) => row.agentId == unopened.id), isFalse);
+    }
+    expect(unopened.projectReads, 0);
+  });
+
   test(
     'swarm History counts distinct machines, including offline and closed work',
     () async {

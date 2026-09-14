@@ -125,7 +125,11 @@ class SwarmNavigationHistory {
     if (listEquals(_menuPresentation, presentation)) return _menuDestinations;
     _menuPresentation = presentation;
     final catalog = {
-      for (final entry in swarmDestinations(app, recent: _recent))
+      for (final entry in swarmDestinations(
+        app,
+        recent: _recent,
+        openOnly: true,
+      ))
         if (entry.hasView) entry.id: entry,
     };
     return _menuDestinations = List.unmodifiable([
@@ -633,6 +637,7 @@ List<SwarmDestination> closedWorkDestinations(AppNotifier app) => [
 List<SwarmDestination> swarmDestinations(
   AppNotifier app, {
   List<String> recent = const [],
+  bool openOnly = false,
 }) {
   final owners = <String, List<Swarm>>{};
   final agents = <String, (MachineState, Agent)>{};
@@ -682,7 +687,10 @@ List<SwarmDestination> swarmDestinations(
       ),
     );
   }
-  for (final id in {...owners.keys, ...agents.keys}) {
+  // History refreshes on focus changes, but only offers existing views. Keep
+  // their normal owner/metadata resolution without formatting every unopened
+  // runtime in discovery. Add agent continues to include those runtimes.
+  for (final id in {...owners.keys, if (!openOnly) ...agents.keys}) {
     final memberships = owners[id] ?? const <Swarm>[];
     final row = agents[id];
     if (memberships.isEmpty && row?.$2.terminalAvailable != true) continue;

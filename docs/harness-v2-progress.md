@@ -6,6 +6,19 @@ Updated 2026-09-14 after integrating the continuation into main. This is a worki
 
 ## Continue directly on main
 
+- The user confirms the current menu and Navigate changes are visible. No
+  further app restart or inspection is needed for that confirmation.
+- History focus updates now skip formatting unopened agents. A failing-before
+  regression passes; 39 affected tests, all seven expanded benchmark cases,
+  analysis (zero errors/warnings) and the arm64 Release build pass. History
+  snapshot CPU median fell 1.863 to 0.334 ms in the 2,000-agent fixture.
+  Full paired timings, including variable/worse fallback-tab tails, are in
+  [the performance record](harness-v2-performance.md). Native latency is still
+  unmeasured.
+- Latest approved work: restore visible machine/project swarm starters; let
+  shared Add select multiple existing agents across searches with an explicit
+  count/removal and Add N action; keep New agent visible and Navigate separate.
+  The bottom-right + must overlay the panes without reserving a footer.
 - The user now wants all subsequent work, commits and pushes on **main**.
   This supersedes the earlier fresh-feature-branch workflow. Only consolidate
   this user's own branches; other contributors' branches and PRs are excluded.
