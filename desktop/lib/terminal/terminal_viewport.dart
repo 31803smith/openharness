@@ -11,4 +11,8 @@ abstract interface class TerminalViewport {
 
   /// Opens or steps through local terminal output without sending a key.
   void find(TerminalFindAction action);
+
+  /// Claims an already mounted editor before navigation's next rendered frame.
+  /// False means the destination has no ready input view yet.
+  bool focusInput();
 }

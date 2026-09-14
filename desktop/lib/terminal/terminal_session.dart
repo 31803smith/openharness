@@ -1112,6 +1112,8 @@ class TerminalSession extends ChangeNotifier {
 
   void find(TerminalFindAction action) => _viewport?.find(action);
 
+  bool focusInput() => _viewport?.focusInput() ?? false;
+
   /// Coalescing windows for the two things the user drives directly.
   ///
   /// Both are leading + trailing: act on the first event, batch the rest. A flat trailing debounce

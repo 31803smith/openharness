@@ -97,6 +97,16 @@ pane when switching away and back. Closing views
 keeps agent runtimes alive. Stored layout formats and internal command IDs remain
 compatible.
 
+Switching between panes or tabs, closing them, or moving between zoomed panes
+transfers keyboard and text input to the ready retained view before the next
+rendered frame. Its existing terminal, composer or
+Find field receives the next key with its draft and selection intact. Blank
+pages release the previous terminal immediately and leave welcome search
+unfocused. A connecting composer releases the old input connection and receives
+focus once ready. Dialogs keep input while background destinations or connection
+state change; dismissal returns it to the current destination without restoring an
+older agent's focus.
+
 ## Pane chrome
 
 The left side contains only the agent icon and session name. The right side

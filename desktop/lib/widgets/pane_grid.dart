@@ -227,17 +227,34 @@ class _SwarmCanvas extends StatefulWidget {
 class _SwarmCanvasState extends State<_SwarmCanvas> {
   final _scroll = ScrollController(keepScrollOffset: false);
   final _offsets = <String, double>{};
+  final _inputLayers = <int, GlobalKey<_PaneLayerState>>{};
+  final _idleFocus = FocusNode(
+    debugLabel: 'Swarm navigation',
+    skipTraversal: true,
+  );
+  late Object _lastInputDestination;
   final _resizeFocus = FocusNode(debugLabel: 'Resize focused agent');
   final _resizeHelp = OverlayPortalController();
-  late int _resizeRequest = widget.notifier.paneResizeRequest;
-  late String _activeId = widget.notifier.activeSwarmId;
-  late int _focusRequest = widget.notifier.paneFocusRequest;
+  late int _resizeRequest;
+  late String _activeId;
+  late int _focusRequest;
   Size? _viewportSize;
   bool _focusRevealPending = false;
+
+  Object get _inputDestination => (
+    widget.notifier.activeSwarmId,
+    widget.notifier.focusedPaneId,
+    widget.notifier.paneFocusRequest,
+    widget.notifier.zoomedPaneId,
+  );
 
   @override
   void initState() {
     super.initState();
+    _lastInputDestination = _inputDestination;
+    _resizeRequest = widget.notifier.paneResizeRequest;
+    _activeId = widget.notifier.activeSwarmId;
+    _focusRequest = widget.notifier.paneFocusRequest;
     widget.notifier.addListener(_onAppChanged);
     terminalFontStore.addListener(_onFontChanged);
   }
@@ -251,12 +268,18 @@ class _SwarmCanvasState extends State<_SwarmCanvas> {
       _offsets.clear();
       _activeId = widget.notifier.activeSwarmId;
       _focusRequest = widget.notifier.paneFocusRequest;
+      _resizeRequest = widget.notifier.paneResizeRequest;
+      _lastInputDestination = _inputDestination;
       if (_scroll.hasClients) _scroll.jumpTo(0);
     }
   }
 
   void _onAppChanged() {
     final app = widget.notifier;
+    if (_lastInputDestination != _inputDestination) {
+      _lastInputDestination = _inputDestination;
+      _syncInputFocus();
+    }
     if (_resizeRequest != app.paneResizeRequest) {
       _resizeRequest = app.paneResizeRequest;
       _resizeFocus.requestFocus();
@@ -278,6 +301,28 @@ class _SwarmCanvasState extends State<_SwarmCanvas> {
       _revealFocusedPane();
     }
     setState(() {});
+  }
+
+  void _syncInputFocus() {
+    final app = widget.notifier;
+    final visible = {
+      for (final pane in app.panes)
+        if (app.zoomedPaneId == null || pane.id == app.zoomedPaneId) pane.id,
+    };
+    // Exclude the outgoing views and enable the destination's existing focus
+    // tree now. Painting/layout still happens in the normal scheduled frame.
+    for (final entry in _inputLayers.entries) {
+      entry.value.currentState?.prepareInput(visible.contains(entry.key));
+    }
+    if (!_idleFocus.canRequestFocus ||
+        ModalRoute.of(context)?.isCurrent == false) {
+      return;
+    }
+    if (app.focusedPane?.session?.focusInput() != true) {
+      // Blank pages and not-yet-mounted destinations must release the old
+      // terminal's text client immediately, without focusing welcome search.
+      _idleFocus.requestFocus();
+    }
   }
 
   void _revealFocusedPane({bool correctingLayout = false}) {
@@ -325,6 +370,7 @@ class _SwarmCanvasState extends State<_SwarmCanvas> {
     widget.notifier.removeListener(_onAppChanged);
     terminalFontStore.removeListener(_onFontChanged);
     _resizeFocus.dispose();
+    _idleFocus.dispose();
     _scroll.dispose();
     super.dispose();
   }
@@ -418,50 +464,61 @@ class _SwarmCanvasState extends State<_SwarmCanvas> {
         for (var i = 0; i < visible.length; i++)
           visible[i].id: layout.rectangles[i],
       };
+      final retainedIds = app.allPanes.map((pane) => pane.id).toSet();
+      _inputLayers.removeWhere((id, _) => !retainedIds.contains(id));
       // The scroll view stays mounted even when content fits. Its maximum
       // extent is then zero; keeping its ancestry is what avoids grafting.
-      return SingleChildScrollView(
-        controller: _scroll,
-        child: SizedBox(
-          width: constraints.maxWidth,
-          height: layout.height,
-          child: Stack(
-            children: [
-              if (visible.isEmpty)
-                Positioned.fill(
-                  child: widget.empty ?? _EmptyGrid(notifier: app),
-                ),
-              for (final pane in app.allPanes)
-                if (rectangles.containsKey(pane.id) ||
-                    pane.lastViewSize != null)
-                  Positioned.fromRect(
-                    key: ValueKey(pane.id),
-                    rect:
-                        rectangles[pane.id] ?? Offset.zero & pane.lastViewSize!,
-                    child: _PaneLayer(
-                      session: pane.session,
-                      visible: rectangles.containsKey(pane.id),
-                      presentation: _presentation(
-                        pane,
-                        rectangles.containsKey(pane.id),
-                      ),
-                      child: _PaneCell(
-                        key: pane.cellKey,
-                        notifier: app,
-                        pane: pane,
-                        dragging: widget.dragging,
+      return Focus(
+        focusNode: _idleFocus,
+        includeSemantics: false,
+        child: SingleChildScrollView(
+          controller: _scroll,
+          child: SizedBox(
+            width: constraints.maxWidth,
+            height: layout.height,
+            child: Stack(
+              children: [
+                if (visible.isEmpty)
+                  Positioned.fill(
+                    child: widget.empty ?? _EmptyGrid(notifier: app),
+                  ),
+                for (final pane in app.allPanes)
+                  if (rectangles.containsKey(pane.id) ||
+                      pane.lastViewSize != null)
+                    Positioned.fromRect(
+                      key: ValueKey(pane.id),
+                      rect:
+                          rectangles[pane.id] ??
+                          Offset.zero & pane.lastViewSize!,
+                      child: _PaneLayer(
+                        key: _inputLayers.putIfAbsent(
+                          pane.id,
+                          () => GlobalKey<_PaneLayerState>(),
+                        ),
+                        session: pane.session,
                         visible: rectangles.containsKey(pane.id),
-                        swarmMode: true,
-                        onSplit: widget.onSplit,
+                        presentation: _presentation(
+                          pane,
+                          rectangles.containsKey(pane.id),
+                        ),
+                        child: _PaneCell(
+                          key: pane.cellKey,
+                          notifier: app,
+                          pane: pane,
+                          dragging: widget.dragging,
+                          visible: rectangles.containsKey(pane.id),
+                          swarmMode: true,
+                          onSplit: widget.onSplit,
+                        ),
                       ),
                     ),
+                if (app.zoomedPaneId == null &&
+                    layout.arrangement?.dividers.isNotEmpty == true)
+                  Positioned.fill(
+                    child: _resizeLayer(layout, constraints.biggest),
                   ),
-              if (app.zoomedPaneId == null &&
-                  layout.arrangement?.dividers.isNotEmpty == true)
-                Positioned.fill(
-                  child: _resizeLayer(layout, constraints.biggest),
-                ),
-            ],
+              ],
+            ),
           ),
         ),
       );
@@ -631,6 +688,7 @@ class _SwarmGeometry {
 /// update a replaced session; showing it applies fresh machine/agent metadata.
 class _PaneLayer extends StatefulWidget {
   const _PaneLayer({
+    super.key,
     required this.session,
     required this.visible,
     required this.presentation,
@@ -647,11 +705,24 @@ class _PaneLayer extends StatefulWidget {
 }
 
 class _PaneLayerState extends State<_PaneLayer> {
+  final _focus = FocusNode(canRequestFocus: false, skipTraversal: true);
   late Widget _layer = _buildLayer();
+
+  @override
+  void initState() {
+    super.initState();
+    prepareInput(widget.visible);
+  }
+
+  void prepareInput(bool visible) {
+    _focus.descendantsAreFocusable = visible;
+    _focus.descendantsAreTraversable = visible;
+  }
 
   @override
   void didUpdateWidget(_PaneLayer oldWidget) {
     super.didUpdateWidget(oldWidget);
+    prepareInput(widget.visible);
     if (oldWidget.visible != widget.visible ||
         oldWidget.presentation != widget.presentation ||
         !identical(oldWidget.session, widget.session)) {
@@ -662,11 +733,21 @@ class _PaneLayerState extends State<_PaneLayer> {
   @override
   Widget build(BuildContext context) => _layer;
 
+  @override
+  void dispose() {
+    _focus.dispose();
+    super.dispose();
+  }
+
   Widget _buildLayer() => Offstage(
     offstage: !widget.visible,
     child: TickerMode(
       enabled: widget.visible,
-      child: ExcludeFocus(excluding: !widget.visible, child: widget.child),
+      child: Focus.withExternalFocusNode(
+        focusNode: _focus,
+        includeSemantics: false,
+        child: widget.child,
+      ),
     ),
   );
 }

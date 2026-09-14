@@ -335,7 +335,7 @@ class _TerminalPanelState extends State<TerminalPanel>
     // built as disabled — and a disabled field REFUSES focus. Claiming after the frame the
     // composer rebuilds in is what makes the claim actually land.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !widget.focused || !_showsComposer) return;
+      if (!_canClaimInput || !widget.focused || !_showsComposer) return;
       if (widget.readOnly || !widget.session.acceptsInput) return;
       _composerFocus.requestFocus();
     });
@@ -463,7 +463,7 @@ class _TerminalPanelState extends State<TerminalPanel>
     }
   }
 
-  /// Re-establishes the native text-input connection after a rail selection.
+  /// Re-establishes the native text-input connection on pane activation.
   ///
   /// Replacing an agent remounts TerminalView but deliberately keeps this
   /// FocusNode. A plain requestFocus is a no-op when that node already owns
@@ -471,24 +471,48 @@ class _TerminalPanelState extends State<TerminalPanel>
   /// the terminal. TerminalView.requestKeyboard handles both cases: it moves
   /// focus when needed, or opens the connection immediately when focus stayed
   /// on this tile. That is essential for ordinary keys and IMEs alike.
-  void _claimFocus(TerminalViewState view) {
-    if (!mounted || !widget.focused || !widget.visible) return;
-    if (_find != null) {
-      _findBarKey.currentState?.focusSearch(selectAll: false);
-      return;
+  bool _claimFocus(TerminalViewState view, {bool navigating = false}) {
+    if (!_canClaimInput ||
+        (!navigating && (!widget.focused || !widget.visible))) {
+      return false;
     }
-    if (_composerFocus.hasFocus) return;
+    if (_find != null) {
+      final bar = _findBarKey.currentState;
+      if (bar == null) return false;
+      bar.focusSearch(selectAll: false);
+      return true;
+    }
+    if (_composerFocus.hasFocus) return true;
     // On a remote pane the box gets the caret, not the terminal. Landing in the terminal would
     // hand the user the per-keystroke path by default — the exact cost the box exists to avoid.
     if (_showsComposer && !widget.readOnly) {
-      if (widget.session.acceptsInput) {
+      if (widget.session.acceptsInput && _composerFocus.canRequestFocus) {
         _composerFocus.requestFocus();
-      } else {
-        _composerFocusPending = true;
+        return true;
       }
-      return;
+      _composerFocusPending = true;
+      return false;
     }
     view.requestKeyboard();
+    return true;
+  }
+
+  bool get _canClaimInput =>
+      mounted &&
+      _focusNode.canRequestFocus &&
+      ModalRoute.of(context)?.isCurrent != false;
+
+  @override
+  bool focusInput() {
+    // The model has already selected this retained view, but widget visibility
+    // and focus flags will not catch up until the canvas's next frame.
+    if (!_canClaimInput ||
+        !identical(widget.notifier.focusedPane?.session, widget.session)) {
+      return false;
+    }
+    final view = _laidOutTerminalView();
+    if (view == null) return false;
+    return _claimFocus(view, navigating: true);
   }
 
   void _claimFocusAfterFrame() {

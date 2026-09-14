@@ -12,6 +12,43 @@ It prints `SWARM_BENCH` JSON records. Its filename deliberately does not end in 
 
 ## Current continuation benchmark (2026-09-14)
 
+### Immediate keyboard ownership during navigation
+
+Ten current-main regressions reproduced physical keys reaching the previous
+agent after pane/tab navigation, or being dropped after closing a pane/tab.
+Committed text followed the stale input connection too. Creating a blank tab
+also left the previous agent able to receive input before the next frame.
+The before-fix run uses online synthetic machines and both the keyboard and
+actual incoming native command handler:
+`/private/tmp/harness-navigation-input-before.log`.
+
+The canvas now enables the destination's retained focus tree and requests its
+existing input view immediately when the model changes. Blank, unmounted or
+not-yet-ready input views release the previous terminal to the workspace scope.
+No event replay, forced frame, new session or renderer reconstruction is introduced.
+Zoomed panes, retained Find/composer drafts, selection and composition follow
+the same ownership transition. Existing heartbeats and dial scrolling still
+cause zero workspace builds or irrelevant terminal JSON dispatches. Two additional
+cases caught a still-connecting composer leaving the old input owner active;
+it now releases that owner and takes focus only once ready. Reproduction:
+`/private/tmp/harness-navigation-pending-before.log`.
+
+Dialog coverage also reproduced delayed terminal/composer focus taking over
+Rename while a destination changed or an agent became ready. The canvas is now
+excluded from focus while a dialog owns input and explicitly returns it to the
+current destination on dismissal. Deferred viewport/composer callbacks respect
+that boundary. The composer-readiness reproduction is in
+`/private/tmp/harness-navigation-composer-before.log`.
+
+The 18 transition cases cover keyboard/native entry, zoom, waiting input,
+editor drafts/composition, background changes and immediate dialog return.
+All **1,461 desktop checks** pass, with one optional CLI-media placeholder
+skipped, in `/private/tmp/harness-navigation-input-full.log`.
+Six changed source/test files analyze cleanly in
+`/private/tmp/harness-navigation-input-analyze.log`.
+These are input-routing, retention and deterministic-work checks; they do not
+measure native event-to-display latency or qualify live native IME behavior.
+
 ### Find takes input before its first frame
 
 The first-frame opening checks reproduced text and Escape reaching the agent

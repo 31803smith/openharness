@@ -569,12 +569,23 @@ class _SwarmScreenState extends State<SwarmScreen> {
     if (_dialogOpen || _spokenPaletteOpen || !mounted) return;
     _closeSearch();
     _dialogOpen = true;
+    // The route must not restore an old terminal while the destination changes
+    // behind a dialog. Return input explicitly when that dialog finishes.
+    _canvasFocus.descendantsAreFocusable = false;
     if (_native) _syncNative();
     try {
       await action();
     } finally {
       _dialogOpen = false;
-      if (_native && mounted) _syncNative();
+      if (mounted) {
+        _canvasFocus.descendantsAreFocusable = _search == null;
+        if (_search == null &&
+            ModalRoute.of(context)?.isCurrent != false &&
+            app.focusedPane?.session?.focusInput() != true) {
+          _shellFocus.requestFocus();
+        }
+        if (_native) _syncNative();
+      }
     }
     if (restoreEntry) await _ensureEmptyEntry();
   }
