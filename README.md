@@ -112,6 +112,13 @@ backend in [`backend/`](backend/README.md), and the desktop app that attaches te
 machines in [`desktop/`](desktop/README.md). Each releases on its own tag — see
 [`docs/cicd.md`](docs/cicd.md).
 
+There is a fourth side, and it is a physical one: [`device/esp32-circle/`](device/esp32-circle/README.md)
+is the firmware for the Harness dial, a round 466×466 AMOLED you plug into a USB port. It is not
+another client of the backend — since August 2026 it holds no credential and speaks no WiFi, and is
+served entirely over the cable by the `harness` daemon on the computer it is plugged into
+([`docs/specs/cable-protocol.md`](docs/specs/cable-protocol.md)). It ships over the air rather than on
+a tag: `make upload-circle`.
+
 ## End-to-end encryption
 
 On the CLI path it's always on — there's no switch for it. Everything between your machines and the

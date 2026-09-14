@@ -4,7 +4,7 @@
 #   make install-cli ARGS="--no-restart"
 #   make upload-cli  ARGS="0.1.0"
 
-.PHONY: cli-test install-cli upload-cli release-cli release-backend release-desktop remote-machine
+.PHONY: cli-test install-cli upload-cli release-cli release-backend release-desktop remote-machine upload-circle device-test
 
 ## cli-test: typecheck + run the CLI test suite.
 cli-test:
@@ -56,3 +56,22 @@ upload-cli:
 ## See cli/docker/remote-machine/README.md.
 remote-machine:
 	bash cli/scripts/remote-machine.sh $(ARGS)
+
+## upload-circle: bump version -> build -> publish the dial's firmware OTA. MAINTAINER ONLY.
+##
+## NOT a tag-triggered release like the three above, and deliberately so: this builds with a local
+## ESP-IDF toolchain and writes straight to the GCS bucket every running dial polls, so it needs an
+## authenticated gsutil and a sourced IDF env on the machine that runs it. There is no CI runner with
+## a board attached to check the result. See device/esp32-circle/RELEASE.md.
+##
+## ARGS="--dry-run" to preview, ARGS="X.Y.Z" for an explicit version, ARGS="--no-bump" to rebuild and
+## upload what version.txt already says.
+upload-circle:
+	bash device/esp32-circle/scripts/upload-firmware.sh $(ARGS)
+
+## device-test: the firmware's host-side unit tests — frame codec, machine list, carousel ring.
+##
+## Plain `cc` on the host, no board and no ESP-IDF: the parts worth testing here are arithmetic and
+## parsing, and a test that needed hardware attached is a test nobody runs.
+device-test:
+	bash device/esp32-circle/test/run.sh
