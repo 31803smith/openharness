@@ -642,7 +642,7 @@ void main() {
     await tester.pump();
 
     expect(find.textContaining('/bin/sh -s -- --desktop'), findsOneWidget);
-    expect(find.text('I ran these · Recheck'), findsOneWidget);
+    expect(find.text('Check again'), findsOneWidget);
   });
 
   testWidgets(

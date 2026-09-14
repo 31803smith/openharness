@@ -55,6 +55,14 @@ and return keyboard focus to the retry action. The public GitHub clone service
 was also exercised directly in a disposable folder; private access and the
 native chooser still need first-use observation.
 
+First-launch installation now keeps **Install**, **Retry** and **Check again**
+visible while the tool list and diagnostics scroll. Enter activates the current
+step, including recovery after failure; explicit manual/detail focus is retained.
+Manual Retry performs a read-only check instead of silently doing nothing.
+Verbose output is optional under **Setup details**, with Copy diagnostics still
+available. This changes the first-launch tools screen before sign-in; it does not
+add another step to New agent or the common empty-swarm page.
+
 ## Goal
 
 Build the best everyday workspace for people directing persistent AI agents:
@@ -79,7 +87,20 @@ Research must lead to justified improvements, not feature accumulation.
 - Continue on **`main`**, tracking `origin/main`. The user's latest instruction
   is to work, commit, and push directly on main from now on. This supersedes
   the earlier preference for creating a fresh feature branch after each merge.
-- Clone recovery passes 49 affected workflow checks and one real-font render
+- First-launch installation passes 59 affected workflow checks and one real-font
+  render check (60 total). Six new regressions cover minimum-size/2× text action
+  visibility, Enter/retry, manual-mode focus and read-only retry, and diagnostics.
+  The original action-visibility and Enter regressions failed before the fix.
+  Analysis has zero errors/warnings and 14 existing infos. The normal arm64
+  Release build succeeds at
+  `/private/tmp/harness-setup-release/Build/Products/Release/Harness.app`.
+  Logs: `/private/tmp/harness-setup-final-{tests,analyze}.log` and
+  `/private/tmp/harness-setup-release.log`. The app was not launched. These are
+  fake-provisioner and rendered-screen checks, not a real fresh install or
+  provider sign-in. Main was fast-forwarded through the team's `e14d0fb`;
+  incoming release-script and dial-firmware changes leave the tested desktop
+  application sources unchanged. Benchmarking remains deferred.
+- **`cb92d2a`** adds clone recovery, passing 49 affected workflow checks and one real-font render
   check at 880×560 with normal/2× text. The original cancellation and keyboard
   retry regressions failed before the fix; visual review then exposed the hidden
   large-text error. Analysis has zero errors/warnings and 14 existing infos.

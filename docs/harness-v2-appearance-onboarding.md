@@ -95,6 +95,32 @@ were inspected at 1280×800 and at 880×560 with 2× text. These are synthetic U
 checks; first-install/provider-sign-in observation and measured time to a useful
 real agent remain release qualification work.
 
+## First-launch installation
+
+The tools screen before sign-in keeps its primary action outside the scrollable
+body. **Install N tools**, **Retry**, **Check again** and **Continue to sign in**
+stay visible at the minimum 880×560 window size and with 2× text. The required
+tool list is denser, larger text stacks its details, and the footer states what
+comes next. Verbose output starts collapsed under **Setup details**; Copy
+diagnostics remains available, and expanded output stays selectable.
+
+Enter activates the current step and can retry after a failed installation.
+Repeated Enter while work is pending does not start a duplicate attempt. Users
+who explicitly focus manual controls or details retain that focus through
+asynchronous updates. Manual Retry now checks installed tools without installing
+anything; the previous callback entered the automatic path, which returned
+without doing anything in manual mode. Manual review uses **Check again**.
+
+The 59 affected workflow checks and one real-font render check pass. Six new
+regressions cover visibility, keyboard recovery, manual-mode focus and retry,
+and diagnostics copying. Review, CLI-only, manual, failed, Terminal handoff and
+expanded-details screens were rendered at minimum size, including 2× review
+and failure states. Analysis has no errors/warnings and 14 existing infos; the
+normal arm64 Release build succeeds. Provisioning and authentication use fakes
+in these checks. Actual dependency installation, administrator prompts and
+provider sign-in still need first-use observation. Native benchmarking remains
+deferred at the user's request.
+
 ## Browser sign-in recovery
 
 Sign-in keeps its workspace example and action in the same card through CLI

@@ -6,6 +6,22 @@ Updated 2026-09-14 after integrating the continuation into main. This is a worki
 
 ## Continue directly on main
 
+- Fixed first-launch installation at minimum window size: Install/Retry/Check
+  again stay visible outside the scrollable tool list, and Enter can start or
+  retry the current step. Manual Retry now performs a read-only check instead of
+  calling the automatic path that returned without doing anything. Explicit
+  method/detail focus stays put. Shorter copy, denser required-tool rows and
+  optional **Setup details** keep the next action clear; expanded diagnostics
+  remain selectable and copyable. The affected suite passes 59 workflow checks
+  plus one real-font render check at 880×560 with normal/2× text. Analysis has
+  zero errors/warnings and 14 existing infos. The normal arm64 Release build
+  succeeds at `/private/tmp/harness-setup-release/Build/Products/Release/Harness.app`.
+  Logs: `/private/tmp/harness-setup-final-{tests,analyze}.log` and
+  `/private/tmp/harness-setup-release.log`. Verification uses fake provisioning;
+  no tools were installed and no real sign-in ran. First-install observation
+  remains open, and benchmarking stays deferred. Main preserves the team's
+  changes through `e14d0fb`; incoming release-script/dial work does not alter the
+  tested desktop application sources.
 - Fixed Clone repository cancellation and keyboard recovery. Escape now uses
   Cancel and waits for cleanup; a late successful clone cannot advance a
   cancelled flow. Outside clicks leave an active clone running. Failed clones
