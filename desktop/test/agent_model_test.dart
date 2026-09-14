@@ -111,37 +111,48 @@ void _dshTests() {
     expect(agent.identityEngine, 'codex');
   });
 
-  test('refuses a harness id, viewer URL or verdict outside the spec shape', () {
-    Agent parse(Map<String, dynamic> extra) =>
-        Agent.fromJson({'id': 'agent-1', 'name': 'a', ...extra});
-    // The id is owner/name; a bare word, a deeper path, or an upper-case one is not.
-    expect(parse({'dsh': 'circuit'}).dsh, isNull);
-    expect(parse({'dsh': 'a/b/c'}).dsh, isNull);
-    expect(parse({'dsh': 'Autonomous/Circuit'}).dsh, isNull);
-    expect(parse({'dsh': 'autonomous/../etc'}).dsh, isNull);
-    // The viewer URL lands in a webview: http(s) with a host, no whitespace, no control bytes.
-    expect(parse({'viewerUrl': 'file:///etc/passwd'}).viewerUrl, isNull);
-    expect(parse({'viewerUrl': 'javascript:alert(1)'}).viewerUrl, isNull);
-    expect(parse({'viewerUrl': 'http://127.0.0.1:4179/a b'}).viewerUrl, isNull);
-    expect(parse({'viewerUrl': 'http://\n127.0.0.1/'}).viewerUrl, isNull);
-    expect(
-      parse({'viewerUrl': 'https://viewer.local/x'}).viewerUrl,
-      'https://viewer.local/x',
-    );
-    // A verdict without the one required fact is no verdict; counts never go negative or absurd.
-    expect(parse({'verdict': {'summary': 'x'}}).verdict, isNull);
-    expect(parse({'verdict': 'ready'}).verdict, isNull);
-    final odd = parse({
-      'verdict': {
-        'ready': true,
-        'errors': -3,
-        'warnings': 1e9,
-        'summary': 'ok\u0000\u0001',
-      },
-    }).verdict!;
-    expect(odd.errors, 0);
-    expect(odd.warnings, 9999);
-    expect(odd.summary, 'ok');
-    expect(odd.updatedAt, isNull);
-  });
+  test(
+    'refuses a harness id, viewer URL or verdict outside the spec shape',
+    () {
+      Agent parse(Map<String, dynamic> extra) =>
+          Agent.fromJson({'id': 'agent-1', 'name': 'a', ...extra});
+      // The id is owner/name; a bare word, a deeper path, or an upper-case one is not.
+      expect(parse({'dsh': 'circuit'}).dsh, isNull);
+      expect(parse({'dsh': 'a/b/c'}).dsh, isNull);
+      expect(parse({'dsh': 'Autonomous/Circuit'}).dsh, isNull);
+      expect(parse({'dsh': 'autonomous/../etc'}).dsh, isNull);
+      // The viewer URL lands in a webview: http(s) with a host, no whitespace, no control bytes.
+      expect(parse({'viewerUrl': 'file:///etc/passwd'}).viewerUrl, isNull);
+      expect(parse({'viewerUrl': 'javascript:alert(1)'}).viewerUrl, isNull);
+      expect(
+        parse({'viewerUrl': 'http://127.0.0.1:4179/a b'}).viewerUrl,
+        isNull,
+      );
+      expect(parse({'viewerUrl': 'http://\n127.0.0.1/'}).viewerUrl, isNull);
+      expect(
+        parse({'viewerUrl': 'https://viewer.local/x'}).viewerUrl,
+        'https://viewer.local/x',
+      );
+      // A verdict without the one required fact is no verdict; counts never go negative or absurd.
+      expect(
+        parse({
+          'verdict': {'summary': 'x'},
+        }).verdict,
+        isNull,
+      );
+      expect(parse({'verdict': 'ready'}).verdict, isNull);
+      final odd = parse({
+        'verdict': {
+          'ready': true,
+          'errors': -3,
+          'warnings': 1e9,
+          'summary': 'ok\u0000\u0001',
+        },
+      }).verdict!;
+      expect(odd.errors, 0);
+      expect(odd.warnings, 9999);
+      expect(odd.summary, 'ok');
+      expect(odd.updatedAt, isNull);
+    },
+  );
 }

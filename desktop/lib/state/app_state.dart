@@ -18,6 +18,7 @@ import '../auth/cli_login.dart';
 import '../bootstrap/environment_provisioner.dart';
 import '../core/config.dart';
 import '../core/agent_preference.dart';
+import '../core/dsh_catalog.dart';
 import '../core/engine_availability.dart';
 import '../core/local_hostname.dart';
 import '../core/local_git_projects.dart';
@@ -187,6 +188,10 @@ class MachineState {
   // machines on one account hold different engines, and the Docker rig holds
   // exactly one. See `engines_probe` in the CLI's backendSocket.
   final MachineEngines engines = MachineEngines();
+  // Which domain-specific harnesses this machine has or could install, as it
+  // answered `dsh_list`. Per machine for the same reason `engines` is: an
+  // install is a clone and a toolchain on ONE box.
+  final MachineDsh dsh = MachineDsh();
   // Adapter/manager presence for this machine, from `node_status` pushes —
   // distinct from `connectionStatus`, which only reflects OUR websocket to
   // the backend. null = not seen yet (initial connect).
@@ -3525,6 +3530,112 @@ class AppNotifier extends ChangeNotifier {
   /// reopening it mid-probe, does not start a second sweep. Never throws — a
   /// machine that cannot answer leaves every engine unknown, and unknown is
   /// rendered as the dialog behaved before this existed.
+  /// Which domain-specific harnesses [machineId] has or could install — the
+  /// `dsh_list` answer, cached per machine and deduplicated on
+  /// [MachineDsh.inFlight] exactly like [probeEngines]. The Create dialog asks
+  /// with [force] on every open, since an install it started itself is what
+  /// most often makes the stored answer stale.
+  Future<void> probeDsh(String machineId, {bool force = false}) {
+    final machine = machineStates[machineId];
+    if (machine == null) return Future.value();
+    final existing = machine.dsh.inFlight;
+    if (existing != null) return existing;
+    if (machine.dsh.loaded && !force) return Future.value();
+    final work = _probeDsh(machine);
+    machine.dsh.inFlight = work;
+    notifyListeners();
+    return work;
+  }
+
+  Future<void> _probeDsh(MachineState machine) async {
+    try {
+      final result = await _conn(machine.machine.machineId).request(
+        'dsh_list',
+        timeout: const Duration(seconds: 30),
+      );
+      final raw = result['dsh'];
+      if (raw is! List) throw const FormatException('dsh_list: no list');
+      machine.dsh.replace(raw.map(DshEntry.fromJson).whereType<DshEntry>());
+    } catch (error) {
+      // A CLI that predates `dsh_list` refuses it by code, and the dialog then
+      // offers only the harnesses this build ships a face for; the machine
+      // has the final say at create time (`INVALID_DSH`).
+      machine.dsh.error = error is WsRequestFailure
+          ? (error.detail?.isNotEmpty == true ? error.detail : error.code)
+          : 'This machine could not report its harnesses';
+    } finally {
+      machine.dsh.inFlight = null;
+      notifyListeners();
+    }
+  }
+
+  /// Install the harness [id] on [machineId]: clone, set up its toolchain, run
+  /// its doctor. Minutes, not seconds — the Circuit toolchain alone is an
+  /// `npm ci` — so the request carries its own long budget and the machine
+  /// narrates progress through `dsh_install_status` pushes, which land in
+  /// [MachineDsh.installs] for the dialog's status line. Null on success, else
+  /// a sentence for the person who clicked.
+  Future<String?> installDsh(String machineId, String id) async {
+    final machine = machineStates[machineId];
+    if (machine == null) return 'Machine not found';
+    final machineName = machine.machine.displayName;
+    machine.dsh.installs[id] = DshInstallProgress(id: id, phase: 'clone');
+    notifyListeners();
+    try {
+      final result = await _conn(machineId).request(
+        'dsh_install',
+        payload: {'id': id},
+        timeout: const Duration(minutes: 10),
+      );
+      if (result['ok'] != true) {
+        final detail = result['detail'];
+        return _finishInstall(
+          machine,
+          id,
+          detail is String && detail.isNotEmpty
+              ? detail
+              : 'Install failed on $machineName',
+        );
+      }
+    } on WsRequestFailure catch (failure) {
+      return _finishInstall(
+        machine,
+        id,
+        switch (failure.code) {
+          'UNSUPPORTED' ||
+          'UNSUPPORTED_ON_REMOTE' =>
+            'Update the harness CLI on $machineName to install harnesses',
+          _ => failure.detail?.isNotEmpty == true
+              ? failure.detail!
+              : 'Install failed on $machineName (${failure.code})',
+        },
+      );
+    } on WsRequestTimeout {
+      return _finishInstall(
+        machine,
+        id,
+        '$machineName is still installing. Try again in a few minutes.',
+      );
+    } catch (_) {
+      return _finishInstall(machine, id, 'Install failed on $machineName');
+    }
+    machine.dsh.installs[id] = DshInstallProgress(id: id, phase: 'done');
+    notifyListeners();
+    // The stored answer just became stale by the dialog's own hand.
+    await probeDsh(machineId, force: true);
+    return null;
+  }
+
+  String _finishInstall(MachineState machine, String id, String error) {
+    machine.dsh.installs[id] = DshInstallProgress(
+      id: id,
+      phase: 'failed',
+      detail: error,
+    );
+    notifyListeners();
+    return error;
+  }
+
   Future<void> probeEngines(String machineId, {bool force = false}) {
     final machine = machineStates[machineId];
     if (machine == null) return Future.value();
@@ -4111,6 +4222,7 @@ class AppNotifier extends ChangeNotifier {
     ProjectFolderRequest? projectFolder,
     bool bypassPermission = false,
     String? codexHome,
+    String? dsh,
     String? swarmId,
     PaneSplitRequest? split,
     AgentCreationAttempt? attempt,
@@ -4122,6 +4234,9 @@ class AppNotifier extends ChangeNotifier {
       ...?projectFolder?.payload,
       'bypassPermission': bypassPermission,
       'codexHome': ?codexHome,
+      // The harness this agent is created from. `engine` above is its BASE —
+      // the machine refuses the pair when they disagree (`INVALID_DSH`).
+      'dsh': ?dsh,
     };
     if (creation._choices != null &&
         (creation._machineId != machineId ||
@@ -4173,6 +4288,9 @@ class AppNotifier extends ChangeNotifier {
               'Install tmux there, then try again.',
         'UNSUPPORTED_ON_REMOTE' || 'UNSUPPORTED' =>
           'Update the harness CLI on this machine to create an agent',
+        'INVALID_DSH' =>
+          'This harness is not installed on $machine. '
+              '${detail ?? 'Install it there, then try again.'}',
         _ => 'Create agent failed: ${detail ?? code}',
       };
 
@@ -4275,6 +4393,7 @@ class AppNotifier extends ChangeNotifier {
         'INVALID_ENGINE',
         'INVALID_GRID',
         'INVALID_CODEX_HOME',
+        'INVALID_DSH',
         'TMUX_UNAVAILABLE',
         'TMUX_TOO_OLD_FOR_GRID',
         'GRID_CONFIG_FAILED',
@@ -5802,6 +5921,13 @@ class AppNotifier extends ChangeNotifier {
       // until now, even though the daemon had already shaped the question for
       // the dial — `sendCommander` is device-only, so it never came down this
       // wire at all.
+      case 'dsh_install_status':
+        // The machine narrating an install this window (or another) asked for.
+        // Only ever advances a known install: a phase for an id nobody here
+        // asked about is still worth showing, so it is recorded either way.
+        final progress = DshInstallProgress.fromJson(payload);
+        if (progress != null) machine.dsh.installs[progress.id] = progress;
+        break;
       case 'commander_question':
         final agentId = _eventAgentId(machine, event, payload);
         if (agentId != null) {

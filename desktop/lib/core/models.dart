@@ -257,7 +257,8 @@ class Agent {
   /// id names an install directory on the far machine and a picker tile here.
   static String? _safeDsh(Object? raw) {
     if (raw is! String || raw.isEmpty || raw.length > 129) return null;
-    return RegExp(r'^[a-z0-9][a-z0-9-]{0,63}/[a-z0-9][a-z0-9-]{0,63}$').hasMatch(raw)
+    return RegExp(r'^[a-z0-9][a-z0-9-]{0,63}/[a-z0-9][a-z0-9-]{0,63}$')
+            .hasMatch(raw)
         ? raw
         : null;
   }
