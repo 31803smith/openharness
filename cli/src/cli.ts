@@ -242,6 +242,11 @@ const HERMES_DB = join(env.HERMES_HOME, 'state.db')
 // Devin likewise keeps all history in one SQLite store (WAL) — polled per session by DevinReader.
 const DEVIN_DB = join(env.DEVIN_HOME, 'sessions.db')
 
+// How long a control-plane call the daemon proxies for a local client (`/api/machines`, `/api/auth/me`)
+// may wait on the backend. Under the desktop app's own 30s receive timeout, so a slow backend is
+// reported by the daemon in words rather than by the app as a timeout.
+const PROXY_BACKEND_TIMEOUT_MS = 20_000
+
 // How long `harness start` waits for the background daemon to report "[backend] connected" before
 // declaring an error. A healthy backend connects in well under this; a timeout ⇒ unreachable.
 const CONNECT_WAIT_MS = 10_000
@@ -2466,18 +2471,50 @@ async function runForeground(session: AuthSession): Promise<void> {
    *  (e.g. the desktop app) never needs a bearer token of its own, loopback trust does the
    *  authenticating. Forwards backend's response status/body verbatim, success or error alike, so a
    *  local client's model layer needs zero special-casing versus talking to backend directly. */
+  //
+  //  A backend that cannot be reached, or does not answer in time, is reported in the SAME shape
+  //  (`{success:false, error:{code,message}}`, 502/504) rather than thrown: the hook server runs each
+  //  request as a void-discarded async, so a throw here was an unhandledRejection and a local request
+  //  that NEVER got a response — the desktop app then sat on its 30s receive timeout and printed a
+  //  DioException where "the backend is down" belonged. Same for a backend that accepts the request
+  //  and hangs (a Redis presence lookup, say): `fetch` waits forever by default, and the app's
+  //  timeout fired first. The bound is shorter than that timeout on purpose, so the daemon is the one
+  //  that answers, with a sentence.
   async function proxyBackend(method: string, path: string, body?: unknown): Promise<{ status: number; body: Record<string, unknown> }> {
-    const accessToken = await auth.accessToken()
+    const failure = (status: number, code: string, message: string): { status: number; body: Record<string, unknown> } =>
+      ({ status, body: { success: false, error: { code, message } } })
+    let accessToken: string
+    try {
+      accessToken = await auth.accessToken()
+    } catch (err) {
+      // No session, or one the SSO service will never renew, is the caller's 401 — the answer the
+      // backend itself would give — not a backend fault; a refresh the service could not serve right
+      // now is. Telling them apart is what lets a local client say "sign in again" only when true.
+      const signedOut = err instanceof AuthSessionError && err.code !== 'UNAVAILABLE'
+      return failure(signedOut ? 401 : 502, signedOut ? 'NOT_SIGNED_IN' : 'AUTH_UNAVAILABLE', err instanceof Error ? err.message : String(err))
+    }
     const latest = readAuthSession()
-    const res = await fetch(`${backendHttpBase()}${path}`, {
-      method,
-      headers: {
-        authorization: `Bearer ${accessToken}`,
-        'x-autonomous-env': latest?.autonomousEnv ?? session.autonomousEnv,
-        ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
-      },
-      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-    })
+    let res: Response
+    try {
+      res = await fetch(`${backendHttpBase()}${path}`, {
+        method,
+        headers: {
+          authorization: `Bearer ${accessToken}`,
+          'x-autonomous-env': latest?.autonomousEnv ?? session.autonomousEnv,
+          ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
+        },
+        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+        signal: AbortSignal.timeout(PROXY_BACKEND_TIMEOUT_MS),
+      })
+    } catch (err) {
+      const e = err as Error & { cause?: { message?: string } }
+      if (e.name === 'TimeoutError' || e.name === 'AbortError') {
+        return failure(504, 'BACKEND_TIMEOUT', `The Harness backend did not answer ${method} ${path} within ${PROXY_BACKEND_TIMEOUT_MS / 1000}s. Try again in a moment.`)
+      }
+      // undici wraps the socket error as `TypeError: fetch failed` with the real one in `cause`.
+      const why = e.cause?.message ?? e.message
+      return failure(502, 'BACKEND_UNREACHABLE', `Could not reach the Harness backend (${why}). Check the connection and try again.`)
+    }
     const json = await res.json().catch(() => ({})) as Record<string, unknown>
     return { status: res.status, body: json }
   }

@@ -1143,7 +1143,8 @@ class AppNotifier extends ChangeNotifier {
         ? send(machineId, agentId)
         : _pool?[machineId]?.sendTerminalFrame('app_focus', {
             'agentId': agentId,
-            if (_deviceFocusRevision != null) 'focusRevision': _deviceFocusRevision,
+            if (_deviceFocusRevision != null)
+              'focusRevision': _deviceFocusRevision,
           });
     if (pending != null) unawaited(pending.catchError((_) => false));
   }
@@ -1788,7 +1789,7 @@ class AppNotifier extends ChangeNotifier {
       await refreshMachines();
     } catch (error) {
       if (!_authWorkCurrent(revision)) return;
-      _lastError = 'Could not load machines: $error';
+      _lastError = 'Could not load machines: ${describeApiError(error)}';
       _lastErrorRetryable = true;
     }
     if (_authWorkCurrent(revision)) notifyListeners();
@@ -2714,7 +2715,7 @@ class AppNotifier extends ChangeNotifier {
       _lastError = null;
     } catch (error) {
       if (!_authWorkCurrent(revision)) return;
-      _lastError = 'Could not load machines: $error';
+      _lastError = 'Could not load machines: ${describeApiError(error)}';
       _lastErrorRetryable = true;
       notifyListeners();
       return;
