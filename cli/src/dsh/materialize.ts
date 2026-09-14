@@ -137,6 +137,14 @@ function linkSkills(dsh: InstalledDsh, workspace: string, result: MaterializeRes
   }
 }
 
+/** A command that is a path inside the harness becomes that absolute path, shell-quoted. */
+export function resolveDshCommand(dsh: Pick<InstalledDsh, 'realDir'>, command: string): string {
+  if (/[\s;&|<>$`'"\\]/.test(command)) return command
+  const inside = join(dsh.realDir, command)
+  if (!existsSync(inside)) return command
+  return `'${inside.replace(/'/g, `'\\''`)}'`
+}
+
 export async function materializeWorkspace(dsh: InstalledDsh, workspace: string): Promise<MaterializeResult> {
   const result: MaterializeResult = { created: [], kept: [], warnings: [], initLines: [] }
   const ws = dsh.manifest.workspace
@@ -144,7 +152,10 @@ export async function materializeWorkspace(dsh: InstalledDsh, workspace: string)
   const fresh = marker ? !existsSync(marker) : false
   if (fresh && ws?.template) copyTemplate(join(dsh.realDir, ws.template), workspace, result)
   if (fresh && ws?.init) {
-    const init = await runDshCommand(ws.init, {
+    // The init runs IN the workspace, so a command that names a script by its path inside the
+    // harness (the usual shape: `harness/toolchain/init-workspace.sh`) is resolved against the
+    // install directory first; anything else is a shell line and runs as written.
+    const init = await runDshCommand(resolveDshCommand(dsh, ws.init), {
       cwd: workspace,
       env: { HARNESS_DSH: dsh.id, HARNESS_DSH_DIR: dsh.realDir, HARNESS_WORKSPACE: workspace },
       onLine: (line) => result.initLines.push(line),

@@ -6,7 +6,8 @@
   "engine": "claude",
   "workspace": {
     "template": "template",
-    "marker": "NOTES.md"
+    "marker": "NOTES.md",
+    "init": "toolchain/init-workspace.sh"
   },
   "agent": {
     "instructions": "AGENTS.md",

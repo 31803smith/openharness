@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { InstalledDsh } from './installed.js'
 import { readDshManifest } from './manifest.js'
-import { dshMarkerLine, materializeWorkspace, skillDirsIn } from './materialize.js'
+import { dshMarkerLine, materializeWorkspace, resolveDshCommand, skillDirsIn } from './materialize.js'
 
 const STARTER = realpathSync(fileURLToPath(new URL('../../../dsh/starter-dsh', import.meta.url)))
 
@@ -44,6 +44,16 @@ describe('materializeWorkspace', () => {
     expect(existsSync(join(link, 'SKILL.md'))).toBe(true)
     expect(existsSync(join(workspace, '.harness'))).toBe(true)
     expect(result.created).toContain('AGENTS.md')
+    // The init ran in the workspace, found by its path inside the harness, with the contract's env.
+    expect(readFileSync(join(workspace, '.harness-initialized'), 'utf8')).toBe('initialized by autonomous/starter\n')
+    expect(result.warnings).toEqual([])
+  })
+
+  it('runs the init only once: a marked workspace is not re-initialized', async () => {
+    await materializeWorkspace(starter(), workspace)
+    rmSync(join(workspace, '.harness-initialized'))
+    await materializeWorkspace(starter(), workspace)
+    expect(existsSync(join(workspace, '.harness-initialized'))).toBe(false)
   })
 
   it('is idempotent: a second run keeps everything and appends nothing', async () => {
@@ -92,5 +102,13 @@ describe('skillDirsIn', () => {
     expect(skillDirsIn(join(STARTER, 'skills', 'hello'))).toEqual([join(STARTER, 'skills', 'hello')])
     expect(skillDirsIn(join(STARTER, 'template'))).toEqual([])
     expect(skillDirsIn('/nonexistent')).toEqual([])
+  })
+})
+
+describe('resolveDshCommand', () => {
+  it('turns a path inside the harness into a quoted absolute path and leaves shell lines alone', () => {
+    expect(resolveDshCommand({ realDir: STARTER }, 'toolchain/init-workspace.sh')).toBe(`'${join(STARTER, 'toolchain', 'init-workspace.sh')}'`)
+    expect(resolveDshCommand({ realDir: STARTER }, 'toolchain/missing.sh')).toBe('toolchain/missing.sh')
+    expect(resolveDshCommand({ realDir: STARTER }, 'npm run viewer -- --port $HARNESS_VIEWER_PORT')).toBe('npm run viewer -- --port $HARNESS_VIEWER_PORT')
   })
 })

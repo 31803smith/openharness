@@ -16,7 +16,7 @@ import type { ChildProcess } from 'node:child_process'
 import { createServer, connect } from 'node:net'
 import { isCandidateArtifact, isArtifactDirIgnored, newestArtifact } from './artifacts.js'
 import type { InstalledDsh } from './installed.js'
-import { killProcessGroup, spawnDshCommand } from './shell.js'
+import { isShellNoise, killProcessGroup, spawnDshCommand } from './shell.js'
 
 export interface DshViewerDeps {
   /** The URL clients should show for this agent's viewer, or null when there is none right now. */
@@ -197,7 +197,7 @@ export class DshViewerManager {
     let logged = 0
     const onData = (chunk: Buffer): void => {
       for (const line of chunk.toString('utf8').split('\n')) {
-        if (!line.trim()) continue
+        if (!line.trim() || isShellNoise(line)) continue
         if (logged++ < LOG_LINE_LIMIT) this.log(`[dsh] ${state.dsh.id} viewer · ${line}`)
       }
     }
