@@ -3,7 +3,6 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import 'package:harness/shared/theme/app_theme.dart';
 import 'package:harness/widgets/engine_identity.dart';
-import 'agent_hero.dart';
 import 'agent_index.dart';
 import 'phone_card.dart';
 import 'status_pill.dart';
@@ -23,62 +22,51 @@ class AgentRow extends StatelessWidget {
   Widget build(BuildContext context) {
     AppTheme.watch(context);
     final agent = entry.agent;
-    return AgentHeroCard(
-      // An agent with no terminal does not open, so there is no page for the row to become — a tag
-      // here would be one end of a flight that never happens.
-      tag: agent.terminalAvailable
-          ? agentHeroTag(
-              machineId: entry.machineId,
-              agentId: agent.id,
-              source: AgentHeroSource.agents,
-            )
+    return PhoneCard(
+      onTap: agent.terminalAvailable ? onTap : null,
+      // A rim in the attention colour, so a waiting agent is findable in a long list without
+      // reading a word of it — the list's whole job on a phone.
+      border: entry.isWaiting
+          ? Border.all(color: AppPalette.warn.withValues(alpha: 0.42))
           : null,
-      child: PhoneCard(
-        onTap: agent.terminalAvailable ? onTap : null,
-        // A rim in the attention colour, so a waiting agent is findable in a long list without
-        // reading a word of it — the list's whole job on a phone.
-        border: entry.isWaiting
-            ? Border.all(color: AppPalette.warn.withValues(alpha: 0.42))
-            : null,
-        child: Row(
-          children: [
-            PhoneCardGlyph(
-              child: EngineMark(
-                engine: agent.engine,
-                displayName: agent.engineDisplayName,
-                size: 22,
-              ),
+      child: Row(
+        children: [
+          PhoneCardGlyph(
+            child: EngineMark(
+              engine: agent.engine,
+              displayName: agent.engineDisplayName,
+              size: 22,
             ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    agent.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: AppPalette.textPrimary,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                    ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  agent.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: AppPalette.textPrimary,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
                   ),
-                  const SizedBox(height: 5),
-                  _StatusAndMachine(entry: entry),
-                ],
-              ),
+                ),
+                const SizedBox(height: 5),
+                _StatusAndMachine(entry: entry),
+              ],
             ),
-            const SizedBox(width: 8),
-            if (agent.terminalAvailable)
-              Icon(
-                LucideIcons.chevronRight300,
-                size: 22,
-                color: AppPalette.textFaint,
-              ),
-          ],
-        ),
+          ),
+          const SizedBox(width: 8),
+          if (agent.terminalAvailable)
+            Icon(
+              LucideIcons.chevronRight300,
+              size: 22,
+              color: AppPalette.textFaint,
+            ),
+        ],
       ),
     );
   }

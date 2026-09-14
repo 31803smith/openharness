@@ -8,7 +8,6 @@ import 'package:harness/shared/widgets/app_icon_button.dart';
 import 'package:harness/shared/widgets/empty_state.dart';
 import 'package:harness/state/app_state.dart';
 
-import 'agent_hero.dart';
 import 'agent_tile.dart';
 import 'link_page.dart';
 import 'phone_card.dart';
@@ -221,13 +220,7 @@ class _AgentsBody extends StatelessWidget {
       itemBuilder: (context, index) => AgentTile(
         machine: machine,
         agent: agents[index],
-        onTap: () => openAgent(
-          context,
-          notifier,
-          _machineId,
-          agents[index].id,
-          heroSource: AgentHeroSource.machine,
-        ),
+        onTap: () => openAgent(context, notifier, _machineId, agents[index].id),
       ),
     );
   }
