@@ -1,6 +1,6 @@
 # Harness v2: goal, plan, and continuation handoff
 
-**Layout keyboard and rendering correction:** The current workspace keymap blocked
+**Layout keyboard and rendering correction:** `d5756ab` is pushed. The current workspace keymap blocked
 a second Layout chord once the dialog opened, and Cmd-number fell through as a
 plain layout choice. Layout now owns its configured cycling command while other
 workspace actions stay blocked; modified digits/arrows do not choose a shape.
@@ -19,8 +19,8 @@ source/test files is clean in `/private/tmp/harness-layout-final-analyze.log`.
 The full desktop suite passes **1,426 checks**, with one optional media placeholder
 skipped, in `/private/tmp/harness-layout-final-full.log`. These are headless renders
 with metric-compatible fonts, not native platform or latency qualification.
-The build refresh is pending; the prepared preview below predates this correction
-and the running preview is unchanged while the console is locked.
+The prepared Release below includes this correction and passes deep, strict
+signature verification. The running preview is unchanged while the console is locked.
 
 **Picker focus correction:** `0c240dd` is pushed. Tab could move from the search field into a result,
 outside its shortcut scope. Both Cmd-N and the native New Harness action then
@@ -116,8 +116,8 @@ The existing guarantee that arrow navigation rebuilds only changed rows remains
 verified. Analysis of the five changed source/test files reports no issues in
 `/private/tmp/harness-start-search-analyze.log`.
 
-The latest Release build, through `0c240dd`, succeeds in
-`/private/tmp/harness-picker-scope-release.log`. Both rebuilt frameworks verified
+The latest Release build, through `d5756ab`, succeeds in
+`/private/tmp/harness-layout-final-release.log`. Both rebuilt frameworks verified
 before refreshing the outer ad-hoc signature; the full bundle then passed deep,
 strict signature verification at
 `/private/tmp/harness-pane-controls-release/Build/Products/Release/Harness.app`.
@@ -129,9 +129,10 @@ Do not treat that as a stopped app or launch an old fixture. When accessible,
 use Quit and Keep Windows, replace only the current checkout's preview with the
 verified bundle, and check inline command entry/reopen from both keyboard and
 native menu, including after Tab focuses a result. Check New Harness dismissal
-from inline search, initial folder focus and folder cancellation. The visual and terminal
-checks below describe the preceding `b4baf68` preview. Native latency benchmarking
-remains deferred.
+from inline search, initial folder focus and folder cancellation. Check repeated
+Layout chords, confirmation returning focus to the same agent, and latest-output
+alignment after applying a layout. The visual and terminal checks below describe
+the preceding `b4baf68` preview. Native latency benchmarking remains deferred.
 
 **Latest UI direction:** [Harness entry and pane controls](harness-agent-first-tabs.md)
 is the current contract. **New and Open Harness are separate actions and popups.**
