@@ -290,6 +290,9 @@ class SwarmSearchResults extends StatefulWidget {
 }
 
 class _SwarmSearchResultsState extends State<SwarmSearchResults> {
+  // Keep a small set of recently built rows, not the whole search catalog.
+  // A new highlight only changes two rows; their neighbors keep their widgets.
+  final _rowWidgets = <String, ({Object presentation, Widget child})>{};
   final _scroll = ScrollController();
   double _rowHeight = 56;
   bool _revealScheduled = false;
@@ -392,12 +395,44 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                               itemExtent: _rowHeight,
                               itemBuilder: (context, index) {
                                 final row = search.rows[index];
+                                final highlighted = index == search.cursor;
+                                final canSubmit = search.canSubmit(row);
+                                final multiSelect = search.multiSelect;
+                                final checked =
+                                    multiSelect && search.isChecked(row);
+                                final canToggle =
+                                    multiSelect && search.canToggle(row);
+                                final alreadyHere = search.alreadyHere(row);
+                                final presentation = (
+                                  row,
+                                  search.query,
+                                  highlighted,
+                                  canSubmit,
+                                  multiSelect,
+                                  checked,
+                                  canToggle,
+                                  alreadyHere,
+                                  highlighted
+                                      ? (
+                                          search.canAccept,
+                                          search.actionLabel(row),
+                                        )
+                                      : null,
+                                  _rowHeight,
+                                  scale.scale(11),
+                                  grid.AppTheme.palette.value,
+                                );
+                                final previous = _rowWidgets.remove(row.id);
+                                if (previous?.presentation == presentation) {
+                                  _rowWidgets[row.id] = previous!;
+                                  return previous.child;
+                                }
                                 final matches = searchResultMatches(row, terms);
-                                return ListTile(
+                                final tile = ListTile(
                                   key: ValueKey(row.id),
                                   minTileHeight: _rowHeight,
-                                  enabled: search.canSubmit(row),
-                                  selected: index == search.cursor,
+                                  enabled: canSubmit,
+                                  selected: highlighted,
                                   selectedColor: Colors.white,
                                   hoverColor: Colors.transparent,
                                   selectedTileColor: Colors.white.withValues(
@@ -412,17 +447,17 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                                   leading: Row(
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
-                                      if (search.multiSelect) ...[
+                                      if (multiSelect) ...[
                                         SizedBox(
                                           width: 28,
                                           child: Tooltip(
-                                            message: search.isChecked(row)
+                                            message: checked
                                                 ? 'Deselect ${row.title}'
                                                 : 'Select ${row.title}',
                                             child: Checkbox(
                                               key: ValueKey('select:${row.id}'),
-                                              value: search.isChecked(row),
-                                              onChanged: search.canToggle(row)
+                                              value: checked,
+                                              onChanged: canToggle
                                                   ? (_) {
                                                       search.toggle(row);
                                                       widget.onRefocus();
@@ -447,7 +482,7 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                                           ? EngineMark(
                                               engine: row.engine,
                                               size: 22,
-                                              enabled: search.canSubmit(row),
+                                              enabled: canSubmit,
                                             )
                                           : const SwarmIcon(
                                               size: 22,
@@ -474,7 +509,7 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                                             color: Colors.white60,
                                           ),
                                         ),
-                                  trailing: search.alreadyHere(row)
+                                  trailing: alreadyHere
                                       ? const Text(
                                           'In this swarm',
                                           style: TextStyle(
@@ -482,7 +517,7 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                                             color: Colors.white38,
                                           ),
                                         )
-                                      : search.adding && index == search.cursor
+                                      : search.adding && highlighted
                                       ? ConstrainedBox(
                                           constraints: BoxConstraints(
                                             maxWidth:
@@ -512,12 +547,20 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                                             color: Colors.white60,
                                           ),
                                         ),
-                                  onTap: search.canSubmit(row)
+                                  onTap: canSubmit
                                       ? () => search.hasSelection
                                             ? search.toggle(row)
                                             : _submit(row)
                                       : null,
                                 );
+                                _rowWidgets[row.id] = (
+                                  presentation: presentation,
+                                  child: tile,
+                                );
+                                if (_rowWidgets.length > 48) {
+                                  _rowWidgets.remove(_rowWidgets.keys.first);
+                                }
+                                return tile;
                               },
                             ),
                     ),

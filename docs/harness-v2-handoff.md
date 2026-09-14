@@ -30,6 +30,10 @@ Research must lead to justified improvements, not feature accumulation.
 - Continue on **`main`**, tracking `origin/main`. The user's latest instruction
   is to work, commit, and push directly on main from now on. This supersedes
   the earlier preference for creating a fresh feature branch after each merge.
+- Add's frame continuation reuses unchanged result rows and keeps background
+  pane additions from taking the picker's Flutter focus. The full suite passes
+  1,302 tests. Native fixture identity repair is saved in `fe42f2e`; `56f9d2a`
+  preserves the team's subsequent `9e2e4be` branding/update work.
 - **`5f3ecae`** saves Cmd-N Add, the prominent New agent button, optional
   multi-select, visible machine/project starters and the larger floating-button
   inset. **`f514140`** preserves the team's concurrent main through `76a469b`,
@@ -242,18 +246,28 @@ unverified; do not infer them from these UI changes.
 **Archived drafts:** both are superseded. The onboarding ideas were adapted into
 the common page, without adding another first-tab-only component.
 
-**Latest verification:** after integrating the team's current main, 1,299
-desktop tests passed with one existing skip.
+**Latest verification:** the Add frame/focus continuation on integrated main
+passes 1,302 desktop tests with one existing skip.
 Analyzer reports zero errors/warnings and 14 existing informational diagnostics
-(12 vendored, two inherited from main). Native checks passed 51 keymap decoder
+(12 vendored, two inherited from main). Logs:
+`/private/tmp/harness-add-render-{full-tests,final-analyze}.log`.
+The final macOS arm64 Release build also succeeds with
+`FLUTTER_TARGET=lib/main.dart`; log:
+`/private/tmp/harness-add-render-release-build.log`. The running app was not
+restarted, so do not claim its process has loaded these source changes.
+The preceding Add/shortcut integration passed 51 native keymap decoder
 and 347 AppKit assertions, including the exported Dart keymap and hidden window
-layout. The normal macOS arm64 Release build succeeded with
+layout; no Swift changed in the frame/focus continuation. That integrated
+macOS arm64 Release build succeeded with
 `FLUTTER_TARGET=lib/main.dart`. Synthetic real-font captures of the visible
 starters, Add, multi-select and Navigate were reviewed at 1280×800 and 880×560
 with 2× text. These do not measure native display latency or real reconnect.
 Integrated test/native/analysis/build logs:
 `/private/tmp/harness-revised-add-integrated-{tests,analyze,native,build}.log`.
 The integrated Release build uses the new `ai.autonomous.harness` bundle ID.
+Add's new full-frame fixture observes an arrow-selection median of 4.714 ms
+versus 8.592 ms before the change, with 2,000 agents and five retained terminals.
+Opening did not improve. This is headless debug CPU time, not displayed latency.
 Navigate/Add timings and their exact scope are in
 [the performance record](harness-v2-performance.md). The new navigation catalog
 build measured 0.188 ms median / 0.259 ms p95 in the earlier integrated run for
@@ -265,13 +279,14 @@ unmeasured. Log: `/private/tmp/harness-onboarding-main-benchmark.log`.
 and [shared-swarm collaboration research](harness-collaboration-design.md), which
 were existing uncommitted work. Collaboration is a separate proposal/prototype,
 not implemented multiplayer or a prerequisite for finishing this desktop pass.
-The benchmark's product-name, process-identity and initial-responder compatibility
-issues are now repaired. Six isolated Python checks pass, and a read-only check
-recognizes the running renamed preview by its bundle ID. Preserve its isolation
-and foreground/key-window guards. The performance notes explain the earlier
-failed calibration; these tooling fixes provide no new latency measurements.
-The disposable Release build succeeded at
-`/private/tmp/harness-native-benchmark-x227eh35`. Its actual runner correctly
+The benchmark accepts the team's current public bundle ID while still producing
+a distinct Harness Benchmark app. Nine isolated Python checks pass. Preflight
+distinguishes installed copies from workspace builds by exact location as well
+as identity. Preserve its isolation and foreground/key-window guards. The
+performance notes explain the earlier failed calibration; these tooling fixes
+provide no new latency measurements. The identity-fix disposable Release build
+succeeded at `/private/tmp/harness-native-benchmark-7hv6voyr`, before the newer
+Add frame/focus changes. Rebuild it for current-source timing. Its runner correctly
 refused to start while the workspace preview was running, writing no timing
 result. The [performance record](harness-v2-performance.md) has the artifacts.
 
@@ -353,9 +368,10 @@ that its isolated window can become active/key.
    using the repaired benchmark identity checks for the team's new
    `ai.autonomous.harness` macOS bundle identifier (Linux now uses
    `com.autonomous.harness` and executable `harness`). Nine isolation tests pass;
-   a current disposable Release fixture is ready at
+   an identity-fix disposable Release fixture is available at
    `/private/tmp/harness-native-benchmark-7hv6voyr`. Its runner correctly refuses
-   the running workspace preview. A request to briefly close/reopen that preview
+   the running workspace preview. Rebuild it for the newer Add frame/focus
+   source. A request to briefly close/reopen that preview
    for calibration is pending; elapsed time is not approval. No native samples
    have been accepted. See the current performance record for exact artifacts.
    Then close remaining visual/platform/release qualification gaps. Maintain
@@ -459,8 +475,9 @@ xterm contains required patches; do not replace it with the pub.dev package.
 Build instructions and prior measurements are in the progress/performance notes.
 
 The normal entry point is `desktop/lib/main.dart`. The public app/binary name
-is **Harness**; the development bundle ID remains `ai.autonomous.harness.v2` to
-preserve its separate state. Workspace Release path on the old computer was
+is **Harness**. Main now uses `ai.autonomous.harness`; older running previews may
+still report `ai.autonomous.harness.v2`. Do not infer the exact running process
+or its state from the current on-disk bundle. Workspace Release path here is
 `desktop/build/macos/Build/Products/Release/Harness.app`; the installed Harness
 was a separate process. Recheck exact bundle paths/PIDs before normally quitting
 or relaunching a preview. Do not launch a competing duplicate or use a real

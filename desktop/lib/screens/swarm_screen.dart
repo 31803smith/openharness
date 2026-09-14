@@ -71,11 +71,17 @@ class _SwarmScreenState extends State<SwarmScreen> {
       SwarmProjectStore(storage: kUnderTest ? null : HarnessFileStore.shared);
   StreamSubscription<SpokenTaskRequest>? _spokenTasks;
   final _shellFocus = FocusNode(debugLabel: 'Swarm shell');
+  final _canvasFocus = FocusNode(
+    debugLabel: 'Swarm canvas',
+    canRequestFocus: false,
+    skipTraversal: true,
+  );
   final _navigation = SwarmNavigationHistory();
   final _searchText = TextEditingController();
   final _searchFocus = FocusNode(debugLabel: 'Search agents and swarms');
   SwarmSearchController? _search;
   OverlayEntry? _searchOverlay;
+  (String, bool)? _searchHeaderState;
   FocusNode? _searchReturnFocus;
   bool _spokenPaletteOpen = false;
   bool _dialogOpen = false;
@@ -150,6 +156,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
     _search?.dispose();
     _searchFocus.dispose();
     _searchText.dispose();
+    _canvasFocus.dispose();
     _shellFocus.dispose();
     unawaited(_spokenTasks?.cancel());
     if (_native) {
@@ -676,6 +683,9 @@ class _SwarmScreenState extends State<SwarmScreen> {
         ? null
         : FocusManager.instance.primaryFocus;
     if (_native) _preparePaneFocus();
+    // Search is an overlay, so late pane attachment needs an explicit focus
+    // boundary to keep its programmatic focus request out of the picker.
+    _canvasFocus.descendantsAreFocusable = false;
     _search = SwarmSearchController(
       app,
       adding ? _navigation.recent : _navigation.recentLocations,
@@ -720,17 +730,27 @@ class _SwarmScreenState extends State<SwarmScreen> {
         selection: TextSelection.collapsed(offset: search.query.length),
       );
     }
-    _searchOverlay?.markNeedsBuild();
+    // Results listen to their controller directly. Rebuilding the entire
+    // overlay on every arrow also rebuilt the unchanged text editor/button.
+    final header = (search.hint, search.canCreate);
+    if (_searchHeaderState != header) {
+      _searchHeaderState = header;
+      _searchOverlay?.markNeedsBuild();
+    }
   }
 
   void _closeSearch({bool restoreFocus = true}) {
     if (_search == null) return;
+    // Enable the chosen terminal synchronously, before activation requests its
+    // focus and before the following frame rebuilds the canvas.
+    _canvasFocus.descendantsAreFocusable = true;
     _searchOverlay?.remove();
     _searchOverlay?.dispose();
     _searchOverlay = null;
     _search!.removeListener(_syncSearch);
     _search!.dispose();
     _search = null;
+    _searchHeaderState = null;
     _searchText.clear();
     _searchFocus.unfocus();
     final previous = _searchReturnFocus;
@@ -758,7 +778,10 @@ class _SwarmScreenState extends State<SwarmScreen> {
     if (search == null || !search.canCreate) return;
     final target = search.targetId;
     final split = search.split;
-    _closeSearch(restoreFocus: false);
+    // Let the creation dialog remember the original focus for Cancel. Blocking
+    // canvas focus during the picker intentionally cleared route focus history.
+    _closeSearch();
+    FocusManager.instance.applyFocusChangesIfNeeded();
     await _newAgent(swarmId: target, split: split);
   }
 
@@ -1246,67 +1269,73 @@ class _SwarmScreenState extends State<SwarmScreen> {
                           padding: app.panes.isEmpty
                               ? EdgeInsets.zero
                               : const EdgeInsets.all(10),
-                          child: Stack(
-                            children: [
-                              Positioned.fill(
-                                child: PaneGrid(
-                                  notifier: app,
-                                  swarmMode: true,
-                                  onSplit: (paneId, axis) {
-                                    app.focusPane(paneId);
-                                    unawaited(_splitAgent(axis));
-                                  },
-                                  empty: SwarmWelcome(
-                                    key: ValueKey(app.activeSwarmId),
+                          child: Focus.withExternalFocusNode(
+                            focusNode: _canvasFocus,
+                            includeSemantics: false,
+                            child: Stack(
+                              children: [
+                                Positioned.fill(
+                                  child: PaneGrid(
                                     notifier: app,
-                                    projects: _projects.projects,
-                                    onNewAgent: _newAgent,
-                                    onChooseFirstFolder: () =>
-                                        _newAgent(chooseFolderFirst: true),
-                                    onCloneRepository: () =>
-                                        _newAgent(cloneRepositoryFirst: true),
-                                    onAgent: (entry) => _activateSearch(
-                                      SwarmSearchSelection(
-                                        SwarmDestination(
-                                          id: agentDestinationId(
-                                            entry.machineId,
-                                            entry.agent.id,
-                                          ),
-                                          title: entry.agent.name,
-                                          detail:
-                                              entry.machine.machine.displayName,
-                                          swarmId: null,
-                                          current: false,
-                                          machineId: entry.machineId,
-                                          agentId: entry.agent.id,
-                                          engine: entry.agent.engine,
-                                        ),
-                                        SwarmSearchAction.addHere,
-                                      ),
-                                      app.activeSwarmId,
-                                    ),
-                                    searchField: SwarmInlineSearch(
-                                      key: ValueKey(
-                                        'welcome-search:${app.activeSwarmId}',
-                                      ),
-                                      app: app,
-                                      projects: _projects,
-                                      recent: _navigation.recent,
-                                      commands: _searchCommands,
-                                      onChoose: _activateSearch,
+                                    swarmMode: true,
+                                    onSplit: (paneId, axis) {
+                                      app.focusPane(paneId);
+                                      unawaited(_splitAgent(axis));
+                                    },
+                                    empty: SwarmWelcome(
+                                      key: ValueKey(app.activeSwarmId),
+                                      notifier: app,
+                                      projects: _projects.projects,
                                       onNewAgent: _newAgent,
+                                      onChooseFirstFolder: () =>
+                                          _newAgent(chooseFolderFirst: true),
+                                      onCloneRepository: () =>
+                                          _newAgent(cloneRepositoryFirst: true),
+                                      onAgent: (entry) => _activateSearch(
+                                        SwarmSearchSelection(
+                                          SwarmDestination(
+                                            id: agentDestinationId(
+                                              entry.machineId,
+                                              entry.agent.id,
+                                            ),
+                                            title: entry.agent.name,
+                                            detail: entry
+                                                .machine
+                                                .machine
+                                                .displayName,
+                                            swarmId: null,
+                                            current: false,
+                                            machineId: entry.machineId,
+                                            agentId: entry.agent.id,
+                                            engine: entry.agent.engine,
+                                          ),
+                                          SwarmSearchAction.addHere,
+                                        ),
+                                        app.activeSwarmId,
+                                      ),
+                                      searchField: SwarmInlineSearch(
+                                        key: ValueKey(
+                                          'welcome-search:${app.activeSwarmId}',
+                                        ),
+                                        app: app,
+                                        projects: _projects,
+                                        recent: _navigation.recent,
+                                        commands: _searchCommands,
+                                        onChoose: _activateSearch,
+                                        onNewAgent: _newAgent,
+                                      ),
+                                      onAddProject: _addProject,
+                                      onLinkMachine: () => _dialog(
+                                        () => showSwarmLinkDialog(context, app),
+                                      ),
+                                      onMachine: _machine,
+                                      onProject: _project,
+                                      onProjectAgents: _projectAgents,
                                     ),
-                                    onAddProject: _addProject,
-                                    onLinkMachine: () => _dialog(
-                                      () => showSwarmLinkDialog(context, app),
-                                    ),
-                                    onMachine: _machine,
-                                    onProject: _project,
-                                    onProjectAgents: _projectAgents,
                                   ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
                         ),
                       ],

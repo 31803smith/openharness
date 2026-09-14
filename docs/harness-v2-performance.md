@@ -12,6 +12,48 @@ It prints `SWARM_BENCH` JSON records. Its filename deliberately does not end in 
 
 ## Current continuation benchmark (2026-09-14)
 
+### Add picker frame work and keyboard focus
+
+Add now reuses up to 48 recently built result rows. Moving the highlight rebuilds
+the old/new selection and newly revealed rows; unchanged neighbors keep their
+widgets. Query, metadata, availability, selection, palette and text-size changes
+still refresh their presentation. The overlay header rebuilds when its hint or
+creation availability changes, rather than on every controller notification.
+
+The new explicit `test/benchmarks/swarm_add_benchmark.dart` measures an input
+operation plus one Flutter frame pump. It uses 2,000 discovered agents on one
+machine, 50 projects, five retained terminals with 1,000 lines each, and a
+1280×800 viewport. Each distribution has 20 warmups and 100 measured samples;
+the native bridge is stubbed. Runs were sequential in the headless debug runner
+without overlapping this session's tests/builds. These are CPU observations,
+not native input-to-display measurements.
+
+| Operation | Before median / p95 / p99 | Final median / p95 / p99 |
+| --- | ---: | ---: |
+| Cmd-N open + frame | 26.106 / 33.320 / 73.743 ms | 26.686 / 35.267 / 79.533 ms |
+| Query edit + frame | 11.398 / 17.790 / 19.785 ms | 11.193 / 16.182 / 18.320 ms |
+| Arrow selection + frame | 8.592 / 10.188 / 10.713 ms | 4.714 / 5.978 / 10.209 ms |
+
+Arrow selection's median fell about 45%; opening did not improve, and its tail
+was worse in the final run. JIT/shared-host variation limits tail conclusions.
+A single scrolling-arrow rebuild observation went from 19 ListTiles and one
+TextField to three ListTiles and zero TextFields. The regression with no scroll
+observes just the two changed rows. An intermediate run before the focus fix
+measured arrow selection at 4.985 / 7.655 / 8.457 ms; all three runs are retained
+at `/private/tmp/harness-add-frame-{baseline,after,final}.log`.
+
+A separate failing-before regression reproduced a completed background addition
+taking keyboard focus away from the picker. A persistent canvas focus boundary
+now prevents panes requesting Flutter focus while Add/Navigate is open. It is
+released synchronously on close. Opening New agent restores the original focus
+before its dialog opens, so Cancel returns to that terminal. The tests also
+cover live capacity changes and palette/text scaling with a checked selection.
+All 1,302 desktop tests pass with one existing skip; analysis has zero errors
+or warnings and 14 existing infos. The normal macOS arm64 Release build also
+succeeds; no running app was restarted. Logs:
+`/private/tmp/harness-add-render-{full-tests,final-analyze}.log`.
+Build log: `/private/tmp/harness-add-render-release-build.log`.
+
 ### Native fixture after the public bundle-ID change
 
 The team's `76a469b` gave the workspace preview the installed app's
@@ -24,12 +66,13 @@ identity to be in `/Applications` or the current user's `Applications` folder
 before exempting it. Unknown identities, development copies, legacy previews
 and other benchmark processes remain blocked.
 
-Nine isolated Python tests pass. The current disposable arm64 Release fixture
+Nine isolated Python tests pass. The identity-fix disposable arm64 Release fixture
 built at `/private/tmp/harness-native-benchmark-7hv6voyr`. Its actual runner
 correctly refused the still-running workspace preview at its exact build path;
 the installed copy is classified separately. No native samples were taken.
 The session requested a brief preview-close/idle window for calibration and
 continues independent performance work while that request is pending.
+Rebuild the fixture before measuring the newer Add frame/focus changes above.
 Artifacts: `/private/tmp/harness-native-identity-{before,tests,prepare,preflight}.log`.
 
 ### History focus hot path

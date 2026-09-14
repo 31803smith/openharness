@@ -6,6 +6,22 @@ Updated 2026-09-14 after integrating the continuation into main. This is a worki
 
 ## Continue directly on main
 
+- Improved Add's arrow-key frame work by reusing unchanged result rows and
+  leaving the text editor alone when only the highlight changes. In the paired
+  2,000-agent headless fixture, arrow selection median fell 8.592 to 4.714 ms;
+  opening time did not improve. The full distributions and scope are in the
+  [performance record](harness-v2-performance.md). Fixed a reproduced case of a
+  background agent addition taking focus from the picker, while preserving
+  New agent cancellation focus. All **1,302 desktop tests** pass with one
+  existing skip; analysis has zero errors/warnings and 14 existing infos.
+  The normal macOS arm64 Release build succeeds. Test/analysis/build artifacts
+  use `/private/tmp/harness-add-render-*.log`; no running app was restarted.
+- `fe42f2e` repairs the isolated native benchmark for the team's public bundle
+  identity change. Nine isolation checks pass and the disposable Release
+  fixture builds. Its runner correctly refuses the running workspace preview;
+  native latency remains unmeasured. `56f9d2a` preserves the team's concurrent
+  `9e2e4be` branding/update changes. A brief preview-close calibration request
+  is pending; no running app or real agent has been stopped for these checks.
 - Saved the Add/shortcut checkpoint as `5f3ecae`, then merged the team's
   current main through `76a469b` as `f514140`. The merge was clean and preserves
   its Settings toolbar button, independent terminal schemes, dial changes,
