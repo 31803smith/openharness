@@ -45,6 +45,7 @@ class TerminalPanel extends StatefulWidget {
   /// Takes this tile off the grid. Null when the terminal is the whole window,
   /// where there is nothing to close it back to.
   final VoidCallback? onClose;
+  final VoidCallback? onDelete;
 
   /// Whether this tile keeps its slot when the grid moves under it, and the
   /// control that changes that. Null where there is no grid to hold a slot in.
@@ -97,6 +98,7 @@ class TerminalPanel extends StatefulWidget {
     this.notice,
     this.onToggleComposer,
     this.onClose,
+    this.onDelete,
     this.pinned = false,
     this.onTogglePin,
     this.onToggleZoom,
@@ -1252,6 +1254,7 @@ class _TerminalPanelState extends State<TerminalPanel>
       compact: widget.compactHeader,
       pinned: widget.pinned,
       close: widget.onClose != null,
+      delete: widget.onDelete != null,
       pin: widget.onTogglePin != null,
       zoomed: widget.zoomed,
       zoom: widget.onToggleZoom != null,
@@ -1275,6 +1278,9 @@ class _TerminalPanelState extends State<TerminalPanel>
         onSplitRight: widget.onSplitRight,
         onSplitDown: widget.onSplitDown,
         onClose: widget.onClose == null ? null : () => widget.onClose?.call(),
+        onDelete: widget.onDelete == null
+            ? null
+            : () => widget.onDelete?.call(),
         pinned: widget.pinned,
         onTogglePin: widget.onTogglePin == null
             ? null
@@ -1296,6 +1302,10 @@ class _TerminalHeader extends StatelessWidget {
   final TerminalNotice? notice;
   final bool readOnly;
   final VoidCallback? onClose;
+
+  /// Ends the agent (with a confirmation), as the rail's row menu does. Null
+  /// where the pane cannot name a live agent to end.
+  final VoidCallback? onDelete;
   final bool pinned;
   final bool compact;
   final VoidCallback? onTogglePin;
@@ -1320,6 +1330,7 @@ class _TerminalHeader extends StatelessWidget {
     this.notice,
     this.readOnly = false,
     this.onClose,
+    this.onDelete,
     this.pinned = false,
     this.compact = false,
     this.onTogglePin,
@@ -1597,6 +1608,7 @@ class _TerminalHeader extends StatelessWidget {
                   onToggleComposer: onToggleComposer,
                   composerVisible: composerVisible,
                   onClose: onClose,
+                  onDelete: onDelete,
                 ),
               ] else if (onClose != null)
                 PaneCloseButton(onPressed: onClose!),

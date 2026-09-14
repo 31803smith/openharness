@@ -13,6 +13,7 @@
  * instead of ever reaching pipe mode.
  */
 import { WebSocket, type RawData } from 'ws'
+import { watchSocketLiveness, type LivenessWatch } from './wsLiveness.js'
 import type { Frame, LocalClientSink } from '../backendSocket.js'
 import type { AuthSessionManager } from './authSession.js'
 import { b64d, type Identity } from './e2ee/core.js'
@@ -38,7 +39,6 @@ const LINGER_MS = 30_000
 // an upstream socket the backend silently dropped with no close frame — every RPC sent through it then
 // times out client-side forever, since nothing ever removes the dead entry to let the next select
 // redial. `ws.terminate()` on a missed pong forces the existing `close` handler to run cleanup.
-const HEARTBEAT_MS = 20_000
 
 // A p2p attempt that never reaches 'direct', or one that did and then got demoted mid-session, both
 // leave the stream(s) on the ws relay with nothing to bring them back — see scheduleP2pRetry(). One
@@ -53,7 +53,7 @@ const HEARTBEAT_MS = 20_000
 const P2P_RETRY_DELAY_MS = 60_000
 const P2P_RETRY_WINDOW_MS = 60 * 60 * 1000
 const P2P_RETRY_HOURLY_CAP = 10
-// How long a stream may sit in p2pMigrating before the sweep (piggybacked on heartbeatTimer) gives up
+// How long a stream may sit in p2pMigrating before the sweep (piggybacked on the liveness tick) gives up
 // on it and lets the ordinary demote-on-mismatch rule apply again.
 const P2P_MIGRATION_TTL_MS = 30_000
 
@@ -93,8 +93,7 @@ interface Entry {
   sink: LocalClientSink | null
   onClosed: ((code: number, reason: string) => void) | null
   lingerTimer: ReturnType<typeof setTimeout> | null
-  alive: boolean
-  heartbeatTimer: ReturnType<typeof setInterval> | null
+  heartbeat: LivenessWatch | null
   p2p: TerminalP2pInitiator | null
   p2pPolicy: TerminalP2pPolicy | null
   p2pPendingOpens: Set<string>
@@ -189,7 +188,7 @@ export class RemoteRelayPool {
     const entry = this.entries.get(machineId)
     if (!entry) return
     this.entries.delete(machineId)
-    if (entry.heartbeatTimer) clearInterval(entry.heartbeatTimer)
+    entry.heartbeat?.stop()
     if (entry.lingerTimer) clearTimeout(entry.lingerTimer)
     if (entry.p2pRetryTimer) clearTimeout(entry.p2pRetryTimer)
     if (entry.upgradeTimer) clearTimeout(entry.upgradeTimer)
@@ -268,8 +267,7 @@ export class RemoteRelayPool {
       sink: null,
       onClosed: null,
       lingerTimer: null,
-      alive: true,
-      heartbeatTimer: null,
+      heartbeat: null,
       p2p: null,
       p2pPolicy: null,
       p2pPendingOpens: new Set(),
@@ -450,7 +448,7 @@ export class RemoteRelayPool {
     })
     // Handshake done — from here on, a close is the entry's real end-of-life, not a handshake failure.
     ws.on('close', (code, reasonBuf) => {
-      if (entry.heartbeatTimer) clearInterval(entry.heartbeatTimer)
+      entry.heartbeat?.stop()
       if (entry.p2pRetryTimer) clearTimeout(entry.p2pRetryTimer)
       if (entry.upgradeTimer) clearTimeout(entry.upgradeTimer)
       void entry.upgradeShadow?.stop('relay_closed', false)
@@ -460,21 +458,18 @@ export class RemoteRelayPool {
       this.entries.delete(machineId)
       entry.onClosed?.(code, reasonBuf?.toString() ?? '')
     })
-    ws.on('pong', () => { entry.alive = true })
-    entry.heartbeatTimer = setInterval(() => {
-      if (!entry.alive) { ws.terminate(); return }
-      entry.alive = false
-      try { ws.ping() } catch { ws.terminate() }
+    entry.heartbeat = watchSocketLiveness(ws, {
+      onIdle: (idleMs) => console.log(`[relay] ${machineId.slice(0, 8)} no traffic for ${Math.round(idleMs / 1000)}s — terminating`),
       // Piggybacked sweep for a migration that never completed (pane closed mid-flight, responder never
       // answered, etc.) — no dedicated timer needed, this tick is frequent enough (20s) against the 30s TTL.
-      if (entry.p2pMigrating.size > 0) {
+      onTick: () => {
+        if (entry.p2pMigrating.size === 0) return
         const cutoff = Date.now() - P2P_MIGRATION_TTL_MS
         for (const [streamId, startedAt] of entry.p2pMigrating) {
           if (startedAt < cutoff) entry.p2pMigrating.delete(streamId)
         }
-      }
-    }, HEARTBEAT_MS)
-    entry.heartbeatTimer.unref?.()
+      },
+    })
     this.entries.set(machineId, entry)
     return entry
   }

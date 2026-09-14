@@ -12,6 +12,7 @@ class PaneActionsMenu extends StatefulWidget {
     this.onTogglePin,
     this.onToggleComposer,
     this.onClose,
+    this.onDelete,
     this.pinned = false,
     this.composerVisible = false,
   });
@@ -20,7 +21,8 @@ class PaneActionsMenu extends StatefulWidget {
       onSplitDown,
       onTogglePin,
       onToggleComposer,
-      onClose;
+      onClose,
+      onDelete;
   final bool pinned, composerVisible;
   @override
   State<PaneActionsMenu> createState() => _PaneActionsMenuState();
@@ -73,6 +75,21 @@ class _PaneActionsMenuState extends State<PaneActionsMenu> {
         ),
       if (widget.onClose != null)
         _action('Close agent', Icons.close, widget.onClose!),
+      // Last, after a line, and in the danger colour: Close puts the tile
+      // away and Delete ends the agent. Two verbs one row apart that both
+      // start with the pane vanishing need more between them than a label.
+      if (widget.onDelete != null) ...[
+        const AppMenuDivider(),
+        AppMenuItem(
+          label: 'Delete agent',
+          icon: Icons.delete_outline,
+          danger: true,
+          onPressed: () {
+            _menu.close();
+            widget.onDelete!();
+          },
+        ),
+      ],
     ],
     builder: (_, menu, _) => IconButton(
       tooltip: 'Actions for ${widget.name}',
