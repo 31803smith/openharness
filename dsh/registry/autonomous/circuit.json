@@ -1,0 +1,10 @@
+{
+  "id": "autonomous/circuit",
+  "name": "Circuit",
+  "description": "Chat with AI → a board you can order. Golden blocks, two independent DRC substrates, a JLCPCB-ready packet.",
+  "repo": "https://github.com/autonomous-ai/autonomous-circuit",
+  "ref": "harness-dsh",
+  "engine": "claude",
+  "tier": 2,
+  "verified": true
+}
