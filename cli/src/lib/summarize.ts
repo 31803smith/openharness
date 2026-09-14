@@ -40,6 +40,9 @@ import {
 const SUMMARY_MAX_WORDS = 120
 const RECAP_MAX_WORDS = 15 // ~12-15 words; ONE complete sentence (20 overflowed the device tile).
 const MAX_INPUT_CHARS = 50_000
+// The previous turn's `recap\n\nbody` is ≤ 135 words by construction; this is a guard against a
+// stored summary from an older build, not a budget anyone is expected to hit.
+const PREVIOUS_RECAP_MAX_CHARS = 1_000
 const SUMMARY_SCRATCH = join(env.ADAPTER_DATA_DIR, 'summary-scratch')
 
 function ensureSummaryScratch(): string {
@@ -304,16 +307,37 @@ function firstProseLine(stripped: string): string {
 /** Longer than this and a line is saying something, not naming a section. */
 const LABEL_MAX_CHARS = 24
 
+/**
+ * `recap = llm(instruct, previousRecap, userMessage, text)`.
+ *
+ * `previousRecap` is the stored summary of this agent's LAST turn. It is context, not content: it lets
+ * a turn whose answer is "Done — same change in the other two files" recap as what was done, instead of
+ * a fragment that names nothing. The prompt fences it off so it can only resolve references, never be
+ * reported as this turn's news. Absent on a session's first turn.
+ */
 export async function summarizeTurnText(
   text: string,
   signal?: AbortSignal,
   userMessage?: string,
   engine: AgentEngine = 'claude',
   gateway?: GatewayRuntime,
+  previousRecap?: string,
 ): Promise<string | null> {
   let last = (text || '').trim()
   if (!last) return null
   if (last.length > MAX_INPUT_CHARS) last = last.slice(-MAX_INPUT_CHARS)
+
+  // Continuity only. Flattened — the stored body carries line breaks the model would otherwise
+  // read as structure to preserve — and capped so an odd stored value cannot crowd out the turn.
+  const prev = (previousRecap || '').replace(/\s+/g, ' ').trim().slice(0, PREVIOUS_RECAP_MAX_CHARS)
+  const prevBlock = prev
+    ? `For continuity ONLY, the recap of this assistant's PREVIOUS turn was: «${prev}». Use it to ` +
+      `resolve references in this turn ("it", "that one", "the same fix", "as before", "the other file") ` +
+      `and to keep names and terms consistent — nothing more. Your recap describes THIS turn's message ` +
+      `alone: do NOT repeat, restate or merge in the previous recap, and do NOT report anything from it ` +
+      `as if it happened now. If this turn's message is complete on its own, ignore the previous recap ` +
+      `entirely.\n\n`
+    : ''
 
   // If we know the user's request for this turn, tell the recap to LEAD with the direct answer to it
   // (asked a price → give the price), not a generic characterization of the topic — the answer text
@@ -338,7 +362,9 @@ export async function summarizeTurnText(
     `turn and the assistant message between the --- markers below. If both are in English, output English. ` +
     `If they use another language, output that language. If they mix languages, preserve that mix naturally. ` +
     `Never switch to a language that does not appear in the user's request or the assistant message. Ignore ` +
-    `previous conversation, account locale, environment locale, and the language of these instructions.\n\n` +
+    `previous conversation (including the previous recap, if one is quoted below), account locale, ` +
+    `environment locale, and the language of these instructions.\n\n` +
+    prevBlock +
     askBlock +
     `Between the --- markers below is a message the assistant already sent to the user. Re-voice its ` +
     `CONTENT back to the user, in the FIRST PERSON as that same assistant (its own "I"). You are ONLY ` +
@@ -423,8 +449,8 @@ export async function summarizeTurnText(
   const effort = engine === 'cursor' ? 'model-defined' : env.SUMMARY_EFFORT
   console.log(
     gatewayKey
-      ? `[recap] openrouter ${engine} · model=${model} · inputChars=${last.length}${ask ? ' · withAsk' : ''}`
-      : `[recap] one-shot ${engine} · model=${model} · effort=${effort} · inputChars=${last.length}${ask ? ' · withAsk' : ''}`,
+      ? `[recap] openrouter ${engine} · model=${model} · inputChars=${last.length}${ask ? ' · withAsk' : ''}${prev ? ' · withPrev' : ''}`
+      : `[recap] one-shot ${engine} · model=${model} · effort=${effort} · inputChars=${last.length}${ask ? ' · withAsk' : ''}${prev ? ' · withPrev' : ''}`,
   )
   const runEngine = engine === 'claude'
     ? runClaudeOneShot

@@ -8,7 +8,8 @@
  *   tool_start Task/Agent   → + {kind:'agents', agents:[{text,color}]} (live sub-agent list)
  *   subagent_finished       → + {kind:'agents', …} with that row ticked off
  *   turn_ended (device on)  → {kind:'processing', text:'Summarizing…'} then, once the LLM one-shot
- *                             returns, {kind:'summary', text:body, recap} (persisted per session)
+ *                             returns, {kind:'summary', text:body, recap} (persisted per session,
+ *                             and handed to the NEXT turn's summariser as its previous recap)
  *   turn_ended (no device)  → nothing (device-gated; the summary map is left untouched)
  *   turn_ended (empty text) → {kind:'done'}                          (clear busy)
  *
@@ -38,7 +39,16 @@ export interface CommanderMirrorOpts {
    *  Gates the live turn-card STREAM; the turn-done `summary` card ignores it so a background machine still
    *  badges. Omitted → defaults to hasDevice (single-machine firmware: attached == active, streams as before). */
   active?: () => boolean
-  summarize: (text: string, signal?: AbortSignal, userMessage?: string, sessionId?: string) => Promise<string | null>
+  /** `previousRecap` is the stored `recap\n\nbody` of this session's last summarised turn, when there is
+   *  one — the continuity a recap of THIS turn alone cannot carry ("same fix, other file" is a fragment
+   *  without it). Undefined on a session's first turn. */
+  summarize: (
+    text: string,
+    signal?: AbortSignal,
+    userMessage?: string,
+    sessionId?: string,
+    previousRecap?: string,
+  ) => Promise<string | null>
   /** True when `summarize` is a local derivation rather than a model call — see startSummary. */
   summarizeIsLocal?: boolean
   /** Agent display name for a sessionId — rides the summary's outer frame so a BACKGROUND machine's device
@@ -613,7 +623,9 @@ export class CommanderMirror {
     }
 
     const ask = userMessage.replace(/\s+/g, ' ').trim().slice(0, 60)
-    this.trace(sessionId, `${sid} summarizing · source=${source} · textLen=${text.length} · device=${device}${this.opts.recapForce ? ' · recapForce' : ''}${ask ? ` · ask="${ask}"` : ''}`)
+    // Read BEFORE the new summary is stored below, or the "previous" recap is this turn's own.
+    const previousRecap = this.summaries.get(sessionId)
+    this.trace(sessionId, `${sid} summarizing · source=${source} · textLen=${text.length} · device=${device}${this.opts.recapForce ? ' · recapForce' : ''}${ask ? ` · ask="${ask}"` : ''} · prev=${previousRecap ? 'yes' : 'none'}`)
     // Device: busy "Summarizing…" card. Web: the "Summarizing for device…" indicator (mirrors the
     // node's handleBrainSummaryEvent — the web ignores the summary text, only toggles the flag).
     //
@@ -626,7 +638,7 @@ export class CommanderMirror {
     }
 
     this.opts
-      .summarize(text, ac.signal, userMessage, sessionId)
+      .summarize(text, ac.signal, userMessage, sessionId, previousRecap)
       .then((summary) => {
         const ms = Date.now() - t0
         if (ac.signal.aborted) { this.trace(sessionId, `${sid} superseded after ${ms}ms (newer turn) — dropping result`); return }
