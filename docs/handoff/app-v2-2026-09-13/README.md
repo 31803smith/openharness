@@ -4,6 +4,11 @@ These files preserve work paused during the user's design discussion. They are
 **not active application source**. Read [the current handoff](../../harness-v2-handoff.md)
 before reusing them: the final decision requires distinct Navigate and Add UIs.
 
+Both drafts are now superseded by production source. Navigate and Add were
+implemented separately in `2d3c024`; the later common empty-swarm start page
+adapts the onboarding ideas without introducing a first-tab-only component.
+Keep these files as design history, not patches to apply to the current branch.
+
 The drafts were saved from a worktree based on `ac443eb`. Both patches separately
 pass `git apply --check` at the `26a372e` code checkpoint. They overlap in
 `desktop/lib/screens/swarm_screen.dart`; this is not a verified combined patch.
@@ -42,7 +47,7 @@ first-use detection beyond a single empty-machine case. It was saved before
 validation and must be adapted to the approved shared Add interface. Do not
 describe it as shipped or proven to improve onboarding.
 
-Inspect/reuse selected changes rather than automatically applying both files:
+Historical applicability checks (only against the old checkpoint named above):
 
 ```sh
 # From repository root; checks only, without modifying source.

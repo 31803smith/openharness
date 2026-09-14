@@ -50,7 +50,7 @@ On an existing checkout, preserve local work before updating; use a fast-forward
 pull, not a reset. The prior computer's `/private/tmp` files, installed apps,
 saved account state, and localhost prototype server will not transfer with Git.
 The [handoff archive](handoff/app-v2-2026-09-13/README.md) preserves older drafts;
-the picker patch is now superseded by production source. Do not reapply it.
+both patches are now superseded by production source. Do not reapply them.
 
 ## Core product rules
 
@@ -179,21 +179,29 @@ remove terminal rules/recap headers, and show a bounded excerpt in a reading car
 The shared modal veil is darker and the eye toggle is removed. Old custom
 bindings for that retired toggle no longer invalidate the rest of the keymap.
 
-**Empty-swarm consistency:** existing-agent suggestions now depend on discovered
-inventory, not a first-workspace-only gate. Every empty tab, including one made
-after closing a swarm, says “Add an existing agent” and adds to that tab. The
-broader first-use education and setup simplification remain unfinished; do not
-claim a verified onboarding conversion/time improvement.
+**Current first-use continuation:** every empty tab uses one inventory-driven
+start page. With no existing work, it leads with **Start with one agent**, a
+static workspace example, **Choose folder…** and separate **Clone repository…**.
+Available existing work gets Add search, three direct agent choices and New
+agent. Saved projects stay visible; the rest of the machine/project catalog is
+behind Browse. A single usable local computer no longer needs a Machine dropdown
+in the creation form. Delayed discovery enables Enter on the primary action
+without stealing an explicit focus choice. Offline/linking cases expose their
+next action. Large text stacks the layout, and New agent now uses the shared
+darker modal veil. See [first-use details](harness-v2-appearance-onboarding.md).
+Observed first-install/provider flows and onboarding conversion/time remain
+unverified; do not infer them from these UI changes.
 
-**Archived drafts:** the picker draft is superseded by these changes. The
-onboarding draft remains unapplied and unverified. Inspect and adapt useful
-parts; do not apply it blindly over the new picker/welcome paths.
+**Archived drafts:** both are superseded. The onboarding ideas were adapted into
+the common page, without adding another first-tab-only component.
 
-**Latest verification:** 1,256 desktop tests passed with one existing skip;
-analyzer reports zero errors/warnings and 12 existing vendored infos. Native
-checks passed 51 keymap decoder and 344 AppKit assertions, including hidden
-window layout. Synthetic captures with real fonts were reviewed at 1280×800
-and 880×560; they are not a real native-session visual or latency measurement.
+**Latest verification:** 1,262 desktop tests passed with one existing skip;
+analyzer reports zero errors/warnings and 12 existing vendored infos. The last
+native checks passed 51 keymap decoder and 344 AppKit assertions; this onboarding
+pass changes no native source. Synthetic start-page/form captures with real
+fonts were reviewed at 1280×800 and 880×560 with 2× text; they are not a real
+native-session visual or latency measurement. Logs:
+`/private/tmp/harness-onboarding-{full-tests-final,analyze-clean}.log`.
 Navigate/Add timings and their exact scope are in
 [the performance record](harness-v2-performance.md). The new navigation catalog
 build measured 0.194 ms median / 0.264 ms p95 for 50 locations across 12 swarms.
@@ -243,7 +251,14 @@ Historical checks for that terminal checkpoint:
   51 keymap decoder + 343 AppKit checks before it was parked. Those results
   apply to the old draft only. Its final visual treatment still needs review.
 
-The workspace Release build at **`2d3c024` succeeded**. The old preview (PID 29025)
+The common onboarding continuation's macOS arm64 **Release build succeeded**
+with `FLUTTER_TARGET=lib/main.dart`. Log:
+`/private/tmp/harness-onboarding-release-build.log`. Computer Use still returns
+`cgWindowNotFound` for the exact workspace bundle path. The new binary is built;
+it has not been confirmed loaded in the running preview or visually verified
+through native capture. Preserve this distinction when resuming.
+
+The previous workspace Release build at **`2d3c024` succeeded**. The old preview (PID 29025)
 was closed normally, then the exact workspace bundle was launched and verified
 running as PID 15377 with identity `ai.autonomous.harness.v2`. Those PIDs are only
 historical observations; recheck before any later process action. Build log:
@@ -259,15 +274,17 @@ that its isolated window can become active/key.
 
 ## Plan for the next session
 
-1. **Confirm the latest source/build checkpoint.** The `2d3c024` release has been
-   built and its workspace process relaunched. Review
+1. **Confirm the latest source/build checkpoint.** The common onboarding
+   continuation has a successful Release build; its running-window revision is
+   not confirmed. The last confirmed relaunch was `2d3c024`. Review
    Navigate, Add, command mode, and the fresh terminal position in the native app
    when computer-use access works. Preserve real running agents and input.
-2. **Improve genuine first use.** Start with no account/runtime/agents/projects
-   knowledge. Make “choose a working folder → choose an agent → start” clear;
-   use this computer by default, reveal machine/link/project concepts when
-   needed, and offer existing work prominently when discovered. Adapt the saved
-   onboarding draft to the new Add experience. Preserve choices on failure.
+2. **Observe genuine first use of the common start page.** Start with no
+   account/runtime/agents/projects knowledge and record actual steps/errors to
+   a usable agent. The folder-first path, workspace example and secondary
+   catalog are implemented. Check fresh dependencies, provider sign-in, cloning,
+   first task and adding a second agent; improve what the observation exposes.
+   Preserve choices on failure and the distinction between Navigate and Add.
 3. **Recheck fresh terminal positioning and real workflows** on disposable
    local/remote agents: startup, delayed snapshots, resizing, returning to a
    scrolled view, reconnect, paste, selection, and IME.

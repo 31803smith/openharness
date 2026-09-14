@@ -1,10 +1,40 @@
 # Harness App V2 — development handoff
 
-Updated 2026-09-13 after resuming the Navigate/Add implementation. This is a working preview, not a release.
+Updated 2026-09-13 after the common empty-swarm onboarding continuation. This is a working preview, not a release.
 
 **Resume with [Harness v2: goal, plan, and continuation handoff](harness-v2-handoff.md).** It records the latest approved design, acceptance criteria, next-work order, and portable drafts. The checkpoints below are historical; the current handoff supersedes their conflicting toolbar, picker, preview, menu, and onboarding directions.
 
-## Navigate and Add agent continuation
+## Common empty-swarm onboarding continuation
+
+- One start page serves every empty swarm. With no existing work it leads with
+  **Start with one agent**, a static side-by-side example, **Choose folder…** and
+  separate **Clone repository…**. With existing work it offers shared Add search,
+  three direct agent choices and New agent. Saved projects stay visible, while
+  Browse reveals the full machine/project catalog.
+- A usable local computer retains the direct folder path even if another
+  computer is offline. New agent skips the Machine dropdown for a single usable
+  local target. Offline/linking/loading states offer their next action. The
+  form now uses the darker shared modal veil; the welcome surfaces need no
+  backdrop filters, and the layout stacks with larger text.
+- A regression caught Enter doing nothing when first discovery finished after
+  the initial disabled action. The newly enabled action now receives default
+  focus in the welcome scope, while an explicit focus on another control wins.
+  Tests also cover offline retry, saved-project routing/visibility in later
+  tabs, clone cancellation and the existing creation/recovery paths.
+- **1,262 desktop tests passed, one existing skip**; analyzer: zero errors or
+  warnings, 12 existing vendored infos. Actual screen/form renders with real
+  fonts were reviewed at 1280×800 and 880×560 with 2× text. Logs:
+  `/private/tmp/harness-onboarding-{full-tests-final,analyze-clean}.log`.
+- The [onboarding notes](harness-v2-appearance-onboarding.md) record the source
+  research, current behavior and remaining qualification. The archived welcome
+  draft is superseded. Real first-install/provider sign-in, time to useful work,
+  native event-to-display latency and remote reconnect remain unverified.
+- The macOS arm64 Release build succeeded with the normal `lib/main.dart`
+  target (`/private/tmp/harness-onboarding-release-build.log`). Exact-path native
+  capture still returns `cgWindowNotFound`; the new binary has not been confirmed
+  loaded in the running preview. No native visual or latency result is claimed.
+
+## Navigate and Add agent continuation (previous checkpoint)
 
 - Implemented distinct UIs: a compact compass/Navigate directory lists every existing swarm location for a matching agent; New swarm, bottom-right floating +, and both splits share Add results with an always-on preview and New agent action. Navigate does not mutate membership. Add reuses the session and preserves source swarms, avoids duplicates, and keeps the chosen split position.
 - Every empty swarm now offers the same existing-agent suggestions, including after closing earlier swarms. Removed the first-use-only gate and “Go to an agent” heading. Broader onboarding simplification remains next work.

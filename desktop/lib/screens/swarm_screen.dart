@@ -35,6 +35,7 @@ import '../widgets/new_agent_dialog.dart';
 import '../widgets/pane_grid.dart';
 import '../widgets/shortcuts_sheet.dart';
 import '../widgets/swarm_dialogs.dart';
+import '../widgets/clone_repository_dialog.dart';
 import '../widgets/swarm_inline_search.dart';
 import '../widgets/swarm_navigator.dart';
 import '../widgets/swarm_search_input.dart';
@@ -508,10 +509,14 @@ class _SwarmScreenState extends State<SwarmScreen> {
     String? swarmId,
     PaneSplitRequest? split,
     bool chooseFolderFirst = false,
+    bool cloneRepositoryFirst = false,
   }) => _dialog(() async {
     final focused = app.focusedPane;
     final inherit =
-        machineId == null && !chooseFolderFirst && focused?.agentId != null;
+        machineId == null &&
+        !chooseFolderFirst &&
+        !cloneRepositoryFirst &&
+        focused?.agentId != null;
     final focusedMachine = inherit
         ? app.machineStates[focused!.machineId]
         : null;
@@ -519,7 +524,12 @@ class _SwarmScreenState extends State<SwarmScreen> {
         .where((agent) => agent.id == focused?.agentId)
         .firstOrNull;
     final local = app.machineStates.values
-        .where((m) => m.isLocalMachine)
+        .where(
+          (m) =>
+              m.isLocalMachine &&
+              (!(chooseFolderFirst || cloneRepositoryFirst) ||
+                  (!m.needsLink && m.nodeOnline != false)),
+        )
         .firstOrNull;
     final id =
         machineId ??
@@ -532,24 +542,42 @@ class _SwarmScreenState extends State<SwarmScreen> {
     }
     final targetId = swarmId ?? app.activeSwarmId;
     final machine = app.machineStates[id];
+    if ((chooseFolderFirst || cloneRepositoryFirst) &&
+        (machine == null ||
+            !machine.isLocalMachine ||
+            machine.needsLink ||
+            machine.nodeOnline == false)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'This computer is unavailable. Reconnect and try again.',
+          ),
+        ),
+      );
+      return;
+    }
     var selectedFolder =
         folder ??
         (focusedAgent == null
             ? null
             : focusedMachine?.projectOf(focusedAgent)?.cwd);
     Future<void>? initialEngineProbe;
-    if (chooseFolderFirst && machine != null && machine.isLocalMachine) {
+    if ((chooseFolderFirst || cloneRepositoryFirst) &&
+        machine != null &&
+        machine.isLocalMachine) {
       // Read availability while the user chooses a folder, so the form can
       // prefer an installed agent without adding a second probe or wait.
       initialEngineProbe = app.probeEngines(id, force: true);
       try {
-        selectedFolder = await getDirectoryPath(
-          confirmButtonText: 'Use folder',
-        );
+        selectedFolder = cloneRepositoryFirst
+            ? await showCloneRepositoryDialog(context)
+            : await getDirectoryPath(confirmButtonText: 'Use folder');
       } catch (error) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Could not open the folder picker: $error')),
+            SnackBar(
+              content: Text('Could not choose a working folder: $error'),
+            ),
           );
         }
         return;
@@ -568,7 +596,11 @@ class _SwarmScreenState extends State<SwarmScreen> {
       context,
       app,
       id,
-      source: chooseFolderFirst ? 'first_folder' : 'swarm',
+      source: cloneRepositoryFirst
+          ? 'first_clone'
+          : chooseFolderFirst
+          ? 'first_folder'
+          : 'swarm',
       initialFolder: selectedFolder,
       initialEngineProbe: initialEngineProbe,
       swarmId: targetId,
@@ -1229,6 +1261,8 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                     onNewAgent: _newAgent,
                                     onChooseFirstFolder: () =>
                                         _newAgent(chooseFolderFirst: true),
+                                    onCloneRepository: () =>
+                                        _newAgent(cloneRepositoryFirst: true),
                                     onAgent: (entry) => _activateSearch(
                                       SwarmSearchSelection(
                                         SwarmDestination(
