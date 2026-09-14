@@ -1,4 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Lets libwebrtc notice a wifi↔cellular change and restart ICE rather than
+         wait out the disconnect grace. Not a runtime permission. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <application
         android:label="harness"
         android:name="${applicationName}"

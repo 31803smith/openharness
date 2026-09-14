@@ -15,6 +15,10 @@ abstract interface class RelayCodec {
 
   bool handleRekey(Map<String, dynamic> payload);
 
+  /// The machine's `features.terminalP2p` from its welcome — 0 when it offers no
+  /// P2P terminal channel (or before the welcome).
+  int get terminalP2pVersion;
+
   /// The frame as it may cross the relay. Null when it must travel sealed and the session is not
   /// up yet — it must then not go at all: sent in the clear it leaks, and a terminal frame is
   /// rejected by the relay outright.

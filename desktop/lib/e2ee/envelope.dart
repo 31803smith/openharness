@@ -49,6 +49,7 @@ const Set<String> encryptedDownTypes = {
   'p2p_answer',
   'p2p_ice_candidate',
   'p2p_abort',
+  'p2p_promote',
 };
 
 Uint8List _aad(int v, String type, String dbSessionId, String k, String epoch) =>

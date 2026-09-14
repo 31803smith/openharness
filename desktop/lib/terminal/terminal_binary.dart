@@ -202,6 +202,30 @@ Uint8List? encodeTerminalLocal(TerminalBinaryFrame frame) {
   return Uint8List.fromList([...header, ...payload]);
 }
 
+/// Kind and stream of a loopback (HTRL) frame from its headers alone — enough to
+/// route it without inflating or copying the payload. Null when the frame does
+/// not carry a plain body [decodeTerminalLocal] would accept either.
+({TerminalBinaryKind kind, String streamId})? peekTerminalLocal(
+  Uint8List bytes,
+) {
+  if (bytes.length < terminalLocalHeaderBytes + 16) return null;
+  for (var index = 0; index < _localMagic.length; index++) {
+    if (bytes[index] != _localMagic[index]) return null;
+  }
+  final kind = TerminalBinaryKind.fromCode(bytes[5]);
+  if (bytes[4] != terminalLocalVersion || kind == null) return null;
+  return (
+    kind: kind,
+    streamId: _uuidString(
+      Uint8List.sublistView(
+        bytes,
+        terminalLocalHeaderBytes,
+        terminalLocalHeaderBytes + 16,
+      ),
+    ),
+  );
+}
+
 TerminalBinaryFrame? decodeTerminalLocal(List<int> raw) {
   final bytes = Uint8List.fromList(raw);
   if (bytes.length < terminalLocalHeaderBytes) return null;

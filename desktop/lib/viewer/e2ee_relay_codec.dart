@@ -25,6 +25,9 @@ class E2eeRelayCodec implements RelayCodec {
       _session.handleRekey(payload);
 
   @override
+  int get terminalP2pVersion => _session.terminalP2pVersion;
+
+  @override
   Map<String, dynamic>? encodeFrame(Map<String, dynamic> frame) {
     final type = frame['type'];
     final mustSeal = type is String && encryptedDownTypes.contains(type);

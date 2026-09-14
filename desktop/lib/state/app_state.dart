@@ -2258,6 +2258,7 @@ class AppNotifier extends ChangeNotifier {
         );
       },
       relayCodecs: viewer?.relayCodecs,
+      transportPlugins: viewer?.transportPlugins,
       onAuthFailure: _signedOutAtRuntime,
       onLocalFailure: _onLocalFailure,
       onEvent: _handleEvent,

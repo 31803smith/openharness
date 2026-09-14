@@ -135,6 +135,10 @@ describe('e2ee core — codes + fingerprint + classification', () => {
     // A machine's account usage names what the person spends and on whose subscription. Missing from
     // either list the request would not fail — it would time out, which is harder to find.
     expect(C.isEncryptedDownType('usage_read')).toBe(true)
+    // The whole p2p signaling exchange, cutover included — see the set's own comment.
+    for (const type of ['p2p_offer', 'p2p_answer', 'p2p_ice_candidate', 'p2p_abort', 'p2p_promote']) {
+      expect(C.isEncryptedDownType(type)).toBe(true)
+    }
     expect(C.isEncryptedRpcResultType('usage_read_result')).toBe(true)
     expect(C.ENCRYPTED_RPC_RESULT_TYPES.has('session_get_result')).toBe(true)
     expect(C.ENCRYPTED_RPC_RESULT_TYPES.has('agents_list_result')).toBe(true)
@@ -201,6 +205,6 @@ describe('e2ee core — interop keystone', () => {
   it('core.ts still hashes to the pinned value shared with the other implementations', () => {
     const here = dirname(fileURLToPath(import.meta.url))
     const actual = createHash('sha256').update(readFileSync(join(here, 'core.ts'))).digest('hex')
-    expect(actual).toBe('76b0171f0dd53a1a00e5e321f376ae956faacf3db85cd95b644ef3dd9f91e78c')
+    expect(actual).toBe('ea9395d253a6c1896f264509d18eef1a8e6072b5f5a55ed2e7dea69944d06776')
   })
 })

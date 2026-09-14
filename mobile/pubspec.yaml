@@ -26,10 +26,20 @@ dependencies:
   flutter_riverpod: ^2.6.1
   lucide_icons_flutter: ^3.1.15
 
+  # The phone's second wire to a machine: the `terminal-v1` data channel the
+  # harness CLI opens with werift on the desktop's behalf (lib/p2p/). Data
+  # channels only — no camera or microphone, so no usage strings are needed.
+  # Pinned exactly: a native plugin, and libwebrtc's SCTP/SDP behaviour is
+  # what the responder's werift has to agree with.
+  flutter_webrtc: 1.6.2+hotfix.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  # The p2p routing is all timers (retry, migration sweep, upgrade) — tests drive
+  # them without waiting them out.
+  fake_async: ^1.3.1
 
 flutter:
   uses-material-design: true
