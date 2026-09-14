@@ -72,6 +72,7 @@ class AppSelectField<T> extends StatefulWidget {
     required this.options,
     required this.onChanged,
     this.width,
+    this.trigger,
   });
 
   final T value;
@@ -81,6 +82,10 @@ class AppSelectField<T> extends StatefulWidget {
   /// Fixed width, so a column of these lines up on one right edge. Null lets it
   /// take whatever its parent gives.
   final double? width;
+
+  /// An alternate compact trigger, such as the agent picker's More button.
+  /// Selection, keyboard navigation and menu rows remain shared.
+  final Widget? trigger;
 
   @override
   State<AppSelectField<T>> createState() => _AppSelectFieldState<T>();
@@ -251,61 +256,63 @@ class _AppSelectFieldState<T> extends State<AppSelectField<T>> {
                       : Colors.transparent,
                 ),
               ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Row(
-                      children: [
-                        if (current?.leading != null) ...[
-                          current!.leading!(),
-                          const SizedBox(width: 8),
-                        ],
-                        Flexible(
-                          child: Text(
-                            current?.label ?? '—',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontFamily: AppFont.sans,
-                              fontFamilyFallback: AppFont.sansFallback,
-                              fontSize: AppControl.fontSize,
-                              fontWeight: AppControl.fontWeight,
-                              letterSpacing: AppFont.trackingFor(
-                                AppControl.fontSize,
+              child:
+                  widget.trigger ??
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Row(
+                          children: [
+                            if (current?.leading != null) ...[
+                              current!.leading!(),
+                              const SizedBox(width: 8),
+                            ],
+                            Flexible(
+                              child: Text(
+                                current?.label ?? '—',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontFamily: AppFont.sans,
+                                  fontFamilyFallback: AppFont.sansFallback,
+                                  fontSize: AppControl.fontSize,
+                                  fontWeight: AppControl.fontWeight,
+                                  letterSpacing: AppFont.trackingFor(
+                                    AppControl.fontSize,
+                                  ),
+                                  color: AppPalette.textPrimary,
+                                ),
                               ),
-                              color: AppPalette.textPrimary,
                             ),
-                          ),
+                            if (current?.note != null) ...[
+                              const SizedBox(width: 8),
+                              Flexible(
+                                child: Text(
+                                  current!.note!,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontFamily: AppFont.sans,
+                                    fontFamilyFallback: AppFont.sansFallback,
+                                    fontSize: 11.5,
+                                    color: AppPalette.textFaint,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
                         ),
-                        if (current?.note != null) ...[
-                          const SizedBox(width: 8),
-                          Flexible(
-                            child: Text(
-                              current!.note!,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontFamily: AppFont.sans,
-                                fontFamilyFallback: AppFont.sansFallback,
-                                fontSize: 11.5,
-                                color: AppPalette.textFaint,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
+                      ),
+                      const SizedBox(width: 6),
+                      Icon(
+                        Icons.expand_more_rounded,
+                        size: AppControl.iconSize,
+                        color: _hovered || controller.isOpen
+                            ? AppPalette.textPrimary
+                            : AppPalette.textSecondary,
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 6),
-                  Icon(
-                    Icons.expand_more_rounded,
-                    size: AppControl.iconSize,
-                    color: _hovered || controller.isOpen
-                        ? AppPalette.textPrimary
-                        : AppPalette.textSecondary,
-                  ),
-                ],
-              ),
             ),
           ),
         ),

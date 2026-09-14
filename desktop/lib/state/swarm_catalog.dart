@@ -67,9 +67,13 @@ class SavedSwarmProject {
 }
 
 class SwarmProjectGroup {
-  SwarmProjectGroup({required this.id, required this.name, this.saved});
+  SwarmProjectGroup({required this.id, required String name, this.saved})
+    : _discoveredName = name;
   final String id;
-  final String name;
+  final String _discoveredName;
+  // An explicitly saved folder is the user's choice of project identity/name.
+  // Discovery order across checkouts must not hide it under another folder name.
+  String get name => saved?.name ?? _discoveredName;
   SavedSwarmProject? saved;
   final List<SwarmAgentRef> agents = [];
 }

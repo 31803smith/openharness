@@ -16,6 +16,8 @@ import '../shared/widgets/labeled_field.dart';
 import '../state/app_state.dart';
 import 'engine_identity.dart';
 import 'codex_profile_field.dart';
+import 'clone_repository_dialog.dart';
+import 'agent_picker.dart';
 import 'remote_folder_picker.dart';
 
 /// Mirrors the harness CLI's `BYPASS_PERMISSION_FLAGS`
@@ -112,7 +114,13 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   @override
   void initState() {
     super.initState();
-    _engine = _preferredInstalledEngine();
+    final remembered = widget.notifier.agentPreference.value;
+    if (allEngines.any((identity) => identity.id == remembered)) {
+      _engine = remembered!;
+      _engineChosenByUser = true;
+    } else {
+      _engine = _preferredInstalledEngine();
+    }
     // Which engines this machine actually has. Asked here rather than at
     // connect because the answer costs the far side one interactive shell per
     // engine and is only ever read on this screen. Deferred a frame so the
@@ -128,8 +136,23 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         unawaited(_probeEngines(initialProbe: widget.initialEngineProbe));
+        unawaited(_loadAgentPreference());
       }
     });
+  }
+
+  Future<void> _loadAgentPreference() async {
+    await widget.notifier.agentPreference.load();
+    if (!mounted || _submitting || _engineChosenByUser) return;
+    final remembered = widget.notifier.agentPreference.value;
+    if (allEngines.any((identity) => identity.id == remembered)) {
+      setState(() {
+        _engine = remembered!;
+        _engineChosenByUser = true;
+        _codexProfile = null;
+        _codexProfilesBusy = true;
+      });
+    }
   }
 
   String _preferredInstalledEngine() {
@@ -371,6 +394,24 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     Navigator.of(context).pop();
   }
 
+  Future<void> _cloneRepository() async {
+    if (_picking || !_machineIsThisComputer) return;
+    final revision = _machineRevision;
+    setState(() => _picking = true);
+    final folder = await showCloneRepositoryDialog(
+      context,
+      initialFolder: _folder,
+    );
+    if (!mounted) return;
+    setState(() {
+      _picking = false;
+      if (folder != null && revision == _machineRevision) {
+        _folder = folder;
+        _error = null;
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     // Reads colour tokens, and lives in an Overlay — a top-down rebuild never
@@ -517,7 +558,22 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
           },
         ),
         const SizedBox(height: _gapField),
-        const FieldLabel('Project folder'),
+        Row(
+          children: [
+            const Expanded(child: FieldLabel('Working folder')),
+            if (_machineIsThisComputer)
+              TextButton(
+                onPressed: _picking ? null : _cloneRepository,
+                style: TextButton.styleFrom(
+                  foregroundColor: grid.AppPalette.textSecondary,
+                  padding: const EdgeInsets.only(bottom: 6),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                child: const Text('Clone repository…'),
+              ),
+          ],
+        ),
         _FolderControl(
           folder: _folder,
           machineName: _machineName,
@@ -531,7 +587,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
           onPressed: _browse,
         ),
         const SizedBox(height: _gapField),
-        const FieldLabel('Coding agent'),
+        const FieldLabel('Agent'),
         // The app's own picker, not `DropdownButtonFormField`.
         //
         // Material's dropdown renders its own popup, anchors it OVER the field
@@ -539,8 +595,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
         // out square-cornered and edge-to-edge whatever you pass it — while
         // ignoring both `menuTheme` and `popupMenuTheme`, so it could not be
         // made to match any other menu in this app.
-        AppSelectField<String>(
-          key: const Key('new-agent-engine-field'),
+        AgentPicker(
           value: _engine,
           options: [
             for (final identity in allEngines)
@@ -560,6 +615,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
               ),
           ],
           onChanged: (value) => setState(() {
+            unawaited(widget.notifier.agentPreference.select(value));
             _engineChosenByUser = true;
             _engine = value;
             _error = null;
@@ -647,9 +703,12 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
             ],
-            // No 'Permissions' heading. It sat over a single checkbox whose own
-            // label already says what it does, so it was a section title for a
-            // section of one.
+            if (_engine == 'codex') ...[
+              const SizedBox(height: 12),
+              Divider(height: 1, color: grid.AppGlass.hair),
+              const SizedBox(height: 16),
+            ],
+            const FieldLabel('Permissions'),
             if (bypassFlag != null)
               _BypassCheck(
                 value: _bypassPermission,
@@ -662,8 +721,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
               // Not silence: an engine with no checkbox looks identical to one whose
               // checkbox the user simply missed.
               Text(
-                '${engineIdentity(_engine).label} has no permission flag this app '
-                'can pass — it asks in the terminal.',
+                'Managed by ${engineIdentity(_engine).label}.',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
           ],
@@ -832,17 +890,19 @@ class _Advanced extends StatelessWidget {
                   ),
                 ),
                 const Spacer(),
-                Flexible(
-                  child: Text(
-                    key: const Key('new-agent-advanced-state'),
-                    state,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.right,
-                    style: _mono(color: grid.AppPalette.textFaint)
-                        .copyWith(fontSize: 11.5),
+                if (!open)
+                  Flexible(
+                    child: Text(
+                      key: const Key('new-agent-advanced-state'),
+                      state,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.right,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: grid.AppPalette.textSecondary,
+                      ),
+                    ),
                   ),
-                ),
               ],
             ),
           ),
@@ -863,8 +923,13 @@ class _Advanced extends StatelessWidget {
           offstage: !open,
           child: ExcludeFocus(
             excluding: !open,
-            child: Padding(
-              padding: const EdgeInsets.only(top: 4, bottom: 2),
+            child: Container(
+              margin: const EdgeInsets.only(top: 4),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: grid.AppSurface.hoverFill,
+                borderRadius: BorderRadius.circular(10),
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 mainAxisSize: MainAxisSize.min,
@@ -1091,14 +1156,33 @@ class _BypassCheck extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(
-                      'Bypass permission prompts',
-                      style: theme.textTheme.labelMedium?.copyWith(
-                        color: grid.AppPalette.textPrimary,
-                      ),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Bypass permission prompts',
+                            style: theme.textTheme.labelMedium?.copyWith(
+                              color: grid.AppPalette.textPrimary,
+                            ),
+                          ),
+                        ),
+                        Tooltip(
+                          message: flag,
+                          child: Icon(
+                            LucideIcons.info,
+                            size: 14,
+                            color: grid.AppPalette.textSecondary,
+                          ),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: _gapTight),
-                    Text(flag, style: _mono(color: grid.AppPalette.textFaint)),
+                    Text(
+                      'Allow this agent to act without asking for approval.',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: grid.AppPalette.textSecondary,
+                      ),
+                    ),
                   ],
                 ),
               ),

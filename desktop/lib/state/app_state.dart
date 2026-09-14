@@ -13,6 +13,7 @@ import '../auth/cli_link.dart';
 import '../auth/cli_login.dart';
 import '../bootstrap/environment_provisioner.dart';
 import '../core/config.dart';
+import '../core/agent_preference.dart';
 import '../core/build_identity.dart';
 import '../core/engine_availability.dart';
 import '../core/local_hostname.dart';
@@ -846,6 +847,7 @@ class AppNotifier extends ChangeNotifier {
        // layout is remembered: with a layout store there is a state file, and
        // without one (the tests) nothing is written anywhere.
        dial = DialState(paneLayoutStore?.storage),
+       agentPreference = AgentPreference(paneLayoutStore?.storage),
        session = authSession,
        _store = configStore,
        cliLogin = cliLogin ?? CliLogin(),
@@ -889,6 +891,7 @@ class AppNotifier extends ChangeNotifier {
   /// frames from the local daemon; its own notifier, so the row rebuilds
   /// without dragging the whole rail through a machine-list rebuild.
   final DialState dial;
+  final AgentPreference agentPreference;
 
   TerminalPane? get focusedPane {
     final id = focusedPaneId;

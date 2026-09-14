@@ -10,6 +10,7 @@ import 'package:harness/core/models.dart';
 import 'package:harness/state/app_state.dart';
 import 'package:harness/state/pane_arrangement.dart';
 import 'package:harness/widgets/new_agent_dialog.dart';
+import 'package:harness/shared/widgets/app_select_field.dart';
 
 class _Folders extends FileSelectorPlatform {
   @override
@@ -19,17 +20,15 @@ class _Folders extends FileSelectorPlatform {
   }) async => '/work';
 }
 
-/// The profile the dialog says it will use, read off the Advanced row.
-///
-/// That row is the only place reporting it now: the summary card that used to
-/// print a `Profile` fact is gone with the rest of the second column, and the
-/// row carries the same answer by LABEL rather than by full path — which is what
-/// a person reading a folded drawer actually needs.
+/// The visible profile field reports the account used for the next launch.
 void expectProfile(WidgetTester tester, String label) {
-  final state = tester.widget<Text>(
-    find.byKey(const Key('new-agent-advanced-state')),
+  final field = tester.widget<AppSelectField<String>>(
+    find.byKey(const Key('new-agent-codex-profile-field')),
   );
-  expect(state.data, contains(label), reason: 'Advanced should name $label');
+  expect(
+    field.options.firstWhere((option) => option.value == field.value).label,
+    contains(label),
+  );
 }
 
 String _labelFor(String path) =>
@@ -175,16 +174,6 @@ void main() {
     // opens it.
     await tester.tap(find.byKey(const Key('new-agent-advanced')));
     await tester.pumpAndSettle();
-    for (final t in [
-      'Permissions',
-      'Codex profile',
-      'Link a profile folder…',
-      '/custom/work-login',
-      'Checking whether this computer supports Codex profiles…',
-    ]) {
-      // ignore: avoid_print
-      print('PROBE $t -> ${tester.widgetList(find.text(t)).length}');
-    }
     return n;
   }
 
@@ -195,15 +184,15 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('no profiles hides the picker and keeps a default launch', (
+  testWidgets('no profiles shows the default launch explicitly', (
     tester,
   ) async {
     final notifier = await open(tester, initialPaths: const []);
     expect(
       find.byKey(const Key('new-agent-codex-profile-field')),
-      findsNothing,
+      findsOneWidget,
     );
-    expect(find.text('Codex profile'), findsNothing);
+    expect(find.text('Codex profile'), findsOneWidget);
     expect(find.text('Link a profile folder…'), findsOneWidget);
     await tester.tap(find.text('Browse…'));
     await tester.pumpAndSettle();
@@ -212,7 +201,7 @@ void main() {
     expect(notifier.calls.single['codexHome'], isNull);
   });
 
-  testWidgets('one profile is used automatically without a picker', (
+  testWidgets('one profile is selected automatically and remains visible', (
     tester,
   ) async {
     final notifier = await open(
@@ -221,9 +210,9 @@ void main() {
     );
     expect(
       find.byKey(const Key('new-agent-codex-profile-field')),
-      findsNothing,
+      findsOneWidget,
     );
-    expect(find.text('Codex profile'), findsNothing);
+    expect(find.text('Codex profile'), findsOneWidget);
     expectProfile(tester, 'work-login');
     expect(find.text('Link a profile folder…'), findsOneWidget);
     await tester.tap(find.text('Browse…'));
@@ -244,14 +233,14 @@ void main() {
       );
       expect(
         find.byKey(const Key('new-agent-codex-profile-field')),
-        findsNothing,
+        findsOneWidget,
       );
       expectProfile(tester, 'work-login');
       expect(find.text('Link a profile folder…'), findsOneWidget);
     },
   );
 
-  testWidgets('the picker appears at two profiles and hides again at one', (
+  testWidgets('refresh keeps the selected profile visible as accounts change', (
     tester,
   ) async {
     final notifier = await open(
@@ -260,7 +249,7 @@ void main() {
     );
     expect(
       find.byKey(const Key('new-agent-codex-profile-field')),
-      findsNothing,
+      findsOneWidget,
     );
     notifier.paths.add('/accounts/codex2');
     await tester.tap(find.byTooltip('Refresh profiles'));
@@ -276,7 +265,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(
       find.byKey(const Key('new-agent-codex-profile-field')),
-      findsNothing,
+      findsOneWidget,
     );
     expectProfile(tester, 'codex2');
   });
@@ -311,10 +300,12 @@ void main() {
     await tester.pumpAndSettle();
     expect(
       find.byKey(const Key('new-agent-codex-profile-field')),
-      findsNothing,
+      findsOneWidget,
     );
     expectProfile(tester, 'codex2');
-    await tester.tap(find.text('Use codex1'));
+    await tester.tap(find.byKey(const Key('new-agent-codex-profile-field')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('codex1').last);
     await tester.pumpAndSettle();
     expectProfile(tester, 'codex1');
     await tester.tap(find.text('Browse…'));
@@ -331,21 +322,16 @@ void main() {
     await selectSecond(tester);
     await tester.tap(find.byKey(const Key('new-agent-codex-profile-field')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Default').last);
+    await tester.tap(find.text('Default profile').last);
     await tester.pumpAndSettle();
     notifier.paths.remove('/accounts/codex2');
     await tester.tap(find.byTooltip('Refresh profiles'));
     await tester.pumpAndSettle();
     expect(
       find.byKey(const Key('new-agent-codex-profile-field')),
-      findsNothing,
+      findsOneWidget,
     );
-    expect(
-      tester
-          .widget<Text>(find.byKey(const Key('new-agent-advanced-state')))
-          .data,
-      isNot(contains('codex1')),
-    );
+    expectProfile(tester, 'Default profile');
     await tester.tap(find.text('Browse…'));
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, 'Create agent'));

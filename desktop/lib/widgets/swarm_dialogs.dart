@@ -10,6 +10,7 @@ import '../state/swarm_catalog.dart';
 import 'link_machine_dialog.dart';
 import 'link_machine_screen.dart';
 import 'remote_folder_picker.dart';
+import 'clone_repository_dialog.dart';
 
 Future<String?> showSwarmRenameDialog(BuildContext context, String name) =>
     showAppDialog<String>(
@@ -98,16 +99,20 @@ class _ProjectDialogState extends State<_ProjectDialog> {
               widget.notifier.machineStates.values.firstOrNull)
           ?.machine
           .machineId;
-  final name = TextEditingController();
   String? path;
   String? error;
   bool picking = false;
   int _machineRevision = 0;
-  @override
-  void dispose() {
-    name.dispose();
-    super.dispose();
-  }
+  String get folderName =>
+      (path
+                  ?.split(RegExp(r'[/\\]'))
+                  .where((part) => part.isNotEmpty)
+                  .lastOrNull ??
+              path ??
+              '')
+          .characters
+          .take(80)
+          .join();
 
   Future<void> browse() async {
     final id = machineId;
@@ -129,17 +134,6 @@ class _ProjectDialogState extends State<_ProjectDialog> {
       if (!mounted || revision != _machineRevision) return;
       setState(() {
         path = folder ?? path;
-        if (folder != null && name.text.trim().isEmpty) {
-          name.text =
-              (folder
-                          .split(RegExp(r'[/\\]'))
-                          .where((s) => s.isNotEmpty)
-                          .lastOrNull ??
-                      folder)
-                  .characters
-                  .take(80)
-                  .join();
-        }
       });
     } catch (_) {
       if (mounted && revision == _machineRevision) {
@@ -151,6 +145,24 @@ class _ProjectDialogState extends State<_ProjectDialog> {
     } finally {
       if (mounted) setState(() => picking = false);
     }
+  }
+
+  Future<void> clone() async {
+    if (picking) return;
+    final revision = _machineRevision;
+    setState(() => picking = true);
+    final folder = await showCloneRepositoryDialog(
+      context,
+      initialFolder: path,
+    );
+    if (!mounted) return;
+    setState(() {
+      picking = false;
+      if (folder != null && revision == _machineRevision) {
+        path = folder;
+        error = null;
+      }
+    });
   }
 
   @override
@@ -175,7 +187,7 @@ class _ProjectDialogState extends State<_ProjectDialog> {
                   SelectOption(
                     value: machine.machine.machineId,
                     label: machine.isLocalMachine
-                        ? 'Local'
+                        ? 'This computer'
                         : machine.machine.displayName,
                   ),
               ],
@@ -197,13 +209,12 @@ class _ProjectDialogState extends State<_ProjectDialog> {
               overflow: TextOverflow.ellipsis,
             ),
           ),
-          const SizedBox(height: 16),
-          TextField(
-            controller: name,
-            maxLength: 80,
-            decoration: const InputDecoration(labelText: 'Project name'),
-            onChanged: (_) => setState(() {}),
-          ),
+          if (widget.notifier.stateOf(machineId ?? '')?.isLocalMachine == true)
+            TextButton(
+              onPressed: picking ? null : clone,
+              style: TextButton.styleFrom(foregroundColor: Colors.white70),
+              child: const Text('Clone repository…'),
+            ),
           if (error != null)
             Text(
               error!,
@@ -218,14 +229,14 @@ class _ProjectDialogState extends State<_ProjectDialog> {
         child: const Text('Cancel'),
       ),
       FilledButton(
-        onPressed: path == null || name.text.trim().isEmpty || picking
+        onPressed: path == null || folderName.isEmpty || picking
             ? null
             : () => Navigator.pop(
                 context,
                 SavedSwarmProject(
                   machineId: machineId!,
                   path: path!,
-                  name: name.text.trim(),
+                  name: folderName,
                 ),
               ),
         child: const Text('Add project'),
