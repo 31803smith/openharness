@@ -76,14 +76,17 @@ are:
 
 ## Current source and verification
 
-**dff8dfb** gives terminal Find keyboard/text input before its first frame and is
-pushed to main. Immediate text and Escape no longer reach the agent underneath.
-Analysis and full desktop regressions pass. The prepared, verified Release now
-includes this change; the running preview remains unchanged while the console
-is locked.
+**c35e298** transfers keyboard/text ownership immediately during pane/tab
+navigation and is pushed to main. Ready retained views receive input before
+the next frame; blank or connecting destinations release the previous agent.
+Dialogs preserve their input and return it to the current destination on
+dismissal. Analysis and full desktop regressions pass. The prepared, verified
+Release includes this change; the running preview remains unchanged while the
+console is locked.
 
 | Checkpoint | Verified change |
 | --- | --- |
+| **c35e298** — navigation input | Pane/tab switches, closes and zoom navigation transfer input to the existing view before painting. Find/composer drafts, caret and composition survive. Connecting composers release the old agent and take focus once ready. Dialogs exclude background input and restore the current destination immediately on dismissal. |
 | **dff8dfb** — Find opening | Shortcut/native entry immediately activates the focused pane's prepared editor. Early text, composition and Escape belong to Find before its first paint. Sixteen retained terminals keep only one dormant editor, without a search index or output-driven editor rebuilds. |
 | **8d754db** — Find dismissal | Escape or the close button previously lost an arrow key and text arriving before the next frame. Dismissal now immediately restores the retained terminal's input connection, or the visible composer's field and draft. The renderer and remembered Find query stay intact. |
 | **8b73106** — terminal Find | Ten output updates now rebuild the editor zero times instead of ten. Results update around it while match, caret, composition and focus remain stable. Enter/keypad Enter and Escape return to the platform input method during composition; normal navigation/dismissal resumes afterward. |
@@ -96,21 +99,25 @@ is locked.
 
 Current checks:
 
-- **1,443 desktop unit/widget checks pass**, with one optional CLI-media
-  placeholder skipped. Log: /private/tmp/harness-find-opening-full.log.
+- **1,461 desktop unit/widget checks pass**, with one optional CLI-media
+  placeholder skipped. Log: /private/tmp/harness-navigation-input-full.log.
 - All **six changed source/test files analyze cleanly** in
-  /private/tmp/harness-find-opening-analyze.log. The two before-fix input-routing
-  failures are in /private/tmp/harness-find-opening-before.log. Current checks
-  also preserve full editing state through terminal snapshot replacement and
-  immediate terminal/composer input when Find closes.
+  /private/tmp/harness-navigation-input-analyze.log. The **18 new transition
+  cases** cover keyboard/native command entry, ready/connecting views, zoom,
+  editor drafts/composition, background changes and immediate dialog dismissal.
+  The original ten failures are in /private/tmp/harness-navigation-input-before.log;
+  connecting-composer and late-readiness failures are in
+  /private/tmp/harness-navigation-pending-before.log and
+  /private/tmp/harness-navigation-composer-before.log. Existing retained-view,
+  latest-output and idle-work checks still pass.
 - The unchanged exported Dart bindings last passed **84 native keyboard checks** and
   **363 AppKit titlebar checks**, including hidden native window layout.
   Log: /private/tmp/harness-current-native-contract.log. The script completed;
   it displayed no windows and opened no agents.
-- The normal arm64 **Release build succeeds** through dff8dfb. Both rebuilt
+- The normal arm64 **Release build succeeds** through c35e298. Both rebuilt
   frameworks verified before refreshing the outer ad-hoc signature; the full
   bundle passed deep, strict signature verification.
-  Build log: /private/tmp/harness-find-opening-release.log.
+  Build log: /private/tmp/harness-navigation-input-release.log.
 - Four optional CLI-media checks previously passed at 67c20f4 in
   /private/tmp/harness-current-media-smoke.log. They use isolated identities,
   synthetic media, loopback transport and a stubbed OS launch boundary.
@@ -123,7 +130,7 @@ earlier counts separate.
 
 ### Prepared build versus running preview
 
-**Prepared, verified Release through dff8dfb:**
+**Prepared, verified Release through c35e298:**
 
 /private/tmp/harness-pane-controls-release/Build/Products/Release/Harness.app
 
@@ -212,7 +219,9 @@ to another computer with Git.
    rows, composition and the first key after activation through both native
    menu and keyboard entry. Check New Harness folder focus/cancellation,
    Layout repeated chords and confirmation, and Find during output/composition,
-   including the immediate next key after closing it.
+   including the immediate next key after closing it. Ready navigation, Find
+   and dialog-return transitions are now fixture-checked before their next
+   frame; current-preview observation remains the next level of evidence.
    Observe fresh dependencies, provider sign-in/browser return, native folder
    choice, clone, first task and a second harness. Record actual steps, errors
    and time to a usable agent. Public GitHub cloning passed a direct disposable
