@@ -1,17 +1,18 @@
 # Harness v2: goal, plan, and continuation handoff
 
-**Latest UI direction:** [Agent-first tabs](harness-agent-first-tabs.md) supersedes
-the swarm terminology in the historical notes below. First launch and New Tab
-offer existing-agent search alongside New agent. Single-agent tabs show engine
-icons; groups show the group icon. The macOS Agent menu now includes tab actions,
-with no separate Swarm menu. Existing creation, split and session behavior remains.
+**Latest UI direction:** [Harness entry and pane controls](harness-agent-first-tabs.md)
+is the current contract. **New Harness** is a centered search with recent harnesses
+and a prominent creation button. Pick one result and open it immediately; multi-select
+is removed. **File** replaces Agent in the macOS menu, and **Machines** follows Models.
+The latest header keeps icon/name left, folder/branch/machine right, swapping the
+right side for muted actions on hover. This supersedes older swarm/onboarding notes.
 
 Updated September 14, 2026. **Read this first when resuming on another computer.**
 This is the current product contract and next-work order. It supersedes conflicting
 historical checkpoints in [the progress log](harness-v2-progress.md). The user
 requested a portable checkpoint and later paused the broader goal pending a
 breaking change. The goal remains unfinished and is currently blocked. The latest
-pane-header and hover-edge controls are separately authorized, bounded changes; wait for
+entry-page, picker, menu and pane-chrome changes are separately authorized; wait for
 the user's instruction before resuming the broader backlog.
 
 **Latest priority:** the user explicitly deferred native benchmarking and further
@@ -25,12 +26,13 @@ explicit Archive/Resume plus bulk cleanup, preserving ordinary view closure.
 This is a proposal for discussion, not implemented behavior or authorization to
 archive/delete existing user sessions.
 
-Pane headers now have three direct outline icons, in order: **Zoom**, **Delete
-agent**, **Close pane**. The overflow menu, split actions and pin control are gone
-from the header. Delete opens the existing confirmation; Close removes only this
-view and keeps the agent running. The native/menu close-view action is now
-**Close Agent Pane**. Narrow headers give the name priority over the branch
-label; the identity tooltip retains the branch and working folder.
+Pane headers show only the agent icon and session name on the left. The right
+side shows **folder • branch • machine**, replaced on header hover by **Zoom**,
+**Delete**, **Close**, with **Keyboard** first for remote sessions. These controls
+are small and muted, remain keyboard accessible and reserve the same width as
+the metadata. Delete uses the existing confirmation; Close preserves the runtime.
+The session tooltip retains full metadata when a narrow header truncates it.
+Divider grips are invisible until hover, keyboard focus or resize drag.
 
 Hover near a pane's right or bottom edge to reveal an inset **+** for that
 direction. Clicking it opens the shared Add Agent picker, supporting an existing
@@ -38,8 +40,8 @@ agent or **Create Agent** in the chosen position. Keyboard split commands remain
 available. Hover does not change focus or rebuild the terminal; the resize gaps
 remain draggable. Controls stay hidden while zoomed or dragging, and a pane too
 small for the chosen split explains the required width/height in its tooltip.
-This was integrated after the team's agent-first update on main (`16716d0`).
-Twenty-four affected checks pass, with no analyzer errors or warnings. The arm64
+The preceding edge-control checkpoint was integrated after the team's agent-first
+update on main (`16716d0`). Its twenty-four affected checks passed, with no analyzer errors or warnings. The arm64
 Release build was reopened from the exact workspace bundle at the user's request
 and confirmed active (PID 18687). Recheck the process before future app actions;
 this does not verify native latency. Log: `/private/tmp/harness-split-edges-release.log`.
@@ -66,13 +68,13 @@ query back to Add and retains its original swarm/split. A closed swarm or change
 split gets an explanation instead of redirecting the addition. A background
 empty tab cannot take focus from the open creation dialog.
 
-Opening **New agent** from centered Add or either split now preserves that
-picker for cancellation. Cancel/Escape restores the query, text selection,
-highlighted result, checked agents and original split. **Find existing agent…**
-also preserves that draft. A successful creation leaves Add closed. Cancel does
-not return to a swarm that is no longer current; stale splits get an explanation.
-Returning revalidates membership/capacity and keeps unavailable checked agents
-visible for removal. This is an in-memory picker draft, not saved creation intent.
+Opening **Create Agent** from centered Add or either split preserves that picker
+for cancellation. Cancel/Escape restores the query, text selection, highlighted
+result and original split. **Find existing agent…** also preserves that draft.
+A successful creation leaves Add closed. Cancel does not return to a tab that is
+no longer current; stale splits get an explanation. There is no multi-select or
+checked-agent draft anymore. This remains in-memory search recovery, not a saved
+creation intent.
 
 Browser sign-in now offers **Open browser**, **Copy link** and immediate **Cancel**
 while waiting for authorization. Reopening uses the current link without starting

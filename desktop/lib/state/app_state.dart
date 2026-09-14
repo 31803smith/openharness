@@ -459,7 +459,7 @@ class AppNotifier extends ChangeNotifier {
   Iterable<TerminalPane> get allPanes => swarms.expand((s) => s.panes).toSet();
   String get activeSwarmId => activeSwarm.id;
 
-  void newSwarm({String name = 'New Agent'}) {
+  void newSwarm({String name = 'New Harness'}) {
     if (swarms.length >= maxSwarms) return;
     while (swarms.any((s) => s.id == 'swarm-$_nextSwarmId')) {
       _nextSwarmId++;
@@ -557,7 +557,7 @@ class AppNotifier extends ChangeNotifier {
     // welcome tabs, evicting the real work from recently closed history.
     if (swarms.length == 1 &&
         swarms.single.panes.isEmpty &&
-        swarms.single.name == 'New Agent' &&
+        swarms.single.name == 'New Harness' &&
         swarms.single.presets.isEmpty) {
       return;
     }
@@ -3876,7 +3876,7 @@ class AppNotifier extends ChangeNotifier {
     if (_creationPlacementError(targetId, split) != null) {
       _lastError =
           'The agent was created, but its original tab or layout changed. '
-          'Find it with New Agent.';
+          'Find it with New Harness.';
       _lastErrorRetryable = false;
       notifyListeners();
       return null;
@@ -4339,7 +4339,7 @@ class AppNotifier extends ChangeNotifier {
       target.arranged = split.after;
       target.arrangedKey = key;
     }
-    if (firstAgent && target.name == 'New Agent') {
+    if (firstAgent && target.name == 'New Harness') {
       final name = agent.name.trim();
       if (name.isNotEmpty) {
         target.name = name.length > 80 ? name.substring(0, 80) : name;
@@ -4867,7 +4867,7 @@ class AppNotifier extends ChangeNotifier {
                   0,
                   (raw['name'] as String).length.clamp(0, 80),
                 )
-              : 'New Agent',
+              : 'New Harness',
         );
         for (final item in (raw['panes'] as List).take(maxPanes)) {
           final entry = PaneLayoutEntry.fromJson(item);

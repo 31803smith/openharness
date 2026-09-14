@@ -118,7 +118,7 @@ void main() {
 
   for (final inline in [false, true]) {
     testWidgets(
-      'configured picker actions and hints stay in ${inline ? 'New Agent' : 'titlebar'} search',
+      'configured picker actions and hints stay in ${inline ? 'New Harness' : 'titlebar'} search',
       (tester) async {
         final map = MemoryKeymap()
           ..apply('''{"bindings":[

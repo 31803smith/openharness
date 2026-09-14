@@ -79,8 +79,8 @@ void main() {
       final app = createApp();
       final tab = app.activeSwarm;
       await mount(tester, app, nativeTabs: native);
-      expect(tab.name, 'New Agent');
-      expect(find.text('New Agent'), findsWidgets);
+      expect(tab.name, 'New Harness');
+      expect(find.text('New Harness'), findsWidgets);
 
       await app.addAgentToSwarm('m', 'a0');
       await tester.pump();
@@ -168,7 +168,7 @@ void main() {
     (tester) async {
       final app = createApp();
       await mount(tester, app);
-      expect(find.text('New Agent'), findsWidgets);
+      expect(find.text('New Harness'), findsWidgets);
       expect(find.text('Models'), findsNothing);
       expect(find.text('Machines'), findsNothing);
       await tester.tap(

@@ -829,7 +829,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.text('New Agent'), findsWidgets);
+      expect(find.text('New Harness'), findsWidgets);
       expect(find.text('Create Agent'), findsNothing);
       expect(find.text('Add project'), findsNothing);
       await tester.ensureVisible(find.text('Link a machine'));

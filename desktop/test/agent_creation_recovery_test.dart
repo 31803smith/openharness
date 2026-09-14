@@ -111,20 +111,12 @@ void main() {
       }
       await tester.enterText(field, 'Agent 1');
       await tester.pump();
-      if (entry == 'Add') {
-        await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
-        await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-        await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
-        await tester.pump();
-        expect(find.text('1 selected'), findsOneWidget);
-      }
       await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
       await tester.pump();
       final before = tester
           .widget<SwarmSearchResults>(find.byType(SwarmSearchResults))
           .search;
       final selected = before.selected!.id;
-      final checked = before.checked.map((row) => row.id).toList();
       final editing = tester.widget<TextField>(field).controller!;
       editing.selection = const TextSelection(baseOffset: 0, extentOffset: 5);
       final value = editing.value;
@@ -144,7 +136,6 @@ void main() {
       expect(tester.widget<TextField>(field).controller!.value, value);
       expect(tester.widget<TextField>(field).focusNode!.hasFocus, isTrue);
       expect(restored.selected!.id, selected);
-      expect(restored.checked.map((row) => row.id), checked);
       expect(restored.targetId, target.id);
       if (entry != 'Add') expect(restored.primaryAction, entry);
       expect(app.activeSwarm, same(target));
@@ -220,11 +211,6 @@ void main() {
       final field = find.byKey(const ValueKey('swarm-search-input'));
       await tester.enterText(field, 'Agent 12');
       await tester.pump();
-      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
-      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
-      await tester.pump();
-      expect(find.text('1 selected'), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('swarm-search-new-agent')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('new-agent-folder')));
@@ -250,7 +236,7 @@ void main() {
         await tester.pumpAndSettle();
         expect(tester.widget<TextField>(field).controller!.text, 'Agent 12');
         expect(tester.widget<TextField>(field).focusNode!.hasFocus, isTrue);
-        expect(find.text('1 selected'), findsOneWidget);
+        expect(find.byType(Checkbox), findsNothing);
         expect(app.panes, [existing]);
       }
       expect(connection.calls.map((call) => call.type), ['agent_create']);
@@ -585,7 +571,7 @@ void main() {
       app.stateOf('m')!.agents.any((agent) => agent.id == 'created'),
       isTrue,
     );
-    expect(app.lastError, contains('Find it with New Agent'));
+    expect(app.lastError, contains('Find it with New Harness'));
   });
 
   testWidgets(

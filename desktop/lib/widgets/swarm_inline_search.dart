@@ -12,7 +12,7 @@ import '../state/swarm_search.dart';
 import 'swarm_switcher.dart';
 import 'swarm_search_input.dart';
 
-/// New Agent owns its input and caret, sharing the same Add agent results and
+/// New Harness owns its input and caret, sharing the same Add agent results and
 /// actions as the floating button and splits.
 class SwarmInlineSearch extends StatefulWidget {
   const SwarmInlineSearch({
@@ -40,7 +40,7 @@ class SwarmInlineSearch extends StatefulWidget {
 
 class _SwarmInlineSearchState extends State<SwarmInlineSearch> {
   final _text = TextEditingController();
-  final _focus = FocusNode(debugLabel: 'New Agent search');
+  final _focus = FocusNode(debugLabel: 'New Harness search');
   final _overlay = OverlayPortalController();
   final _tapGroup = Object();
   final _catalog = SwarmSearchCatalog();
@@ -54,7 +54,7 @@ class _SwarmInlineSearchState extends State<SwarmInlineSearch> {
   }
 
   void _focusChanged() {
-    // New Agent gives the field its caret immediately, but the welcome
+    // New Harness gives the field its caret immediately, but the welcome
     // choices stay visible until a click, edit or result-navigation key.
     if (!_focus.hasFocus) _close();
   }
@@ -182,6 +182,8 @@ class _SwarmInlineSearchState extends State<SwarmInlineSearch> {
         );
       },
       child: SwarmSearchInput(
+        hintText: 'Find a harness…',
+        rounded: true,
         inputKey: const ValueKey('swarm-welcome-search-input'),
         controller: _text,
         focusNode: _focus,

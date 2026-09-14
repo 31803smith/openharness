@@ -58,27 +58,29 @@ AppNotifier createApp({
 }
 
 void main() {
-  test(
-    'old empty swarm names restore as tabs and still name the first agent',
-    () async {
-      final store = MemoryStore();
-      final original = createApp(store: store);
-      original.renameSwarm(original.activeSwarmId, 'New swarm');
-      await original.flushPaneLayout();
-      // Retain the old payload exactly as previous versions wrote it.
-      expect(
-        store.values.values.any((value) => value.contains('New swarm')),
-        isTrue,
-      );
-      original.dispose();
-      final restored = createApp(store: store);
-      addTearDown(restored.dispose);
-      await restored.restorePaneLayoutForTest();
-      expect(restored.activeSwarm.name, 'New Agent');
-      await restored.addAgentToSwarm('m', 'a0');
-      expect(restored.activeSwarm.name, 'Agent 0');
-    },
-  );
+  for (final legacy in ['New swarm', 'New tab', 'New Agent']) {
+    test(
+      '$legacy empty tabs restore as New Harness and still name the first agent',
+      () async {
+        final store = MemoryStore();
+        final original = createApp(store: store);
+        original.renameSwarm(original.activeSwarmId, legacy);
+        await original.flushPaneLayout();
+        // Retain the old payload exactly as previous versions wrote it.
+        expect(
+          store.values.values.any((value) => value.contains(legacy)),
+          isTrue,
+        );
+        original.dispose();
+        final restored = createApp(store: store);
+        addTearDown(restored.dispose);
+        await restored.restorePaneLayoutForTest();
+        expect(restored.activeSwarm.name, 'New Harness');
+        await restored.addAgentToSwarm('m', 'a0');
+        expect(restored.activeSwarm.name, 'Agent 0');
+      },
+    );
+  }
 
   test(
     'first agent names a swarm and survives closing and reopening',

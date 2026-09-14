@@ -117,8 +117,8 @@ void main() {
         ),
       );
       await mount(tester, app, projects: projects);
-      expect(find.text('Find an agent'), findsOneWidget);
-      expect(find.text('Create a new agent'), findsOneWidget);
+      expect(find.text('Find a harness…'), findsOneWidget);
+      expect(find.text('Create harness'), findsOneWidget);
       expect(
         find.byKey(const ValueKey('swarm-welcome-search-input')),
         findsOneWidget,
@@ -146,7 +146,7 @@ void main() {
     FileSelectorPlatform.instance = picker;
     addTearDown(() => FileSelectorPlatform.instance = oldPicker);
     await mount(tester, app);
-    expect(find.text('Finding your computers…'), findsOneWidget);
+    expect(find.text('Finding computers…'), findsOneWidget);
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pump();
     expect(picker.opened, 0);
@@ -154,7 +154,7 @@ void main() {
     app.machinesLoading = false;
     app.dismissError();
     await tester.pump();
-    expect(find.text('Create Agent'), findsOneWidget);
+    expect(find.text('Create harness'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('swarm-start-primary')));
     await tester.pump();
     expect(picker.opened, 1);
@@ -176,7 +176,7 @@ void main() {
     expect(find.text('Reconnect'), findsOneWidget);
     await tester.tap(find.text('Reconnect'));
     await tester.pump();
-    expect(find.text('Finding your computers…'), findsOneWidget);
+    expect(find.text('Finding computers…'), findsOneWidget);
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pump();
     expect(app.reconnects, 1);
@@ -228,7 +228,7 @@ void main() {
       FileSelectorPlatform.instance = picker;
       addTearDown(() => FileSelectorPlatform.instance = oldPicker);
       await mount(tester, app);
-      expect(find.text('Create Agent'), findsOneWidget);
+      expect(find.text('Create harness'), findsOneWidget);
       expect(find.text('Machines'), findsNothing);
       await tester.tap(find.byKey(const ValueKey('swarm-start-primary')));
       await tester.pump();
@@ -579,7 +579,7 @@ void main() {
     addTearDown(() => FileSelectorPlatform.instance = oldPicker);
     await mount(tester, app);
 
-    expect(find.text('New Agent'), findsWidgets);
+    expect(find.text('New Harness'), findsWidgets);
     expect(find.text('Machines'), findsNothing);
     expect(find.text('Projects'), findsNothing);
     expect(app.launches, isEmpty);
@@ -644,7 +644,7 @@ void main() {
     ];
     await mount(tester, app);
     expect(app.panes, isEmpty);
-    expect(find.text('Find an agent'), findsOneWidget);
+    expect(find.text('Find a harness…'), findsOneWidget);
     expect(find.text('Go to an agent'), findsNothing);
     await tester.enterText(
       find.byKey(const ValueKey('swarm-welcome-search-input')),
@@ -658,8 +658,8 @@ void main() {
     final pane = app.panes.single;
     app.newSwarm();
     await tester.pump();
-    expect(find.text('Find an agent'), findsOneWidget);
-    expect(find.text('Create Agent'), findsOneWidget);
+    expect(find.text('Find a harness…'), findsOneWidget);
+    expect(find.text('Create harness'), findsOneWidget);
     expect(find.text('Go to an agent'), findsNothing);
     await tester.enterText(
       find.byKey(const ValueKey('swarm-welcome-search-input')),
@@ -675,7 +675,7 @@ void main() {
     app.newSwarm();
     await tester.pump();
     expect(app.closedHistory, isNotEmpty);
-    expect(find.text('Find an agent'), findsOneWidget);
+    expect(find.text('Find a harness…'), findsOneWidget);
     expect(app.launches, isEmpty);
     expect(find.text('Go to an agent'), findsNothing);
     expect(tester.takeException(), isNull);
@@ -693,9 +693,9 @@ void main() {
       addTearDown(() => FileSelectorPlatform.instance = oldPicker);
       await mount(tester, app);
 
-      await tester.tap(find.text('Create Agent'));
+      await tester.tap(find.text('Create harness'));
       await tester.pump();
-      await tester.tap(find.text('Create Agent'));
+      await tester.tap(find.text('Create harness'));
       await tester.pump();
       expect(picker.opened, 1);
       expect(app.probes, 1);
@@ -746,7 +746,7 @@ void main() {
       FileSelectorPlatform.instance = picker;
       addTearDown(() => FileSelectorPlatform.instance = oldPicker);
       await mount(tester, app);
-      await tester.tap(find.text('Create Agent'));
+      await tester.tap(find.text('Create harness'));
       await tester.pump();
       switch (change) {
         case 'swarm':

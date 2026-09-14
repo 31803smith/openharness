@@ -295,6 +295,21 @@ class _SwarmScreenState extends State<SwarmScreen> {
           },
       ],
       'attention': _attention,
+      'machines': [
+        for (final machine in app.machineStates.values)
+          {
+            'id': machine.machine.machineId,
+            'name': machine.machine.displayName,
+            'local': machine.isLocalMachine,
+            'status': machine.needsLink
+                ? 'Link required'
+                : machine.nodeOnline == false
+                ? 'Offline'
+                : machine.nodeOnline == true
+                ? 'Online'
+                : 'Connecting…',
+          },
+      ],
       'history': [
         for (final entry in _navigation.menuDestinations(app))
           {
@@ -461,6 +476,13 @@ class _SwarmScreenState extends State<SwarmScreen> {
         await _addProject();
       case 'linkMachine':
         await _dialog(() => showSwarmLinkDialog(context, app));
+      case 'refreshMachines':
+        unawaited(app.retryMachines());
+      case 'machineDestination':
+        final machine = args['id'] is String ? app.stateOf(args['id']) : null;
+        if (machine != null) {
+          _openSearch(adding: true, query: machine.machine.displayName);
+        }
       case 'commands':
         _showSearchCommands();
       case 'historyDestination':
@@ -502,6 +524,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
           'splitDown',
           'zoomPane',
           'pinPane',
+          'machineDestination',
         }.contains(call.method)) {
       // Native tab controls wait for this reply before releasing keyboard
       // ownership. The destination's actual focus tree must be ready first.
@@ -659,7 +682,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
         SnackBar(
           content: Text(
             !targetExists
-                ? 'That tab was closed. Open New Agent to find the agent.'
+                ? 'That tab was closed. Open New Harness to find the agent.'
                 : 'That split changed. Open Add Agent again to choose a position.',
           ),
         ),
@@ -1309,6 +1332,14 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                     empty: SwarmWelcome(
                                       key: ValueKey(app.activeSwarmId),
                                       notifier: app,
+                                      recent: _navigation.recent,
+                                      onRecent: (entry) => _activateSearch(
+                                        SwarmSearchSelection(
+                                          entry,
+                                          SwarmSearchAction.addHere,
+                                        ),
+                                        app.activeSwarmId,
+                                      ),
                                       onNewAgent: _newAgent,
                                       onChooseFirstFolder: () =>
                                           _newAgent(chooseFolderFirst: true),
@@ -1441,7 +1472,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
           key: const ValueKey('swarm-new-agent-button'),
           tooltip: withEffectiveShortcutHint(
             context,
-            'New Agent',
+            'New Harness',
             ShortcutAction.newSwarm,
           ),
           onPressed: app.swarms.length < AppNotifier.maxSwarms

@@ -6,6 +6,23 @@ Updated 2026-09-14 after integrating the continuation into main. This is a worki
 
 ## Continue directly on main
 
+- Applied the latest simple-entry direction: **New Harness** replaces New Agent
+  on empty tabs. The centered start page has **Find a harness…**, a prominent
+  **Create harness** action, and up to six recent shortcuts, with responsive
+  layouts. Opening a recent or search result immediately reuses that runtime.
+  Removed multi-select checkboxes, selection count/tray and Shift-Enter staging
+  from shared Add; creation cancellation retains query/highlight/target.
+  **File** replaces Agent, with **Machines** after Models for computer status,
+  search, linking and refresh. The header now has icon/name left and
+  folder/branch/machine right; hover swaps the right side for muted Zoom,
+  Delete and Close, with Keyboard first remotely. The title and terminal stay
+  fixed during hover, and resize grips only appear on hover/focus/drag.
+  Focused Flutter workflow checks and 204 native menu/keyboard checks pass;
+  real-font renders cover the welcome page and 280/430/720px headers at normal
+  and large text. Analysis reports zero errors/warnings and 14 existing infos.
+  Logs: `/private/tmp/harness-new-harness-*.log` and
+  `/private/tmp/harness-header-render.log`. The next bounded request is to make
+  Command-number select tabs; build/reopen follows that keyboard change.
 - Added hover split controls inside the right and bottom pane edges. Each **+**
   opens shared Add Agent at that position; existing-agent reuse and Create Agent
   both remain available. Headers retain only Zoom, Delete and Close. Hover is

@@ -332,7 +332,7 @@ void main() {
 
   for (final adding in [false, true]) {
     testWidgets(
-      'Return waits for composing text in ${adding ? 'Add' : 'New Agent'}',
+      'Return waits for composing text in ${adding ? 'Add' : 'New Harness'}',
       (tester) async {
         final app = createApp();
         app.adoptSessionForTest(terminal('a0', []));

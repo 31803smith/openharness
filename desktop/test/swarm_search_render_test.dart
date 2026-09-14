@@ -151,9 +151,7 @@ void main() {
       final oldRow = first.selected!;
       expect(oldRow.agentId, 'a0');
       expect(find.byKey(const ValueKey('swarm-search-preview')), findsNothing);
-      first.toggle();
       await tester.pump();
-      expect(first.checkedCount, 1);
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
       await tester.pump();
       session.terminal.write('Newest useful output.\r\n');
@@ -163,7 +161,6 @@ void main() {
       await tester.enterText(field, 'Agent 0');
       await tester.pump();
       final next = inputWidget().search!;
-      expect(next.checkedCount, 0);
       expect(find.textContaining('Newest useful output.'), findsNothing);
       expect(next.selected, same(oldRow));
       expect(machine.projectReads, 0, reason: 'Agent metadata did not change');
@@ -302,27 +299,24 @@ void main() {
       final field = find.byKey(const ValueKey('swarm-search-input'));
       await tester.enterText(field, 'Agent');
       await tester.pump();
-      final row = find.byKey(ValueKey(agentDestinationId('m', 'a0')));
-      final checkbox = find.byKey(
-        ValueKey('select:${agentDestinationId('m', 'a0')}'),
-      );
-      await tester.tap(checkbox);
-      await tester.pump();
-      expect(tester.widget<Checkbox>(checkbox).value, isTrue);
+      final search = tester
+          .widget<SwarmSearchInput>(
+            find.ancestor(of: field, matching: find.byType(SwarmSearchInput)),
+          )
+          .search!;
+      final row = find.byKey(ValueKey(search.selected!.id));
+      expect(find.byType(Checkbox), findsNothing);
+      expect(tester.widget<ListTile>(row).selected, isTrue);
       final height = tester.getSize(row).height;
       grid.AppTheme.palette.value = HarnessPalette.ember;
       await tester.pump();
-      expect(
-        tester.widget<Checkbox>(checkbox).activeColor,
-        HarnessPalette.ember.accent,
-      );
-      expect(tester.widget<Checkbox>(checkbox).value, isTrue);
+      expect(tester.widget<ListTile>(row).selected, isTrue);
       tester.platformDispatcher.textScaleFactorTestValue = 2;
       await tester.pump();
       expect(tester.getSize(row).height, greaterThan(height));
       expect(tester.widget<TextField>(field).controller!.text, 'Agent');
       expect(tester.widget<TextField>(field).focusNode!.hasFocus, isTrue);
-      expect(find.text('1 selected'), findsOneWidget);
+      expect(tester.widget<ListTile>(row).selected, isTrue);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());
       app.dispose();

@@ -18,7 +18,7 @@ void main() {
       addTearDown(app.dispose);
       final command = SwarmDestination(
         id: 'command:swarm.new',
-        title: 'New Agent',
+        title: 'New Harness',
         detail: 'Navigate',
         swarmId: null,
         current: false,
@@ -32,7 +32,7 @@ void main() {
         commands: () => available ? [command] : [],
       );
       addTearDown(search.dispose);
-      search.setQuery('New Agent');
+      search.setQuery('New Harness');
       expect(search.rows.any((row) => row.isCommand), isFalse);
       search.setQuery('> new');
       expect(search.selected, same(command));

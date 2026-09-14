@@ -422,7 +422,7 @@ const kSwarmShortcuts = [
   AppShortcut(
     action: ShortcutAction.newSwarm,
     activator: SingleActivator(LogicalKeyboardKey.keyT, meta: true),
-    label: 'New Agent',
+    label: 'New Harness',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(

@@ -201,14 +201,16 @@ class _PaneResizeHandleState extends State<PaneResizeHandle> {
                 ),
               Center(
                 child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 100),
+                  duration: MediaQuery.disableAnimationsOf(context)
+                      ? Duration.zero
+                      : const Duration(milliseconds: 100),
                   width: _horizontal ? 3 : 36,
                   height: _horizontal ? 36 : 3,
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(2),
                     color: _hover || _focused || _start != null
                         ? grid.AppPalette.swarmAccent
-                        : Colors.white24,
+                        : Colors.transparent,
                   ),
                 ),
               ),

@@ -8,8 +8,10 @@ import 'terminal_pane.dart';
 /// Shared agents reuse the same pane/session across swarms, so the daemon has
 /// exactly one controller and switching tabs cannot take over our own stream.
 class Swarm {
-  Swarm({required this.id, String name = 'New Agent'})
-    : name = const {'New swarm', 'New tab'}.contains(name) ? 'New Agent' : name;
+  Swarm({required this.id, String name = 'New Harness'})
+    : name = const {'New swarm', 'New tab', 'New Agent'}.contains(name)
+          ? 'New Harness'
+          : name;
 
   final String id;
   String name;
@@ -173,7 +175,7 @@ class ClosedSwarm extends ClosedWork {
 
   bool replacesUntouchedWelcome(Swarm swarm) =>
       swarm.id == replacementId &&
-      swarm.name == 'New Agent' &&
+      swarm.name == 'New Harness' &&
       swarm.panes.isEmpty &&
       swarm.presets.isEmpty;
 }

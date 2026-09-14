@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:file_selector_platform_interface/file_selector_platform_interface.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/auth/auth_session.dart';
@@ -139,14 +140,33 @@ void main() {
     final controls = find.byType(PaneHeaderActions).first;
     expect(
       find.descendant(of: controls, matching: find.byType(IconButton)),
-      findsNWidgets(3),
+      findsNWidgets(4),
     );
+    expect(find.byTooltip('Delete agent').first.hitTestable(), findsNothing);
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await mouse.addPointer(location: const Offset(1, 1));
+    Future<void> hover() async {
+      await mouse.moveTo(tester.getCenter(controls));
+      await tester.pump(const Duration(milliseconds: 120));
+    }
+
+    await hover();
+    await tester.tap(find.byTooltip('Show message composer').first);
+    await tester.pump();
+    expect(pane.composerVisible, isTrue);
+    await hover();
+    await tester.tap(find.byTooltip('Hide message composer').first);
+    await tester.pump();
+    expect(pane.composerVisible, isFalse);
+    await hover();
     await tester.tap(find.byTooltip('Zoom Session a0'));
     await tester.pump();
     expect(app.zoomedPaneId, pane.id);
+    await hover();
     await tester.tap(find.byTooltip('Restore agents'));
     await tester.pump();
     expect(app.zoomedPaneId, isNull);
+    await hover();
 
     await tester.tap(
       find.descendant(of: controls, matching: find.byTooltip('Delete agent')),
@@ -158,11 +178,13 @@ void main() {
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
     expect(app.panes, contains(pane));
+    await hover();
 
     await tester.tap(
       find.descendant(of: controls, matching: find.byTooltip('Close pane')),
     );
     await tester.pump();
+    await mouse.removePointer();
     expect(app.panes.single.agentId, 'a1');
     expect(original.panes.single.session, same(session));
     app.selectSwarm(original.id);
@@ -262,7 +284,7 @@ void main() {
       expect(app.swarms, hasLength(1));
       expect(app.panes, isEmpty);
       expect(app.activeSwarmId, isNot(anyOf(first, second)));
-      expect(find.text('New Agent'), findsOneWidget);
+      expect(find.text('New Harness'), findsOneWidget);
       await activate('new');
       expect(app.swarms, hasLength(2));
       expect(input, hasLength(2));

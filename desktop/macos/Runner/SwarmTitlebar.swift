@@ -23,6 +23,8 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
   private var closedHistory: [SwarmHistoryEntry] = []
   private let historyIcons = SwarmHistoryIcons()
   private let modelsMenu = NSMenu(title: "Models")
+  private let machinesMenu = NSMenu(title: "Machines")
+  private var machines: [SwarmMachineEntry] = []
   private var subscriptions: [SwarmSubscriptionEntry] = []
   private var keymap: HarnessNativeKeymap?
   private var flutterKeyContext = "workspace"
@@ -53,6 +55,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
         self.canGoForward = state["canGoForward"] as? Bool == true
         self.canCreateSwarm = (state["tabs"] as? [Any] ?? []).count < 24
         self.updateHistory(state["history"] as? [[String: Any]] ?? [], closed: state["closedHistory"] as? [[String: Any]] ?? [])
+        self.updateMachines(state["machines"] as? [[String: Any]] ?? [])
         self.strip.update(state)
         self.window?.backgroundColor = self.strip.palette.tabBar
         result(nil)
@@ -92,7 +95,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
   }
 
   private func sendTabAction(_ method: String, arguments: Any?) {
-    guard ["select", "close", "new", "rename", "commands", "notifications", "addAgent", "newAgent", "splitRight", "splitDown", "zoomPane", "pinPane"].contains(method) else {
+    guard ["select", "close", "new", "rename", "commands", "notifications", "addAgent", "newAgent", "splitRight", "splitDown", "zoomPane", "pinPane", "machineDestination"].contains(method) else {
       channel.invokeMethod(method, arguments: arguments)
       return
     }
@@ -111,7 +114,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
   private func setKeymap(_ map: HarnessNativeKeymap) {
     keymap = map
     let hint = map.hint(for: "swarm.new", context: "workspace")
-    strip.newButton.toolTip = hint.map { "New Agent (\($0))" } ?? "New Agent"
+    strip.newButton.toolTip = hint.map { "New Harness (\($0))" } ?? "New Harness"
     if let main = NSApp.mainMenu, let window {
       let menu = main as? HarnessKeymapMenu ?? HarnessKeymapMenu.replacing(main)
       if NSApp.mainMenu !== menu { NSApp.mainMenu = menu }
@@ -196,24 +199,23 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
       main.insertItem(item, at: index)
     }
     if let file = main.item(withTitle: "File") { main.removeItem(file) }
-    let agent = NSMenu(title: "Agent")
-    add(agent, "New Agent", "t", "new")
-    add(agent, "Add Agent…", "n", "addAgent")
-    add(agent, "Create Agent…", "n", "newAgent", [.command, .shift])
-    agent.addItem(.separator())
-    add(agent, "Split Right…", "", "splitRight")
-    add(agent, "Split Down…", "", "splitDown")
-    agent.addItem(.separator())
-    add(agent, "Zoom Agent", "", "zoomPane")
-    add(agent, "Pin or Unpin Agent", "", "pinPane")
-    agent.addItem(.separator())
-    add(agent, "Rename Tab…", "r", "renameActive", [.command, .shift])
-    add(agent, "Close Agent Pane", "w", "closePane", [.command, .shift])
-    add(agent, "Close Tab", "w", "closeActive")
-    agent.addItem(.separator())
-    add(agent, "Link Machine…", "", "linkMachine")
-    add(agent, "Add Project…", "", "addProject")
-    install(agent, at: 1)
+    let file = NSMenu(title: "File")
+    add(file, "New Harness", "t", "new")
+    add(file, "Add Agent…", "n", "addAgent")
+    add(file, "Create Agent…", "n", "newAgent", [.command, .shift])
+    file.addItem(.separator())
+    add(file, "Split Right…", "", "splitRight")
+    add(file, "Split Down…", "", "splitDown")
+    file.addItem(.separator())
+    add(file, "Zoom Agent", "", "zoomPane")
+    add(file, "Pin or Unpin Agent", "", "pinPane")
+    file.addItem(.separator())
+    add(file, "Rename Tab…", "r", "renameActive", [.command, .shift])
+    add(file, "Close Agent Pane", "w", "closePane", [.command, .shift])
+    add(file, "Close Tab", "w", "closeActive")
+    file.addItem(.separator())
+    add(file, "Add Project…", "", "addProject")
+    install(file, at: 1)
 
     rebuildHistoryMenu()
     install(historyMenu, at: main.items.firstIndex(where: { $0.title == "Window" }) ?? main.numberOfItems)
@@ -231,6 +233,8 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     modelsMenu.delegate = self
     rebuildModelsMenu()
     install(modelsMenu, at: main.items.firstIndex(where: { $0.title == "Window" }) ?? main.numberOfItems)
+    rebuildMachinesMenu()
+    install(machinesMenu, at: main.items.firstIndex(where: { $0.title == "Window" }) ?? main.numberOfItems)
     installTerminalFindMenu(main)
   }
 
@@ -240,6 +244,41 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     // The native menu opens from its cache. Network/credential reads happen
     // asynchronously in Dart and never hold up AppKit's menu tracking.
     channel.invokeMethod("modelsOpened", arguments: nil)
+  }
+
+  private func updateMachines(_ rows: [[String: Any]]) {
+    let entries = rows.prefix(128).compactMap(SwarmMachineEntry.init)
+    guard entries != machines else { return }
+    machines = entries
+    rebuildMachinesMenu()
+  }
+
+  private func rebuildMachinesMenu() {
+    machinesMenu.removeAllItems()
+    for machine in machines {
+      let item = NSMenuItem(title: machine.name, action: #selector(machineAction(_:)), keyEquivalent: "")
+      item.target = self
+      item.representedObject = machine.id
+      let label = NSMutableAttributedString(string: machine.name)
+      label.append(NSAttributedString(string: "  " + machine.status, attributes: [.foregroundColor: NSColor.secondaryLabelColor]))
+      item.attributedTitle = label
+      item.toolTip = "Find harnesses on " + machine.name
+      item.image = NSImage(systemSymbolName: machine.local ? "laptopcomputer" : "desktopcomputer", accessibilityDescription: nil)
+      machinesMenu.addItem(item)
+    }
+    if machines.isEmpty {
+      let empty = NSMenuItem(title: "No Machines Linked", action: nil, keyEquivalent: "")
+      empty.isEnabled = false
+      machinesMenu.addItem(empty)
+    }
+    machinesMenu.addItem(.separator())
+    for (title, action) in [("Link Machine…", "linkMachine"), ("Refresh Machines", "refreshMachines")] {
+      let item = NSMenuItem(title: title, action: #selector(menuAction(_:)), keyEquivalent: "")
+      item.target = self
+      item.representedObject = action
+      item.identifier = NSUserInterfaceItemIdentifier(HarnessKeymapMenu.actionPrefix + action)
+      machinesMenu.addItem(item)
+    }
   }
 
   private func updateModels(_ rows: [[String: Any]]) {
@@ -376,6 +415,9 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
 
   func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
     let action = menuItem.representedObject as? String ?? ""
+    if menuItem.action == #selector(machineAction(_:)) {
+      return actionsEnabled && machines.contains(where: { $0.id == action })
+    }
     if menuItem.action == #selector(historyAction(_:)) {
       return actionsEnabled && history.contains(where: { $0.id == action })
     }
@@ -393,6 +435,11 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     sendTabAction(action, arguments: nil)
   }
 
+  @objc private func machineAction(_ sender: NSMenuItem) {
+    guard validateMenuItem(sender), let id = sender.representedObject as? String else { return }
+    sendTabAction("machineDestination", arguments: ["id": id])
+  }
+
   @objc private func historyAction(_ sender: NSMenuItem) {
     guard validateMenuItem(sender), let id = sender.representedObject as? String else { return }
     channel.invokeMethod("historyDestination", arguments: ["id": id])
@@ -407,6 +454,21 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
 private enum SwarmIdentity {
   // Same four-pane symbol as widgets/swarm_icon.dart.
   static let menuIcon = NSImage(systemSymbolName: "square.split.2x2", accessibilityDescription: nil)
+}
+
+private struct SwarmMachineEntry: Equatable {
+  let id: String
+  let name: String
+  let status: String
+  let local: Bool
+  init?(_ row: [String: Any]) {
+    guard let id = row["id"] as? String, !id.isEmpty,
+          let name = row["name"] as? String, !name.isEmpty else { return nil }
+    self.id = id
+    self.name = String(name.prefix(128))
+    status = String((row["status"] as? String ?? "").prefix(80))
+    local = row["local"] as? Bool == true
+  }
 }
 
 private struct SwarmSubscriptionEntry: Equatable {
@@ -687,8 +749,8 @@ private final class SwarmTabStrip: NSView {
       button.setAccessibilityLabel(label)
       addSubview(button)
     }
-    button(newButton, "plus", "New Agent (⌘T)", #selector(newSwarm))
-    newButton.setAccessibilityLabel("New Agent")
+    button(newButton, "plus", "New Harness (⌘T)", #selector(newSwarm))
+    newButton.setAccessibilityLabel("New Harness")
     newButton.isEnabled = false
     button(notificationButton, "bell", "Notifications", #selector(openNotifications))
     notificationButton.isEnabled = false
@@ -723,13 +785,13 @@ private final class SwarmTabStrip: NSView {
       guard let id = row["id"] as? String else { return nil }
       let tab = previous[id] ?? SwarmTabButton(id: id)
       tab.palette = palette
-      tab.name = row["name"] as? String ?? "New Agent"
+      tab.name = row["name"] as? String ?? "New Harness"
       let count = row["agentCount"] as? Int ?? 0
       tab.icon = count == 1
         ? icons.image(engine: row["engine"] as? String, asset: row["iconAsset"] as? String)
         : count > 1
         ? SwarmIdentity.menuIcon
-        : NSImage(systemSymbolName: "plus.square", accessibilityDescription: "New Agent")
+        : NSImage(systemSymbolName: "plus.square", accessibilityDescription: "New Harness")
       tab.selected = id == activeId
       tab.actionsEnabled = actionsEnabled
       tab.attention = (row["attention"] as? Int ?? 0) > 0
@@ -849,7 +911,7 @@ private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidati
     didSet { if palette != oldValue { needsDisplay = true } }
   }
   let swarmId: String
-  var name = "New Agent" { didSet { if name != oldValue { invalidateLabel(); updateAccessibility() } } }
+  var name = "New Harness" { didSet { if name != oldValue { invalidateLabel(); updateAccessibility() } } }
   var selected = false { didSet { if selected != oldValue { invalidateLabel(); updateAccessibility() } } }
   var attention = false { didSet { if attention != oldValue { needsDisplay = true; updateAccessibility() } } }
   var showsDivider = false { didSet { if showsDivider != oldValue { needsDisplay = true } } }

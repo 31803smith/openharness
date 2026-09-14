@@ -56,7 +56,7 @@ final harnessCommands = <HarnessCommand>[
   ),
   const HarnessCommand(
     'swarm.new',
-    'New Agent',
+    'New Harness',
     ShortcutGroup.navigate,
     action: ShortcutAction.newSwarm,
     nativeAction: 'new',
@@ -359,13 +359,6 @@ final harnessCommands = <HarnessCommand>[
     'Open the selected result',
     ShortcutGroup.navigate,
     extraKeys: ['enter'],
-    context: KeymapContext.picker,
-  ),
-  const HarnessCommand(
-    'picker.toggle_selection',
-    'Select or deselect an agent',
-    ShortcutGroup.actions,
-    extraKeys: ['shift+enter'],
     context: KeymapContext.picker,
   ),
   const HarnessCommand(

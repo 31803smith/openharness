@@ -1268,11 +1268,14 @@ class _TerminalPanelState extends State<TerminalPanel>
       error: session.errorMessage ?? session.errorCode,
       link: session.linkMode,
       machine: machine?.machine,
+      local: machine?.isLocalMachine,
       agent: agent,
       project: agent == null ? null : machine?.projectOf(agent),
       compact: widget.compactHeader,
       close: widget.onClose != null,
       delete: widget.onDelete != null,
+      composer: widget.composerVisible,
+      toggleComposer: widget.onToggleComposer != null,
       zoomed: widget.zoomed,
       zoom: widget.onToggleZoom != null,
       dragId: widget.paneDrag?.ref.paneId,
@@ -1294,6 +1297,10 @@ class _TerminalPanelState extends State<TerminalPanel>
         onDelete: widget.onDelete == null
             ? null
             : () => widget.onDelete?.call(),
+        composerVisible: widget.composerVisible,
+        onToggleComposer: widget.onToggleComposer == null
+            ? null
+            : () => widget.onToggleComposer?.call(),
         paneDrag: widget.paneDrag,
       );
     }
@@ -1314,6 +1321,8 @@ class _TerminalHeader extends StatelessWidget {
   final bool compact;
   final VoidCallback? onToggleZoom;
   final bool zoomed;
+  final VoidCallback? onToggleComposer;
+  final bool composerVisible;
 
   /// This strip's drag gesture, or null when there is nothing to drag.
   ///
@@ -1336,6 +1345,8 @@ class _TerminalHeader extends StatelessWidget {
     this.onToggleZoom,
     this.zoomed = false,
     this.paneDrag,
+    this.onToggleComposer,
+    this.composerVisible = false,
   });
 
   @override
@@ -1403,186 +1414,183 @@ class _TerminalHeader extends StatelessWidget {
       if (profile != null) 'Codex profile: $profile',
       'Double-click to rename',
     ].join('\n');
-    final strip = SizedBox(
-      height: compact ? 38 : 46,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: _stripPadding),
-        child: LayoutBuilder(
-          builder: (context, constraints) => Row(
-            children: [
-              EngineMark(engine: session.engineId, size: 17),
-              const SizedBox(width: 10),
-              Expanded(
-                // Double click the NAME to rename — the same dialog the rail's
-                // row opens, so one name has one way to change wherever it is
-                // shown. Scoped to the text rather than the whole strip: the
-                // strip is the drag handle, and a double click that both renamed
-                // and looked like the start of a drag would be two answers to one
-                // gesture.
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onDoubleTap: () => unawaited(
-                    showAgentRenameDialog(
-                      context,
-                      notifier,
-                      session.machineId,
-                      session.agentId,
-                      session.agentName,
-                    ),
-                  ),
+    final remoteComposer = machine != null && !machine.isLocalMachine
+        ? onToggleComposer
+        : null;
+    final actionsWidth = remoteComposer == null ? 88.0 : 118.0;
+    final folder =
+        project?.cwd
+            .split(RegExp(r'[/\\]'))
+            .where((part) => part.isNotEmpty)
+            .lastOrNull ??
+        project?.name;
+    final details = [
+      if (folder?.isNotEmpty == true) folder!,
+      if (project?.branch?.trim().isNotEmpty == true) project!.branch!,
+      machineName,
+    ];
+    final strip = PaneHeaderHover(
+      child: SizedBox(
+        height: compact ? 38 : 46,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: _stripPadding),
+          child: LayoutBuilder(
+            builder: (context, constraints) => Row(
+              children: [
+                EngineMark(engine: session.engineId, size: 17),
+                const SizedBox(width: 10),
+                Expanded(
                   child: Tooltip(
                     message: identityDetail,
                     waitDuration: const Duration(milliseconds: 700),
-                    child: Text(
-                      // The profile path's basename used to trail the name here, but for the
-                      // default profile that basename is literally the hidden `.codex` folder —
-                      // meaningless clutter on every ordinary codex agent. The tooltip above still
-                      // carries the full path for whoever actually needs it.
-                      session.agentName,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: AppColors.text,
-                        fontFamily: AppFonts.sans,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onDoubleTap: () => unawaited(
+                        showAgentRenameDialog(
+                          context,
+                          notifier,
+                          session.machineId,
+                          session.agentId,
+                          session.agentName,
+                        ),
+                      ),
+                      child: Text(
+                        session.agentName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: AppColors.text,
+                          fontFamily: AppFonts.sans,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
-              if (compact &&
-                  constraints.maxWidth >= 360 &&
-                  status == null &&
-                  project?.branch != null) ...[
-                const SizedBox(width: 16),
-                Tooltip(
-                  message: '${project!.branch}\n${project.cwd}',
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        LucideIcons.gitBranch,
-                        size: 12,
-                        color: AppColors.mutedStrong,
-                      ),
-                      const SizedBox(width: 5),
-                      ConstrainedBox(
-                        constraints: BoxConstraints(
-                          maxWidth: math.min(112, constraints.maxWidth * .22),
-                        ),
-                        child: Text(
-                          project.branch!,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: AppColors.textSoft,
-                          ),
+                const SizedBox(width: 8),
+                if (status != null)
+                  ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxWidth: math.max(
+                        0,
+                        math.min(
+                          constraints.maxWidth * .3,
+                          constraints.maxWidth - actionsWidth - 110,
                         ),
                       ),
-                    ],
-                  ),
-                ),
-              ],
-              if (compact && status == null) ...[
-                const SizedBox(width: 16),
-                ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxWidth: math.min(156, constraints.maxWidth * .28),
-                  ),
-                  child: Tooltip(
-                    message: machineName,
-                    child: constraints.maxWidth < 380 && project?.branch != null
-                        ? Icon(
-                            machine?.isLocalMachine == true
-                                ? Icons.laptop_mac
-                                : Icons.desktop_mac,
-                            size: 14,
-                            color: AppColors.mutedStrong,
-                          )
-                        : Text(
-                            machineName,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: AppColors.mutedStrong,
+                    ),
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: Tooltip(
+                        message: status.detail,
+                        child: TextButton(
+                          onPressed: canReconnect
+                              ? () => notifier.selectAgent(
+                                  session.machineId,
+                                  session.agentId,
+                                )
+                              : null,
+                          style: TextButton.styleFrom(
+                            foregroundColor: color,
+                            disabledForegroundColor: AppColors.textSoft,
+                            minimumSize: Size.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 4,
                             ),
                           ),
-                  ),
-                ),
-              ],
-              const SizedBox(width: 8),
-              if (status != null)
-                ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxWidth: constraints.maxWidth * .42,
-                  ),
-                  child: Align(
-                    alignment: Alignment.centerRight,
-                    child: Tooltip(
-                      message: status.detail,
-                      child: TextButton(
-                        onPressed: canReconnect
-                            ? () => notifier.selectAgent(
-                                session.machineId,
-                                session.agentId,
-                              )
-                            : null,
-                        style: TextButton.styleFrom(
-                          foregroundColor: color,
-                          disabledForegroundColor: AppColors.textSoft,
-                          minimumSize: Size.zero,
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 4,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(status.icon, size: 14),
+                              const SizedBox(width: 6),
+                              Flexible(
+                                child: Text(
+                                  status.label,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(fontSize: 11),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(status.icon, size: 14),
-                            const SizedBox(width: 6),
+                      ),
+                    ),
+                  )
+                else if (!compact)
+                  Padding(
+                    padding: const EdgeInsets.all(4),
+                    child: Icon(Icons.circle, size: 8, color: color),
+                  ),
+                // Which of the three paths carries this pane's bytes. Absent for a local machine's own
+                // terminal, which has no such distinction and so gets no badge.
+                //
+                // The wire word and the word a person reads differ for the middle state, deliberately:
+                // the CLI sends 'turn' (it is a TURN allocation) but both middle and last are relays to
+                // a reader, so they read as "relay" and "ws". 'relay' on the wire kept its original
+                // meaning — the backend WebSocket — so an older CLI is never mislabelled.
+                if (!compact && session.linkMode != null)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 2),
+                    child: _LinkModeMark(mode: session.linkMode!),
+                  ),
+                ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: math.max(
+                      actionsWidth,
+                      constraints.maxWidth * (status == null ? .55 : .3),
+                    ),
+                  ),
+                  child: PaneHeaderActions(
+                    name: session.agentName,
+                    zoomed: zoomed,
+                    onZoom: onToggleZoom,
+                    onDelete: onDelete,
+                    onClose: onClose,
+                    onToggleComposer: remoteComposer,
+                    composerVisible: composerVisible,
+                    details: Tooltip(
+                      message: [
+                        if (project != null) project.cwd,
+                        if (project?.branch?.isNotEmpty == true)
+                          'Branch: ${project!.branch}',
+                        machineName,
+                      ].join('\n'),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          for (var i = 0; i < details.length; i++) ...[
+                            if (i > 0)
+                              Text(
+                                '  •  ',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  color: AppColors.mutedStrong,
+                                ),
+                              ),
                             Flexible(
                               child: Text(
-                                status.label,
+                                details[i],
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(fontSize: 11),
+                                style: TextStyle(
+                                  fontFamily: AppFonts.sans,
+                                  fontSize: 12,
+                                  color: AppColors.mutedStrong,
+                                ),
                               ),
                             ),
                           ],
-                        ),
+                        ],
                       ),
                     ),
                   ),
-                )
-              else if (!compact)
-                Padding(
-                  padding: const EdgeInsets.all(4),
-                  child: Icon(Icons.circle, size: 8, color: color),
                 ),
-              // Which of the three paths carries this pane's bytes. Absent for a local machine's own
-              // terminal, which has no such distinction and so gets no badge.
-              //
-              // The wire word and the word a person reads differ for the middle state, deliberately:
-              // the CLI sends 'turn' (it is a TURN allocation) but both middle and last are relays to
-              // a reader, so they read as "relay" and "ws". 'relay' on the wire kept its original
-              // meaning — the backend WebSocket — so an older CLI is never mislabelled.
-              if (!compact && session.linkMode != null)
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 2),
-                  child: _LinkModeMark(mode: session.linkMode!),
-                ),
-              PaneHeaderActions(
-                name: session.agentName,
-                zoomed: zoomed,
-                onZoom: onToggleZoom,
-                onDelete: onDelete,
-                onClose: onClose,
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

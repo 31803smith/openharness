@@ -23,6 +23,8 @@ class SwarmSearchInput extends StatelessWidget {
     this.onTapOutside,
     this.showClose = false,
     this.autofocus = true,
+    this.hintText,
+    this.rounded = false,
   });
 
   final Key inputKey;
@@ -37,14 +39,22 @@ class SwarmSearchInput extends StatelessWidget {
   final Object? groupId;
   final VoidCallback? onTapOutside;
   final bool showClose, autofocus;
+  final String? hintText;
+  final bool rounded;
 
   @override
   Widget build(BuildContext context) {
     final open = search != null;
     final border = OutlineInputBorder(
       borderRadius: BorderRadius.vertical(
-        top: const Radius.circular(12),
-        bottom: Radius.circular(open ? 0 : 12),
+        top: Radius.circular(rounded && !open ? 30 : 12),
+        bottom: Radius.circular(
+          open
+              ? 0
+              : rounded
+              ? 30
+              : 12,
+        ),
       ),
       borderSide: BorderSide(color: open ? Colors.transparent : Colors.white24),
     );
@@ -69,7 +79,9 @@ class SwarmSearchInput extends StatelessWidget {
         cursorColor: grid.AppPalette.swarmAccent,
         textAlignVertical: TextAlignVertical.center,
         decoration: InputDecoration(
-          hintText: search?.hint ?? 'Find an existing agent…',
+          hintText: search?.isCommandMode == true
+              ? search!.hint
+              : hintText ?? search?.hint ?? 'Find an existing agent…',
           hintStyle: const TextStyle(fontSize: 16, color: Colors.white60),
           prefixIcon: const Icon(Icons.search, size: 20, color: Colors.white60),
           prefixIconConstraints: const BoxConstraints(

@@ -158,8 +158,6 @@ class SwarmSearchKeys extends StatelessWidget {
         actions: {
           if (onNewAgent != null) 'agent.new': () => run(onNewAgent!),
           if (search != null || onOpen != null) ...{
-            if (search?.multiSelect == true)
-              'picker.toggle_selection': () => run(search!.toggle),
             'picker.accept': () => choose(false),
             'picker.add_here': () => choose(true),
             'picker.next': () => move(1),
@@ -186,13 +184,6 @@ class SwarmSearchKeys extends StatelessWidget {
       bindings: search == null && onOpen == null
           ? {}
           : {
-              if (search?.multiSelect == true)
-                const SingleActivator(
-                  LogicalKeyboardKey.enter,
-                  shift: true,
-                  includeRepeats: false,
-                ): () =>
-                    run(search!.toggle),
               if (onNewAgent != null)
                 const SingleActivator(
                   LogicalKeyboardKey.keyN,
@@ -270,8 +261,7 @@ double swarmSearchResultsHeight(
 ) =>
     search.rows.length.clamp(4, 7) *
         swarmSearchRowHeight(scale, commands: search.isCommandMode) +
-    52 +
-    (search.hasSelection ? 48 : 0);
+    52;
 
 /// Shared Add agent results, also used for commands and History.
 class SwarmSearchResults extends StatefulWidget {
@@ -387,19 +377,12 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                           final row = search.rows[index];
                           final highlighted = index == search.cursor;
                           final canSubmit = search.canSubmit(row);
-                          final multiSelect = search.multiSelect;
-                          final checked = multiSelect && search.isChecked(row);
-                          final canToggle =
-                              multiSelect && search.canToggle(row);
                           final alreadyHere = search.alreadyHere(row);
                           final presentation = (
                             row,
                             search.query,
                             highlighted,
                             canSubmit,
-                            multiSelect,
-                            checked,
-                            canToggle,
                             alreadyHere,
                             highlighted
                                 ? (search.canAccept, search.actionLabel(row))
@@ -433,30 +416,6 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                             leading: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                if (multiSelect) ...[
-                                  SizedBox(
-                                    width: 28,
-                                    child: Tooltip(
-                                      message: checked
-                                          ? 'Deselect ${row.title}'
-                                          : 'Select ${row.title}',
-                                      child: Checkbox(
-                                        key: ValueKey('select:${row.id}'),
-                                        value: checked,
-                                        onChanged: canToggle
-                                            ? (_) {
-                                                search.toggle(row);
-                                                widget.onRefocus();
-                                              }
-                                            : null,
-                                        activeColor:
-                                            grid.AppPalette.swarmAccent,
-                                        checkColor: grid.AppPalette.swarmField,
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 10),
-                                ],
                                 row.isCommand
                                     ? const Icon(
                                         Icons.keyboard_command_key,
@@ -527,11 +486,7 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                                       color: Colors.white60,
                                     ),
                                   ),
-                            onTap: canSubmit
-                                ? () => search.hasSelection
-                                      ? search.toggle(row)
-                                      : _submit(row)
-                                : null,
+                            onTap: canSubmit ? () => _submit(row) : null,
                           );
                           _rowWidgets[row.id] = (
                             presentation: presentation,
@@ -544,66 +499,6 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                         },
                       ),
               ),
-              if (search.hasSelection) ...[
-                const Divider(height: 1, color: Colors.white12),
-                SizedBox(
-                  height: 46,
-                  child: Row(
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        child: Text(
-                          '${search.checkedCount} selected',
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: Colors.white70,
-                          ),
-                        ),
-                      ),
-                      Expanded(
-                        child: ListView(
-                          key: const ValueKey('swarm-selected-agents'),
-                          scrollDirection: Axis.horizontal,
-                          children: [
-                            for (final agent in search.checked)
-                              Padding(
-                                padding: const EdgeInsets.only(right: 6),
-                                child: InputChip(
-                                  label: ConstrainedBox(
-                                    constraints: const BoxConstraints(
-                                      maxWidth: 180,
-                                    ),
-                                    child: Text(
-                                      agent.title,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(fontSize: 11),
-                                    ),
-                                  ),
-                                  onDeleted: () {
-                                    search.removeChecked(agent.id);
-                                    widget.onRefocus();
-                                  },
-                                  deleteButtonTooltipMessage:
-                                      'Remove ${agent.title}',
-                                ),
-                              ),
-                          ],
-                        ),
-                      ),
-                      TextButton(
-                        onPressed: search.clearChecked,
-                        style: TextButton.styleFrom(
-                          foregroundColor: Colors.white70,
-                        ),
-                        child: const Text(
-                          'Clear',
-                          style: TextStyle(fontSize: 12),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
               const Divider(height: 1, color: Colors.white12),
               SizedBox(
                 height: 48,
@@ -623,8 +518,7 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                             style: TextStyle(fontSize: 12),
                           ),
                         ),
-                      if ((search.hasSelection && !search.canSubmitSelection) ||
-                          (selected != null && !search.canSubmit(selected)) ||
+                      if ((selected != null && !search.canSubmit(selected)) ||
                           search.adding && !search.canCreate)
                         Expanded(
                           child: Text(
