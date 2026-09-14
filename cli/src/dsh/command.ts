@@ -6,6 +6,7 @@ import { listDshState, installedDsh } from './installed.js'
 import { dshTier } from './manifest.js'
 import { bundledDshRegistry } from './registry.js'
 import { installDsh, removeDsh, resolveInstallSource, runDshDoctor } from './install.js'
+import { checkDsh, formatCheck } from './check.js'
 
 export function dshUsage(): string {
   return `Domain-specific harnesses (a DSH turns Harness into a product for one domain — see dsh/README.md):
@@ -14,7 +15,8 @@ export function dshUsage(): string {
                                    install by registry id (autonomous/circuit), git URL, or local path;
                                    --link symlinks a local checkout instead of cloning it
   harness dsh doctor <id>          re-run the harness's own readiness check
-  harness dsh remove <id>          uninstall (a --link install removes only the link)`
+  harness dsh remove <id>          uninstall (a --link install removes only the link)
+  harness dsh check <path>         conformance check for a harness checkout (what the registry runs)`
 }
 
 function flagValue(argv: readonly string[], flag: string): string | undefined {
@@ -71,6 +73,13 @@ export async function dshCommand(verb: string | undefined, rest: readonly string
       const doctor = await runDshDoctor(dsh, (line) => console.log(`  ${line}`))
       console.log(doctor.ok ? `${dsh.id} is ready` : `${dsh.id} is not ready`)
       return doctor.ok ? 0 : 1
+    }
+    case 'check': {
+      const target = args[0] ?? '.'
+      const result = checkDsh(target)
+      console.log(formatCheck(result))
+      console.log(result.ok ? `${result.manifest?.id ?? target} conforms to spec 1` : `${result.manifest?.id ?? target} does not conform`)
+      return result.ok ? 0 : 1
     }
     case 'remove': {
       const id = args[0]
