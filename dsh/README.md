@@ -41,10 +41,12 @@ Harness does at create time, and what it sets in the engine's environment. The J
 ## Installing
 
 ```bash
+harness dsh install autonomous/circuit                                    # by registry id
 harness dsh install https://github.com/autonomous-ai/autonomous-circuit   # by git URL
 harness dsh install /path/to/checkout --link                              # symlink, for development
 harness dsh list
 harness dsh doctor autonomous/circuit
+harness dsh check /path/to/checkout                                       # conformance, before publishing
 ```
 
 The desktop app offers the same install from the Create Harness dialog: a DSH the machine does not

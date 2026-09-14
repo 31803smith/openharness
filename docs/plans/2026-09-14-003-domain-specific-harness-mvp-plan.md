@@ -1,6 +1,6 @@
 # Domain-specific harnesses (DSH): MVP
 
-Status: in progress · 2026-09-14
+Status: built · 2026-09-14 (visual check of the desktop web pane pending — see Verification)
 
 ## Context
 
@@ -189,8 +189,19 @@ desktop/lib/dsh/       catalog, web pane, verdict chip
 
 ## Verification
 
-- `make cli-test` green; new specs for manifest, materialize, verdict, viewer URL.
-- `flutter test` green minus the two pre-existing failures noted in the branches memory.
-- On this Mac: `harness dsh install --link` both repos; `make install-cli`; run the desktop from the
-  worktree; Create Harness → Circuit → prompt → board appears in the pane, ready chip flips; same
-  for Workshop with a STEP in the 3D pane.
+Done on 2026-09-14, on this Mac:
+
+- `make cli-test`: 2,228 tests green (37 new under `cli/src/dsh/`). `flutter test`: 1,406 green, the
+  two pre-existing failures unchanged. `harness dsh check` passes for the starter, Circuit and Workshop.
+- Daemon-level, over the same loopback WebSocket the desktop uses (`agent_create` with `dsh`): the
+  workspace is materialized (template, AGENTS.md under its marker, CLAUDE.md import, six skill links,
+  `.harness/`), the viewer is up on a free port within a second, the engine's environment carries
+  `HARNESS_DSH`, a real Circuit build's `.harness/verdict.json` reaches the client as a `verdict`
+  frame in the same second, and `agent_delete` takes the viewer with it. `agent_restart` keeps the
+  DSH; a pane started by hand with `-e HARNESS_DSH=autonomous/circuit` is discovered as Circuit.
+- Circuit and Workshop each proven standalone by their packaging: setup, doctor, a real build writing
+  the verdict, the viewer-only page serving the board / the STEP.
+
+Still to see with eyes: the desktop's Create Harness → Circuit → prompt → board-in-pane loop, and
+the WKWebView pane on both the Skia and Impeller builds. The app was built and launched from the
+worktree, but the screen was locked for the session that would have clicked through it.
