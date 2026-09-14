@@ -9,6 +9,7 @@ import 'package:harness/state/app_state.dart';
 import 'package:harness/widgets/engine_identity.dart';
 import 'package:harness/widgets/rename_agent_dialog.dart';
 import 'package:harness/widgets/terminal_panel.dart';
+
 import 'phone_header.dart';
 import 'phone_sheet.dart';
 import 'phone_status.dart';
@@ -49,7 +50,8 @@ class TerminalPage extends StatefulWidget {
   State<TerminalPage> createState() => _TerminalPageState();
 }
 
-class _TerminalPageState extends State<TerminalPage> {
+class _TerminalPageState extends State<TerminalPage>
+    with WidgetsBindingObserver {
   /// Whether this page's pane ever existed.
   ///
   /// ⚠️ Load-bearing, and the reason this page is stateful at all. The page is pushed BEFORE the
@@ -62,12 +64,73 @@ class _TerminalPageState extends State<TerminalPage> {
   /// TerminalPage still sitting in the Agents tab's stack.
   bool _hadPane = false;
 
+  /// Whether this page has already used its one chance to summon the keyboard.
+  ///
+  /// It starts `false`, so the terminal is focused on arrival and the keyboard
+  /// rises by itself. It flips the moment the keyboard IS up, and NEVER goes
+  /// back: from then on `TerminalPanel` is passed `focused: false` and stops
+  /// claiming, for the life of the page. Bringing the keyboard back is the
+  /// terminal's own job — xterm's tap handler calls `requestKeyboard()` without
+  /// consulting this flag, so nothing here needs to re-arm.
+  ///
+  /// ⚠️ Without this, Back could not put the keyboard away at all:
+  /// `TerminalPanel._claimFocus` calls `TerminalView.requestKeyboard()`, which
+  /// RE-TAKES focus when it finds none, so the keyboard returned a frame after
+  /// the system dismissed it. Measured on a Pixel 8 Pro — `onRequestShow`
+  /// ELEVEN times against a single `onRequestHide`.
+  ///
+  /// ⚠️ It flips on the keyboard APPEARING, not on it going away, and that is
+  /// the difference between Back working on the first press and on the second.
+  /// `_claimFocus` runs from a post-frame callback and BEATS `didChangeMetrics`
+  /// to the news that the keyboard is gone:
+  ///
+  ///     onDispatched            keyboard hidden
+  ///     CLAIM focused=true      claim ran first — re-took focus
+  ///     onRequestShow           keyboard on its way back
+  ///     KB raw=0.0              our metrics callback, one beat too late
+  ///
+  /// Arming on the way up removes the race: by the time any Back arrives,
+  /// claiming has been off for as long as the keyboard has been visible.
+  bool _claimSpent = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  /// Watches the keyboard through [View], because MediaQuery lies to this page.
+  ///
+  /// ⚠️ `MediaQuery.viewInsetsOf(context).bottom` is ALWAYS ZERO here, keyboard
+  /// up or down. `PhoneShell` puts this page's Navigator inside a `Scaffold`
+  /// body, and a Scaffold that has already resized for the keyboard STRIPS the
+  /// bottom inset from the MediaQuery it hands its body — the body must not
+  /// subtract it twice. Every descendant therefore reads zero.
+  ///
+  /// [View.of] is the raw platform value, in PHYSICAL pixels, and no widget can
+  /// intercept it.
+  @override
+  void didChangeMetrics() {
+    super.didChangeMetrics();
+    if (!mounted) return;
+    // The FIRST frame of the keyboard rising is enough — it need not finish.
+    // Spending the claim this early is the point: it is off long before any
+    // Back press can arrive.
+    if (View.of(context).viewInsets.bottom > 0 && !_claimSpent) {
+      setState(() => _claimSpent = true);
+    }
+  }
+
   /// The composer starts OPEN here, and the phone owns that answer rather than the pane.
   ///
   @override
   Widget build(BuildContext context) {
-    // Clear of the home indicator — except while the keyboard is up, which already is.
-    final keyboardUp = MediaQuery.viewInsetsOf(context).bottom > 0;
     return ListenableBuilder(
       listenable: widget.notifier,
       builder: (context, _) {
@@ -100,8 +163,11 @@ class _TerminalPageState extends State<TerminalPage> {
         final reclaim = phoneReclaimAction(session);
         return Scaffold(
           backgroundColor: AppPalette.windowBg,
+          // ⚠️ Plain `SafeArea`. A `bottom: !keyboardUp` toggle was here,
+          // computed from `MediaQuery.viewInsetsOf(context).bottom > 0` — and
+          // that value is pinned at ZERO inside this page (see
+          // [didChangeMetrics]). The toggle therefore never toggled.
           body: SafeArea(
-            bottom: !keyboardUp,
             child: Column(
               children: [
                 PhoneHeader(
@@ -159,6 +225,17 @@ class _TerminalPageState extends State<TerminalPage> {
                       Expanded(
                         child: pane == null || session == null
                             ? const _Attaching()
+                            // ⚠️ Nothing re-arms [_claimSpent] on tap, and that
+                            // is deliberate. A `Listener` doing so was written
+                            // and removed: xterm's own `_onTapDown` already
+                            // calls `requestKeyboard()`, so the tap opened the
+                            // keyboard and THEN the re-armed claim asked for it
+                            // a second time — Android answers a show arriving
+                            // mid-animation by cancelling and restarting it.
+                            // Measured: two `onRequestShow` and two
+                            // `onCancelled at PHASE_CLIENT_APPLY_ANIMATION` per
+                            // tap. The claim exists only to raise the keyboard
+                            // on arrival; after that the terminal handles it.
                             : TerminalPanel(
                                 key: ValueKey(pane.id),
                                 notifier: widget.notifier,
@@ -167,7 +244,13 @@ class _TerminalPageState extends State<TerminalPage> {
                                 // [TerminalPage.isActive]. `visible` is the same answer for the
                                 // panel's other half: a page parked beside this one releases
                                 // focus, stops rendering and stops resizing its remote shell.
-                                focused: widget.isActive,
+                                //
+                                // AND only until the keyboard is actually up —
+                                // see [_claimSpent]. Both gates, not either:
+                                // `isActive` keeps a parked page from stealing
+                                // the keyboard, `_claimSpent` keeps this one
+                                // from taking it back after Back.
+                                focused: widget.isActive && !_claimSpent,
                                 visible: widget.isActive,
                                 showHeader: false,
                                 // No composer, and so no grip above it: the
