@@ -406,7 +406,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 10));
     final search = tester
         .widget<TerminalFindBar>(find.byType(TerminalFindBar))
-        .search;
+        .search!;
     expect(search.count, 2);
     await native('findNext');
     await tester.pump();

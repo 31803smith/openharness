@@ -129,6 +129,10 @@ output without scheduling paints. Regression fixtures cover delayed history and
 reconnects for local and remote sessions, multi-pane resize, retained-pane reuse,
 hidden output, and input arriving between output and the next layout.
 
+Find takes keyboard and text input as soon as its shortcut or native action is
+invoked, including before its first frame. Only a focused, visible pane prepares
+a dormant editor; it stays hidden and unfocusable, with no search index, until
+requested. Immediate text, composition and Escape belong to Find, not the agent.
 Closing Find returns keyboard and text input to the retained terminal or visible
 message composer immediately, without waiting for another frame. The next key
 cannot be lost in the closing search field or replace its remembered query.

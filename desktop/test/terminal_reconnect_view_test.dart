@@ -194,7 +194,7 @@ void main() {
       field.selection = const TextSelection.collapsed(offset: 3);
       final search = tester
           .widget<TerminalFindBar>(find.byType(TerminalFindBar))
-          .search;
+          .search!;
       final matchedRow = search.match!.begin.y;
       final matchedText = session.terminal.buffer.lines[matchedRow].getText();
       final before = session.terminal;
@@ -234,7 +234,7 @@ void main() {
       expect(terminalView(tester, session), same(renderer));
       final restored = tester
           .widget<TerminalFindBar>(find.byType(TerminalFindBar))
-          .search;
+          .search!;
       expect(
         session.terminal.buffer.lines[restored.match!.begin.y].getText(),
         matchedText,

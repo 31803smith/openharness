@@ -11,9 +11,15 @@ class TerminalFindBar extends StatefulWidget {
     required this.onStep,
     required this.onClose,
     required this.onFocus,
+    this.initialQuery = '',
+    this.initialCaseSensitive = false,
     this.readOnly = false,
   });
-  final TerminalSearch search;
+
+  /// Null while the focused pane keeps its input ready without a search index.
+  final TerminalSearch? search;
+  final String initialQuery;
+  final bool initialCaseSensitive;
   final void Function(String query, bool caseSensitive) onQuery;
   final ValueChanged<int> onStep;
   final VoidCallback onClose;
@@ -25,23 +31,54 @@ class TerminalFindBar extends StatefulWidget {
 }
 
 class TerminalFindBarState extends State<TerminalFindBar> {
+  static final _idle = Listenable.merge(const []);
+  final _scope = FocusScopeNode(debugLabel: 'Terminal Find');
   final _focus = FocusNode(debugLabel: 'Find in terminal');
-  late final _text = TextEditingController(text: widget.search.query);
+  late final _text = TextEditingController(
+    text: widget.search?.query ?? widget.initialQuery,
+  );
+  // Keys can arrive before the widget receives the newly opened search.
+  TerminalSearch? _activeSearch;
 
   @override
   void initState() {
     super.initState();
+    _activeSearch = widget.search;
+    _setActive(widget.search != null);
     _focus.addListener(_onFocus);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) focusSearch();
+      if (mounted && widget.search != null) focusSearch();
     });
+  }
+
+  @override
+  void didUpdateWidget(TerminalFindBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _activeSearch = widget.search;
+    _setActive(widget.search != null);
+    if (widget.search == null && _text.text != widget.initialQuery) {
+      _text.text = widget.initialQuery;
+    }
+  }
+
+  void _setActive(bool active) {
+    _scope.canRequestFocus = active;
+    _scope.descendantsAreFocusable = active;
+    _scope.descendantsAreTraversable = active;
+  }
+
+  void releaseSearchFocus() {
+    _activeSearch = null;
+    _setActive(false);
   }
 
   void _onFocus() {
     if (_focus.hasFocus) widget.onFocus();
   }
 
-  void focusSearch({bool selectAll = true}) {
+  void focusSearch({bool selectAll = true, TerminalSearch? search}) {
+    _activeSearch = search ?? widget.search ?? _activeSearch;
+    _setActive(true);
     _focus.requestFocus();
     if (selectAll) {
       _text.selection = TextSelection(
@@ -86,13 +123,14 @@ class TerminalFindBarState extends State<TerminalFindBar> {
   void dispose() {
     _focus.removeListener(_onFocus);
     _focus.dispose();
+    _scope.dispose();
     _text.dispose();
     super.dispose();
   }
 
   @override
-  Widget build(BuildContext context) => Focus(
-    canRequestFocus: false,
+  Widget build(BuildContext context) => FocusScope(
+    node: _scope,
     onKeyEvent: _onKeyEvent,
     child: Material(
       color: const Color(0xff272727),
@@ -103,14 +141,15 @@ class TerminalFindBarState extends State<TerminalFindBar> {
       child: Padding(
         padding: const EdgeInsets.only(left: 10, right: 4, top: 2, bottom: 2),
         child: ListenableBuilder(
-          listenable: widget.search,
+          listenable: widget.search ?? _idle,
           // Live output and result navigation update the controls, not the
           // editor. Keep its widget stable while the search index refreshes.
           child: Expanded(
+            key: const ValueKey('terminal-find-editor'),
             child: TextField(
               controller: _text,
               focusNode: _focus,
-              autofocus: true,
+              autofocus: widget.search != null,
               textAlignVertical: TextAlignVertical.center,
               style: const TextStyle(
                 fontSize: 13,
@@ -129,17 +168,26 @@ class TerminalFindBarState extends State<TerminalFindBar> {
                 filled: false,
                 contentPadding: EdgeInsets.zero,
               ),
-              onChanged: (value) =>
-                  widget.onQuery(value, widget.search.caseSensitive),
+              onChanged: (value) => widget.onQuery(
+                value,
+                _activeSearch?.caseSensitive ?? widget.initialCaseSensitive,
+              ),
             ),
           ),
           builder: (context, editor) {
             final search = widget.search;
-            final status = search.query.isEmpty
+            final query = search?.query ?? '';
+            final searching = search?.searching ?? false;
+            final hasSnapshot = search?.hasSnapshot ?? false;
+            final count = search?.count ?? 0;
+            final selected = (search?.selected ?? -1) + 1;
+            final sensitive =
+                search?.caseSensitive ?? widget.initialCaseSensitive;
+            final status = query.isEmpty
                 ? ''
-                : search.searching && !search.hasSnapshot
+                : searching && !hasSnapshot
                 ? '…'
-                : '${search.selected + 1}/${search.count}';
+                : '$selected/$count';
             Widget button(
               String label,
               Widget icon,
@@ -180,13 +228,13 @@ class TerminalFindBarState extends State<TerminalFindBar> {
                 const SizedBox(width: 6),
                 Semantics(
                   liveRegion: true,
-                  label: search.searching && !search.hasSnapshot
+                  label: searching && !hasSnapshot
                       ? 'Searching terminal'
-                      : search.query.isEmpty
+                      : query.isEmpty
                       ? 'Find in terminal'
-                      : search.count == 0
+                      : count == 0
                       ? 'No matches'
-                      : 'Match ${search.selected + 1} of ${search.count}',
+                      : 'Match $selected of $count',
                   child: ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 56),
                     child: ExcludeSemantics(
@@ -197,10 +245,7 @@ class TerminalFindBarState extends State<TerminalFindBar> {
                         style: TextStyle(
                           fontSize: 11,
                           height: 1,
-                          color:
-                              search.count == 0 &&
-                                  search.query.isNotEmpty &&
-                                  !search.searching
+                          color: count == 0 && query.isNotEmpty && !searching
                               ? const Color(0xffffb4a9)
                               : Colors.white54,
                         ),
@@ -216,24 +261,26 @@ class TerminalFindBarState extends State<TerminalFindBar> {
                     style: TextStyle(
                       fontSize: 12,
                       height: 1,
-                      color: search.caseSensitive
-                          ? Colors.white
-                          : Colors.white54,
-                      fontWeight: search.caseSensitive
+                      color: sensitive ? Colors.white : Colors.white54,
+                      fontWeight: sensitive
                           ? FontWeight.w700
                           : FontWeight.normal,
                     ),
                   ),
                   () {
-                    widget.onQuery(_text.text, !search.caseSensitive);
+                    widget.onQuery(
+                      _text.text,
+                      !(_activeSearch?.caseSensitive ??
+                          widget.initialCaseSensitive),
+                    );
                     _focus.requestFocus();
                   },
-                  selected: search.caseSensitive,
+                  selected: sensitive,
                 ),
                 button(
                   'Previous match (⇧⌘G)',
                   const Icon(Icons.keyboard_arrow_up),
-                  search.count > 0
+                  count > 0
                       ? () {
                           widget.onStep(-1);
                           _focus.requestFocus();
@@ -243,7 +290,7 @@ class TerminalFindBarState extends State<TerminalFindBar> {
                 button(
                   'Next match (⌘G)',
                   const Icon(Icons.keyboard_arrow_down),
-                  search.count > 0
+                  count > 0
                       ? () {
                           widget.onStep(1);
                           _focus.requestFocus();

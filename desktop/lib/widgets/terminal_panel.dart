@@ -652,6 +652,7 @@ class _TerminalPanelState extends State<TerminalPanel>
         ..addListener(_onFindChanged);
       _findRevealPending = true;
       _find!.setQuery(_lastFindQuery, caseSensitive: _lastFindCaseSensitive);
+      _findBarKey.currentState?.focusSearch(search: _find);
       setState(() {});
     } else if (action == TerminalFindAction.open) {
       _findBarKey.currentState?.focusSearch();
@@ -746,6 +747,7 @@ class _TerminalPanelState extends State<TerminalPanel>
       _lastFindBuffer = _viewTerminal.buffer;
     }
     _find = null;
+    _findBarKey.currentState?.releaseSearchFocus();
     search.removeListener(_onFindChanged);
     search.dispose();
     _clearFindHighlight();
@@ -1112,50 +1114,57 @@ class _TerminalPanelState extends State<TerminalPanel>
                   maintainState: true,
                   child: _buildHeader(context),
                 ),
-                if (_find != null)
+                // Attach the focused pane's input before Find is requested.
+                // Hidden/unfocused panes need no dormant editor or index.
+                if (_find != null || (widget.visible && widget.focused))
                   Positioned.fill(
-                    child: LayoutBuilder(
-                      builder: (context, constraints) => Row(
-                        children: [
-                          if (constraints.maxWidth > 520)
-                            Expanded(
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: _stripPadding,
-                                ),
-                                child: Text(
-                                  session.agentName,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontSize: 13,
-                                    color: Colors.white70,
+                    child: Offstage(
+                      offstage: _find == null,
+                      child: LayoutBuilder(
+                        builder: (context, constraints) => Row(
+                          children: [
+                            if (constraints.maxWidth > 520)
+                              Expanded(
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: _stripPadding,
+                                  ),
+                                  child: Text(
+                                    session.agentName,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 13,
+                                      color: Colors.white70,
+                                    ),
                                   ),
                                 ),
-                              ),
-                            )
-                          else
-                            const Spacer(),
-                          SizedBox(
-                            width: math.min(constraints.maxWidth, 380),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 4,
-                              ),
-                              child: TerminalFindBar(
-                                key: _findBarKey,
-                                search: _find!,
-                                readOnly:
-                                    widget.readOnly || !session.acceptsInput,
-                                onQuery: _queryFind,
-                                onStep: _stepFind,
-                                onClose: _closeFind,
-                                onFocus: () => widget.onRendererFocus?.call(),
+                              )
+                            else
+                              const Spacer(),
+                            SizedBox(
+                              width: math.min(constraints.maxWidth, 380),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                  vertical: 4,
+                                ),
+                                child: TerminalFindBar(
+                                  key: _findBarKey,
+                                  search: _find,
+                                  initialQuery: _lastFindQuery,
+                                  initialCaseSensitive: _lastFindCaseSensitive,
+                                  readOnly:
+                                      widget.readOnly || !session.acceptsInput,
+                                  onQuery: _queryFind,
+                                  onStep: _stepFind,
+                                  onClose: _closeFind,
+                                  onFocus: () => widget.onRendererFocus?.call(),
+                                ),
                               ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
                   ),

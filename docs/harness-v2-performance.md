@@ -12,6 +12,29 @@ It prints `SWARM_BENCH` JSON records. Its filename deliberately does not end in 
 
 ## Current continuation benchmark (2026-09-14)
 
+### Find takes input before its first frame
+
+The first-frame opening checks reproduced text and Escape reaching the agent
+after Find had been requested but before its editor mounted. The focused visible
+pane now prepares its input field without a search index. Opening activates its
+focus scope and text-input client immediately; the first paint uses that same
+editor, preserving already-entered text and composition. Closing before that
+paint consumes Escape and returns the next key to the terminal.
+
+In the current 16-terminal/four-workspace fixture, exactly one dormant editor is
+mounted. It cannot take focus while inactive, has no search model, and output
+updates across all 16 sessions cause zero Find/editor rebuilds. Existing active
+Find output checks still show zero editor rebuilds. Snapshot replacement retains
+the editor's full editing value, including composition. These are input-ownership
+and deterministic-work checks, not native latency or live IME measurements.
+
+The before-fix cases are in `/private/tmp/harness-find-opening-before.log`.
+All **1,443 desktop checks** pass, with one optional CLI-media placeholder
+skipped, in `/private/tmp/harness-find-opening-full.log`. Analysis of all six
+changed source/test files is clean in
+`/private/tmp/harness-find-opening-analyze.log`. The native-entry case uses the
+actual incoming Dart method handler with an isolated platform channel.
+
 ### Immediate input after closing terminal Find
 
 Find previously waited for the next frame to return focus to the retained
