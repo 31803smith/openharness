@@ -389,21 +389,36 @@ class _SwarmScreenState extends State<SwarmScreen> {
       await _modelsMenu?.refresh();
       return;
     }
+    final nativeCommand = switch (call.method) {
+      'keymapCommand' =>
+        args['command'] is String ? args['command'] as String : null,
+      'commands' => 'navigation.commands',
+      'newAgent' => 'agent.new',
+      _ => null,
+    };
+    if (nativeCommand != null) {
+      final focus = FocusManager.instance.primaryFocus?.context;
+      final region = focus == null ? null : KeymapRegion.of(focus);
+      final action = region?.actions?[nativeCommand];
+      if (action != null) {
+        // Match keyboard dispatch: the focused picker owns its commands and
+        // closes its own results before opening creation. Bypassing it stacks
+        // another search or leaves the start-page dropdown under the dialog.
+        if (region?.composing?.call() == true) return;
+        action();
+        if (call.method != 'keymapCommand') {
+          await WidgetsBinding.instance.endOfFrame;
+          if (mounted) FocusManager.instance.applyFocusChangesIfNeeded();
+        }
+        return;
+      }
+    }
     if (call.method == 'keymapCommand' &&
-        !(args['command'] as String? ?? '').startsWith('picker.')) {
-      if (args['command'] is String) _runShortcut(args['command']);
+        nativeCommand?.startsWith('picker.') != true) {
+      if (nativeCommand != null) _runShortcut(nativeCommand);
       return;
     }
     if (call.method == 'searchCommand' || call.method == 'keymapCommand') {
-      if (call.method == 'keymapCommand') {
-        final focus = FocusManager.instance.primaryFocus?.context;
-        final region = focus == null ? null : KeymapRegion.of(focus);
-        final action = region?.actions?[args['command']];
-        if (action != null) {
-          if (region?.composing?.call() != true) action();
-          return;
-        }
-      }
       final search = _search;
       if (search == null) return;
       final command =

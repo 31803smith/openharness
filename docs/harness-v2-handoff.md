@@ -1,5 +1,17 @@
 # Harness v2: goal, plan, and continuation handoff
 
+**Native entry correction:** Actual AppKit `commands` and `newAgent` messages
+bypassed the focused inline picker. Regression checks reproduced a second search
+overlay and an inline result list left underneath creation. Native actions now
+use the same focused-region callbacks as keyboard input, wait for their focus
+handoff, and preserve active IME composition. The keyboard runtime fixture now
+uses the current idle start page and separate dialogs. All **90 affected checks**
+pass in `/private/tmp/harness-native-search-after.log`; the **13 keyboard checks**
+also pass with explicit composition coverage in
+`/private/tmp/harness-native-search-composition.log`. Analysis reports no issues
+in `/private/tmp/harness-native-search-analyze.log`. The prepared Release below
+still predates this fix until its next refresh; no running app was changed.
+
 **First-use audit:** `581d0a4` is pushed. All **16 current-flow checks** now pass in
 `/private/tmp/harness-current-first-use.log`, with no analysis issues in
 `/private/tmp/harness-current-first-use-analyze.log`. They cover the idle start
@@ -20,10 +32,7 @@ brace-style infos in
 unchanged `app_state.dart` lines (2264 and 2932), with no errors or warnings;
 see `/private/tmp/harness-current-creation-recovery-analyze.log`.
 The prepared Release bundle includes these changes through `581d0a4`; the console
-remains locked and the running preview is unchanged. The next fixture audit is
-`test/keymap_runtime_test.dart`, which still expects Cmd-T to autofocus the removed
-modal input. Update remaining assertions to the current start page and separate
-dialogs; do not restore the retired UI. A full current-suite pass is still needed
+remains locked and the running preview is unchanged. A full current-suite pass is still needed
 before claiming release readiness.
 
 **Keyboard creation checkpoint:** `98fc760` makes New Harness immediately usable

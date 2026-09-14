@@ -47,6 +47,10 @@ and the containing workspace name is not repeated.
 The Commands footer stays removed; Shift-Cmd-P and typing `>` expose commands.
 An explicit Cmd-N while choosing a split replaces search with creation in that
 split position; dismissing creation still returns directly to the terminal.
+Native New Harness and Search Commands actions use the focused search field's
+actions too. Command search stays in that field, and creation closes its dropdown
+before opening the form. Native actions wait for the destination focus tree before
+handing keyboard ownership back to Flutter and preserve in-progress composition.
 
 ## Tabs and menus
 
