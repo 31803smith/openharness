@@ -299,24 +299,8 @@ const List<AppShortcut> kAppShortcuts = [
     label: 'Forward',
     group: ShortcutGroup.navigate,
   ),
-  // ⌘P — "go to", the way VS Code's quick-open spells it, because that is what
-  // this is: type part of a name, land on the agent.
-  //
-  // It answers the one thing a keyboard-only session could not do at all. ⌘1…⌘9
-  // address TILES, so they only reach agents already on the grid; ⌘B sends a
-  // task and lets a model choose. Neither opens the eleventh agent by name, and
-  // until this key existed the only way was the mouse.
-  //
-  // ⌘K stays unbound and is now spoken for by the navigation row above — see
-  // the header's note about what the file used to hold it in reserve for.
-  // ⌃⇥ / ⌃⇧⇥ — the one Ctrl pair this app is allowed, and the terminal is made
-  // to let it past on purpose (terminal_view.dart) because no shell or tmux
-  // binding wants it.
-  //
-  // It walks AGENTS now, not panes. It used to be a third spelling of "next
-  // pane", which put it in list order beside hjkl's geometry — the same split
-  // brain the brackets had. Tab between agents is what every tabbed app has
-  // trained the hand to expect anyway.
+  // Control-Tab and Shift-brackets move through tabs. Pane directions and
+  // agent history have their own shortcuts above.
   AppShortcut(
     action: ShortcutAction.nextAgent,
     activator: SingleActivator(LogicalKeyboardKey.tab, control: true),
@@ -515,18 +499,11 @@ const kSwarmShortcuts = [
   ),
 ];
 
-/// `⌘1`…`⌘9` jump to the nth TILE on the grid.
-///
-/// Tiles, not sidebar rows: the number is the one printed on the tile and the
-/// one the dial walks, so "the third one" means the same thing wherever it is
-/// said. Addressing the sidebar instead made ⌘3 open something that was not on
-/// screen and replace a tile to do it.
-///
-/// Not in [kAppShortcuts] because nine near-identical rows would bury the sheet;
-/// the sheet prints them as one line instead.
-const int kAgentDigitCount = 9;
+/// Command-number selects the first nine tabs in their visible order. The
+/// shortcut sheet prints one row; pane movement uses H/J/K/L and arrow keys.
+const int kTabDigitCount = 9;
 
-List<SingleActivator> agentDigitActivators() => const [
+List<SingleActivator> tabDigitActivators() => const [
   SingleActivator(LogicalKeyboardKey.digit1, meta: true),
   SingleActivator(LogicalKeyboardKey.digit2, meta: true),
   SingleActivator(LogicalKeyboardKey.digit3, meta: true),
@@ -592,18 +569,16 @@ List<ShortcutRow> shortcutRows() {
   // The digits are not in [kAppShortcuts] — nine near-identical rows would bury
   // everything around them — so they join here, at the end of their group.
   final digits = ShortcutRow(
-    label: 'Focus the 1st–9th pane',
+    label: 'Select tabs 1–9',
     chords: const [
-      ['⌘', '1 – $kAgentDigitCount'],
+      ['⌘', '1 – $kTabDigitCount'],
     ],
-    // Panes, not Navigate: the digits address tiles on the grid now, and a row
-    // reads under the heading that matches what it does.
-    group: ShortcutGroup.panes,
+    group: ShortcutGroup.navigate,
   );
-  final lastPane = rows.lastIndexWhere(
-    (row) => row.group == ShortcutGroup.panes,
+  final lastTab = rows.lastIndexWhere(
+    (row) => row.group == ShortcutGroup.navigate,
   );
-  rows.insert(lastPane + 1, digits);
+  rows.insert(lastTab + 1, digits);
   return rows;
 }
 
@@ -637,7 +612,7 @@ const List<TerminalKey> kTerminalOwnedKeys = [
 /// terminal underneath could have had it.
 Map<ShortcutActivator, VoidCallback> buildShortcutBindings({
   required Map<ShortcutAction, VoidCallback> handlers,
-  void Function(int index)? onSelectPaneIndex,
+  void Function(int index)? onSelectTabIndex,
   bool swarmMode = true,
 }) {
   final bindings = <ShortcutActivator, VoidCallback>{};
@@ -645,10 +620,10 @@ Map<ShortcutActivator, VoidCallback> buildShortcutBindings({
     final handler = handlers[shortcut.action];
     if (handler != null) bindings[shortcut.activator] = handler;
   }
-  if (onSelectPaneIndex != null) {
-    final digits = agentDigitActivators();
+  if (onSelectTabIndex != null) {
+    final digits = tabDigitActivators();
     for (var i = 0; i < digits.length; i++) {
-      bindings[digits[i]] = () => onSelectPaneIndex(i);
+      bindings[digits[i]] = () => onSelectTabIndex(i);
     }
   }
   return bindings;

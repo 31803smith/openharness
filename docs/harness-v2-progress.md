@@ -6,6 +6,16 @@ Updated 2026-09-14 after integrating the continuation into main. This is a worki
 
 ## Continue directly on main
 
+- Command-number now selects **tabs 1–9** in their current visible order.
+  Command-H/J/K/L and Command-arrows continue to move between panes. Switching
+  tabs restores their focused pane, reordered tabs use their new positions, and
+  an unavailable number does nothing. Custom pane-focus command IDs remain
+  available without conflicting default digit bindings. Shortcut help and the
+  native exported keymap agree. All 52 affected Flutter checks pass, including
+  native-command routing, tab order/focus and subsequent terminal input; the
+  native keyboard bridge passes 78 checks against the exported bindings.
+  Analysis has zero errors/warnings and the 14 existing infos. Logs:
+  `/private/tmp/harness-tab-shortcuts-{tests,analyze,titlebar}.log`.
 - Applied the latest simple-entry direction: **New Harness** replaces New Agent
   on empty tabs. The centered start page has **Find a harness…**, a prominent
   **Create harness** action, and up to six recent shortcuts, with responsive

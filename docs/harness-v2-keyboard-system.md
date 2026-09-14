@@ -1,8 +1,18 @@
 # A coherent keyboard system for Harness
 
-Current continuation: [goal, plan, and acceptance criteria](harness-v2-handoff.md). The latest user decision separates global Navigate (Cmd-P) from local Add agent; earlier descriptions of identical direct-open behavior in both search fields are superseded. Cmd-Shift-P remains command mode. Both flows are implemented. The latest default is Cmd-N for Add (the floating +) and Shift-Cmd-N for a fresh agent, with a prominent New agent button beside the Add search field. Shift-Enter optionally selects multiple agents; Enter still adds a single agent immediately when none are checked.
+Current continuation: [goal, plan, and acceptance criteria](harness-v2-handoff.md)
+and [Harness entry](harness-agent-first-tabs.md). Updated September 14, 2026.
+**Command-1 through Command-9 now select tabs in their current visual order**,
+replacing their former pane-focus defaults. An unavailable number does nothing.
+Command-H/J/K/L and Command-arrows still move between panes, retaining each tab's
+last focused pane when switching back.
 
-Updated 2026-09-13 after the user's review. **The earlier proposed modifier-heavy defaults are withdrawn.** The user explicitly chose to retain Cmd-H/J/K/L and Cmd-arrows for pane movement, Cmd-S for layout, Cmd-R for refresh, and Cmd-B for Boss mode. Cmd-L stays move right. File remapping is available; menus and help reflect the effective bindings.
+Cmd-T opens New Harness, Cmd-N opens Add Agent, and Shift-Cmd-N creates a fresh
+agent. Add uses immediate single selection; there is no multi-select or Shift-Enter
+staging. Cmd-Shift-P opens command mode. The Navigate directory and default Cmd-P
+were removed by the agent-first update. Cmd-S, Cmd-R and Cmd-B keep their layout,
+refresh and task-routing behavior. File remapping remains available; menus and
+help reflect the effective bindings.
 
 ## Product contract
 
@@ -20,12 +30,12 @@ Keep ordinary typing and editing predictable inside the actual agent CLI, search
 | Layout | Keep Cmd-S. The user explicitly resolved the Cmd-L conflict in favor of the complete H/J/K/L family. |
 | Refresh machines/agents | Keep Cmd-R. The user considered using it for relayout and chose to preserve refresh. |
 | Boss mode / task routing | Keep Cmd-B. |
-| Navigate agents/swarms | Keep Cmd-P. Show every swarm destination for agents with multiple memberships; choosing one focuses that exact view. New design pending implementation. |
-| Local Add agent | New swarm, floating +, and Split share existing-agent search and New agent creation. Keep the target swarm/position; this is a separate UI from Navigate. |
-| Machine/project results | Their effect depends on the entry point; never silently navigate away from a local Add flow. Bulk addition seeds membership once. Final presentation belongs to the new Navigate/Add implementation. |
-| Other existing shortcuts | Preserve until a concrete problem justifies a reviewed change. Do not silently switch Cmd-number navigation, zoom, tab traversal, or closing to the earlier proposed alternatives. |
+| Select a tab | Cmd-1…Cmd-9 select positions 1…9 in the visible tab order. Reordering tabs changes those positions. Closing or switching tabs preserves each tab’s pane focus. |
+| Local Add agent | New Harness, floating +, and Split share immediate existing-agent selection and a prominent Create Agent action. Keep the target tab/position. |
+| Machine/project results | One group result seeds its existing agents into the current tab. There is no multi-select basket or separate group-creation step. |
+| Other existing shortcuts | Preserve until a concrete problem justifies a reviewed change. Numbered tab selection is now explicitly approved; preserve zoom, traversal and closing. |
 | File customization | One commented config file with reload; menus, help and dispatch must agree. |
-| Commands in search | Approved: Cmd-Shift-P opens `>` command mode, following the later user decision. Pin remains available in the Agent menu, pane menu, commands and custom bindings. |
+| Commands in search | Approved: Cmd-Shift-P opens `>` command mode, following the later user decision. Pin remains in File, commands and custom bindings; it is absent from pane headers. |
 
 The previous full default-binding audit is preserved in Git history. Its evidence is useful, but its proposed defaults do not override these decisions.
 
@@ -57,10 +67,14 @@ Parse and resolve when configuration changes, never on each keystroke. A lookup 
 
 Production startup loads the optional file before the workspace opens. Settings and the shortcut sheet show the effective bindings for Workspace, Agent input or Search, including unassigned commands. **Edit keyboard config** creates a commented template only when explicitly invoked, lists the stable command IDs, and opens the associated editor. The startup path, watcher and dispatch never rewrite existing user configuration.
 
-Flutter owns configured workspace/terminal keys before the focused input, with live composition checks. Both search fields use their own picker context. Their Enter/add/preview actions and displayed hints update together; the command result list also refreshes its shortcut labels after a configuration change. Prefixes are temporary and never replay into agent input. Cmd-P opens the centered shared search editor. Cmd-Shift-P opens the same editor in command mode. The other frequent direct defaults remain unchanged.
+Flutter owns configured workspace/terminal keys before the focused input, with live composition checks. Both search fields use their own picker context. Their Enter/add actions and displayed hints update together; the command result list also refreshes its shortcut labels after a configuration change. Prefixes are temporary and never replay into agent input. Cmd-N opens Add; Cmd-Shift-P opens command mode. Numbered keys select tabs in workspace, terminal and picker contexts, with modal/composition guards still respected.
 
-Native menu labels come from the same resolved snapshot. The main menu yields configured first strokes to Flutter, which owns both search editors, text selection, composition and result navigation. The titlebar contains Navigate and Notifications. The floating Add button is inside the swarm, with the effective Cmd-N hint; New agent is prominent inside Add. Button activation waits for the destination's Flutter frame before returning native keyboard focus to the content view. Ordinary Mac editing, font and window commands remain native; custom bindings using reserved strokes are rejected.
+Native menu labels come from the same resolved snapshot. The main menu yields configured first strokes to Flutter, which owns both search editors, text selection, composition and result navigation. The titlebar contains tabs, New Harness and Notifications. The floating Add button is inside the swarm, with the effective Cmd-N hint; Create Agent is prominent inside Add. Button activation waits for the destination's Flutter frame before returning native keyboard focus to the content view. Ordinary Mac editing, font and window commands remain native; custom bindings using reserved strokes are rejected.
 
-Current validation includes the shared editor's arrow navigation, select-all/delete, command mode, effective remaps, pane focus and terminal IME. The native adapter passes **51 checks** against Dart-exported bindings, followed by **347 AppKit titlebar checks**, including Swarm/Agent menu ordering, three distinct toolbar targets, disabled controls and delayed focus handoff. These are synthetic checks; no real agents receive test input. Current build and regression results are recorded in the progress log.
+Current validation covers the shared editor, effective remaps, terminal IME,
+numbered tab selection through Flutter and the native command bridge, reordered
+tabs, preserved pane focus and the first subsequent terminal key. Native fixtures
+consume the Dart-exported bindings. These are synthetic correctness checks; no
+real agents receive test input. Current build and test counts are in the progress log.
 
 See the [progress log](harness-v2-progress.md) for build/artifact status and the [working queue](harness-v2-developer-tools-research.md) for the next product improvements. These fixtures do not establish native input-to-display latency or first-install conversion rates; those remain separate measurements.

@@ -46,7 +46,10 @@ and Refresh Machines. Selecting a computer opens the shared search with its
 name filled in; no agent is opened until the user chooses a result.
 
 Cmd-T opens New Harness, Cmd-N opens Add Agent, Shift-Cmd-N opens Create Agent,
-Cmd-W closes the tab, and Shift-Cmd-W closes the focused pane. Closing views
+Cmd-W closes the tab, and Shift-Cmd-W closes the focused pane. **Cmd-1…Cmd-9**
+select tabs 1…9 in their current visible order; a missing number does nothing.
+**Cmd-H/J/K/L** and **Cmd-arrows** move between panes. Each tab retains its focused
+pane when switching away and back. Closing views
 keeps agent runtimes alive. Stored layout formats and internal command IDs remain
 compatible.
 

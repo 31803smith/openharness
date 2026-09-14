@@ -1117,7 +1117,9 @@ class _SwarmScreenState extends State<SwarmScreen> {
     for (final command in harnessCommands)
       if (command.action != null && _actionHandlers.containsKey(command.action))
         command.id: _actionHandlers[command.action]!,
-    for (var i = 1; i <= kAgentDigitCount; i++)
+    for (var i = 1; i <= kTabDigitCount; i++)
+      'swarm.select_$i': () => app.selectSwarmByIndex(i - 1),
+    for (var i = 1; i <= 9; i++)
       'pane.focus_$i': () => app.focusPaneByIndex(i - 1),
     'navigation.commands': _showSearchCommands,
     'machine.link': () => _dialog(() => showSwarmLinkDialog(context, app)),
@@ -1138,6 +1140,10 @@ class _SwarmScreenState extends State<SwarmScreen> {
     }
     if (id == 'keyboard.open_config') return _keymap.store != null;
     if (id == 'pane.layout' || id == 'task.route') return true;
+    if (id.startsWith('swarm.select_')) {
+      final number = int.tryParse(id.substring('swarm.select_'.length));
+      return number != null && number >= 1 && number <= app.swarms.length;
+    }
     if (id == 'swarm.new') return app.swarms.length < AppNotifier.maxSwarms;
     if (id == 'swarm.reopen') return app.canReopenLastClosed;
     if (id == 'swarm.next' || id == 'swarm.previous') {

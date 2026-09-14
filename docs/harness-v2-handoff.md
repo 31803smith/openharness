@@ -5,7 +5,9 @@ is the current contract. **New Harness** is a centered search with recent harnes
 and a prominent creation button. Pick one result and open it immediately; multi-select
 is removed. **File** replaces Agent in the macOS menu, and **Machines** follows Models.
 The latest header keeps icon/name left, folder/branch/machine right, swapping the
-right side for muted actions on hover. This supersedes older swarm/onboarding notes.
+right side for muted actions on hover. **Cmd-1…Cmd-9** select tabs in visual order;
+**Cmd-H/J/K/L** and **Cmd-arrows** focus panes. This supersedes older
+swarm/onboarding and numbered-pane notes.
 
 Updated September 14, 2026. **Read this first when resuming on another computer.**
 This is the current product contract and next-work order. It supersedes conflicting

@@ -194,9 +194,9 @@ List<ShortcutRow> effectiveShortcutRows(
   final bindings = (map ?? harnessDefaultKeymap).bindingsFor(contextKind);
   final defaultDigits =
       contextKind != KeymapContext.picker &&
-      List.generate(kAgentDigitCount, (i) {
+      List.generate(kTabDigitCount, (i) {
         final matches = bindings
-            .where((b) => b.command == 'pane.focus_${i + 1}')
+            .where((b) => b.command == 'swarm.select_${i + 1}')
             .toList();
         return matches.length == 1 &&
             matches.single.keys.length == 1 &&
@@ -208,7 +208,7 @@ List<ShortcutRow> effectiveShortcutRows(
       if ((command.context == KeymapContext.workspace ||
               command.context == contextKind) &&
           (!defaultDigits ||
-              !RegExp(r'^pane\.focus_[1-9]$').hasMatch(command.id)))
+              !RegExp(r'^swarm\.select_[1-9]$').hasMatch(command.id)))
         if (command.action != null ||
             bindings.any((b) => b.command == command.id))
           ShortcutRow(
@@ -234,11 +234,11 @@ List<ShortcutRow> effectiveShortcutRows(
           ),
     if (defaultDigits)
       const ShortcutRow(
-        label: 'Focus the 1st–9th pane',
+        label: 'Select tabs 1–9',
         chords: [
           ['⌘', '1 – 9'],
         ],
-        group: ShortcutGroup.panes,
+        group: ShortcutGroup.navigate,
       ),
   ];
 }

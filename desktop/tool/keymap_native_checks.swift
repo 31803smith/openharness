@@ -21,6 +21,12 @@ for (key, command) in [
     "Preserve the current default for \(key)")
 }
 for context in ["workspace", "terminal", "picker"] {
+  for number in 1...9 {
+    try checkKeymap(defaults.match([stroke("cmd+\(number)")], context: context).binding?.command == "swarm.select_\(number)",
+      "Command-number selects the corresponding tab from \(context)")
+  }
+}
+for context in ["workspace", "terminal", "picker"] {
   try checkKeymap(changed.match([stroke("cmd+t")], context: context).binding == nil,
     "Native context honors inherited unbinding")
   let search = changed.match([stroke("cmd+o")], context: context).binding

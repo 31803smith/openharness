@@ -55,8 +55,8 @@ void main() {
         .match(context, keys.split(' ').map(KeyStroke.parse))
         .command;
     for (final (keys, expected) in [
-      ('cmd+1', 'pane.focus_1'),
-      ('cmd+9', 'pane.focus_9'),
+      ('cmd+1', 'swarm.select_1'),
+      ('cmd+9', 'swarm.select_9'),
       ('cmd+h', 'pane.focus_left'),
       ('cmd+j', 'pane.focus_below'),
       ('cmd+k', 'pane.focus_above'),

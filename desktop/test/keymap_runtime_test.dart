@@ -58,6 +58,88 @@ Future<void> native(WidgetTester tester, String method, [Object? arguments]) {
 }
 
 void main() {
+  for (final nativeTabs in [false, true]) {
+    testWidgets(
+      'Command-number selects tabs and preserves pane focus (native=$nativeTabs)',
+      (tester) async {
+        final app = createApp();
+        final map = MemoryKeymap();
+        final input = <TerminalBinaryFrame>[];
+        final firstLeft = app.adoptSessionForTest(terminal('a0', input));
+        final firstRight = app.adoptSessionForTest(terminal('a1', input));
+        final firstTab = app.activeSwarm;
+        app.newSwarm();
+        final secondLeft = app.adoptSessionForTest(terminal('a2', input));
+        final secondRight = app.adoptSessionForTest(terminal('a3', input));
+        final secondTab = app.activeSwarm;
+        app.newSwarm();
+        final emptyTab = app.activeSwarm;
+        if (nativeTabs) {
+          tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+            nativeChannel,
+            (_) async => null,
+          );
+          addTearDown(
+            () => tester.binding.defaultBinaryMessenger
+                .setMockMethodCallHandler(nativeChannel, null),
+          );
+        }
+        await mount(tester, app, map, native: nativeTabs);
+        Future<void> select(int number) async {
+          if (nativeTabs) {
+            await native(tester, 'keymapCommand', {
+              'command': 'swarm.select_$number',
+            });
+          } else {
+            await key(
+              tester,
+              LogicalKeyboardKey(LogicalKeyboardKey.digit1.keyId + number - 1),
+              cmd: true,
+            );
+          }
+          await tester.pump(const Duration(milliseconds: 100));
+        }
+
+        await select(1);
+        expect(app.activeSwarm, same(firstTab));
+        expect(app.focusedPaneId, firstRight.id);
+        await key(tester, LogicalKeyboardKey.keyH, cmd: true);
+        expect(app.focusedPaneId, firstLeft.id);
+        await select(2);
+        expect(app.activeSwarm, same(secondTab));
+        expect(app.focusedPaneId, secondRight.id);
+        await key(tester, LogicalKeyboardKey.arrowLeft, cmd: true);
+        expect(app.focusedPaneId, secondLeft.id);
+        await select(1);
+        expect(app.focusedPaneId, firstLeft.id);
+        await select(9);
+        expect(
+          app.activeSwarm,
+          same(firstTab),
+          reason: 'A missing tab number is a no-op',
+        );
+        app.reorderSwarm(secondTab.id, 0);
+        await select(1);
+        expect(app.activeSwarm, same(secondTab));
+        expect(app.focusedPaneId, secondLeft.id);
+        expect(firstTab.panes, [firstLeft, firstRight]);
+        expect(secondTab.panes, [secondLeft, secondRight]);
+        expect(emptyTab.panes, isEmpty);
+        expect(
+          input,
+          isEmpty,
+          reason: 'App navigation never reaches terminal input',
+        );
+        await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+        await tester.pump();
+        expect(input.single.bytes, [27, 91, 68]);
+        await tester.pumpWidget(const SizedBox());
+        app.dispose();
+        map.dispose();
+      },
+    );
+  }
+
   testWidgets(
     'remaps, unbinding and sequences control the actual focused agent without leaking input',
     (tester) async {
@@ -69,7 +151,7 @@ void main() {
       final first = app.adoptSessionForTest(terminal('a0', firstInput));
       final second = app.adoptSessionForTest(terminal('a1', secondInput));
       await mount(tester, app, map);
-      await key(tester, LogicalKeyboardKey.digit1, cmd: true);
+      await key(tester, LogicalKeyboardKey.keyH, cmd: true);
       expect(app.focusedPaneId, first.id);
       await key(tester, LogicalKeyboardKey.keyL, cmd: true);
       expect(app.focusedPaneId, second.id);

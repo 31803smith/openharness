@@ -526,6 +526,13 @@ class AppNotifier extends ChangeNotifier {
     return true;
   }
 
+  /// Command-number follows the current visual tab order, retaining each tab's
+  /// focused pane. A missing position is a no-op, never a pane selection.
+  void selectSwarmByIndex(int index) {
+    if (index < 0 || index >= swarms.length) return;
+    selectSwarm(swarms[index].id);
+  }
+
   void stepSwarm(int delta) {
     final index = swarms.indexOf(activeSwarm);
     selectSwarm(swarms[(index + delta) % swarms.length].id);

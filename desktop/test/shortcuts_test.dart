@@ -220,9 +220,9 @@ void main() {
     test('every declared shortcut gets a binding when a handler exists', () {
       final bindings = buildShortcutBindings(
         handlers: {for (final s in appShortcuts()) s.action: () {}},
-        onSelectPaneIndex: (_) {},
+        onSelectTabIndex: (_) {},
       );
-      expect(bindings.length, appShortcuts().length + kAgentDigitCount);
+      expect(bindings.length, appShortcuts().length + kTabDigitCount);
     });
 
     chordsFor(ShortcutAction a) => appShortcuts()
@@ -353,19 +353,17 @@ void main() {
 
     test('the digits are one row, at the end of their own group', () {
       final rows = shortcutRows();
-      final digits = rows.indexWhere(
-        (row) => row.label == 'Focus the 1st–9th pane',
-      );
+      final digits = rows.indexWhere((row) => row.label == 'Select tabs 1–9');
       expect(digits, isNot(-1));
       expect(rows[digits].chords, [
         ['⌘', '1 – 9'],
       ]);
-      // Panes: the digits address tiles on the grid, not rows in the sidebar.
-      expect(rows[digits].group, ShortcutGroup.panes);
+      // Digits select tabs; directional shortcuts stay in the pane layout.
+      expect(rows[digits].group, ShortcutGroup.navigate);
       // Last of its group, so it does not split the group it belongs to.
       expect(
         digits == rows.length - 1 ||
-            rows[digits + 1].group != ShortcutGroup.panes,
+            rows[digits + 1].group != ShortcutGroup.navigate,
         isTrue,
       );
     });

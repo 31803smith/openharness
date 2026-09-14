@@ -131,16 +131,12 @@ final harnessCommands = <HarnessCommand>[
   for (var i = 1; i <= 9; i++)
     HarnessCommand(
       'swarm.select_$i',
-      i == 9 ? 'Select the last tab' : 'Select tab $i',
+      'Select tab $i',
       ShortcutGroup.navigate,
-    ),
-  for (var i = 1; i <= 9; i++)
-    HarnessCommand(
-      'pane.focus_$i',
-      'Focus pane $i',
-      ShortcutGroup.panes,
       extraKeys: ['cmd+$i'],
     ),
+  for (var i = 1; i <= 9; i++)
+    HarnessCommand('pane.focus_$i', 'Focus pane $i', ShortcutGroup.panes),
   const HarnessCommand(
     'pane.focus_left',
     'Focus the pane to the left',
