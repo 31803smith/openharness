@@ -156,3 +156,29 @@ A later full-screen probe found that first launch focused the shell, while arriv
 The [W3C combobox pattern](https://www.w3.org/WAI/ARIA/apg/patterns/combobox/) documents a collapsed default and several possible expansion triggers, including Down Arrow, focus and typing. Our choice is to keep the welcome useful while making search immediately available. This is a Harness interaction decision, not a claim of complete ARIA or native accessibility conformance. Keymap overrides, composition ownership, explicit command mode and both search locations retain their existing behavior.
 
 The full Flutter screen was rendered at 880×560 for fresh welcome, prefilled creation, New swarm after work and inline results. Regression checks cover first arrival, close-last-swarm, keyboard opening, retained query/selection/composition, native-search cancellation and the first folder action. The render uses Flutter's fallback titlebar; native field behavior is checked separately in a hidden AppKit window. Live first-install observation and native input-to-display timing remain unmeasured.
+
+## Remote folder selection
+
+The shared remote folder chooser now names the machine and offers an editable
+full path. Enter opens the path; Down moves into the list, arrows browse, Enter
+opens a folder, Alt-Up returns to the parent, and Cmd-Enter (Ctrl-Enter on other
+platforms) selects the currently loaded folder. Home remains available when an
+initial folder no longer exists. The list also explains when the remote server's
+bounded reply omits more folders, which can still be opened by their full paths.
+
+A regression reproduced Select returning the previous folder while the next one
+was still loading. Selection now requires a successfully loaded path matching
+the editor. Late replies cannot replace a newer request or path draft; IME and
+selection survive a reply. A failed hop keeps the last usable list visible,
+names the directory still shown, and offers Retry without leaving the dialog.
+Cancel returns to the same New agent form; selecting a folder preserves the
+chosen agent and does not create a runtime by itself.
+
+Nine new folder regressions and the surrounding onboarding, project, profile
+and creation checks pass (57 total), plus real-font renders at 880×560 with
+normal and 2× text. The visual pass adjusted icon controls and button height for
+large text. Analysis has zero errors/warnings and 14 existing infos. Artifacts:
+`/private/tmp/harness-remote-folder-{final-tests,final-analyze}.log` and
+`/private/tmp/harness-remote-folder-{ready,error,large-text}.png`. The checks use
+isolated remote replies and creation calls, not real remote agents; native
+input timing and observed first-install flows remain unverified.

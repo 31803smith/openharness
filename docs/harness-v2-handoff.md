@@ -22,6 +22,11 @@ History recovery also reuses a partially restored swarm: reopening an agent and
 then its original swarm adds the missing views to the same tab, retaining newer
 choices and live sessions. No runtime cleanup was introduced.
 
+The remote folder chooser now accepts a full path and supports keyboard browsing,
+with in-place retry and latest-request ownership. A pending or failed hop cannot
+select the previous folder. These changes apply wherever the shared remote
+chooser is used: agent working folders, saved projects and profile folders.
+
 ## Goal
 
 Build the best everyday workspace for people directing persistent AI agents:
@@ -286,10 +291,31 @@ darker modal veil. See [first-use details](harness-v2-appearance-onboarding.md).
 Observed first-install/provider flows and onboarding conversion/time remain
 unverified; do not infer them from these UI changes.
 
+**Remote folder selection:** the chosen machine is named above an editable path.
+Enter opens that path; Down enters the folder list, arrows move, Enter opens a
+folder, Alt-Up goes to its parent, and Cmd-Enter (Ctrl-Enter on other platforms)
+selects the loaded folder. Home and Retry recover from inaccessible paths.
+Delayed replies cannot replace a newer request, path draft or composition.
+Failures retain the last usable listing and identify which directory it shows.
+Folder selection returns to the same New agent choices and starts no agent.
+
 **Archived drafts:** both are superseded. The onboarding ideas were adapted into
 the common page, without adding another first-tab-only component.
 
-**Latest verification:** the History recovery and viewport-focus continuation,
+**Latest verification:** the remote-folder continuation passes 57 affected
+workflow checks, including nine new folder regressions, plus a real-font render
+check at 880×560 with normal and 2× text (58 total). Analysis reports no errors
+or warnings and the same 14 existing informational diagnostics. Logs:
+`/private/tmp/harness-remote-folder-{final-tests,final-analyze}.log`.
+The normal macOS Release build also succeeds with `FLUTTER_TARGET=lib/main.dart`:
+`/private/tmp/harness-remote-folder-release/Build/Products/Release/Harness.app`;
+log: `/private/tmp/harness-remote-folder-release.log`. The running app was not
+replaced or restarted.
+The tested folder replies and creation calls are isolated fixtures; no real
+agent was started or given input. Live remote and first-install qualification
+remain outstanding, and benchmarking remains deferred.
+
+**Previous verification:** the History recovery and viewport-focus continuation,
 including the team's default-machine update in `eef17f6`, passes **1,317 desktop
 tests**, one existing skip. The analyzer reports
 zero errors/warnings and the same 14 informational diagnostics. The isolated
@@ -528,6 +554,7 @@ that its isolated window can become active/key.
 | Area | Start here |
 | --- | --- |
 | Workspace orchestration, picker routes, split/new-agent context | `desktop/lib/screens/swarm_screen.dart` |
+| Shared remote folder browsing and request ownership | `desktop/lib/widgets/remote_folder_picker.dart`, `desktop/test/remote_folder_picker_test.dart` |
 | Search data, actions, destinations | `desktop/lib/state/swarm_search.dart`, `swarm_navigation.dart`, `swarm_catalog.dart` |
 | Distinct Navigate and shared Add/welcome UI | `desktop/lib/widgets/swarm_navigator.dart`, `swarm_switcher.dart`, `swarm_inline_search.dart`, `swarm_search_input.dart`, `swarm_welcome.dart` |
 | Preview extraction | `desktop/lib/terminal/search_output_preview.dart` |

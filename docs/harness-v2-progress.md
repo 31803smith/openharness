@@ -6,6 +6,23 @@ Updated 2026-09-14 after integrating the continuation into main. This is a worki
 
 ## Continue directly on main
 
+- Made the shared remote folder chooser work by keyboard: enter a full path,
+  browse with arrows/Enter, go up with Alt-Up, and select the loaded folder with
+  Cmd-Enter (Ctrl-Enter elsewhere). It names the target machine and keeps Home
+  and Retry available. Failed navigation preserves the last usable listing;
+  pending navigation cannot accidentally select the previous folder. Older
+  replies cannot replace a newer path, text selection or composition. Selecting
+  a folder returns to the existing agent choices without starting a runtime.
+  The affected onboarding/project/profile/creation checks pass (57 tests), plus
+  a real-font render check at 880×560 with normal/2× text. Analysis has zero
+  errors/warnings and 14 existing infos. Logs:
+  `/private/tmp/harness-remote-folder-{final-tests,final-analyze}.log`.
+  The normal macOS Release build succeeds with the production `lib/main.dart`
+  entry point at `/private/tmp/harness-remote-folder-release/Build/Products/Release/Harness.app`;
+  log: `/private/tmp/harness-remote-folder-release.log`. It was not launched and
+  the user's running app was not replaced or restarted.
+  These are isolated UI/transport checks; live remote and first-install
+  qualification remain open. Benchmarking remains deferred.
 - Clarified **Remove from swarm** in the pane/native menus and keyboard help.
   The action still removes only a view. Fixed History recovery that created a
   second same-named swarm after one of its agents had already been reopened:
