@@ -28,7 +28,7 @@ void main() {
     (600.0, 900.0, 1.7),
   ]) {
     testWidgets(
-      'shared entry picker remains usable at $width with text scale $scale',
+      'start page and inline search remain usable at $width with text scale $scale',
       (tester) async {
         tester.view.devicePixelRatio = 1;
         tester.view.physicalSize = Size(width, height);
@@ -63,6 +63,7 @@ void main() {
           RepaintBoundary(
             key: boundaryKey,
             child: MaterialApp(
+              debugShowCheckedModeBanner: false,
               theme: grid.buildAppTheme(brightness: Brightness.dark),
               builder: (context, child) => MediaQuery(
                 data: MediaQuery.of(context)
@@ -77,36 +78,35 @@ void main() {
         if (Platform.environment['HARNESS_ENTRY_CAPTURE_DIR'] != null) {
           await tester.runAsync(
             () => precacheImage(
-              const AssetImage('assets/engine-icons/codex.png'),
+              const AssetImage('assets/harness_device.webp'),
               tester.element(find.byType(SwarmScreen)),
             ),
           );
           await tester.pump();
         }
-        final field = find.byKey(const ValueKey('swarm-search-input'));
-        final create = find.byKey(const ValueKey('swarm-search-new-agent'));
-        expect(find.text('Find a harness'), findsOneWidget);
-        expect(
-          find.descendant(of: create, matching: find.text('New Harness')),
-          findsOneWidget,
-        );
-        expect(find.text('Harness'), findsNothing);
-        expect(find.text('> Commands'), findsNothing);
-        expect(find.text('or'), findsOneWidget);
-        expect(find.byType(Checkbox), findsNothing);
-        final card = tester.getRect(
-          find.byKey(const ValueKey('swarm-search-results')),
-        );
+        final field = find.byKey(const ValueKey('harness-start-search'));
+        final create = find.byKey(const ValueKey('harness-start-new'));
+        final open = find.byKey(const ValueKey('harness-start-open'));
+        final device = find.byKey(const ValueKey('harness-device-link'));
+        expect(find.text('Harness'), findsOneWidget);
+        expect(tester.widget<TextField>(field).decoration!.hintText, isEmpty);
+        expect(tester.widget<TextField>(field).focusNode!.hasFocus, isFalse);
+        expect(find.byType(ListTile), findsNothing);
         final fieldRect = tester.getRect(field);
         final createRect = tester.getRect(create);
-        final dividerRect = tester.getRect(find.text('or'));
-        expect(createRect.top, greaterThan(dividerRect.bottom + 24));
-        expect(dividerRect.top, greaterThan(card.bottom + 24));
+        final openRect = tester.getRect(open);
+        expect(createRect.top, greaterThanOrEqualTo(fieldRect.bottom + 16));
+        expect(openRect.top, greaterThanOrEqualTo(fieldRect.bottom + 16));
         expect(fieldRect.center.dx, closeTo(width / 2, 1));
-        expect(fieldRect.width, closeTo((width - 64).clamp(280, 720), 1));
+        expect(fieldRect.width, closeTo((width - 48).clamp(0, 640), 1));
         expect(create.hitTestable(), findsOneWidget);
+        expect(open.hitTestable(), findsOneWidget);
         expect(createRect.bottom, lessThanOrEqualTo(height));
-        expect(tester.takeException(), isNull);
+        expect(openRect.bottom, lessThanOrEqualTo(height));
+        expect(
+          tester.getRect(device).top,
+          greaterThan(createRect.bottom + 150),
+        );
         final output = Platform.environment['HARNESS_ENTRY_CAPTURE_DIR'];
         if (output != null) {
           final boundary =
@@ -124,19 +124,28 @@ void main() {
             image.dispose();
           });
         }
+        expect(tester.takeException(), isNull);
+        await tester.tap(field);
         await tester.enterText(field, 'Test host');
         await tester.pump();
-        final results = find.byKey(const ValueKey('swarm-search-results'));
+        final results = find.byKey(const ValueKey('harness-start-results'));
         expect(results, findsOneWidget);
         expect(tester.getRect(results).height, greaterThan(140));
         expect(tester.getRect(results).width, tester.getRect(field).width);
-        expect(
-          find.byKey(const ValueKey('swarm-search-preview')),
-          findsNothing,
-        );
-        await tester.ensureVisible(
-          find.byKey(const ValueKey('swarm-search-new-agent')),
-        );
+        await tester.ensureVisible(create);
+        expect(create.hitTestable(), findsOneWidget);
+        await tester.tap(create);
+        await tester.pumpAndSettle();
+        expect(find.byType(AlertDialog), findsOneWidget);
+        expect(results, findsNothing);
+        expect(tester.takeException(), isNull);
+        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+        await tester.pumpAndSettle();
+        expect(find.byType(AlertDialog), findsNothing);
+        expect(tester.widget<TextField>(field).focusNode!.hasFocus, isFalse);
+        await tester.ensureVisible(device);
+        await tester.pumpAndSettle();
+        expect(device.hitTestable(), findsOneWidget);
         expect(tester.takeException(), isNull);
         await tester.pumpWidget(const SizedBox());
         app.dispose();

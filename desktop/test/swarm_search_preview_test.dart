@@ -10,7 +10,7 @@ import 'swarm_state_test.dart' show createApp;
 void main() {
   for (final inline in [false, true]) {
     testWidgets(
-      'agent and group results use a single list without previews (reopened=$inline)',
+      'agent and group results use a single list without previews (inline=$inline)',
       (tester) async {
         final app = createApp();
         app.adoptSessionForTest(
@@ -18,8 +18,14 @@ void main() {
         );
         app.newSwarm();
         await mount(tester, app);
-        final field = find.byKey(ValueKey('swarm-search-input'));
-        if (!inline) await chord(tester, LogicalKeyboardKey.keyO);
+        final field = find.byKey(
+          ValueKey(inline ? 'harness-start-search' : 'swarm-search-input'),
+        );
+        if (inline) {
+          await tester.tap(field);
+        } else {
+          await chord(tester, LogicalKeyboardKey.keyO);
+        }
         for (final query in ['Agent 0', 'Test host']) {
           await tester.enterText(field, query);
           await tester.pump();
@@ -39,7 +45,11 @@ void main() {
             find.byKey(const ValueKey('swarm-search-result-list')),
           );
           final surface = tester.getRect(
-            find.byKey(ValueKey('swarm-search-results')),
+            find.byKey(
+              ValueKey(
+                inline ? 'harness-start-results' : 'swarm-search-results',
+              ),
+            ),
           );
           expect(list.width, closeTo(surface.width, 2));
         }

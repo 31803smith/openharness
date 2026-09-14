@@ -7,6 +7,7 @@
 // a dialog says it was opened by, and that the first message is reported once
 // per SESSION rather than per agent, and never with any of what was typed.
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/analytics/analytics.dart';
 import 'package:harness/analytics/analytics_sink.dart';
@@ -125,7 +126,7 @@ void main() {
       // call site: a door added later cannot forget.
       for (final source in ['machine_row', 'pane_empty', 'shortcut']) {
         await openFrom(tester, source);
-        await tester.tap(find.text('Cancel'));
+        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
         await tester.pumpAndSettle();
       }
 
@@ -169,7 +170,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, 'Select this folder'));
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(FilledButton, 'Create Harness'));
+      await tester.tap(find.widgetWithText(FilledButton, 'New Harness'));
       await tester.pumpAndSettle();
     }
 

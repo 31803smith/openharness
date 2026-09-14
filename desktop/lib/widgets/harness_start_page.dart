@@ -217,12 +217,23 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
                               ),
                             ),
                             const SizedBox(height: 16),
-                            const Text(
-                              'Meet Harness Device ↗',
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: Colors.white70,
-                              ),
+                            const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  'Meet Harness Device',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: Colors.white70,
+                                  ),
+                                ),
+                                SizedBox(width: 4),
+                                Icon(
+                                  Icons.arrow_outward,
+                                  size: 12,
+                                  color: Colors.white70,
+                                ),
+                              ],
                             ),
                             const SizedBox(height: 6),
                             const Text(

@@ -819,7 +819,7 @@ void main() {
   });
 
   testWidgets(
-    'authenticated with no machines opens Swarm welcome and linking',
+    'authenticated with no machines starts idle and New opens linking',
     (tester) async {
       final app = makeNotifier(AppStatus.authenticated);
       await tester.pumpWidget(
@@ -830,10 +830,17 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('New Harness'), findsWidgets);
-      expect(find.text('Create Harness'), findsNothing);
-      expect(find.text('Add project'), findsNothing);
-      await tester.ensureVisible(find.text('Link a machine'));
-      await tester.tap(find.text('Link a machine'));
+      expect(
+        tester
+            .widget<TextField>(
+              find.byKey(const ValueKey('harness-start-search')),
+            )
+            .focusNode!
+            .hasFocus,
+        isFalse,
+      );
+      expect(find.byKey(const ValueKey('harness-start-open')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('harness-start-new')));
       await tester.pumpAndSettle();
       expect(find.text('harness login\nharness start'), findsOneWidget);
       await tester.tap(find.text('Done'));

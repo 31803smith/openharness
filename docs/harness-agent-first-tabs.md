@@ -30,6 +30,8 @@ plus. Explicit **New Harness** and **Open Harness** buttons sit on the right.
 There is no floating +. Cmd-N opens creation directly; Cmd-O opens existing-work
 search. Each has its own popup, with no creation CTA or “or” divider in search,
 no Back to Search button in creation, and no stacked dialog on dismissal.
+The Flutter titlebar uses the same compact accent/secondary button treatment as
+AppKit, inherits the app's font, and exposes current shortcut hints on hover.
 The creation dialog title and CTA are **New Harness**. Cancel is removed; Escape
 and clicking outside dismiss it. Launch-in-progress and uncertain-outcome states
 retain their existing safeguards and recovery actions.
@@ -50,7 +52,7 @@ split position; dismissing creation still returns directly to the terminal.
 Native New Harness and Search Commands actions use the focused search field's
 actions too. Command search stays in that field, and creation closes its dropdown
 before opening the form. Native actions wait for the destination focus tree before
-handing keyboard ownership back to Flutter and preserve in-progress composition.
+handing keyboard ownership back to Flutter and preserve in-progress search composition.
 
 ## Tabs and menus
 

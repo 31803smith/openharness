@@ -1,10 +1,26 @@
 # Harness v2: goal, plan, and continuation handoff
 
-**Native entry correction:** Actual AppKit `commands` and `newAgent` messages
+**Current desktop regression checkpoint:** All **1,416 unit/widget checks** pass
+in `/private/tmp/harness-current-full-suite-after.log`. The one optional remote
+media integration placeholder is skipped without its CLI environment; that
+isolated test is being checked separately. The preceding run's ten failures were
+retired control/label expectations in boot, remote folders, analytics, results and
+responsive entry fixtures. They now test the current UI. All seven changed files
+analyze cleanly in `/private/tmp/harness-current-ui-analyze.log`.
+
+Current start-page renders were inspected at 1280×800, 760×900, 880×560 and
+600×900 with 1.7× text in `/private/tmp/harness-current-entry-captures/`.
+The Flutter titlebar now matches AppKit's compact New/Open colors and retains
+the app's font family. The device-link arrow is an icon instead of a font glyph.
+The **33 affected keyboard/first-use/layout checks** pass in
+`/private/tmp/harness-entry-visual-after.log`. These are widget renders with real
+metric-compatible fonts, not native macOS or Linux qualification.
+
+**Native entry correction:** `a64ab4e` is pushed. Actual AppKit `commands` and `newAgent` messages
 bypassed the focused inline picker. Regression checks reproduced a second search
 overlay and an inline result list left underneath creation. Native actions now
 use the same focused-region callbacks as keyboard input, wait for their focus
-handoff, and preserve active IME composition. The keyboard runtime fixture now
+handoff, and preserve active search IME composition. The keyboard runtime fixture now
 uses the current idle start page and separate dialogs. All **90 affected checks**
 pass in `/private/tmp/harness-native-search-after.log`; the **13 keyboard checks**
 also pass with explicit composition coverage in
@@ -32,8 +48,8 @@ brace-style infos in
 unchanged `app_state.dart` lines (2264 and 2932), with no errors or warnings;
 see `/private/tmp/harness-current-creation-recovery-analyze.log`.
 The prepared Release bundle includes these changes through `581d0a4`; the console
-remains locked and the running preview is unchanged. A full current-suite pass is still needed
-before claiming release readiness.
+remains locked and the running preview is unchanged. The full current suite is
+now green; native first-use, latency and Linux-host qualification remain open.
 
 **Keyboard creation checkpoint:** `98fc760` makes New Harness immediately usable
 from the keyboard. The folder control receives focus when the dialog mounts;

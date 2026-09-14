@@ -1460,18 +1460,45 @@ class _SwarmScreenState extends State<SwarmScreen> {
           onPressed: app.swarms.length < AppNotifier.maxSwarms ? _newTab : null,
           icon: const Icon(Icons.add, size: 18),
         ),
-        TextButton(
-          key: const ValueKey('swarm-new-harness-button'),
-          onPressed: _newAgent,
-          child: const Text('New Harness'),
-        ),
-        TextButton(
-          key: const ValueKey('swarm-open-harness-button'),
-          onPressed: _addAgent,
-          child: const Text('Open Harness'),
-        ),
+        _harnessButton(create: true),
+        const SizedBox(width: 8),
+        _harnessButton(create: false),
         const SizedBox(width: 6),
       ],
     ),
   );
+
+  Widget _harnessButton({required bool create}) {
+    final label = create ? 'New Harness' : 'Open Harness';
+    return Tooltip(
+      message: withEffectiveShortcutHint(
+        context,
+        label,
+        create ? ShortcutAction.newAgent : ShortcutAction.addAgent,
+      ),
+      child: TextButton(
+        key: ValueKey(
+          create ? 'swarm-new-harness-button' : 'swarm-open-harness-button',
+        ),
+        onPressed: create ? _newAgent : _addAgent,
+        style: TextButton.styleFrom(
+          minimumSize: Size(create ? 106 : 108, 28),
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          textStyle: Theme.of(context).textTheme.labelLarge?.copyWith(
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+          ),
+          backgroundColor: create
+              ? grid.AppPalette.swarmAccent
+              : grid.AppPalette.swarmSearchSurface,
+          foregroundColor: create
+              ? grid.AppPalette.swarmTabBar
+              : grid.AppPalette.swarmAccent,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+        ),
+        child: Text(label),
+      ),
+    );
+  }
 }
