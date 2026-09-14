@@ -1,9 +1,13 @@
 # Harness v2: goal, plan, and continuation handoff
 
-**Current desktop regression checkpoint:** All **1,416 unit/widget checks** pass
+**Current desktop regression checkpoint:** `67c20f4` is pushed. All **1,416 unit/widget checks** pass
 in `/private/tmp/harness-current-full-suite-after.log`. The one optional remote
-media integration placeholder is skipped without its CLI environment; that
-isolated test is being checked separately. The preceding run's ten failures were
+media integration placeholder is skipped without its CLI environment. With the
+current CLI enabled, all **four media integration checks** also pass in
+`/private/tmp/harness-current-media-smoke.log`: encrypted image/video transfer,
+cancellation cleanup, and cleanup after a lost connection. These use isolated
+identities, synthetic media, loopback transport and a stubbed OS launch boundary;
+they do not qualify real remote-machine reconnect. The preceding run's ten failures were
 retired control/label expectations in boot, remote folders, analytics, results and
 responsive entry fixtures. They now test the current UI. All seven changed files
 analyze cleanly in `/private/tmp/harness-current-ui-analyze.log`.
@@ -26,7 +30,7 @@ pass in `/private/tmp/harness-native-search-after.log`; the **13 keyboard checks
 also pass with explicit composition coverage in
 `/private/tmp/harness-native-search-composition.log`. Analysis reports no issues
 in `/private/tmp/harness-native-search-analyze.log`. The prepared Release below
-still predates this fix until its next refresh; no running app was changed.
+includes this fix; no running app was changed.
 
 **First-use audit:** `581d0a4` is pushed. All **16 current-flow checks** now pass in
 `/private/tmp/harness-current-first-use.log`, with no analysis issues in
@@ -47,7 +51,7 @@ receipt and never submits another launch. Analysis reports only two existing
 brace-style infos in
 unchanged `app_state.dart` lines (2264 and 2932), with no errors or warnings;
 see `/private/tmp/harness-current-creation-recovery-analyze.log`.
-The prepared Release bundle includes these changes through `581d0a4`; the console
+The prepared Release bundle includes these changes through `67c20f4`; the console
 remains locked and the running preview is unchanged. The full current suite is
 now green; native first-use, latency and Linux-host qualification remain open.
 
@@ -75,17 +79,20 @@ The existing guarantee that arrow navigation rebuilds only changed rows remains
 verified. Analysis of the five changed source/test files reports no issues in
 `/private/tmp/harness-start-search-analyze.log`.
 
-The latest Release build succeeds in `/private/tmp/harness-current-first-use-release.log`.
-Its framework and full bundle signatures verify at
+The latest Release build, through `67c20f4`, succeeds in
+`/private/tmp/harness-current-ui-release.log`. Both rebuilt frameworks verified
+before refreshing the outer ad-hoc signature; the full bundle then passed deep,
+strict signature verification at
 `/private/tmp/harness-pane-controls-release/Build/Products/Release/Harness.app`.
 **This newer bundle has not replaced the running preview yet.** Two exact-path
 CUA lookups returned `cgWindowNotFound`; the preview process was confirmed running
-(PID 92821 at the prior check, recheck before acting). The console again reports
+(PID 92821 confirmed after this build, recheck before acting). The console again reports
 `CGSSessionScreenIsLocked = Yes` after the latest build.
 Do not treat that as a stopped app or launch an old fixture. When accessible,
 use Quit and Keep Windows, replace only the current checkout's preview with the
-verified bundle, and check inline command entry/reopen plus New Harness initial
-focus and folder cancellation. The visual and terminal
+verified bundle, and check inline command entry/reopen from both keyboard and
+native menu, New Harness dismissal from inline search, initial folder focus and
+folder cancellation. The visual and terminal
 checks below describe the preceding `b4baf68` preview. Native latency benchmarking
 remains deferred.
 
