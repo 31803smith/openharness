@@ -91,6 +91,12 @@ export type RecentProvider = (sessionId: string, n: number) => Array<{ kind: str
 
 const HEARTBEAT_MS = 20_000
 const APP_PING_MS = 15_000
+// How long the opening handshake may take before the attempt is abandoned and retried. `ws` waits
+// forever by default, and the heartbeat below only starts on 'open' — so a TCP connection that came
+// up while the network was flapping but never got its upgrade answered sat in CONNECTING for hours,
+// `this.ws` set, every later connect() returning early, and the daemon reporting "cloud
+// reconnecting…" until someone restarted it.
+const HANDSHAKE_TIMEOUT_MS = 15_000
 const BASE_DELAY_MS = 1_000
 const MAX_DELAY_MS = 30_000
 const QUEUE_MAX = 2_000
@@ -555,7 +561,9 @@ export class BackendSocket {
       return
     }
     if (this.closed) { this.connecting = false; return }
-    const ws = new WebSocket(this.url, [token])
+    // On timeout `ws` emits 'error' ("Opening handshake has timed out") then 'close', which lands in
+    // onGone below and re-enters the ordinary backoff — the same path a refused connection takes.
+    const ws = new WebSocket(this.url, [token], { handshakeTimeout: HANDSHAKE_TIMEOUT_MS })
     this.ws = ws
     this.connecting = false
 

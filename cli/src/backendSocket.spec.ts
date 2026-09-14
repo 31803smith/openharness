@@ -19,7 +19,7 @@ const wsMock = vi.hoisted(() => {
     failNextSend: Error | null = null
     private handlers = new Map<string, Array<(...args: unknown[]) => void>>()
 
-    constructor(readonly url: string, readonly protocols: string[]) {
+    constructor(readonly url: string, readonly protocols: string[], readonly options?: { handshakeTimeout?: number }) {
       instances.push(this)
     }
 
@@ -57,6 +57,12 @@ const wsMock = vi.hoisted(() => {
     close(): void {
       this.readyState = MockWebSocket.CLOSED
       this.emit('close', 1006)
+    }
+
+    /** What `ws` does when `handshakeTimeout` elapses: abort the upgrade, then report the socket gone. */
+    handshakeTimeout(): void {
+      this.emit('error', new Error('Opening handshake has timed out'))
+      this.close()
     }
 
     terminate(): void {
@@ -99,6 +105,34 @@ describe('BackendSocket outbound queue', () => {
     expect((sent[0].frame as { type?: string }).type).toBe('turn_summary_pending')
     expect((sent[1].frame as { type?: string }).type).toBe('commander_event')
     expect(sent[1]).toMatchObject({ webEligible: false, commanderEligible: true })
+
+    await socket.stop()
+  })
+
+  it('bounds the opening handshake and reconnects when it times out', async () => {
+    // A connect attempt whose TCP side came up but whose upgrade was never answered used to sit in
+    // CONNECTING forever: no 'open', so no heartbeat to terminate it, and `this.ws` set, so every
+    // later connect() returned early. The daemon then showed "cloud reconnecting…" until restarted.
+    vi.useFakeTimers()
+    const socket = new BackendSocket('token')
+    socket.connect()
+    const ws1 = wsMock.instances[0]
+    expect(ws1.options?.handshakeTimeout).toBe(15_000)
+    expect(ws1.readyState).toBe(wsMock.MockWebSocket.CONNECTING)
+
+    // Still connecting: a second connect() must not open a competing socket …
+    socket.connect()
+    expect(wsMock.instances).toHaveLength(1)
+
+    // … but once the handshake is abandoned, the ordinary backoff schedules a fresh attempt.
+    ws1.handshakeTimeout()
+    expect(socket.isConnected()).toBe(false)
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(wsMock.instances).toHaveLength(2)
+    const ws2 = wsMock.instances[1]
+    expect(ws2.options?.handshakeTimeout).toBe(15_000)
+    ws2.open()
+    expect(socket.isConnected()).toBe(true)
 
     await socket.stop()
   })
