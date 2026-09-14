@@ -16,6 +16,7 @@ import 'package:harness/shortcuts/keymap_commands.dart';
 import 'package:harness/shortcuts/keymap_store.dart';
 import 'package:harness/stats/harness_stats.dart';
 import 'package:harness/terminal/terminal_font_store.dart';
+import 'package:harness/terminal/terminal_theme_store.dart';
 
 Map<String, num> distribution(List<int> times) {
   times.sort();
@@ -60,6 +61,7 @@ void main() {
       for (var sample = -20; sample < 100; sample++) {
         final storage = HarnessFileStore(directory: preferences);
         final font = TerminalFontStore(storage: storage);
+        final scheme = TerminalThemeStore(storage: storage);
         final appearance = AppearancePrefsStore(storage: storage);
         final stats = HarnessStats(store: statsStore);
         final keymapStore = KeymapStore(
@@ -75,6 +77,7 @@ void main() {
           await Future.wait([
             loadPersistedSettings(
               terminalFont: font,
+              terminalTheme: scheme,
               appearance: appearance,
               stats: stats,
             ),
@@ -97,6 +100,7 @@ void main() {
           keymapStore.dispose();
           stats.dispose();
           font.dispose();
+          scheme.dispose();
           appearance.dispose();
         }
       }
