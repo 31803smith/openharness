@@ -6,6 +6,17 @@ Updated 2026-09-14 after integrating the continuation into main. This is a worki
 
 ## Continue directly on main
 
+- Picker opening/cancellation no longer rebuilds the retained Swarm canvas.
+  Add and Navigate reuse validated catalogs across openings, including shared
+  inline/floating/split Add data. Output excerpts remain fresh and canceled
+  queries/selections remain local to their picker. The paired headless fixture
+  measured warm Add opening at 22.006 ms median versus 26.273 ms. Query timing
+  was worse; full scope and tails are in the performance record. Seven new
+  regressions pass; the full desktop suite passes **1,309 tests**, one existing
+  skip, with no analyzer errors/warnings and 14 existing infos. Preserved the
+  team's independent device UI change `5f8baac` by fast-forwarding main.
+  The normal macOS arm64 Release build succeeds. Verification artifacts:
+  `/private/tmp/harness-add-open-{full-tests,analyze,release-build}.log`.
 - Improved Add's arrow-key frame work by reusing unchanged result rows and
   leaving the text editor alone when only the highlight changes. In the paired
   2,000-agent headless fixture, arrow selection median fell 8.592 to 4.714 ms;

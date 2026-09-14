@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:harness/core/models.dart';
 import 'package:harness/screens/swarm_screen.dart';
 import 'package:harness/shared/theme/app_theme.dart' as grid;
 import 'package:harness/shared/theme/color_palette.dart';
@@ -8,12 +9,227 @@ import 'package:harness/state/app_state.dart';
 import 'package:harness/state/swarm_navigation.dart';
 import 'package:harness/terminal/terminal_binary.dart';
 import 'package:harness/widgets/swarm_search_input.dart';
+import 'package:harness/widgets/swarm_switcher.dart';
+import 'package:xterm/xterm.dart';
 
 import 'swarm_interactions_test.dart' show chord;
 import 'swarm_screen_test.dart' show mount, terminal;
 import 'swarm_state_test.dart' show createApp;
 
+class _CatalogMachine extends MachineState {
+  _CatalogMachine(super.machine);
+  var projectReads = 0;
+
+  @override
+  AgentProject? projectOf(Agent agent) {
+    projectReads++;
+    return super.projectOf(agent);
+  }
+}
+
 void main() {
+  for (final add in [false, true]) {
+    testWidgets(
+      'reopened ${add ? 'Add' : 'Navigate'} sees changed metadata and membership',
+      (tester) async {
+        final app = createApp();
+        final machine = app.machineStates['m']!;
+        machine.nodeOnline = true;
+        const original = Agent(
+          id: 'a0',
+          name: 'Original agent',
+          engine: 'codex',
+          terminalAvailable: true,
+          project: AgentProject(
+            name: 'Workbench',
+            cwd: '/work/workbench',
+            branch: 'before-branch',
+          ),
+        );
+        machine.agents = [
+          original,
+          ...machine.agents.where((agent) => agent.id != original.id),
+        ];
+        final input = <TerminalBinaryFrame>[];
+        app.adoptSessionForTest(terminal('a0', input));
+        final source = app.activeSwarm;
+        app.newSwarm();
+        app.adoptSessionForTest(terminal('a69', input));
+        final target = app.activeSwarm;
+        await mount(tester, app);
+        final field = find.byKey(const ValueKey('swarm-search-input'));
+        Future<void> open() => chord(
+          tester,
+          add ? LogicalKeyboardKey.keyN : LogicalKeyboardKey.keyP,
+        );
+        SwarmSearchKeys keys() => tester.widget<SwarmSearchKeys>(
+          find.ancestor(of: field, matching: find.byType(SwarmSearchKeys)),
+        );
+        await open();
+        await tester.enterText(field, 'before-branch');
+        await tester.pump();
+        expect(
+          keys().search!.rows.singleWhere((row) => row.agentId == 'a0').title,
+          'Original agent',
+        );
+        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+        await tester.pump();
+
+        await app.addAgentToSwarm('m', 'a0', swarmId: target.id);
+        machine.agents = [
+          const Agent(
+            id: 'a0',
+            name: 'Latest agent',
+            engine: 'codex',
+            terminalAvailable: true,
+            project: AgentProject(
+              name: 'Workbench',
+              cwd: '/work/workbench',
+              branch: 'after-branch',
+            ),
+          ),
+          ...machine.agents.where((agent) => agent.id != original.id),
+        ];
+        machine.nodeOnline = false;
+        app.renameSwarm(source.id, 'Renamed swarm');
+        await tester.pump();
+        await open();
+        await tester.enterText(field, 'after-branch');
+        await tester.pump();
+        final search = keys().search!;
+        final rows = search.rows.where((row) => row.agentId == 'a0');
+        expect(rows, hasLength(add ? 1 : 2));
+        expect(rows.every((row) => row.title == 'Latest agent'), isTrue);
+        expect(rows.every((row) => row.detail.contains('Offline')), isTrue);
+        expect(search.targetId, target.id);
+        if (add) {
+          expect(search.alreadyHere(rows.single), isTrue);
+          expect(search.canSubmit(rows.single), isFalse);
+        } else {
+          expect(rows.map((row) => row.swarmId).toSet(), {
+            source.id,
+            target.id,
+          });
+          expect(
+            rows.singleWhere((row) => row.swarmId == source.id).swarmName,
+            'Renamed swarm',
+          );
+        }
+        await tester.enterText(field, 'before-branch');
+        await tester.pump();
+        expect(search.rows.where((row) => row.agentId == 'a0'), isEmpty);
+        expect(input, isEmpty);
+        await tester.pumpWidget(const SizedBox());
+        app.dispose();
+      },
+    );
+  }
+
+  testWidgets(
+    'reopening Add reuses catalog work but refreshes output and choices',
+    (tester) async {
+      final app = createApp();
+      final machine = _CatalogMachine(app.machineStates['m']!.machine)
+        ..agents = app.machineStates['m']!.agents
+        ..nodeOnline = true;
+      app.machineStates['m'] = machine;
+      final input = <TerminalBinaryFrame>[];
+      final session = terminal('a0', input);
+      session.terminal.write('Earlier useful output.\r\n');
+      app.adoptSessionForTest(session);
+      app.newSwarm();
+      app.adoptSessionForTest(terminal('a69', input));
+      await mount(tester, app);
+      final field = find.byKey(const ValueKey('swarm-search-input'));
+      SwarmSearchInput inputWidget() => tester.widget<SwarmSearchInput>(
+        find.ancestor(of: field, matching: find.byType(SwarmSearchInput)),
+      );
+      await chord(tester, LogicalKeyboardKey.keyN);
+      await tester.enterText(field, 'Agent 0');
+      await tester.pump();
+      final first = inputWidget().search!;
+      final oldRow = first.selected!;
+      expect(oldRow.agentId, 'a0');
+      expect(first.preview!.text, contains('Earlier useful output.'));
+      first.toggle();
+      await tester.pump();
+      expect(first.checkedCount, 1);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
+      session.terminal.write('Newest useful output.\r\n');
+      machine.projectReads = 0;
+      await chord(tester, LogicalKeyboardKey.keyN);
+      expect(tester.widget<TextField>(field).controller!.text, isEmpty);
+      await tester.enterText(field, 'Agent 0');
+      await tester.pump();
+      final next = inputWidget().search!;
+      expect(next.checkedCount, 0);
+      expect(next.preview!.text, contains('Newest useful output.'));
+      expect(next.selected, same(oldRow));
+      expect(machine.projectReads, 0, reason: 'Agent metadata did not change');
+      expect(input, isEmpty);
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+    },
+  );
+
+  for (final native in [false, true]) {
+    for (final add in [false, true]) {
+      testWidgets(
+        '${add ? 'Add' : 'Navigate'} opening and cancel keep the canvas built (native $native)',
+        (tester) async {
+          const channel = MethodChannel('harness/swarm_tabs');
+          final messenger = tester.binding.defaultBinaryMessenger;
+          messenger.setMockMethodCallHandler(channel, (_) async => null);
+          addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+          final app = createApp();
+          final input = <TerminalBinaryFrame>[];
+          app.adoptSessionForTest(terminal('a69', input));
+          await mount(tester, app, nativeTabs: native);
+          final terminalView = tester.widget<TerminalView>(
+            find.byType(TerminalView),
+          );
+          var canvasBuilds = 0;
+          debugOnRebuildDirtyWidget = (element, _) {
+            if (element.widget is SwarmScreen) canvasBuilds++;
+          };
+          try {
+            await chord(
+              tester,
+              add ? LogicalKeyboardKey.keyN : LogicalKeyboardKey.keyP,
+            );
+            expect(
+              tester
+                  .widget<TextField>(
+                    find.byKey(const ValueKey('swarm-search-input')),
+                  )
+                  .focusNode!
+                  .hasFocus,
+              isTrue,
+            );
+            expect(canvasBuilds, 0, reason: 'The canvas did not change');
+            await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+            await tester.pump();
+            expect(canvasBuilds, 0, reason: 'Cancel only removes the overlay');
+          } finally {
+            debugOnRebuildDirtyWidget = null;
+          }
+          expect(terminalView.focusNode!.hasFocus, isTrue);
+          expect(
+            tester.widget<TerminalView>(find.byType(TerminalView)).controller,
+            same(terminalView.controller),
+          );
+          expect(input, isEmpty);
+          await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+          await tester.pump();
+          expect(input.single.bytes, [27, 91, 68]);
+          await tester.pumpWidget(const SizedBox());
+          app.dispose();
+        },
+      );
+    }
+  }
+
   testWidgets('Add arrow movement rebuilds only the changed result rows', (
     tester,
   ) async {

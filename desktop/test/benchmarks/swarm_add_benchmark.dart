@@ -55,11 +55,17 @@ void main() {
     addTearDown(() => messenger.setMockMethodCallHandler(native, null));
     await mount(tester, app, nativeTabs: true);
 
+    var openDispatchMicros = 0;
+    var openFrameMicros = 0;
     Future<void> open() async {
+      final watch = Stopwatch()..start();
       await tester.sendKeyDownEvent(LogicalKeyboardKey.meta);
       await tester.sendKeyEvent(LogicalKeyboardKey.keyN);
       await tester.sendKeyUpEvent(LogicalKeyboardKey.meta);
+      openDispatchMicros = watch.elapsedMicroseconds;
+      watch.reset();
       await tester.pump();
+      openFrameMicros = watch.elapsedMicroseconds;
     }
 
     Future<void> close() async {
@@ -96,7 +102,17 @@ void main() {
       return counts;
     }
 
-    final opening = await measure((_) => open(), after: close);
+    final dispatchTimes = <int>[];
+    final frameTimes = <int>[];
+    final opening = await measure((i) async {
+      await open();
+      if (i >= 20) {
+        dispatchTimes.add(openDispatchMicros);
+        frameTimes.add(openFrameMicros);
+      }
+    }, after: close);
+    final openingRebuilds = await rebuilds(open);
+    final closingRebuilds = await rebuilds(close);
     await open();
     final field = find.byKey(const ValueKey('swarm-search-input'));
     final controller = tester
@@ -128,7 +144,7 @@ void main() {
     expect(target.panes, panes);
     expect(tester.takeException(), isNull);
     debugPrint(
-      'SWARM_BENCH ${jsonEncode({'kind': 'headless_debug_cpu', 'operation': 'add_picker_frame', 'agents': 2000, 'machines': 1, 'projects': 50, 'retainedTerminals': 5, 'scrollbackLinesPerTerminal': 1000, 'viewport': '1280x800', 'nativeBridge': 'stubbed', 'openAndFrame': opening, 'queryAndFrame': typing, 'arrowAndFrame': arrows, 'queryRebuilds': typingRebuilds, 'arrowRebuilds': arrowRebuilds})}',
+      'SWARM_BENCH ${jsonEncode({'kind': 'headless_debug_cpu', 'operation': 'add_picker_frame', 'agents': 2000, 'machines': 1, 'projects': 50, 'retainedTerminals': 5, 'scrollbackLinesPerTerminal': 1000, 'viewport': '1280x800', 'nativeBridge': 'stubbed', 'openAndFrame': opening, 'openDispatch': distribution(dispatchTimes), 'openFrame': distribution(frameTimes), 'queryAndFrame': typing, 'arrowAndFrame': arrows, 'openingRebuilds': openingRebuilds, 'closingRebuilds': closingRebuilds, 'queryRebuilds': typingRebuilds, 'arrowRebuilds': arrowRebuilds})}',
     );
     await close();
     await tester.pumpWidget(const SizedBox());

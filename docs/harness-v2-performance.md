@@ -12,6 +12,48 @@ It prints `SWARM_BENCH` JSON records. Its filename deliberately does not end in 
 
 ## Current continuation benchmark (2026-09-14)
 
+### Warm picker reopening
+
+Add and Navigate no longer rebuild the unchanged Swarm screen when their
+overlay opens or closes. Their focus nodes and overlay update independently.
+The workspace also retains its validated Add/location catalogs across openings;
+inline Add, the floating button and splits share the Add catalog. This retains
+normalized metadata only. Every read still checks discovery, project, location
+and membership identity; each new picker owns its query, checked selection and
+fresh output excerpt.
+
+The same 2,000-agent/five-terminal fixture below now separates keyboard dispatch
+and setup from the following frame pump. There are 20 warmups and 100 samples,
+with repeated opening/canceling on an unchanged workspace. This measures **warm
+reopening**, not app startup or a cold/invalidated catalog. Runs did not overlap
+this session's correctness checks or builds.
+
+| Operation | Before median / p95 / p99 | After median / p95 / p99 |
+| --- | ---: | ---: |
+| Warm Cmd-N open + frame | 26.273 / 32.719 / 73.537 ms | 22.006 / 27.653 / 52.138 ms |
+| Opening: dispatch and setup | 6.258 / 7.262 / 9.023 ms | 2.141 / 3.374 / 3.548 ms |
+| Opening: frame pump | 20.033 / 26.514 / 66.335 ms | 19.729 / 25.161 / 49.592 ms |
+| Query edit + frame | 10.779 / 15.600 / 19.924 ms | 11.784 / 16.763 / 20.294 ms |
+| Arrow selection + frame | 4.628 / 6.527 / 7.866 ms | 4.757 / 5.932 / 7.623 ms |
+
+Warm opening's median fell about 16%. Query timing was worse; no new query or
+arrow improvement is claimed. Removing the redundant canvas build alone had a
+25.608 ms opening median, before catalog reuse. Rebuild observations fell from
+950 to 877 on open and 100 to 27 on cancel; SwarmScreen, Scaffold and PaneGrid
+went from one to zero. Retained TerminalPanel/TerminalView builds stayed zero.
+Headless debug/JIT and shared-host variation limit conclusions about tails or
+native performance. These are not input-to-display latency measurements.
+
+Seven added regressions cover both picker kinds and chrome configurations,
+Escape/first-terminal-key ownership, fresh output with cleared canceled choices,
+and metadata/offline/membership changes while closed. An unchanged reopen makes
+zero project-metadata reads. All **1,309 desktop tests** pass with one existing
+skip; analysis has zero errors/warnings and 14 existing infos.
+The normal macOS arm64 Release build succeeds; no running app was restarted.
+Benchmark logs: `/private/tmp/harness-add-open-{stages-before,canvas-after,cache-after}.log`.
+Checks: `/private/tmp/harness-add-open-{full-tests,analyze,release-build}.log`.
+The initial unstaged trace is `/private/tmp/harness-add-open-before.log`.
+
 ### Add picker frame work and keyboard focus
 
 Add now reuses up to 48 recently built result rows. Moving the highlight rebuilds

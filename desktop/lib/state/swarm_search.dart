@@ -20,7 +20,11 @@ class SwarmSearchController extends ChangeNotifier {
     this.adding = false,
     this.navigating = false,
     this.split,
-  }) : targetId = app.activeSwarmId,
+    SwarmSearchCatalog? catalog,
+    SwarmLocationCatalog? locations,
+  }) : _cache = catalog ?? SwarmSearchCatalog(),
+       _locations = locations ?? SwarmLocationCatalog(),
+       targetId = app.activeSwarmId,
        targetName = app.activeSwarm.name {
     _refresh();
     app.addListener(_refresh);
@@ -41,8 +45,10 @@ class SwarmSearchController extends ChangeNotifier {
   bool get allowsCommands => split == null && history == null;
   bool get isCommandMode => allowsCommands && query.trimLeft().startsWith('>');
   final String targetId, targetName;
-  final _cache = SwarmSearchCatalog();
-  final _locations = SwarmLocationCatalog();
+  // The workspace can retain normalized metadata across picker openings. Each
+  // read still validates its snapshot; query, selection and output stay local.
+  final SwarmSearchCatalog _cache;
+  final SwarmLocationCatalog _locations;
   List<SwarmDestination> _catalog = const [];
   Set<String> _catalogIds = const {};
   Set<String> _commandIds = const {};
