@@ -6,6 +6,17 @@ Updated 2026-09-14 after integrating the continuation into main. This is a worki
 
 ## Continue directly on main
 
+- Saved the Add/shortcut checkpoint as `5f3ecae`, then merged the team's
+  current main through `76a469b` as `f514140`. The merge was clean and preserves
+  its Settings toolbar button, independent terminal schemes, dial changes,
+  error messages and public bundle-name cleanup. All **1,299 desktop tests**
+  pass after integration, with one existing skip. Analysis remains at zero
+  errors/warnings and 14 existing infos; 51 decoder and 347 native AppKit
+  checks pass against the combined sources. Logs:
+  `/private/tmp/harness-revised-add-integrated-{tests,analyze,native}.log`.
+  The integrated macOS arm64 Release build also succeeds with the renamed
+  bundle ID (`/private/tmp/harness-revised-add-integrated-build.log`). The app
+  was not restarted; real native timing/reconnect qualification remains open.
 - Corrected Navigate's hierarchy: each swarm appears once as a selectable
   parent, with matching agents indented below it. Agent-only queries retain
   their swarm context and keep the best matching agent selected for Enter.

@@ -30,6 +30,12 @@ Research must lead to justified improvements, not feature accumulation.
 - Continue on **`main`**, tracking `origin/main`. The user's latest instruction
   is to work, commit, and push directly on main from now on. This supersedes
   the earlier preference for creating a fresh feature branch after each merge.
+- **`5f3ecae`** saves Cmd-N Add, the prominent New agent button, optional
+  multi-select, visible machine/project starters and the larger floating-button
+  inset. **`f514140`** preserves the team's concurrent main through `76a469b`,
+  including its Settings toolbar button, terminal color schemes, dial work,
+  error messages and public bundle-name cleanup. No teammate branch was merged
+  separately or retired.
 - Only consolidate this user's own branches and PRs. The authenticated account
   is `deehw`, matching this session's commits and PRs #31/#34. The user explicitly
   excluded other team members' branches from merging or retirement. The audit
@@ -224,7 +230,8 @@ start page. With no existing work, it leads with **Start with one agent**, a
 static workspace example, **Choose folder…** and separate **Clone repository…**.
 Available existing work gets Add search, three direct agent choices and New
 agent. Machines and projects are visible as one-click swarm starters; the
-first agent opens immediately and optional multi-select lives in shared Add. A single usable local computer no longer needs a Machine dropdown
+first agent opens immediately and optional multi-select lives in shared Add.
+A single usable local computer no longer needs a Machine dropdown
 in the creation form. Delayed discovery enables Enter on the primary action
 without stealing an explicit focus choice. Offline/linking cases expose their
 next action. Large text stacks the layout, and New agent now uses the shared
@@ -235,7 +242,8 @@ unverified; do not infer them from these UI changes.
 **Archived drafts:** both are superseded. The onboarding ideas were adapted into
 the common page, without adding another first-tab-only component.
 
-**Latest verification:** 1,295 desktop tests passed with one existing skip.
+**Latest verification:** after integrating the team's current main, 1,299
+desktop tests passed with one existing skip.
 Analyzer reports zero errors/warnings and 14 existing informational diagnostics
 (12 vendored, two inherited from main). Native checks passed 51 keymap decoder
 and 347 AppKit assertions, including the exported Dart keymap and hidden window
@@ -243,10 +251,9 @@ layout. The normal macOS arm64 Release build succeeded with
 `FLUTTER_TARGET=lib/main.dart`. Synthetic real-font captures of the visible
 starters, Add, multi-select and Navigate were reviewed at 1280×800 and 880×560
 with 2× text. These do not measure native display latency or real reconnect.
-Logs: `/private/tmp/harness-revised-add-full-tests-final.log`,
-`/private/tmp/harness-revised-add-analyze-final.log`,
-`/private/tmp/harness-revised-add-keymap-native.log`, and
-`/private/tmp/harness-revised-add-release-build.log`.
+Integrated test/native/analysis/build logs:
+`/private/tmp/harness-revised-add-integrated-{tests,analyze,native,build}.log`.
+The integrated Release build uses the new `ai.autonomous.harness` bundle ID.
 Navigate/Add timings and their exact scope are in
 [the performance record](harness-v2-performance.md). The new navigation catalog
 build measured 0.188 ms median / 0.259 ms p95 in the earlier integrated run for
@@ -343,7 +350,11 @@ that its isolated window can become active/key.
    local/remote agents: startup, delayed snapshots, resizing, returning to a
    scrolled view, reconnect, paste, selection, and IME.
 4. **Measure native responsiveness** under representative retained/output load,
-   then close remaining visual/platform/release qualification gaps. Maintain
+   first updating the isolated benchmark's identity checks for the team's
+   new `ai.autonomous.harness` macOS bundle identifier (Linux now uses
+   `com.autonomous.harness` and executable `harness`). Earlier compatibility
+   checks used the old internal `.v2` identifier; do not reuse that calibration.
+   Then close remaining visual/platform/release qualification gaps. Maintain
    the main-branch handoff and keep it honest about what's still unverified.
 
 ## Acceptance criteria
