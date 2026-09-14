@@ -13,6 +13,7 @@
  */
 import { homedir } from 'node:os'
 import type { AgentEngine } from '../engines/types.js'
+import type { GridLaunchOverride } from './gridLaunch.js'
 import type { RegisteredSession } from './registry.js'
 import type { TerminalBackend } from './terminalBackend.js'
 import type { TerminalCreateResult, TmuxRuntimeRef } from './terminalTypes.js'
@@ -28,6 +29,7 @@ export interface CreateAgentPaneDeps {
     primaryRuntimeKey?: string
     cwd?: string | null
     grid?: { baseUrl: string; model: string | null } | null
+    gridLaunch?: GridLaunchOverride | null
     codexHome?: string | null
     bypassPermission?: boolean
   }) => RegisteredSession | null }
@@ -39,6 +41,8 @@ export interface CreateAgentPaneDeps {
   argv: string[]
   env?: Record<string, string>
   grid?: { baseUrl: string; model: string | null } | null
+  /** The grid launch behind `grid`, credential included — what restore/restart relaunch the pane with. */
+  gridLaunch?: GridLaunchOverride | null
   /** The CODEX_HOME folder this agent was launched against, if the caller chose one; codex only. */
   codexHome?: string | null
   maxAttempts?: number
@@ -72,6 +76,7 @@ export async function createAndRegisterPane(deps: CreateAgentPaneDeps): Promise<
       primaryRuntimeKey: terminalRouteKey(spawned.runtime),
       cwd: deps.cwd,
       grid: deps.grid,
+      gridLaunch: deps.gridLaunch,
       codexHome: deps.codexHome,
       bypassPermission: deps.bypassPermission,
     })

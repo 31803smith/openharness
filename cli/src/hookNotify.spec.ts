@@ -829,6 +829,72 @@ describe('hook notify terminal scope', () => {
     expect(JSON.parse(readFileSync(join(dataDir, 'registry.json'), 'utf-8'))).toEqual([{ sessionId: 'maybe-alive' }])
   })
 
+  it('carries what the daemon chose at launch through an offline re-register', async () => {
+    // A hook arriving while the daemon is down rebuilds the row. The grid launch (key included), the
+    // Codex profile, the bypass flag and the observed grid are not on the process or in the hook body
+    // — they must come from the row being replaced, or this becomes the one write that strips them
+    // and the next restart relaunches the agent on the wrong login.
+    const dir = mkdtempSync(join(tmpdir(), 'adapter-hook-carry-'))
+    tmpDirs.push(dir)
+    const claudeProjectsDir = join(dir, 'claude-projects')
+    const dataDir = join(dir, 'data')
+    const transcriptPath = join(claudeProjectsDir, 'demo', 'session-1.jsonl')
+    mkdirSync(join(claudeProjectsDir, 'demo'), { recursive: true })
+    mkdirSync(dataDir, { recursive: true })
+    chmodSync(dataDir, 0o755)
+    writeFileSync(transcriptPath, '{}\n')
+    const gridLaunch = { networkId: 'grid-abc', networkName: 'Team grid', baseUrl: 'https://grid.example/grid-abc/relay/v1', apiKey: 'gridkey-abc123' }
+    writeLegacyStateFile(join(dataDir, 'registry.json'), JSON.stringify([{
+      schemaVersion: 2,
+      active: true,
+      launch: { state: 'starting' },
+      agentId: 'agent-created',
+      sessionId: '',
+      boundAt: null,
+      engine: 'claude',
+      gateway: null,
+      grid: { baseUrl: gridLaunch.baseUrl, model: null },
+      gridLaunch,
+      codexHome: null,
+      bypassPermission: true,
+      transcriptPath: null,
+      projectDir: 'demo',
+      cwd: '/tmp/demo',
+      runtimes: [{ backend: 'tmux', paneId: '%7' }],
+      primaryRuntimeKey: 'tmux\u0000%7',
+      tmuxPane: '%7',
+      source: null,
+      title: null,
+      model: null,
+      cliVersion: null,
+      processIdentity: { pid: 7001, executable: 'claude', startMarker: 'Mon Aug 10 10:00:01 2026' },
+      registeredAt: 1,
+      updatedAt: 1,
+      lastHookAt: 1,
+      lastTranscriptAt: 1,
+    }]))
+
+    await runHook({
+      port: 9,
+      tmuxPane: '%7',
+      processEngine: 'claude',
+      dataDir,
+      claudeProjectsDir,
+      input: { hook_event_name: 'SessionStart', session_id: 'session-1', transcript_path: transcriptPath, cwd: '/tmp/demo' },
+    })
+
+    const registry = JSON.parse(readFileSync(join(dataDir, 'registry.json'), 'utf-8'))
+    expect(registry).toHaveLength(1)
+    expect(registry[0]).toMatchObject({
+      agentId: 'agent-created',
+      sessionId: 'session-1',
+      grid: { baseUrl: gridLaunch.baseUrl, model: null },
+      gridLaunch,
+      bypassPermission: true,
+    })
+    expect(registry[0]).not.toHaveProperty('launch')
+  })
+
   it('drops stale registry entries when boot marker predates this boot', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'adapter-hook-reboot-'))
     tmpDirs.push(dir)

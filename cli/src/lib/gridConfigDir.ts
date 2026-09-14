@@ -8,7 +8,8 @@
  * directory undoes the whole thing.
  *
  * Nothing written here is secret. A provider block references the key through an environment
- * variable; the key itself only ever lives in the process environment.
+ * variable; the key itself lives in the process environment — and, so a relaunch can put it back
+ * there, in the registry row (`RegisteredSession.gridLaunch`), never in these files.
  */
 
 import { lstat, mkdir, readdir, readlink, rm, stat, symlink, writeFile } from 'node:fs/promises'

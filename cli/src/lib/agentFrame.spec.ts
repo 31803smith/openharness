@@ -26,6 +26,14 @@ describe('agentFrame', () => {
       .toMatchObject({ grid: assignment })
   })
 
+  it('never carries the grid launch — the key stays in the registry', async () => {
+    const row = session(assignment)
+    row.gridLaunch = { networkId: 'grid-abc', networkName: 'Team grid', baseUrl: assignment.baseUrl, apiKey: 'gridkey-SECRET' }
+    const frame = await agentFrame(row, { selectedModel: null, terminalAvailable: true })
+    expect(frame).not.toHaveProperty('gridLaunch')
+    expect(JSON.stringify(frame)).not.toContain('gridkey-SECRET')
+  })
+
   it('reports no assignment as null rather than omitting the field', async () => {
     const frame = await agentFrame(session(null), { selectedModel: null, terminalAvailable: true })
     expect(frame).toHaveProperty('grid', null)

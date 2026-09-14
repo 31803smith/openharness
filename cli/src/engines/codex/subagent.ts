@@ -1,4 +1,5 @@
 import { readFileSync } from 'fs'
+import { join } from 'path'
 import type { SessionEvent } from '../../lib/normalize.js'
 import { resolveCodexRollout } from './rollout.js'
 
@@ -222,4 +223,18 @@ export function readChildRollout(file: string): CodexSubagentInfo | null {
 export const resolveCodexSubagent: CodexSubagentResolver = (threadId) => {
   const file = resolveChildRollout(threadId)
   return file ? readChildRollout(file) : null
+}
+
+/**
+ * The resolver for an agent on a Codex PROFILE: its child rollouts live under that profile's
+ * `sessions/`, not the default one, so the default resolver would answer every Task card with
+ * "history unreadable". Null/undefined = the default profile = the default resolver.
+ */
+export function codexSubagentResolverFor(codexHome: string | null | undefined): CodexSubagentResolver {
+  if (!codexHome) return resolveCodexSubagent
+  const root = join(codexHome, 'sessions')
+  return (threadId) => {
+    const file = resolveChildRollout(threadId, root)
+    return file ? readChildRollout(file) : null
+  }
 }

@@ -142,8 +142,13 @@ claude under a terminal backend ──writes──▶ ~/.claude/projects/**.json
 - **Agents survive a reboot.** The registry outlives the tmux server. On start, every registered agent
   whose pane is gone (a reboot, a `tmux kill-server`) gets a new pane running the same engine in the
   same folder, resuming its engine session when it has one, under the same agent id — so the app's
-  tiles reattach by themselves. Agents that were pointed at a grid are not restored (the launch
-  credential is never persisted), and an engine with no resume flag (devin) comes back fresh.
+  tiles reattach by themselves. An agent that was pointed at a grid comes back on that grid: the
+  registry row keeps the launch it was created or retargeted with (`gridLaunch`, key included, in the
+  0600 `registry.json`), and restore, `agent_restart` and the offline hook fallback all reuse it — a
+  relaunch on the engine's own login would spend the wrong account while looking identical. A Codex
+  profile agent comes back under its `CODEX_HOME` with its hooks installed. A grid row written before
+  the launch was persisted is not relaunched; it is marked `GRID_CREDENTIAL_REQUIRED` instead. An
+  engine with no resume flag (devin) comes back fresh.
 - **Hooks bind mutable engine sessions** to the process agent using authenticated tmux and/or Herdr
   runtime hints plus verified caller ancestry. Hook socket paths are lookup hints only. They do not
   require `MACHINE_ID`. `SessionStart` and catch hooks attach transcript/store metadata; `SessionEnd` only

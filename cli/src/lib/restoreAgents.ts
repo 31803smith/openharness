@@ -19,6 +19,12 @@
  *   3. The row keeps `launch: starting` and only gets its process identity from here. The reconcile
  *      pass after the release then matches the process, sees a launch in progress, and does the
  *      full ready → attach → announce sequence it already does for `agent_create`.
+ *
+ * A grid agent comes back onto its grid: the registry kept the launch it was created or retargeted
+ * with (`gridLaunch`, credential included), and `buildLaunch` turns that back into the same env and
+ * argv `agent_create` used. A row that only knows WHERE it pointed (`grid` without `gridLaunch`,
+ * written before the credential was persisted) is not relaunched — on the engine's own login it would
+ * spend the wrong account while looking identical — and is marked so the app can say why.
  */
 
 import type { AgentEngine } from '../engines/types.js'
@@ -30,6 +36,11 @@ export interface RestoreLaunch {
   argv: string[]
   env?: Record<string, string>
 }
+
+export type RestoreLaunchResult = RestoreLaunch | { error: string; detail: string }
+
+/** The row knows it was on a grid but not how to get back there. */
+export const GRID_CREDENTIAL_REQUIRED = 'GRID_CREDENTIAL_REQUIRED'
 
 export interface RestoreAgentsDeps {
   registry: {
@@ -46,7 +57,9 @@ export interface RestoreAgentsDeps {
   /** The engine process still running in this row's pane, or null when tmux does not know the pane
    *  at all — including when no tmux server is running — or the pane has become something else. */
   liveProcess: (entry: RegisteredSession, runtime: TmuxRuntimeRef) => Promise<ProcessIdentity | null>
-  buildLaunch: (entry: RegisteredSession, opts: { resumeSessionId?: string }) => RestoreLaunch
+  /** The pane's launch — engine argv plus whatever puts it back on its grid / profile. A grid the
+   *  machine cannot honour (unsupported engine, tmux too old, config dir unwritable) is a refusal. */
+  buildLaunch: (entry: RegisteredSession, opts: { resumeSessionId?: string }) => Promise<RestoreLaunchResult>
   createPane: (entry: RegisteredSession, launch: RestoreLaunch) => Promise<
     | { ok: true; runtime: TmuxRuntimeRef }
     | { ok: false; reason: string }
@@ -126,10 +139,22 @@ export async function restoreAgents(deps: RestoreAgentsDeps): Promise<RestoreSum
       if (!entry.processIdentity) deps.registry.updateProcessIdentity(entry.agentId, live)
       continue
     }
-    // The registry keeps only where a grid agent pointed, never the credential the launch needs —
-    // and launching it on the engine's own login instead would spend the wrong account while
-    // looking identical. Refusing is the rule gridLaunch.ts already sets.
-    if (entry.grid) { summary.skipped.push({ agentId: entry.agentId, reason: 'grid agent; credential not persisted' }); continue }
+    // A grid row without its launch: written before the credential was persisted, or a grid agent
+    // discovery adopted from a pane the daemon never launched (it saw the endpoint, never the key).
+    // Launching it on the engine's own login instead would spend the wrong account while looking
+    // identical — refusing is the rule gridLaunch.ts already sets. Marked, not just skipped: the row
+    // has no pane to come back to, and the app should be able to say why before discovery lets it go.
+    if (entry.grid && !entry.gridLaunch) {
+      const reason = 'grid agent; credential not persisted'
+      summary.skipped.push({ agentId: entry.agentId, reason })
+      deps.registry.setLaunch(entry.agentId, {
+        state: 'failed',
+        error: GRID_CREDENTIAL_REQUIRED,
+        detail: `${entry.engine} was on a grid, but this machine no longer holds the credential to put it back there. Create it again from the app.`,
+      })
+      deps.log(`[restore] ${entry.engine} · agent ${entry.agentId} · skipped · ${reason}`)
+      continue
+    }
     missing.push({ entry, runtime })
   }
   if (!missing.length) return summary
@@ -142,7 +167,13 @@ export async function restoreAgents(deps: RestoreAgentsDeps): Promise<RestoreSum
       // into this agent (route adoption requires either no identity or a matching pid).
       deps.registry.clearProcessIdentity(entry.agentId)
       const resumeSessionId = entry.sessionId || undefined
-      const launch = deps.buildLaunch(entry, resumeSessionId ? { resumeSessionId } : {})
+      const launch = await deps.buildLaunch(entry, resumeSessionId ? { resumeSessionId } : {})
+      if ('error' in launch) {
+        summary.failed.push({ agentId: entry.agentId, reason: launch.detail })
+        deps.registry.setLaunch(entry.agentId, { state: 'failed', error: launch.error, detail: launch.detail })
+        deps.log(`[restore] ${entry.engine} · agent ${entry.agentId} · could not build its launch · ${launch.detail}`)
+        continue
+      }
       const created = await deps.createPane(entry, launch)
       if (!created.ok) {
         summary.failed.push({ agentId: entry.agentId, reason: created.reason })
@@ -154,8 +185,11 @@ export async function restoreAgents(deps: RestoreAgentsDeps): Promise<RestoreSum
       deps.registry.updateRuntimes(entry.agentId, [created.runtime], key)
       deps.registry.setLaunch(entry.agentId, { state: 'starting' })
       summary.restored.push(entry.agentId)
+      // The grid is named because the pane gives nothing away: the engine looks exactly like one on
+      // its own login. The key is never printed.
       deps.log(`[restore] ${entry.engine} · agent ${entry.agentId} · pane ${dead.paneId} → ${created.runtime.paneId}`
-        + (resumeSessionId ? ` · resuming ${resumeSessionId.slice(0, 8)}` : ' · fresh session'))
+        + (resumeSessionId ? ` · resuming ${resumeSessionId.slice(0, 8)}` : ' · fresh session')
+        + (entry.gridLaunch ? ` · grid ${entry.gridLaunch.networkName}` : ''))
       watches.push(() => watchRestoredPane(deps, entry, created.runtime, !!resumeSessionId, budgetMs))
     }
   })
@@ -191,7 +225,12 @@ async function watchRestoredPane(
     deps.log(`[restore] ${engine} · agent ${agentId} · did not come back up resuming its session — retrying fresh`)
     deps.registry.inheritName(entry.sessionId, agentId)
     deps.registry.unbindSession(entry.sessionId)
-    const spawned = await deps.respawn(runtime, deps.buildLaunch(entry, {}))
+    const launch = await deps.buildLaunch(entry, {})
+    if ('error' in launch) {
+      fail(launch.error, launch.detail)
+      return false
+    }
+    const spawned = await deps.respawn(runtime, launch)
     if (!spawned.ok) {
       fail('ENGINE_DID_NOT_START', `${engine} could not be relaunched fresh: ${spawned.reason ?? 'unknown reason'}`)
       return false

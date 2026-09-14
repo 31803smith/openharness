@@ -36,6 +36,7 @@ import { messagesToEvents, windowRawLines, subagentStatsFromRawLines, type Sessi
 import { listFileTree, readProjectFile } from './lib/files.js'
 import { MediaPreviewError, readMediaPreviewChunk } from './lib/mediaPreview.js'
 import { codexMessagesToEvents, windowCodexLines } from './engines/codex/normalizer.js'
+import { codexSubagentResolverFor } from './engines/codex/subagent.js'
 import { cursorMessagesToEvents, windowCursorLines } from './engines/cursor/normalizer.js'
 import { loadCursorReplayTaskLinks } from './engines/cursor/subagent.js'
 import { opencodeMessagesToEvents, windowOpencodeMessages } from './engines/opencode/normalizer.js'
@@ -1305,7 +1306,7 @@ export class BackendSocket {
 
           if (!limit) {
             const fullEvents = s.engine === 'codex'
-              ? codexMessagesToEvents(lines)
+              ? codexMessagesToEvents(lines, codexSubagentResolverFor(s.codexHome))
               : s.engine === 'cursor'
                 ? cursorMessagesToEvents(lines, sessionId, await loadCursorReplayTaskLinks(env.CURSOR_HOME, sessionId))
                 : s.engine === 'muse'
@@ -1378,7 +1379,7 @@ export class BackendSocket {
             return
           }
           const events = s.engine === 'codex'
-            ? codexMessagesToEvents(w.window)
+            ? codexMessagesToEvents(w.window, codexSubagentResolverFor(s.codexHome))
             : s.engine === 'cursor'
               ? cursorMessagesToEvents(
                   w.window,

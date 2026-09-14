@@ -16,6 +16,7 @@ import {
 import type { AgentEngine } from '../engines/types.js'
 import { probeGatewayRuntime } from './gatewayRuntime.js'
 import { probeGridAssignment, type GridAssignment } from './gridAssignment.js'
+import { probeCodexHome } from './codexHomeProbe.js'
 import { isHarnessSession } from './harnessSessionLabel.js'
 import type { ProcessIdentity, RegisteredSession } from './registry.js'
 import {
@@ -55,6 +56,8 @@ export interface DiscoveredTmuxAgent {
    * see `probeGridAssignment`.
    */
   grid?: GridAssignment | null
+  /** Codex only: the non-default CODEX_HOME the process runs under; same three answers as `grid`. */
+  codexHome?: string | null
 }
 
 export type TmuxAgentProbe =
@@ -255,6 +258,8 @@ export async function probeTmuxAgents(
     const runtime = await probeGatewayRuntime(agent.processIdentity, agent.args)
     agent.gateway = runtime.kind
     agent.grid = await probeGridAssignment(agent.processIdentity, agent.engine, agent.args)
+    // And, for Codex, the profile it runs under — a fact about the process the row cannot otherwise learn.
+    agent.codexHome = await probeCodexHome(agent.processIdentity, agent.engine)
   }))
   return probe
 }
