@@ -6,6 +6,14 @@ Updated 2026-09-14 after integrating the continuation into main. This is a worki
 
 ## Continue directly on main
 
+- Preserved the team's native Settings-button removal (`51c0d27`) in merge
+  `3a7fe57`, then its independent device updates through `22653fe` in `51f62e7`.
+  The combined desktop passes **1,309 tests**, one existing skip, 51 native
+  decoder checks and 347 AppKit assertions. Analysis has zero errors/warnings
+  and 14 existing infos; Release succeeds. Logs:
+  `/private/tmp/harness-add-open-titlebar-{tests,analyze,native,build}.log`.
+  The prepared native fixture below is pinned to the preceding `339f008`
+  source; rebuild it for the later titlebar change before measuring main.
 - Picker opening/cancellation no longer rebuilds the retained Swarm canvas.
   Add and Navigate reuse validated catalogs across openings, including shared
   inline/floating/split Add data. Output excerpts remain fresh and canceled

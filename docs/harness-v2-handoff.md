@@ -30,12 +30,17 @@ Research must lead to justified improvements, not feature accumulation.
 - Continue on **`main`**, tracking `origin/main`. The user's latest instruction
   is to work, commit, and push directly on main from now on. This supersedes
   the earlier preference for creating a fresh feature branch after each merge.
-- **`339f008`** saves the opening continuation: it keeps the retained canvas built while a
-  picker opens/closes and shares validated catalogs across openings. Warm Add
+- **`339f008`** saves the opening continuation: it keeps the retained canvas
+  built while a picker opens/closes and shares validated catalogs across openings. Warm Add
   opening measured 22.006 ms median versus 26.273 ms in the same headless
   fixture; cold starts and native display latency are not established by it.
   Main includes the team's independent device change `5f8baac`. The complete
   desktop suite passes 1,309 tests with one existing skip.
+- **`3a7fe57`** preserves the team's `51c0d27` titlebar Settings-button removal.
+  The combined desktop passes the same 1,309 tests, 51 native decoder checks,
+  347 AppKit assertions, analysis and a Release build. Settings remains in the
+  app menu/keyboard flow. **`51f62e7`** then preserves the team's independent
+  device-only changes through `22653fe`; desktop sources are unchanged.
 - **`e71e0ca`** saves Add's frame continuation: it reuses unchanged result rows
   and keeps background pane additions from taking the picker's Flutter focus.
   The full suite passes 1,302 tests. Native fixture identity repair is saved in
@@ -260,14 +265,15 @@ the common page, without adding another first-tab-only component.
 desktop tests with one existing skip.
 Analyzer reports zero errors/warnings and 14 existing informational diagnostics
 (12 vendored, two inherited from main). Logs:
-`/private/tmp/harness-add-open-{full-tests,analyze}.log`.
+`/private/tmp/harness-add-open-titlebar-{tests,analyze}.log`.
 The final macOS arm64 Release build succeeds with
 `FLUTTER_TARGET=lib/main.dart`; log:
-`/private/tmp/harness-add-open-release-build.log`. The running app was not
+`/private/tmp/harness-add-open-titlebar-build.log`. The running app was not
 restarted, so do not claim its process has loaded these source changes.
-The preceding Add/shortcut integration passed 51 native keymap decoder
+The combined titlebar/picker source passes 51 native keymap decoder
 and 347 AppKit assertions, including the exported Dart keymap and hidden window
-layout; no Swift changed in the frame/focus continuation. That integrated
+layout. Native log: `/private/tmp/harness-add-open-titlebar-native.log`.
+The preceding Add/shortcut integrated
 macOS arm64 Release build succeeded with
 `FLUTTER_TARGET=lib/main.dart`. Synthetic real-font captures of the visible
 starters, Add, multi-select and Navigate were reviewed at 1280×800 and 880×560
@@ -306,7 +312,9 @@ the built bundle is `ai.autonomous.harness.benchmark`. Build receipt:
 `/private/tmp/harness-native-picker-prepare.log`. The earlier identity-fix runner
 correctly refused the running workspace preview, writing no timing result.
 This session confirmed that preview is still running; the new fixture was not
-launched. The [performance record](harness-v2-performance.md) has the artifacts.
+launched. The later titlebar change supersedes that fixture's native source;
+rebuild it before measuring current main. The [performance record](harness-v2-performance.md)
+has the artifacts.
 
 ## Previous terminal fix and verification
 
@@ -386,9 +394,10 @@ that its isolated window can become active/key.
    using the repaired benchmark identity checks for the team's new
    `ai.autonomous.harness` macOS bundle identifier (Linux now uses
    `com.autonomous.harness` and executable `harness`). Nine isolation tests pass;
-   a current disposable Release fixture is available at
+   a disposable Release fixture is available at
    `/private/tmp/harness-native-benchmark-wt0_dt31` from source `339f008`.
-   Rebuild it if production source changes. The workspace preview is still
+   Rebuild it for the team's later titlebar change when the measurement window
+   is available. The workspace preview is still
    running. A request to briefly close/reopen that preview
    for calibration is pending; elapsed time is not approval. No native samples
    have been accepted. See the current performance record for exact artifacts.

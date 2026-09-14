@@ -54,6 +54,13 @@ Benchmark logs: `/private/tmp/harness-add-open-{stages-before,canvas-after,cache
 Checks: `/private/tmp/harness-add-open-{full-tests,analyze,release-build}.log`.
 The initial unstaged trace is `/private/tmp/harness-add-open-before.log`.
 
+After merging the team's titlebar Settings-button removal in `3a7fe57`, all
+1,309 desktop tests, 51 native decoder checks and 347 AppKit assertions pass.
+Analysis remains at zero errors/warnings and 14 existing infos; the combined
+Release build succeeds. Logs:
+`/private/tmp/harness-add-open-titlebar-{tests,analyze,native,build}.log`.
+The later merge `51f62e7` only incorporates independent device firmware changes.
+
 ### Add picker frame work and keyboard focus
 
 Add now reuses up to 48 recently built result rows. Moving the highlight rebuilds
@@ -127,6 +134,8 @@ the distinct `ai.autonomous.harness.benchmark` identity. Build receipt:
 `/private/tmp/harness-native-picker-prepare.log`. The workspace preview is still
 running and the close/reopen request is pending. This fixture was not launched;
 no native samples were collected. Rebuild it if production source changes.
+The team's later native titlebar change in `51c0d27` now requires that rebuild
+before qualifying current main; the prepared fixture remains pinned to `339f008`.
 
 ### History focus hot path
 
