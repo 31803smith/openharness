@@ -51,6 +51,11 @@ Research must lead to justified improvements, not feature accumulation.
 - Continue on **`main`**, tracking `origin/main`. The user's latest instruction
   is to work, commit, and push directly on main from now on. This supersedes
   the earlier preference for creating a fresh feature branch after each merge.
+- **`e73eb6e`** adds keyboard remote-folder selection and reliable asynchronous
+  browsing. The affected workflow/render checks (58 total), analysis and normal
+  Release build pass. **`8800c35`** preserves the team's concurrent main through
+  `e094271`; those incoming CLI/device changes leave the tested desktop tree
+  unchanged. No teammate branch was merged separately.
 - **`d727360`** clarifies view removal and restores closed work into its existing
   swarm. **`332546f`** keeps terminal relayout from taking keyboard focus from
   resize controls. **`eef17f6`** preserves the team's `e68c893` local-machine
