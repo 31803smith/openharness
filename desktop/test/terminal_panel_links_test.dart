@@ -139,11 +139,11 @@ void main() {
     });
   }
 
-  Offset point(WidgetTester tester, [int column = 6]) {
+  Offset point(WidgetTester tester, [int column = 6, int row = 0]) {
     final view = tester.state<TerminalViewState>(find.byType(TerminalView));
     final render = view.renderTerminal;
     return render.localToGlobal(
-      render.getOffset(CellOffset(column, 0)) +
+      render.getOffset(CellOffset(column, row)) +
           Offset(render.cellSize.width / 2, render.cellSize.height / 2),
     );
   }
@@ -438,6 +438,49 @@ void main() {
         LogicalKeyboardKey.metaLeft,
         platform: 'macos',
       );
+      await mouse.removePointer();
+      await tester.pump(const Duration(milliseconds: 350));
+    },
+  );
+  testOnPlatform(
+    'a URL the agent hard-wrapped across rows opens whole from either row',
+    (tester) async {
+      await mount(tester);
+      // Claude Code (Ink) cuts a long address at its box width and writes the
+      // rest on its own row, indented like the box — two rows, one link.
+      session.terminal.write(
+        '\r\x1b[2K  Command Code here: https://commandc'
+        '\r\n\x1b[2K  ode.ai/0xkongamoto/settings/billing',
+      );
+      await tester.pump();
+      const url = 'https://commandcode.ai/0xkongamoto/settings/billing';
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await mouse.addPointer(location: Offset.zero);
+      await mouse.moveTo(point(tester, 10, 1));
+      await tester.pump();
+      expect(
+        tester
+            .widget<Tooltip>(
+              find.ancestor(
+                of: find.byType(TerminalView),
+                matching: find.byType(Tooltip),
+              ),
+            )
+            .message,
+        '⌘-click to open\n$url',
+      );
+      await tester.sendKeyDownEvent(
+        LogicalKeyboardKey.metaLeft,
+        platform: 'macos',
+      );
+      await tester.tapAt(point(tester, 10, 1), kind: PointerDeviceKind.mouse);
+      await tester.sendKeyUpEvent(
+        LogicalKeyboardKey.metaLeft,
+        platform: 'macos',
+      );
+      await tester.pump(const Duration(milliseconds: 350));
+      expect(launched.single.toString(), url);
+      expect(outbound, isEmpty);
       await mouse.removePointer();
       await tester.pump(const Duration(milliseconds: 350));
     },
