@@ -1,3 +1,7 @@
+import 'swarm_interactions_test.dart' show chord;
+
+import 'package:flutter/services.dart';
+
 import 'dart:async';
 
 import 'package:harness/auth/auth_session.dart';
@@ -850,7 +854,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip(RegExp(r'^Settings')));
+    await chord(tester, LogicalKeyboardKey.comma);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Account'));
     await tester.pumpAndSettle();

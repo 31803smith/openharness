@@ -158,11 +158,11 @@ void main() {
         expect(search.cursor, (initial - 1) % search.rows.length);
         await tester.enterText(input, 'Agent 0');
         await tester.pump();
-        expect(find.byTooltip('Preview recent output (⌃I)'), findsOneWidget);
+        expect(find.byTooltip('Hide preview (⌃I)'), findsOneWidget);
         await key(tester, LogicalKeyboardKey.keyI, cmd: true);
-        expect(search.previewEnabled, isFalse);
-        await key(tester, LogicalKeyboardKey.keyI, ctrl: true);
         expect(search.previewEnabled, isTrue);
+        await key(tester, LogicalKeyboardKey.keyI, ctrl: true);
+        expect(search.previewEnabled, isFalse);
         await key(tester, LogicalKeyboardKey.enter);
         expect(find.byType(SwarmSearchResults), findsOneWidget);
         expect(frames, isEmpty);
@@ -222,13 +222,7 @@ void main() {
           .search;
       expect(search.isCommandMode, isTrue);
       expect(tester.widget<TextField>(field).controller!.text, '> ');
-      expect(
-        tester
-            .widget<TextField>(find.byKey(const ValueKey('swarm-search-input')))
-            .controller!
-            .text,
-        isEmpty,
-      );
+      expect(find.byKey(const ValueKey('swarm-search-input')), findsNothing);
       expect(app.panes, isEmpty);
       await tester.pumpWidget(const SizedBox());
       app.dispose();
@@ -237,7 +231,7 @@ void main() {
   );
 
   testWidgets(
-    'native typing sends only changed hints and never echoes a query during refresh',
+    'native buttons leave all search editing in Flutter during refresh',
     (tester) async {
       final calls = <MethodCall>[];
       tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
@@ -261,8 +255,9 @@ void main() {
       });
       await tester.pump();
       calls.clear();
+      final field = find.byKey(const ValueKey('swarm-search-input'));
       for (final query in ['w', 'wo', 'wor', 'work', 'work 木']) {
-        await native(tester, 'searchChanged', {'query': query});
+        await tester.enterText(field, query);
         app.renameSwarm(app.activeSwarmId, 'Background $query');
       }
       await tester.pump();
@@ -273,7 +268,7 @@ void main() {
             'Typing and discovery do not need a reverse-channel field update',
       );
       for (final query in ['>', '> s', '> se', '> set']) {
-        await native(tester, 'searchChanged', {'query': query});
+        await tester.enterText(field, query);
         app.renameSwarm(app.activeSwarmId, 'Background $query');
       }
       map.apply(
@@ -285,11 +280,9 @@ void main() {
             .where((c) => c.method == 'searchState')
             .map((c) => c.arguments)
             .toList(),
-        [
-          {'hint': 'Search commands…'},
-        ],
+        isEmpty,
       );
-      await native(tester, 'searchChanged', {'query': 'Agent'});
+      await tester.enterText(field, 'Agent');
       await tester.pump();
       calls.clear();
       await native(tester, 'keymapCommand', {'command': 'navigation.commands'});
@@ -299,10 +292,13 @@ void main() {
             .where((c) => c.method == 'searchState')
             .map((c) => c.arguments)
             .toList(),
-        [
-          {'query': '> ', 'hint': 'Search commands…'},
-        ],
-        reason: 'Deliberate commands still update the native query and hint',
+        isEmpty,
+        reason: 'Native chrome never mirrors the Flutter query',
+      );
+      expect(tester.widget<TextField>(field).controller!.text, '> ');
+      expect(
+        tester.widget<TextField>(field).decoration!.hintText,
+        'Search commands…',
       );
       await native(tester, 'keymapCommand', {'command': 'picker.cancel'});
       await tester.pump();
@@ -357,7 +353,7 @@ void main() {
   );
 
   testWidgets(
-    'native field commands and snapshots use the same configured workspace actions',
+    'native commands and snapshots use the same configured workspace actions',
     (tester) async {
       final calls = <MethodCall>[];
       tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
@@ -401,8 +397,14 @@ void main() {
         'command': 'navigation.quick_open',
       });
       await tester.pump();
-      await native(tester, 'searchChanged', {'query': 'Agent 0'});
+      await tester.enterText(
+        find.byKey(const ValueKey('swarm-search-input')),
+        'Agent 0',
+      );
       await tester.pump();
+      await native(tester, 'keymapCommand', {'command': 'picker.preview'});
+      await tester.pump();
+      expect(find.byKey(const ValueKey('swarm-search-preview')), findsNothing);
       await native(tester, 'keymapCommand', {'command': 'picker.preview'});
       await tester.pump();
       expect(

@@ -30,6 +30,7 @@ import '../terminal/terminal_viewport.dart';
 import '../shared/theme/app_theme.dart' as grid;
 import '../theme/app_theme.dart';
 import 'engine_identity.dart';
+import 'pane_actions_menu.dart';
 
 /// The pane header's own horizontal inset.
 const double _stripPadding = 14;
@@ -48,6 +49,8 @@ class TerminalPanel extends StatefulWidget {
   /// control that changes that. Null where there is no grid to hold a slot in.
   final bool pinned;
   final VoidCallback? onTogglePin;
+  final VoidCallback? onToggleZoom, onSplitRight, onSplitDown;
+  final bool zoomed;
 
   /// This native terminal took the keyboard, so its grid tile becomes focused.
   final VoidCallback? onRendererFocus;
@@ -89,6 +92,10 @@ class TerminalPanel extends StatefulWidget {
     this.onClose,
     this.pinned = false,
     this.onTogglePin,
+    this.onToggleZoom,
+    this.onSplitRight,
+    this.onSplitDown,
+    this.zoomed = false,
     this.onRendererFocus,
     this.paneDrag,
     this.linkOpener,
@@ -1228,6 +1235,10 @@ class _TerminalPanelState extends State<TerminalPanel>
       pinned: widget.pinned,
       close: widget.onClose != null,
       pin: widget.onTogglePin != null,
+      zoomed: widget.zoomed,
+      zoom: widget.onToggleZoom != null,
+      splitRight: widget.onSplitRight != null,
+      splitDown: widget.onSplitDown != null,
       composer: canToggleComposer,
       composerVisible: widget.composerVisible,
       dragId: widget.paneDrag?.ref.paneId,
@@ -1241,6 +1252,10 @@ class _TerminalPanelState extends State<TerminalPanel>
         notice: widget.notice,
         readOnly: widget.readOnly,
         compact: widget.compactHeader,
+        zoomed: widget.zoomed,
+        onToggleZoom: widget.onToggleZoom,
+        onSplitRight: widget.onSplitRight,
+        onSplitDown: widget.onSplitDown,
         onClose: widget.onClose == null ? null : () => widget.onClose?.call(),
         pinned: widget.pinned,
         onTogglePin: widget.onTogglePin == null
@@ -1266,6 +1281,8 @@ class _TerminalHeader extends StatelessWidget {
   final bool pinned;
   final bool compact;
   final VoidCallback? onTogglePin;
+  final VoidCallback? onToggleZoom, onSplitRight, onSplitDown;
+  final bool zoomed;
   final VoidCallback? onToggleComposer;
   final bool composerVisible;
 
@@ -1288,6 +1305,10 @@ class _TerminalHeader extends StatelessWidget {
     this.pinned = false,
     this.compact = false,
     this.onTogglePin,
+    this.onToggleZoom,
+    this.onSplitRight,
+    this.onSplitDown,
+    this.zoomed = false,
     this.onToggleComposer,
     this.composerVisible = false,
     this.paneDrag,
@@ -1532,26 +1553,35 @@ class _TerminalHeader extends StatelessWidget {
               // memory cannot shift it under their pointer.
               if (!compact && onTogglePin != null)
                 PanePinButton(pinned: pinned, onPressed: onTogglePin!),
-              if (compact && onToggleComposer != null)
-                IconButton(
-                  tooltip: composerVisible
-                      ? 'Hide message composer'
-                      : 'Show message composer',
-                  onPressed: onToggleComposer,
-                  icon: Icon(
-                    Icons.edit_note,
-                    size: 18,
-                    color: composerVisible
-                        ? AppColors.text
-                        : AppColors.mutedStrong,
+              if (compact) ...[
+                if (onToggleZoom != null)
+                  IconButton(
+                    tooltip: zoomed
+                        ? 'Restore agents'
+                        : 'Zoom ${session.agentName}',
+                    onPressed: onToggleZoom,
+                    icon: Icon(
+                      zoomed ? Icons.fullscreen_exit : Icons.fullscreen,
+                      size: 18,
+                    ),
+                    constraints: const BoxConstraints.tightFor(
+                      width: 28,
+                      height: 28,
+                    ),
+                    padding: EdgeInsets.zero,
                   ),
-                  constraints: const BoxConstraints.tightFor(
-                    width: 28,
-                    height: 28,
-                  ),
-                  padding: EdgeInsets.zero,
+                PaneActionsMenu(
+                  name: session.agentName,
+                  onSplitRight: onSplitRight,
+                  onSplitDown: onSplitDown,
+                  onTogglePin: onTogglePin,
+                  pinned: pinned,
+                  onToggleComposer: onToggleComposer,
+                  composerVisible: composerVisible,
+                  onClose: onClose,
                 ),
-              if (onClose != null) PaneCloseButton(onPressed: onClose!),
+              ] else if (onClose != null)
+                PaneCloseButton(onPressed: onClose!),
             ],
           ),
         ),

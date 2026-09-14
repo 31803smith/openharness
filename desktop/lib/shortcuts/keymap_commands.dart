@@ -58,6 +58,7 @@ final harnessCommands = <HarnessCommand>[
     'navigation.commands',
     'Search commands',
     ShortcutGroup.actions,
+    extraKeys: ['cmd+shift+p'],
     nativeAction: 'commands',
   ),
   const HarnessCommand(
@@ -228,6 +229,7 @@ final harnessCommands = <HarnessCommand>[
     'Pin or unpin the focused pane',
     ShortcutGroup.panes,
     action: ShortcutAction.pinPane,
+    nativeAction: 'pinPane',
   ),
   const HarnessCommand(
     'pane.layout',
@@ -237,8 +239,18 @@ final harnessCommands = <HarnessCommand>[
     nativeAction: 'layout',
   ),
   const HarnessCommand('pane.resize', 'Resize panes', ShortcutGroup.panes),
-  const HarnessCommand('pane.split_right', 'Split right…', ShortcutGroup.panes),
-  const HarnessCommand('pane.split_down', 'Split down…', ShortcutGroup.panes),
+  const HarnessCommand(
+    'pane.split_right',
+    'Split right…',
+    ShortcutGroup.panes,
+    nativeAction: 'splitRight',
+  ),
+  const HarnessCommand(
+    'pane.split_down',
+    'Split down…',
+    ShortcutGroup.panes,
+    nativeAction: 'splitDown',
+  ),
   const HarnessCommand(
     'pane.reset_sizes',
     'Reset pane sizes',

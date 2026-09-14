@@ -1,6 +1,6 @@
 # A coherent keyboard system for Harness
 
-Updated 2026-09-13 after the user's review. **The earlier proposed modifier-heavy defaults are withdrawn.** The user explicitly chose to retain Cmd-H/J/K/L and Cmd-arrows for pane movement, Cmd-S for layout, Cmd-R for refresh, and Cmd-B for Boss mode. Cmd-L stays move right. File remapping is not enabled in the running preview yet.
+Updated 2026-09-13 after the user's review. **The earlier proposed modifier-heavy defaults are withdrawn.** The user explicitly chose to retain Cmd-H/J/K/L and Cmd-arrows for pane movement, Cmd-S for layout, Cmd-R for refresh, and Cmd-B for Boss mode. Cmd-L stays move right. File remapping is available; menus and help reflect the effective bindings.
 
 ## Product contract
 
@@ -22,7 +22,7 @@ Keep ordinary typing and editing predictable inside the actual agent CLI, search
 | Machine/project search result | Open its swarm directly; no intermediate Browse agents step. |
 | Other existing shortcuts | Preserve until a concrete problem justifies a reviewed change. Do not silently switch Cmd-number navigation, zoom, tab traversal, or closing to the earlier proposed alternatives. |
 | File customization | One commented config file with reload; menus, help and dispatch must agree. |
-| Commands in search | Approved: optional `>` mode for existing actions. Preserve existing defaults, including Cmd-Shift-P for pin; no new conflicting command shortcut. |
+| Commands in search | Approved: Cmd-Shift-P opens `>` command mode, following the later user decision. Pin remains available in the Agent menu, pane menu, commands and custom bindings. |
 
 The previous full default-binding audit is preserved in Git history. Its evidence is useful, but its proposed defaults do not override these decisions.
 
@@ -54,10 +54,10 @@ Parse and resolve when configuration changes, never on each keystroke. A lookup 
 
 Production startup loads the optional file before the workspace opens. Settings and the shortcut sheet show the effective bindings for Workspace, Agent input or Search, including unassigned commands. **Edit keyboard config** creates a commented template only when explicitly invoked, lists the stable command IDs, and opens the associated editor. The startup path, watcher and dispatch never rewrite existing user configuration.
 
-Flutter owns configured workspace/terminal keys before the focused input, with live composition checks. Both search fields use their own picker context. Their Enter/add/preview actions and displayed hints update together; the command result list also refreshes its shortcut labels after a configuration change. Prefixes are temporary and never replay into agent input. The current direct defaults and explicit Cmd-P jump to titlebar search remain unchanged.
+Flutter owns configured workspace/terminal keys before the focused input, with live composition checks. Both search fields use their own picker context. Their Enter/add/preview actions and displayed hints update together; the command result list also refreshes its shortcut labels after a configuration change. Prefixes are temporary and never replay into agent input. Cmd-P opens the centered shared search editor. Cmd-Shift-P opens the same editor in command mode. The other frequent direct defaults remain unchanged.
 
-Native menu labels come from the same resolved snapshot. The main menu yields configured first strokes to the input owner, rather than independently executing a command before Flutter knows its context. The native search editor uses a scoped local event monitor for ordinary sequence suffixes, with explicit cleanup. This follows Apple's [key-event routing](https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/EventOverview/HandlingKeyEvents/HandlingKeyEvents.html) and [local event monitor lifecycle](https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/EventOverview/MonitoringEvents/MonitoringEvents.html). Ordinary Mac editing, font and window commands remain native; custom bindings that use those reserved strokes, including sequence suffixes, are rejected instead of being silently unreliable.
+Native menu labels come from the same resolved snapshot. The main menu yields configured first strokes to Flutter, which owns both search editors, text selection, composition and result navigation. The titlebar contains Search, New agent and Notifications buttons. Button activation waits for the destination's Flutter frame before returning native keyboard focus to the content view. Ordinary Mac editing, font and window commands remain native; custom bindings using reserved strokes are rejected.
 
-The complete Flutter suite passes **1,155 tests with one existing skip**. The native adapter/dispatcher passes **51 checks** against Dart-exported bindings, followed by **319 AppKit titlebar checks**, including remaps in a hidden actual field editor. Integration fixtures cover precise pane destinations and retained sessions, unbinding that returns an input key to its original agent, failed/completed sequences, both search fields, terminal IME, native channel dispatch and effective help. Final visual checks cover the settings deck, narrow layout and sheet; missing Tab/Return glyphs use icons. No real agents receive test input.
+Current validation includes the shared editor's arrow navigation, select-all/delete, command mode, effective remaps, pane focus and terminal IME. The native adapter passes **51 checks** against Dart-exported bindings, followed by **347 AppKit titlebar checks**, including Swarm/Agent menu ordering, three distinct toolbar targets, disabled controls and delayed focus handoff. These are synthetic checks; no real agents receive test input. Current build and regression results are recorded in the progress log.
 
 See the [progress log](harness-v2-progress.md) for build/artifact status and the [working queue](harness-v2-developer-tools-research.md) for the next product improvements. These fixtures do not establish native input-to-display latency or first-install conversion rates; those remain separate measurements.

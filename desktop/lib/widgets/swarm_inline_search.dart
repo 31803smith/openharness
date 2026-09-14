@@ -10,6 +10,7 @@ import '../state/swarm_catalog.dart';
 import '../state/swarm_navigation.dart';
 import '../state/swarm_search.dart';
 import 'swarm_switcher.dart';
+import 'swarm_search_input.dart';
 
 /// New swarm owns its input and caret. Only the catalog and result actions are
 /// shared with the title bar; typing here never activates the native field.
@@ -72,6 +73,7 @@ class _SwarmInlineSearchState extends State<SwarmInlineSearch> {
       widget.recent,
       projects: widget.projects,
       commands: widget.commands,
+      previewInitiallyEnabled: true,
     )..setQuery(_text.text);
     _search!.addListener(_changed);
     _overlay.show();
@@ -79,6 +81,16 @@ class _SwarmInlineSearchState extends State<SwarmInlineSearch> {
   }
 
   void _changed() => setState(() {});
+
+  void _showCommands() {
+    _text.value = const TextEditingValue(
+      text: '> ',
+      selection: TextSelection.collapsed(offset: 2),
+    );
+    _begin();
+    _search!.setQuery('> ');
+    _focus.requestFocus();
+  }
 
   void _close() {
     if (_search == null) return;
@@ -109,14 +121,6 @@ class _SwarmInlineSearchState extends State<SwarmInlineSearch> {
 
   @override
   Widget build(BuildContext context) {
-    final open = _search != null;
-    final border = OutlineInputBorder(
-      borderRadius: BorderRadius.vertical(
-        top: const Radius.circular(8),
-        bottom: Radius.circular(open ? 0 : 8),
-      ),
-      borderSide: BorderSide(color: open ? Colors.transparent : Colors.white24),
-    );
     return OverlayPortal.overlayChildLayoutBuilder(
       controller: _overlay,
       overlayChildBuilder: (context, info) {
@@ -148,15 +152,16 @@ class _SwarmInlineSearchState extends State<SwarmInlineSearch> {
                 elevation: 8,
                 shadowColor: Colors.black54,
                 borderRadius: const BorderRadius.vertical(
-                  bottom: Radius.circular(8),
+                  bottom: Radius.circular(12),
                 ),
                 clipBehavior: Clip.antiAlias,
                 child: Padding(
-                  padding: const EdgeInsets.all(8),
+                  padding: EdgeInsets.zero,
                   child: SwarmSearchResults(
                     search: search,
                     onChoose: _choose,
                     onRefocus: _focus.requestFocus,
+                    onCommands: _showCommands,
                   ),
                 ),
               ),
@@ -164,48 +169,20 @@ class _SwarmInlineSearchState extends State<SwarmInlineSearch> {
           ),
         );
       },
-      child: SwarmSearchKeys(
+      child: SwarmSearchInput(
+        inputKey: const ValueKey('swarm-welcome-search-input'),
+        controller: _text,
+        focusNode: _focus,
+        groupId: _tapGroup,
         search: _search,
-        editing: _text,
         onChoose: _choose,
         onClose: _close,
         onOpen: _begin,
-        child: TextField(
-          key: const ValueKey('swarm-welcome-search-input'),
-          groupId: _tapGroup,
-          controller: _text,
-          focusNode: _focus,
-          autofocus: true,
-          onTap: _begin,
-          onTapAlwaysCalled: true,
-          onTapOutside: (_) => _close(),
-          onChanged: (value) {
-            _begin();
-            _search!.setQuery(value);
-          },
-          style: const TextStyle(fontSize: 13, color: Colors.white),
-          decoration: InputDecoration(
-            hintText: 'Search agents, swarms, machines, projects…',
-            hintStyle: const TextStyle(fontSize: 13, color: Color(0xffc5bece)),
-            prefixIcon: const Icon(
-              Icons.search,
-              size: 18,
-              color: Color(0xffc5bece),
-            ),
-            filled: true,
-            fillColor: open
-                ? grid.AppPalette.swarmSearchSurface
-                : const Color(0xa6111521),
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 14,
-              vertical: 14,
-            ),
-            isDense: true,
-            border: border,
-            enabledBorder: border,
-            focusedBorder: border,
-          ),
-        ),
+        onTapOutside: _close,
+        onChanged: (value) {
+          _begin();
+          _search!.setQuery(value);
+        },
       ),
     );
   }

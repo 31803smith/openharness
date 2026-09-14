@@ -280,18 +280,6 @@ const List<AppShortcut> kAppShortcuts = [
     group: ShortcutGroup.panes,
   ),
   AppShortcut(
-    action: ShortcutAction.pinPane,
-    // ⇧⌘P: plain ⌘P is the switcher now, which is the key people reach for far
-    // more often. Same letter, so the pair stays learnable.
-    activator: SingleActivator(
-      LogicalKeyboardKey.keyP,
-      meta: true,
-      shift: true,
-    ),
-    label: 'Hold this pane in its slot',
-    group: ShortcutGroup.panes,
-  ),
-  AppShortcut(
     action: ShortcutAction.showLayout,
     activator: SingleActivator(LogicalKeyboardKey.keyS, meta: true),
     label: 'Choose the grid layout',

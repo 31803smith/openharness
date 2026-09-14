@@ -16,6 +16,8 @@ import 'package:xterm/xterm.dart';
 
 import 'swarm_screen_test.dart' show mount, terminal;
 import 'swarm_interactions_test.dart' show chord;
+import 'keymap_host_test.dart' show MemoryKeymap;
+import 'keymap_runtime_test.dart' as runtime;
 
 class _FirstUseApp extends AppNotifier {
   _FirstUseApp()
@@ -155,6 +157,93 @@ void main() {
     },
   );
 
+  for (final native in [false, true]) {
+    testWidgets(
+      'new agent toolbar ${native ? 'native' : 'Flutter'} action inherits the focused working folder',
+      (tester) async {
+        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          const MethodChannel('harness/swarm_tabs'),
+          (_) async => null,
+        );
+        addTearDown(
+          () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+            const MethodChannel('harness/swarm_tabs'),
+            null,
+          ),
+        );
+        final app = _FirstUseApp();
+        final map = MemoryKeymap();
+        app.machineStates['m']!.engines.replace(const [
+          EngineAvailability(engine: 'codex', installed: true),
+        ]);
+        app.machineStates['m']!.agents = const [
+          Agent(
+            id: 'existing',
+            name: 'Existing work',
+            engine: 'codex',
+            terminalAvailable: true,
+            project: AgentProject(name: 'Workspace', cwd: '/work/existing'),
+          ),
+        ];
+        final pane = app.adoptSessionForTest(terminal('existing', app.input));
+        await runtime.mount(tester, app, map, native: native);
+        if (native) {
+          final opening = runtime.native(tester, 'newAgent');
+          await tester.pump();
+          await opening;
+        } else {
+          final search = find.byKey(const ValueKey('swarm-search-button'));
+          final add = find.byKey(const ValueKey('swarm-new-agent-button'));
+          final bell = find.byKey(const ValueKey('swarm-notifications-button'));
+          expect(
+            tester.getRect(search).right,
+            lessThanOrEqualTo(tester.getRect(add).left),
+          );
+          expect(
+            tester.getRect(add).right,
+            lessThanOrEqualTo(tester.getRect(bell).left),
+          );
+          await tester.tap(add);
+          await tester.pump();
+        }
+        expect(find.byType(AlertDialog), findsOneWidget);
+        expect(find.text('/work/existing'), findsOneWidget);
+        expect(
+          tester
+              .widget<AppSelectField<String>>(
+                find.byKey(const Key('new-agent-machine-field')),
+              )
+              .value,
+          'm',
+        );
+        expect(
+          tester
+              .widget<AppSelectField<String>>(
+                find.byKey(const Key('new-agent-engine-field')),
+              )
+              .value,
+          'codex',
+        );
+        expect(app.panes, [pane]);
+        expect(app.launches, isEmpty);
+        expect(app.input, isEmpty);
+        await tester.tap(find.text('Cancel'));
+        await tester.pump();
+        expect(find.byType(AlertDialog), findsNothing);
+        expect(
+          tester
+              .widget<TerminalView>(find.byType(TerminalView))
+              .focusNode!
+              .hasFocus,
+          isTrue,
+        );
+        await tester.pumpWidget(const SizedBox());
+        app.dispose();
+        map.dispose();
+      },
+    );
+  }
+
   testWidgets(
     'new agent is keyboard accessible without hidden focus stops',
     (tester) async {
@@ -185,6 +274,13 @@ void main() {
       expect(fieldFocused('new-agent-machine-field'), isTrue);
       await tester.sendKeyEvent(LogicalKeyboardKey.tab);
       await tester.pump();
+      expect(
+        Focus.of(tester.element(find.text('Clone repository…')))
+            .hasPrimaryFocus,
+        isTrue,
+      );
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
       final folder = tester.widget<InkWell>(
         find.byKey(const Key('new-agent-folder')),
       );
@@ -199,6 +295,21 @@ void main() {
       expect(folder.focusNode!.hasPrimaryFocus, isTrue);
       expect(find.text('/work/my-project'), findsOneWidget);
 
+      for (final id in ['codex', 'claude', 'cursor']) {
+        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+        await tester.pump();
+        expect(
+          Focus.of(
+            tester.element(
+              find.descendant(
+                of: find.byKey(ValueKey('new-agent-quick-$id')),
+                matching: find.byType(Text),
+              ),
+            ),
+          ).hasPrimaryFocus,
+          isTrue,
+        );
+      }
       await tester.sendKeyEvent(LogicalKeyboardKey.tab);
       await tester.pump();
       expect(fieldFocused('new-agent-engine-field'), isTrue);
@@ -280,8 +391,8 @@ void main() {
     expect(engine.value, 'codex');
     expect(machine.value, 'm');
     expect(
-      tester.getTopLeft(find.text('Project folder')).dy,
-      lessThan(tester.getTopLeft(find.text('Coding agent')).dy),
+      tester.getTopLeft(find.text('Working folder')).dy,
+      lessThan(tester.getTopLeft(find.text('Agent')).dy),
     );
     expect(picker.opened, 1);
     expect(app.probes, 1);
@@ -435,9 +546,9 @@ void main() {
         await chord(tester, LogicalKeyboardKey.keyN);
         await tester.pump();
         if (chooseExplicitly) {
-          await tester.tap(find.byKey(const Key('new-agent-engine-field')));
-          await tester.pump();
-          await tester.tap(find.text('Cursor'));
+          await tester.tap(
+            find.byKey(const ValueKey('new-agent-quick-cursor')),
+          );
           await tester.pump();
         }
         app.machineStates['m']!.engines.replace(const [

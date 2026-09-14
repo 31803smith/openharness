@@ -26,9 +26,6 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
   private var subscriptions: [SwarmSubscriptionEntry] = []
   private var keymap: HarnessNativeKeymap?
   private var flutterKeyContext = "workspace"
-  private var searchKeyDispatch: HarnessNativeKeyDispatch?
-  private var searchKeyMonitor: Any?
-  private var pendingKeyNames: [String] = []
   private var tabActionGeneration = 0
 
   init(window: NSWindow, messenger: FlutterBinaryMessenger) {
@@ -39,11 +36,6 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
       guard let self else { return }
       self.sendTabAction(method, arguments: args)
     }
-    strip.editingEnded = { [weak self] in
-      self?.cancelKeySequence()
-      self?.syncMenuKeys()
-    }
-    strip.editingBegan = { [weak self] in self?.syncMenuKeys() }
     channel.setMethodCallHandler { [weak self] call, result in
       guard let self else { result(nil); return }
       switch call.method {
@@ -54,7 +46,6 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
       case "update":
         let state = call.arguments as? [String: Any] ?? [:]
         self.actionsEnabled = state["enabled"] as? Bool == true
-        if !self.actionsEnabled { self.cancelKeySequence() }
         self.canReopen = state["canReopen"] as? Bool == true
         self.canFind = state["canFind"] as? Bool == true
         self.canClosePane = state["canClosePane"] as? Bool == true
@@ -64,17 +55,6 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
         self.updateHistory(state["history"] as? [[String: Any]] ?? [], closed: state["closedHistory"] as? [[String: Any]] ?? [])
         self.strip.update(state)
         self.window?.backgroundColor = self.strip.palette.tabBar
-        result(nil)
-      case "focusSearch":
-        self.strip.focusSearch(selectAll: (call.arguments as? [String: Any])?["selectAll"] as? Bool == true)
-        result(nil)
-      case "searchState":
-        self.strip.setSearchState(call.arguments as? [String: Any] ?? [:])
-        result(nil)
-      case "closeSearch":
-        self.cancelKeySequence()
-        self.strip.closeSearch()
-        self.syncMenuKeys()
         result(nil)
       case "modelsState":
         let state = call.arguments as? [String: Any] ?? [:]
@@ -104,21 +84,15 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
         [weak self] _ in self?.resize()
       })
     }
-    // Keep an in-progress search and its native input owner across app switches.
-    // Cancelling on window blur would return the next typed key to an agent.
-    observers.append(NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification,
-      object: window, queue: .main) { [weak self] _ in self?.cancelKeySequence(suspend: true) })
-    observers.append(NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification,
-      object: window, queue: .main) { [weak self] _ in self?.removeKeyMonitor() })
+
   }
 
   deinit {
-    removeKeyMonitor()
     observers.forEach(NotificationCenter.default.removeObserver)
   }
 
   private func sendTabAction(_ method: String, arguments: Any?) {
-    guard ["select", "close", "new", "rename"].contains(method) else {
+    guard ["select", "close", "new", "rename", "jump", "commands", "notifications", "newAgent", "splitRight", "splitDown", "zoomPane", "pinPane"].contains(method) else {
       channel.invokeMethod(method, arguments: arguments)
       return
     }
@@ -134,79 +108,23 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     }
   }
 
-  private func removeKeyMonitor() {
-    if let searchKeyMonitor { NSEvent.removeMonitor(searchKeyMonitor) }
-    searchKeyMonitor = nil
-    cancelKeySequence(suspend: true)
-  }
-
-  private func cancelKeySequence(suspend: Bool = false) {
-    if suspend { searchKeyDispatch?.suspend() }
-    else { searchKeyDispatch?.cancel() }
-    syncPendingKeys()
-  }
-
-  private func syncPendingKeys() {
-    let names = searchKeyDispatch?.pending.map(\.canonical) ?? []
-    guard names != pendingKeyNames else { return }
-    pendingKeyNames = names
-    channel.invokeMethod("keymapPending", arguments: ["keys": names])
-  }
-
   private func setKeymap(_ map: HarnessNativeKeymap) {
     keymap = map
-    if let searchKeyDispatch { searchKeyDispatch.update(map) }
-    else { searchKeyDispatch = HarnessNativeKeyDispatch(map) }
-    syncPendingKeys()
-    strip.searchField.usesKeymap = true
-    strip.searchField.shortcutHint = map.hint(for: "navigation.quick_open", context: "workspace")
+    let hint = map.hint(for: "navigation.quick_open", context: "workspace")
+    strip.searchButton.toolTip = hint.map { "Search (\($0))" } ?? "Search"
+    let newHint = map.hint(for: "agent.new", context: "workspace")
+    strip.newAgentButton.toolTip = newHint.map { "New agent (\($0))" } ?? "New agent"
     if let main = NSApp.mainMenu, let window {
       let menu = main as? HarnessKeymapMenu ?? HarnessKeymapMenu.replacing(main)
       if NSApp.mainMenu !== menu { NSApp.mainMenu = menu }
       menu.update(map, window: window)
     }
     syncMenuKeys()
-    guard searchKeyMonitor == nil else { return }
-    // A local monitor is needed for ordinary letters that follow a custom
-    // prefix. NSTextView's command delegate only receives editing commands;
-    // it cannot stop a plain sequence suffix before it becomes query text.
-    searchKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .leftMouseDown, .rightMouseDown]) {
-      [weak self] event in
-      guard let self else { return event }
-      return self.handleSearchKey(event)
-    }
-  }
-
-  private func handleSearchKey(_ event: NSEvent) -> NSEvent? {
-    guard let dispatch = searchKeyDispatch else { return event }
-    if event.type == .leftMouseDown || event.type == .rightMouseDown {
-      cancelKeySequence()
-      return event
-    }
-    guard let window, event.window === window else { return event }
-    // Consume the paired release even when a command just moved focus. It
-    // must not leak half a keystroke into the newly selected agent.
-    if event.type == .keyUp { return dispatch.release(event.keyCode) ? nil : event }
-    guard actionsEnabled, strip.searchField.searching,
-          let editor = strip.searchField.currentEditor() as? NSTextView,
-          window.firstResponder === editor else {
-      cancelKeySequence()
-      return event
-    }
-    let result = dispatch.dispatch(HarnessKeyStroke.fromEvent(event), keyCode: event.keyCode,
-      repeated: event.isARepeat, composing: editor.hasMarkedText(), context: "picker", owner: editor)
-    syncPendingKeys()
-    if let command = result.command {
-      if command == "navigation.quick_open" { editor.selectAll(nil) }
-      else { channel.invokeMethod("keymapCommand", arguments: ["command": command]) }
-    }
-    return result.handled ? nil : event
   }
 
   private func syncMenuKeys() {
     guard let keymap, let main = NSApp.mainMenu else { return }
-    let context = strip.searchField.currentEditor() == nil ? flutterKeyContext : "picker"
-    keymap.applyMenuKeys(to: main, context: context)
+    keymap.applyMenuKeys(to: main, context: flutterKeyContext)
   }
 
   private func configure(palette: [String: Any]? = nil) {
@@ -220,7 +138,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     configured = true
     NSWindow.allowsAutomaticWindowTabbing = false
     window.tabbingMode = .disallowed
-    window.title = "Harness V2"
+    window.title = "Harness"
     window.titleVisibility = .hidden
     window.titlebarAppearsTransparent = true
     window.styleMask.remove(.fullSizeContentView)
@@ -240,7 +158,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     resize()
     installWorkspaceMenus()
     if let keymap { setKeymap(keymap) }
-    // An editable accessory must not become the window's initial input owner.
+    // Toolbar controls must not become the window's initial input owner.
     window.makeFirstResponder(window.contentViewController)
   }
 
@@ -279,28 +197,36 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
       item.submenu = menu
       main.insertItem(item, at: index)
     }
-    let file = NSMenu(title: "File")
-    add(file, "New Swarm", "t", "new")
-    add(file, "New Agent…", "", "newAgent")
-    add(file, "Reopen Last Closed", "t", "reopen", [.command, .shift])
-    file.addItem(.separator())
-    add(file, "Link Machine…", "", "linkMachine")
-    add(file, "Add Project…", "", "addProject")
-    file.addItem(.separator())
-    add(file, "Rename Swarm…", "r", "renameActive", [.command, .shift])
-    add(file, "Remove Agent from Swarm", "w", "closePane", [.command, .shift])
-    add(file, "Close Swarm", "w", "closeActive")
-    install(file, at: 1)
+    if let file = main.item(withTitle: "File") { main.removeItem(file) }
+    let swarm = NSMenu(title: "Swarm")
+    add(swarm, "New Swarm", "t", "new")
+    add(swarm, "Rename Swarm…", "r", "renameActive", [.command, .shift])
+    add(swarm, "Close Swarm", "w", "closeActive")
+    swarm.addItem(.separator())
+    add(swarm, "Link Machine…", "", "linkMachine")
+    add(swarm, "Add Project…", "", "addProject")
+    install(swarm, at: 1)
+    let agent = NSMenu(title: "Agent")
+    add(agent, "New Agent…", "n", "newAgent")
+    agent.addItem(.separator())
+    add(agent, "Split Right…", "", "splitRight")
+    add(agent, "Split Down…", "", "splitDown")
+    agent.addItem(.separator())
+    add(agent, "Zoom Agent", "", "zoomPane")
+    add(agent, "Pin or Unpin Agent", "", "pinPane")
+    agent.addItem(.separator())
+    add(agent, "Close Agent", "w", "closePane", [.command, .shift])
+    install(agent, at: 2)
 
     rebuildHistoryMenu()
     let windowIndex = main.items.firstIndex(where: { $0.title == "Window" }) ?? main.numberOfItems
     install(historyMenu, at: windowIndex)
 
-    // Navigation chords remain in Flutter's terminal-safe shortcut table.
-    // Search still needs a native owner when the titlebar field has focus.
+    // Native menu hints mirror Flutter; the shared picker owns all editing.
     if let edit = main.item(withTitle: "Edit")?.submenu {
       edit.addItem(.separator())
-      add(edit, "Search Agents, Swarms, Machines and Projects…", "p", "jump")
+      add(edit, "Search Agents and Swarms…", "p", "jump")
+      add(edit, "Search Commands…", "p", "commands", [.command, .shift])
     }
     if let view = main.item(withTitle: "View")?.submenu {
       view.addItem(.separator())
@@ -389,6 +315,12 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     }
     command("Back", "[", "historyBack")
     command("Forward", "]", "historyForward")
+    let reopen = NSMenuItem(title: "Reopen Last Closed", action: #selector(menuAction(_:)), keyEquivalent: "t")
+    reopen.target = self
+    reopen.representedObject = "reopen"
+    reopen.identifier = NSUserInterfaceItemIdentifier(HarnessKeymapMenu.actionPrefix + "reopen")
+    reopen.keyEquivalentModifierMask = [.command, .shift]
+    historyMenu.addItem(reopen)
     historyMenu.addItem(.separator())
     appendHistorySection("Recently Closed", entries: Array(closedHistory.prefix(10)), closed: true)
     historyMenu.addItem(.separator())
@@ -458,12 +390,12 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     return actionsEnabled && (action != "reopen" || canReopen) &&
       (action != "historyBack" || canGoBack) && (action != "historyForward" || canGoForward) &&
       (action != "new" || canCreateSwarm) && (action != "closePane" || canClosePane) &&
-      (!["findTerminal", "findNext", "findPrevious"].contains(action) || canFind)
+      (!["findTerminal", "findNext", "findPrevious", "splitRight", "splitDown", "zoomPane", "pinPane"].contains(action) || canFind)
   }
 
   @objc private func menuAction(_ sender: NSMenuItem) {
     guard validateMenuItem(sender), let action = sender.representedObject as? String else { return }
-    channel.invokeMethod(action, arguments: nil)
+    sendTabAction(action, arguments: nil)
   }
 
   @objc private func historyAction(_ sender: NSMenuItem) {
@@ -712,152 +644,26 @@ private struct SwarmNativePalette: Equatable {
   }
 }
 
-private final class SwarmSearchCell: NSSearchFieldCell {
-  override func select(withFrame rect: NSRect, in controlView: NSView, editor: NSText,
-                       delegate: Any?, start: Int, length: Int) {
-    super.select(withFrame: searchTextRect(forBounds: rect), in: controlView,
-      editor: editor, delegate: delegate, start: start, length: length)
-  }
-  override func edit(withFrame rect: NSRect, in controlView: NSView, editor: NSText,
-                     delegate: Any?, event: NSEvent?) {
-    super.edit(withFrame: searchTextRect(forBounds: rect), in: controlView,
-      editor: editor, delegate: delegate, event: event)
-  }
-  override func searchButtonRect(forBounds rect: NSRect) -> NSRect {
-    NSRect(x: rect.minX + 12, y: rect.midY - 8, width: 16, height: 16)
-  }
-  override func cancelButtonRect(forBounds rect: NSRect) -> NSRect {
-    NSRect(x: rect.maxX - 28, y: rect.midY - 8, width: 16, height: 16)
-  }
-  override func searchTextRect(forBounds rect: NSRect) -> NSRect {
-    let font = font ?? NSFont.systemFont(ofSize: 13)
-    let height = ceil(font.ascender - font.descender + font.leading)
-    return NSRect(x: rect.minX + 36, y: rect.midY - height / 2,
-      width: max(0, rect.width - 68), height: height)
-  }
-}
-
-/// AppKit owns editing, selection, paste and IME. Only result-navigation keys
-/// leave the field editor; ordinary terminal input never passes through here.
-private final class SwarmSearchField: NSSearchField {
-  var palette = SwarmNativePalette() { didSet { needsDisplay = true } }
-  var begin: (() -> Void)?
-  var command: ((String) -> Void)?
-  var searching = false { didSet { needsDisplay = true } }
-  var usesKeymap = false
-  var shortcutHint: String? = "⌘P" { didSet { needsDisplay = true } }
-  override init(frame: NSRect) {
-    super.init(frame: frame)
-    cell = SwarmSearchCell(textCell: "")
-    font = NSFont.systemFont(ofSize: 13)
-    controlSize = .regular
-    appearance = NSAppearance(named: .darkAqua)
-    isEditable = true
-    isSelectable = true
-    isBordered = false
-    drawsBackground = false
-    textColor = NSColor(white: 0.92, alpha: 1)
-    placeholderString = "Search…"
-    sendsSearchStringImmediately = true
-    sendsWholeSearchString = false
-    maximumRecents = 0
-    searchMenuTemplate = nil
-    focusRingType = .none
-    if let search = cell as? NSSearchFieldCell {
-      search.focusRingType = .none
-      search.isScrollable = true
-      search.searchButtonCell?.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil)?
-        .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 14, weight: .regular))
-    }
-  }
-  required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-  override var mouseDownCanMoveWindow: Bool { false }
-  override func becomeFirstResponder() -> Bool {
-    begin?()
-    return super.becomeFirstResponder()
-  }
-  override func mouseDown(with event: NSEvent) {
-    begin?()
-    super.mouseDown(with: event)
-  }
-  override func performKeyEquivalent(with event: NSEvent) -> Bool {
-    if usesKeymap { return super.performKeyEquivalent(with: event) }
-    if let editor = currentEditor() as? NSTextView,
-       event.modifierFlags.intersection([.command, .option, .control, .shift]) == .command {
-      if event.charactersIgnoringModifiers == "p" && !editor.hasMarkedText() {
-        editor.selectAll(nil)
-        return true
-      }
-      if event.charactersIgnoringModifiers == "i" && !editor.hasMarkedText() {
-        if !event.isARepeat { command?("preview") }
-        return true
-      }
-      if let action = Self.resultCommand("insertNewline:", event: event, composing: editor.hasMarkedText()),
-         event.charactersIgnoringModifiers == "\r" || event.charactersIgnoringModifiers == "\u{3}" {
-        if !event.isARepeat { command?(action) }
-        return true
-      }
-    }
-    return super.performKeyEquivalent(with: event)
-  }
-  static func resultCommand(_ selector: String, event: NSEvent?, composing: Bool) -> String? {
-    guard !composing else { return nil }
-    let modifiers = event?.modifierFlags.intersection([.command, .option, .control, .shift]) ?? []
-    if modifiers == .command && event?.charactersIgnoringModifiers == "i" { return "preview" }
-    if modifiers == .control {
-      switch event?.charactersIgnoringModifiers?.lowercased() {
-      case "n", "j": return "next"
-      case "p", "k": return "previous"
-      case "g": return "close"
-      default: break
-      }
-    }
-    switch selector {
-    case "moveDown:": return "next"
-    case "moveUp:": return "previous"
-    case "insertNewline:", "insertNewlineIgnoringFieldEditor:": return modifiers == .command ? "add" : "submit"
-    case "cancelOperation:", "complete:": return "close"
-    default: return nil
-    }
-  }
+private final class SwarmNotificationButton: NSButton {
+  var hasAttention = false { didSet { needsDisplay = true } }
   override func draw(_ dirtyRect: NSRect) {
-    let shape = NSBezierPath(roundedRect: bounds, xRadius: searching ? 10 : 16, yRadius: searching ? 10 : 16)
-    palette.search.setFill()
-    shape.fill()
-    if searching {
-      // The strip continues the square bottom edge down to the result list.
-      NSRect(x: 0, y: isFlipped ? bounds.midY : 0,
-        width: bounds.width, height: bounds.height / 2).fill()
-    } else {
-      NSColor(white: 1, alpha: 0.16).setStroke()
-      let rim = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 16, yRadius: 16)
-      rim.lineWidth = 1
-      rim.stroke()
-    }
     super.draw(dirtyRect)
-    if !searching && stringValue.isEmpty && bounds.width >= 140, let shortcutHint,
-       !shortcutHint.isEmpty {
-      let shortcut = shortcutHint as NSString
-      let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 11),
-        .foregroundColor: NSColor.secondaryLabelColor]
-      let size = shortcut.size(withAttributes: attrs)
-      guard size.width <= bounds.width * 0.4 else { return }
-      shortcut.draw(at: NSPoint(x: bounds.width - size.width - 12,
-        y: (bounds.height - size.height) / 2), withAttributes: attrs)
+    if hasAttention {
+      NSColor.systemOrange.setFill()
+      NSBezierPath(ovalIn: NSRect(x: bounds.midX + 4, y: bounds.midY + 5, width: 5, height: 5)).fill()
     }
   }
 }
 
-private final class SwarmTabStrip: NSView, NSSearchFieldDelegate {
+private final class SwarmTabStrip: NSView {
   private(set) var palette = SwarmNativePalette()
   var emit: ((String, Any?) -> Void)?
-  var editingEnded: (() -> Void)?
-  var editingBegan: (() -> Void)?
   private let scroll = NSScrollView()
   private let document = NSView()
   private let newButton = NSButton()
-  fileprivate let searchField = SwarmSearchField()
-  private var lastSearchWidth: CGFloat = 0
+  fileprivate let searchButton = NSButton()
+  fileprivate let newAgentButton = NSButton()
+  fileprivate let notificationButton = SwarmNotificationButton()
   private var tabs: [SwarmTabButton] = []
   private var activeId = ""
   private var revealActiveAfterLayout = false
@@ -877,6 +683,8 @@ private final class SwarmTabStrip: NSView, NSSearchFieldDelegate {
       button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
       button.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 13, weight: .regular)
       button.isBordered = false
+      button.title = ""
+      button.imagePosition = .imageOnly
       button.contentTintColor = palette.accent
       button.target = self
       button.action = action
@@ -886,13 +694,14 @@ private final class SwarmTabStrip: NSView, NSSearchFieldDelegate {
     }
     button(newButton, "plus", "New swarm (⌘T)", #selector(newSwarm))
     newButton.isEnabled = false
-    searchField.delegate = self
-    searchField.isEnabled = false
-    searchField.begin = { [weak self] in self?.beginSearch() }
-    searchField.command = { [weak self] action in self?.emit?("searchCommand", ["command": action]) }
-    searchField.toolTip = "Search agents, swarms, machines and projects (⌘P)"
-    searchField.setAccessibilityLabel("Search agents, swarms, machines and projects")
-    addSubview(searchField)
+    button(searchButton, "magnifyingglass", "Search (⌘P)", #selector(openSearch))
+    button(newAgentButton, "plus", "New agent (⌘N)", #selector(newAgent))
+    newAgentButton.imagePosition = .imageOnly
+    newAgentButton.setAccessibilityLabel("New agent")
+    newAgentButton.isEnabled = false
+    button(notificationButton, "bell", "Notifications", #selector(openNotifications))
+    searchButton.isEnabled = false
+    notificationButton.isEnabled = false
     registerForDraggedTypes([swarmPasteboardType])
   }
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -901,7 +710,9 @@ private final class SwarmTabStrip: NSView, NSSearchFieldDelegate {
     let nextPalette = SwarmNativePalette(values)
     guard nextPalette != palette else { return }
     palette = nextPalette
-    searchField.palette = palette
+    searchButton.contentTintColor = palette.accent
+    newAgentButton.contentTintColor = palette.accent
+    notificationButton.contentTintColor = palette.accent
     newButton.contentTintColor = palette.accent
     for tab in tabs { tab.palette = palette }
     needsDisplay = true
@@ -942,8 +753,13 @@ private final class SwarmTabStrip: NSView, NSSearchFieldDelegate {
     // Moving frames alone leaves AppKit's child traversal in insertion order.
     document.setAccessibilityChildren(tabs)
     newButton.isEnabled = actionsEnabled && tabs.count < 24
-    searchField.isEnabled = actionsEnabled
-    if !actionsEnabled { closeSearch() }
+    searchButton.isEnabled = actionsEnabled
+    newAgentButton.isEnabled = actionsEnabled
+    notificationButton.isEnabled = actionsEnabled
+    let attention = state["attention"] as? Int ?? 0
+    notificationButton.hasAttention = attention > 0
+    notificationButton.toolTip = attention > 0 ? "\(attention) agents need input" : "Notifications"
+    notificationButton.setAccessibilityLabel(notificationButton.toolTip)
     needsLayout = true
     layoutSubtreeIfNeeded()
     if ids != previousOrder {
@@ -965,10 +781,7 @@ private final class SwarmTabStrip: NSView, NSSearchFieldDelegate {
     let activeWasVisible = active.map { scroll.documentVisibleRect.intersects($0.frame) } ?? false
     let previousScrollSize = scroll.frame.size
     let previousDocumentSize = document.frame.size
-    let searchWidth: CGFloat = searchField.searching
-      ? min(600, max(128, bounds.width - 184))
-      : bounds.width < 480 ? 128 : bounds.width < 720 ? 156 : 200
-    let available = max(132, bounds.width - searchWidth - 56)
+    let available = max(132, bounds.width - 164)
     let width = min(220, max(132, available / CGFloat(max(1, tabs.count))))
     let occupied = min(available, CGFloat(tabs.count) * width)
     scroll.frame = NSRect(x: 0, y: 0, width: occupied, height: bounds.height)
@@ -979,11 +792,9 @@ private final class SwarmTabStrip: NSView, NSSearchFieldDelegate {
     }
     let buttonY = (bounds.height - 28) / 2
     newButton.frame = NSRect(x: occupied + 4, y: buttonY, width: 28, height: 28)
-    searchField.frame = NSRect(x: bounds.width - searchWidth - 8, y: (bounds.height - 32) / 2, width: searchWidth, height: 32)
-    if searchField.searching && searchWidth != lastSearchWidth {
-      lastSearchWidth = searchWidth
-      emit?("searchGeometry", ["width": searchWidth])
-    }
+    searchButton.frame = NSRect(x: bounds.width - 120, y: buttonY, width: 28, height: 28)
+    newAgentButton.frame = NSRect(x: bounds.width - 80, y: buttonY, width: 28, height: 28)
+    notificationButton.frame = NSRect(x: bounds.width - 40, y: buttonY, width: 28, height: 28)
     let geometryChanged = scroll.frame.size != previousScrollSize || document.frame.size != previousDocumentSize
     if let active, revealActiveAfterLayout || (activeWasVisible && (geometryChanged || tabOrderChanged)) {
       document.scrollToVisible(active.frame)
@@ -996,11 +807,7 @@ private final class SwarmTabStrip: NSView, NSSearchFieldDelegate {
     // rather than the rounded bottom of a separate pill.
     palette.workspace.setFill()
     NSRect(x: 0, y: 0, width: bounds.width, height: 1).fill()
-    if searchField.searching {
-      palette.search.setFill()
-      NSRect(x: searchField.frame.minX, y: 0, width: searchField.frame.width,
-        height: searchField.frame.minY + 1).fill()
-    }
+
   }
   override func mouseDown(with event: NSEvent) {
     if event.clickCount == 2 { window?.performZoom(nil) }
@@ -1009,61 +816,18 @@ private final class SwarmTabStrip: NSView, NSSearchFieldDelegate {
   @objc private func newSwarm() {
     if actionsEnabled && newButton.isEnabled { emit?("new", nil) }
   }
-  private func beginSearch() {
-    guard actionsEnabled, !searchField.searching else { return }
-    searchField.searching = true
-    needsDisplay = true
-    needsLayout = true
-    layoutSubtreeIfNeeded()
-    emit?("searchBegin", ["width": searchField.frame.width])
+  @objc private func openSearch() {
+    if actionsEnabled { emit?("jump", nil) }
   }
-  func focusSearch(selectAll: Bool = false) {
+  @objc private func openNotifications() {
+    if actionsEnabled { emit?("notifications", nil) }
+  }
+
+  @objc private func newAgent() {
     guard actionsEnabled else { return }
-    beginSearch()
-    if searchField.currentEditor() == nil { window?.makeFirstResponder(searchField) }
-    if selectAll, let editor = searchField.currentEditor() as? NSTextView, !editor.hasMarkedText() { editor.selectAll(nil) }
+    emit?("newAgent", nil)
   }
-  func setSearchState(_ state: [String: Any]) {
-    if let query = state["query"] as? String, query != searchField.stringValue {
-      searchField.stringValue = query
-      if let editor = searchField.currentEditor() as? NSTextView {
-        editor.string = query
-        editor.setSelectedRange(NSRange(location: (query as NSString).length, length: 0))
-      }
-    }
-    searchField.placeholderString = state["hint"] as? String ?? "Search…"
-  }
-  func closeSearch() {
-    guard searchField.searching else { return }
-    searchField.searching = false
-    needsDisplay = true
-    if searchField.currentEditor() != nil {
-      // Flutter's wrapper NSView does not accept first responder. Its public
-      // view controller does, and routes the next event to Flutter's keyboard.
-      let responder = window?.contentViewController as NSResponder? ?? window?.contentView
-      window?.makeFirstResponder(responder)
-    }
-    searchField.stringValue = ""
-    searchField.placeholderString = "Search…"
-    lastSearchWidth = 0
-    needsLayout = true
-  }
-  func controlTextDidChange(_ notification: Notification) {
-    guard searchField.searching else { return }
-    emit?("searchChanged", ["query": searchField.stringValue])
-  }
-  func controlTextDidEndEditing(_ notification: Notification) { editingEnded?() }
-  func controlTextDidBeginEditing(_ notification: Notification) { editingBegan?() }
-  func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
-    if searchField.usesKeymap { return false }
-    let event = NSApp.currentEvent
-    guard let action = SwarmSearchField.resultCommand(NSStringFromSelector(selector), event: event,
-      composing: textView.hasMarkedText()) else { return false }
-    if event?.isARepeat != true || !["submit", "add", "close", "preview"].contains(action) {
-      emit?("searchCommand", ["command": action])
-    }
-    return true
-  }
+
   private func draggedTab(_ sender: NSDraggingInfo) -> SwarmTabButton? {
     guard actionsEnabled, sender.draggingSourceOperationMask.contains(.move),
           let source = sender.draggingSource as? SwarmTabButton,

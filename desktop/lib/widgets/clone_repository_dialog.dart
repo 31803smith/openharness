@@ -53,14 +53,16 @@ class _CloneRepositoryDialogState extends State<CloneRepositoryDialog> {
                 : p.dirname(widget.initialFolder!)),
         confirmButtonText: 'Choose destination',
       );
-      if (mounted && folder != null)
+      if (mounted && folder != null) {
         setState(() {
           _parent = folder;
           _error = null;
         });
+      }
     } catch (_) {
-      if (mounted)
+      if (mounted) {
         setState(() => _error = 'Could not open the folder picker. Try again.');
+      }
     } finally {
       if (mounted) setState(() => _picking = false);
     }
@@ -80,10 +82,11 @@ class _CloneRepositoryDialogState extends State<CloneRepositoryDialog> {
     } on RepositoryCloneException catch (error) {
       if (mounted && !_closing) setState(() => _error = error.message);
     } catch (_) {
-      if (mounted && !_closing)
+      if (mounted && !_closing) {
         setState(
           () => _error = 'Could not clone the repository. Please retry.',
         );
+      }
     } finally {
       if (mounted) {
         setState(() => _clone = null);

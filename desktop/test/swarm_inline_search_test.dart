@@ -152,7 +152,7 @@ void main() {
       await tester.enterText(_input, 'Agent 12');
       await tester.pump();
       expect(tester.widget<TextField>(_input).focusNode!.hasFocus, isTrue);
-      expect(tester.widget<TextField>(top).controller!.text, isEmpty);
+      expect(top, findsNothing);
       expect(find.byKey(const ValueKey('swarm-search-results')), findsNothing);
       expect(find.widgetWithText(ListTile, 'Agent 12'), findsOneWidget);
       final results = tester.getRect(_results);

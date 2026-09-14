@@ -8,6 +8,7 @@ import '../shared/widgets/skeleton.dart';
 import '../state/app_state.dart';
 import '../state/swarm_catalog.dart';
 import 'engine_identity.dart';
+import 'swarm_icon.dart';
 
 class SwarmWelcome extends StatelessWidget {
   const SwarmWelcome({
@@ -208,7 +209,6 @@ class SwarmWelcome extends StatelessWidget {
                                   for (final machine
                                       in app.machineStates.values)
                                     _StarterRow(
-                                      icon: Icons.computer_outlined,
                                       name: machine.machine.displayName,
                                       note: machine.needsLink
                                           ? 'Link required'
@@ -239,7 +239,6 @@ class SwarmWelcome extends StatelessWidget {
                                 [
                                   for (final group in groups)
                                     _StarterRow(
-                                      icon: Icons.folder_outlined,
                                       name: group.name,
                                       count: group.agents.length,
                                       onTap: () => onProject(group),
@@ -337,11 +336,7 @@ class _FirstAgentGuide extends StatelessWidget {
       const SizedBox(height: 16),
       for (final (number, title, detail) in const [
         ('1', 'Choose a folder', 'Use a project you already work on.'),
-        (
-          '2',
-          'Pick your agent',
-          'Claude Code, Codex, or another coding agent.',
-        ),
+        ('2', 'Pick your agent', 'Claude Code, Codex, or another agent.'),
         (
           '3',
           'Start working',
@@ -510,14 +505,12 @@ class _SwarmSearchFieldState extends State<SwarmSearchField> {
 
 class _StarterRow extends StatelessWidget {
   const _StarterRow({
-    required this.icon,
     required this.name,
     required this.count,
     required this.onTap,
     this.note,
     this.onManage,
   });
-  final IconData icon;
   final String name;
   final int count;
   final VoidCallback onTap;
@@ -533,7 +526,7 @@ class _StarterRow extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 14),
         child: Row(
           children: [
-            Icon(icon, size: 17, color: Colors.white60),
+            const SwarmIcon(size: 19, color: Colors.white60),
             const SizedBox(width: 11),
             Expanded(
               child: Text(

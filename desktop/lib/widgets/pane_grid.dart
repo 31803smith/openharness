@@ -34,11 +34,13 @@ class PaneGrid extends StatelessWidget {
     required this.notifier,
     this.swarmMode = false,
     this.empty,
+    this.onSplit,
   });
 
   final AppNotifier notifier;
   final bool swarmMode;
   final Widget? empty;
+  final void Function(int paneId, PaneResizeAxis axis)? onSplit;
 
   @override
   Widget build(BuildContext context) {
@@ -50,6 +52,7 @@ class PaneGrid extends StatelessWidget {
             notifier: notifier,
             dragging: dragging,
             empty: empty,
+            onSplit: onSplit,
           );
         }
         final panes = notifier.panes;
@@ -209,10 +212,12 @@ class _SwarmCanvas extends StatefulWidget {
     required this.notifier,
     required this.dragging,
     this.empty,
+    this.onSplit,
   });
   final AppNotifier notifier;
   final AgentDragRef? dragging;
   final Widget? empty;
+  final void Function(int paneId, PaneResizeAxis axis)? onSplit;
   @override
   State<_SwarmCanvas> createState() => _SwarmCanvasState();
 }
@@ -354,6 +359,8 @@ class _SwarmCanvasState extends State<_SwarmCanvas> {
       focusRequest: app.isPaneFocused(pane.id) ? app.paneFocusRequest : 0,
       single: app.panes.length == 1,
       pinned: app.isPanePinned(pane),
+      zoomed: app.zoomedPaneId == pane.id,
+      canSplit: app.canAddPane,
       composer: pane.composerVisible,
       blocked:
           app.questionFor(pane.machineId, pane.agentId ?? session.agentId) !=
@@ -431,6 +438,7 @@ class _SwarmCanvasState extends State<_SwarmCanvas> {
                         dragging: widget.dragging,
                         visible: rectangles.containsKey(pane.id),
                         swarmMode: true,
+                        onSplit: widget.onSplit,
                       ),
                     ),
                   ),
@@ -935,6 +943,7 @@ class _PaneCell extends StatelessWidget {
     required this.dragging,
     this.visible = true,
     this.swarmMode = false,
+    this.onSplit,
   });
 
   final AppNotifier notifier;
@@ -942,6 +951,7 @@ class _PaneCell extends StatelessWidget {
   final AgentDragRef? dragging;
   final bool visible;
   final bool swarmMode;
+  final void Function(int paneId, PaneResizeAxis axis)? onSplit;
 
   bool get _single => notifier.panes.length == 1;
 
@@ -1049,6 +1059,7 @@ class _PaneCell extends StatelessWidget {
                       single: _single,
                       visible: visible,
                       swarmMode: swarmMode,
+                      onSplit: onSplit,
                     ),
                   ),
                 ),
@@ -1068,6 +1079,7 @@ class _PaneContent extends StatelessWidget {
     required this.single,
     required this.visible,
     required this.swarmMode,
+    this.onSplit,
   });
 
   final AppNotifier notifier;
@@ -1075,6 +1087,7 @@ class _PaneContent extends StatelessWidget {
   final bool single;
   final bool visible;
   final bool swarmMode;
+  final void Function(int paneId, PaneResizeAxis axis)? onSplit;
 
   @override
   Widget build(BuildContext context) {
@@ -1156,6 +1169,19 @@ class _PaneContent extends StatelessWidget {
           onClose: single && !swarmMode ? null : close,
           pinned: notifier.isPanePinned(pane),
           onTogglePin: single ? null : () => notifier.togglePinPane(pane.id),
+          zoomed: notifier.zoomedPaneId == pane.id,
+          onToggleZoom: swarmMode
+              ? () {
+                  notifier.focusPane(pane.id);
+                  notifier.toggleZoomPane();
+                }
+              : null,
+          onSplitRight: onSplit == null || !notifier.canAddPane
+              ? null
+              : () => onSplit!(pane.id, PaneResizeAxis.x),
+          onSplitDown: onSplit == null || !notifier.canAddPane
+              ? null
+              : () => onSplit!(pane.id, PaneResizeAxis.y),
           onRendererFocus: () => notifier.focusPane(pane.id),
           paneDrag: single
               ? null

@@ -77,8 +77,8 @@ void main() {
         '/work/existing',
       );
       await tester.pump();
-      expect(find.text('Agent 0'), findsOneWidget);
-      expect(find.text('Agent 1'), findsOneWidget);
+      expect(find.widgetWithText(ListTile, 'Agent 0'), findsOneWidget);
+      expect(find.widgetWithText(ListTile, 'Agent 1'), findsOneWidget);
       expect(find.text('Agent 2'), findsNothing);
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
       await tester.pump();
@@ -109,14 +109,14 @@ void main() {
       );
       await tester.pump();
       expect(find.text('Agent 1').last, findsOneWidget);
-      await tester.tap(find.text('Agent 1').last);
+      await tester.tap(find.widgetWithText(ListTile, 'Agent 1'));
       await tester.pump();
       await app.addAgentToSwarm('m', 'a2');
       app.toggleZoomPane();
       await tester.pump();
       final zoom = app.zoomedPaneId;
       final before = tester.getSize(find.byType(PaneGrid));
-      await tester.tap(find.byKey(const ValueKey('swarm-search-input')));
+      await tester.tap(find.byKey(const ValueKey('swarm-search-button')));
       await tester.pump(const Duration(milliseconds: 300));
       expect(
         find.byKey(const ValueKey('swarm-search-results')),

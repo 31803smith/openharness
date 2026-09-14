@@ -25,9 +25,10 @@ void main() {
       app.adoptSessionForTest(session);
       await mount(tester, app);
       final input = find.byKey(const ValueKey('swarm-search-input'));
-      final originalController = tester.widget<TextField>(input).controller;
-      await tester.tap(input);
+      expect(input, findsNothing);
+      await tester.tap(find.byKey(const ValueKey('swarm-search-button')));
       await tester.pump();
+      final originalController = tester.widget<TextField>(input).controller;
       await tester.enterText(input, 'a query only');
       await tester.pump();
       expect(
@@ -273,7 +274,7 @@ void main() {
         .take(3)
         .toList();
     await mount(tester, app);
-    await tester.tap(find.byKey(const ValueKey('swarm-search-input')));
+    await tester.tap(find.byKey(const ValueKey('swarm-search-button')));
     await tester.pump();
     await tester.enterText(jumpField, 'Test host');
     await tester.pump();

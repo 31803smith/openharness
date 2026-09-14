@@ -63,7 +63,7 @@ void main() {
       ('cmd+l', 'pane.focus_right'),
       ('cmd+left', 'pane.focus_left'),
       ('cmd+enter', 'pane.zoom'),
-      ('cmd+shift+p', 'pane.pin'),
+      ('cmd+shift+p', 'navigation.commands'),
       ('cmd+s', 'pane.layout'),
       ('cmd+b', 'task.route'),
       ('cmd+r', 'machines.refresh'),

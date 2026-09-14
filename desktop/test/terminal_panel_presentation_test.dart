@@ -35,7 +35,10 @@ void main() {
       await tester.pump();
       revision.value = 1;
       await tester.pump();
-      await tester.tap(find.byTooltip('Close pane'));
+      await tester.tap(find.byTooltip('Actions for ${session.agentName}'));
+      await tester.pump();
+      await tester.tap(find.text('Close agent'));
+      await tester.pump();
       expect(closed, [1]);
       session.agentName = 'Renamed terminal';
       app.machineStates['m']!.agents = [

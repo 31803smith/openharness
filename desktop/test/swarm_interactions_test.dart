@@ -129,10 +129,14 @@ void main() {
     app.adoptSessionForTest(terminal('a0', []));
     await mount(tester, app);
     expect(find.byType(TerminalComposer), findsNothing);
-    await tester.tap(find.byTooltip('Show message composer'));
+    await tester.tap(find.byTooltip('Actions for Session a0'));
+    await tester.pump();
+    await tester.tap(find.text('Show message composer'));
     await tester.pump();
     expect(find.byType(TerminalComposer), findsOneWidget);
-    await tester.tap(find.byTooltip('Hide message composer'));
+    await tester.tap(find.byTooltip('Actions for Session a0'));
+    await tester.pump();
+    await tester.tap(find.text('Hide message composer'));
     await tester.pump();
     expect(find.byType(TerminalComposer), findsNothing);
     await tester.pumpWidget(const SizedBox());

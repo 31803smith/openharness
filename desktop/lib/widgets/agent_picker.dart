@@ -44,7 +44,9 @@ class AgentPicker extends StatelessWidget {
                           : grid.AppSurface.recess,
                       minimumSize: const Size(0, 38),
                       padding: const EdgeInsets.symmetric(horizontal: 8),
-                      textStyle: const TextStyle(
+                      textStyle: TextStyle(
+                        fontFamily: grid.AppFont.sans,
+                        fontFamilyFallback: grid.AppFont.sansFallback,
                         fontSize: 13,
                         fontWeight: FontWeight.w500,
                       ),
@@ -72,6 +74,7 @@ class AgentPicker extends StatelessWidget {
                 options: options,
                 onChanged: onChanged,
                 width: 42,
+                height: 38,
                 trigger: Icon(
                   Icons.more_horiz,
                   size: 20,

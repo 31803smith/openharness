@@ -3,6 +3,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 
 import '../state/pane_arrangement.dart';
+import '../shared/theme/app_theme.dart' as grid;
 
 /// The existing gap is the hit target. Only hover or keyboard focus reveals
 /// its thin grip; pointer movement never changes the focused agent.
@@ -187,19 +188,31 @@ class _PaneResizeHandleState extends State<PaneResizeHandle> {
           onVerticalDragUpdate: _horizontal ? null : _drag,
           onVerticalDragEnd: _horizontal ? null : _end,
           onVerticalDragCancel: _horizontal ? null : _cancel,
-          child: Center(
-            child: Container(
-              width: _horizontal ? 2 : double.infinity,
-              height: _horizontal ? double.infinity : 2,
-              margin: _horizontal
-                  ? const EdgeInsets.symmetric(vertical: 12)
-                  : const EdgeInsets.symmetric(horizontal: 12),
-              color: _focused
-                  ? Colors.white70
-                  : _hover
-                  ? Colors.white30
-                  : Colors.transparent,
-            ),
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              if (_hover || _focused || _start != null)
+                Center(
+                  child: Container(
+                    width: _horizontal ? 1 : double.infinity,
+                    height: _horizontal ? double.infinity : 1,
+                    color: grid.AppPalette.swarmAccent.withValues(alpha: .35),
+                  ),
+                ),
+              Center(
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 100),
+                  width: _horizontal ? 3 : 36,
+                  height: _horizontal ? 36 : 3,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(2),
+                    color: _hover || _focused || _start != null
+                        ? grid.AppPalette.swarmAccent
+                        : Colors.white24,
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
       ),

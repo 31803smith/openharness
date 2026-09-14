@@ -72,6 +72,7 @@ class AppSelectField<T> extends StatefulWidget {
     required this.options,
     required this.onChanged,
     this.width,
+    this.height = AppControl.height,
     this.trigger,
   });
 
@@ -82,6 +83,7 @@ class AppSelectField<T> extends StatefulWidget {
   /// Fixed width, so a column of these lines up on one right edge. Null lets it
   /// take whatever its parent gives.
   final double? width;
+  final double height;
 
   /// An alternate compact trigger, such as the agent picker's More button.
   /// Selection, keyboard navigation and menu rows remain shared.
@@ -243,7 +245,7 @@ class _AppSelectFieldState<T> extends State<AppSelectField<T>> {
               duration: AppMotion.hover,
               curve: AppMotion.curve,
               width: widget.width,
-              height: AppControl.height,
+              height: widget.height,
               padding: const EdgeInsets.only(left: 10, right: 8),
               decoration: BoxDecoration(
                 color: _hovered || _focused || controller.isOpen

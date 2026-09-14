@@ -16,7 +16,9 @@ class SwarmSearchController extends ChangeNotifier {
     this.projects,
     this.history,
     this.commands,
-  }) : targetId = app.activeSwarmId,
+    bool previewInitiallyEnabled = false,
+  }) : previewEnabled = previewInitiallyEnabled,
+       targetId = app.activeSwarmId,
        targetName = app.activeSwarm.name {
     _refresh();
     app.addListener(_refresh);
@@ -40,12 +42,15 @@ class SwarmSearchController extends ChangeNotifier {
   String query = '';
   String? _selectedId;
   int cursor = 0;
-  bool previewEnabled = false;
+  bool previewEnabled;
   SearchOutputPreview? preview;
   String? _previewId;
 
   bool get canPreview =>
-      !isCommandMode && selected?.agentId != null && selected?.closedId == null;
+      !isCommandMode &&
+      history == null &&
+      selected != null &&
+      selected?.closedId == null;
   bool get previewVisible => previewEnabled && canPreview;
 
   void togglePreview() {
@@ -56,7 +61,7 @@ class SwarmSearchController extends ChangeNotifier {
   }
 
   void _updatePreview() {
-    if (!previewVisible) {
+    if (!previewVisible || selected?.agentId == null) {
       preview = null;
       _previewId = null;
       return;

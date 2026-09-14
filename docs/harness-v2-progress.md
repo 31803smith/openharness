@@ -2,6 +2,16 @@
 
 Updated 2026-09-13 with coordinated palettes, Models, combined closed-work History and faster unified search. This is a working preview, not a release.
 
+## Search, creation and workspace controls checkpoint
+
+- Replaced File with separate **Swarm** and **Agent** menus. The top-right toolbar has exactly three icons: Search, New agent and Notifications. The tab-strip plus still creates a swarm. Native and Flutter New agent actions open the current swarm's creation dialog, inherit the focused agent's machine/working folder and preserve the existing agents and their input.
+- Cmd-P opens a centered search editor. Cmd-Shift-P opens command mode. Inline New swarm search uses the same input/results components, with results on the left and an optional preview on the right. Flutter owns arrows, text selection, deletion and IME in both locations. Native chrome no longer maintains a competing text editor or copies queries across channels.
+- Added header zoom and pane actions for right/down splits, pinning, the optional message composer and closing. Resize dividers show short centered grips. Existing resizing limits, saved proportions, cancellation and retained terminals remain covered. The four-pane SwarmIcon also identifies machine/project entries that open swarms.
+- User-facing names now say **Harness**; the internal bundle identifier stays unchanged. Models uses bare short account IDs. The preceding creation checkpoint (`06ba77c`) adds one-click Codex/Claude Code/Cursor choices, remembered agent choice, organized Advanced settings and a separate GitHub clone dialog on this computer. A saved project name wins over a discovered checkout alias.
+- The macOS Release preview built successfully (`/private/tmp/harness-v2-toolbar-release-build.log`). Synthetic visual review with real fonts verified the New agent dialog, quick choices and expanded Advanced section (`/private/tmp/harness-advanced-review.png`). Analyzer reports zero errors/warnings and the 12 existing vendored infos. Native checks pass: **51 decoder + 347 AppKit**; no windows displayed or real agent input used.
+- Full desktop regression run exercised 1,240 tests plus one existing skip. Eight old UI expectations were updated for the approved controls, command shortcut and visible preview; the affected files are rechecked separately. Logs: `/private/tmp/harness-v2-full-workspace-checks.log`, `/private/tmp/harness-v2-final-regressions.log`, `/private/tmp/harness-v2-pane-menu-checks.log`.
+- Draft PR #31 remains a review checkpoint. Actual first-use clarity, direct native input-to-display latency, real remote reconnect and Linux rollout still need qualification. Do not claim those are verified by widget or hidden AppKit tests. Preserve the separate uncommitted first-agent naming work, collaboration design and native benchmark tooling.
+
 ## Concurrent machine discovery checkpoint
 
 - Agent inventory and terminal capabilities now start together after the machine handshake. Capability checks are sent first, so the CLI's per-client FIFO can answer that small request before building the agent catalog. Discovered agents publish without waiting for a slower capability response. Restored panes still require both results, attach once and preserve focus.

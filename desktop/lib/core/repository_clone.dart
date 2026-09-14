@@ -24,8 +24,9 @@ class GitHubRepository {
           uri.userInfo.isNotEmpty ||
           uri.hasPort ||
           uri.hasQuery ||
-          uri.hasFragment)
+          uri.hasFragment) {
         return null;
+      }
       path = uri.path.replaceFirst(RegExp(r'^/'), '');
     }
     path = path
@@ -36,8 +37,9 @@ class GitHubRepository {
         !RegExp(r'^[A-Za-z0-9][A-Za-z0-9-]{0,38}$').hasMatch(parts[0]) ||
         !RegExp(r'^[A-Za-z0-9_.-]{1,100}$').hasMatch(parts[1]) ||
         parts[1] == '.' ||
-        parts[1] == '..')
+        parts[1] == '..') {
       return null;
+    }
     return GitHubRepository._(
       ssh ? 'git@github.com:$path.git' : 'https://github.com/$path.git',
       parts[1],
@@ -121,20 +123,22 @@ class RepositoryClone {
       final errors = process.stderr
           .transform(const Utf8Decoder(allowMalformed: true))
           .forEach((chunk) {
-            if (diagnostic.length < 8192)
+            if (diagnostic.length < 8192) {
               diagnostic += chunk.substring(
                 0,
                 chunk.length.clamp(0, 8192 - diagnostic.length),
               );
+            }
           });
       final code = await process.exitCode;
       await output;
       await errors;
       if (_cancelled) throw const RepositoryCloneException('Clone cancelled.');
-      if (timedOut)
+      if (timedOut) {
         throw const RepositoryCloneException(
           'Cloning took too long. Check the connection and retry.',
         );
+      }
       if (code != 0) {
         if (RegExp(
           r'authentication|permission denied|could not read Username|repository not found',

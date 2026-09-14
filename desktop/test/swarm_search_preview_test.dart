@@ -94,8 +94,18 @@ void main() {
             inline ? 'swarm-welcome-search-input' : 'swarm-search-input',
           ),
         );
+        if (!inline) {
+          await tester.tap(find.byKey(const ValueKey('swarm-search-button')));
+          await tester.pump();
+        }
         await tester.tap(input);
         await tester.enterText(input, 'Agent 0');
+        await tester.pump();
+        expect(
+          find.byKey(const ValueKey('swarm-search-preview')),
+          findsOneWidget,
+        );
+        await chord(tester, LogicalKeyboardKey.keyI);
         await tester.pump();
         expect(
           find.byKey(const ValueKey('swarm-search-preview')),

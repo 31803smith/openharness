@@ -1,3 +1,5 @@
+import 'swarm_interactions_test.dart' show chord;
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -100,7 +102,7 @@ void main() {
   testWidgets('app menu dialogs do not open over Settings', (tester) async {
     final app = createApp();
     await _mount(tester, app);
-    await tester.tap(find.byTooltip('Settings  ⌘,'));
+    await chord(tester, LogicalKeyboardKey.comma);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.byType(SettingsScreen), findsOneWidget);

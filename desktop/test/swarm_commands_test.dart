@@ -73,7 +73,7 @@ void main() {
       await tester.enterText(input, '> pin');
       await tester.pump();
       expect(find.text('⌘⇧P'), findsNothing);
-      expect(find.text('⇧⌘P'), findsOneWidget);
+      expect(find.text('⇧⌘P'), findsNothing);
       expect(find.text('Add to this swarm'), findsNothing);
       expect(find.byKey(const ValueKey('command:pane.pin')), findsOneWidget);
       expect(app.isPanePinned(pane), isFalse);
@@ -90,8 +90,14 @@ void main() {
             .hasFocus,
         isTrue,
       );
-      // The existing key still toggles pin; > commands did not steal it.
+      // The approved command shortcut opens command mode and leaves pinning alone.
       await chord(tester, LogicalKeyboardKey.keyP, shift: true);
+      expect(app.isPanePinned(pane), isTrue);
+      expect(tester.widget<TextField>(input).controller!.text, '> ');
+      await tester.enterText(input, '> unpin');
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
       expect(app.isPanePinned(pane), isFalse);
       expect(frames, isEmpty);
       await tester.pumpWidget(const SizedBox());

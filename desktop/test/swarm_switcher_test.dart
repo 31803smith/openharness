@@ -139,8 +139,7 @@ void main() {
       await mount(tester, app);
       final membership = [...app.panes];
       final input = find.byKey(const ValueKey('swarm-search-input'));
-      final controller = tester.widget<TextField>(input).controller;
-      final route = ModalRoute.of(tester.element(input));
+      expect(input, findsNothing);
       await tester.sendKeyDownEvent(LogicalKeyboardKey.meta);
       await tester.sendKeyEvent(LogicalKeyboardKey.keyP);
       await tester.sendKeyUpEvent(LogicalKeyboardKey.meta);
@@ -148,17 +147,20 @@ void main() {
       expect(jumpField, findsOneWidget);
       final field = tester.widget<TextField>(jumpField);
       expect(field.focusNode!.hasFocus, isTrue);
-      expect(field.controller, same(controller));
-      expect(ModalRoute.of(tester.element(input)), same(route));
+      final controller = field.controller;
       final results = tester.getRect(
-        find.byKey(const ValueKey('swarm-search-results')),
+        find.byKey(const ValueKey('swarm-search-result-list')),
       );
       final bar = tester.getRect(input);
       expect(results.top, inInclusiveRange(bar.bottom, bar.bottom + 12));
-      expect(results.right, closeTo(bar.right, 0.1));
+      final picker = tester.getRect(
+        find.byKey(const ValueKey('swarm-search-results')),
+      );
+      expect(picker.center.dx, closeTo(1280 / 2, 0.1));
       expect(find.byType(TextField), findsOneWidget);
       expect(find.byType(BackdropFilter), findsNothing);
       await chord(tester, LogicalKeyboardKey.keyP);
+      expect(tester.widget<TextField>(input).controller, same(controller));
       expect(
         find.byKey(const ValueKey('swarm-search-results')),
         findsOneWidget,
@@ -175,7 +177,7 @@ void main() {
       expect(app.panes, membership);
       await chord(tester, LogicalKeyboardKey.keyF, shift: true);
       expect(find.byType(Dialog), findsNothing);
-      await tester.tap(find.byKey(const ValueKey('swarm-search-input')));
+      await tester.tap(find.byKey(const ValueKey('swarm-search-button')));
       await tester.pump();
       expect(jumpField, findsOneWidget);
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
@@ -271,7 +273,7 @@ void main() {
       await tester.pump();
       await tester.pump();
       expect(tester.widget<ListTile>(selectedRow).key, ValueKey(selectedId));
-      expect(find.textContaining('Opens in'), findsOneWidget);
+      expect(find.text('Go to agent'), findsOneWidget);
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pump();
       expect(app.panes, hasLength(2));

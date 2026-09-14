@@ -89,7 +89,7 @@ class _NewAgentDialog extends StatefulWidget {
 }
 
 class _NewAgentDialogState extends State<_NewAgentDialog> {
-  final _folderFocus = FocusNode(debugLabel: 'Project folder');
+  final _folderFocus = FocusNode(debugLabel: 'Working folder');
   late String _engine = allEngines.first.id;
   bool _engineChosenByUser = false;
   late String _machineId = widget.machineId;

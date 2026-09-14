@@ -35,6 +35,7 @@ import '../widgets/pane_grid.dart';
 import '../widgets/shortcuts_sheet.dart';
 import '../widgets/swarm_dialogs.dart';
 import '../widgets/swarm_inline_search.dart';
+import '../widgets/swarm_search_input.dart';
 import '../widgets/swarm_project_agents.dart';
 import '../widgets/swarm_attention.dart';
 import '../widgets/swarm_switcher.dart';
@@ -69,14 +70,10 @@ class _SwarmScreenState extends State<SwarmScreen> {
   final _shellFocus = FocusNode(debugLabel: 'Swarm shell');
   final _navigation = SwarmNavigationHistory();
   final _searchText = TextEditingController();
-  final _searchFocus = FocusNode(debugLabel: 'Title bar search');
-  final _searchAnchor = LayerLink();
+  final _searchFocus = FocusNode(debugLabel: 'Search agents and swarms');
   SwarmSearchController? _search;
   OverlayEntry? _searchOverlay;
   FocusNode? _searchReturnFocus;
-  double _nativeSearchWidth = 600;
-  ({String query, String hint})? _nativeSearchFieldState;
-  bool _nativeQueryChange = false;
   bool _spokenPaletteOpen = false;
   bool _dialogOpen = false;
   bool _routeIsCurrent = true;
@@ -101,7 +98,6 @@ class _SwarmScreenState extends State<SwarmScreen> {
     app.addListener(_recordNavigation);
     FocusManager.instance.addListener(_restoreEmptyFocus);
     FocusManager.instance.addListener(_syncKeyContext);
-    _searchFocus.addListener(_searchFocusChanged);
     grid.AppTheme.palette.addListener(_paletteChanged);
     unawaited(_projects.load());
     _spokenTasks = app.spokenTasks.listen(_openSpokenTask);
@@ -339,26 +335,6 @@ class _SwarmScreenState extends State<SwarmScreen> {
       await _modelsMenu?.refresh();
       return;
     }
-    if (call.method == 'searchBegin') {
-      _openSearch();
-      _updateSearchGeometry(args);
-      return;
-    }
-    if (call.method == 'searchGeometry') {
-      _updateSearchGeometry(args);
-      return;
-    }
-    if (call.method == 'searchChanged') {
-      // The field editor is authoritative while typing. Echoing an earlier
-      // query back over the channel could replace a newer edit or marked text.
-      _nativeQueryChange = true;
-      try {
-        if (args['query'] is String) _search?.setQuery(args['query']);
-      } finally {
-        _nativeQueryChange = false;
-      }
-      return;
-    }
     if (call.method == 'keymapCommand' &&
         !(args['command'] as String? ?? '').startsWith('picker.')) {
       if (args['command'] is String) _runShortcut(args['command']);
@@ -432,13 +408,23 @@ class _SwarmScreenState extends State<SwarmScreen> {
       case 'addAgent':
         await _addAgent();
       case 'newAgent':
-        await _newAgent(swarmId: app.activeSwarmId);
+        unawaited(_newAgent(swarmId: app.activeSwarmId));
+      case 'splitRight':
+        unawaited(_splitAgent(PaneResizeAxis.x));
+      case 'splitDown':
+        unawaited(_splitAgent(PaneResizeAxis.y));
+      case 'zoomPane':
+        app.toggleZoomPane();
+      case 'pinPane':
+        if (app.focusedPaneId != null) app.togglePinPane(app.focusedPaneId!);
       case 'addProject':
         await _addProject();
       case 'linkMachine':
         await _dialog(() => showSwarmLinkDialog(context, app));
       case 'jump':
         await _jump();
+      case 'commands':
+        _showSearchCommands();
       case 'historyDestination':
         final entry = _navigation
             .menuDestinations(app)
@@ -461,12 +447,25 @@ class _SwarmScreenState extends State<SwarmScreen> {
       case 'findPrevious':
         app.focusedPane?.session?.find(TerminalFindAction.previous);
       case 'notifications':
-        await _notifications();
+        unawaited(_notifications());
       case 'settings':
         await _settings();
     }
     if (mounted &&
-        const {'select', 'close', 'new', 'rename'}.contains(call.method)) {
+        const {
+          'select',
+          'close',
+          'new',
+          'rename',
+          'jump',
+          'commands',
+          'notifications',
+          'newAgent',
+          'splitRight',
+          'splitDown',
+          'zoomPane',
+          'pinPane',
+        }.contains(call.method)) {
       // Native tab controls wait for this reply before releasing keyboard
       // ownership. The destination's actual focus tree must be ready first.
       await WidgetsBinding.instance.endOfFrame;
@@ -502,11 +501,21 @@ class _SwarmScreenState extends State<SwarmScreen> {
     PaneSplitRequest? split,
     bool chooseFolderFirst = false,
   }) => _dialog(() async {
+    final focused = app.focusedPane;
+    final inherit =
+        machineId == null && !chooseFolderFirst && focused?.agentId != null;
+    final focusedMachine = inherit
+        ? app.machineStates[focused!.machineId]
+        : null;
+    final focusedAgent = focusedMachine?.agents
+        .where((agent) => agent.id == focused?.agentId)
+        .firstOrNull;
     final local = app.machineStates.values
         .where((m) => m.isLocalMachine)
         .firstOrNull;
     final id =
         machineId ??
+        focusedMachine?.machine.machineId ??
         local?.machine.machineId ??
         app.machineStates.keys.firstOrNull;
     if (id == null) {
@@ -515,7 +524,11 @@ class _SwarmScreenState extends State<SwarmScreen> {
     }
     final targetId = swarmId ?? app.activeSwarmId;
     final machine = app.machineStates[id];
-    var selectedFolder = folder;
+    var selectedFolder =
+        folder ??
+        (focusedAgent == null
+            ? null
+            : focusedMachine?.projectOf(focusedAgent)?.cwd);
     Future<void>? initialEngineProbe;
     if (chooseFolderFirst && machine != null && machine.isLocalMachine) {
       // Read availability while the user chooses a folder, so the form can
@@ -614,10 +627,6 @@ class _SwarmScreenState extends State<SwarmScreen> {
     }
   }
 
-  void _searchFocusChanged() {
-    if (_searchFocus.hasFocus && _search == null) _openSearch();
-  }
-
   void _openSearch() {
     if (_search != null ||
         !mounted ||
@@ -635,70 +644,43 @@ class _SwarmScreenState extends State<SwarmScreen> {
       _navigation.recent,
       projects: _projects,
       commands: _searchCommands,
+      previewInitiallyEnabled: true,
     );
     _search!.addListener(_syncSearch);
     _searchOverlay = OverlayEntry(builder: _buildSearchOverlay);
     Overlay.of(context).insert(_searchOverlay!);
-    _nativeQueryChange = _native;
     _syncSearch();
-    _nativeQueryChange = false;
     setState(() {});
-    // Flutter releases its text client before AppKit takes the caret. This
-    // prevents a terminal's old client from reclaiming the field editor.
-    if (_native) _focusSearch();
+    _focusSearch();
   }
 
   void _focusSearch({bool selectAll = false}) {
     if (_search == null) return;
-    if (_native) {
-      unawaited(
-        _channel.invokeMethod<void>('focusSearch', {'selectAll': selectAll}),
+    _searchFocus.requestFocus();
+    if (selectAll) {
+      _searchText.selection = TextSelection(
+        baseOffset: 0,
+        extentOffset: _searchText.text.length,
       );
-    } else {
-      _searchFocus.requestFocus();
-      if (selectAll) {
-        _searchText.selection = TextSelection(
-          baseOffset: 0,
-          extentOffset: _searchText.text.length,
-        );
-      }
     }
+  }
+
+  void _showSearchCommands() {
+    _openSearch();
+    _search?.setQuery('> ');
+    _focusSearch();
   }
 
   void _syncSearch() {
     final search = _search;
     if (search == null) return;
-    if (!_native && _searchText.text != search.query) {
+    if (_searchText.text != search.query) {
       _searchText.value = TextEditingValue(
         text: search.query,
         selection: TextSelection.collapsed(offset: search.query.length),
       );
     }
-    if (_native) {
-      final state = (query: search.query, hint: search.hint);
-      final updateQuery =
-          !_nativeQueryChange && state.query != _nativeSearchFieldState?.query;
-      final updateHint = state.hint != _nativeSearchFieldState?.hint;
-      // Remember native edits even when no message is needed. A later catalog
-      // refresh must not echo this query over a newer edit or marked text.
-      _nativeSearchFieldState = state;
-      if (updateQuery || updateHint) {
-        unawaited(
-          _channel.invokeMethod<void>('searchState', {
-            if (updateQuery) 'query': state.query,
-            'hint': state.hint,
-          }),
-        );
-      }
-    }
     _searchOverlay?.markNeedsBuild();
-  }
-
-  void _updateSearchGeometry(Map args) {
-    if (args['width'] is num) {
-      _nativeSearchWidth = (args['width'] as num).toDouble();
-      _searchOverlay?.markNeedsBuild();
-    }
   }
 
   void _closeSearch({bool restoreFocus = true}) {
@@ -709,10 +691,8 @@ class _SwarmScreenState extends State<SwarmScreen> {
     _search!.removeListener(_syncSearch);
     _search!.dispose();
     _search = null;
-    _nativeSearchFieldState = null;
     _searchText.clear();
     _searchFocus.unfocus();
-    if (_native) unawaited(_channel.invokeMethod<void>('closeSearch'));
     final previous = _searchReturnFocus;
     _searchReturnFocus = null;
     if (restoreFocus) {
@@ -732,73 +712,64 @@ class _SwarmScreenState extends State<SwarmScreen> {
     await _activateSearch(choice, target);
   }
 
-  double _searchWidth(double available) =>
-      _search == null ? 192 : (available - 200).clamp(140, 600).toDouble();
-
   Widget _buildSearchOverlay(BuildContext context) {
     final search = _search!;
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final width =
-            (_native ? _nativeSearchWidth : _searchWidth(constraints.maxWidth))
-                .clamp(128.0, constraints.maxWidth - 16);
-        final scale = MediaQuery.textScalerOf(context);
-        final height = swarmSearchResultsHeight(
-          search,
-          scale,
-        ).clamp(140.0, constraints.maxHeight - (_native ? 12 : 56));
-        final results = SizedBox(
-          width: width,
-          height: height.toDouble(),
-          child: Material(
-            key: const ValueKey('swarm-search-results'),
-            elevation: 8,
-            shadowColor: Colors.black54,
-            color: grid.AppPalette.swarmSearchSurface,
-            shape: const RoundedRectangleBorder(
-              borderRadius: BorderRadius.vertical(bottom: Radius.circular(10)),
-            ),
-            clipBehavior: Clip.antiAlias,
-            child: Padding(
-              padding: const EdgeInsets.all(8),
-              child: SwarmSearchResults(
-                search: search,
-                onChoose: _chooseSearch,
-                onRefocus: _focusSearch,
-              ),
-            ),
-          ),
-        );
-        return Stack(
+    return KeymapProvider(
+      keymap: _keymap,
+      child: LayoutBuilder(
+        builder: (context, constraints) => Stack(
           children: [
-            Positioned(
-              top: _native ? 0 : 44,
-              left: 0,
-              right: 0,
-              bottom: 0,
+            Positioned.fill(
               child: GestureDetector(
                 behavior: HitTestBehavior.opaque,
                 onTap: _closeSearch,
+                child: const ColoredBox(color: Color(0x66000000)),
               ),
             ),
-            if (_native)
-              Positioned(top: 0, right: 8, child: results)
-            else
-              Positioned(
-                left: 0,
-                top: 0,
-                child: CompositedTransformFollower(
-                  link: _searchAnchor,
-                  showWhenUnlinked: false,
-                  targetAnchor: Alignment.bottomRight,
-                  followerAnchor: Alignment.topRight,
-                  offset: Offset.zero,
-                  child: results,
+            Align(
+              alignment: const Alignment(0, -0.12),
+              child: SizedBox(
+                width: (constraints.maxWidth - 64).clamp(280.0, 1040.0),
+                height: (constraints.maxHeight - 96).clamp(220.0, 540.0),
+                child: Material(
+                  key: const ValueKey('swarm-search-results'),
+                  elevation: 16,
+                  shadowColor: Colors.black54,
+                  color: grid.AppPalette.swarmSearchSurface,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    side: const BorderSide(color: Colors.white24),
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: Column(
+                    children: [
+                      SwarmSearchInput(
+                        inputKey: const ValueKey('swarm-search-input'),
+                        controller: _searchText,
+                        focusNode: _searchFocus,
+                        search: search,
+                        onChoose: _chooseSearch,
+                        onClose: _closeSearch,
+                        onChanged: search.setQuery,
+                        showClose: true,
+                      ),
+                      const Divider(height: 1, color: Colors.white12),
+                      Expanded(
+                        child: SwarmSearchResults(
+                          search: search,
+                          onChoose: _chooseSearch,
+                          onRefocus: _focusSearch,
+                          onCommands: _showSearchCommands,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
+            ),
           ],
-        );
-      },
+        ),
+      ),
     );
   }
 
@@ -1000,11 +971,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
         command.id: _actionHandlers[command.action]!,
     for (var i = 1; i <= kAgentDigitCount; i++)
       'pane.focus_$i': () => app.focusPaneByIndex(i - 1),
-    'navigation.commands': () {
-      _openSearch();
-      _search?.setQuery('> ');
-      _focusSearch();
-    },
+    'navigation.commands': _showSearchCommands,
     'machine.link': () => _dialog(() => showSwarmLinkDialog(context, app)),
     'project.add': _addProject,
     'keyboard.open_config': () => openKeyboardConfig(context),
@@ -1191,6 +1158,10 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                 child: PaneGrid(
                                   notifier: app,
                                   swarmMode: true,
+                                  onSplit: (paneId, axis) {
+                                    app.focusPane(paneId);
+                                    unawaited(_splitAgent(axis));
+                                  },
                                   empty: SwarmWelcome(
                                     key: ValueKey(app.activeSwarmId),
                                     notifier: app,
@@ -1332,132 +1303,38 @@ class _SwarmScreenState extends State<SwarmScreen> {
               : null,
           icon: const Icon(Icons.add, size: 18),
         ),
-        Padding(
-          padding: const EdgeInsets.only(left: 8, right: 8, top: 6),
-          child: CompositedTransformTarget(
-            link: _searchAnchor,
-            child: SizedBox(
-              width: _searchWidth(MediaQuery.sizeOf(context).width),
-              height: 38,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: _search == null
-                      ? null
-                      : grid.AppPalette.swarmSearchSurface,
-                  borderRadius: const BorderRadius.vertical(
-                    top: Radius.circular(10),
-                  ),
-                ),
-                child: Align(
-                  alignment: Alignment.topCenter,
-                  child: SizedBox(
-                    height: 32,
-                    child: ListenableBuilder(
-                      listenable: _search ?? _searchText,
-                      builder: (context, _) => SwarmSearchKeys(
-                        search: _search,
-                        editing: _searchText,
-                        onChoose: _chooseSearch,
-                        onClose: _closeSearch,
-                        child: Listener(
-                          onPointerDown: (_) => _openSearch(),
-                          child: TextField(
-                            key: const ValueKey('swarm-search-input'),
-                            controller: _searchText,
-                            focusNode: _searchFocus,
-                            onChanged: (query) => _search?.setQuery(query),
-                            style: const TextStyle(
-                              fontSize: 13,
-                              color: Color(0xffebebeb),
-                            ),
-                            textAlignVertical: TextAlignVertical.center,
-                            decoration: InputDecoration(
-                              hintText: _search?.hint ?? 'Search…',
-                              isDense: true,
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                              ),
-                              prefixIcon: const Icon(
-                                Icons.search,
-                                size: 16,
-                                color: Colors.white60,
-                              ),
-                              prefixIconConstraints:
-                                  const BoxConstraints.tightFor(
-                                    width: 36,
-                                    height: 32,
-                                  ),
-                              suffixIcon:
-                                  _search == null &&
-                                      _keymap.hint('navigation.quick_open') !=
-                                          null
-                                  ? Padding(
-                                      padding: const EdgeInsets.only(right: 12),
-                                      child: ConstrainedBox(
-                                        constraints: const BoxConstraints(
-                                          maxWidth: 80,
-                                        ),
-                                        child: Text(
-                                          _keymap.hint(
-                                            'navigation.quick_open',
-                                          )!,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: const TextStyle(fontSize: 11),
-                                        ),
-                                      ),
-                                    )
-                                  : null,
-                              suffixIconConstraints: const BoxConstraints(
-                                minWidth: 24,
-                              ),
-                              filled: true,
-                              fillColor: grid.AppPalette.swarmSearchSurface,
-                              hintStyle: const TextStyle(color: Colors.white60),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(16),
-                                borderSide: const BorderSide(
-                                  color: Color(0x29ffffff),
-                                ),
-                              ),
-                              enabledBorder: _search != null
-                                  ? const OutlineInputBorder(
-                                      borderRadius: BorderRadius.vertical(
-                                        top: Radius.circular(10),
-                                      ),
-                                      borderSide: BorderSide.none,
-                                    )
-                                  : OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(16),
-                                      borderSide: const BorderSide(
-                                        color: Color(0x29ffffff),
-                                      ),
-                                    ),
-                              focusedBorder: const OutlineInputBorder(
-                                borderRadius: BorderRadius.vertical(
-                                  top: Radius.circular(10),
-                                ),
-                                borderSide: BorderSide.none,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
         IconButton(
+          key: const ValueKey('swarm-search-button'),
           tooltip: withEffectiveShortcutHint(
             context,
-            'Settings',
-            ShortcutAction.showSettings,
+            'Search',
+            ShortcutAction.switchAgent,
           ),
-          onPressed: _settings,
-          icon: const Icon(Icons.settings_outlined, size: 18),
+          onPressed: _jump,
+          icon: const Icon(Icons.search, size: 20),
+        ),
+        IconButton(
+          key: const ValueKey('swarm-new-agent-button'),
+          tooltip: withEffectiveShortcutHint(
+            context,
+            'New agent',
+            ShortcutAction.newAgent,
+          ),
+          onPressed: _newAgent,
+          icon: const Icon(Icons.add, size: 20),
+        ),
+        IconButton(
+          key: const ValueKey('swarm-notifications-button'),
+          tooltip: withEffectiveShortcutHint(
+            context,
+            'Agents needing input',
+            ShortcutAction.showAttention,
+          ),
+          onPressed: _notifications,
+          icon: Badge(
+            isLabelVisible: _attention > 0,
+            child: const Icon(Icons.notifications_none, size: 20),
+          ),
         ),
         const SizedBox(width: 6),
       ],

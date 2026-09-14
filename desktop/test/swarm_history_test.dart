@@ -317,41 +317,33 @@ void main() {
       await tester.pump();
       await settings;
 
-      // Native Command-P focuses the native input; Flutter only paints its results.
+      // Native search opens the same centered Flutter editor and preview.
       final jumping = native('jump');
       await tester.pump();
       expect(
         find.byKey(const ValueKey('swarm-search-results')),
         findsOneWidget,
       );
-      expect(find.byType(TextField), findsNothing);
-      await native('searchChanged', {'query': 'A'});
-      await native('searchChanged', {'query': 'Agent 1'});
-      expect(
-        fieldUpdates.every((state) => !state.containsKey('query')),
-        isTrue,
-        reason: 'Native edits must never be echoed back over newer typing',
-      );
-      await native('searchGeometry', {'width': 480});
+      final field = find.byKey(const ValueKey('swarm-search-input'));
+      expect(field, findsOneWidget);
+      await tester.enterText(field, 'Agent 1');
       await tester.pump();
-      expect(
-        tester
-            .getSize(find.byKey(const ValueKey('swarm-search-results')))
-            .width,
-        480,
+      expect(tester.widget<TextField>(field).focusNode!.hasFocus, isTrue);
+      expect(fieldUpdates, isEmpty, reason: 'Queries stay in Flutter');
+      final picker = tester.getRect(
+        find.byKey(const ValueKey('swarm-search-results')),
       );
-      await native('searchCommand', {'command': 'preview'});
-      await tester.pump();
+      expect(picker.width, greaterThan(600));
+      expect(
+        picker.center.dx,
+        tester.view.physicalSize.width / tester.view.devicePixelRatio / 2,
+      );
       expect(
         find.byKey(const ValueKey('swarm-search-preview')),
         findsOneWidget,
       );
-      expect(
-        fieldUpdates.every((state) => !state.containsKey('query')),
-        isTrue,
-      );
       expect(otherInput, isEmpty);
-      await native('searchCommand', {'command': 'submit'});
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pump();
       await jumping;
       expect(app.focusedPaneId, second.id);
