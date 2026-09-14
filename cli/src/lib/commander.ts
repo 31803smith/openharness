@@ -61,6 +61,7 @@ export interface CommanderMirrorOpts {
   agentIdFor?: (sessionId: string) => string | undefined
   dataDir: string
   recapForce?: boolean
+  alwaysGenerate?: boolean
 }
 
 interface SessionState {
@@ -558,10 +559,19 @@ export class CommanderMirror {
     const sid = sessionId.slice(0, 8)
     const device = this.opts.hasDevice()
 
-    // Device-gated: only run the (costly) LLM recap while a device is connected (mirrors the hosted runtime's
-    // isDeviceConnected()). No device → no card, and the summaries map is left untouched.
-    if (!device && !this.opts.recapForce) {
-      // Console-only: no device means no recap flow to watch.
+    // Whether to GENERATE at all. Two independent reasons to proceed without a device:
+    //   • recapForce — the test override, which ALSO un-gates emit() (streaming cards ride to a device
+    //     that is not there). Kept as-is for the scripted device tests.
+    //   • alwaysGenerate — persist a recap on EVERY turn so `agent.recap`/`agents.list` are populated
+    //     for a programmatic client (a local-ws app), with no device ever paired. Unlike recapForce it
+    //     does NOT touch emit(): the persistence below runs, `emit()` stays device-gated on its own, so
+    //     nothing rides the wire to an absent device. This is the fix for the back-fill gap — a device
+    //     that pairs LATER restores real tiles from what was persisted here, instead of blank ones,
+    //     because replayAll() only re-emits stored recaps and never regenerates a past turn.
+    // Cost: with SUMMARY_MODE=model this is one engine one-shot per turn, per agent, forever — the very
+    // cost the device gate used to avoid. SUMMARY_MODE=local makes it free (no model, same-tick excerpt).
+    if (!device && !this.opts.recapForce && !this.opts.alwaysGenerate) {
+      // Console-only: no device and generation is off, so there is no recap flow to watch.
       console.log(`[recap] ${sid} turn-end · SKIP (no device connected) · textLen=${fallbackText.length}`)
       return
     }
