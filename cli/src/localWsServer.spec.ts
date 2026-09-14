@@ -199,6 +199,25 @@ describe('local CLI WebSocket', () => {
     expect(states[2]).toEqual(states[1])
   })
 
+  it('keeps stale automatic focus off the dial and forwards its revision for validation', async () => {
+    const backend = new FakeBackend()
+    const focus = vi.fn(() => false), dial = vi.fn()
+    server = http.createServer((_req, res) => { res.statusCode = 404; res.end() })
+    local = attachLocalWsServer(server, { machineId, backend, onAppFocusState: focus, onAppFocus: dial })
+    await new Promise<void>(resolve => server!.listen(0, '127.0.0.1', resolve))
+    const ws = new WebSocket(`ws://127.0.0.1:${(server.address() as AddressInfo).port}/api/local-ws`)
+    await onceOpen(ws)
+    const connected = onceMessage(ws)
+    ws.send(JSON.stringify({ type: 'machine_select', payload: { machineId, localProtocolVersion: 1 } }))
+    await connected
+    ws.send(JSON.stringify({ type: 'app_focus', payload: { agentId: 'first', focusRevision: 'old:0' } }))
+    await vi.waitFor(() => expect(focus).toHaveBeenCalledTimes(1))
+    expect(focus).toHaveBeenCalledWith(machineId, 'first', expect.any(String), 'old:0')
+    expect(dial).not.toHaveBeenCalled()
+    expect(backend.frames).toHaveLength(0)
+    ws.close()
+  })
+
   it('carries the window\'s answer about a spoken task, and keeps it off the wire', async () => {
     const backend = new FakeBackend()
     const replies: Array<{ voiceId: string; reply: unknown }> = []

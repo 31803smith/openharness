@@ -94,3 +94,18 @@ session đã xác thực và app-ready, không đếm socket thô. Full CLI đã
 5 file / 50 test skip; `npm run typecheck` đạt. Lần chạy deadline mặc định 5 giây bị timeout ở
 các test password/scrypt sẵn có khi máy chịu tải. Chỉ đổi deadline qua lệnh chạy serial, không
 sửa test hoặc cấu hình để né lỗi. Không deploy hoặc pair thiết bị thật.
+
+### Agent mặc định khi bật mode
+
+Capability tùy chọn `focus.ensure` nhận `{type:"focus.ensure",requestId}` và trả cùng snapshot
+`{focus,focusRevision}` như `focus.get`. Nếu app đã có focus thì giữ nguyên, kể cả máy remote;
+OS vẫn từ chối target remote chưa được hỗ trợ. Nếu chưa có focus, CLI yêu cầu một cửa sổ Desktop
+local chọn agent đầu tiên theo thứ tự `agents.list`, dùng flow chọn pane hiện có. Desktop đang có
+lựa chọn sẽ gửi lại focus đó thay vì thay đổi. Chỉ xác nhận `app_focus` mới thiết lập target chính thức;
+không gửi task hay tự đặt target khi không có app.
+Các request đồng thời dùng chung lần chờ tối đa hai giây. Không có agent trả `NO_AGENTS`; không có
+cửa sổ hoặc không nhận xác nhận trả `FOCUS_UNAVAILABLE`. Frame local `device_focus` có thời hạn để
+request đến trễ không mở pane sau khi hết thời gian chờ. Chỉ gọi khi bật voice mode, không gọi giữa
+utterance để tự đổi target. CLI cũ chưa có capability cần chọn agent trong app. Pairing, đọc focus,
+event và dispatch task thông thường giữ nguyên.
+Xác nhận focus tự động mang revision ban đầu; CLI bỏ qua nếu user đã chọn focus mới trong lúc request đang truyền.

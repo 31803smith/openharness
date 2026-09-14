@@ -41,7 +41,7 @@ export interface LocalWsServerOptions {
   /** The desktop app opened an agent's terminal — which agent, and on which machine. Lets the dial follow
    *  the window, so the two screens stay one desk. */
   /** Explicit app focus, including clear/disconnect, for voice routing independent of the dial. */
-  onAppFocusState?: (machineId: string, agentId: string | null, connId: string) => void
+  onAppFocusState?: (machineId: string, agentId: string | null, connId: string, expectedRevision?: string) => unknown
   onAppFocus?: (machineId: string, agentId: string) => void
   /** Every agent the window currently has a tile for, across all its machines. */
   onAppPanes?: (agentIds: string[]) => void
@@ -363,7 +363,9 @@ export function attachLocalWsServer(server: http.Server, options: LocalWsServerO
           const agentId = (moved?.payload as Record<string, unknown> | undefined)?.agentId
           if (moved?.type === 'app_focus') {
             if (agentId === null || (typeof agentId === 'string' && agentId)) {
-              options.onAppFocusState?.(boundMachineId, agentId, connId)
+              const revision = (moved.payload as Record<string, unknown>)?.focusRevision
+              if (options.onAppFocusState?.(boundMachineId, agentId, connId,
+                typeof revision === 'string' ? revision : undefined) === false) return
               if (agentId) options.onAppFocus?.(boundMachineId, agentId)
             }
             // Focus is local desk state and must never be forwarded to a remote machine.

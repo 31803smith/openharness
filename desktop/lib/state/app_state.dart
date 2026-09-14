@@ -1115,6 +1115,7 @@ class AppNotifier extends ChangeNotifier {
   }
 
   String? _announcedFocusMachineId;
+  String? _deviceFocusRevision;
 
   @visibleForTesting
   Future<bool> Function(String machineId, String? agentId)?
@@ -1142,6 +1143,7 @@ class AppNotifier extends ChangeNotifier {
         ? send(machineId, agentId)
         : _pool?[machineId]?.sendTerminalFrame('app_focus', {
             'agentId': agentId,
+            if (_deviceFocusRevision != null) 'focusRevision': _deviceFocusRevision,
           });
     if (pending != null) unawaited(pending.catchError((_) => false));
   }
@@ -3868,6 +3870,38 @@ class AppNotifier extends ChangeNotifier {
     await addAgentToSwarm(machineId, agentId);
   }
 
+  /// Enable-time fallback: preserve the user's current choice and acknowledge it.
+  /// Selection records focus before waiting for terminal attachment, so a later
+  /// user click is never overwritten by completion of an asynchronous open.
+  Future<void> ensureDeviceFocus(Map<String, dynamic> payload) async {
+    final expiresAt = payload['expiresAt'];
+    final machineId = payload['machineId'];
+    final agentId = payload['agentId'];
+    final focusRevision = payload['focusRevision'];
+    if (expiresAt is! num ||
+        expiresAt <= DateTime.now().millisecondsSinceEpoch ||
+        machineId is! String ||
+        agentId is! String ||
+        agentId.isEmpty ||
+        focusRevision is! String ||
+        focusRevision.isEmpty) {
+      return;
+    }
+    if (focusedPane?.agentId != null) {
+      _announceAppFocus();
+      return;
+    }
+    // Tag only the synchronous fallback announcement, never a later user click.
+    late Future<void> selection;
+    _deviceFocusRevision = focusRevision;
+    try {
+      selection = selectAgent(machineId, agentId);
+    } finally {
+      _deviceFocusRevision = null;
+    }
+    await selection;
+  }
+
   /// The dial turned to an agent. Ordinary selection, the same path a click on the rail takes.
   ///
   /// It used to take a `DeskEdge` and, for an agent with no tile, replace the pane at that end — the
@@ -4800,6 +4834,9 @@ class AppNotifier extends ChangeNotifier {
           (payload['dy'] as num?)?.round() ?? 0,
           (payload['velocity'] as num?)?.round() ?? 0,
         );
+        break;
+      case 'device_focus':
+        unawaited(ensureDeviceFocus(payload));
         break;
       case 'dial_focus':
         // Turning the dial to an agent brings that agent's terminal up here — the ordinary selection

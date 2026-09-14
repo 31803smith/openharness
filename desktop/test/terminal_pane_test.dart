@@ -117,6 +117,41 @@ void main() {
     });
     tearDown(() => app.dispose());
 
+    test('device fallback opens and announces the candidate', () async {
+      await app.ensureDeviceFocus({
+        'machineId': 'm1',
+        'agentId': 'a',
+        'focusRevision': 'instance:0',
+        'expiresAt': DateTime.now().millisecondsSinceEpoch + 2000,
+      });
+      expect(app.focusedPane?.agentId, 'a');
+      expect(frames.last, ('m1', 'a'));
+    });
+
+    test('device fallback preserves an existing remote selection', () async {
+      await app.assignAgentToPane(null, 'm2', 'c');
+      frames.clear();
+      await app.ensureDeviceFocus({
+        'machineId': 'm1',
+        'agentId': 'a',
+        'focusRevision': 'instance:0',
+        'expiresAt': DateTime.now().millisecondsSinceEpoch + 2000,
+      });
+      expect(app.focusedPane?.agentId, 'c');
+      expect(frames, [('m2', 'c')]);
+    });
+
+    test('expired device fallback never opens a pane', () async {
+      await app.ensureDeviceFocus({
+        'machineId': 'm1',
+        'agentId': 'a',
+        'focusRevision': 'instance:0',
+        'expiresAt': DateTime.now().millisecondsSinceEpoch - 1,
+      });
+      expect(app.focusedPane, isNull);
+      expect(frames, isEmpty);
+    });
+
     test('closing focused pane selects replacement, then clears last pane', () async {
       await app.assignAgentToPane(null, 'm1', 'a');
       await app.assignAgentToPane(null, 'm1', 'b');
