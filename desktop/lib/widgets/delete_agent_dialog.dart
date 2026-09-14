@@ -5,7 +5,7 @@ import '../shared/widgets/app_dialog.dart';
 import '../state/app_state.dart';
 
 /// The one "Delete agent" confirmation, opened from every place an agent can
-/// be deleted: the rail's row menu and the pane's ⋯ menu.
+/// be deleted: the rail's row menu and the pane's delete button.
 ///
 /// Pulled out of the rail for the reason the rename dialog was: two copies
 /// would have been two wordings of one irreversible act, and two ways of

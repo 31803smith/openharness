@@ -16,8 +16,8 @@ import 'package:harness/state/swarm_catalog.dart';
 import 'package:harness/terminal/terminal_binary.dart';
 import 'package:harness/widgets/codex_profile_field.dart';
 import 'package:harness/widgets/new_agent_dialog.dart';
+import 'package:harness/widgets/pane_header_actions.dart';
 import 'package:harness/widgets/swarm_dialogs.dart';
-import 'package:harness/widgets/terminal_composer.dart';
 import 'package:harness/widgets/terminal_find_bar.dart';
 
 import 'swarm_screen_test.dart' show mount, terminal;
@@ -121,24 +121,60 @@ void main() {
     },
   );
 
-  testWidgets('a remote compact pane exposes its message composer', (
+  testWidgets('pane controls zoom, confirm deletion and close only this view', (
     tester,
   ) async {
     final app = createApp();
     app.machineStates['m']!.nodeOnline = true;
-    app.adoptSessionForTest(terminal('a0', []));
+    final input = <TerminalBinaryFrame>[];
+    final session = terminal('a0', input);
+    app.adoptSessionForTest(session);
+    final original = app.activeSwarm;
+    app.newSwarm();
+    await app.addAgentToSwarm('m', 'a0');
+    final pane = app.panes.single;
+    app.adoptSessionForTest(terminal('a1', []));
     await mount(tester, app);
-    expect(find.byType(TerminalComposer), findsNothing);
-    await tester.tap(find.byTooltip('Actions for Session a0'));
+
+    final controls = find.byType(PaneHeaderActions).first;
+    expect(
+      find.descendant(of: controls, matching: find.byType(IconButton)),
+      findsNWidgets(3),
+    );
+    await tester.tap(find.byTooltip('Zoom Session a0'));
     await tester.pump();
-    await tester.tap(find.text('Show message composer'));
+    expect(app.zoomedPaneId, pane.id);
+    await tester.tap(find.byTooltip('Restore agents'));
     await tester.pump();
-    expect(find.byType(TerminalComposer), findsOneWidget);
-    await tester.tap(find.byTooltip('Actions for Session a0'));
+    expect(app.zoomedPaneId, isNull);
+
+    await tester.tap(
+      find.descendant(of: controls, matching: find.byTooltip('Delete agent')),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Delete agent'), findsOneWidget);
+    expect(app.panes, contains(pane));
+    expect(original.panes.single.session, same(session));
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(app.panes, contains(pane));
+
+    await tester.tap(
+      find.descendant(of: controls, matching: find.byTooltip('Close pane')),
+    );
     await tester.pump();
-    await tester.tap(find.text('Hide message composer'));
+    expect(app.panes.single.agentId, 'a1');
+    expect(original.panes.single.session, same(session));
+    app.selectSwarm(original.id);
     await tester.pump();
-    expect(find.byType(TerminalComposer), findsNothing);
+    tester.testTextInput.enterText('x');
+    await tester.pump(const Duration(milliseconds: 20));
+    expect(
+      String.fromCharCodes(
+        input.where((f) => f.kind == TerminalBinaryKind.input).single.bytes,
+      ),
+      'x',
+    );
     await tester.pumpWidget(const SizedBox());
     app.dispose();
   });

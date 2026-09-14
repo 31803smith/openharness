@@ -1348,10 +1348,6 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                   child: PaneGrid(
                                     notifier: app,
                                     swarmMode: true,
-                                    onSplit: (paneId, axis) {
-                                      app.focusPane(paneId);
-                                      unawaited(_splitAgent(axis));
-                                    },
                                     empty: SwarmWelcome(
                                       key: ValueKey(app.activeSwarmId),
                                       notifier: app,

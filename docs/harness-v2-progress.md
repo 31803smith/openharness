@@ -6,6 +6,27 @@ Updated 2026-09-14 after integrating the continuation into main. This is a worki
 
 ## Continue directly on main
 
+- Simplified the pane header to three direct outline icons: Zoom, Delete agent,
+  Close pane. Removed the overflow menu and its split/pin controls. Delete still
+  opens the shared confirmation; closing a pane preserves the agent and its
+  views in other swarms. Controls keep a consistent size/order and support
+  tooltips, keyboard focus and hover states. Narrow panes prioritize the agent
+  name over inline branch metadata. The retained header resolves the current
+  callback for all three actions, including Zoom. The broader goal remains
+  paused/blocked pending the user's breaking-change details; this is a bounded
+  follow-up request, not a resumption of the backlog or benchmarking.
+  Forty-two focused workflow checks and one real-font render check pass (43
+  total), including confirmation/cancellation, shared-session input after close,
+  current callbacks, existing keyboard splits and terminal interactions. The
+  rendered header fits 280/430/720px panes at normal and 2× text. Analysis has
+  zero errors/warnings and 14 existing infos. Logs:
+  `/private/tmp/harness-pane-controls-final-tests.log`,
+  `/private/tmp/harness-pane-controls-analyze.log` and
+  `/private/tmp/harness-pane-controls-render.log`.
+  The normal arm64 Release build succeeds at
+  `/private/tmp/harness-pane-controls-release/Build/Products/Release/Harness.app`
+  (log: `/private/tmp/harness-pane-controls-release.log`); it was not launched.
+  Main preserves the team's `f6b9849` welcome-background change.
 - Preserved Add while trying New agent. Cancel/Escape from centered Add or either
   split returns to the same query, caret/selection, highlighted result and
   checked agents. Find existing after an uncertain creation also retains those

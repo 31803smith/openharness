@@ -15,6 +15,8 @@ void main() {
       final session = terminal('a0', []);
       final revision = ValueNotifier(0);
       final closed = <int>[];
+      final deleted = <int>[];
+      final zoomed = <int>[];
       tester.view.devicePixelRatio = 1;
       tester.view.physicalSize = const Size(1100, 700);
       addTearDown(tester.view.reset);
@@ -28,6 +30,9 @@ void main() {
               focused: version.isEven,
               compactHeader: true,
               onClose: () => closed.add(version),
+              onDelete: () => deleted.add(version),
+              onToggleZoom: () => zoomed.add(version),
+              zoomed: version >= 2,
             ),
           ),
         ),
@@ -35,11 +40,13 @@ void main() {
       await tester.pump();
       revision.value = 1;
       await tester.pump();
-      await tester.tap(find.byTooltip('Actions for ${session.agentName}'));
-      await tester.pump();
-      await tester.tap(find.text('Remove from swarm'));
+      await tester.tap(find.byTooltip('Zoom ${session.agentName}'));
+      await tester.tap(find.byTooltip('Delete agent'));
+      await tester.tap(find.byTooltip('Close pane'));
       await tester.pump();
       expect(closed, [1]);
+      expect(deleted, [1]);
+      expect(zoomed, [1]);
       session.agentName = 'Renamed terminal';
       app.machineStates['m']!.agents = [
         const Agent(
@@ -59,6 +66,7 @@ void main() {
       expect(find.text('Renamed terminal'), findsOneWidget);
       expect(find.text('fast-focus'), findsOneWidget);
       expect(find.byTooltip('fast-focus\n/work/terminal'), findsOneWidget);
+      expect(find.byTooltip('Restore agents'), findsOneWidget);
       session.status = TerminalSessionStatus.takenOver;
       revision.value = 3;
       await tester.pump();

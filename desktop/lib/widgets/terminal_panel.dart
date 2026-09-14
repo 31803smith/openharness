@@ -31,7 +31,7 @@ import '../terminal/terminal_viewport.dart';
 import '../shared/theme/app_theme.dart' as grid;
 import '../theme/app_theme.dart';
 import 'engine_identity.dart';
-import 'pane_actions_menu.dart';
+import 'pane_header_actions.dart';
 
 /// The pane header's own horizontal inset.
 const double _stripPadding = 14;
@@ -47,11 +47,7 @@ class TerminalPanel extends StatefulWidget {
   final VoidCallback? onClose;
   final VoidCallback? onDelete;
 
-  /// Whether this tile keeps its slot when the grid moves under it, and the
-  /// control that changes that. Null where there is no grid to hold a slot in.
-  final bool pinned;
-  final VoidCallback? onTogglePin;
-  final VoidCallback? onToggleZoom, onSplitRight, onSplitDown;
+  final VoidCallback? onToggleZoom;
   final bool zoomed;
 
   /// This native terminal took the keyboard, so its grid tile becomes focused.
@@ -95,11 +91,7 @@ class TerminalPanel extends StatefulWidget {
     this.onToggleComposer,
     this.onClose,
     this.onDelete,
-    this.pinned = false,
-    this.onTogglePin,
     this.onToggleZoom,
-    this.onSplitRight,
-    this.onSplitDown,
     this.zoomed = false,
     this.onRendererFocus,
     this.paneDrag,
@@ -1086,7 +1078,7 @@ class _TerminalPanelState extends State<TerminalPanel>
                   maintainSize: true,
                   maintainAnimation: true,
                   maintainState: true,
-                  child: _buildHeader(context, remote: remote),
+                  child: _buildHeader(context),
                 ),
                 if (_find != null)
                   Positioned.fill(
@@ -1257,14 +1249,12 @@ class _TerminalPanelState extends State<TerminalPanel>
   /// Visibility and focus affect the renderer, not its title and controls.
   /// Retain that subtree until its presentation changes. Callback wrappers
   /// resolve the current widget so cached controls never retain an old action.
-  Widget _buildHeader(BuildContext context, {required bool remote}) {
+  Widget _buildHeader(BuildContext context) {
     final session = widget.session;
     final machine = widget.notifier.stateOf(session.machineId);
     final agent = machine?.agents
         .where((a) => a.id == session.agentId)
         .firstOrNull;
-    final canToggleComposer =
-        remote && !widget.readOnly && widget.onToggleComposer != null;
     final presentation = (
       theme: Theme.of(context),
       brightness: grid.AppTheme.brightness.value,
@@ -1281,16 +1271,10 @@ class _TerminalPanelState extends State<TerminalPanel>
       agent: agent,
       project: agent == null ? null : machine?.projectOf(agent),
       compact: widget.compactHeader,
-      pinned: widget.pinned,
       close: widget.onClose != null,
       delete: widget.onDelete != null,
-      pin: widget.onTogglePin != null,
       zoomed: widget.zoomed,
       zoom: widget.onToggleZoom != null,
-      splitRight: widget.onSplitRight != null,
-      splitDown: widget.onSplitDown != null,
-      composer: canToggleComposer,
-      composerVisible: widget.composerVisible,
       dragId: widget.paneDrag?.ref.paneId,
       dragSize: widget.paneDrag?.size,
     );
@@ -1303,21 +1287,13 @@ class _TerminalPanelState extends State<TerminalPanel>
         readOnly: widget.readOnly,
         compact: widget.compactHeader,
         zoomed: widget.zoomed,
-        onToggleZoom: widget.onToggleZoom,
-        onSplitRight: widget.onSplitRight,
-        onSplitDown: widget.onSplitDown,
+        onToggleZoom: widget.onToggleZoom == null
+            ? null
+            : () => widget.onToggleZoom?.call(),
         onClose: widget.onClose == null ? null : () => widget.onClose?.call(),
         onDelete: widget.onDelete == null
             ? null
             : () => widget.onDelete?.call(),
-        pinned: widget.pinned,
-        onTogglePin: widget.onTogglePin == null
-            ? null
-            : () => widget.onTogglePin?.call(),
-        onToggleComposer: canToggleComposer
-            ? () => widget.onToggleComposer?.call()
-            : null,
-        composerVisible: widget.composerVisible,
         paneDrag: widget.paneDrag,
       );
     }
@@ -1335,13 +1311,9 @@ class _TerminalHeader extends StatelessWidget {
   /// Ends the agent (with a confirmation), as the rail's row menu does. Null
   /// where the pane cannot name a live agent to end.
   final VoidCallback? onDelete;
-  final bool pinned;
   final bool compact;
-  final VoidCallback? onTogglePin;
-  final VoidCallback? onToggleZoom, onSplitRight, onSplitDown;
+  final VoidCallback? onToggleZoom;
   final bool zoomed;
-  final VoidCallback? onToggleComposer;
-  final bool composerVisible;
 
   /// This strip's drag gesture, or null when there is nothing to drag.
   ///
@@ -1360,15 +1332,9 @@ class _TerminalHeader extends StatelessWidget {
     this.readOnly = false,
     this.onClose,
     this.onDelete,
-    this.pinned = false,
     this.compact = false,
-    this.onTogglePin,
     this.onToggleZoom,
-    this.onSplitRight,
-    this.onSplitDown,
     this.zoomed = false,
-    this.onToggleComposer,
-    this.composerVisible = false,
     this.paneDrag,
   });
 
@@ -1484,7 +1450,10 @@ class _TerminalHeader extends StatelessWidget {
                   ),
                 ),
               ),
-              if (compact && status == null && project?.branch != null) ...[
+              if (compact &&
+                  constraints.maxWidth >= 360 &&
+                  status == null &&
+                  project?.branch != null) ...[
                 const SizedBox(width: 16),
                 Tooltip(
                   message: '${project!.branch}\n${project.cwd}',
@@ -1606,41 +1575,13 @@ class _TerminalHeader extends StatelessWidget {
                   padding: const EdgeInsets.symmetric(horizontal: 2),
                   child: _LinkModeMark(mode: session.linkMode!),
                 ),
-              // Before the close button: pinning is the rarer act, and a control
-              // that appears to the LEFT of the one people aim for by muscle
-              // memory cannot shift it under their pointer.
-              if (!compact && onTogglePin != null)
-                PanePinButton(pinned: pinned, onPressed: onTogglePin!),
-              if (compact) ...[
-                if (onToggleZoom != null)
-                  IconButton(
-                    tooltip: zoomed
-                        ? 'Restore agents'
-                        : 'Zoom ${session.agentName}',
-                    onPressed: onToggleZoom,
-                    icon: Icon(
-                      zoomed ? Icons.fullscreen_exit : Icons.fullscreen,
-                      size: 18,
-                    ),
-                    constraints: const BoxConstraints.tightFor(
-                      width: 28,
-                      height: 28,
-                    ),
-                    padding: EdgeInsets.zero,
-                  ),
-                PaneActionsMenu(
-                  name: session.agentName,
-                  onSplitRight: onSplitRight,
-                  onSplitDown: onSplitDown,
-                  onTogglePin: onTogglePin,
-                  pinned: pinned,
-                  onToggleComposer: onToggleComposer,
-                  composerVisible: composerVisible,
-                  onClose: onClose,
-                  onDelete: onDelete,
-                ),
-              ] else if (onClose != null)
-                PaneCloseButton(onPressed: onClose!),
+              PaneHeaderActions(
+                name: session.agentName,
+                zoomed: zoomed,
+                onZoom: onToggleZoom,
+                onDelete: onDelete,
+                onClose: onClose,
+              ),
             ],
           ),
         ),
