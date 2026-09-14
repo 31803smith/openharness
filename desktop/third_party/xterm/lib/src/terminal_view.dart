@@ -33,6 +33,7 @@ class TerminalView extends StatefulWidget {
     this.padding,
     this.scrollController,
     this.autoResize = true,
+    this.resizeBuffer = true,
     this.renderingEnabled = true,
     this.backgroundOpacity = 1,
     this.focusNode,
@@ -77,6 +78,11 @@ class TerminalView extends StatefulWidget {
   /// Should this widget automatically notify the underlying terminal when its
   /// size changes. [true] by default.
   final bool autoResize;
+
+  /// Resize the emulator together with the viewport. Set false for a remote
+  /// grid: report the requested size through Terminal.onResize and retain the
+  /// captured cells until the remote side supplies its resized screen.
+  final bool resizeBuffer;
 
   /// Whether output should schedule renderer layout/paint work. Disable while
   /// retaining a hidden view; the terminal buffer continues receiving output.
@@ -267,6 +273,7 @@ class TerminalViewState extends State<TerminalView> {
           offset: offset,
           padding: MediaQuery.of(context).padding,
           autoResize: widget.autoResize,
+          resizeBuffer: widget.resizeBuffer,
           renderingEnabled: widget.renderingEnabled,
           textStyle: widget.textStyle,
           textScaler: widget.textScaler ?? MediaQuery.textScalerOf(context),
@@ -648,6 +655,7 @@ class _TerminalView extends LeafRenderObjectWidget {
     required this.offset,
     required this.padding,
     required this.autoResize,
+    required this.resizeBuffer,
     required this.renderingEnabled,
     required this.textStyle,
     required this.textScaler,
@@ -669,6 +677,8 @@ class _TerminalView extends LeafRenderObjectWidget {
   final EdgeInsets padding;
 
   final bool autoResize;
+
+  final bool resizeBuffer;
 
   final bool renderingEnabled;
 
@@ -698,6 +708,7 @@ class _TerminalView extends LeafRenderObjectWidget {
       offset: offset,
       padding: padding,
       autoResize: autoResize,
+      resizeBuffer: resizeBuffer,
       renderingEnabled:
           renderingEnabled && TickerMode.valuesOf(context).enabled,
       textStyle: textStyle,
@@ -722,6 +733,7 @@ class _TerminalView extends LeafRenderObjectWidget {
       ..offset = offset
       ..padding = padding
       ..autoResize = autoResize
+      ..resizeBuffer = resizeBuffer
       ..textStyle = textStyle
       ..textScaler = textScaler
       ..theme = theme

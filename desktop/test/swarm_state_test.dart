@@ -59,6 +59,39 @@ AppNotifier createApp({
 
 void main() {
   test(
+    'first agent names a swarm and survives closing and reopening',
+    () async {
+      final app = createApp();
+      addTearDown(app.dispose);
+      await app.addAgentToSwarm('m', 'a0');
+      expect(app.activeSwarm.name, 'Agent 0');
+      await app.addAgentToSwarm('m', 'a1');
+      expect(app.activeSwarm.name, 'Agent 0');
+      expect(app.activeSwarm.toJson()['name'], 'Agent 0');
+      await app.closeSwarm(app.activeSwarmId);
+      app.reopenClosedSwarm();
+      expect(app.activeSwarm.name, 'Agent 0');
+    },
+  );
+
+  test(
+    'first agent preserves custom names and names the requested swarm',
+    () async {
+      final app = createApp();
+      addTearDown(app.dispose);
+      app.renameSwarm(app.activeSwarmId, 'My project');
+      await app.addAgentToSwarm('m', 'a0');
+      expect(app.activeSwarm.name, 'My project');
+      app.newSwarm();
+      final target = app.activeSwarm;
+      app.newSwarm(name: 'Elsewhere');
+      await app.addAgentToSwarm('m', 'a1', swarmId: target.id);
+      expect(target.name, 'Agent 1');
+      expect(app.activeSwarm.name, 'Elsewhere');
+    },
+  );
+
+  test(
     'shared memberships own one controller and close only the final stream',
     () async {
       final app = createApp();

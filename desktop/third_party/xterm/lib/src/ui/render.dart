@@ -25,6 +25,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     required ViewportOffset offset,
     required EdgeInsets padding,
     required bool autoResize,
+    bool resizeBuffer = true,
     bool renderingEnabled = true,
     required TerminalStyle textStyle,
     required TextScaler textScaler,
@@ -40,6 +41,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
         _offset = offset,
         _padding = padding,
         _autoResize = autoResize,
+        _resizeBuffer = resizeBuffer,
         _renderingEnabled = renderingEnabled,
         _focusNode = focusNode,
         _cursorType = cursorType,
@@ -60,6 +62,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
       _terminal.removeListener(_onTerminalChange);
     }
     _terminal = terminal;
+    _reportedViewportSize = null;
     if (attached && _renderingEnabled) _terminal.addListener(_onTerminalChange);
     _resizeTerminalIfNeeded();
     markNeedsLayout();
@@ -94,6 +97,14 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   set autoResize(bool value) {
     if (value == _autoResize) return;
     _autoResize = value;
+    markNeedsLayout();
+  }
+
+  bool _resizeBuffer;
+  set resizeBuffer(bool value) {
+    if (value == _resizeBuffer) return;
+    _resizeBuffer = value;
+    _reportedViewportSize = null;
     markNeedsLayout();
   }
 
@@ -176,6 +187,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   }
 
   TerminalSize? _viewportSize;
+  TerminalSize? _reportedViewportSize;
 
   final TerminalPainter _painter;
 
@@ -401,6 +413,24 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   void _resizeTerminalIfNeeded() {
     if (_renderingEnabled &&
         _autoResize &&
+        !_resizeBuffer &&
+        _viewportSize != null &&
+        _reportedViewportSize != _viewportSize) {
+      _reportedViewportSize = _viewportSize;
+      // Shrinking a captured TUI locally can discard its latest rows when
+      // its cursor is parked near the top. Keep the authoritative remote
+      // cells while requesting a new grid; the next keyframe replaces them.
+      _terminal.onResize?.call(
+        _viewportSize!.width,
+        _viewportSize!.height,
+        _painter.cellSize.width.round(),
+        _painter.cellSize.height.round(),
+      );
+      return;
+    }
+    if (_renderingEnabled &&
+        _autoResize &&
+        _resizeBuffer &&
         _viewportSize != null &&
         (_terminal.viewWidth != _viewportSize!.width ||
             _terminal.viewHeight != _viewportSize!.height)) {

@@ -1111,6 +1111,7 @@ class _TerminalPanelState extends State<TerminalPanel>
                           key: _terminalViewKey,
                           controller: _controller,
                           autoResize: widget.visible,
+                          resizeBuffer: false,
                           renderingEnabled: widget.visible,
                           scrollController: _scrollController,
                           focusNode: _focusNode,

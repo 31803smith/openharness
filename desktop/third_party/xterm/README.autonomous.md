@@ -13,6 +13,15 @@ fix and the regression in `test/terminal_session_test.dart` passes against it.
 
 ## Local patches
 
+- **Remote grids survive viewport resizing** (`lib/src/terminal_view.dart`,
+  `lib/src/ui/render.dart`). `TerminalView.resizeBuffer` defaults to true;
+  Harness sets it to false so a smaller local pane reports its desired size
+  without deleting rows from the captured remote screen. The next remote
+  keyframe supplies the resized grid. Repeated output does not repeat the
+  resize request. Regressions: `test/terminal_initial_output_test.dart`, including
+  a tall screen with its cursor parked above the newest output, five fresh
+  panes, delayed snapshots, and preserved reading positions on return.
+
 - **On-demand terminal find** (`lib/src/core/buffer/line.dart`,
   `lib/src/terminal.dart`). Text mutations advance a local line version so a
   search can reuse decoded rows; color-only changes keep the version. Optional

@@ -4012,6 +4012,7 @@ class AppNotifier extends ChangeNotifier {
     final pane =
         shared ??
         TerminalPane(id: _nextPaneId++, machineId: machineId, agentId: agentId);
+    final firstAgent = targetPanes.every((pane) => pane.agentId == null);
     targetPanes.insert(insertion.clamp(0, targetPanes.length), pane);
     if (split != null) {
       target.pinnedSlots.updateAll(
@@ -4021,6 +4022,12 @@ class AppNotifier extends ChangeNotifier {
       target.savePaneSizes(key, split.after);
       target.arranged = split.after;
       target.arrangedKey = key;
+    }
+    if (firstAgent && target.name == 'New swarm') {
+      final name = agent.name.trim();
+      if (name.isNotEmpty) {
+        target.name = name.length > 80 ? name.substring(0, 80) : name;
+      }
     }
     if (replaced != null && !allPanes.contains(replaced)) {
       // Release just the desktop stream. The CLI agent process keeps running.
