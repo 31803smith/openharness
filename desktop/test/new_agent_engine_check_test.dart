@@ -216,7 +216,7 @@ void main() {
     await tester.pump();
     await tester.tap(find.byKey(const Key('new-agent-machine-field')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Other computer'));
+    await tester.tap(find.text('Other computer — Remote'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('new-agent-quick-codex')));
     await tester.tap(find.byKey(const Key('new-agent-advanced')));

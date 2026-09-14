@@ -20,8 +20,10 @@ Updated 2026-09-14 after integrating the continuation into main. This is a worki
   switches to a valid four-pane layout. Archive/Resume is still a proposal;
   current user runtimes were not started, stopped or used as test fixtures.
   Verification: **1,317 desktop tests pass**, one existing skip; zero analyzer
-  errors/warnings, 14 existing infos; 335 isolated AppKit checks pass. Logs:
-  `/private/tmp/harness-reopen-existing-{verified-full-tests,analyze,native}.log`.
+  errors/warnings, 14 existing infos; 335 isolated AppKit checks pass. The final
+  combined suite includes the team's `e68c893` local-machine default, preserved
+  in merge `eef17f6`; existing fixtures now use its explicit remote labels.
+  Logs: `/private/tmp/harness-reopen-existing-{final-full-tests,final-analyze,native}.log`.
   The running preview was not restarted; this continuation has no new Release
   build or live native workflow result. Benchmarking remains deferred.
 - Added **Retry** to failed New agent availability checks. The same form keeps

@@ -48,7 +48,9 @@ Research must lead to justified improvements, not feature accumulation.
   the earlier preference for creating a fresh feature branch after each merge.
 - **`d727360`** clarifies view removal and restores closed work into its existing
   swarm. **`332546f`** keeps terminal relayout from taking keyboard focus from
-  resize controls. The combined desktop suite passes 1,317 tests, one skip.
+  resize controls. **`eef17f6`** preserves the team's `e68c893` local-machine
+  default for general New agent actions; explicit split context stays intact.
+  The combined desktop suite passes 1,317 tests, one skip.
 - **`339f008`** saves the opening continuation: it keeps the retained canvas
   built while a picker opens/closes and shares validated catalogs across openings. Warm Add
   opening measured 22.006 ms median versus 26.273 ms in the same headless
@@ -287,12 +289,13 @@ unverified; do not infer them from these UI changes.
 **Archived drafts:** both are superseded. The onboarding ideas were adapted into
 the common page, without adding another first-tab-only component.
 
-**Latest verification:** the History recovery and viewport-focus continuation on
-`e909396` passes **1,317 desktop tests**, one existing skip. The analyzer reports
+**Latest verification:** the History recovery and viewport-focus continuation,
+including the team's default-machine update in `eef17f6`, passes **1,317 desktop
+tests**, one existing skip. The analyzer reports
 zero errors/warnings and the same 14 informational diagnostics. The isolated
 AppKit titlebar/menu fixture passes 335 checks, including hidden window layout.
-Logs: `/private/tmp/harness-reopen-existing-verified-full-tests.log`,
-`/private/tmp/harness-reopen-existing-analyze.log` and
+Logs: `/private/tmp/harness-reopen-existing-final-full-tests.log`,
+`/private/tmp/harness-reopen-existing-final-analyze.log` and
 `/private/tmp/harness-reopen-existing-native.log`. The 54 focused History checks
 and 23 focused terminal/recovery checks also pass. No real agent received test
 input; the running preview was not restarted. These changes have not had a new
