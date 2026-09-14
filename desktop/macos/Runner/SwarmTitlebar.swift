@@ -666,6 +666,7 @@ private final class SwarmTabStrip: NSView {
   private var revealActiveAfterLayout = false
   private var tabOrderChanged = false
   private var actionsEnabled = false
+  private var lastBackgroundClick: (time: TimeInterval, point: NSPoint)?
   override var mouseDownCanMoveWindow: Bool { true }
 
   override init(frame: NSRect) {
@@ -801,8 +802,22 @@ private final class SwarmTabStrip: NSView {
 
   }
   override func mouseDown(with event: NSEvent) {
-    if event.clickCount == 2 { window?.performZoom(nil) }
-    else { window?.performDrag(with: event) }
+    if ownsBackgroundDoubleClick(event) { window?.performZoom(nil) }
+    else if event.clickCount == 1 { window?.performDrag(with: event) }
+  }
+  fileprivate func ownsBackgroundDoubleClick(_ event: NSEvent) -> Bool {
+    if event.clickCount == 1 {
+      lastBackgroundClick = (event.timestamp, event.locationInWindow)
+      return false
+    }
+    guard event.clickCount == 2, let first = lastBackgroundClick else {
+      lastBackgroundClick = nil
+      return false
+    }
+    lastBackgroundClick = nil
+    return event.timestamp - first.time <= NSEvent.doubleClickInterval &&
+      hypot(event.locationInWindow.x - first.point.x,
+            event.locationInWindow.y - first.point.y) <= 4
   }
   @objc private func newSwarm() {
     if actionsEnabled && newButton.isEnabled { emit?("new", nil) }

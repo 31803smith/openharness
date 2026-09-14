@@ -60,6 +60,7 @@ class TerminalPanel extends StatefulWidget {
   /// Only the focused grid tile may claim keyboard focus on mount/rebuild.
   final bool focused;
   final bool visible;
+  final Size? viewportSize;
   final bool compactHeader;
   final int focusRequest;
 
@@ -85,6 +86,7 @@ class TerminalPanel extends StatefulWidget {
     required this.session,
     required this.focused,
     this.visible = true,
+    this.viewportSize,
     this.compactHeader = false,
     this.focusRequest = 0,
     this.composerVisible = false,
@@ -149,6 +151,7 @@ class _TerminalPanelState extends State<TerminalPanel>
   String? _pressedLink;
   bool _openingLink = false;
   bool _linkRefreshPending = false;
+  bool _followTail = true;
   bool _observingLinkModifiers = false;
   late final RemoteMediaDownloader _mediaDownloader;
   MediaDownloadCancellation? _previewCancellation;
@@ -161,7 +164,7 @@ class _TerminalPanelState extends State<TerminalPanel>
     super.initState();
     _viewTerminal = widget.session.terminal;
     _viewTerminal.addListener(_scheduleLinkRefresh);
-    _scrollController.addListener(_scheduleLinkRefresh);
+    _scrollController.addListener(_onScrollChanged);
     _terminalViewKey = GlobalKey<TerminalViewState>();
     _linkOpener = widget.linkOpener ?? TerminalLinkOpener();
     _mediaDownloader = widget.mediaDownloader ?? RemoteMediaDownloader();
@@ -238,6 +241,7 @@ class _TerminalPanelState extends State<TerminalPanel>
       _afterTerminalMounted();
     }
     if (oldWidget.visible && !widget.visible) {
+      _rememberFollowTail();
       _focusNode.unfocus();
       _composerFocus.unfocus();
       _cancelDialInertia();
@@ -245,6 +249,12 @@ class _TerminalPanelState extends State<TerminalPanel>
       _hoveredLink = null;
       _pressedLink = null;
       _observeLinkModifiers(false);
+    }
+    if (!oldWidget.visible && widget.visible) {
+      _afterTerminalMounted(scrollToEnd: _followTail);
+    }
+    if (oldWidget.viewportSize != widget.viewportSize) {
+      _afterTerminalMounted(scrollToEnd: _followTail);
     }
     if (widget.focused &&
         (!oldWidget.focused || oldWidget.focusRequest != widget.focusRequest)) {
@@ -266,7 +276,7 @@ class _TerminalPanelState extends State<TerminalPanel>
     _tickerMode?.removeListener(_syncCursorBlink);
     _previewCancellation?.cancel();
     _viewTerminal.removeListener(_scheduleLinkRefresh);
-    _scrollController.removeListener(_scheduleLinkRefresh);
+    _scrollController.removeListener(_onScrollChanged);
     _observeLinkModifiers(false);
     widget.session.setCursorBlinkPhase(true);
     widget.session.removeListener(_onSessionChanged);
@@ -426,7 +436,8 @@ class _TerminalPanelState extends State<TerminalPanel>
       )..addListener(_onFindChanged);
       _find!.setQuery(_lastFindQuery, caseSensitive: _lastFindCaseSensitive);
     }
-    _afterTerminalMounted(scrollToEnd: false);
+    _followTail = atEnd;
+    _afterTerminalMounted(scrollToEnd: atEnd);
   }
 
   /// Typing in the composer focuses the tile, exactly like clicking into the terminal does.
@@ -554,12 +565,22 @@ class _TerminalPanelState extends State<TerminalPanel>
   void _afterTerminalMounted({
     bool clearSelection = false,
     bool scrollToEnd = true,
+    int retries = 2,
   }) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !widget.visible) return;
       if (clearSelection) _controller.clearSelection();
       final view = _laidOutTerminalView();
-      if (view == null) return;
+      if (view == null) {
+        if (retries > 0) {
+          _afterTerminalMounted(
+            clearSelection: clearSelection,
+            scrollToEnd: scrollToEnd,
+            retries: retries - 1,
+          );
+        }
+        return;
+      }
       final renderTerminal = view.renderTerminal;
       final cellSize = renderTerminal.cellSize;
       final renderSize = renderTerminal.size;
@@ -571,6 +592,7 @@ class _TerminalPanelState extends State<TerminalPanel>
       }
       if (scrollToEnd && _scrollController.hasClients) {
         _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+        _followTail = true;
       }
       // Never over the composer: a rebuild that re-focuses this tile while someone is typing into
       // the box would pull the caret out from under them mid-sentence.
@@ -931,6 +953,17 @@ class _TerminalPanelState extends State<TerminalPanel>
       _linkRefreshPending = false;
       if (mounted && widget.visible) _hoverLink(_linkPointerPosition);
     });
+  }
+
+  void _rememberFollowTail() {
+    if (!_scrollController.hasClients) return;
+    final position = _scrollController.position;
+    _followTail = position.maxScrollExtent - position.pixels < 1;
+  }
+
+  void _onScrollChanged() {
+    _rememberFollowTail();
+    _scheduleLinkRefresh();
   }
 
   String? _linkAtPointer(Offset globalPosition) {
