@@ -310,6 +310,15 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
       widget.notifier.stateOf(_machineId)?.machine.displayName ??
       'this machine';
 
+  String _machineLabel(MachineState machine) => [
+    machine.machine.displayName,
+    machine.isLocalMachine ? 'This computer' : 'Remote',
+    if (machine.nodeOnline == false)
+      'Offline'
+    else if (machine.needsLink)
+      'Link required',
+  ].join(' — ');
+
   Future<void> _browse() async {
     if (_picking) return;
     final restoreFocus = _folderFocus.hasFocus;
@@ -522,7 +531,11 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                     ],
                   ),
                 )
-              : const Text('Create agent'),
+              : Text(
+                  _machineIsThisComputer
+                      ? 'Create agent'
+                      : 'Create on $_machineName',
+                ),
         ),
       ],
     );
@@ -546,14 +559,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
               for (final machine in widget.notifier.machineStates.values)
                 SelectOption(
                   value: machine.machine.machineId,
-                  label: machine.isLocalMachine
-                      ? 'This computer'
-                      : machine.machine.displayName,
-                  note: machine.nodeOnline == false
-                      ? 'Offline'
-                      : machine.needsLink
-                      ? 'Link required'
-                      : null,
+                  label: _machineLabel(machine),
                 ),
             ],
             onChanged: (id) {
@@ -1107,8 +1113,8 @@ class _FolderControl extends StatelessWidget {
         if (!machineIsThisComputer) ...[
           const SizedBox(height: _gapTight),
           Text(
-            '$machineName is another computer — this browses its folders '
-            "through the CLI, not this Mac's.",
+            'This agent will run on $machineName. Its folders are browsed '
+            'through the remote CLI.',
             style: theme.textTheme.bodySmall,
           ),
         ],

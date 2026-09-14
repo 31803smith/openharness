@@ -231,6 +231,18 @@ void main() {
         local: false,
         initialPaths: const ['/custom/work-login'],
       );
+      final machineField = tester.widget<AppSelectField<String>>(
+        find.byKey(const Key('new-agent-machine-field')),
+      );
+      expect(machineField.options.single.label, 'This Mac — Remote');
+      expect(find.text('Create on This Mac'), findsOneWidget);
+      expect(
+        find.text(
+          'This agent will run on This Mac. Its folders are browsed through '
+          'the remote CLI.',
+        ),
+        findsOneWidget,
+      );
       expect(
         find.byKey(const Key('new-agent-codex-profile-field')),
         findsOneWidget,

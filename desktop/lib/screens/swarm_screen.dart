@@ -521,8 +521,13 @@ class _SwarmScreenState extends State<SwarmScreen> {
     bool cloneRepositoryFirst = false,
   }) => _dialog(() async {
     final focused = app.focusedPane;
+    // A general New Agent action starts on this computer. Most launches are
+    // local, and silently inheriting a remote focused pane makes the uncommon
+    // destination look like the default. Splitting a pane is contextual by
+    // definition, so it keeps the focused agent's machine and folder.
     final inherit =
         machineId == null &&
+        split != null &&
         !chooseFolderFirst &&
         !cloneRepositoryFirst &&
         focused?.agentId != null;
