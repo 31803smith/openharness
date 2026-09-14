@@ -640,7 +640,14 @@ class TerminalViewState extends State<TerminalView> {
   }
 
   /// Show the latest output when the current buffer and viewport are laid out.
-  void scrollToBottom() => renderTerminal.scrollToBottom();
+  void scrollToBottom() {
+    // A resize can land between ticks of a fling or driven scroll. Cancelling
+    // that activity is part of returning to live output; otherwise its next
+    // tick overwrites the freshly aligned offset with an old history position.
+    final position = _scrollableKey.currentState?.position;
+    if (position is ScrollPositionWithSingleContext) position.goIdle();
+    renderTerminal.scrollToBottom();
+  }
 
   void _scrollToBottom() => scrollToBottom();
 }

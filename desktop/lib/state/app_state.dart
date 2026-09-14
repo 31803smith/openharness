@@ -859,6 +859,11 @@ class AppNotifier extends ChangeNotifier {
   /// Explicit navigation must reveal and refocus even an already-selected pane.
   int get paneFocusRequest => _paneFocusRequest;
 
+  /// An explicit relayout reveals live output even in tiles whose rectangle
+  /// does not change. This is view intent, so it is never persisted.
+  int _paneLayoutRequest = 0;
+  int get paneLayoutRequest => _paneLayoutRequest;
+
   /// The chosen shape for a grid of this size, or the shipped one.
   Map<int, PanePreset> get panePresets => activeSwarm.presets;
 
@@ -872,7 +877,11 @@ class AppNotifier extends ChangeNotifier {
     final resized = activeSwarm.paneSizes.keys.any(
       (key) => key.startsWith('$paneCount:'),
     );
-    if (presetFor(paneCount) == preset && !resized) return;
+    _paneLayoutRequest++;
+    if (presetFor(paneCount) == preset && !resized) {
+      notifyListeners();
+      return;
+    }
     panePresets[paneCount] = preset;
     activeSwarm.paneSizes.removeWhere(
       (key, _) => key.startsWith('$paneCount:'),
@@ -953,6 +962,7 @@ class AppNotifier extends ChangeNotifier {
     }
     activeSwarm.savePaneSizes(layoutKey, arrangement);
     activeSwarm.arranged = arrangement;
+    _paneLayoutRequest++;
     notifyListeners();
     if (persist) _persistLayout();
     return true;

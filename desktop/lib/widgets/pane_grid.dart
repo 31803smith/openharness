@@ -344,6 +344,11 @@ class _SwarmCanvasState extends State<_SwarmCanvas> {
     return (
       notifier: app,
       location: (app.activeSwarmId, app.panes.indexOf(pane)),
+      layoutRequest: (
+        app.paneLayoutRequest,
+        app.panes.length,
+        app.zoomedPaneId,
+      ),
       machine: machine?.machine,
       local: machine?.isLocalMachine,
       online: machine?.nodeOnline,
@@ -1186,6 +1191,11 @@ class _PaneContent extends StatelessWidget {
           session: session,
           viewportSize: constraints.biggest,
           paneLocation: (notifier.activeSwarmId, notifier.panes.indexOf(pane)),
+          layoutRequest: (
+            notifier.paneLayoutRequest,
+            notifier.panes.length,
+            notifier.zoomedPaneId,
+          ),
           focused: visible && notifier.isPaneFocused(pane.id),
           focusRequest: notifier.isPaneFocused(pane.id)
               ? notifier.paneFocusRequest

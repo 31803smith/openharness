@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -46,6 +47,151 @@ void atBottom(WidgetTester tester, TerminalSession session) {
 }
 
 void main() {
+  testWidgets(
+    'incremental resize repaint cannot start a scroll bounce',
+    (tester) async {
+      final app = createApp();
+      final session = terminal('a0', []);
+      await snapshot(session, 0, 900);
+      app.adoptSessionForTest(session);
+      await mount(tester, app);
+      final view = terminalView(tester, session);
+      // Codex clears history and redraws in separate output frames. There is no
+      // further keyframe to cancel a bounce created by the temporary small buffer.
+      session.terminal.write('\x1b[3J\x1b[H\x1b[2JRepainting');
+      await tester.pump();
+      for (var chunk = 0; chunk < 5; chunk++) {
+        session.terminal.write(
+          '\r\n${'Repainted history\r\n' * 200}LATEST OUTPUT',
+        );
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      await tester.pump(const Duration(seconds: 2));
+      expect(
+        view.widget.scrollController!.position.isScrollingNotifier.value,
+        isFalse,
+      );
+      atBottom(tester, session);
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+    },
+    variant: TargetPlatformVariant({
+      TargetPlatform.macOS,
+      TargetPlatform.linux,
+    }),
+  );
+
+  testWidgets('relayout cancels scrolling that was already in flight', (
+    tester,
+  ) async {
+    final app = createApp();
+    final sessions = [terminal('a0', []), terminal('a1', [])];
+    for (final session in sessions) {
+      await snapshot(session, 0, 800);
+      app.adoptSessionForTest(session);
+    }
+    await mount(tester, app);
+    for (final session in sessions) {
+      unawaited(
+        terminalView(tester, session).widget.scrollController!.animateTo(
+          0,
+          duration: const Duration(milliseconds: 600),
+          curve: Curves.linear,
+        ),
+      );
+    }
+    await tester.pump(const Duration(milliseconds: 60));
+    app.setPreset(2, PanePreset.rows);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    for (final session in sessions) {
+      await snapshot(session, 1, 1000);
+    }
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    for (final session in sessions) {
+      atBottom(tester, session);
+    }
+    await tester.pumpWidget(const SizedBox());
+    app.dispose();
+  });
+
+  testWidgets('applying a layout resets panes whose size stays the same', (
+    tester,
+  ) async {
+    final app = createApp();
+    final sessions = [terminal('a0', []), terminal('a1', [])];
+    for (final session in sessions) {
+      await snapshot(session, 0, 800);
+      app.adoptSessionForTest(session);
+    }
+    await mount(tester, app);
+    app.setPreset(2, PanePreset.columns);
+    await tester.pump();
+    for (final session in sessions) {
+      terminalView(tester, session).widget.scrollController!.jumpTo(100);
+    }
+    await tester.pump();
+    app.setPreset(2, PanePreset.columns);
+    await tester.pump();
+    for (final session in sessions) {
+      atBottom(tester, session);
+    }
+    await tester.pumpWidget(const SizedBox());
+    app.dispose();
+  });
+
+  testWidgets(
+    'resize redraws and delayed captures keep following live output',
+    (tester) async {
+      final app = createApp();
+      final sessions = [terminal('a0', []), terminal('a1', [])];
+      for (final session in sessions) {
+        await snapshot(session, 0, 1000);
+        app.adoptSessionForTest(session);
+      }
+      await mount(tester, app);
+      var sequence = 1;
+      for (final preset in [
+        PanePreset.rows,
+        PanePreset.columns,
+        PanePreset.rows,
+      ]) {
+        await chord(tester, LogicalKeyboardKey.keyS);
+        await tester.pump(const Duration(milliseconds: 200));
+        await tester.tap(find.text(preset.label));
+        await tester.pump();
+        for (final session in sessions) {
+          atBottom(tester, session);
+          // Codex can clear its scrollback while repainting after SIGWINCH.
+          // A delayed tmux capture then seeds the full history again.
+          session.terminal.write('\x1b[3J\x1b[H\x1b[2JRepainting');
+        }
+        await tester.pump();
+        for (final session in sessions) {
+          await snapshot(session, sequence, 400);
+        }
+        sequence++;
+        await tester.pump(const Duration(milliseconds: 100));
+        for (final session in sessions) {
+          atBottom(tester, session);
+          await snapshot(session, sequence, 1200);
+        }
+        sequence++;
+        await tester.pump();
+        for (final session in sessions) {
+          atBottom(tester, session);
+        }
+      }
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+    },
+    variant: TargetPlatformVariant({
+      TargetPlatform.macOS,
+      TargetPlatform.linux,
+    }),
+  );
+
   testWidgets(
     'returning to live output before a layout follows the new extent',
     (tester) async {
@@ -111,6 +257,7 @@ void main() {
       view.widget.scrollController!.jumpTo(100);
       await tester.pump();
       await chord(tester, LogicalKeyboardKey.keyT);
+      await chord(tester, LogicalKeyboardKey.keyO);
       await tester.enterText(
         find.byKey(const ValueKey('swarm-search-input')),
         'Agent 0',
@@ -161,6 +308,9 @@ void main() {
       await snapshot(third, 0, 1200);
       app.adoptSessionForTest(third);
       sessions.add(third);
+      // The adoption seam only inserts the session; publish a session update
+      // as the real attach path does, so every retained pane is rebuilt.
+      await snapshot(third, 1, 1200);
       await tester.pump();
       for (final session in sessions) {
         atBottom(tester, session);

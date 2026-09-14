@@ -269,12 +269,15 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     final followTail = _stickToBottom;
     _updateViewportSize();
 
-    _updateScrollOffset();
-
     if (followTail) {
+      // Correct before publishing the dimensions. A terminal redraw may empty
+      // its history for one frame; publishing that short extent while pixels
+      // still points into the old history starts a macOS bounce to the top.
+      // That animation would keep scrolling even as the next output refills it.
       _offset.correctBy(_maxScrollExtent - _scrollOffset);
-      _stickToBottom = true;
     }
+    _updateScrollOffset();
+    if (followTail) _stickToBottom = true;
     _laidOutMaxScrollExtent = _maxScrollExtent;
     _scheduleEditableRect();
   }

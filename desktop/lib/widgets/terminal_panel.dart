@@ -60,6 +60,7 @@ class TerminalPanel extends StatefulWidget {
 
   /// A shared terminal can move to another harness without being remounted.
   final (String, int)? paneLocation;
+  final (int, int, int?)? layoutRequest;
   final bool compactHeader;
   final int focusRequest;
 
@@ -87,6 +88,7 @@ class TerminalPanel extends StatefulWidget {
     this.visible = true,
     this.viewportSize,
     this.paneLocation,
+    this.layoutRequest,
     this.compactHeader = false,
     this.focusRequest = 0,
     this.composerVisible = false,
@@ -254,7 +256,8 @@ class _TerminalPanelState extends State<TerminalPanel>
         (!oldWidget.visible || oldWidget.paneLocation != widget.paneLocation)) {
       _afterTerminalMounted();
     }
-    if (oldWidget.viewportSize != widget.viewportSize) {
+    if (oldWidget.viewportSize != widget.viewportSize ||
+        oldWidget.layoutRequest != widget.layoutRequest) {
       // Geometry can change while a resize handle or another control owns
       // the keyboard. Refresh the viewport without claiming input ownership.
       _afterTerminalMounted(claimFocus: false);
@@ -352,6 +355,7 @@ class _TerminalPanelState extends State<TerminalPanel>
 
   void _syncTerminal(Terminal terminal) {
     if (identical(_viewTerminal, terminal)) return;
+
     final previous = _viewTerminal.buffer;
     final next = terminal.buffer;
     final render = _laidOutTerminalView()?.renderTerminal;
@@ -578,6 +582,7 @@ class _TerminalPanelState extends State<TerminalPanel>
     // Request alignment before this frame's layout, so even a retained pane's
     // first visible paint uses its new size. Keep Find's explicit location.
     if (scrollToEnd && _find == null) {
+      _cancelDialInertia();
       _followTail = true;
       _laidOutTerminalView()?.scrollToBottom();
     }
