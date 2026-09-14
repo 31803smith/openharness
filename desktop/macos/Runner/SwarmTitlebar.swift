@@ -115,6 +115,10 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     keymap = map
     let hint = map.hint(for: "swarm.new", context: "workspace")
     strip.newButton.toolTip = hint.map { "New Tab (\($0))" } ?? "New Tab"
+    strip.createButton.toolTip = map.hint(for: "agent.new", context: "workspace")
+      .map { "New Harness (\($0))" } ?? "New Harness"
+    strip.openButton.toolTip = map.hint(for: "agent.add", context: "workspace")
+      .map { "Open Harness (\($0))" } ?? "Open Harness"
     if let main = NSApp.mainMenu, let window {
       let menu = main as? HarnessKeymapMenu ?? HarnessKeymapMenu.replacing(main)
       if NSApp.mainMenu !== menu { NSApp.mainMenu = menu }
@@ -202,7 +206,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     let file = NSMenu(title: "File")
     add(file, "New Tab", "t", "new")
     add(file, "New Harness…", "n", "newAgent")
-    add(file, "Find Harness…", "o", "addAgent")
+    add(file, "Open Harness…", "o", "addAgent")
     add(file, "Rename Harness…", "r", "renameActive", [.command, .shift])
     add(file, "Close Harness", "w", "closeActive")
     file.addItem(.separator())
@@ -715,6 +719,40 @@ private final class SwarmNotificationButton: NSButton {
   }
 }
 
+/// Keep titlebar actions on the app's palette. AppKit's rounded bezel chooses
+/// its own label color in active/inactive windows, ignoring contentTintColor.
+private final class SwarmActionButton: NSButton {
+  var fillColor = NSColor.clear { didSet { needsDisplay = true } }
+  var labelColor = NSColor.labelColor { didSet { needsDisplay = true } }
+  private var hovered = false
+  override var isEnabled: Bool { didSet { needsDisplay = true } }
+  override var mouseDownCanMoveWindow: Bool { false }
+
+  override func updateTrackingAreas() {
+    super.updateTrackingAreas()
+    trackingAreas.forEach(removeTrackingArea)
+    addTrackingArea(NSTrackingArea(rect: .zero,
+      options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
+  }
+  override func mouseEntered(with event: NSEvent) { hovered = true; needsDisplay = true }
+  override func mouseExited(with event: NSEvent) { hovered = false; needsDisplay = true }
+
+  override func draw(_ dirtyRect: NSRect) {
+    let opacity: CGFloat = isEnabled ? 1 : 0.35
+    let fill = isEnabled && (hovered || isHighlighted)
+      ? fillColor.blended(withFraction: isHighlighted ? 0.16 : 0.08, of: labelColor) ?? fillColor
+      : fillColor
+    fill.withAlphaComponent(opacity).setFill()
+    NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
+    let label = NSAttributedString(string: title, attributes: [
+      .font: font ?? NSFont.systemFont(ofSize: 12, weight: .medium),
+      .foregroundColor: labelColor.withAlphaComponent(opacity),
+    ])
+    let size = label.size()
+    label.draw(at: NSPoint(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2))
+  }
+}
+
 private final class SwarmTabStrip: NSView {
   private(set) var palette = SwarmNativePalette()
   var emit: ((String, Any?) -> Void)?
@@ -722,6 +760,8 @@ private final class SwarmTabStrip: NSView {
   private let document = NSView()
   fileprivate let newButton = NSButton()
   fileprivate let notificationButton = SwarmNotificationButton()
+  fileprivate let createButton = SwarmActionButton()
+  fileprivate let openButton = SwarmActionButton()
   private var tabs: [SwarmTabButton] = []
   private let icons = SwarmHistoryIcons()
   private var activeId = ""
@@ -757,6 +797,22 @@ private final class SwarmTabStrip: NSView {
     newButton.isEnabled = false
     button(notificationButton, "bell", "Notifications", #selector(openNotifications))
     notificationButton.isEnabled = false
+    func textButton(_ button: NSButton, _ label: String, _ action: Selector) {
+      button.title = label
+      button.font = .systemFont(ofSize: 12, weight: .medium)
+      button.isBordered = false
+      button.setButtonType(.momentaryChange)
+      button.target = self
+      button.action = action
+      button.toolTip = label
+      button.setAccessibilityLabel(label)
+      button.isEnabled = false
+      addSubview(button)
+    }
+    textButton(createButton, "New Harness", #selector(createHarness))
+    textButton(openButton, "Open Harness", #selector(openHarness))
+    updateActionColors()
+    setAccessibilityChildren([notificationButton, scroll, newButton, createButton, openButton])
     registerForDraggedTypes([swarmPasteboardType])
   }
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -767,8 +823,16 @@ private final class SwarmTabStrip: NSView {
     palette = nextPalette
     notificationButton.contentTintColor = palette.accent
     newButton.contentTintColor = palette.accent
+    updateActionColors()
     for tab in tabs { tab.palette = palette }
     needsDisplay = true
+  }
+
+  private func updateActionColors() {
+    createButton.fillColor = palette.accent
+    createButton.labelColor = palette.tabBar
+    openButton.fillColor = palette.search
+    openButton.labelColor = palette.accent
   }
 
   func update(_ state: [String: Any]) {
@@ -813,6 +877,8 @@ private final class SwarmTabStrip: NSView {
     document.setAccessibilityChildren(tabs)
     newButton.isEnabled = actionsEnabled && tabs.count < 24
     notificationButton.isEnabled = actionsEnabled
+    createButton.isEnabled = actionsEnabled
+    openButton.isEnabled = actionsEnabled
     let attention = state["attention"] as? Int ?? 0
     notificationButton.hasAttention = attention > 0
     notificationButton.toolTip = attention > 0 ? "\(attention) harnesses need input" : "Notifications"
@@ -838,18 +904,23 @@ private final class SwarmTabStrip: NSView {
     let activeWasVisible = active.map { scroll.documentVisibleRect.intersects($0.frame) } ?? false
     let previousScrollSize = scroll.frame.size
     let previousDocumentSize = document.frame.size
-    let available = max(132, bounds.width - 84)
-    let width = min(220, max(132, available / CGFloat(max(1, tabs.count))))
+    let leading: CGFloat = 36
+    let actionsWidth: CGFloat = 232
+    newButton.isHidden = bounds.width < 420
+    let available = max(32, bounds.width - leading - actionsWidth - (newButton.isHidden ? 0 : 36))
+    let width = min(220, max(min(132, available), available / CGFloat(max(1, tabs.count))))
     let occupied = min(available, CGFloat(tabs.count) * width)
-    scroll.frame = NSRect(x: 0, y: 0, width: occupied, height: bounds.height)
+    scroll.frame = NSRect(x: leading, y: 0, width: occupied, height: bounds.height)
     document.frame = NSRect(x: 0, y: 0, width: max(occupied, CGFloat(tabs.count) * width), height: bounds.height)
     for (index, tab) in tabs.enumerated() {
       tab.frame = NSRect(x: CGFloat(index) * width, y: 0, width: width, height: bounds.height - 6)
       tab.contentCenterY = bounds.midY
     }
     let buttonY = (bounds.height - 28) / 2
-    newButton.frame = NSRect(x: occupied + 4, y: buttonY, width: 28, height: 28)
-    notificationButton.frame = NSRect(x: bounds.width - 40, y: buttonY, width: 28, height: 28)
+    notificationButton.frame = NSRect(x: 0, y: buttonY, width: 28, height: 28)
+    newButton.frame = NSRect(x: leading + occupied + 4, y: buttonY, width: 28, height: 28)
+    createButton.frame = NSRect(x: bounds.width - actionsWidth, y: buttonY, width: 106, height: 28)
+    openButton.frame = NSRect(x: bounds.width - 116, y: buttonY, width: 108, height: 28)
     let geometryChanged = scroll.frame.size != previousScrollSize || document.frame.size != previousDocumentSize
     if let active, revealActiveAfterLayout || (activeWasVisible && (geometryChanged || tabOrderChanged)) {
       document.scrollToVisible(active.frame)
@@ -887,6 +958,12 @@ private final class SwarmTabStrip: NSView {
   }
   @objc private func openNotifications() {
     if actionsEnabled { emit?("notifications", nil) }
+  }
+  @objc private func createHarness() {
+    if actionsEnabled { emit?("newAgent", nil) }
+  }
+  @objc private func openHarness() {
+    if actionsEnabled { emit?("addAgent", nil) }
   }
 
   private func draggedTab(_ sender: NSDraggingInfo) -> SwarmTabButton? {

@@ -151,12 +151,20 @@ private extension SwarmTabStrip {
     try original.checkAccessibility(expectedName: "Renamed tab", active: true)
     try checkTitlebar(newButton.isEnabled, "New Harness returns below capacity")
     try checkTitlebar(newButton.toolTip?.contains("⌘T") == true, "New Harness advertises its keyboard shortcut")
-    try checkTitlebar(newButton.frame.maxX < notificationButton.frame.minX, "New Harness and the bell have separate targets")
+    try checkTitlebar(notificationButton.frame.maxX <= scroll.frame.minX,
+      "The bell is before the tabs beside the traffic lights")
+    try checkTitlebar((newButton.isHidden || newButton.frame.maxX <= createButton.frame.minX) && scroll.frame.maxX <= createButton.frame.minX && createButton.frame.maxX < openButton.frame.minX,
+      "New and Open Harness have separate targets on the right")
+    try checkTitlebar(createButton.title == "New Harness" && openButton.title == "Open Harness",
+      "Creation and opening are explicit in the titlebar")
     try checkTitlebar(!subviews.contains(where: { $0 is NSTextField }), "The titlebar has no competing text editor")
     events.removeAll()
     newButton.performClick(nil)
     notificationButton.performClick(nil)
-    try checkTitlebar(events == ["new", "notifications"], "Each toolbar icon opens its shared Flutter surface once")
+    createButton.performClick(nil)
+    openButton.performClick(nil)
+    try checkTitlebar(events == ["new", "notifications", "newAgent", "addAgent"],
+      "The new tab, notification, create and open buttons dispatch separate actions once")
     try checkTitlebar(notificationButton.hasAttention, "The bell represents pending agent attention")
     let oldButton = newButton
     var themedState = state([["id": "swarm-0", "name": "Renamed tab"]], active: "swarm-0")
@@ -174,10 +182,12 @@ private extension SwarmTabStrip {
     events.removeAll()
     update(state([["id": "swarm-0", "name": "Renamed tab"]], active: "swarm-0", enabled: false))
     try original.checkEnabled(false)
-    try checkTitlebar(!newButton.isEnabled && !notificationButton.isEnabled, "Titlebar actions disable with a modal")
+    try checkTitlebar(!newButton.isEnabled && !notificationButton.isEnabled && !createButton.isEnabled && !openButton.isEnabled, "Titlebar actions disable with a modal")
     original.clickBothActions()
     newButton.performClick(nil)
     notificationButton.performClick(nil)
+    createButton.performClick(nil)
+    openButton.performClick(nil)
     try checkTitlebar(events.isEmpty, "Disabled controls emit no actions")
     try checkDragOperations()
   }
