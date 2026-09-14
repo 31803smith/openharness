@@ -5,7 +5,7 @@ tag: `.github/workflows/release.yml` bundles the CLI, publishes it to that bucke
 Release. **The tag IS the version — CI never bumps.**
 
 Tags are `vX.Y.Z_cli`, not plain `vX.Y.Z`: the backend now lives in this same repo under `backend/`
-and releases as `vX.Y.Z_api` (see `../backend/README.md`), so the suffix is what tells each tag-push
+and releases as `vX.Y.Z_backend` (see `../backend/README.md`), so the suffix is what tells each tag-push
 trigger which workflow to run. It's stripped before anything treats it as a version — the published
 version everywhere below (manifest, release title, `ADAPTER_VERSION`) is always a bare `X.Y.Z`.
 

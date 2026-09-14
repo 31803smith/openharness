@@ -3,7 +3,7 @@
 # ../.github/workflows/release-desktop.yml builds macOS + Linux, publishes to GCS, and creates the
 # GitHub Release. The tag IS the version; CI never bumps on its own. Tags are "vX.Y.Z_desktop" — the
 # "_desktop" suffix is stripped by release-desktop.yml before anything treats it as a version; it
-# exists only so this tag never also triggers the CLI's "vX.Y.Z_cli" or the backend's "vX.Y.Z_api"
+# exists only so this tag never also triggers the CLI's "vX.Y.Z_cli" or the backend's "vX.Y.Z_backend"
 # release, now that all three live in one repo.
 #
 # Usage (from the repo root, `make release-desktop ARGS=...` runs the same thing):
