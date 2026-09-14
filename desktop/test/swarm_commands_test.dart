@@ -74,7 +74,7 @@ void main() {
       await tester.pump();
       expect(find.text('⌘⇧P'), findsNothing);
       expect(find.text('⇧⌘P'), findsNothing);
-      expect(find.text('Add to this tab'), findsNothing);
+      expect(find.text('Add Harness'), findsNothing);
       expect(find.byKey(const ValueKey('command:pane.pin')), findsOneWidget);
       expect(app.isPanePinned(pane), isFalse);
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
@@ -106,11 +106,11 @@ void main() {
   );
 
   testWidgets(
-    'New tab commands stay inline and hand focus to the chosen dialog',
+    'New Harness commands use the shared picker and hand focus to the chosen dialog',
     (tester) async {
       final app = createApp();
       await mount(tester, app);
-      final input = find.byKey(const ValueKey('swarm-welcome-search-input'));
+      final input = find.byKey(const ValueKey('swarm-search-input'));
       await tester.tap(input);
       await tester.enterText(input, '> rename');
       await tester.pump();
@@ -118,7 +118,10 @@ void main() {
         find.byKey(const ValueKey('command:swarm.rename')),
         findsOneWidget,
       );
-      expect(find.byKey(const ValueKey('swarm-search-results')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('swarm-search-results')),
+        findsOneWidget,
+      );
       final text = tester.widget<TextField>(input).controller!;
       text.value = text.value.copyWith(
         composing: const TextRange(start: 2, end: 8),
@@ -129,10 +132,7 @@ void main() {
       text.clearComposing();
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pumpAndSettle();
-      expect(
-        find.byKey(const ValueKey('swarm-welcome-search-results')),
-        findsNothing,
-      );
+      expect(find.byKey(const ValueKey('swarm-search-results')), findsNothing);
       expect(find.byType(Dialog), findsOneWidget);
       final dialogInput = find.descendant(
         of: find.byType(Dialog),

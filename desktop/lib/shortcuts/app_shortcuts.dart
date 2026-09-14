@@ -4,13 +4,14 @@ import 'package:flutter/widgets.dart';
 import '../logging/debug_surface.dart';
 
 /// Harness uses Command as a direct prefix for frequent workspace actions.
-/// H/J/K/L and arrows focus panes, B routes a task, S changes layout and R
-/// refreshes discovery. The same definitions feed live keys, help and search.
+/// T opens a tab, N creates a harness, O finds one, S changes layout,
+/// H/J/K/L and arrows focus panes, B routes a task
+/// and R refreshes discovery. The same definitions feed live keys, help and search.
 ///
 /// Unclaimed input stays with the focused agent or text field. Composition,
 /// copy/paste and the coding agent's own prompt editing must keep working.
 /// AppKit's Edit menu has no competing equivalents for C/V/X/A, and Hide has
-/// no H equivalent: Flutter owns editing and Harness owns Command-H movement.
+/// no H equivalent: Flutter owns editing and Harness owns Command-H navigation.
 /// Menu clicks still use their usual responder-chain actions.
 
 enum ShortcutAction {
@@ -109,8 +110,7 @@ const List<AppShortcut> kAppShortcuts = [
   ),
   // --- navigate -------------------------------------------------------------
   //
-  // Both letter and arrow directions are available without a mode switch.
-  // The macOS Hide menu keeps its click action but releases Command-H.
+  // Command-arrows and H/J/K/L focus panes; bare keys stay with the terminal.
   AppShortcut(
     action: ShortcutAction.focusPaneLeft,
     activator: SingleActivator(LogicalKeyboardKey.keyH, meta: true),
@@ -135,11 +135,6 @@ const List<AppShortcut> kAppShortcuts = [
     label: 'Focus the pane to the right',
     group: ShortcutGroup.navigate,
   ),
-  // The same four, for the hand that never left the arrow cluster. Safe despite
-  // the bare-arrow rule this file's tests enforce: that rule is about UNMODIFIED
-  // arrows, which the terminal owns for the cursor and for shell history. A ⌘
-  // chord is the app's — terminal_panel._onTerminalKey passes everything but ⌘V
-  // straight through.
   AppShortcut(
     action: ShortcutAction.focusPaneLeft,
     activator: SingleActivator(LogicalKeyboardKey.arrowLeft, meta: true),
@@ -167,50 +162,7 @@ const List<AppShortcut> kAppShortcuts = [
 
   // --- panes ----------------------------------------------------------------
   //
-  // SHIFT MOVES WHAT THE PLAIN KEY WALKS TO, and that is not a convention
-  // invented here: vim has used `Ctrl-w H/J/K/L` — the capitals — to move a
-  // window to an edge for as long as it has had splits. A vim user does not
-  // have to be taught this row; they have to be told it is not missing.
-  AppShortcut(
-    action: ShortcutAction.movePaneLeft,
-    activator: SingleActivator(
-      LogicalKeyboardKey.keyH,
-      meta: true,
-      shift: true,
-    ),
-    label: 'Move this pane left',
-    group: ShortcutGroup.panes,
-  ),
-  AppShortcut(
-    action: ShortcutAction.movePaneDown,
-    activator: SingleActivator(
-      LogicalKeyboardKey.keyJ,
-      meta: true,
-      shift: true,
-    ),
-    label: 'Move this pane down',
-    group: ShortcutGroup.panes,
-  ),
-  AppShortcut(
-    action: ShortcutAction.movePaneUp,
-    activator: SingleActivator(
-      LogicalKeyboardKey.keyK,
-      meta: true,
-      shift: true,
-    ),
-    label: 'Move this pane up',
-    group: ShortcutGroup.panes,
-  ),
-  AppShortcut(
-    action: ShortcutAction.movePaneRight,
-    activator: SingleActivator(
-      LogicalKeyboardKey.keyL,
-      meta: true,
-      shift: true,
-    ),
-    label: 'Move this pane right',
-    group: ShortcutGroup.panes,
-  ),
+  // Shift-Command-arrows move the pane itself in the same direction.
   AppShortcut(
     action: ShortcutAction.movePaneLeft,
     activator: SingleActivator(
@@ -273,7 +225,7 @@ const List<AppShortcut> kAppShortcuts = [
   AppShortcut(
     action: ShortcutAction.closePane,
     activator: SingleActivator(LogicalKeyboardKey.keyW, meta: true),
-    label: 'Close the focused agent pane',
+    label: 'Close the focused pane',
     group: ShortcutGroup.panes,
   ),
   AppShortcut(
@@ -304,7 +256,7 @@ const List<AppShortcut> kAppShortcuts = [
   AppShortcut(
     action: ShortcutAction.nextAgent,
     activator: SingleActivator(LogicalKeyboardKey.tab, control: true),
-    label: 'Next agent',
+    label: 'Next pane',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
@@ -314,7 +266,7 @@ const List<AppShortcut> kAppShortcuts = [
       control: true,
       shift: true,
     ),
-    label: 'Previous agent',
+    label: 'Previous pane',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
@@ -327,12 +279,8 @@ const List<AppShortcut> kAppShortcuts = [
   // --- actions --------------------------------------------------------------
   AppShortcut(
     action: ShortcutAction.newAgent,
-    activator: SingleActivator(
-      LogicalKeyboardKey.keyN,
-      meta: true,
-      shift: true,
-    ),
-    label: 'Create Agent',
+    activator: SingleActivator(LogicalKeyboardKey.keyN, meta: true),
+    label: 'New Harness',
     group: ShortcutGroup.actions,
   ),
   AppShortcut(
@@ -344,7 +292,7 @@ const List<AppShortcut> kAppShortcuts = [
   AppShortcut(
     action: ShortcutAction.reload,
     activator: SingleActivator(LogicalKeyboardKey.keyR, meta: true),
-    label: 'Reload machines and agents',
+    label: 'Reload machines and harnesses',
     group: ShortcutGroup.actions,
   ),
   AppShortcut(
@@ -393,8 +341,8 @@ List<AppShortcut> appShortcuts({bool swarmMode = true}) => [
 const kSwarmShortcuts = [
   AppShortcut(
     action: ShortcutAction.addAgent,
-    activator: SingleActivator(LogicalKeyboardKey.keyN, meta: true),
-    label: 'Add agent to this tab',
+    activator: SingleActivator(LogicalKeyboardKey.keyO, meta: true),
+    label: 'Find Harness',
     group: ShortcutGroup.actions,
   ),
   AppShortcut(
@@ -406,7 +354,7 @@ const kSwarmShortcuts = [
   AppShortcut(
     action: ShortcutAction.newSwarm,
     activator: SingleActivator(LogicalKeyboardKey.keyT, meta: true),
-    label: 'New Harness',
+    label: 'New Tab',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
@@ -416,13 +364,13 @@ const kSwarmShortcuts = [
       meta: true,
       shift: true,
     ),
-    label: 'Reopen last closed agent or tab',
+    label: 'Reopen last closed harness',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
     action: ShortcutAction.closeSwarm,
     activator: SingleActivator(LogicalKeyboardKey.keyW, meta: true),
-    label: 'Close this tab',
+    label: 'Close Harness',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
@@ -432,7 +380,7 @@ const kSwarmShortcuts = [
       meta: true,
       shift: true,
     ),
-    label: 'Rename this tab',
+    label: 'Rename Harness',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
@@ -442,7 +390,7 @@ const kSwarmShortcuts = [
       meta: true,
       shift: true,
     ),
-    label: 'Next tab',
+    label: 'Next Harness',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
@@ -452,13 +400,13 @@ const kSwarmShortcuts = [
       meta: true,
       shift: true,
     ),
-    label: 'Previous tab',
+    label: 'Previous Harness',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
     action: ShortcutAction.nextSwarm,
     activator: SingleActivator(LogicalKeyboardKey.tab, control: true),
-    label: 'Next tab',
+    label: 'Next Harness',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
@@ -468,7 +416,7 @@ const kSwarmShortcuts = [
       control: true,
       shift: true,
     ),
-    label: 'Previous tab',
+    label: 'Previous Harness',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
@@ -478,7 +426,7 @@ const kSwarmShortcuts = [
       meta: true,
       shift: true,
     ),
-    label: 'Show agents needing input',
+    label: 'Show harnesses needing input',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
@@ -488,7 +436,7 @@ const kSwarmShortcuts = [
       meta: true,
       shift: true,
     ),
-    label: 'Close the focused agent pane',
+    label: 'Close the focused pane',
     group: ShortcutGroup.panes,
   ),
   AppShortcut(
@@ -500,7 +448,7 @@ const kSwarmShortcuts = [
 ];
 
 /// Command-number selects the first nine tabs in their visible order. The
-/// shortcut sheet prints one row; pane movement uses H/J/K/L and arrow keys.
+/// shortcut sheet prints one row; pane movement uses Command-arrows.
 const int kTabDigitCount = 9;
 
 List<SingleActivator> tabDigitActivators() => const [

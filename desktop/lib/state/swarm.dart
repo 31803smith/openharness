@@ -137,6 +137,7 @@ class ClosedSwarm extends ClosedWork {
     required super.historyId,
     required this.index,
     Swarm? replacement,
+    this.engine,
   }) : id = swarm.id,
        name = swarm.name,
        gridColumns = swarm.gridColumns,
@@ -160,6 +161,7 @@ class ClosedSwarm extends ClosedWork {
 
   final String id;
   final String name;
+  final String? engine;
   final int index;
   final int? gridColumns;
   final int focus;

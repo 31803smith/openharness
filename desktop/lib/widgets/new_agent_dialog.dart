@@ -31,9 +31,9 @@ const Map<String, String> kEngineBypassPermissionFlag = {
   'opencode': '--auto',
 };
 
-enum NewAgentDialogResult { created, findExisting }
+enum NewAgentDialogResult { created, findExisting, backToSearch }
 
-/// Opens the Create Agent dialog for [machineId].
+/// Opens the Create Harness dialog for [machineId].
 ///
 /// [source] names the door it was opened by — `machine_row`, `rail_empty`,
 /// `pane_empty` or `shortcut` — and is required rather than defaulted, so a
@@ -52,6 +52,7 @@ Future<NewAgentDialogResult?> showNewAgentDialog(
   PaneSplitRequest? split,
   Future<void>? initialEngineProbe,
   bool offerFindExisting = false,
+  bool offerBackToSearch = false,
 }) {
   // Reported here rather than at each call site: the doors are four and
   // growing, and one that forgets to track is a hole in the funnel that only
@@ -69,6 +70,7 @@ Future<NewAgentDialogResult?> showNewAgentDialog(
       split: split,
       initialEngineProbe: initialEngineProbe,
       offerFindExisting: offerFindExisting,
+      offerBackToSearch: offerBackToSearch,
     ),
   );
 }
@@ -81,6 +83,7 @@ class _NewAgentDialog extends StatefulWidget {
   final PaneSplitRequest? split;
   final Future<void>? initialEngineProbe;
   final bool offerFindExisting;
+  final bool offerBackToSearch;
 
   const _NewAgentDialog({
     required this.notifier,
@@ -90,6 +93,7 @@ class _NewAgentDialog extends StatefulWidget {
     this.split,
     this.initialEngineProbe,
     required this.offerFindExisting,
+    required this.offerBackToSearch,
   });
 
   @override
@@ -320,7 +324,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
       _codexProfilesBusy;
 
   /// [Machine.displayName], not `name` — the latter is nullable and a machine
-  /// that never got one would title the dialog "Create Agent on null".
+  /// that never got one would title the dialog "Create Harness on null".
   String get _machineName =>
       widget.notifier.stateOf(_machineId)?.machine.displayName ??
       'this machine';
@@ -484,9 +488,9 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
 
     return AlertDialog(
       title: Text(switch (widget.split?.axis) {
-        PaneResizeAxis.x => 'Create Agent to the right',
-        PaneResizeAxis.y => 'Create Agent below',
-        null => 'Create Agent',
+        PaneResizeAxis.x => 'Create Harness to the right',
+        PaneResizeAxis.y => 'Create Harness below',
+        null => 'Create Harness',
       }),
       titleTextStyle: Theme.of(context).textTheme.titleMedium,
       content: SizedBox(
@@ -537,11 +541,23 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
       ),
       actions: [
         TextButton(
-          onPressed: _submitting ? null : () => Navigator.of(context).pop(),
+          onPressed: _submitting
+              ? null
+              : () => Navigator.of(context).pop(
+                  widget.offerBackToSearch && !_confirmationPending
+                      ? NewAgentDialogResult.backToSearch
+                      : null,
+                ),
           style: TextButton.styleFrom(
             foregroundColor: grid.AppPalette.textSecondary,
           ),
-          child: Text(_confirmationPending ? 'Close' : 'Cancel'),
+          child: Text(
+            _confirmationPending
+                ? 'Close'
+                : widget.offerBackToSearch
+                ? 'Back to Search'
+                : 'Cancel',
+          ),
         ),
         if (widget.offerFindExisting &&
             _confirmationPending &&
@@ -553,7 +569,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                       Navigator.of(context)
                           .pop(NewAgentDialogResult.findExisting),
             icon: const Icon(LucideIcons.search, size: 16),
-            label: const Text('Find existing agent…'),
+            label: const Text('Find a harness'),
           ),
         FilledButton(
           key: const ValueKey('create-agent-submit'),
@@ -579,18 +595,12 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                       Text(
                         _checkingCreation
                             ? 'Checking status…'
-                            : 'Creating agent…',
+                            : 'Creating harness…',
                       ),
                     ],
                   ),
                 )
-              : Text(
-                  _confirmationPending
-                      ? 'Check status'
-                      : _machineIsThisComputer
-                      ? 'Create Agent'
-                      : 'Create on $_machineName',
-                ),
+              : Text(_confirmationPending ? 'Check status' : 'Create Harness'),
         ),
       ],
     );
@@ -643,7 +653,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                   minimumSize: Size.zero,
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
-                child: const Text('Clone repository…'),
+                child: const Text('Clone repository'),
               ),
           ],
         ),
@@ -719,7 +729,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                   _willInstall
                       ? 'Harness will install ${engineIdentity(_engine).label} before starting.'
                       : 'Couldn’t check whether ${engineIdentity(_engine).label} is installed. '
-                            'You can still try creating an agent.',
+                            'You can still try creating a harness.',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: _willInstall
                         ? grid.AppPalette.accentOnSurface
@@ -1171,7 +1181,7 @@ class _FolderControl extends StatelessWidget {
         if (!machineIsThisComputer) ...[
           const SizedBox(height: _gapTight),
           Text(
-            'This agent will run on $machineName. Its folders are browsed '
+            'This harness will run on $machineName. Its folders are browsed '
             'through the remote CLI.',
             style: theme.textTheme.bodySmall,
           ),

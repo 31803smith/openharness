@@ -5,8 +5,8 @@ import '../state/swarm_search.dart';
 import '../state/swarm_navigation.dart';
 import 'swarm_switcher.dart';
 
-/// The same editable input in the centered picker and the New Agent page.
-/// Flutter owns both the caret and result navigation; native chrome only opens it.
+/// The shared input for New Harness, Add and split searches.
+/// Flutter owns the caret and result navigation; native chrome only opens it.
 class SwarmSearchInput extends StatelessWidget {
   const SwarmSearchInput({
     super.key,
@@ -58,7 +58,7 @@ class SwarmSearchInput extends StatelessWidget {
       ),
       borderSide: BorderSide(color: open ? Colors.transparent : Colors.white24),
     );
-    final input = SwarmSearchKeys(
+    return SwarmSearchKeys(
       search: search,
       editing: controller,
       onChoose: onChoose,
@@ -81,7 +81,7 @@ class SwarmSearchInput extends StatelessWidget {
         decoration: InputDecoration(
           hintText: search?.isCommandMode == true
               ? search!.hint
-              : hintText ?? search?.hint ?? 'Find an existing agent…',
+              : hintText ?? search?.hint ?? 'Find a harness',
           hintStyle: const TextStyle(fontSize: 16, color: Colors.white60),
           prefixIcon: const Icon(Icons.search, size: 20, color: Colors.white60),
           prefixIconConstraints: const BoxConstraints(
@@ -115,35 +115,6 @@ class SwarmSearchInput extends StatelessWidget {
           focusedBorder: border,
         ),
       ),
-    );
-    if (!showClose || search?.adding != true || onNewAgent == null) {
-      return input;
-    }
-    return Row(
-      children: [
-        Expanded(child: input),
-        Padding(
-          padding: const EdgeInsets.only(left: 4, right: 14),
-          child: FilledButton.icon(
-            key: const ValueKey('swarm-search-new-agent'),
-            onPressed: search!.canCreate ? onNewAgent : null,
-            style: FilledButton.styleFrom(
-              backgroundColor: grid.AppPalette.swarmAccent,
-              foregroundColor: grid.AppPalette.swarmField,
-              minimumSize: const Size(148, 42),
-              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-            ),
-            icon: const Icon(Icons.add, size: 20),
-            label: const Text(
-              'Create Agent',
-              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-            ),
-          ),
-        ),
-      ],
     );
   }
 }

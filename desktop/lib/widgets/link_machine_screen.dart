@@ -210,7 +210,7 @@ class _LinkMachineScreenState extends State<LinkMachineScreen> {
           ),
           const SizedBox(height: 8),
           Text(
-            'Your previous agent will reconnect automatically after linking.',
+            'Your previous harness will reconnect automatically after linking.',
             style: TextStyle(
               fontFamily: AppFonts.sans,
               fontSize: 11.2,

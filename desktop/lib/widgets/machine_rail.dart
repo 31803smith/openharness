@@ -24,6 +24,7 @@ import 'device_row.dart';
 import 'engine_identity.dart';
 import 'link_machine_dialog.dart';
 import 'new_agent_dialog.dart';
+import 'machines_manager.dart';
 
 /// The machine caption's type.
 ///
@@ -398,7 +399,7 @@ class _CaptionActions extends StatelessWidget {
         AppIconButton(
           icon: LucideIcons.plus300,
           size: 16,
-          tooltip: 'Create Agent here…',
+          tooltip: 'Create Harness here…',
           onPressed: onNewAgent,
         ),
       ],
@@ -408,7 +409,7 @@ class _CaptionActions extends StatelessWidget {
 
 class _MachineNode extends StatefulWidget {
   /// Whether the guide line arrives from a row above. False on the first
-  /// machine, where a line dangling up towards the Create Agent button would point
+  /// machine, where a line dangling up towards the Create Harness button would point
   /// at nothing.
   final bool isFirst;
 
@@ -433,77 +434,12 @@ class _MachineNodeState extends State<_MachineNode> {
   AppNotifier get notifier => widget.notifier;
   Machine get machine => widget.machine;
 
-  Future<void> _showRenameDialog() async {
-    final controller = TextEditingController(text: machine.displayName);
-    String? error;
-    await showAppDialog<void>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (dialogContext, setDialogState) => AlertDialog(
-          title: const Text('Edit name'),
-          content: SizedBox(
-            width: 360,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                TextField(
-                  controller: controller,
-                  autofocus: true,
-                  style: grid.kFieldTextStyle,
-                  onSubmitted: (_) async {
-                    final result = await notifier.renameMachine(
-                      machine.machineId,
-                      controller.text,
-                    );
-                    if (result == null) {
-                      if (dialogContext.mounted) {
-                        Navigator.of(dialogContext).pop();
-                      }
-                    } else {
-                      setDialogState(() => error = result);
-                    }
-                  },
-                ),
-                if (error != null) ...[
-                  const SizedBox(height: 10),
-                  Text(
-                    error!,
-                    style: TextStyle(
-                      color: grid.AppPalette.dangerFill,
-                      fontFamily: grid.AppFont.sans,
-                      fontSize: 11.2,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () async {
-                final result = await notifier.renameMachine(
-                  machine.machineId,
-                  controller.text,
-                );
-                if (result == null) {
-                  if (dialogContext.mounted) Navigator.of(dialogContext).pop();
-                } else {
-                  setDialogState(() => error = result);
-                }
-              },
-              child: const Text('Save'),
-            ),
-          ],
-        ),
-      ),
-    );
-    controller.dispose();
-  }
+  Future<void> _showRenameDialog() => showMachineRenameDialog(
+    context,
+    notifier,
+    machine.machineId,
+    machine.displayName,
+  );
 
   Future<void> _confirmDeleteMachine() async {
     final confirmed = await showAppDialog<bool>(
@@ -513,7 +449,7 @@ class _MachineNodeState extends State<_MachineNode> {
         content: SizedBox(
           width: 360,
           child: Text(
-            'Delete "${machine.displayName}"? All its agents will be disconnected and '
+            'Delete "${machine.displayName}"? All its harnesses will be disconnected and '
             "it'll need to be linked again. This can't be undone.",
             style: TextStyle(fontFamily: grid.AppFont.sans, fontSize: 13.5),
           ),
@@ -748,7 +684,7 @@ class _MachineNodeState extends State<_MachineNode> {
                             ),
                           ),
                         // Both of this machine's actions, on this machine's own
-                        // row. The `+` is what the rail's big Create Agent button
+                        // row. The `+` is what the rail's big Create Harness button
                         // used to be: that button had to guess which machine you
                         // meant, and this one cannot be wrong about it.
                         _CaptionActions(
@@ -770,7 +706,7 @@ class _MachineNodeState extends State<_MachineNode> {
                               // it. A per-machine action belongs with the machine's other ones.
                               AppMenuItem(
                                 icon: LucideIcons.refreshCw300,
-                                label: 'Reload agents',
+                                label: 'Reload harnesses',
                                 onPressed: () {
                                   _machineMenu.close();
                                   notifier.reloadMachineData(machine.machineId);
@@ -778,7 +714,7 @@ class _MachineNodeState extends State<_MachineNode> {
                               ),
                               AppMenuItem(
                                 icon: LucideIcons.pencil300,
-                                label: 'Edit name',
+                                label: 'Rename Machine',
                                 onPressed: () {
                                   _machineMenu.close();
                                   _showRenameDialog();
@@ -875,7 +811,7 @@ class _AgentTree extends StatelessWidget {
           return _AgentStatusRow(
             icon: Icons.sync,
             label: state.connectionStatus == ConnectionStatus.connected
-                ? 'preparing agent list…'
+                ? 'preparing harness list…'
                 : 'connecting…',
           );
         case AgentLoadStatus.needsLink:
@@ -1471,7 +1407,7 @@ class _AgentRowsSkeleton extends StatelessWidget {
   Widget build(BuildContext context) => SkeletonList(
     rows: _rows,
     fadeDepth: skeletonFadeLight,
-    semanticsLabel: 'Loading agents',
+    semanticsLabel: 'Loading harnesses',
     itemBuilder: (context, i) => SidebarTimeline(
       role: SidebarTimelineRole.branch,
       below: i < _rows - 1,
@@ -1656,7 +1592,7 @@ class _AgentLoadError extends StatelessWidget {
           const SizedBox(width: 7),
           Expanded(
             child: Text(
-              state.agentsLoadError ?? 'Could not load agents',
+              state.agentsLoadError ?? 'Could not load harnesses',
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
@@ -1669,7 +1605,7 @@ class _AgentLoadError extends StatelessWidget {
           IconButton(
             icon: const Icon(Icons.refresh, size: 14),
             color: grid.AppPalette.textSecondary,
-            tooltip: 'Retry agents',
+            tooltip: 'Retry harnesses',
             onPressed: () =>
                 notifier.reloadMachineData(state.machine.machineId),
           ),
@@ -1679,7 +1615,7 @@ class _AgentLoadError extends StatelessWidget {
   }
 }
 
-/// "Create Agent…", drawn as the row it would create.
+/// "Create Harness…", drawn as the row it would create.
 ///
 /// The rail is a LIST, and every framed control put in it has read as a foreign object — there is
 /// nothing else in this column with a border or a fill of its own. So this is not a button placed in a
@@ -1720,11 +1656,11 @@ class _NewAgentRow extends StatelessWidget {
       // one. A different indent here would bend the trunk at the last branch.
       padding: const EdgeInsets.only(left: 28),
       child: SidebarItem(
-        label: 'Create Agent…',
+        label: 'Create Harness…',
         // Dimmed rather than a colour of its own: this row is a placeholder until it is reached for, and
         // the hover state SidebarItem already owns is what says it is live.
         dimmed: true,
-        tooltip: 'Start an agent on this machine',
+        tooltip: 'Start a harness on this machine',
         onTap: () =>
             showNewAgentDialog(context, notifier, machineId, source: source),
         // The agent row's well, in dashes. Same 24px box and same 7px radius, so the column of marks
@@ -1775,7 +1711,7 @@ class _LinkMachineRow extends StatelessWidget {
           label: 'Link this machine…',
           dimmed: true,
           tooltip:
-              'Link ${state.machine.displayName} so its agents show up here',
+              'Link ${state.machine.displayName} so its harnesses show up here',
           onTap: () => notifier.selectMachineForSetup(state.machine.machineId),
           leading: CustomPaint(
             painter: _DashedWellPainter(color: grid.AppPalette.textFaint),

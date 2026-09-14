@@ -1,22 +1,71 @@
 # Harness v2: goal, plan, and continuation handoff
 
 **Latest UI direction:** [Harness entry and pane controls](harness-agent-first-tabs.md)
-is the current contract. The **New Harness** tab shows a centered **Harness**
-heading, a full-width **Find a harness** field and unlabeled recent shortcuts
-(machine above session name). An **or** divider leads to **Create a new harness**
-below. Pick one result and open it immediately; multi-select
-is removed. **File** replaces Agent in the macOS menu, and **Machines** follows Models.
-The latest header keeps icon/name left, folder/branch/machine right, swapping the
-right side for muted actions on hover. **Cmd-1…Cmd-9** select tabs in visual order;
-**Cmd-H/J/K/L** and **Cmd-arrows** focus panes. This supersedes older
-swarm/onboarding and numbered-pane notes.
+is the current contract. The former separate start page is removed; all entry
+uses one centered picker with single-choice results. Session names sit above
+**project · branch · machine**, without the redundant workspace title. Only the
+highlighted result shows its action, with consistent **Add Harness / Add N Harnesses**
+capitalization. No Commands footer; Shift-Cmd-P and typing `>` still find commands.
+A short **or** divider and **+ New Harness** button sit outside the card over a
+90% black backdrop.
 
-The current workspace Release preview was rebuilt from main `44d6540` and reopened
-at `desktop/build/macos/Build/Products/Release/Harness.app`. PID 79285 was confirmed
-active; recheck the process before future app actions. The installed app remained
-running separately. Build log: `/private/tmp/harness-new-harness-release.log`.
-Both the built and copied bundles passed code-signature verification. This is a
-UI/build checkpoint, with native latency benchmarking still deferred.
+**Cmd-T = New Tab**, **Cmd-N = New Harness** (creation form), **Cmd-O = Find Harness**,
+**Cmd-S = Layout**, **Cmd-H/J/K/L and Cmd-arrows = pane navigation**.
+Cmd-1…9 select tabs, Shift-Cmd-arrows move panes, and Shift-Cmd-T reopens closed
+work. User overrides retain precedence. File groups tab/harness actions first,
+then pane actions. Pin/Unpin and Add Project are absent. Machines follows Models
+and starts with **Open Machines Manager**, with a visible **Rename** on each machine.
+
+New Tab is a temporary draft until its first harness is opened or created.
+Dismissing the picker or creation discards the untouched draft and returns to
+previous work. If there is no populated workspace, the picker remains the starting
+screen. Renamed/saved empty layouts are preserved. Drafts are omitted from saved
+layout and navigation history. Closing an unused default-name empty page never
+adds it to Recently Closed, including pages from older builds. Closed single-agent
+harnesses retain their engine icon; groups keep the group icon.
+
+Terminal scrolling now follows the latest output on new attachment, restored or
+reopened work, reconnect, returning to a workspace, reuse of a retained pane,
+relayout, resize, zoom and font changes. Regression tests reproduced a retained
+pane stuck at its old scroll offset and a late-output/input race 200 lines short
+of the bottom. Alignment now resolves against the current buffer during layout.
+Manual scrollback within an unchanged pane and active Find are preserved; hidden
+output still causes no unnecessary frames. Local and remote delayed history,
+reconnect and multi-pane transitions are covered with fake sessions.
+
+Clicking outside creation or pressing Escape dismisses the whole flow back to the
+terminal. Back to Search deliberately restores the query and target. The title
+and submit action are **Create Harness**; Agent names only the engine choice.
+
+The current Release preview is built from **`/Users/ab/code/autonomous-harness`**
+and running at `desktop/build/macos/Build/Products/Release/Harness.app` (PID **63310**;
+recheck before acting). Its signature and copied bundle both verified. Build log:
+`/private/tmp/harness-current-features-release.log`. The visible shared picker was
+confirmed through the exact app path, including the removed footer and separate
+New Harness button. The installed `/Applications/Harness.app` remains separate
+(PID 1722). The other checkout's Debug app is no longer running. The user asked
+the other agent to pause development there to avoid conflicting previews; do not
+launch that checkout to review this work.
+
+Verification: **86 current-flow regression checks** passed in
+`/private/tmp/harness-current-ui-final-tests.log`; its two additional manager
+checks were corrected to use an online fixture and both pass in
+`/private/tmp/harness-machines-final-tests.log`. The fixture had incorrectly tried
+to type into an intentionally read-only offline terminal. **361 AppKit menu/window
+checks** pass in `/private/tmp/harness-final-native-menus.log`, and **84 native
+keyboard checks** pass against Dart's exported bindings. Static analysis has no
+errors or warnings, with the same 14 existing infos, in
+`/private/tmp/harness-current-features-analyze.log`. The earlier full-suite run
+passed 1,409 tests with one skip and four failures; those four were outdated
+expectations or the offline fixture, and all passed on focused reruns. The user
+subsequently asked to keep verification on the current experience, rather than
+revisiting retired UI fixtures. No latency benchmark was run.
+
+Publication: the user explicitly requested **commit and push** for this accumulated
+UI work, then added the scrolling, remapping, machine manager and empty-history
+fixes. That fresh authorization supersedes the earlier checkpoint's pending request
+for approval. These verified changes are the next commit on main. The broader goal
+and native latency benchmarks remain paused by user instruction.
 
 Updated September 14, 2026. **Read this first when resuming on another computer.**
 This is the current product contract and next-work order. It supersedes conflicting
@@ -46,8 +95,8 @@ The session tooltip retains full metadata when a narrow header truncates it.
 Divider grips are invisible until hover, keyboard focus or resize drag.
 
 Hover near a pane's right or bottom edge to reveal an inset **+** for that
-direction. Clicking it opens the shared Add Agent picker, supporting an existing
-agent or **Create Agent** in the chosen position. Keyboard split commands remain
+direction. Clicking it opens the shared harness picker, supporting an existing
+harness or **Create Harness** in the chosen position. Keyboard split commands remain
 available. Hover does not change focus or rebuild the terminal; the resize gaps
 remain draggable. Controls stay hidden while zoomed or dragging, and a pane too
 small for the chosen split explains the required width/height in its tooltip.
@@ -73,19 +122,22 @@ it never creates another agent. A confirmed agent returns to the original swarm
 or stays discoverable in Add if that destination changed. Older CLIs can still
 create normally, but cannot recover a lost result through this new status RPC.
 Form intents currently last for that open dialog; do not claim app-restart recovery.
-An uncertain form also offers **Find existing agent…**, which opens shared Add
+An uncertain form also offers **Find a harness**, which opens shared Add
 after the modal releases keyboard focus. Creation opened from search carries its
 query back to Add and retains its original swarm/split. A closed swarm or changed
 split gets an explanation instead of redirecting the addition. A background
 empty tab cannot take focus from the open creation dialog.
 
-Opening **Create Agent** from centered Add or either split preserves that picker
-for cancellation. Cancel/Escape restores the query, text selection, highlighted
-result and original split. **Find existing agent…** also preserves that draft.
-A successful creation leaves Add closed. Cancel does not return to a tab that is
-no longer current; stale splits get an explanation. There is no multi-select or
-checked-agent draft anymore. This remains in-memory search recovery, not a saved
-creation intent.
+Opening **New Harness** from centered Add or either split closes that picker.
+Clicking outside creation or pressing Escape dismisses everything back to the
+terminal, including restoration of terminal keyboard input. The explicit
+**Back to Search** button restores the query, text selection, highlighted result
+and original split. **Find a harness** on an uncertain request also preserves that
+draft. A successful creation leaves Add closed. Back to Search does not select a
+different tab if the original one is no longer current; stale splits get an
+explanation. Direct creation retains Cancel, and uncertain requests retain Close.
+There is no multi-select or checked-agent draft. This remains in-memory search
+recovery, not a saved creation intent.
 
 Browser sign-in now offers **Open browser**, **Copy link** and immediate **Cancel**
 while waiting for authorization. Reopening uses the current link without starting
@@ -134,7 +186,8 @@ Research must lead to justified improvements, not feature accumulation.
 - Continue on **`main`**, tracking `origin/main`. The user's latest instruction
   is to work, commit, and push directly on main from now on. This supersedes
   the earlier preference for creating a fresh feature branch after each merge.
-- The Add-to-New-agent return flow passes 76 affected workflow checks and one
+- Historical Add-to-New-agent return checkpoint, superseded by the explicit
+  Back to Search and single-dismissal behavior above: 76 affected workflow checks and one
   real-font render check (77 total). Nine new checks cover cancel/Escape,
   successful and uncertain creation, checked agents, changed targets and draft
   revalidation. The three cancellation regressions failed before the fix. The
@@ -630,10 +683,9 @@ that its isolated window can become active/key.
    CLI and a changed original swarm. A status check must remain read-only. A
    durable desktop pending-creations list and crash-window registry reconciliation
    are still future work; the current dialog cannot resume its intent after closure.
-   The centered Add/split picker now survives a New agent cancellation with its
-   selection intact. The inline New swarm field retains text, but its optional
-   checked selection is still discarded when focus leaves; improve that
-   continuation without changing immediate single-agent startup.
+   New Harness, Add and split now use one centered picker. Outside-click/Escape
+   dismisses creation completely; explicit Back to Search restores its draft.
+   Multi-select and the separate inline search have been removed.
 3. **Recheck fresh terminal positioning and real workflows** on disposable
    local/remote agents: startup, delayed snapshots, resizing, returning to a
    scrolled view, reconnect, paste, selection, and IME.
@@ -726,7 +778,7 @@ that its isolated window can become active/key.
 | Workspace orchestration, picker routes, split/new-agent context | `desktop/lib/screens/swarm_screen.dart` |
 | Shared remote folder browsing and request ownership | `desktop/lib/widgets/remote_folder_picker.dart`, `desktop/test/remote_folder_picker_test.dart` |
 | Search data, actions, destinations | `desktop/lib/state/swarm_search.dart`, `swarm_navigation.dart`, `swarm_catalog.dart` |
-| Distinct Navigate and shared Add/welcome UI | `desktop/lib/widgets/swarm_navigator.dart`, `swarm_switcher.dart`, `swarm_inline_search.dart`, `swarm_search_input.dart`, `swarm_welcome.dart` |
+| Shared New Harness, Add and split picker | `desktop/lib/screens/swarm_screen.dart`, `desktop/lib/widgets/swarm_switcher.dart`, `swarm_search_input.dart`, `harness_creation_option.dart` |
 | Preview extraction | `desktop/lib/terminal/search_output_preview.dart` |
 | Native tabs, toolbar, menus | `desktop/macos/Runner/SwarmTitlebar.swift` |
 | Key ownership and customization | `desktop/lib/shortcuts/`, `desktop/tool/check_keymap_native.sh` |

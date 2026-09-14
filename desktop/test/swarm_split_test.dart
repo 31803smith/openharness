@@ -291,7 +291,7 @@ void main() {
           isTrue,
         );
         if (change != 'switch') {
-          expect(app.lastError, contains('agent was created'));
+          expect(app.lastError, contains('harness was created'));
         }
         expect(connection.calls, isNot(contains('agent_delete')));
         await tester.pumpWidget(const SizedBox());
@@ -300,56 +300,52 @@ void main() {
     );
   }
 
-  testWidgets(
-    'split creation returns through Add before restoring terminal input',
-    (tester) async {
-      final connection = _Creation();
-      final app = createApp(connectionForTest: (_) => connection);
-      final machine = app.machineStates['m']!;
-      machine.nodeOnline = true;
-      machine.agents[0] = const Agent(
-        id: 'a0',
-        name: 'Checkout',
-        engine: 'claude',
-        project: AgentProject(name: 'work', cwd: '/work/checkout'),
-      );
-      final frames = <TerminalBinaryFrame>[];
-      final pane = app.adoptSessionForTest(terminal('a0', frames));
-      await mountWide(tester, app);
-      tester.view.physicalSize = const Size(3000, 1800);
-      await tester.pump();
-      await chord(tester, LogicalKeyboardKey.keyP, shift: true);
-      await tester.enterText(
-        find.byKey(const ValueKey('swarm-search-input')),
-        '> split right',
-      );
-      await tester.pump();
-      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-      await tester.pump();
-      expect(find.byKey(const ValueKey('swarm-row-action')), findsOneWidget);
-      expect(find.text('Split right'), findsNWidgets(2));
-      expect(find.byType(AlertDialog), findsNothing);
-      await tester.tap(find.byKey(const ValueKey('swarm-search-new-agent')));
-      await tester.pump();
-      expect(find.text('Create Agent to the right'), findsOneWidget);
-      expect(find.text('/work/checkout'), findsOneWidget);
-      expect(app.panes, [pane]);
-      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-      await tester.pump();
-      await tester.pump();
-      expect(find.byType(AlertDialog), findsNothing);
-      expect(app.panes, [pane]);
-      expect(connection.calls, isNot(contains('agent_create')));
-      expect(frames, isEmpty);
-      expect(find.byKey(const ValueKey('swarm-search-input')), findsOneWidget);
-      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-      await tester.pump();
-      expect(find.byKey(const ValueKey('swarm-search-input')), findsNothing);
-      await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
-      await tester.pump(const Duration(milliseconds: 10));
-      expect(frames.single.bytes, [27, 91, 67]);
-      await tester.pumpWidget(const SizedBox());
-      app.dispose();
-    },
-  );
+  testWidgets('split creation dismissal restores terminal input immediately', (
+    tester,
+  ) async {
+    final connection = _Creation();
+    final app = createApp(connectionForTest: (_) => connection);
+    final machine = app.machineStates['m']!;
+    machine.nodeOnline = true;
+    machine.agents[0] = const Agent(
+      id: 'a0',
+      name: 'Checkout',
+      engine: 'claude',
+      project: AgentProject(name: 'work', cwd: '/work/checkout'),
+    );
+    final frames = <TerminalBinaryFrame>[];
+    final pane = app.adoptSessionForTest(terminal('a0', frames));
+    await mountWide(tester, app);
+    tester.view.physicalSize = const Size(3000, 1800);
+    await tester.pump();
+    await chord(tester, LogicalKeyboardKey.keyP, shift: true);
+    await tester.enterText(
+      find.byKey(const ValueKey('swarm-search-input')),
+      '> split right',
+    );
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+    expect(find.byKey(const ValueKey('swarm-row-action')), findsOneWidget);
+    expect(find.text('Split right'), findsOneWidget);
+    expect(find.byType(AlertDialog), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('swarm-search-new-agent')));
+    await tester.pump();
+    expect(find.text('Create Harness to the right'), findsOneWidget);
+    expect(find.text('/work/checkout'), findsOneWidget);
+    expect(app.panes, [pane]);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pump();
+    await tester.pump();
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(app.panes, [pane]);
+    expect(connection.calls, isNot(contains('agent_create')));
+    expect(frames, isEmpty);
+    expect(find.byKey(const ValueKey('swarm-search-input')), findsNothing);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.pump(const Duration(milliseconds: 10));
+    expect(frames.single.bytes, [27, 91, 67]);
+    await tester.pumpWidget(const SizedBox());
+    app.dispose();
+  });
 }

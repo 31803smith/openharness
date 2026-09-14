@@ -64,7 +64,7 @@ void main() {
         expect(focus.hasFocus, isTrue);
         await key(tester, LogicalKeyboardKey.escape);
         expect(field, findsNothing);
-        await key(tester, LogicalKeyboardKey.keyN, cmd: true);
+        await key(tester, LogicalKeyboardKey.keyO, cmd: true);
         await tester.enterText(field, 'Agent 0');
         await tester.pump();
         expect(

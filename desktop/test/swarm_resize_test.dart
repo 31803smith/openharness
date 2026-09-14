@@ -145,7 +145,7 @@ void main() {
         reason: 'Relayout keeps subsequent arrow keys on the resize handle',
       );
       expect(frames, isEmpty);
-      await chord(tester, LogicalKeyboardKey.keyH);
+      await chord(tester, LogicalKeyboardKey.arrowLeft);
       await tester.pump();
       expect(app.focusedPaneId, left.id);
       expect(frames, isEmpty);

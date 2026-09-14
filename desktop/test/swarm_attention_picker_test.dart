@@ -14,7 +14,7 @@ import 'swarm_switcher_test.dart' show selectedRow;
 Finder get attentionField => find.byWidgetPredicate(
   (w) =>
       w is TextField &&
-      w.decoration?.hintText == 'Find a question, agent, or project…',
+      w.decoration?.hintText == 'Find a question, harness, or project',
 );
 
 void main() {
@@ -223,7 +223,7 @@ void main() {
       machine.blockedAgents.clear();
       app.dismissError();
       await tester.pump();
-      expect(find.text('No agents need your input'), findsOneWidget);
+      expect(find.text('No harnesses need your input'), findsOneWidget);
       await tester.tap(find.byTooltip('Close notifications'));
       await tester.pump();
       expect(app.panes, isEmpty);

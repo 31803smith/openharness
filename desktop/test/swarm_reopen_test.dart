@@ -175,12 +175,12 @@ void main() {
       expect(app.swarms, hasLength(AppNotifier.maxSwarms));
       await app.closeSwarm(app.activeSwarmId);
       app.reopenClosedSwarm();
-      expect(app.activeSwarm.name, 'New Harness');
+      expect(app.activeSwarm.name, 'Closed 26');
       // Free slots directly without adding newer close records to this check.
       app.swarms.removeRange(1, app.swarms.length);
       app.selectSwarm(app.swarms.single.id);
       app.reopenClosedSwarm();
-      expect(app.activeSwarm.name, 'Closed 26');
+      expect(app.activeSwarm.name, 'Closed 25');
     },
   );
 

@@ -27,7 +27,7 @@ void main() {
       await mount(tester, app);
       final input = find.byKey(const ValueKey('swarm-search-input'));
       expect(input, findsNothing);
-      await chord(tester, LogicalKeyboardKey.keyN);
+      await chord(tester, LogicalKeyboardKey.keyO);
       await tester.pump();
       final originalController = tester.widget<TextField>(input).controller;
       await tester.enterText(input, 'a query only');
@@ -174,7 +174,7 @@ void main() {
       search.setQuery('Test host');
       final choice = search.submit();
       expect(choice?.destination.isMachine, isTrue);
-      expect(SwarmSearchController.action(choice!.destination), 'Go to tab');
+      expect(SwarmSearchController.action(choice!.destination), 'Open Harness');
       expect(
         await activateSwarmSearchSelection(
           app,
@@ -275,7 +275,7 @@ void main() {
         .take(3)
         .toList();
     await mount(tester, app);
-    await chord(tester, LogicalKeyboardKey.keyN);
+    await chord(tester, LogicalKeyboardKey.keyO);
     await tester.pump();
     await tester.enterText(jumpField, 'Test host');
     await tester.pump();
@@ -304,12 +304,12 @@ void main() {
     app.adoptSessionForTest(terminal('a1', secondInputs));
     final target = app.activeSwarm;
     await mount(tester, app);
-    await chord(tester, LogicalKeyboardKey.keyN);
+    await chord(tester, LogicalKeyboardKey.keyO);
     await tester.pump();
     await tester.enterText(jumpField, 'Agent 0');
     await tester.pump();
     expect(find.byKey(const ValueKey('swarm-row-action')), findsOneWidget);
-    expect(find.text('Add to this tab'), findsNWidgets(2));
+    expect(find.text('Add Harness'), findsOneWidget);
     await chord(tester, LogicalKeyboardKey.enter);
     expect(find.byType(Dialog), findsNothing);
     expect(app.activeSwarm, same(target));
@@ -340,13 +340,9 @@ void main() {
         app.newSwarm();
         final target = app.activeSwarm;
         await mount(tester, app);
-        final field = find.byKey(
-          ValueKey(
-            adding ? 'swarm-search-input' : 'swarm-welcome-search-input',
-          ),
-        );
+        final field = find.byKey(ValueKey('swarm-search-input'));
         if (adding) {
-          await chord(tester, LogicalKeyboardKey.keyN);
+          await chord(tester, LogicalKeyboardKey.keyO);
           await tester.pump();
         } else {
           await tester.tap(field);
@@ -360,14 +356,7 @@ void main() {
         );
         await tester.sendKeyEvent(LogicalKeyboardKey.enter);
         await tester.pump();
-        expect(
-          find.byKey(
-            ValueKey(
-              adding ? 'swarm-search-results' : 'swarm-welcome-search-results',
-            ),
-          ),
-          findsOneWidget,
-        );
+        expect(find.byKey(ValueKey('swarm-search-results')), findsOneWidget);
         expect(find.byType(Dialog), findsNothing);
         expect(app.panes, isEmpty);
         controller.clearComposing();

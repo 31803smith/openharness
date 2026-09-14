@@ -639,12 +639,10 @@ class TerminalViewState extends State<TerminalView> {
     _customTextEditKey.currentState?.setEditableRect(rect, caretRect);
   }
 
-  void _scrollToBottom() {
-    final position = _scrollableKey.currentState?.position;
-    if (position != null) {
-      position.jumpTo(position.maxScrollExtent);
-    }
-  }
+  /// Show the latest output when the current buffer and viewport are laid out.
+  void scrollToBottom() => renderTerminal.scrollToBottom();
+
+  void _scrollToBottom() => scrollToBottom();
 }
 
 class _TerminalView extends LeafRenderObjectWidget {

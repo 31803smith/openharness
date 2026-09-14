@@ -60,7 +60,7 @@ to that action. Closing an uncertain request is labeled **Close**, not Cancel.
 A confirmed refusal unlocks the choices for correction; the next deliberate
 submission uses a new intent. Opening New agent also starts a fresh intent.
 
-In a swarm, the uncertain form also offers **Find existing agent…**. It closes
+In a swarm, the uncertain form also offers **Find a harness**. It closes
 the form and opens the shared Add picker, with its input focused and the query
 retained when creation began from search. This only searches the catalog; it
 does not infer the created agent from a matching name/folder or start another.
@@ -70,19 +70,25 @@ and asks the user to choose a destination again. The modal handoff waits for
 the route to return keyboard ownership. An empty tab appearing behind the
 dialog cannot take that focus for its welcome search.
 
-When creation started from centered Add or a split, **Cancel** or **Escape** now
-returns to that picker with its query, text selection, highlighted result and
-checked agents intact. **Find existing agent…** restores those choices too.
-Successful creation keeps the picker closed. Ordinary cancellation never selects
-a different swarm to resurrect its picker; a changed split gets an explanation
-instead of a different insertion position. A second Escape closes Add and
-restores the original terminal's keyboard input.
+When creation starts from centered Add or a split, clicking outside or pressing
+**Escape** dismisses the entire flow and restores the original terminal's keyboard
+input. **Back to Search** explicitly returns to the picker with its query, text
+selection, highlighted result and split target intact. Direct creation retains
+**Cancel**. **Find a harness** on an uncertain request also restores that search
+draft. Successful creation keeps the picker closed. Returning to search never
+silently redirects a stale split; a changed target gets an explanation.
 
-The restored draft reads the current catalog. Agents already added to the target
-leave the checked list, and missing choices stay visible for explicit removal.
-It cannot silently submit a smaller set, exceed capacity or restore its choices
-into a different swarm. The draft exists only for this temporary detour; it does
-not persist a pending creation receipt or survive an app restart.
+New Tab (Cmd-T) creates a temporary workspace with the shared picker. Cancelling
+creation also discards that unused workspace and returns to the previous harness;
+success commits it. With no other populated workspace, cancellation restores the
+starting picker. Cmd-N opens creation directly; Cmd-O opens harness search. A
+changed or closed destination never redirects a successful creation into another
+workspace, and returning to an empty replacement always restores its picker.
+
+The restored draft reads the current catalog and validates its target and
+capacity again. There is no multi-select or checked-agent draft. The draft exists
+only for this temporary detour; it does not persist a pending creation receipt or
+survive an app restart.
 
 Recovery opens the returned agent in the original swarm/position and counts the
 creation once. If that destination changed or closed, the runtime remains in

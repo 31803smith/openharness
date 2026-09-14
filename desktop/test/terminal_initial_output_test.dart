@@ -135,7 +135,7 @@ void main() {
           expect(scroll.position.maxScrollExtent, greaterThan(0));
           expect(scroll.offset, scroll.position.maxScrollExtent);
         }
-        // Revisiting an intentionally scrolled view preserves the reader's place.
+        // Reopening a harness reveals current output in each retained view.
         final first = terminalView(tester, sessions.first);
         final scroll = first.widget.scrollController!;
         scroll.jumpTo(100);
@@ -146,7 +146,7 @@ void main() {
         app.selectSwarm(original);
         await tester.pump();
         expect(terminalView(tester, sessions.first), same(first));
-        expect(scroll.offset, 100);
+        expect(scroll.offset, scroll.position.maxScrollExtent);
         expect(find.byType(TerminalView), findsNWidgets(5));
         await tester.pumpWidget(const SizedBox());
         app.dispose();
@@ -176,7 +176,7 @@ void main() {
     },
   );
 
-  testWidgets('a relayout keeps tail-following panes at latest output', (
+  testWidgets('a relayout reveals the latest output in every pane', (
     tester,
   ) async {
     final app = createApp();
@@ -201,7 +201,7 @@ void main() {
       terminalView(tester, sessions.first).renderTerminal.size,
       isNot(before),
     );
-    expect(reading.offset, 100);
+    expect(reading.offset, reading.position.maxScrollExtent);
     for (final session in sessions.skip(1)) {
       final scroll = terminalView(tester, session).widget.scrollController!;
       expect(scroll.offset, scroll.position.maxScrollExtent);

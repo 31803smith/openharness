@@ -61,7 +61,7 @@ void main() {
         expect(opened.name, 'New Harness');
         expect(opened.panes, isEmpty);
         expect(find.byType(AlertDialog), findsNothing);
-        final field = find.byKey(const ValueKey('swarm-welcome-search-input'));
+        final field = find.byKey(const ValueKey('swarm-search-input'));
         expect(tester.widget<TextField>(field).focusNode!.hasFocus, isTrue);
         await tester.enterText(field, 'Agent 0');
         await tester.pump();
@@ -105,16 +105,13 @@ void main() {
       );
       expect(find.byKey(const ValueKey('swarm-search-preview')), findsNothing);
     }
-    expect(harnessCommandById['agent.new']!.label, 'Create Agent');
+    expect(harnessCommandById['agent.new']!.label, 'New Harness');
     await tester.tap(find.byKey(const ValueKey('command:swarm.new')));
     await tester.pump();
     expect(app.activeSwarm.name, 'New Harness');
     expect(app.panes, isEmpty);
     expect(app.allPanes, contains(pane));
-    expect(
-      find.byKey(const ValueKey('swarm-welcome-search-input')),
-      findsOneWidget,
-    );
+    expect(find.byKey(const ValueKey('swarm-search-input')), findsOneWidget);
     expect(frames, isEmpty);
     await tester.pumpWidget(const SizedBox());
     app.dispose();

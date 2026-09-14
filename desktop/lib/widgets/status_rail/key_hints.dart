@@ -69,7 +69,7 @@ class KeyHints extends StatelessWidget {
   /// match what it is about to do is worse than no label.
   static List<(String, String)> _gridHints(AppNotifier notifier) => [
     ('⌘hjkl', 'panes'),
-    ('⌘P', 'go to agent'),
+    ('⌘O', 'find a harness'),
     ('⌘⏎', notifier.zoomedPaneId != null ? 'unzoom' : 'zoom'),
     ('⌘;', 'last'),
     ('⌘N', 'new'),

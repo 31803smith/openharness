@@ -104,7 +104,7 @@ class _SwarmHistoryState extends State<_SwarmHistory> {
   );
 }
 
-/// Centered search, inline search and History share editing and navigation keys.
+/// Search and History share editing and navigation keys.
 class SwarmSearchKeys extends StatelessWidget {
   const SwarmSearchKeys({
     super.key,
@@ -177,7 +177,15 @@ class SwarmSearchKeys extends StatelessWidget {
               },
           },
         },
-        child: child,
+        child: Actions(
+          // EditableText's Escape action has no route-level handler when the
+          // picker lives in an overlay. The keymap owns dismissal; composition
+          // and user-unbound Escape must stay with the text editor.
+          actions: {
+            DismissIntent: CallbackAction<DismissIntent>(onInvoke: (_) => null),
+          },
+          child: child,
+        ),
       );
     }
     return CallbackShortcuts(
@@ -261,7 +269,7 @@ double swarmSearchResultsHeight(
 ) =>
     search.rows.length.clamp(4, 7) *
         swarmSearchRowHeight(scale, commands: search.isCommandMode) +
-    52;
+    (search.selected != null && !search.canAccept ? 48 : 0);
 
 /// Shared Add agent results, also used for commands and History.
 class SwarmSearchResults extends StatefulWidget {
@@ -270,12 +278,10 @@ class SwarmSearchResults extends StatefulWidget {
     required this.search,
     required this.onChoose,
     required this.onRefocus,
-    this.onCommands,
   });
   final SwarmSearchController search;
   final ValueChanged<SwarmSearchSelection> onChoose;
   final VoidCallback onRefocus;
-  final VoidCallback? onCommands;
   @override
   State<SwarmSearchResults> createState() => _SwarmSearchResultsState();
 }
@@ -340,6 +346,9 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
     final scale = MediaQuery.textScalerOf(context);
     _rowHeight = swarmSearchRowHeight(scale, commands: search.isCommandMode);
     final selected = search.selected;
+    final unavailable =
+        (selected != null && !search.canSubmit(selected)) ||
+        search.adding && !search.canCreate;
     final terms = swarmQueryTerms(
       search.isCommandMode ? search.commandQuery : search.query,
     );
@@ -357,9 +366,9 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                           search.isCommandMode
                               ? 'No matching commands'
                               : search.adding && search.query.isEmpty
-                              ? 'Choose Create Agent to start fresh.'
+                              ? 'Create a new harness to start fresh.'
                               : search.adding
-                              ? 'No matching agents'
+                              ? 'No matching harnesses'
                               : 'No matching results',
                           style: const TextStyle(
                             fontSize: 14,
@@ -422,7 +431,9 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                                         size: 20,
                                         color: Colors.white60,
                                       )
-                                    : row.agentId != null
+                                    : row.agentId != null ||
+                                          (row.isSwarm &&
+                                              row.members.length == 1)
                                     ? EngineMark(
                                         engine: row.engine,
                                         size: 22,
@@ -453,13 +464,13 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                                   ),
                             trailing: alreadyHere
                                 ? const Text(
-                                    'In this tab',
+                                    'Already added',
                                     style: TextStyle(
                                       fontSize: 11,
                                       color: Colors.white38,
                                     ),
                                   )
-                                : search.adding && highlighted
+                                : highlighted
                                 ? ConstrainedBox(
                                     constraints: BoxConstraints(
                                       maxWidth: 170 * scale.scale(11) / 11,
@@ -499,27 +510,14 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                         },
                       ),
               ),
-              const Divider(height: 1, color: Colors.white12),
-              SizedBox(
-                height: 48,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  child: Row(
-                    children: [
-                      if (widget.onCommands != null)
-                        TextButton(
-                          key: const ValueKey('swarm-search-commands'),
-                          onPressed: widget.onCommands,
-                          style: TextButton.styleFrom(
-                            foregroundColor: Colors.white70,
-                          ),
-                          child: const Text(
-                            '> Commands',
-                            style: TextStyle(fontSize: 12),
-                          ),
-                        ),
-                      if ((selected != null && !search.canSubmit(selected)) ||
-                          search.adding && !search.canCreate)
+              if (unavailable) ...[
+                const Divider(height: 1, color: Colors.white12),
+                SizedBox(
+                  height: 48,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: Row(
+                      children: [
                         Expanded(
                           child: Text(
                             search.adding
@@ -527,8 +525,8 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                                 : selected!.isGroup &&
                                       selected.members.length >
                                           AppNotifier.maxPanes
-                                ? 'A tab supports up to ${AppNotifier.maxPanes} agents'
-                                : 'No room to open this ${selected.isSwarm || selected.isGroup ? 'group' : 'agent'}',
+                                ? 'Open up to ${AppNotifier.maxPanes} harnesses at once'
+                                : 'No room to open this ${selected.isSwarm || selected.isGroup ? 'group' : 'harness'}',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
@@ -536,36 +534,12 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                               color: Colors.white60,
                             ),
                           ),
-                        )
-                      else
-                        const Spacer(),
-                      if (!search.adding &&
-                          search.canAdd(selected) &&
-                          constraints.maxWidth >= 900)
-                        TextButton(
-                          onPressed: () => widget.onChoose(search.addHere()!),
-                          style: TextButton.styleFrom(
-                            foregroundColor: Colors.white70,
-                          ),
-                          child: const SwarmSearchActionLabel(
-                            'Add to this tab',
-                            command: 'picker.add_here',
-                          ),
                         ),
-                      TextButton(
-                        key: const ValueKey('swarm-search-accept'),
-                        onPressed: search.canAccept ? _submit : null,
-                        style: TextButton.styleFrom(
-                          foregroundColor: Colors.white,
-                        ),
-                        child: SwarmSearchActionLabel(
-                          search.actionLabel(selected),
-                        ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
-              ),
+              ],
             ],
           ),
         );

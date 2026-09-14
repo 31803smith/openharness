@@ -31,6 +31,7 @@ class SwarmNavigationHistory {
   List<String> get recentLocations => List.unmodifiable(_recentLocations);
 
   void record(AppNotifier app) {
+    if (app.isDraftSwarm(app.activeSwarmId)) return;
     final location = (app.activeSwarmId, app.focusedPaneId);
     if (_location == location) return;
     if (!_traversing) {
@@ -110,7 +111,13 @@ class SwarmNavigationHistory {
         swarm.id,
         swarm.name,
         for (final pane in swarm.panes)
-          (pane.id, pane.machineId, pane.agentId, pane.session?.agentName),
+          (
+            pane.id,
+            pane.machineId,
+            pane.agentId,
+            pane.session?.agentName,
+            pane.session?.engineId,
+          ),
       ],
       for (final machine in app.machineStates.values)
         (
@@ -384,9 +391,9 @@ class SwarmLocationCatalog {
     final machineLabel = machine?.machine.displayName ?? pane.machineId;
     final engine = agent?.engine ?? pane.session?.engineId;
     final detail = [
-      machineLabel,
       project?.name,
       project?.branch,
+      machineLabel,
       if (machine?.nodeOnline == false) 'Offline',
     ].whereType<String>().where((s) => s.isNotEmpty).toSet().join(' · ');
     return SwarmDestination(
@@ -650,7 +657,7 @@ Swarm? _matchingGroupSwarm(AppNotifier app, SwarmDestination destination) {
 
 String _agentCountLabel(Iterable<String?> ids) {
   final count = ids.whereType<String>().length;
-  return '$count ${count == 1 ? 'agent' : 'agents'}';
+  return '$count ${count == 1 ? 'harness' : 'harnesses'}';
 }
 
 String _swarmMachineLabel(AppNotifier app, Iterable<String> machineIds) {
@@ -668,6 +675,12 @@ List<SwarmDestination> closedWorkDestinations(AppNotifier app) => [
         id: entry.historyId,
         closedId: entry.historyId,
         title: entry.name,
+        engine: entry.engine,
+        members: {
+          for (final pane in entry.panes)
+            if (pane.agentId != null)
+              agentDestinationId(pane.machineId, pane.agentId!),
+        },
         machineLabel: _swarmMachineLabel(app, [
           for (final pane in entry.panes)
             if (pane.agentId != null) pane.machineId,
@@ -732,6 +745,15 @@ List<SwarmDestination> swarmDestinations(
       SwarmDestination(
         id: swarmDestinationId(swarm.id),
         title: swarm.name,
+        engine: swarm.panes.length == 1
+            ? agents[agentDestinationId(
+                        swarm.panes.single.machineId,
+                        swarm.panes.single.agentId ?? '',
+                      )]
+                      ?.$2
+                      .engine ??
+                  swarm.panes.single.session?.engineId
+            : null,
         machineLabel: _swarmMachineLabel(app, [
           for (final pane in swarm.panes)
             if (pane.agentId != null) pane.machineId,
@@ -784,10 +806,9 @@ List<SwarmDestination> swarmDestinations(
         id: id,
         title: row?.$2.name ?? pane?.session?.agentName ?? agentId,
         detail: [
-          machineName,
           project?.name,
           project?.branch,
-          owner?.name,
+          machineName,
           if (machine?.nodeOnline == false) 'Offline',
         ].whereType<String>().where((s) => s.isNotEmpty).toSet().join(' · '),
         swarmId: owner?.id,

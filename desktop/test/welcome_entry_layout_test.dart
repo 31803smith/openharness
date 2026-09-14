@@ -28,7 +28,7 @@ void main() {
     (600.0, 900.0, 1.7),
   ]) {
     testWidgets(
-      'centered start and recent harnesses remain usable at $width with text scale $scale',
+      'shared entry picker remains usable at $width with text scale $scale',
       (tester) async {
         tester.view.devicePixelRatio = 1;
         tester.view.physicalSize = Size(width, height);
@@ -49,6 +49,11 @@ void main() {
             name: name,
             engine: i.isEven ? 'codex' : 'claude',
             terminalAvailable: true,
+            project: const AgentProject(
+              name: 'autonomous-harness',
+              branch: 'main',
+              cwd: '/work/autonomous-harness',
+            ),
           );
           app.adoptSessionForTest(terminal('a$i', []));
         }
@@ -69,29 +74,40 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
-        final field = find.byKey(const ValueKey('swarm-welcome-search-input'));
-        final create = find.byKey(const ValueKey('swarm-start-primary'));
+        if (Platform.environment['HARNESS_ENTRY_CAPTURE_DIR'] != null) {
+          await tester.runAsync(
+            () => precacheImage(
+              const AssetImage('assets/engine-icons/codex.png'),
+              tester.element(find.byType(SwarmScreen)),
+            ),
+          );
+          await tester.pump();
+        }
+        final field = find.byKey(const ValueKey('swarm-search-input'));
+        final create = find.byKey(const ValueKey('swarm-search-new-agent'));
         expect(find.text('Find a harness'), findsOneWidget);
-        expect(find.text('Create a new harness'), findsOneWidget);
-        expect(find.text('Recent harnesses'), findsNothing);
-        expect(find.text('Harness'), findsOneWidget);
+        expect(
+          find.descendant(of: create, matching: find.text('New Harness')),
+          findsOneWidget,
+        );
+        expect(find.text('Harness'), findsNothing);
+        expect(find.text('> Commands'), findsNothing);
         expect(find.text('or'), findsOneWidget);
         expect(find.byType(Checkbox), findsNothing);
-        expect(
-          find.byKey(const ValueKey('swarm-add-agent-button')),
-          findsNothing,
+        final card = tester.getRect(
+          find.byKey(const ValueKey('swarm-search-results')),
         );
-        final findRect = tester.getRect(field);
+        final fieldRect = tester.getRect(field);
         final createRect = tester.getRect(create);
-        expect(createRect.top, greaterThan(findRect.bottom));
-        expect(findRect.center.dx, closeTo(width / 2, 1));
-        expect(findRect.width, closeTo((width - 96).clamp(0, 920), 1));
-        if (scale == 1) {
-          expect(create.hitTestable(), findsOneWidget);
-          expect(createRect.bottom, lessThanOrEqualTo(height));
-        }
+        final dividerRect = tester.getRect(find.text('or'));
+        expect(createRect.top, greaterThan(dividerRect.bottom + 24));
+        expect(dividerRect.top, greaterThan(card.bottom + 24));
+        expect(fieldRect.center.dx, closeTo(width / 2, 1));
+        expect(fieldRect.width, closeTo((width - 64).clamp(280, 720), 1));
+        expect(create.hitTestable(), findsOneWidget);
+        expect(createRect.bottom, lessThanOrEqualTo(height));
         expect(tester.takeException(), isNull);
-        final output = Platform.environment['HARNESS_WELCOME_CAPTURE_DIR'];
+        final output = Platform.environment['HARNESS_ENTRY_CAPTURE_DIR'];
         if (output != null) {
           final boundary =
               boundaryKey.currentContext!.findRenderObject()!
@@ -103,16 +119,14 @@ void main() {
             );
             await Directory(output).create(recursive: true);
             await File(
-              '$output/welcome-${width.toInt()}-${scale.toStringAsFixed(1)}.png',
+              '$output/entry-${width.toInt()}-${scale.toStringAsFixed(1)}.png',
             ).writeAsBytes(bytes!.buffer.asUint8List());
             image.dispose();
           });
         }
         await tester.enterText(field, 'Test host');
         await tester.pump();
-        final results = find.byKey(
-          const ValueKey('swarm-welcome-search-results'),
-        );
+        final results = find.byKey(const ValueKey('swarm-search-results'));
         expect(results, findsOneWidget);
         expect(tester.getRect(results).height, greaterThan(140));
         expect(tester.getRect(results).width, tester.getRect(field).width);
@@ -121,7 +135,7 @@ void main() {
           findsNothing,
         );
         await tester.ensureVisible(
-          find.byKey(const ValueKey('swarm-start-primary')),
+          find.byKey(const ValueKey('swarm-search-new-agent')),
         );
         expect(tester.takeException(), isNull);
         await tester.pumpWidget(const SizedBox());

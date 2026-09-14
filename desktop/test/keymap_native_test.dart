@@ -20,7 +20,7 @@ void main() {
       {"keys":"cmd+o","command":"swarm.new"},
       {"keys":"cmd+k","command":null},
       {"keys":"cmd+k cmd+n","command":"swarm.new"},
-      {"keys":"cmd+h","command":null,"when":"terminal"},
+      {"keys":"cmd+left","command":null,"when":"terminal"},
       {"keys":"down","command":null,"when":"picker"},
       {"keys":"ctrl+j","command":"picker.previous","when":"picker"}
     ]}''');
@@ -52,13 +52,13 @@ void main() {
       }
       expect(
         (contexts['terminal'] as List).any(
-          (row) => (row['keys'] as List).join(' ') == 'cmd+h',
+          (row) => (row['keys'] as List).join(' ') == 'cmd+left',
         ),
         isFalse,
       );
       expect(
         (contexts['workspace'] as List).any(
-          (row) => (row['keys'] as List).join(' ') == 'cmd+h',
+          (row) => (row['keys'] as List).join(' ') == 'cmd+left',
         ),
         isTrue,
       );

@@ -56,28 +56,28 @@ final harnessCommands = <HarnessCommand>[
   ),
   const HarnessCommand(
     'swarm.new',
-    'New Harness',
+    'New Tab',
     ShortcutGroup.navigate,
     action: ShortcutAction.newSwarm,
     nativeAction: 'new',
   ),
   const HarnessCommand(
     'swarm.close',
-    'Close this tab',
+    'Close Harness',
     ShortcutGroup.navigate,
     action: ShortcutAction.closeSwarm,
     nativeAction: 'closeActive',
   ),
   const HarnessCommand(
     'swarm.reopen',
-    'Reopen last closed agent or tab',
+    'Reopen last closed harness',
     ShortcutGroup.navigate,
     action: ShortcutAction.reopenClosedSwarm,
     nativeAction: 'reopen',
   ),
   const HarnessCommand(
     'swarm.next',
-    'Next tab',
+    'Next Harness',
     ShortcutGroup.navigate,
     action: ShortcutAction.nextSwarm,
     nativeAction: 'next',
@@ -85,7 +85,7 @@ final harnessCommands = <HarnessCommand>[
   ),
   const HarnessCommand(
     'swarm.previous',
-    'Previous tab',
+    'Previous Harness',
     ShortcutGroup.navigate,
     action: ShortcutAction.previousSwarm,
     nativeAction: 'previous',
@@ -93,7 +93,7 @@ final harnessCommands = <HarnessCommand>[
   ),
   const HarnessCommand(
     'swarm.rename',
-    'Rename this tab',
+    'Rename Harness',
     ShortcutGroup.actions,
     action: ShortcutAction.renameSwarm,
     nativeAction: 'renameActive',
@@ -123,7 +123,7 @@ final harnessCommands = <HarnessCommand>[
   ),
   const HarnessCommand(
     'navigation.needs_input',
-    'Show agents needing input',
+    'Show harnesses needing input',
     ShortcutGroup.navigate,
     action: ShortcutAction.showAttention,
     nativeAction: 'notifications',
@@ -202,7 +202,7 @@ final harnessCommands = <HarnessCommand>[
   ),
   const HarnessCommand(
     'pane.close',
-    'Close the focused agent pane',
+    'Close the focused pane',
     ShortcutGroup.panes,
     action: ShortcutAction.closePane,
     nativeAction: 'closePane',
@@ -270,17 +270,23 @@ final harnessCommands = <HarnessCommand>[
   ),
   const HarnessCommand(
     'agent.add',
-    'Add agent to this tab',
+    'Find Harness',
     ShortcutGroup.actions,
     action: ShortcutAction.addAgent,
     nativeAction: 'addAgent',
   ),
   const HarnessCommand(
     'agent.new',
-    'Create Agent',
+    'New Harness',
     ShortcutGroup.actions,
     action: ShortcutAction.newAgent,
     nativeAction: 'newAgent',
+  ),
+  const HarnessCommand(
+    'machines.manage',
+    'Open Machines Manager',
+    ShortcutGroup.actions,
+    nativeAction: 'manageMachines',
   ),
   const HarnessCommand(
     'machine.link',
@@ -296,7 +302,7 @@ final harnessCommands = <HarnessCommand>[
   ),
   const HarnessCommand(
     'machines.refresh',
-    'Refresh machines and agents',
+    'Refresh machines and harnesses',
     ShortcutGroup.actions,
     action: ShortcutAction.reload,
     nativeAction: 'reload',
@@ -359,7 +365,7 @@ final harnessCommands = <HarnessCommand>[
   ),
   const HarnessCommand(
     'picker.add_here',
-    'Add the selected agent to this tab',
+    'Add the selected harness',
     ShortcutGroup.actions,
     extraKeys: ['cmd+enter'],
     context: KeymapContext.picker,

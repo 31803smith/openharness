@@ -71,7 +71,7 @@ void main() {
         find.byWidgetPredicate(
           (w) =>
               w is TextField &&
-              w.decoration?.hintText == 'Find an agent or machine…',
+              w.decoration?.hintText == 'Find a harness or machine',
         ),
         'Chess Set',
       );
@@ -92,8 +92,10 @@ void main() {
         reason:
             'Editing project membership does not attach or take over terminals',
       );
+      await tester.tap(find.byKey(const ValueKey('swarm-add-agent-button')));
+      await tester.pump();
       await tester.enterText(
-        find.byKey(const ValueKey('swarm-welcome-search-input')),
+        find.byKey(const ValueKey('swarm-search-input')),
         'Workshop',
       );
       await tester.pump();

@@ -57,10 +57,16 @@ void main() {
     for (final (keys, expected) in [
       ('cmd+1', 'swarm.select_1'),
       ('cmd+9', 'swarm.select_9'),
+      ('cmd+t', 'swarm.new'),
+      ('cmd+n', 'agent.new'),
+      ('cmd+o', 'agent.add'),
       ('cmd+h', 'pane.focus_left'),
       ('cmd+j', 'pane.focus_below'),
       ('cmd+k', 'pane.focus_above'),
       ('cmd+l', 'pane.focus_right'),
+      ('cmd+down', 'pane.focus_below'),
+      ('cmd+up', 'pane.focus_above'),
+      ('cmd+right', 'pane.focus_right'),
       ('cmd+left', 'pane.focus_left'),
       ('cmd+enter', 'pane.zoom'),
       ('cmd+shift+p', 'navigation.commands'),
@@ -85,6 +91,15 @@ void main() {
       )!;
       final id = command(stroke.toString());
       expect(harnessCommandById[id]?.action, shortcut.action);
+    }
+    for (final retired in [
+      'cmd+shift+n',
+      'cmd+shift+h',
+      'cmd+shift+j',
+      'cmd+shift+k',
+      'cmd+shift+l',
+    ]) {
+      expect(command(retired), isNull, reason: retired);
     }
     expect(command('cmd+alt+left'), isNull);
     expect(command('cmd+shift+enter'), isNull);

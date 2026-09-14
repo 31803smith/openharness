@@ -230,50 +230,20 @@ void main() {
         .map((s) => describeShortcut(s.activator))
         .toList();
 
-    test('every direction is spelled BOTH ways, with no mode to pick', () {
-      // The whole point of the scheme: a hand that reaches for hjkl and a hand
-      // that reaches for the arrows are not two populations to be asked about,
-      // they are two hands on the same keyboard. zellij binds both on Alt for
-      // the same reason.
-      expect(
-        chordsFor(ShortcutAction.focusPaneLeft),
-        containsAll(['⌘H', '⌘←']),
-      );
-      expect(
-        chordsFor(ShortcutAction.focusPaneBelow),
-        containsAll(['⌘J', '⌘↓']),
-      );
-      expect(
-        chordsFor(ShortcutAction.focusPaneAbove),
-        containsAll(['⌘K', '⌘↑']),
-      );
-      expect(
-        chordsFor(ShortcutAction.focusPaneRight),
-        containsAll(['⌘L', '⌘→']),
-      );
-    });
-
-    test('shift moves what the plain key walks to', () {
-      // vim's `Ctrl-w H/J/K/L`. Not a convention invented here — which is the
-      // argument for spending four more chords on it.
-      expect(
-        chordsFor(ShortcutAction.movePaneLeft),
-        containsAll(['⇧⌘H', '⇧⌘←']),
-      );
-      expect(
-        chordsFor(ShortcutAction.movePaneDown),
-        containsAll(['⇧⌘J', '⇧⌘↓']),
-      );
-      expect(chordsFor(ShortcutAction.movePaneUp), containsAll(['⇧⌘K', '⇧⌘↑']));
-      expect(
-        chordsFor(ShortcutAction.movePaneRight),
-        containsAll(['⇧⌘L', '⇧⌘→']),
-      );
+    test('Command-arrows focus panes and Shift moves them', () {
+      expect(chordsFor(ShortcutAction.focusPaneLeft), ['⌘H', '⌘←']);
+      expect(chordsFor(ShortcutAction.focusPaneBelow), ['⌘J', '⌘↓']);
+      expect(chordsFor(ShortcutAction.focusPaneAbove), ['⌘K', '⌘↑']);
+      expect(chordsFor(ShortcutAction.focusPaneRight), ['⌘L', '⌘→']);
+      expect(chordsFor(ShortcutAction.movePaneLeft), ['⇧⌘←']);
+      expect(chordsFor(ShortcutAction.movePaneDown), ['⇧⌘↓']);
+      expect(chordsFor(ShortcutAction.movePaneUp), ['⇧⌘↑']);
+      expect(chordsFor(ShortcutAction.movePaneRight), ['⇧⌘→']);
     });
 
     test('brackets walk agents, and Shift walks swarms', () {
       // They used to carry three verbs told apart only by modifiers: ⌘[ ] walked
-      // panes, ⇧⌘[ ] walked agents, ⌥⌘[ ] moved panes. Panes went to hjkl, so
+      // panes, ⇧⌘[ ] walked agents, ⌥⌘[ ] moved panes. Panes use arrows, so
       // the brackets keep the one job a bracket is good at.
       final bracketed = <ShortcutAction>{};
       for (final s in appShortcuts()) {
@@ -292,12 +262,13 @@ void main() {
       expect(chordsFor(ShortcutAction.zoomPane), contains('⌘⏎'));
       expect(chordsFor(ShortcutAction.lastPane), contains('⌘;'));
       expect(chordsFor(ShortcutAction.newSwarm), ['⌘T']);
+      expect(chordsFor(ShortcutAction.showLayout), ['⌘S']);
       expect(
         appShortcuts().where((s) => describeShortcut(s.activator) == '⌘P'),
         isEmpty,
       );
-      expect(chordsFor(ShortcutAction.addAgent), ['⌘N']);
-      expect(chordsFor(ShortcutAction.newAgent), ['⇧⌘N']);
+      expect(chordsFor(ShortcutAction.addAgent), ['⌘O']);
+      expect(chordsFor(ShortcutAction.newAgent), ['⌘N']);
       expect(chordsFor(ShortcutAction.showAttention), ['⇧⌘I']);
       expect(chordsFor(ShortcutAction.findTerminal), ['⌘F']);
       expect(chordsFor(ShortcutAction.findNext), ['⌘G']);
@@ -315,11 +286,7 @@ void main() {
 
   group('the rows the UI prints', () {
     test('two chords for one action are one row, not two', () {
-      // ⌘L, ⌘→ both focus the pane on the right, and ⌘], ⌃⇥ both step to the
-      // next agent. Printed as a row each — which is what the list did before it
-      // merged them — the screen reads as though it forgot to collapse a
-      // duplicate. That matters more now than it did: every direction is
-      // deliberately spelled twice, so the sheet would be half repetition.
+      // Alternate history keys share one help row.
       final rows = shortcutRows();
       final labels = rows.map((row) => row.label).toList();
       expect(labels.toSet().length, labels.length, reason: 'a label repeats');
@@ -332,7 +299,7 @@ void main() {
         ['⌘', '→'],
       ]);
 
-      final next = rows.firstWhere((row) => row.label == 'Next tab');
+      final next = rows.firstWhere((row) => row.label == 'Next Harness');
       expect(next.chords, [
         ['⇧', '⌘', ']'],
         ['⌃', '⇥'],

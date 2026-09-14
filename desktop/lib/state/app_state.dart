@@ -447,6 +447,14 @@ class AppNotifier extends ChangeNotifier {
   }
 
   void _rememberClosed(ClosedWork entry) {
+    // An unused starter has no work to recover. This also covers empty pages
+    // restored from builds that did not mark them as drafts.
+    if (entry is ClosedSwarm &&
+        entry.name == 'New Harness' &&
+        entry.panes.isEmpty &&
+        entry.presets.isEmpty) {
+      return;
+    }
     _closedHistory.add(entry);
     if (_closedHistory.length > maxClosedSwarms) _closedHistory.removeAt(0);
   }
@@ -459,18 +467,40 @@ class AppNotifier extends ChangeNotifier {
   Iterable<TerminalPane> get allPanes => swarms.expand((s) => s.panes).toSet();
   String get activeSwarmId => activeSwarm.id;
 
-  void newSwarm({String name = 'New Harness'}) {
+  // A New Harness remains temporary until it has content or a custom name.
+  // The return destination is session-local; abandoned drafts are never saved.
+  final _draftSwarmReturns = <String, String>{};
+
+  bool isDraftSwarm(String id) {
+    if (!_draftSwarmReturns.containsKey(id)) return false;
+    final swarm = swarms.where((swarm) => swarm.id == id).firstOrNull;
+    return swarm != null &&
+        swarm.panes.isEmpty &&
+        swarm.name == 'New Harness' &&
+        swarm.presets.isEmpty;
+  }
+
+  void newSwarm({String name = 'New Harness', bool draft = false}) {
     if (swarms.length >= maxSwarms) return;
     while (swarms.any((s) => s.id == 'swarm-$_nextSwarmId')) {
       _nextSwarmId++;
     }
     final swarm = Swarm(id: 'swarm-${_nextSwarmId++}', name: name);
+    if (draft) {
+      _draftSwarmReturns[swarm.id] =
+          _draftSwarmReturns[activeSwarmId] ?? activeSwarmId;
+    }
     swarms.add(swarm);
     selectSwarm(swarm.id);
   }
 
   void selectSwarm(String id, {bool attachPending = true}) {
     if (!swarms.any((s) => s.id == id)) return;
+    if (id != activeSwarmId && isDraftSwarm(activeSwarmId)) {
+      final abandoned = activeSwarmId;
+      swarms.removeWhere((swarm) => swarm.id == abandoned);
+      _draftSwarmReturns.remove(abandoned);
+    }
     _activeSwarmId = id;
     railFocused = false;
     final pane = focusedPane;
@@ -483,6 +513,33 @@ class AppNotifier extends ChangeNotifier {
       }
     }
     notifyListeners();
+  }
+
+  /// Cancel an untouched New Harness without closing a session or recording
+  /// Recently Closed. A sole workspace remains the app's starting screen.
+  bool cancelSwarmDraft(String id) {
+    final returnId = _draftSwarmReturns[id];
+    final target = swarms.where((swarm) => swarm.id == id).firstOrNull;
+    if (returnId == null ||
+        target == null ||
+        target.panes.isNotEmpty ||
+        target.name != 'New Harness' ||
+        target.presets.isNotEmpty ||
+        swarms.length == 1) {
+      return false;
+    }
+    final wasActive = activeSwarmId == id;
+    swarms.remove(target);
+    _draftSwarmReturns.remove(id);
+    if (wasActive) {
+      selectSwarm(
+        swarms.any((swarm) => swarm.id == returnId) ? returnId : swarms.last.id,
+      );
+    } else {
+      _persistLayout();
+      notifyListeners();
+    }
+    return true;
   }
 
   /// Navigate to an existing view without opening, retrying or taking control
@@ -558,6 +615,7 @@ class AppNotifier extends ChangeNotifier {
   }
 
   Future<void> closeSwarm(String id) async {
+    if (cancelSwarmDraft(id)) return;
     final index = swarms.indexWhere((s) => s.id == id);
     if (index < 0) return;
     // Held ⌘W must not manufacture and close an endless sequence of blank
@@ -580,6 +638,15 @@ class AppNotifier extends ChangeNotifier {
         historyId: 'closed-${_nextClosedHistoryId++}',
         index: index,
         replacement: replacement,
+        engine: removed.panes.length == 1
+            ? stateOf(removed.panes.single.machineId)?.agents
+                      .where(
+                        (agent) => agent.id == removed.panes.single.agentId,
+                      )
+                      .firstOrNull
+                      ?.engine ??
+                  removed.panes.single.session?.engineId
+            : null,
       ),
     );
     if (_activeSwarmId == id) {
@@ -3095,7 +3162,7 @@ class AppNotifier extends ChangeNotifier {
           unawaited(connection.forceReconnect());
         }
       } else {
-        machine.agentsLoadError = 'Could not load agents: $error';
+        machine.agentsLoadError = 'Could not load harnesses: $error';
       }
       // A NO_PEER_LINK close already set needsLink (via onLocalFailure) perhaps a microtask before
       // this catch runs — don't downgrade that specific, actionable state back to a generic error.
@@ -3611,8 +3678,9 @@ class AppNotifier extends ChangeNotifier {
         'MEDIA_CHANGED' => 'The file changed while downloading. Wait for it to finish generating and try again.',
         'MEDIA_UNSUPPORTED' => 'This file is not a supported image or video.',
         'MEDIA_INVALID_REQUEST' =>
-          'Use a full path or a path inside this agent’s working folder.',
-        'AGENT_NOT_FOUND' => 'This agent is no longer available. Reconnect to the agent and try again.',
+          'Use a full path or a path inside this harness’s working folder.',
+        'AGENT_NOT_FOUND' =>
+          'This harness is no longer available. Reconnect and try again.',
         'NOT_TEXT' || 'FILE_TOO_LARGE' => 'Update the Harness CLI on this remote machine to open media previews.',
         _ => 'The remote machine could not read this file. Check that it is accessible and try again.',
       });
@@ -3723,12 +3791,12 @@ class AppNotifier extends ChangeNotifier {
 
   String? _creationPlacementError(String targetId, PaneSplitRequest? split) {
     if (split != null && !isPaneSplitCurrent(split)) {
-      return 'The layout changed. Close this dialog and split the agent again.';
+      return 'The layout changed. Close this dialog and split the pane again.';
     }
     final target = swarms.where((s) => s.id == targetId).firstOrNull;
     if (target == null) return 'This tab was closed';
     if (target.panes.length >= maxPanes) {
-      return 'This tab is full. Open a new tab to create an agent.';
+      return 'This tab is full. Open a new tab to create a harness.';
     }
     return null;
   }
@@ -3739,11 +3807,11 @@ class AppNotifier extends ChangeNotifier {
           'The project folder is unavailable on $machine. '
               'Choose another folder and try again.',
         'TMUX_UNAVAILABLE' =>
-          'Harness needs tmux to start agents on $machine. '
+          'Harness needs tmux to start harnesses on $machine. '
               'Install tmux there, then try again.',
         'UNSUPPORTED_ON_REMOTE' || 'UNSUPPORTED' =>
-          'Update the harness CLI on this machine to use New Agent',
-        _ => 'Create agent failed: ${detail ?? code}',
+          'Update the harness CLI on this machine to create a harness',
+        _ => 'Create harness failed: ${detail ?? code}',
       };
 
   Future<String?> _createAgentWithReceipt(AgentCreationAttempt creation) async {
@@ -3773,7 +3841,7 @@ class AppNotifier extends ChangeNotifier {
         ? 'agent_create_status'
         : 'agent_create';
     final unconfirmed =
-        '$machineName has not confirmed the new agent yet. '
+        '$machineName has not confirmed the new harness yet. '
         'Check status before creating another.';
     Map<String, dynamic> result;
     creation._awaitingConfirmation = true;
@@ -3798,7 +3866,7 @@ class AppNotifier extends ChangeNotifier {
             failure.code == 'UNSUPPORTED_ON_REMOTE' ||
             failure.code == 'E2EE_REQUIRED') {
           return '$machineName cannot check this creation. '
-              'Use Add agent to look for it before creating another.';
+              'Use Find a harness to look for it before creating another.';
         }
         return unconfirmed;
       }
@@ -3837,15 +3905,15 @@ class AppNotifier extends ChangeNotifier {
         // receipt-aware version. Missing is not proof that nothing started.
         // Check status stays read-only, even across upgrades and reconnects.
         return '$machineName has no record of this request. '
-            'Use Add agent to look for it before creating another.';
+            'Use Find a harness to look for it before creating another.';
       case 'pending':
-        return '$machineName is still starting your agent. Check again in a moment.';
+        return '$machineName is still starting your harness. Check again in a moment.';
       case 'unconfirmed':
-        return '$machineName could not confirm whether this agent started. '
-            'Use Add agent to look for it before creating another.';
+        return '$machineName could not confirm whether this harness started. '
+            'Use Find a harness to look for it before creating another.';
       case 'unavailable':
         return creation._complete(
-          'This agent was created but is no longer available. '
+          'This harness was created but is no longer available. '
           'You can create a new one.',
         );
       case 'failed':
@@ -3882,7 +3950,7 @@ class AppNotifier extends ChangeNotifier {
     notifyListeners();
     if (_creationPlacementError(targetId, split) != null) {
       _lastError =
-          'The agent was created, but its original tab or layout changed. '
+          'The harness was created, but its original tab or layout changed. '
           'Find it with New Harness.';
       _lastErrorRetryable = false;
       notifyListeners();
@@ -4320,7 +4388,7 @@ class AppNotifier extends ChangeNotifier {
         existing == null &&
         targetPanes.length >= maxPanes) {
       _lastError =
-          'This tab holds $maxPanes agents. Open another tab to add more.';
+          'This tab holds $maxPanes harnesses. Open another tab to add more.';
       _lastErrorRetryable = false;
       notifyListeners();
       return;
@@ -4835,9 +4903,28 @@ class AppNotifier extends ChangeNotifier {
       _paneLayout?.flushSwarms() ?? Future<void>.value();
 
   void _persistLayout() {
+    _draftSwarmReturns.removeWhere((id, _) {
+      final swarm = swarms.where((swarm) => swarm.id == id).firstOrNull;
+      return swarm == null ||
+          swarm.panes.isNotEmpty ||
+          swarm.name != 'New Harness' ||
+          swarm.presets.isNotEmpty;
+    });
     _layoutRevision++;
     _announceOpenPanesToDial();
-    unawaited(_paneLayout?.saveSwarms(swarms, activeSwarmId));
+    final saved = swarms.where((swarm) => !isDraftSwarm(swarm.id)).toList();
+    if (saved.isEmpty) return;
+    final savedActive = isDraftSwarm(activeSwarmId)
+        ? _draftSwarmReturns[activeSwarmId]
+        : activeSwarmId;
+    unawaited(
+      _paneLayout?.saveSwarms(
+        saved,
+        saved.any((swarm) => swarm.id == savedActive)
+            ? savedActive!
+            : saved.last.id,
+      ),
+    );
   }
 
   /// Rebuild the grid from disk as INTENT only — the tiles appear immediately,

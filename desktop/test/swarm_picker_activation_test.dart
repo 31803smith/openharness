@@ -16,23 +16,36 @@ void main() {
     final input = <TerminalBinaryFrame>[];
     final pane = app.adoptSessionForTest(terminal('a0', input));
     await mount(tester, app);
-    await chord(tester, LogicalKeyboardKey.keyN);
+    await chord(tester, LogicalKeyboardKey.keyO);
     final field = find.byKey(const ValueKey('swarm-search-input'));
     final create = find.byKey(const ValueKey('swarm-search-new-agent'));
     expect(field, findsOneWidget);
     expect(find.byType(AlertDialog), findsNothing);
     expect(
-      tester.getRect(create).center.dy,
-      closeTo(tester.getRect(field).center.dy, 1),
+      tester.getRect(create).top,
+      greaterThan(
+        tester
+            .getRect(find.byKey(const ValueKey('swarm-search-results')))
+            .bottom,
+      ),
     );
-    expect(tester.getRect(create).width, greaterThanOrEqualTo(148));
+    expect(tester.getRect(create).width, greaterThanOrEqualTo(180));
+    expect(
+      tester.getRect(field).width,
+      tester.getRect(find.byKey(const ValueKey('swarm-search-results'))).width,
+    );
+    expect(find.text('Find a harness'), findsOneWidget);
+    expect(
+      find.descendant(of: create, matching: find.text('New Harness')),
+      findsOneWidget,
+    );
     expect(app.panes, [pane]);
-    await chord(tester, LogicalKeyboardKey.keyN, shift: true);
+    await chord(tester, LogicalKeyboardKey.keyN);
     expect(find.byType(AlertDialog), findsOneWidget);
-    expect(find.text('Create on Test host'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, 'Create Harness'), findsOneWidget);
     expect(app.panes, [pane]);
     expect(input, isEmpty);
-    await tester.tap(find.text('Cancel'));
+    await tester.tap(find.text('Back to Search'));
     await tester.pump();
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
@@ -50,13 +63,15 @@ void main() {
       app.newSwarm();
       final target = app.activeSwarm;
       await mount(tester, app);
-      await chord(tester, LogicalKeyboardKey.keyN);
+      await chord(tester, LogicalKeyboardKey.keyO);
       final field = find.byKey(const ValueKey('swarm-search-input'));
       await tester.enterText(field, 'Agent 0');
       await tester.pump();
       expect(find.byType(Checkbox), findsNothing);
       expect(app.panes, isEmpty);
       expect(find.byKey(const ValueKey('swarm-row-action')), findsOneWidget);
+      expect(find.text('Open Harness'), findsOneWidget);
+      expect(find.byKey(const ValueKey('swarm-search-accept')), findsNothing);
       if (activate == 'click') {
         await tester.tap(find.byKey(ValueKey(agentDestinationId('m', 'a0'))));
       } else {
@@ -83,9 +98,7 @@ void main() {
       app.newSwarm();
       final target = app.activeSwarm;
       await mount(tester, app);
-      final recent = find.byKey(
-        ValueKey('welcome-recent:${agentDestinationId('m', 'a0')}'),
-      );
+      final recent = find.byKey(ValueKey(agentDestinationId('m', 'a0')));
       expect(recent, findsOneWidget);
       await tester.tap(recent);
       await tester.pump();

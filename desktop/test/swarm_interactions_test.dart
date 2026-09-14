@@ -70,13 +70,11 @@ void main() {
     (tester) async {
       final app = createApp();
       await mount(tester, app);
-      await tester.tap(
-        find.byKey(const ValueKey('swarm-welcome-search-input')),
-      );
+      await tester.tap(find.byKey(const ValueKey('swarm-search-input')));
       await tester.pump();
       expect(app.panes, isEmpty);
       await tester.enterText(
-        find.byKey(const ValueKey('swarm-welcome-search-input')),
+        find.byKey(const ValueKey('swarm-search-input')),
         'Agent 1',
       );
       await tester.pump();
@@ -142,7 +140,7 @@ void main() {
       find.descendant(of: controls, matching: find.byType(IconButton)),
       findsNWidgets(4),
     );
-    expect(find.byTooltip('Delete agent').first.hitTestable(), findsNothing);
+    expect(find.byTooltip('Delete Harness').first.hitTestable(), findsNothing);
     final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
     await mouse.addPointer(location: const Offset(1, 1));
     Future<void> hover() async {
@@ -163,16 +161,16 @@ void main() {
     await tester.pump();
     expect(app.zoomedPaneId, pane.id);
     await hover();
-    await tester.tap(find.byTooltip('Restore agents'));
+    await tester.tap(find.byTooltip('Restore panes'));
     await tester.pump();
     expect(app.zoomedPaneId, isNull);
     await hover();
 
     await tester.tap(
-      find.descendant(of: controls, matching: find.byTooltip('Delete agent')),
+      find.descendant(of: controls, matching: find.byTooltip('Delete Harness')),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Delete agent'), findsOneWidget);
+    expect(find.text('Delete Harness'), findsOneWidget);
     expect(app.panes, contains(pane));
     expect(original.panes.single.session, same(session));
     await tester.tap(find.text('Cancel'));
@@ -264,7 +262,7 @@ void main() {
       expect(input.single.streamId, 'stream-a1');
       expect(String.fromCharCodes(input.single.bytes), 'x');
       await activate('rename', {'id': second});
-      expect(find.text('Rename tab'), findsOneWidget);
+      expect(find.text('Rename Harness'), findsOneWidget);
       final name = tester.widget<TextField>(find.byType(TextField));
       expect(name.focusNode!.hasPrimaryFocus, isTrue);
       tester.testTextInput.enterText('Keyboard work');
@@ -284,9 +282,11 @@ void main() {
       expect(app.swarms, hasLength(1));
       expect(app.panes, isEmpty);
       expect(app.activeSwarmId, isNot(anyOf(first, second)));
-      expect(find.text('New Harness'), findsOneWidget);
+      expect(find.byKey(const ValueKey('swarm-search-input')), findsOneWidget);
+      final starter = app.activeSwarmId;
       await activate('new');
-      expect(app.swarms, hasLength(2));
+      expect(app.swarms, hasLength(1));
+      expect(app.activeSwarmId, starter);
       expect(input, hasLength(2));
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());

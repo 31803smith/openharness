@@ -13,7 +13,7 @@ import 'swarm_state_test.dart' show createApp;
 
 void main() {
   testWidgets(
-    'floating Add agent keeps the destination and reuses the chosen session',
+    'floating Add harness keeps the destination and reuses the chosen session',
     (tester) async {
       final app = createApp();
       final input = <TerminalBinaryFrame>[];
@@ -47,9 +47,9 @@ void main() {
         'Agent 0',
       );
       await tester.pump();
-      expect(find.text('Add to this tab'), findsNWidgets(2));
+      expect(find.text('Add Harness'), findsOneWidget);
       expect(find.byKey(const ValueKey('swarm-row-action')), findsOneWidget);
-      expect(find.text('Go to agent'), findsNothing);
+      expect(find.text('Open Harness'), findsNothing);
       expect(find.byType(AlertDialog), findsNothing);
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pump();

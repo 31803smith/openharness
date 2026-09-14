@@ -57,6 +57,9 @@ class TerminalPanel extends StatefulWidget {
   final bool focused;
   final bool visible;
   final Size? viewportSize;
+
+  /// A shared terminal can move to another harness without being remounted.
+  final (String, int)? paneLocation;
   final bool compactHeader;
   final int focusRequest;
 
@@ -83,6 +86,7 @@ class TerminalPanel extends StatefulWidget {
     required this.focused,
     this.visible = true,
     this.viewportSize,
+    this.paneLocation,
     this.compactHeader = false,
     this.focusRequest = 0,
     this.composerVisible = false,
@@ -111,7 +115,9 @@ class _TerminalPanelState extends State<TerminalPanel>
   static const _dialDecayPerSecond = 0.002;
 
   final TerminalController _controller = TerminalController();
-  final ScrollController _scrollController = ScrollController();
+  final ScrollController _scrollController = ScrollController(
+    keepScrollOffset: false,
+  );
   final FocusNode _focusNode = FocusNode();
   final FocusNode _composerFocus = FocusNode();
   final _findBarKey = GlobalKey<TerminalFindBarState>();
@@ -144,6 +150,7 @@ class _TerminalPanelState extends State<TerminalPanel>
   bool _openingLink = false;
   bool _linkRefreshPending = false;
   bool _followTail = true;
+  TerminalStyle _terminalFont = terminalFontStore.value;
   bool _observingLinkModifiers = false;
   late final RemoteMediaDownloader _mediaDownloader;
   MediaDownloadCancellation? _previewCancellation;
@@ -228,6 +235,7 @@ class _TerminalPanelState extends State<TerminalPanel>
       _hoveredLink = null;
       _observeLinkModifiers(false);
       _terminalViewKey = GlobalKey<TerminalViewState>();
+      _followTail = true;
       _cursorBlinkVisible = true;
       widget.session.setCursorBlinkPhase(true);
       _afterTerminalMounted();
@@ -242,13 +250,14 @@ class _TerminalPanelState extends State<TerminalPanel>
       _pressedLink = null;
       _observeLinkModifiers(false);
     }
-    if (!oldWidget.visible && widget.visible) {
-      _afterTerminalMounted(scrollToEnd: _followTail);
+    if (widget.visible &&
+        (!oldWidget.visible || oldWidget.paneLocation != widget.paneLocation)) {
+      _afterTerminalMounted();
     }
     if (oldWidget.viewportSize != widget.viewportSize) {
       // Geometry can change while a resize handle or another control owns
       // the keyboard. Refresh the viewport without claiming input ownership.
-      _afterTerminalMounted(scrollToEnd: _followTail, claimFocus: false);
+      _afterTerminalMounted(claimFocus: false);
     }
     if (widget.focused &&
         (!oldWidget.focused || oldWidget.focusRequest != widget.focusRequest)) {
@@ -333,7 +342,12 @@ class _TerminalPanelState extends State<TerminalPanel>
   /// `RenderTerminal.textStyle`'s setter — which recomputes cols/rows from the new cell size and
   /// resizes the remote session automatically. This just needs to get the new value into `build()`.
   void _onFontChanged() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    if (_terminalFont != terminalFontStore.value) {
+      _terminalFont = terminalFontStore.value;
+      _afterTerminalMounted(claimFocus: false);
+    }
+    setState(() {});
   }
 
   void _syncTerminal(Terminal terminal) {
@@ -351,8 +365,7 @@ class _TerminalPanelState extends State<TerminalPanel>
     final viewportFraction = position != null && lineHeight != null
         ? position.pixels / lineHeight - viewportRow!
         : 0.0;
-    final atEnd =
-        position == null || position.maxScrollExtent - position.pixels < 1;
+    final atEnd = _followTail || position == null;
     final originRow = _findOriginLine?.attached == true
         ? _findOriginLine!.y
         : null;
@@ -562,6 +575,12 @@ class _TerminalPanelState extends State<TerminalPanel>
     bool claimFocus = true,
     int retries = 2,
   }) {
+    // Request alignment before this frame's layout, so even a retained pane's
+    // first visible paint uses its new size. Keep Find's explicit location.
+    if (scrollToEnd && _find == null) {
+      _followTail = true;
+      _laidOutTerminalView()?.scrollToBottom();
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !widget.visible) return;
       if (clearSelection) _controller.clearSelection();
@@ -586,9 +605,8 @@ class _TerminalPanelState extends State<TerminalPanel>
           renderSize.height ~/ cellSize.height,
         );
       }
-      if (scrollToEnd && _scrollController.hasClients) {
-        _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
-        _followTail = true;
+      if (scrollToEnd && _followTail && _find == null) {
+        view.scrollToBottom();
       }
       // Never over the composer: a rebuild that re-focuses this tile while someone is typing into
       // the box would pull the caret out from under them mid-sentence.

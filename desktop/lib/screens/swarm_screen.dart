@@ -4,6 +4,7 @@ import 'dart:io' show Platform;
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
 import '../core/desktop_window.dart';
@@ -31,17 +32,17 @@ import '../state/swarm_search.dart';
 import '../state/swarm.dart';
 import '../widgets/layout_palette.dart';
 import '../widgets/engine_identity.dart';
+import '../widgets/harness_creation_option.dart';
 import '../widgets/link_machine_screen.dart';
+import '../widgets/machines_manager.dart';
 import '../widgets/new_agent_dialog.dart';
 import '../widgets/pane_grid.dart';
 import '../widgets/shortcuts_sheet.dart';
 import '../widgets/swarm_dialogs.dart';
-import '../widgets/swarm_inline_search.dart';
 import '../widgets/swarm_search_input.dart';
 import '../widgets/swarm_attention.dart';
 import '../widgets/swarm_switcher.dart';
 import '../widgets/swarm_wallpaper.dart';
-import '../widgets/swarm_welcome.dart';
 import '../widgets/swarm_icon.dart';
 import '../widgets/task_palette.dart';
 
@@ -78,11 +79,12 @@ class _SwarmScreenState extends State<SwarmScreen> {
   final _navigation = SwarmNavigationHistory();
   final _searchCatalog = SwarmSearchCatalog();
   final _searchText = TextEditingController();
-  final _searchFocus = FocusNode(debugLabel: 'Search agents and tabs');
+  final _searchFocus = FocusNode(debugLabel: 'Find a harness');
   SwarmSearchController? _search;
   OverlayEntry? _searchOverlay;
-  (String, bool)? _searchHeaderState;
+  (String, bool, bool)? _searchHeaderState;
   FocusNode? _searchReturnFocus;
+  (String, bool)? _lastWorkspace;
   bool _spokenPaletteOpen = false;
   bool _dialogOpen = false;
   bool _routeIsCurrent = true;
@@ -213,7 +215,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
 
   void _runShortcut(String id) {
     if (id == 'agent.new' && _search != null) {
-      unawaited(_newAgentFromSearch());
+      unawaited(_newAgentFromSearch(chooseFolderFirst: false));
       return;
     }
     if (!_canExecuteCommand(id)) return;
@@ -225,8 +227,32 @@ class _SwarmScreenState extends State<SwarmScreen> {
 
   void _recordNavigation() {
     _navigation.record(app);
-    if (_search != null && _search!.targetId != app.activeSwarmId) {
+    if (_search != null &&
+        (_search!.targetId != app.activeSwarmId ||
+            (_lastWorkspace?.$2 == true && app.panes.isNotEmpty))) {
       _closeSearch(restoreFocus: false);
+    }
+    final workspace = (app.activeSwarmId, app.panes.isEmpty);
+    if (_lastWorkspace == workspace) return;
+    final firstBuild = _lastWorkspace == null;
+    _lastWorkspace = workspace;
+    if (workspace.$2 && _shortcutsEnabled) {
+      void open() {
+        // Open once on entering an empty workspace. Dismissal, discovery and
+        // other rebuilds must not reopen it or take focus from a creation form.
+        if (mounted && _lastWorkspace == workspace && app.panes.isEmpty) {
+          _openSearch(adding: true);
+        }
+      }
+
+      if (!firstBuild &&
+          SchedulerBinding.instance.schedulerPhase == SchedulerPhase.idle) {
+        // Native tab actions acknowledge the next frame. Insert now so that
+        // frame includes the picker and its focus tree, rather than a blank gap.
+        open();
+      } else {
+        WidgetsBinding.instance.addPostFrameCallback((_) => open());
+      }
     }
   }
 
@@ -289,6 +315,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
             'machineName': entry.machineLabel,
             'detail': entry.detail,
             'swarm': entry.isSwarm,
+            'agentCount': entry.isSwarm ? entry.members.length : 1,
             'engine': entry.engine,
             'iconAsset': engineIdentity(entry.engine).asset,
             'canReopen': app.canReopenClosed(entry.id),
@@ -318,6 +345,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
             'machineName': entry.machineLabel,
             'detail': entry.detail,
             'swarm': entry.isSwarm,
+            'agentCount': entry.isSwarm ? entry.members.length : 1,
             'engine': entry.engine,
             'iconAsset': engineIdentity(entry.engine).asset,
             'current': entry.current,
@@ -417,19 +445,19 @@ class _SwarmScreenState extends State<SwarmScreen> {
           final choice = search.addHere();
           if (choice != null) await _chooseSearch(choice);
         case 'close':
-          _closeSearch();
+          _dismissSearch();
       }
       return;
     }
     if (call.method == 'newAgent' && _search != null) {
-      unawaited(_newAgentFromSearch());
+      unawaited(_newAgentFromSearch(chooseFolderFirst: false));
       await WidgetsBinding.instance.endOfFrame;
       return;
     }
     _closeSearch(restoreFocus: false);
     switch (call.method) {
       case 'new':
-        app.newSwarm();
+        _newHarness();
       case 'reopen':
         app.reopenClosed();
       case 'reopenHistory':
@@ -476,6 +504,8 @@ class _SwarmScreenState extends State<SwarmScreen> {
         await _addProject();
       case 'linkMachine':
         await _dialog(() => showSwarmLinkDialog(context, app));
+      case 'manageMachines':
+        unawaited(_dialog(() => showMachinesManager(context, app)));
       case 'refreshMachines':
         unawaited(app.retryMachines());
       case 'machineDestination':
@@ -519,7 +549,9 @@ class _SwarmScreenState extends State<SwarmScreen> {
           'rename',
           'commands',
           'notifications',
+          'addAgent',
           'newAgent',
+          'manageMachines',
           'splitRight',
           'splitDown',
           'zoomPane',
@@ -533,7 +565,10 @@ class _SwarmScreenState extends State<SwarmScreen> {
     }
   }
 
-  Future<void> _dialog(Future<void> Function() action) async {
+  Future<void> _dialog(
+    Future<void> Function() action, {
+    bool restoreEntry = true,
+  }) async {
     if (_dialogOpen || _spokenPaletteOpen || !mounted) return;
     _closeSearch();
     _dialogOpen = true;
@@ -544,6 +579,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
       _dialogOpen = false;
       if (_native && mounted) _syncNative();
     }
+    if (restoreEntry) await _ensureEmptyEntry();
   }
 
   Future<void> _rename(String id) => _dialog(() async {
@@ -554,6 +590,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
   });
   Future<void> _settings() =>
       _dialog(() => showSettingsScreen(context, app, source: 'swarm'));
+
   Future<void> _newAgent({
     String? machineId,
     String? folder,
@@ -657,11 +694,17 @@ class _SwarmScreenState extends State<SwarmScreen> {
         swarmId: targetId,
         split: split,
         offerFindExisting: true,
+        offerBackToSearch: returnToAdd != null,
       );
-    });
+    }, restoreEntry: false);
     final findingExisting = result == NewAgentDialogResult.findExisting;
-    final returningToAdd = result == null && returnToAdd != null;
-    if (!mounted || (!findingExisting && !returningToAdd)) return;
+    final returningToAdd =
+        result == NewAgentDialogResult.backToSearch && returnToAdd != null;
+    if (!mounted) return;
+    if (!findingExisting && !returningToAdd) {
+      await _ensureEmptyEntry(targetId: targetId, cancelDraft: result == null);
+      return;
+    }
     // The pop result arrives before the screen observes its current route.
     // Let that frame release modal keyboard ownership before opening Add.
     await WidgetsBinding.instance.endOfFrame;
@@ -672,7 +715,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
         _search != null) {
       return;
     }
-    // Cancel restores the prior picker only while its swarm remains current.
+    // Back restores the prior picker only while its swarm remains current.
     // An explicit Find existing action can return to the original destination.
     if (returningToAdd && app.activeSwarmId != targetId) return;
     final targetExists = app.swarms.any((swarm) => swarm.id == targetId);
@@ -682,8 +725,8 @@ class _SwarmScreenState extends State<SwarmScreen> {
         SnackBar(
           content: Text(
             !targetExists
-                ? 'That tab was closed. Open New Harness to find the agent.'
-                : 'That split changed. Open Add Agent again to choose a position.',
+                ? 'That harness was closed. Open New Harness to find your work.'
+                : 'That split changed. Split the pane again to choose a position.',
           ),
         ),
       );
@@ -818,7 +861,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
     }
     // Results listen to their controller directly. Rebuilding the entire
     // overlay on every arrow also rebuilt the unchanged text editor/button.
-    final header = (search.hint, search.canCreate);
+    final header = (search.hint, search.canCreate, _canDismissSearch);
     if (_searchHeaderState != header) {
       _searchHeaderState = header;
       _searchOverlay?.markNeedsBuild();
@@ -850,15 +893,83 @@ class _SwarmScreenState extends State<SwarmScreen> {
     }
   }
 
+  bool get _canDismissSearch =>
+      app.panes.isNotEmpty ||
+      app.swarms.any(
+        (swarm) => swarm.id != app.activeSwarmId && swarm.panes.isNotEmpty,
+      );
+
+  void _dismissSearch() {
+    if (app.panes.isNotEmpty) {
+      _closeSearch();
+      return;
+    }
+    // An empty first workspace is the starting screen. Commands can return to
+    // the same picker, but dismissal must never expose a blank canvas.
+    if (!_canDismissSearch) {
+      if (_search?.isCommandMode == true) {
+        _closeSearch(restoreFocus: false);
+        _openSearch(adding: true);
+      } else {
+        _focusSearch();
+      }
+      return;
+    }
+    _closeSearch(restoreFocus: false);
+    _returnFromEmptyHarness();
+  }
+
+  void _returnFromEmptyHarness() {
+    _preparePaneFocus();
+    if (app.cancelSwarmDraft(app.activeSwarmId)) return;
+    // A restored or deliberately renamed empty workspace is real saved work.
+    // Leave it intact and return to the most recently visited populated one.
+    final previous = _navigation.recent
+        .where((id) => id.startsWith('swarm:'))
+        .map(
+          (id) => app.swarms
+              .where((swarm) => swarmDestinationId(swarm.id) == id)
+              .firstOrNull,
+        )
+        .where((swarm) => swarm != null && swarm.panes.isNotEmpty)
+        .firstOrNull;
+    final destination =
+        previous ??
+        app.swarms.where((swarm) => swarm.panes.isNotEmpty).lastOrNull;
+    if (destination != null) app.selectSwarm(destination.id);
+  }
+
+  Future<void> _ensureEmptyEntry({
+    String? targetId,
+    bool cancelDraft = false,
+  }) async {
+    if (!mounted || app.panes.isNotEmpty) return;
+    // A popped dialog releases route and keyboard ownership on this frame.
+    await WidgetsBinding.instance.endOfFrame;
+    if (!_shortcutsEnabled || app.panes.isNotEmpty) {
+      return;
+    }
+    if (cancelDraft &&
+        (targetId == null || app.activeSwarmId == targetId) &&
+        _canDismissSearch) {
+      _returnFromEmptyHarness();
+    }
+    if (app.panes.isEmpty) _openSearch(adding: true);
+  }
+
   Future<void> _chooseSearch(SwarmSearchSelection choice) async {
     final target = _search?.targetId;
     final split = _search?.split;
     if (target == null) return;
     _closeSearch(restoreFocus: choice.destination.isCommand);
     await _activateSearch(choice, target, split: split);
+    if (mounted) {
+      if (app.activeSwarmId != target) app.cancelSwarmDraft(target);
+      await _ensureEmptyEntry(targetId: target);
+    }
   }
 
-  Future<void> _newAgentFromSearch() async {
+  Future<void> _newAgentFromSearch({bool chooseFolderFirst = true}) async {
     final search = _search;
     if (search == null || !search.canCreate) return;
     final target = search.targetId;
@@ -870,13 +981,24 @@ class _SwarmScreenState extends State<SwarmScreen> {
             editing: _searchText.value.copyWith(composing: TextRange.empty),
           )
         : null;
-    // Let the creation dialog remember the original focus for Cancel. Blocking
+    // Let the creation dialog remember the original focus for dismissal. Blocking
     // canvas focus during the picker intentionally cleared route focus history.
     _closeSearch();
     FocusManager.instance.applyFocusChangesIfNeeded();
     await _newAgent(
       swarmId: target,
       split: split,
+      chooseFolderFirst:
+          chooseFolderFirst &&
+          split == null &&
+          !app.allPanes.any((pane) => pane.agentId != null) &&
+          !swarmAgents(app).any((entry) => entry.agent.terminalAvailable) &&
+          app.machineStates.values.any(
+            (machine) =>
+                machine.isLocalMachine &&
+                !machine.needsLink &&
+                machine.nodeOnline != false,
+          ),
       returnToAddQuery: query,
       returnToAdd: draft,
     );
@@ -895,7 +1017,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
             Positioned.fill(
               child: GestureDetector(
                 behavior: HitTestBehavior.opaque,
-                onTap: _closeSearch,
+                onTap: _dismissSearch,
                 child: const ColoredBox(color: kDialogVeilTint),
               ),
             ),
@@ -904,56 +1026,80 @@ class _SwarmScreenState extends State<SwarmScreen> {
               child: SizedBox(
                 width: (constraints.maxWidth - 64).clamp(280.0, 720.0),
                 height: (constraints.maxHeight - 96).clamp(220.0, 540.0),
-                child: Material(
-                  key: const ValueKey('swarm-search-results'),
-                  elevation: 16,
-                  shadowColor: Colors.black54,
-                  color: grid.AppPalette.swarmSearchSurface,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    side: const BorderSide(color: Colors.white24),
-                  ),
-                  clipBehavior: Clip.antiAlias,
-                  child: Column(
-                    children: [
-                      if (commandsOnly)
-                        const Padding(
-                          padding: EdgeInsets.fromLTRB(20, 16, 20, 12),
-                          child: Align(
-                            alignment: Alignment.centerLeft,
-                            child: Text(
-                              'Commands',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
+                child: Column(
+                  children: [
+                    Expanded(
+                      child: Material(
+                        key: const ValueKey('swarm-search-results'),
+                        elevation: 16,
+                        shadowColor: Colors.black54,
+                        color: grid.AppPalette.swarmSearchSurface,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          side: const BorderSide(color: Colors.white24),
+                        ),
+                        clipBehavior: Clip.antiAlias,
+                        child: Column(
+                          children: [
+                            if (commandsOnly)
+                              const Padding(
+                                padding: EdgeInsets.fromLTRB(20, 16, 20, 12),
+                                child: Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: Text(
+                                    'Commands',
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
                               ),
+                            SwarmSearchInput(
+                              inputKey: const ValueKey('swarm-search-input'),
+                              controller: _searchText,
+                              focusNode: _searchFocus,
+                              search: search,
+                              onChoose: _chooseSearch,
+                              onClose: _dismissSearch,
+                              onChanged: search.setQuery,
+                              showClose: _canDismissSearch || commandsOnly,
+                              onNewAgent: search.adding
+                                  ? () => _newAgentFromSearch(
+                                      chooseFolderFirst: false,
+                                    )
+                                  : null,
+                            ),
+                            const Divider(height: 1, color: Colors.white12),
+                            Expanded(
+                              child: SwarmSearchResults(
+                                search: search,
+                                onChoose: _chooseSearch,
+                                onRefocus: _focusSearch,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    if (search.adding)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 32, 20, 0),
+                        child: Material(
+                          type: MaterialType.transparency,
+                          child: HarnessCreationOption(
+                            notifier: app,
+                            buttonKey: const ValueKey('swarm-search-new-agent'),
+                            onPressed: search.canCreate
+                                ? _newAgentFromSearch
+                                : null,
+                            onLinkMachine: () => _dialog(
+                              () => showSwarmLinkDialog(context, app),
                             ),
                           ),
                         ),
-                      SwarmSearchInput(
-                        inputKey: const ValueKey('swarm-search-input'),
-                        controller: _searchText,
-                        focusNode: _searchFocus,
-                        search: search,
-                        onChoose: _chooseSearch,
-                        onClose: _closeSearch,
-                        onChanged: search.setQuery,
-                        showClose: true,
-                        onNewAgent: search.adding ? _newAgentFromSearch : null,
                       ),
-                      const Divider(height: 1, color: Colors.white12),
-                      Expanded(
-                        child: SwarmSearchResults(
-                          search: search,
-                          onChoose: _chooseSearch,
-                          onRefocus: _focusSearch,
-                          onCommands: search.allowsCommands
-                              ? _showSearchCommands
-                              : null,
-                        ),
-                      ),
-                    ],
-                  ),
+                  ],
                 ),
               ),
             ),
@@ -983,6 +1129,11 @@ class _SwarmScreenState extends State<SwarmScreen> {
   Future<void> _addAgent() async {
     if (_search != null) _closeSearch(restoreFocus: false);
     _openSearch(adding: true);
+  }
+
+  void _newHarness() {
+    if (app.panes.isNotEmpty) app.newSwarm(draft: true);
+    if (app.panes.isEmpty) _openSearch(adding: true);
   }
 
   Future<void> _addProject() => _dialog(() async {
@@ -1057,7 +1208,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
 
   // Keyboard actions and search commands execute the same callbacks.
   late final Map<ShortcutAction, VoidCallback> _actionHandlers = {
-    ShortcutAction.newSwarm: app.newSwarm,
+    ShortcutAction.newSwarm: _newHarness,
     ShortcutAction.reopenClosedSwarm: app.reopenClosed,
     ShortcutAction.closeSwarm: () => app.closeSwarm(app.activeSwarmId),
     ShortcutAction.renameSwarm: () => _rename(app.activeSwarmId),
@@ -1123,6 +1274,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
       'pane.focus_$i': () => app.focusPaneByIndex(i - 1),
     'navigation.commands': _showSearchCommands,
     'machine.link': () => _dialog(() => showSwarmLinkDialog(context, app)),
+    'machines.manage': () => _dialog(() => showMachinesManager(context, app)),
     'project.add': _addProject,
     'keyboard.open_config': () => openKeyboardConfig(context),
     'pane.resize': app.beginPaneResize,
@@ -1212,27 +1364,25 @@ class _SwarmScreenState extends State<SwarmScreen> {
           onPending: (keys) => setState(() => _pendingKeys = keys),
           child: Focus(
             focusNode: _shellFocus,
-            autofocus: app.panes.isNotEmpty,
+            autofocus: true,
             child: Scaffold(
               backgroundColor: grid.AppPalette.swarmField,
               floatingActionButtonLocation:
                   FloatingActionButtonLocation.endFloat,
-              floatingActionButton: app.panes.isEmpty
-                  ? null
-                  : Padding(
-                      padding: const EdgeInsets.only(right: 12, bottom: 12),
-                      child: FloatingActionButton.small(
-                        key: const ValueKey('swarm-add-agent-button'),
-                        tooltip: _keymap.hint('agent.add') == null
-                            ? 'Add agent'
-                            : 'Add agent (${_keymap.hint('agent.add')})',
-                        onPressed: () => _openSearch(adding: true),
-                        backgroundColor: grid.AppPalette.swarmAccent,
-                        foregroundColor: grid.AppPalette.swarmField,
-                        shape: const CircleBorder(),
-                        child: const Icon(Icons.add, size: 24),
-                      ),
-                    ),
+              floatingActionButton: Padding(
+                padding: const EdgeInsets.only(right: 12, bottom: 12),
+                child: FloatingActionButton.small(
+                  key: const ValueKey('swarm-add-agent-button'),
+                  tooltip: _keymap.hint('agent.add') == null
+                      ? 'Add Harness'
+                      : 'Add Harness (${_keymap.hint('agent.add')})',
+                  onPressed: () => _openSearch(adding: true),
+                  backgroundColor: grid.AppPalette.swarmAccent,
+                  foregroundColor: grid.AppPalette.swarmField,
+                  shape: const CircleBorder(),
+                  child: const Icon(Icons.add, size: 24),
+                ),
+              ),
               body: Column(
                 children: [
                   if (!_native) _tabStrip(),
@@ -1335,37 +1485,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                     onSplit: (paneId, axis) => unawaited(
                                       _splitAgent(axis, paneId: paneId),
                                     ),
-                                    empty: SwarmWelcome(
-                                      key: ValueKey(app.activeSwarmId),
-                                      notifier: app,
-                                      recent: _navigation.recent,
-                                      onRecent: (entry) => _activateSearch(
-                                        SwarmSearchSelection(
-                                          entry,
-                                          SwarmSearchAction.addHere,
-                                        ),
-                                        app.activeSwarmId,
-                                      ),
-                                      onNewAgent: _newAgent,
-                                      onChooseFirstFolder: () =>
-                                          _newAgent(chooseFolderFirst: true),
-                                      searchField: SwarmInlineSearch(
-                                        key: ValueKey(
-                                          'welcome-search:${app.activeSwarmId}',
-                                        ),
-                                        app: app,
-                                        projects: _projects,
-                                        recent: _navigation.recent,
-                                        catalog: _searchCatalog,
-                                        commands: _searchCommands,
-                                        onChoose: _activateSearch,
-                                        onNewAgent: (query) =>
-                                            _newAgent(returnToAddQuery: query),
-                                      ),
-                                      onLinkMachine: () => _dialog(
-                                        () => showSwarmLinkDialog(context, app),
-                                      ),
-                                    ),
+                                    empty: const SizedBox.expand(),
                                   ),
                                 ),
                               ],
@@ -1482,7 +1602,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
             ShortcutAction.newSwarm,
           ),
           onPressed: app.swarms.length < AppNotifier.maxSwarms
-              ? app.newSwarm
+              ? _newHarness
               : null,
           icon: const Icon(Icons.add, size: 18),
         ),
@@ -1490,7 +1610,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
           key: const ValueKey('swarm-notifications-button'),
           tooltip: withEffectiveShortcutHint(
             context,
-            'Agents needing input',
+            'Harnesses needing input',
             ShortcutAction.showAttention,
           ),
           onPressed: _notifications,

@@ -95,7 +95,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
   }
 
   private func sendTabAction(_ method: String, arguments: Any?) {
-    guard ["select", "close", "new", "rename", "commands", "notifications", "addAgent", "newAgent", "splitRight", "splitDown", "zoomPane", "pinPane", "machineDestination"].contains(method) else {
+    guard ["select", "close", "new", "rename", "commands", "notifications", "addAgent", "newAgent", "splitRight", "splitDown", "zoomPane", "pinPane", "machineDestination", "manageMachines"].contains(method) else {
       channel.invokeMethod(method, arguments: arguments)
       return
     }
@@ -114,7 +114,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
   private func setKeymap(_ map: HarnessNativeKeymap) {
     keymap = map
     let hint = map.hint(for: "swarm.new", context: "workspace")
-    strip.newButton.toolTip = hint.map { "New Harness (\($0))" } ?? "New Harness"
+    strip.newButton.toolTip = hint.map { "New Tab (\($0))" } ?? "New Tab"
     if let main = NSApp.mainMenu, let window {
       let menu = main as? HarnessKeymapMenu ?? HarnessKeymapMenu.replacing(main)
       if NSApp.mainMenu !== menu { NSApp.mainMenu = menu }
@@ -200,21 +200,16 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     }
     if let file = main.item(withTitle: "File") { main.removeItem(file) }
     let file = NSMenu(title: "File")
-    add(file, "New Harness", "t", "new")
-    add(file, "Add Agent…", "n", "addAgent")
-    add(file, "Create Agent…", "n", "newAgent", [.command, .shift])
+    add(file, "New Tab", "t", "new")
+    add(file, "New Harness…", "n", "newAgent")
+    add(file, "Find Harness…", "o", "addAgent")
+    add(file, "Rename Harness…", "r", "renameActive", [.command, .shift])
+    add(file, "Close Harness", "w", "closeActive")
     file.addItem(.separator())
     add(file, "Split Right…", "", "splitRight")
     add(file, "Split Down…", "", "splitDown")
-    file.addItem(.separator())
-    add(file, "Zoom Agent", "", "zoomPane")
-    add(file, "Pin or Unpin Agent", "", "pinPane")
-    file.addItem(.separator())
-    add(file, "Rename Tab…", "r", "renameActive", [.command, .shift])
-    add(file, "Close Agent Pane", "w", "closePane", [.command, .shift])
-    add(file, "Close Tab", "w", "closeActive")
-    file.addItem(.separator())
-    add(file, "Add Project…", "", "addProject")
+    add(file, "Zoom Pane", "", "zoomPane")
+    add(file, "Close Pane", "w", "closePane", [.command, .shift])
     install(file, at: 1)
 
     rebuildHistoryMenu()
@@ -227,7 +222,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     }
     if let view = main.item(withTitle: "View")?.submenu {
       view.addItem(.separator())
-      add(view, "Agents Needing Input…", "i", "notifications", [.command, .shift])
+      add(view, "Harnesses Needing Input…", "i", "notifications", [.command, .shift])
     }
     modelsMenu.autoenablesItems = false
     modelsMenu.delegate = self
@@ -255,6 +250,12 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
 
   private func rebuildMachinesMenu() {
     machinesMenu.removeAllItems()
+    let manager = NSMenuItem(title: "Open Machines Manager", action: #selector(menuAction(_:)), keyEquivalent: "")
+    manager.target = self
+    manager.representedObject = "manageMachines"
+    manager.identifier = NSUserInterfaceItemIdentifier(HarnessKeymapMenu.actionPrefix + "manageMachines")
+    machinesMenu.addItem(manager)
+    machinesMenu.addItem(.separator())
     for machine in machines {
       let item = NSMenuItem(title: machine.name, action: #selector(machineAction(_:)), keyEquivalent: "")
       item.target = self
@@ -380,13 +381,13 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
       item.representedObject = entry.id
       item.toolTip = [entry.title, entry.machineName, entry.detail].filter { !$0.isEmpty }.joined(separator: "\n")
       item.state = entry.current ? .on : .off
-      item.image = entry.swarm
+      item.image = entry.swarm && entry.agentCount != 1
         ? SwarmIdentity.menuIcon
         : historyIcons.image(engine: entry.engine, asset: entry.iconAsset)
       historyMenu.addItem(item)
     }
     if entries.isEmpty {
-      let item = NSMenuItem(title: closed ? "No Recently Closed Agents or Tabs" : "No Recent Visits", action: nil, keyEquivalent: "")
+      let item = NSMenuItem(title: closed ? "No Recently Closed Harnesses" : "No Recent Visits", action: nil, keyEquivalent: "")
       item.isEnabled = false
       historyMenu.addItem(item)
     }
@@ -566,6 +567,7 @@ private struct SwarmHistoryEntry: Equatable {
   let detail: String
   let machineName: String
   let swarm: Bool
+  let agentCount: Int?
   let current: Bool
   let engine: String?
   let iconAsset: String?
@@ -593,6 +595,7 @@ private struct SwarmHistoryEntry: Equatable {
     detail = row["detail"] as? String ?? ""
     machineName = row["machineName"] as? String ?? ""
     swarm = row["swarm"] as? Bool == true
+    agentCount = row["agentCount"] as? Int
     current = row["current"] as? Bool == true
     engine = (row["engine"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     iconAsset = row["iconAsset"] as? String
@@ -749,8 +752,8 @@ private final class SwarmTabStrip: NSView {
       button.setAccessibilityLabel(label)
       addSubview(button)
     }
-    button(newButton, "plus", "New Harness (⌘T)", #selector(newSwarm))
-    newButton.setAccessibilityLabel("New Harness")
+    button(newButton, "plus", "New Tab (⌘T)", #selector(newSwarm))
+    newButton.setAccessibilityLabel("New Tab")
     newButton.isEnabled = false
     button(notificationButton, "bell", "Notifications", #selector(openNotifications))
     notificationButton.isEnabled = false
@@ -812,7 +815,7 @@ private final class SwarmTabStrip: NSView {
     notificationButton.isEnabled = actionsEnabled
     let attention = state["attention"] as? Int ?? 0
     notificationButton.hasAttention = attention > 0
-    notificationButton.toolTip = attention > 0 ? "\(attention) agents need input" : "Notifications"
+    notificationButton.toolTip = attention > 0 ? "\(attention) harnesses need input" : "Notifications"
     notificationButton.setAccessibilityLabel(notificationButton.toolTip)
     needsLayout = true
     layoutSubtreeIfNeeded()
@@ -955,16 +958,16 @@ private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidati
     selectButton.target = self
     selectButton.action = #selector(selectSwarm)
     addSubview(selectButton)
-    closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close tab")
+    closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close Harness")
     closeButton.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 10, weight: .semibold)
     closeButton.contentTintColor = NSColor(white: 0.78, alpha: 1)
     closeButton.isBordered = false
     closeButton.target = self
     closeButton.action = #selector(closeSwarm)
-    closeButton.toolTip = "Close tab"
+    closeButton.toolTip = "Close Harness"
     addSubview(closeButton)
     let menu = NSMenu()
-    for (title, action) in [("Rename Tab…", #selector(renameSwarm)), ("Close Tab", #selector(closeSwarm))] {
+    for (title, action) in [("Rename Harness…", #selector(renameSwarm)), ("Close Harness", #selector(closeSwarm))] {
       let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
       item.target = self
       menu.addItem(item)
@@ -1049,7 +1052,7 @@ private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidati
     setAccessibilityLabel(name)
     selectButton.setAccessibilityLabel("Select \(name)")
     selectButton.setAccessibilityValue(selected ? "Selected" : "")
-    selectButton.setAccessibilityHelp(attention ? "Contains agents needing input" : nil)
+    selectButton.setAccessibilityHelp(attention ? "Contains harnesses needing input" : nil)
     toolTip = "\(name) — double-click to rename"
     closeButton.setAccessibilityLabel("Close \(name)")
   }

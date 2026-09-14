@@ -266,7 +266,7 @@ class _TypePreview extends StatelessWidget {
           Text('Preview', style: theme.textTheme.titleSmall),
           const SizedBox(height: 10),
           Text(
-            'Machines and the agents on them.',
+            'Machines and the harnesses on them.',
             style: theme.textTheme.titleMedium,
           ),
           const SizedBox(height: 6),

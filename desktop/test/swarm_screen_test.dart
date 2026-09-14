@@ -80,7 +80,10 @@ void main() {
       final tab = app.activeSwarm;
       await mount(tester, app, nativeTabs: native);
       expect(tab.name, 'New Harness');
-      expect(find.text('New Harness'), findsWidgets);
+      expect(
+        find.byKey(const ValueKey('swarm-search-results')),
+        findsOneWidget,
+      );
 
       await app.addAgentToSwarm('m', 'a0');
       await tester.pump();
@@ -136,12 +139,10 @@ void main() {
       );
       await mount(tester, app);
       expect(find.text('Existing project'), findsNothing);
-      await tester.tap(
-        find.byKey(const ValueKey('swarm-welcome-search-input')),
-      );
+      await tester.tap(find.byKey(const ValueKey('swarm-search-input')));
       await tester.pump();
       await tester.enterText(
-        find.byKey(const ValueKey('swarm-welcome-search-input')),
+        find.byKey(const ValueKey('swarm-search-input')),
         '/work/existing',
       );
       await tester.pump();
@@ -168,15 +169,16 @@ void main() {
     (tester) async {
       final app = createApp();
       await mount(tester, app);
-      expect(find.text('New Harness'), findsWidgets);
+      expect(
+        find.byKey(const ValueKey('swarm-search-results')),
+        findsOneWidget,
+      );
       expect(find.text('Models'), findsNothing);
       expect(find.text('Machines'), findsNothing);
-      await tester.tap(
-        find.byKey(const ValueKey('swarm-welcome-search-input')),
-      );
+      await tester.tap(find.byKey(const ValueKey('swarm-search-input')));
       await tester.pump();
       await tester.enterText(
-        find.byKey(const ValueKey('swarm-welcome-search-input')),
+        find.byKey(const ValueKey('swarm-search-input')),
         'Agent 1',
       );
       await tester.pump();
@@ -291,7 +293,7 @@ void main() {
   );
 
   testWidgets(
-    'parked terminals keep output, selection, scroll and fresh metadata on return',
+    'parked terminals keep output and selection and reveal the latest on return',
     (tester) async {
       final app = createApp();
       app.machineStates['m']!.nodeOnline = true;
@@ -338,7 +340,10 @@ void main() {
         session.terminal.buffer.getText(view.controller!.selection),
         selection,
       );
-      expect(view.scrollController!.offset, scroll);
+      expect(
+        view.scrollController!.offset,
+        view.scrollController!.position.maxScrollExtent,
+      );
       await tester.pumpWidget(const SizedBox());
       app.dispose();
     },
@@ -412,7 +417,7 @@ void main() {
       });
       await chord(tester, LogicalKeyboardKey.keyI, shift: true);
       await tester.pump(const Duration(milliseconds: 300));
-      expect(find.text('No agents need your input'), findsOneWidget);
+      expect(find.text('No harnesses need your input'), findsOneWidget);
       await tester.pumpWidget(const SizedBox());
       app.dispose();
     },

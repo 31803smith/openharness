@@ -30,7 +30,7 @@ class PaneResizeHandle extends StatefulWidget {
 }
 
 class _PaneResizeHandleState extends State<PaneResizeHandle> {
-  final _ownFocus = FocusNode(debugLabel: 'Resize agents');
+  final _ownFocus = FocusNode(debugLabel: 'Resize panes');
   bool _hover = false, _focused = false;
   PaneArrangement? _start, _last;
   PaneDivider? _startDivider;
@@ -129,11 +129,12 @@ class _PaneResizeHandleState extends State<PaneResizeHandle> {
 
   @override
   Widget build(BuildContext context) => Semantics(
-    label: _horizontal ? 'Resize agent columns' : 'Resize agent rows',
+    label: _horizontal ? 'Resize pane columns' : 'Resize pane rows',
     value: _value(widget.arrangement),
     increasedValue: _value(_resized(.02)),
     decreasedValue: _value(_resized(-.02)),
-    hint: 'Arrow keys resize. Double-click balances. Escape returns to the agent.',
+    hint:
+        'Arrow keys resize. Double-click balances. Escape returns to the pane.',
     slider: true,
     onIncrease: () => _step(.02),
     onDecrease: () => _step(-.02),

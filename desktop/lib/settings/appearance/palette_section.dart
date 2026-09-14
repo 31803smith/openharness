@@ -22,7 +22,7 @@ class PaletteSection extends StatelessWidget {
         children: [
           const SectionHeading(
             'Color palette',
-            subtitle: 'A coordinated look for your tabs, search and agents. Changes apply instantly.',
+            subtitle: 'A coordinated look for your tabs, search and harnesses. Changes apply instantly.',
           ),
           LayoutBuilder(
             builder: (context, constraints) {

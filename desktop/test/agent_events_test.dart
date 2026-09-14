@@ -169,9 +169,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, 'Select this folder'));
       await tester.pumpAndSettle();
-      await tester.tap(
-        find.widgetWithText(FilledButton, 'Create on ${machine.displayName}'),
-      );
+      await tester.tap(find.widgetWithText(FilledButton, 'Create Harness'));
       await tester.pumpAndSettle();
     }
 

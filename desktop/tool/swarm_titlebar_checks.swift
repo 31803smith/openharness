@@ -371,7 +371,7 @@ private extension SwarmTitlebar {
     }
     let original = NSApp.mainMenu!
     let edit = original.item(withTitle: "Edit")!.submenu!
-    let agent = original.item(withTitle: "Agent")!.submenu!
+    let agent = original.item(withTitle: "File")!.submenu!
     let newSwarm = agent.items.first(where: { $0.representedObject as? String == "new" })!
     let nativeCopy = NSMenuItem(title: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
     edit.addItem(nativeCopy)
@@ -413,8 +413,8 @@ private extension SwarmTitlebar {
       "The menu yields the remapped search shortcut to Flutter")
     try checkTitlebar(!main.performKeyEquivalent(with: open), "Menu equivalents defer before input dispatch")
     setKeymap(defaults)
-    try checkTitlebar(strip.newButton.toolTip == "New Harness (⌘T)", "Reload refreshes the New Harness button hint")
-    try checkTitlebar(strip.newButton.accessibilityLabel() == "New Harness", "The plus announces New Harness")
+    try checkTitlebar(strip.newButton.toolTip == "New Tab (⌘T)", "Reload refreshes the New Harness button hint")
+    try checkTitlebar(strip.newButton.accessibilityLabel() == "New Tab", "The plus announces New Harness")
     try checkTitlebar(!main.defersToInput(event("p", 35, .command)), "Command-P no longer opens Navigate")
     try checkTitlebar(main.defersToInput(event("p", 35, [.command, .shift])), "Command-Shift-P reaches command search")
     flutterKeyContext = "picker"
@@ -473,15 +473,13 @@ private extension SwarmTitlebar {
     try checkTitlebar(settings.title == "Settings…" && settings.representedObject as? String == "settings", "Settings stays in the application menu")
     let agent = main.item(withTitle: "File")!.submenu!
     let historyMenu = main.item(withTitle: "History")!.submenu!
-    try checkTitlebar(agent.items.compactMap { $0.representedObject as? String } == ["new", "addAgent", "newAgent", "splitRight", "splitDown", "zoomPane", "pinPane", "renameActive", "closePane", "closeActive", "addProject"], "File groups tab, creation and pane actions without changing their command identities")
-    let addAgent = agent.items.first(where: { $0.representedObject as? String == "addAgent" })!
-    let newAgent = agent.items.first(where: { $0.representedObject as? String == "newAgent" })!
-    try checkTitlebar(addAgent.keyEquivalent == "n" && addAgent.keyEquivalentModifierMask == [.command], "Command-N opens the shared Add agent picker")
-    try checkTitlebar(newAgent.keyEquivalent == "n" && newAgent.keyEquivalentModifierMask == [.command, .shift], "Shift-Command-N creates a fresh agent")
+    try checkTitlebar(agent.items.map { $0.isSeparatorItem ? "separator" : ($0.representedObject as? String ?? "") } == ["new", "newAgent", "addAgent", "renameActive", "closeActive", "separator", "splitRight", "splitDown", "zoomPane", "closePane"], "File groups Harness and Pane actions, without Pin or Add Project clutter")
+    try checkTitlebar(agent.items.contains { $0.title == "Rename Harness…" && $0.representedObject as? String == "renameActive" }, "Rename Harness preserves its command")
+    try checkTitlebar(agent.items.contains { $0.title == "Close Harness" && $0.representedObject as? String == "closeActive" }, "Close Harness preserves its command")
     let commands = edit.submenu!.items.first(where: { $0.representedObject as? String == "commands" })!
     try checkTitlebar(commands.keyEquivalent == "p" && commands.keyEquivalentModifierMask == [.command, .shift], "Command search keeps its native menu owner")
     try checkTitlebar(edit.submenu!.items.allSatisfy { $0.representedObject as? String != "jump" }, "Edit has no Navigate action")
-    try checkTitlebar(agent.items.first?.title == "New Harness" && newAgent.title == "Create Agent…", "New Harness opens the chooser while Create Agent opens the creation form")
+    try checkTitlebar(agent.items.first?.title == "New Tab" && agent.items.first?.keyEquivalent == "t", "New Tab opens the chooser with Command-T")
     let reopen = historyMenu.items.first(where: { $0.representedObject as? String == "reopen" })!
     actionsEnabled = true
     canReopen = false
@@ -504,6 +502,12 @@ private extension SwarmTitlebar {
     ]
     updateMachines(machineRows)
     let machineMenu = main.item(withTitle: "Machines")!.submenu!
+    let manager = machineMenu.items.first!
+    try checkTitlebar(manager.title == "Open Machines Manager" && manager.representedObject as? String == "manageMachines" && machineMenu.items[1].isSeparatorItem,
+      "Machines Manager leads the menu before linked computers")
+    menuAction(manager)
+    try checkTitlebar(messenger.calls.last?.method == "manageMachines",
+      "Machines Manager opens through the Flutter command bridge")
     let destinations = machineMenu.items.filter { $0.action == #selector(machineAction(_:)) }
     try checkTitlebar(destinations.map { $0.representedObject as? String } == ["office", "home"],
       "Machines lists each linked computer as a destination")
@@ -573,15 +577,30 @@ private extension SwarmTitlebar {
       try checkTitlebar(!validateMenuItem(item), "Workspace commands cannot act behind a modal")
     }
     actionsEnabled = true
+    let iconRows: [[String: Any]] = [
+      ["id": "single-harness", "title": "Architecture", "swarm": true,
+       "agentCount": 1, "engine": "claude"],
+      ["id": "group-harness", "title": "Project", "swarm": true,
+       "agentCount": 2],
+    ]
+    updateHistory(iconRows, closed: iconRows)
+    let singleItems = historyMenu.items.filter { $0.representedObject as? String == "single-harness" }
+    let groupItems = historyMenu.items.filter { $0.representedObject as? String == "group-harness" }
+    try checkTitlebar(singleItems.count == 2 && singleItems.allSatisfy {
+      $0.image === historyIcons.image(engine: "claude", asset: nil)
+    }, "Recently visited and closed single-agent harnesses show their agent icon")
+    try checkTitlebar(groupItems.count == 2 && groupItems.allSatisfy {
+      $0.image === SwarmIdentity.menuIcon
+    }, "Multiple-agent harnesses retain the group icon")
     updateHistory([])
     try checkTitlebar(!validateMenuItem(recent), "A stale recent menu item cannot dispatch after its view disappears")
     try checkTitlebar(!validateMenuItem(closed), "A stale closed entry cannot restore another Swarm")
     try checkTitlebar(historyMenu.items.first(where: { $0.title == "No Recent Visits" })?.isEnabled == false, "An empty history is an inert placeholder")
     guard let menu = main.items.first(where: { $0.title == "View" })?.submenu,
           let attention = menu.items.first(where: { $0.representedObject as? String == "notifications" }) else {
-      throw TitlebarCheckFailure(message: "View menu exposes agents needing input")
+      throw TitlebarCheckFailure(message: "View menu exposes harnesses needing input")
     }
-    try checkTitlebar(attention.title == "Agents Needing Input…", "Native command names its destination")
+    try checkTitlebar(attention.title == "Harnesses Needing Input…", "Native command names its destination")
     try checkTitlebar(attention.keyEquivalent == "i" && attention.keyEquivalentModifierMask == [.command, .shift], "Native attention shortcut matches Flutter")
     try checkTitlebar(attention.target === self && attention.action == #selector(menuAction(_:)), "Native attention command uses the guarded channel handler")
     actionsEnabled = false

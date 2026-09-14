@@ -414,7 +414,7 @@ void main() {
       expect(find.byType(AlertDialog), findsOneWidget);
       expect(find.text('/home/dev/target'), findsOneWidget);
       expect(app.launches, isEmpty);
-      await tester.tap(find.text('Create on Studio Mac'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Create Harness'));
       await tester.pumpAndSettle();
       expect(app.launches, [
         (machine: 'remote', engine: 'codex', folder: '/home/dev/target'),

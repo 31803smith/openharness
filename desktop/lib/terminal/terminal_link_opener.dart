@@ -96,7 +96,7 @@ class TerminalLinkOpener {
           if (!absolute) {
             // Agent frames do not advertise cwd. Never resolve against Desktop's
             // process directory, which belongs to a different app and workspace.
-            return 'Use the full file path to open this preview. The agent’s working folder is not available.';
+            return 'Use the full file path to open this preview. The harness’s working folder is not available.';
           }
           if (!await _fileExists(path)) {
             return 'This file is not available on this computer. It may still be generating or may have moved.';
