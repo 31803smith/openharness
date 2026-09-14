@@ -8,6 +8,7 @@ import {
   buildEngineCommandArgv,
   buildEngineLaunchArgv,
   commandAvailableInInteractiveShell,
+  unreadableCwdGuard,
 } from './engineLaunch.js'
 import { ENGINES } from '../engines/types.js'
 import { engineBin } from './engineBin.js'
@@ -31,7 +32,7 @@ describe('buildEngineLaunchArgv', () => {
     const argv = buildEngineLaunchArgv('claude', { cwd: '/work/project' }, '/bin/zsh')
     expect(argv).toEqual([
       '/bin/zsh', '-lic',
-      `${RAISE_OPEN_FILES_SH}if ! cd -- "$1"; then printf '%s\\n' 'harness: the selected working directory is unavailable.' >&2; exit 1; fi\nshift\nexec "$@"`,
+      `${RAISE_OPEN_FILES_SH}if ! cd -- "$1"; then printf '%s\\n' 'harness: the selected working directory is unavailable.' >&2; exit 1; fi\n${unreadableCwdGuard(process.platform)}shift\nexec "$@"`,
       'harness-engine', '/work/project', engineBin('claude'),
     ])
   })
@@ -51,6 +52,98 @@ describe('buildEngineLaunchArgv', () => {
     })
     expect(seenByEngine).not.toBe('256')
     expect(seenByEngine === 'unlimited' || Number(seenByEngine) >= Math.min(MIN_OPEN_FILES, 4096)).toBe(true)
+  })
+
+  describe('an unreadable workspace', () => {
+    // Under /bin/sh, with the engine replaced by printf so its run leaves a marker.
+    async function launchInto(dir: string): Promise<{ code: number; stdout: string; stderr: string }> {
+      const [, , paneScript] = buildEngineLaunchArgv('claude', { cwd: dir }, '/bin/sh')
+      const { execFile } = await import('node:child_process')
+      return await new Promise((resolve) => {
+        execFile(
+          '/bin/sh',
+          ['-c', paneScript, 'harness-engine', dir, '/usr/bin/printf', 'ENGINE_RAN\n'],
+          { timeout: 10_000 },
+          (error, stdout, stderr) => {
+            const code = error && typeof (error as { code?: unknown }).code === 'number'
+              ? (error as unknown as { code: number }).code
+              : 0
+            resolve({ code, stdout, stderr })
+          },
+        )
+      })
+    }
+
+    // root reads everything, so the guard has nothing to catch there.
+    const notRoot = process.getuid?.() !== 0
+
+    it.skipIf(!notRoot)('says why and stops instead of letting the engine fail on its first read', async () => {
+      // Enterable but not readable: what macOS privacy settings (TCC) produce for a folder the
+      // responsible app was not granted — `cd` works, the first readdir does not.
+      const dir = mkdtempSync(join(tmpdir(), 'harness-unreadable-'))
+      try {
+        chmodSync(dir, 0o300)
+        const result = await launchInto(dir)
+        expect(result.code).toBe(1)
+        expect(result.stdout).not.toContain('ENGINE_RAN')
+        expect(result.stderr).toContain(`harness: cannot read ${dir}`)
+      } finally {
+        chmodSync(dir, 0o700)
+        rmSync(dir, { recursive: true, force: true })
+      }
+    })
+
+    it('launches the engine when the workspace is readable', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'harness-readable-'))
+      try {
+        const result = await launchInto(dir)
+        expect(result.code).toBe(0)
+        expect(result.stdout).toContain('ENGINE_RAN')
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    })
+
+    // Both hints are pushed through a real /bin/sh, whatever platform runs the suite: the quoting
+    // of the macOS text (a backtick-free command, `›`, `—`) is what a Linux runner would otherwise
+    // never exercise.
+    async function guardOutput(platform: NodeJS.Platform, dir: string): Promise<string> {
+      const { execFile } = await import('node:child_process')
+      return await new Promise((resolve) => {
+        execFile(
+          '/bin/sh',
+          ['-c', `cd -- "$1" || exit 9\n${unreadableCwdGuard(platform)}echo ENGINE_RAN`, 'guard', dir],
+          { timeout: 10_000 },
+          (_error, stdout, stderr) => resolve(stdout + stderr),
+        )
+      })
+    }
+
+    it.skipIf(!notRoot)('points at the privacy settings on macOS and at permissions elsewhere', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'harness-unreadable-hint-'))
+      try {
+        chmodSync(dir, 0o300)
+        const darwin = await guardOutput('darwin', dir)
+        expect(darwin).toContain('Full Disk Access')
+        expect(darwin).toContain('tmux kill-server')
+        expect(darwin).toContain('Privacy & Security')
+        expect(darwin).not.toContain('ENGINE_RAN')
+        const linux = await guardOutput('linux', dir)
+        expect(linux).toContain('permissions')
+        expect(linux).not.toContain('Privacy & Security')
+        expect(linux).not.toContain('ENGINE_RAN')
+      } finally {
+        chmodSync(dir, 0o700)
+        rmSync(dir, { recursive: true, force: true })
+      }
+    })
+
+    it('keeps the action inside what a relayed pane summary can show', () => {
+      // First hint line: what to do. It has to survive next to a folder path in a ~180-char summary.
+      const firstHint = unreadableCwdGuard('darwin').match(/'(harness: on macOS[^']*)'/)?.[1] ?? ''
+      expect(firstHint.length).toBeGreaterThan(0)
+      expect(firstHint.length).toBeLessThanOrEqual(120)
+    })
   })
 
   it('falls back to direct execution when no absolute shell is available', () => {

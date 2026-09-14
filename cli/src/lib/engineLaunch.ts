@@ -194,7 +194,9 @@ export function buildEngineLaunchArgv(
   // directory and enter the selected workspace only after those files have loaded: an IDE can replace
   // a workspace inode between the desktop picker resolving it and tmux spawning the pane.
   const cwdPrelude = opts.cwd
-    ? `if ! cd -- "$1"; then printf '%s\\n' 'harness: the selected working directory is unavailable.' >&2; exit 1; fi\nshift\n`
+    ? `if ! cd -- "$1"; then printf '%s\\n' 'harness: the selected working directory is unavailable.' >&2; exit 1; fi\n`
+      + unreadableCwdGuard()
+      + 'shift\n'
     : ''
   const body = opts.installIfMissing
     ? installIfMissingThenExecScript(opts.installIfMissing, runtimeNode)
@@ -206,6 +208,34 @@ export function buildEngineLaunchArgv(
   // started the server, and an engine (Claude Code refuses outright) or an npm install under 256 is
   // the failure the person then reads in the pane. See openFiles.ts.
   return [interactive.path, ...interactive.args, RAISE_OPEN_FILES_SH + prelude + cwdPrelude + body, 'harness-engine', ...(opts.cwd ? [opts.cwd] : []), ...command]
+}
+
+/**
+ * Refuse a workspace the shell could enter but cannot read, and say why — before the engine finds
+ * out on its own terms.
+ *
+ * `cd` succeeding proves only the search bit. macOS privacy protection (TCC) leaves exactly that:
+ * a process whose responsible app was never granted Documents, Desktop or Downloads may enter the
+ * folder and is refused its first readdir with EPERM. The engine then dies with nothing to go on —
+ * Claude Code printed "An unknown error occurred (Unexpected)" on a machine whose tmux server had
+ * been started by a terminal app without Documents access, and every pane the daemon opened on
+ * that server inherited the refusal — so the check is made here, where the reason can be given.
+ * `[ -r . ]` is `access(2)`, which TCC answers the same way as the readdir would.
+ *
+ * The hint names the fix for the platform this daemon generates the script on, which is the one
+ * the pane runs on. `$PWD` is left to the shell so the message names the folder as entered. Short
+ * lines, the action first: a dialog that relays the pane's last lines keeps about 180 characters
+ * (agentCreateDiagnosis.ts), and the folder path alone can take half of that.
+ */
+export function unreadableCwdGuard(platform: NodeJS.Platform = process.platform): string {
+  const hints = platform === 'darwin'
+    ? [
+        'harness: on macOS, grant Full Disk Access to the app that started tmux (and to Harness), then run: tmux kill-server',
+        'harness: or pick a folder outside Documents, Desktop and Downloads (System Settings › Privacy & Security).',
+      ]
+    : ['harness: check the folder\'s permissions for this user.']
+  return `if ! [ -r . ]; then printf '%s\\n' "harness: cannot read $PWD — the agent was not started." `
+    + `${hints.map(shellSingleQuote).join(' ')} >&2; exit 1; fi\n`
 }
 
 /**
