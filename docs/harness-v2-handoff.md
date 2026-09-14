@@ -30,10 +30,14 @@ Research must lead to justified improvements, not feature accumulation.
 - Continue on **`main`**, tracking `origin/main`. The user's latest instruction
   is to work, commit, and push directly on main from now on. This supersedes
   the earlier preference for creating a fresh feature branch after each merge.
-- Add's frame continuation reuses unchanged result rows and keeps background
-  pane additions from taking the picker's Flutter focus. The full suite passes
-  1,302 tests. Native fixture identity repair is saved in `fe42f2e`; `56f9d2a`
+- **`e71e0ca`** saves Add's frame continuation: it reuses unchanged result rows
+  and keeps background pane additions from taking the picker's Flutter focus.
+  The full suite passes 1,302 tests. Native fixture identity repair is saved in
+  `fe42f2e`; `56f9d2a`
   preserves the team's subsequent `9e2e4be` branding/update work.
+  **`56143bd`** integrates the team's later `cdb876e` removal of the obsolete
+  internal-V2 update flag. The combined suite still passes all 1,302 tests with
+  one skip; analysis remains at zero errors/warnings and 14 existing infos.
 - **`5f3ecae`** saves Cmd-N Add, the prominent New agent button, optional
   multi-select, visible machine/project starters and the larger floating-button
   inset. **`f514140`** preserves the team's concurrent main through `76a469b`,
@@ -250,10 +254,10 @@ the common page, without adding another first-tab-only component.
 passes 1,302 desktop tests with one existing skip.
 Analyzer reports zero errors/warnings and 14 existing informational diagnostics
 (12 vendored, two inherited from main). Logs:
-`/private/tmp/harness-add-render-{full-tests,final-analyze}.log`.
+`/private/tmp/harness-add-render-integrated-{tests,analyze}.log`.
 The final macOS arm64 Release build also succeeds with
 `FLUTTER_TARGET=lib/main.dart`; log:
-`/private/tmp/harness-add-render-release-build.log`. The running app was not
+`/private/tmp/harness-add-render-integrated-build.log`. The running app was not
 restarted, so do not claim its process has loaded these source changes.
 The preceding Add/shortcut integration passed 51 native keymap decoder
 and 347 AppKit assertions, including the exported Dart keymap and hidden window

@@ -16,6 +16,11 @@ Updated 2026-09-14 after integrating the continuation into main. This is a worki
   existing skip; analysis has zero errors/warnings and 14 existing infos.
   The normal macOS arm64 Release build succeeds. Test/analysis/build artifacts
   use `/private/tmp/harness-add-render-*.log`; no running app was restarted.
+  Saved as `e71e0ca`, then preserved the team's `cdb876e` update-flag cleanup in
+  merge `56143bd`. Integrated tests still pass all 1,302 with one skip, and
+  analysis remains at zero errors/warnings and 14 existing infos. The combined
+  Release build succeeds too; logs:
+  `/private/tmp/harness-add-render-integrated-{tests,analyze,build}.log`.
 - `fe42f2e` repairs the isolated native benchmark for the team's public bundle
   identity change. Nine isolation checks pass and the disposable Release
   fixture builds. Its runner correctly refuses the running workspace preview;

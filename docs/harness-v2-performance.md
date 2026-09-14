@@ -53,6 +53,9 @@ or warnings and 14 existing infos. The normal macOS arm64 Release build also
 succeeds; no running app was restarted. Logs:
 `/private/tmp/harness-add-render-{full-tests,final-analyze}.log`.
 Build log: `/private/tmp/harness-add-render-release-build.log`.
+After integrating the team's update-flag cleanup in `56143bd`, the combined
+source passes the same 1,302 tests, analysis and Release build. Logs:
+`/private/tmp/harness-add-render-integrated-{tests,analyze,build}.log`.
 
 ### Native fixture after the public bundle-ID change
 
