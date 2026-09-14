@@ -1,0 +1,35 @@
+name: harness_mobile
+description: "Harness viewer for iOS and Android."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.13.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # The shared app: state, API, auth, WS/relay, E2EE, the viewer's stand-ins for
+  # the harness CLI, and the design system. A path dependency rather than a copy
+  # — the mobile work once lived in a separate checkout and drifted out of reach,
+  # which is the whole reason it had to be ported back by hand. One source, two
+  # entry points.
+  harness:
+    path: ../desktop
+
+  # Used directly by this package's own code (lib/phone/, lib/main.dart). Kept
+  # explicit rather than leaned on transitively, so an import here cannot break
+  # because the shared app dropped a dependency it no longer uses.
+  cupertino_icons: ^1.0.8
+  flutter_riverpod: ^2.6.1
+  lucide_icons_flutter: ^3.1.15
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

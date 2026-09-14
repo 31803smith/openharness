@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../core/asset_owner.dart';
+
 import '../../core/app_version.dart';
 import '../../core/build_identity.dart';
 import '../../shared/theme/app_theme.dart' as grid;
@@ -161,6 +163,7 @@ class _Identity extends StatelessWidget {
         // The icon is already rounded with transparent corners, so it needs no
         // clip of its own — one would only cut its edge twice.
         Image.asset(
+          package: harnessAssetPackage,
           'assets/app_icon.png',
           width: 46,
           height: 46,

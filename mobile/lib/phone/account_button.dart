@@ -2,8 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../shared/theme/app_theme.dart';
-import '../state/app_state.dart';
+import 'package:harness/shared/theme/app_theme.dart';
+import 'package:harness/state/app_state.dart';
 
 /// Who is signed in, as a round initial in the corner of the machine list — and, on a tap, the
 /// one account action a viewer has: signing out.

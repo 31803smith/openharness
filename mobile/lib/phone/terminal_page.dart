@@ -3,12 +3,12 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
-import '../shared/theme/app_theme.dart';
-import '../shared/widgets/app_icon_button.dart';
-import '../state/app_state.dart';
-import '../widgets/engine_identity.dart';
-import '../widgets/rename_agent_dialog.dart';
-import '../widgets/terminal_panel.dart';
+import 'package:harness/shared/theme/app_theme.dart';
+import 'package:harness/shared/widgets/app_icon_button.dart';
+import 'package:harness/state/app_state.dart';
+import 'package:harness/widgets/engine_identity.dart';
+import 'package:harness/widgets/rename_agent_dialog.dart';
+import 'package:harness/widgets/terminal_panel.dart';
 import 'agent_hero.dart';
 import 'phone_header.dart';
 import 'phone_sheet.dart';

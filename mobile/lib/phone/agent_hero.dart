@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../shared/theme/app_theme.dart';
+import 'package:harness/shared/theme/app_theme.dart';
 
 /// The row expanding into the header of the page it opens.
 ///

@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
-import '../core/models.dart';
-import '../shared/theme/app_theme.dart';
-import '../state/app_state.dart';
-import '../widgets/engine_identity.dart';
+import 'package:harness/core/models.dart';
+import 'package:harness/shared/theme/app_theme.dart';
+import 'package:harness/state/app_state.dart';
+import 'package:harness/widgets/engine_identity.dart';
 import 'agent_hero.dart';
 import 'phone_card.dart';
 import 'phone_status.dart';

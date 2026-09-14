@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
-import '../shared/theme/app_theme.dart';
-import '../state/app_state.dart';
+import 'package:harness/shared/theme/app_theme.dart';
+import 'package:harness/state/app_state.dart';
 import 'phone_card.dart';
 import 'phone_status.dart';
 import 'status_pill.dart';

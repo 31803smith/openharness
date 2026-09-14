@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../state/app_state.dart';
+import 'package:harness/state/app_state.dart';
 import 'agent_index.dart';
 import 'agents_tab.dart';
 import 'machines_tab.dart';

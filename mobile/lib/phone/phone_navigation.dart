@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/cupertino.dart';
 
-import '../state/app_state.dart';
+import 'package:harness/state/app_state.dart';
 import 'agent_hero.dart';
 import 'agents_page.dart';
 import 'link_page.dart';

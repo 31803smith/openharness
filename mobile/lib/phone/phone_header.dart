@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
-import '../shared/theme/app_theme.dart';
-import '../shared/widgets/app_icon_button.dart';
+import 'package:harness/shared/theme/app_theme.dart';
+import 'package:harness/shared/widgets/app_icon_button.dart';
 
 /// The top of a phone page, drawn below the status bar and the Dynamic Island rather than into
 /// them — the desktop chrome only ever had traffic lights to clear.

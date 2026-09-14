@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../shared/theme/app_theme.dart';
+import 'package:harness/shared/theme/app_theme.dart';
 import 'phone_status.dart';
 
 /// The palette colour a [PhoneTone] draws in.

@@ -1,5 +1,7 @@
 import 'dart:math' as math;
 
+import '../core/asset_owner.dart';
+
 import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
@@ -143,6 +145,7 @@ class EngineMark extends StatelessWidget {
     final identity = engineIdentity(engine, displayName: displayName);
     final mark = identity.asset != null
         ? Image.asset(
+            package: harnessAssetPackage,
             identity.asset!,
             key: ValueKey('engine-icon-${identity.id}'),
             width: size,

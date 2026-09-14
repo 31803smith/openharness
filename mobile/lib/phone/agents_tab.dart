@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
-import '../shared/theme/app_theme.dart';
-import '../shared/widgets/empty_state.dart';
-import '../state/app_state.dart';
+import 'package:harness/shared/theme/app_theme.dart';
+import 'package:harness/shared/widgets/empty_state.dart';
+import 'package:harness/state/app_state.dart';
 import 'agent_hero.dart';
 import 'agent_index.dart';
 import 'agent_row.dart';

@@ -6,7 +6,8 @@ import 'dart:ui' show AppExitResponse;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:harness/main.dart';
+import 'package:harness/app_shell.dart';
+import 'package:harness/screens/swarm_screen.dart';
 import 'package:harness/state/app_state.dart';
 import 'package:harness/state/swarm_catalog.dart';
 import 'package:harness/ws/ws_conn.dart';
@@ -186,7 +187,7 @@ void main() {
         await tester.pumpWidget(
           ProviderScope(
             overrides: [appStateProvider.overrideWithValue(app)],
-            child: const DesktopApp(),
+            child: HarnessApp(authenticatedScreen: _swarm),
           ),
         );
         await tester.pump();
@@ -311,3 +312,7 @@ void main() {
     },
   );
 }
+
+/// The screen the desktop app mounts once signed in — the argument `HarnessApp`
+/// now takes, so the shell itself does not have to know about either app.
+Widget _swarm(AppNotifier app) => SwarmScreen(notifier: app);

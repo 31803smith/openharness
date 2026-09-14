@@ -3,11 +3,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
-import '../core/app_version.dart';
-import '../shared/theme/app_theme.dart';
-import '../shared/theme/appearance_prefs_store.dart';
-import '../state/app_state.dart';
-import '../terminal/terminal_font_store.dart';
+import 'package:harness/core/app_version.dart';
+import 'package:harness/shared/theme/app_theme.dart';
+import 'package:harness/shared/theme/appearance_prefs_store.dart';
+import 'package:harness/state/app_state.dart';
+import 'package:harness/terminal/terminal_font_store.dart';
 import 'phone_header.dart';
 import 'phone_sheet.dart';
 import 'settings_row.dart';

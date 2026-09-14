@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import '../core/asset_owner.dart';
+
 import 'package:flutter/material.dart';
 
 /// Wallpaper belongs only to the empty new-swarm canvas.
@@ -11,8 +13,9 @@ class SwarmWallpaper extends StatefulWidget {
 }
 
 class _SwarmWallpaperState extends State<SwarmWallpaper> {
-  static const _image = AssetImage(
+  static final _image = AssetImage(
     'assets/swarm-wallpapers/swarm-welcome-dusk.jpg',
+    package: harnessAssetPackage,
   );
   ImageConfiguration _configuration = ImageConfiguration.empty;
 
