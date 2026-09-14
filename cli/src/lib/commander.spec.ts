@@ -263,6 +263,40 @@ describe('CommanderMirror recap events', () => {
     expect(deviceFrames.filter((f) => f.payload.kind === 'summary')).toHaveLength(1)
   })
 
+  it('hands the summariser the previous turn\'s recap, and nothing on the first turn', async () => {
+    // recap = llm(instruct, previous_recap, ask, answer). The previous recap is read from the store
+    // BEFORE this turn's lands there — otherwise "previous" is the turn being summarised.
+    const previous: Array<string | undefined> = []
+    let turn = 0
+    const mirror = new CommanderMirror({
+      send: () => {},
+      sendWeb: () => {},
+      hasDevice: () => true,
+      summarize: async (_text, _signal, _ask, _sessionId, previousRecap) => {
+        previous.push(previousRecap)
+        turn++
+        return `Recap ${turn}\n\nBody ${turn}`
+      },
+      dataDir,
+    })
+
+    const oneTurn = (ask: string, answer: string) => mirror.ingest([
+      { type: 'turn_started', payload: { userMessage: ask } },
+      { type: 'text_delta', payload: { content: answer } },
+      { type: 'turn_ended', payload: {} },
+    ] as LiveEvent[], 'session-prev')
+
+    oneTurn('fix the retry path', 'Fixed the retry path in client.ts.')
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    oneTurn('same fix in the other file', 'Done, applied the same change to server.ts.')
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+
+    expect(previous).toEqual([undefined, 'Recap 1\n\nBody 1'])
+    expect(mirror.recent('session-prev', 3).map((r) => r.recap)).toEqual(['Recap 2', 'Recap 1'])
+  })
+
   it('renders normalized Codex Task and child tools through the same device cards as Claude', () => {
     const deviceFrames: CommanderFrame[] = []
     const mirror = new CommanderMirror({

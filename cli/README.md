@@ -252,6 +252,7 @@ reported as such, not described as exercised.
 | `ADAPTER_CLI_DIR` | `~/.harness/cli` | install dir holding the `cli.js`/`notify.mjs` the updater swaps |
 | `LOG_FRAMES` | `false` | one log line per backend frame — type, audience and opaque ids, never a payload body. Every content-bearing frame is encrypted before it reaches the socket, so this is the only way to see what the daemon actually sent |
 | `HARNESS_HOOK_DEADLINE_MS` | `4500` | wall-clock budget a hook gives itself before abandoning optional work. Raise it on a slow or heavily loaded machine, where the budget is spent on load rather than on the hook and the offline registry fallback silently does nothing. Clamped, never below the default |
+| `SUMMARY_MODE` | `model` | how the device recap is written. `model`: a one-shot of the session's own engine, fed the previous recap, the user's ask and the answer. `local`: no model — the answer's first sentence is excerpted, instantly, but each recap stands alone |
 | `ORI_SUMMARY_MODEL` | `deepseek/deepseek-v4-flash` | recap model for agents routed through an OpenRouter gateway (`ori claude`), which have no vendor credential to spend |
 | `ORI_VOICE_ROUTE_MODEL` | `deepseek/deepseek-v4-flash` | same, for the voice router's classification |
 | `ORI_CREDENTIALS_PATH` | `~/.ori/credentials.json` | where `ori login` stores its key; read only when neither the daemon env nor the agent's own process supplies one |
@@ -269,9 +270,16 @@ periodic heartbeat).
 The per-turn **summary/recap** matches the hosted runtime: on turn end, *only while a device is
 connected*, the adapter runs a disposable one-shot from the session's own CLI engine
 (`SUMMARY_MODEL`, `CODEX_SUMMARY_MODEL`, or `CURSOR_SUMMARY_MODEL`) → `recap ≤15 words\n\n
-body ≤200`, shows a `Summarizing…` indicator while it runs, persists it per session
+body ≤120 words`, shows a `Summarizing…` indicator while it runs, persists it per session
 (`${ADAPTER_DATA_DIR}/summaries.json`), and returns it on `project_recent` at device boot. A newer
 turn aborts a stale recap.
+
+The one-shot is `recap = llm(instruct, previous recap, the user's ask, the answer)`. The previous
+recap is the session's last stored summary, quoted as *continuity only* — it lets a turn whose
+answer is "done, same change in the other file" recap as what was done instead of a fragment — and
+the prompt forbids repeating it or reporting it as this turn's news. `SUMMARY_MODE=local` drops the
+model: the answer's first prose sentence is excerpted in the same tick (no `Summarizing…`), which is
+the right trade when the dial sits next to a window already showing the full text.
 
 ## Pair an Autonomous device directly
 

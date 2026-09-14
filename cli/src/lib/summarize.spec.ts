@@ -103,6 +103,48 @@ describe('gateway recap', () => {
   })
 })
 
+describe('previous recap', () => {
+  it('quotes the previous turn\'s recap as continuity context, fenced off from the content', async () => {
+    mocks.runClaude.mockResolvedValue({ text: 'Applied the same change to server.ts.\n\nDone.', sessionId: null })
+
+    await summarizeTurnText(
+      'Done, applied the same change to server.ts.',
+      undefined,
+      'same fix in the other file',
+      'claude',
+      undefined,
+      'Fixed the retry path in client.ts.\n\nThe retry now backs off\nand caps at five attempts.',
+    )
+
+    const prompt = mocks.runClaude.mock.calls[0][0].prompt as string
+    // Flattened — the stored body's line breaks must not read as structure to preserve.
+    expect(prompt).toContain('«Fixed the retry path in client.ts. The retry now backs off and caps at five attempts.»')
+    expect(prompt).toContain('PREVIOUS turn')
+    // Context, not content: the block sits BEFORE the turn's own message, and the message is unchanged.
+    expect(prompt.indexOf('PREVIOUS turn')).toBeLessThan(prompt.indexOf('---\nDone, applied the same change'))
+  })
+
+  it('says nothing about a previous turn when there is none', async () => {
+    mocks.runClaude.mockResolvedValue({ text: 'Fixed the retry path.\n\nDone.', sessionId: null })
+
+    await summarizeTurnText('Fixed the retry path in client.ts.', undefined, 'fix the retry path', 'claude')
+
+    const prompt = mocks.runClaude.mock.calls[0][0].prompt as string
+    expect(prompt).not.toContain('PREVIOUS turn')
+  })
+
+  it('does not let the previous recap\'s language trigger the drift retry', async () => {
+    // The language check compares the OUTPUT against the ask + answer only. A previous recap in another
+    // script is context the model was told to ignore for language, so it must not count as a mismatch.
+    mocks.runClaude.mockResolvedValue({ text: 'Deploy finished.\n\nThe service is healthy.', sessionId: null })
+
+    await summarizeTurnText('Deploy finished; service healthy.', undefined, 'deploy status?', 'claude', undefined,
+      'Đã sửa đường retry.\n\nRetry giờ lùi dần và dừng ở năm lần.')
+
+    expect(mocks.runClaude).toHaveBeenCalledTimes(1)
+  })
+})
+
 describe('Cursor recap', () => {
   it('uses a Cursor one-shot with the configured Cursor model', async () => {
     mocks.runCursor.mockResolvedValue({
