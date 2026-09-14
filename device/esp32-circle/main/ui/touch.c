@@ -140,11 +140,12 @@ static void scroll_abort(void)
 // the terminal — learns that the setting exists, which is the point: a preference two sides both have to
 // hold is a preference they can disagree about, and this one would show up as a scroll that goes the wrong
 // way only on some screens.
-// THE SIGNS ARE INVERTED against what this used to return, because the two labels were swapped: what
-// the settings row called "Natural" scrolled the way people call reversed, and vice versa. Only the
-// arithmetic moves — the row still reads Natural ⇄ Reversed, the NVS key is untouched, and the default
-// is still Natural, which now means what it says.
-static int scroll_sign(void) { return ui_scroll_is_reversed() ? 1 : -1; }
+// THE SIGNS WERE INVERTED once, on the reading that the labels were swapped — and put back the other way
+// again (owner, 2026-09-14: "đảo ngược logic natural vs reversed, text thì keep đúng hết rồi"): with the
+// dial in hand, "Natural" is the text following the finger, which is the sign this now returns for it.
+// Only the arithmetic moves — the row still reads Natural ⇄ Reversed, the NVS key is untouched, and the
+// default is still Natural.
+static int scroll_sign(void) { return ui_scroll_is_reversed() ? -1 : 1; }
 
 static void swipe_track(bool pressed, uint16_t x, uint16_t y)
 {
@@ -376,14 +377,10 @@ static void touch_read(lv_indev_t *indev, lv_indev_data_t *data)
     // tap-to-stop + swipe suppression already ran in swipe_track above (raw coords) — swallow everything else.
     if (ui_voice_is_active()) { data->state = LV_INDEV_STATE_RELEASED; return; }
 
-    // Awake: double-tap STARTS voice (only when fully idle — a live turn keeps audio active and blocks a
-    // restart). Stopping is a single tap (swipe_track), so this is start-only.
-    if (dbl) {
-        if (!ui_voice_is_active()) ui_voice_start();
-        s_swallow_until_release = true;              // don't let the 2 taps land as UI presses
-        data->state = LV_INDEV_STATE_RELEASED;
-        return;
-    }
+    // Awake: a double-tap used to START voice here (owner, 2026-09-14: "bỏ double tap để voice"). The
+    // Voice button on the tile and on the Overview is the way in now; a double-tap while awake is two
+    // taps, and lands as two taps. Stopping is still a single tap (swipe_track).
+    (void)dbl;
 
     if (pressed) {
         data->point.x = x;

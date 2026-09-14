@@ -655,10 +655,10 @@ static int ring_of_agent(int i) { return i + RING_LEAD; }   // agent index → r
 // These two keep the call sites unchanged: thirty-odd of them ask the map, and none of them should have
 // to know the ring's length or which way it runs.
 static bool s_swipe_reversed;
-// Ring steps per column step. INVERTED against the old mapping for the same reason scroll_sign() is —
-// the two labels were the wrong way round, so "Natural" walked the carousel the way people call
-// reversed. The label, the key and the default all stay; only the direction they mean changes.
-static int ring_dir(void) { return s_swipe_reversed ? 1 : -1; }
+// Ring steps per column step. Flipped with scroll_sign() (owner, 2026-09-14): "Natural" walks the
+// carousel the way the finger drags, "Reversed" the other way. The label, the key and the default all
+// stay; only the direction they mean changes.
+static int ring_dir(void) { return s_swipe_reversed ? -1 : 1; }
 static int ring_of_col(int c) { return carousel_ring_of_col(c, ring_len(), ring_dir()); }
 static int col_for_ring_near(int cc, int r) { return carousel_col_for_ring_near(cc, r, ring_len(), ring_dir()); }
 // Set active/settings state from whichever ring position is centered right now (single source of truth).
@@ -2925,13 +2925,15 @@ static bool agent_action_ready(void)
 // voice thì hiện ra 3 option Voice Goal Loop, default là Voice" — the wheel this tile had before the
 // three marks, brought back). It opens centred on Voice every time and never remembers the last pick:
 // the button under the finger has to mean the same thing each time it is reached for without looking.
-static void build_action_picker(void);
+// …and then not (owner, later the same day: "bấm icon voice thì voice luôn, không hiện ra 3 option gì
+// nữa"). The wheel stays built, unreferenced; the button starts a plain Voice capture.
+static __attribute__((unused)) void build_action_picker(void);
 static void agent_voice_tap(lv_event_t *e)
 {
     (void)e;
     if (!agent_action_ready()) return;
-    s_suppress_tap = true;   // this press opened a screen; it must not also open the detail reader
-    build_action_picker();
+    s_suppress_tap = true;   // this press started a capture; it must not also land as a tap on the tile
+    voice_start_impl(VOICE_CMD_NONE);
 }
 static __attribute__((unused)) void agent_goal_tap (lv_event_t *e) { (void)e; if (agent_action_ready()) voice_start_impl(VOICE_CMD_GOAL); }
 static __attribute__((unused)) void agent_loop_tap (lv_event_t *e) { (void)e; if (agent_action_ready()) voice_start_impl(VOICE_CMD_LOOP); }
@@ -3557,7 +3559,7 @@ static void settings_vlang_tap(lv_event_t *e)
 // The agent tile's action wheel: Voice / Goal / Loop, in that order because Voice is the default and the
 // wheel opens centred on the first row. Same shell as the language picker — local choices, no backend
 // call, so it builds straight from the tap on the LVGL task.
-static void build_action_picker(void)
+static __attribute__((unused)) void build_action_picker(void)
 {
     static const char *const ACTIONS[] = { "Voice", "Goal", "Loop" };
 
@@ -5479,10 +5481,16 @@ static void notif_remove(const char *proj_id)
 // the swipe-up gesture (m_full, falling back to m_preview) so the two routes can never disagree about what
 // "detail" means. Keeps the one exception swipe-up already makes: while the agent is WORKING its tile shows
 // the live status and the reader would only hold the previous turn's stale text, so stop at the tile.
+// THE DETAIL READER IS OFF (owner, 2026-09-14: "bỏ màn hình detail luôn, noti bấm vào thì đi vào màn
+// hình agent"). A notification lands on the agent's tile and stops there; a tap on the recap opens
+// nothing. The screen, its X and open_reader_text are kept built and wired — set DETAIL_READER to 1 and
+// both ways in come back.
+#define DETAIL_READER 0
 static void open_agent_detail(const char *proj_id)
 {
     if (!proj_id || !proj_id[0]) return;
     ui_focus_project(proj_id);          // takes the lock itself
+    if (!DETAIL_READER) return;
     const char *text = NULL;
     display_lock();
     int i = find_proj(proj_id);
@@ -7834,6 +7842,7 @@ void ui_tap(int32_t x, int32_t y)
         // While the agent is working, the tile shows the LIVE status ("Cooking… 34s" + tool line); the
         // reader would only show the PREVIOUS turn's stale text. Keep the live view — don't open detail.
         if (p->busy_model) return;
+        if (!DETAIL_READER) return;   // the recap is the whole of what the tile says — see open_agent_detail
         // No block means no turn has finished yet ("No activity yet"), and nothing to open.
         if (!p->card) return;
         lv_area_t a;
