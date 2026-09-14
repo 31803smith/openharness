@@ -3920,7 +3920,7 @@ class AppNotifier extends ChangeNotifier {
         return '$machineName is still starting your harness. Check again in a moment.';
       case 'unconfirmed':
         return '$machineName could not confirm whether this harness started. '
-            'Use Find a harness to look for it before creating another.';
+            'Use Open Harness to look for it before creating another.';
       case 'unavailable':
         return creation._complete(
           'This harness was created but is no longer available. '
@@ -3961,7 +3961,7 @@ class AppNotifier extends ChangeNotifier {
     if (_creationPlacementError(targetId, split) != null) {
       _lastError =
           'The harness was created, but its original tab or layout changed. '
-          'Find it with New Harness.';
+          'Use Open Harness to find it.';
       _lastErrorRetryable = false;
       notifyListeners();
       return null;

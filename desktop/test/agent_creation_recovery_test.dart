@@ -87,9 +87,9 @@ Future<void> _timeOut(
 }
 
 void main() {
-  for (final entry in ['floating button', 'shortcut', 'new harness']) {
+  for (final entry in ['header', 'shortcut', 'search shortcut', 'start page']) {
     for (final dismissal in ['outside', 'escape']) {
-      testWidgets('$entry creation closes to the terminal on $dismissal', (
+      testWidgets('$entry creation dismisses once on $dismissal', (
         tester,
       ) async {
         final connection = _Connection();
@@ -97,22 +97,31 @@ void main() {
         app.stateOf('m')!.localOnly = true;
         final input = <TerminalBinaryFrame>[];
         final pane = app.adoptSessionForTest(terminal('a0', input));
+        final original = app.activeSwarmId;
         final keymap = AppKeymap();
         await runtime.mount(tester, app, keymap);
-        if (entry == 'floating button') {
-          await tester.tap(
-            find.byKey(const ValueKey('swarm-add-agent-button')),
-          );
-          await tester.pump();
-        } else if (entry == 'new harness') {
-          await chord(tester, LogicalKeyboardKey.keyT);
-          expect(app.swarms, hasLength(2));
-        } else {
-          await chord(tester, LogicalKeyboardKey.keyO);
+        switch (entry) {
+          case 'header':
+            await tester.tap(
+              find.byKey(const ValueKey('swarm-new-harness-button')),
+            );
+          case 'start page':
+            await chord(tester, LogicalKeyboardKey.keyT);
+            await tester.tap(find.byKey(const ValueKey('harness-start-new')));
+          case 'search shortcut':
+            await chord(tester, LogicalKeyboardKey.keyO);
+            await tester.enterText(
+              find.byKey(const ValueKey('swarm-search-input')),
+              'Agent 12',
+            );
+            await chord(tester, LogicalKeyboardKey.keyN);
+          default:
+            await chord(tester, LogicalKeyboardKey.keyN);
         }
-        await tester.tap(find.byKey(const ValueKey('swarm-search-new-agent')));
         await tester.pumpAndSettle();
         expect(find.byType(AlertDialog), findsOneWidget);
+        expect(find.text('Cancel'), findsNothing);
+        expect(find.text('Back to Search'), findsNothing);
         if (dismissal == 'outside') {
           await tester.tapAt(const Offset(12, 72));
         } else {
@@ -121,6 +130,16 @@ void main() {
         await tester.pumpAndSettle();
         expect(find.byType(AlertDialog), findsNothing);
         expect(find.byType(SwarmSearchResults), findsNothing);
+        if (entry == 'start page') {
+          expect(app.swarms, hasLength(2));
+          expect(app.activeSwarmId, isNot(original));
+          final field = tester.widget<TextField>(
+            find.byKey(const ValueKey('harness-start-search')),
+          );
+          expect(field.focusNode!.hasFocus, isFalse);
+          // The unused page remains usable and closes without a history entry.
+          await chord(tester, LogicalKeyboardKey.keyW);
+        }
         expect(app.focusedPane, same(pane));
         expect(app.swarms, hasLength(1));
         expect(app.closedHistory, isEmpty);
@@ -137,7 +156,7 @@ void main() {
     }
   }
 
-  testWidgets('cancel first-use creation returns to the starting picker', (
+  testWidgets('dismiss first-use creation returns to the idle start page', (
     tester,
   ) async {
     final connection = _Connection();
@@ -149,118 +168,83 @@ void main() {
     await tester.tapAt(const Offset(12, 72));
     await tester.pumpAndSettle();
     expect(find.byType(AlertDialog), findsNothing);
-    expect(find.byType(SwarmSearchResults), findsOneWidget);
+    expect(find.byType(SwarmSearchResults), findsNothing);
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const ValueKey('harness-start-search')))
+          .focusNode!
+          .hasFocus,
+      isFalse,
+    );
     expect(app.swarms, hasLength(1));
     expect(connection.calls, isEmpty);
     await tester.pumpWidget(const SizedBox());
     app.dispose();
   });
 
-  for (final entry in ['Add', 'Split right', 'Split down']) {
-    testWidgets('Back to Search returns to the same $entry search', (
-      tester,
-    ) async {
-      final connection = _Connection();
-      final app = createApp(connectionForTest: (_) => connection);
-      app.stateOf('m')!.localOnly = true;
-      final input = <TerminalBinaryFrame>[];
-      final pane = app.adoptSessionForTest(terminal('a0', input));
-      final target = app.activeSwarm;
-      final keymap = AppKeymap();
-      await runtime.mount(tester, app, keymap);
-      final field = find.byKey(const ValueKey('swarm-search-input'));
-      if (entry == 'Add') {
-        await chord(tester, LogicalKeyboardKey.keyO);
-      } else {
-        await chord(tester, LogicalKeyboardKey.keyP, shift: true);
-        await tester.enterText(field, '> $entry');
+  for (final entry in ['Open', 'Split right', 'Split down']) {
+    testWidgets(
+      'New from $entry preserves its destination without stacking search',
+      (tester) async {
+        final files = FileSelectorPlatform.instance;
+        FileSelectorPlatform.instance = _FolderPicker();
+        addTearDown(() => FileSelectorPlatform.instance = files);
+        final connection = _Connection();
+        final app = createApp(connectionForTest: (_) => connection);
+        app.stateOf('m')!.localOnly = true;
+        final input = <TerminalBinaryFrame>[];
+        final pane = app.adoptSessionForTest(terminal('a0', input));
+        final target = app.activeSwarm;
+        await mount(tester, app);
+        final field = find.byKey(const ValueKey('swarm-search-input'));
+        if (entry == 'Open') {
+          await chord(tester, LogicalKeyboardKey.keyO);
+        } else {
+          await chord(tester, LogicalKeyboardKey.keyP, shift: true);
+          await tester.enterText(field, '> $entry');
+          await tester.pump();
+          await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+          await tester.pump();
+        }
+        await tester.enterText(field, 'Agent 12');
+        await chord(tester, LogicalKeyboardKey.keyN);
+        await tester.pumpAndSettle();
+        expect(find.byType(AlertDialog), findsOneWidget);
+        expect(find.byType(SwarmSearchResults), findsNothing);
+        expect(
+          find.text(switch (entry) {
+            'Split right' => 'New Harness to the right',
+            'Split down' => 'New Harness below',
+            _ => 'New Harness',
+          }),
+          findsWidgets,
+        );
+        await tester.tap(find.byKey(const Key('new-agent-folder')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey('create-agent-submit')));
         await tester.pump();
-        await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+        expect(connection.calls.map((call) => call.type), ['agent_create']);
+        connection.calls.single.created();
+        // The fake new terminal has no handshake, so its spinner never settles.
         await tester.pump();
-      }
-      await tester.enterText(field, 'Agent 1');
-      await tester.pump();
-      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
-      await tester.pump();
-      final before = tester
-          .widget<SwarmSearchResults>(find.byType(SwarmSearchResults))
-          .search;
-      final selected = before.selected!.id;
-      final editing = tester.widget<TextField>(field).controller!;
-      editing.selection = const TextSelection(baseOffset: 0, extentOffset: 5);
-      final value = editing.value;
-      await tester.tap(find.byKey(const ValueKey('swarm-search-new-agent')));
-      await tester.pumpAndSettle();
-      expect(find.byType(AlertDialog), findsOneWidget);
-      await tester.tap(find.text('Back to Search'));
-      await tester.pumpAndSettle();
-      expect(field, findsOneWidget);
-      final restored = tester
-          .widget<SwarmSearchResults>(find.byType(SwarmSearchResults))
-          .search;
-      expect(tester.widget<TextField>(field).controller!.value, value);
-      expect(tester.widget<TextField>(field).focusNode!.hasFocus, isTrue);
-      expect(restored.selected!.id, selected);
-      expect(restored.targetId, target.id);
-      if (entry != 'Add') expect(restored.primaryAction, entry);
-      expect(app.activeSwarm, same(target));
-      expect(target.panes, [pane]);
-      expect(connection.calls, isEmpty);
-      expect(input, isEmpty);
-      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-      await tester.pump();
-      expect(field, findsNothing);
-      await tester.pumpWidget(const SizedBox());
-      app.dispose();
-      keymap.dispose();
-    });
+        await tester.pump(const Duration(milliseconds: 200));
+        expect(find.byType(AlertDialog), findsNothing);
+        expect(find.byType(SwarmSearchResults), findsNothing);
+        expect(app.activeSwarm, same(target));
+        expect(target.panes.first, same(pane));
+        expect(target.panes.last.agentId, 'created');
+        expect(target.panes, hasLength(2));
+        if (entry != 'Open') expect(target.manualLayout, isNotNull);
+        expect(input, isEmpty);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
+        app.dispose();
+      },
+    );
   }
 
-  for (final change in ['switched swarm', 'closed swarm', 'changed split']) {
-    testWidgets('Back does not restore Add into a $change', (tester) async {
-      final connection = _Connection();
-      final app = createApp(connectionForTest: (_) => connection);
-      app.stateOf('m')!.localOnly = true;
-      final input = <TerminalBinaryFrame>[];
-      app.adoptSessionForTest(terminal('a0', input));
-      final original = app.activeSwarm;
-      await mount(tester, app);
-      final field = find.byKey(const ValueKey('swarm-search-input'));
-      if (change == 'changed split') {
-        await chord(tester, LogicalKeyboardKey.keyP, shift: true);
-        await tester.enterText(field, '> split right');
-        await tester.pump();
-        await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-        await tester.pump();
-      } else {
-        await chord(tester, LogicalKeyboardKey.keyO);
-      }
-      await tester.tap(find.byKey(const ValueKey('swarm-search-new-agent')));
-      await tester.pumpAndSettle();
-      if (change == 'changed split') {
-        app.adoptSessionForTest(terminal('a1', input));
-      } else {
-        app.newSwarm();
-        if (change == 'closed swarm') await app.closeSwarm(original.id);
-      }
-      final current = app.activeSwarmId;
-      await tester.pump();
-      await tester.tap(find.text('Back to Search'));
-      await tester.pumpAndSettle();
-      expect(field, findsNothing);
-      expect(app.activeSwarmId, current);
-      if (change == 'changed split') {
-        expect(find.textContaining('split changed'), findsOneWidget);
-      }
-      expect(connection.calls, isEmpty);
-      expect(input, isEmpty);
-      await tester.pumpWidget(const SizedBox());
-      app.dispose();
-    });
-  }
-
-  for (final outcome in ['created', 'uncertain', 'created in new harness']) {
-    testWidgets('$outcome creation keeps the Add return path deliberate', (
+  for (final change in ['unchanged', 'switch', 'closed', 'stale split']) {
+    testWidgets('uncertain creation recovers once after destination $change', (
       tester,
     ) async {
       final files = FileSelectorPlatform.instance;
@@ -270,167 +254,126 @@ void main() {
       final app = createApp(connectionForTest: (_) => connection);
       app.stateOf('m')!.localOnly = true;
       final input = <TerminalBinaryFrame>[];
-      final existing = app.adoptSessionForTest(terminal('a0', input));
+      final originalPane = app.adoptSessionForTest(terminal('a0', input));
+      final original = app.activeSwarm;
       await mount(tester, app);
-      final newHarness = outcome == 'created in new harness';
-      await chord(
-        tester,
-        newHarness ? LogicalKeyboardKey.keyT : LogicalKeyboardKey.keyO,
-      );
-      final target = app.activeSwarmId;
-      final field = find.byKey(const ValueKey('swarm-search-input'));
-      await tester.enterText(field, 'Agent 12');
-      await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('swarm-search-new-agent')));
+      if (change == 'stale split') {
+        await chord(tester, LogicalKeyboardKey.keyP, shift: true);
+        await tester.enterText(
+          find.byKey(const ValueKey('swarm-search-input')),
+          '> split right',
+        );
+        await tester.pump();
+        await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+        await tester.pump();
+      }
+      await chord(tester, LogicalKeyboardKey.keyN);
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('new-agent-folder')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('create-agent-submit')));
       await tester.pump();
       final create = connection.calls.single;
-      if (outcome != 'uncertain') {
-        create.created();
-      } else {
-        create.reply.completeError(const WsRequestTimeout('agent_create'));
-      }
-      // A newly created pane is still waiting on this fixture's terminal
-      // handshake; its loading indicator intentionally does not settle.
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 100));
-      if (outcome != 'uncertain') {
-        expect(find.byType(AlertDialog), findsNothing);
-        expect(field, findsNothing);
-        expect(app.panes.map((pane) => pane.agentId), [
-          if (!newHarness) 'a0',
-          'created',
-        ]);
-        expect(app.activeSwarmId, target);
-        expect(app.isDraftSwarm(target), isFalse);
-      } else {
-        await tester.tap(find.widgetWithText(TextButton, 'Find a harness'));
-        await tester.pumpAndSettle();
-        expect(tester.widget<TextField>(field).controller!.text, 'Agent 12');
-        expect(tester.widget<TextField>(field).focusNode!.hasFocus, isTrue);
-        expect(find.byType(Checkbox), findsNothing);
-        expect(app.panes, [existing]);
-      }
-      expect(connection.calls.map((call) => call.type), ['agent_create']);
-      expect(input, isEmpty);
-      await tester.pumpWidget(const SizedBox());
-      app.dispose();
-    });
-  }
-
-  for (final change in [
-    'unchanged',
-    'welcome',
-    'switch',
-    'closed',
-    'split',
-    'stale split',
-  ]) {
-    testWidgets('find an uncertain creation through Add after $change', (
-      tester,
-    ) async {
-      final files = FileSelectorPlatform.instance;
-      FileSelectorPlatform.instance = _FolderPicker();
-      addTearDown(() => FileSelectorPlatform.instance = files);
-      final connection = _Connection();
-      final app = createApp(connectionForTest: (_) => connection);
-      app.stateOf('m')!.localOnly = true;
-      final input = <TerminalBinaryFrame>[];
-      final welcome = change == 'welcome';
-      if (!welcome) app.adoptSessionForTest(terminal('a0', input));
-      await mount(tester, app);
-      tester.view.physicalSize = const Size(2000, 1200);
-      await tester.pump();
-      final original = app.activeSwarm;
-      final splitting = change.contains('split');
-      final search = find.byKey(const ValueKey('swarm-search-input'));
-      final queryInput = search;
-      if (splitting) {
-        await chord(tester, LogicalKeyboardKey.keyP, shift: true);
-        await tester.enterText(search, '> split right');
-        await tester.pump();
-        await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-        await tester.pump();
-      } else if (!welcome) {
-        await chord(tester, LogicalKeyboardKey.keyO);
-      }
-      await tester.enterText(queryInput, 'Agent 12');
-      await tester.pump();
-      if (welcome) {
-        await chord(tester, LogicalKeyboardKey.keyN);
-      } else {
-        await tester.tap(find.byKey(const ValueKey('swarm-search-new-agent')));
-      }
+      create.reply.completeError(const WsRequestTimeout('agent_create'));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('new-agent-folder')));
-      await tester.pumpAndSettle();
+      expect(find.text('Close'), findsOneWidget);
+      expect(find.text('Back to Search'), findsNothing);
       expect(find.widgetWithText(TextButton, 'Find a harness'), findsNothing);
-      await tester.tap(find.byKey(const ValueKey('create-agent-submit')));
-      await tester.pump();
-      expect(find.widgetWithText(TextButton, 'Find a harness'), findsNothing);
-      connection.calls.last.reply.completeError(
-        const WsRequestTimeout('agent_create'),
-      );
-      await tester.pumpAndSettle();
-      expect(find.widgetWithText(TextButton, 'Find a harness'), findsOneWidget);
       if (change == 'switch' || change == 'closed') app.newSwarm();
       if (change == 'closed') await app.closeSwarm(original.id);
       if (change == 'stale split') {
         app.adoptSessionForTest(terminal('a1', input));
       }
+      final current = app.activeSwarmId;
       await tester.pump();
-      // Check status owns focus after the timeout; Shift-Tab reaches the
-      // alternative without sending the key or Enter to the terminal.
       expect(
         tester
             .widget<FilledButton>(
               find.widgetWithText(FilledButton, 'Check status'),
             )
             .focusNode!
-            .hasFocus,
+            .hasPrimaryFocus,
         isTrue,
       );
-      await tester.sendKeyDownEvent(LogicalKeyboardKey.shift);
-      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
-      await tester.sendKeyUpEvent(LogicalKeyboardKey.shift);
-      await tester.pump();
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-      await tester.pumpAndSettle();
+      await tester.pump();
+      expect(connection.calls.map((call) => call.type), [
+        'agent_create',
+        'agent_create_status',
+      ]);
+      final check = connection.calls.last;
+      expect(check.creationId, create.creationId);
+      // A pending check is still one operation, even on repeated activation.
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      expect(connection.calls, hasLength(2));
+      check.created();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
       expect(find.byType(AlertDialog), findsNothing);
+      expect(find.byType(SwarmSearchResults), findsNothing);
+      expect(app.activeSwarmId, current);
       if (change == 'closed' || change == 'stale split') {
-        expect(search, findsNothing);
-        expect(
-          find.textContaining(
-            change == 'closed' ? 'harness was closed' : 'split changed',
-          ),
-          findsOneWidget,
-        );
-        expect(original.panes.any((p) => p.agentId == 'a12'), isFalse);
+        expect(app.allPanes.any((p) => p.agentId == 'created'), isFalse);
+        expect(app.lastError, contains('Open Harness'));
       } else {
-        final field = tester.widget<TextField>(search);
-        expect(field.controller!.text, 'Agent 12');
-        expect(field.focusNode!.hasFocus, isTrue);
-        expect(app.activeSwarmId, original.id);
-        expect(original.panes.map((p) => p.agentId), welcome ? [] : ['a0']);
-        if (splitting) expect(find.text('Split right'), findsOneWidget);
-        await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-        await tester.pump();
-        expect(
-          original.panes.map((p) => p.agentId),
-          welcome ? ['a12'] : ['a0', 'a12'],
-        );
-        if (splitting) expect(original.manualLayout, isNotNull);
+        expect(original.panes.first, same(originalPane));
+        expect(original.panes.last.agentId, 'created');
+        expect(original.panes, hasLength(2));
+        if (change == 'switch') expect(app.panes, isEmpty);
       }
-      expect(connection.calls.map((c) => c.type), ['agent_create']);
+      expect(app.stateOf('m')!.agents.any((a) => a.id == 'created'), isTrue);
       expect(input, isEmpty);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());
       app.dispose();
     });
   }
+
+  testWidgets('closing an uncertain creation returns to the terminal once', (
+    tester,
+  ) async {
+    final files = FileSelectorPlatform.instance;
+    FileSelectorPlatform.instance = _FolderPicker();
+    addTearDown(() => FileSelectorPlatform.instance = files);
+    final connection = _Connection();
+    final app = createApp(connectionForTest: (_) => connection);
+    app.stateOf('m')!.localOnly = true;
+    final input = <TerminalBinaryFrame>[];
+    final pane = app.adoptSessionForTest(terminal('a0', input));
+    await mount(tester, app);
+    await chord(tester, LogicalKeyboardKey.keyO);
+    await chord(tester, LogicalKeyboardKey.keyN);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('new-agent-folder')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('create-agent-submit')));
+    await tester.pump();
+    connection.calls.single.reply.completeError(
+      const WsRequestTimeout('agent_create'),
+    );
+    await tester.pumpAndSettle();
+    // Check status owns focus. Shift-Tab reaches Close without terminal input.
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shift);
+    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shift);
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.byType(SwarmSearchResults), findsNothing);
+    expect(app.panes, [pane]);
+    expect(connection.calls.map((c) => c.type), ['agent_create']);
+    expect(input, isEmpty);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pump();
+    expect(input.single.bytes, [27, 91, 66]);
+    await chord(tester, LogicalKeyboardKey.keyO);
+    expect(find.byType(SwarmSearchResults), findsOneWidget);
+    expect(connection.calls, hasLength(1));
+    await tester.pumpWidget(const SizedBox());
+    app.dispose();
+  });
 
   test(
     'lost creation reply recovers into the original swarm and counts once',
@@ -644,7 +587,7 @@ void main() {
       app.stateOf('m')!.agents.any((agent) => agent.id == 'created'),
       isTrue,
     );
-    expect(app.lastError, contains('Find it with New Harness'));
+    expect(app.lastError, contains('Open Harness'));
   });
 
   testWidgets(
@@ -683,7 +626,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('/work'), findsOneWidget);
-      expect(find.widgetWithText(FilledButton, 'Create Harness'), findsNothing);
+      expect(find.widgetWithText(FilledButton, 'New Harness'), findsNothing);
       final action = tester.widget<FilledButton>(
         find.widgetWithText(FilledButton, 'Check status'),
       );
