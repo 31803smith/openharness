@@ -84,10 +84,8 @@ class _AboutSectionState extends State<AboutSection> {
               ),
               const SizedBox(height: 12),
               Text(
-                widget.notifier.desktopUpdatesEnabled
-                    ? 'Harness checks for a newer build when it starts, and every '
-                          'six hours after that.'
-                    : 'Automatic and manual updates are disabled for this V2 preview.',
+                'Harness checks for a newer build when it starts, and every '
+                'six hours after that.',
                 style: TextStyle(
                   color: grid.AppPalette.textFaint,
                   fontSize: 11.5,
@@ -139,10 +137,8 @@ class _AboutCard extends StatelessWidget {
           const SizedBox(height: 18),
           Container(height: 1, color: grid.AppPalette.divider),
           const SizedBox(height: 14),
-          if (notifier.desktopUpdatesEnabled) ...[
-            _CheckRow(checking: checking, onCheck: onCheck),
-            const SizedBox(height: 12),
-          ],
+          _CheckRow(checking: checking, onCheck: onCheck),
+          const SizedBox(height: 12),
           const _FlashRow(),
         ],
       ),
@@ -314,12 +310,6 @@ class _PillState {
   final bool wash;
 
   static _PillState of(AppNotifier notifier, {required bool checking}) {
-    if (!notifier.desktopUpdatesEnabled) {
-      return _PillState(
-        'Preview · updates disabled',
-        grid.AppPalette.textSecondary,
-      );
-    }
     if (notifier.isInstallingUpdate) {
       return _PillState(
         'Installing…',
