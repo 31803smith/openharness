@@ -12,6 +12,27 @@ It prints `SWARM_BENCH` JSON records. Its filename deliberately does not end in 
 
 ## Current continuation benchmark (2026-09-14)
 
+### Terminal Find editor work and composition keys
+
+Ten matching output updates caused ten rebuilds of the Find text field even
+though its editor value was unchanged. The result controls now refresh around
+a retained editor widget. Replaying the same output causes **zero editor
+rebuilds**, while the count advances from two to twelve matches and the selected
+match, caret, composing range, focus and terminal renderer remain unchanged.
+This is a deterministic widget work count, not a native latency measurement.
+
+The same audit reproduced Enter/keypad Enter navigating matches during active
+text composition, and Escape closing Find. These keys now return unhandled to
+the platform input method without reaching later Flutter shortcuts. After
+composition ends, Enter/Shift-Enter navigate normally; Escape closes Find and
+the next terminal key still reaches the agent. The tests assert the unhandled
+platform boundary, not a live native input-method session.
+
+All **39 affected Find/search/reconnect/keyboard checks** pass in
+`/private/tmp/harness-find-editor-after.log`; the failing-before cases are in
+`/private/tmp/harness-find-editor-before.log`. Both changed files analyze cleanly
+in `/private/tmp/harness-find-editor-analyze.log`.
+
 ### Routine events leave the surrounding workspace idle
 
 The current New/Open UI was exercised with 16 retained terminals across four

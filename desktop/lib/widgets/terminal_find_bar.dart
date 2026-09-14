@@ -51,6 +51,37 @@ class TerminalFindBarState extends State<TerminalFindBar> {
     }
   }
 
+  KeyEventResult _onKeyEvent(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+    final keyboard = HardwareKeyboard.instance;
+    if (keyboard.isMetaPressed ||
+        keyboard.isControlPressed ||
+        keyboard.isAltPressed) {
+      return KeyEventResult.ignored;
+    }
+    final enter =
+        event.logicalKey == LogicalKeyboardKey.enter ||
+        event.logicalKey == LogicalKeyboardKey.numpadEnter;
+    final escape =
+        event.logicalKey == LogicalKeyboardKey.escape &&
+        !keyboard.isShiftPressed;
+    if (!enter && !escape) return KeyEventResult.ignored;
+    final composing = _text.value.composing;
+    if (composing.isValid && !composing.isCollapsed) {
+      // Let the platform commit/cancel composition without a later shortcut
+      // submitting the editor or closing Find instead.
+      return KeyEventResult.skipRemainingHandlers;
+    }
+    if (escape) {
+      widget.onClose();
+    } else {
+      widget.onStep(keyboard.isShiftPressed ? -1 : 1);
+    }
+    return KeyEventResult.handled;
+  }
+
   @override
   void dispose() {
     _focus.removeListener(_onFocus);
@@ -60,17 +91,9 @@ class TerminalFindBarState extends State<TerminalFindBar> {
   }
 
   @override
-  Widget build(BuildContext context) => CallbackShortcuts(
-    bindings: {
-      const SingleActivator(LogicalKeyboardKey.escape): widget.onClose,
-      const SingleActivator(LogicalKeyboardKey.enter): () => widget.onStep(1),
-      const SingleActivator(LogicalKeyboardKey.enter, shift: true): () =>
-          widget.onStep(-1),
-      const SingleActivator(LogicalKeyboardKey.numpadEnter): () =>
-          widget.onStep(1),
-      const SingleActivator(LogicalKeyboardKey.numpadEnter, shift: true): () =>
-          widget.onStep(-1),
-    },
+  Widget build(BuildContext context) => Focus(
+    canRequestFocus: false,
+    onKeyEvent: _onKeyEvent,
     child: Material(
       color: const Color(0xff272727),
       shape: RoundedRectangleBorder(
@@ -81,7 +104,36 @@ class TerminalFindBarState extends State<TerminalFindBar> {
         padding: const EdgeInsets.only(left: 10, right: 4, top: 2, bottom: 2),
         child: ListenableBuilder(
           listenable: widget.search,
-          builder: (context, _) {
+          // Live output and result navigation update the controls, not the
+          // editor. Keep its widget stable while the search index refreshes.
+          child: Expanded(
+            child: TextField(
+              controller: _text,
+              focusNode: _focus,
+              autofocus: true,
+              textAlignVertical: TextAlignVertical.center,
+              style: const TextStyle(
+                fontSize: 13,
+                height: 1,
+                color: Colors.white,
+              ),
+              decoration: const InputDecoration(
+                hintText: 'Find in terminal…',
+                hintStyle: TextStyle(color: Colors.white54),
+                isDense: true,
+                isCollapsed: true,
+                constraints: BoxConstraints(),
+                border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                filled: false,
+                contentPadding: EdgeInsets.zero,
+              ),
+              onChanged: (value) =>
+                  widget.onQuery(value, widget.search.caseSensitive),
+            ),
+          ),
+          builder: (context, editor) {
             final search = widget.search;
             final status = search.query.isEmpty
                 ? ''
@@ -124,33 +176,7 @@ class TerminalFindBarState extends State<TerminalFindBar> {
                   ),
                   const SizedBox(width: 6),
                 ],
-                Expanded(
-                  child: TextField(
-                    controller: _text,
-                    focusNode: _focus,
-                    autofocus: true,
-                    textAlignVertical: TextAlignVertical.center,
-                    style: const TextStyle(
-                      fontSize: 13,
-                      height: 1,
-                      color: Colors.white,
-                    ),
-                    decoration: const InputDecoration(
-                      hintText: 'Find in terminal…',
-                      hintStyle: TextStyle(color: Colors.white54),
-                      isDense: true,
-                      isCollapsed: true,
-                      constraints: BoxConstraints(),
-                      border: InputBorder.none,
-                      enabledBorder: InputBorder.none,
-                      focusedBorder: InputBorder.none,
-                      filled: false,
-                      contentPadding: EdgeInsets.zero,
-                    ),
-                    onChanged: (value) =>
-                        widget.onQuery(value, search.caseSensitive),
-                  ),
-                ),
+                editor!,
                 const SizedBox(width: 6),
                 Semantics(
                   liveRegion: true,

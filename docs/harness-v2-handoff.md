@@ -1,5 +1,22 @@
 # Harness v2: goal, plan, and continuation handoff
 
+**Terminal Find editor correction:** Ten live output updates previously rebuilt
+the Find text field ten times; the result controls now update around a retained
+editor, reducing that count to zero while keeping the selected match, caret,
+composition and focus. Enter/keypad Enter and Escape no longer navigate or close
+Find during active text composition: they return to the platform input method.
+After composition ends, Enter/Shift-Enter and Escape keep their normal actions,
+including returning the next key to the terminal.
+
+All **39 affected checks** pass in `/private/tmp/harness-find-editor-after.log`;
+the failing-before cases are in `/private/tmp/harness-find-editor-before.log`.
+Both changed files analyze cleanly in `/private/tmp/harness-find-editor-analyze.log`.
+The full desktop suite passes **1,435 checks**, with one optional media placeholder
+skipped, in `/private/tmp/harness-find-editor-full.log`. These are widget work
+counts and composition-boundary checks, not native latency or live input-method
+qualification. The prepared Release below predates this correction; its refresh
+is pending. The running preview remains unchanged while the console is locked.
+
 **Workspace event isolation:** `99d1ac9` is pushed. Routine heartbeats and dial scroll no longer
 rebuild the surrounding workspace or visit every retained terminal's JSON
 dispatcher. In the current 16-terminal/four-workspace fixture, 16 heartbeats went
