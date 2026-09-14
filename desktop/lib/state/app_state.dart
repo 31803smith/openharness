@@ -659,41 +659,38 @@ class AppNotifier extends ChangeNotifier {
     // Re-sending the same agent is safe: the daemon drops it against the dial's
     // real position (`agentId === this.dialFocus` in cableSession), which is the
     // only side that can judge, because only it knows where the dial is.
-    _announceFocusToDial();
+    _announceAppFocus();
     // Only a real move is worth a rebuild.
     if (moved) notifyListeners();
   }
 
-  /// Tell the local daemon which agent this window is looking at, so the dial follows it.
-  ///
-  /// Said outright rather than left to be inferred. The daemon used to work this out from
-  /// `terminal_open`, which was equivalent while a window could only show one terminal: every move
-  /// opened a stream, so opening one meant it had moved.
-  ///
-  /// A pane grid breaks that equivalence. Clicking a tile that already holds a live session opens
-  /// nothing at all, so the dial stayed on whichever agent the last rail click had opened — which is
-  /// why the rail appeared to work and the panes did not.
-  ///
-  /// Fire-and-forget, and only for a tile that has an agent: a machine tile is not somewhere the
-  /// dial can go.
-  void _announceFocusToDial() {
+  String? _announcedFocusMachineId;
+
+  @visibleForTesting
+  Future<bool> Function(String machineId, String? agentId)? focusFrameSenderForTest;
+
+  /// Publish the selected pane to the existing local CLI connection. The CLI
+  /// shares this focus with paired devices and the dial; terminal attachments
+  /// and operating-system window activation do not define the selected agent.
+  void _announceAppFocus() {
     final pane = focusedPane;
-    final agentId = pane?.agentId;
-    if (pane == null || agentId == null) return;
-    // The EXISTING connection, never `_conn`, which builds one. Opening a socket as a side effect of
-    // moving a focus ring is the wrong trade in both directions: it dials a machine nobody asked to
-    // reach, and `_conn` throws outright before the pool exists — which took focusPane down with it,
-    // so clicking a tile did nothing at all rather than merely failing to reach the dial.
-    //
-    // Nothing here is worth failing a click for: no dial attached, no daemon yet, a socket mid
-    // reconnect — the tile still focuses and the window still works.
-    final connection = _pool?[pane.machineId];
-    if (connection == null) return;
-    unawaited(
-      connection
-          .sendTerminalFrame('app_focus', {'agentId': agentId})
-          .catchError((_) => false),
-    );
+    final machineId = pane?.agentId == null ? null : pane?.machineId;
+    final previousMachineId = _announcedFocusMachineId;
+    _announcedFocusMachineId = machineId;
+    if (previousMachineId != null && previousMachineId != machineId) {
+      _sendAppFocus(previousMachineId, null);
+    }
+    if (machineId != null) _sendAppFocus(machineId, pane!.agentId);
+  }
+
+  void _sendAppFocus(String machineId, String? agentId) {
+    // Never create a socket just to move focus, and never queue stale focus
+    // across a reconnect. The connected callback reasserts the current pane.
+    final send = focusFrameSenderForTest;
+    final pending = send != null
+        ? send(machineId, agentId)
+        : _pool?[machineId]?.sendTerminalFrame('app_focus', {'agentId': agentId});
+    if (pending != null) unawaited(pending.catchError((_) => false));
   }
 
   /// Tell the daemon which agents have a tile on the grid, so the dial can stay
@@ -1650,7 +1647,7 @@ class AppNotifier extends ChangeNotifier {
           // something it has been told, and until now the first telling waited for the focus to CHANGE.
           // A daemon restarted mid-session therefore had nothing to say, and a dial that re-anchored onto
           // the wrong tile stayed there.
-          _announceFocusToDial();
+          _announceAppFocus();
           // The local CLI never hands back `connected` until it has terminated E2EE (or confirmed
           // none is needed, for its own machine) — every machine's data is ready to load right away,
           // with no separate app-side readiness gate to wait on anymore.
@@ -2578,6 +2575,7 @@ class AppNotifier extends ChangeNotifier {
       }
     }
     _persistLayout();
+    _announceAppFocus();
   }
 
   String? _eventAgentId(
@@ -3301,7 +3299,7 @@ class AppNotifier extends ChangeNotifier {
         .where((pane) => pane.machineId == machineId && pane.agentId == null)
         .firstOrNull;
     if (existing != null) {
-      focusedPaneId = existing.id;
+      focusPane(existing.id);
       notifyListeners();
       return;
     }
@@ -3309,7 +3307,7 @@ class AppNotifier extends ChangeNotifier {
     final target = focusedPane;
     if (target != null && target.agentId == null) {
       target.machineId = machineId;
-      focusedPaneId = target.id;
+      focusPane(target.id);
       notifyListeners();
       return;
     }
@@ -3321,6 +3319,7 @@ class AppNotifier extends ChangeNotifier {
         unawaited(_detachSession(target, sendClose: true));
         target.machineId = machineId;
         target.agentId = null;
+        _announceAppFocus();
         _persistLayout();
         notifyListeners();
       }
@@ -3328,7 +3327,7 @@ class AppNotifier extends ChangeNotifier {
     }
     final pane = TerminalPane(id: _nextPaneId++, machineId: machineId);
     panes.add(pane);
-    focusedPaneId = pane.id;
+    focusPane(pane.id);
     notifyListeners();
   }
 
@@ -3391,7 +3390,7 @@ class AppNotifier extends ChangeNotifier {
     //
     // This path — a rail click on an agent with no tile — was the one that never said it. It relied on
     // the daemon inferring the move from the `terminal_open` that follows, which is the old
-    // one-terminal-per-window equivalence [see _announceFocusToDial]. Two things wrong with that: the
+    // one-terminal-per-window equivalence [see _announceAppFocus]. Two things wrong with that: the
     // roster below changes the dial's carousel, so the focus and the roster are one transaction and the
     // inference arrives after it by luck; and every early return under here (machine offline, terminal
     // capability missing, a session already attached) opens no stream at all, so nothing was ever sent
@@ -3400,7 +3399,7 @@ class AppNotifier extends ChangeNotifier {
     // After _persistLayout, so the daemon has the new tile roster before it is told to move onto it. A
     // duplicate with the inferred one is free: the daemon drops the second against where the dial
     // already is.
-    _announceFocusToDial();
+    _announceAppFocus();
 
     if (machine.nodeOnline == false) {
       machine.pendingOfflineAgentId = agentId;
@@ -3789,12 +3788,13 @@ class AppNotifier extends ChangeNotifier {
     if (zoomedPaneId == paneId) zoomedPaneId = null;
     if (_previousPaneId == paneId) _previousPaneId = null;
     _settlePins();
-    await _detachSession(pane, sendClose: true);
     if (focusedPaneId == paneId) {
       focusedPaneId = panes.isEmpty
           ? null
           : panes[index.clamp(0, panes.length - 1)].id;
+      _announceAppFocus();
     }
+    await _detachSession(pane, sendClose: true);
     if (persist) _persistLayout();
     notifyListeners();
   }
@@ -3803,6 +3803,7 @@ class AppNotifier extends ChangeNotifier {
     final open = panes.toList();
     panes.clear();
     focusedPaneId = null;
+    _announceAppFocus();
     for (final pane in open) {
       await _detachSession(pane, sendClose: true);
     }
