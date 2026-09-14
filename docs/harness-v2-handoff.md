@@ -297,9 +297,13 @@ AppKit titlebar/menu fixture passes 335 checks, including hidden window layout.
 Logs: `/private/tmp/harness-reopen-existing-final-full-tests.log`,
 `/private/tmp/harness-reopen-existing-final-analyze.log` and
 `/private/tmp/harness-reopen-existing-native.log`. The 54 focused History checks
-and 23 focused terminal/recovery checks also pass. No real agent received test
-input; the running preview was not restarted. These changes have not had a new
-Release app build or live native workflow run. Benchmarking remains deferred.
+and 23 focused terminal/recovery checks also pass. A subsequent normal macOS
+Release build from `3a4ae22` succeeds with `FLUTTER_TARGET=lib/main.dart` at
+`/private/tmp/harness-recovery-release/Build/Products/Release/Harness.app`;
+log: `/private/tmp/harness-recovery-release.log`. The bundle is named Harness
+with identifier `ai.autonomous.harness`. No real agent received test input;
+the running preview was not replaced or restarted. Live native workflow
+verification remains outstanding and benchmarking remains deferred.
 
 The full suite caught viewport refresh taking focus from a resize handle. The
 fix keeps geometry updates from claiming keyboard ownership; pointer Escape,

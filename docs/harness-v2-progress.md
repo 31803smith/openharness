@@ -24,8 +24,12 @@ Updated 2026-09-14 after integrating the continuation into main. This is a worki
   combined suite includes the team's `e68c893` local-machine default, preserved
   in merge `eef17f6`; existing fixtures now use its explicit remote labels.
   Logs: `/private/tmp/harness-reopen-existing-{final-full-tests,final-analyze,native}.log`.
-  The running preview was not restarted; this continuation has no new Release
-  build or live native workflow result. Benchmarking remains deferred.
+  The normal macOS Release build from `3a4ae22` subsequently succeeded at
+  `/private/tmp/harness-recovery-release/Build/Products/Release/Harness.app`
+  with the production `lib/main.dart` entry point; build log:
+  `/private/tmp/harness-recovery-release.log`. The running preview was not
+  replaced or restarted, and live native workflow verification remains
+  outstanding. Benchmarking remains deferred.
 - Added **Retry** to failed New agent availability checks. The same form keeps
   the folder, explicit agent and permission choices while rechecking; recovered
   Codex profile support loads in place. Late replies for a previous machine
