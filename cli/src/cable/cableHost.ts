@@ -17,7 +17,7 @@ import { fetchRelease, loadImage, shouldOffer } from './fwPush.js'
 import { routeVoiceTask, type RouterAgent, type RouterContinuity } from '../lib/voiceRouter.js'
 import { env } from '../config/env.js'
 
-import type { CableAgent, CableHost, CableMachine, CableMachineSource, DialStatus, RouteDecision } from './cableSession.js'
+import type { AppSwarms, CableAgent, CableHost, CableMachine, CableMachineSource, CableSwarm, DialStatus, RouteDecision } from './cableSession.js'
 import type { WindowRoute } from './windowRoute.js'
 import { FleetError, type FleetMachine, type MachineFleet } from './machineFleet.js'
 
@@ -53,6 +53,8 @@ export interface CableHostWiring {
   focused?: (machineId: string, agentId: string) => void
   /** A notification was tapped: the window gives that agent a tile of its own. */
   opened?: (machineId: string, agentId: string) => void
+  /** The dial picked a swarm: the window switches to it. */
+  swarmSelected?: (swarmId: string) => void
   /** A finger on the dial's glass, in pieces, while it is down. */
   scrolled?: (phase: 'down' | 'move' | 'up', dy: number, velocity: number) => void
   /** The dial came, went, or started taking an update — see CableSession's onDialStatus. */
@@ -338,10 +340,42 @@ export class DaemonCableHost implements CableHost {
     this.desk = [...agentIds]
   }
 
+  /** The window's swarms, or null once it has gone — see setSwarms. */
+  private swarms: AppSwarms | null = null
+
+  /**
+   * The window described its swarms (or, with null, went away).
+   *
+   * Also what makes the desk STRICT: a window that is present and says its desk is empty means it —
+   * a fresh swarm has no panes — and the carousel walks nothing rather than everything. A window that
+   * is gone said nothing, and the old fallback applies.
+   */
+  setSwarms(swarms: AppSwarms | null): void {
+    this.swarms = swarms
+  }
+
+  listSwarms(): { selected: string; swarms: CableSwarm[] } {
+    const app = this.swarms
+    if (!app) return { selected: '', swarms: [] }
+    return {
+      selected: app.active,
+      swarms: app.swarms.map((s) => ({ id: s.id, name: s.name, agents: s.agentIds.length })),
+    }
+  }
+
+  selectSwarm(swarmId: string): void {
+    if (!swarmId || !this.swarms?.swarms.some((s) => s.id === swarmId)) {
+      this.wiring.log(`cable: ignored select for unknown swarm ${swarmId || '(empty)'}`)
+      return
+    }
+    this.wiring.log(`cable: swarm → ${swarmId}`)
+    this.wiring.swarmSelected?.(swarmId)
+  }
+
   async listAgents(): Promise<CableAgent[]> {
     const out = await this.listAgentsFlat()
 
-    const ring = deskRing(out.map((a) => a.id), this.desk)
+    const ring = deskRing(out.map((a) => a.id), this.desk, this.swarms !== null)
     // Walked agents first, then the ones the dial knows but does not walk to —
     // the session sends the count of the first group, so the order is the split.
     const listed = [...ring.order, ...ring.offRing]

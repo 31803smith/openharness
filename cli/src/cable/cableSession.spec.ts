@@ -81,6 +81,8 @@ function makeHost(over: Partial<CableHost> = {}) {
     listMachines: async () => ({ machines: [LOCAL_ROW], source: 'backend' as const }),
     selectedMachine: () => 'mac-local',
     selectMachine: async () => ({ ok: true as const }),
+    listSwarms: () => ({ selected: '', swarms: [] }),
+    selectSwarm: vi.fn(),
     appName: () => 'harness',
     voiceLang: () => 'en',
     listAgents: async () => AGENTS,
@@ -124,8 +126,9 @@ describe('cable session', () => {
 
     expect(port.types()).toEqual(
       // Machines FIRST: the dial paints its machine name from this list, so an agent list that lands
-      // ahead of it shows a nameless placeholder for a frame.
-      ['welcome', 'machines.begin', 'machine', 'machines.end', 'agents.begin', 'agent', 'agent', 'agents.end'],
+      // ahead of it shows a nameless placeholder for a frame. Swarms next, for the same reason: the line
+      // naming the tab is drawn on the tile the agent list is about to build.
+      ['welcome', 'machines.begin', 'machine', 'machines.end', 'swarms', 'agents.begin', 'agent', 'agent', 'agents.end'],
     )
     const welcome = port.sent[0]
     expect(welcome).toMatchObject({ t: 'welcome', app: 'harness', machine: { name: 'MacBook Pro' } })
@@ -176,9 +179,35 @@ describe('cable session', () => {
     await vi.waitFor(() => expect(port.types()).toContain('agents.end'))
     expect(port.types()).toEqual(
       // Machines FIRST: the dial paints its machine name from this list, so an agent list that lands
-      // ahead of it shows a nameless placeholder for a frame.
-      ['welcome', 'machines.begin', 'machine', 'machines.end', 'agents.begin', 'agent', 'agent', 'agents.end'],
+      // ahead of it shows a nameless placeholder for a frame. Swarms next, for the same reason: the line
+      // naming the tab is drawn on the tile the agent list is about to build.
+      ['welcome', 'machines.begin', 'machine', 'machines.end', 'swarms', 'agents.begin', 'agent', 'agent', 'agents.end'],
     )
+    await session.stop()
+  })
+
+  it('names the swarms once and again only when they change, and relays a pick', async () => {
+    let swarms = { selected: 's1', swarms: [{ id: 's1', name: 'Workshop', agents: 2 }, { id: 's2', name: 'Launch', agents: 0 }] }
+    const host = makeHost({ listSwarms: () => swarms })
+    const { session, port } = await connect(host)
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
+    await vi.waitFor(() => expect(port.types()).toContain('agents.end'))
+    expect(port.sent.filter((m) => m.t === 'swarms')).toEqual([
+      { t: 'swarms', selected: 's1', items: [{ id: 's1', name: 'Workshop', agents: 2 }, { id: 's2', name: 'Launch', agents: 0 }] },
+    ])
+
+    // Ticks with nothing new say nothing new — the same rule as the wheel.
+    await settle()
+    expect(port.sent.filter((m) => m.t === 'swarms')).toHaveLength(1)
+
+    // The dial picks. The host is told and nothing is answered on the wire: the window's new desk is
+    // the answer, and it arrives as the next swarms/ring push.
+    port.say({ t: 'swarm.select', swarmId: 's2' })
+    await settle()
+    expect(host.selectSwarm).toHaveBeenCalledWith('s2')
+    swarms = { ...swarms, selected: 's2' }
+    await vi.waitFor(() => expect(port.sent.filter((m) => m.t === 'swarms')).toHaveLength(2))
+    expect(port.sent.filter((m) => m.t === 'swarms')[1]).toMatchObject({ selected: 's2' })
     await session.stop()
   })
 

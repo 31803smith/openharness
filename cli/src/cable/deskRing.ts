@@ -30,7 +30,12 @@ export interface DeskRing {
  *              know are ignored: a tile can name an agent on a machine that has
  *              gone quiet, and a ring is no place to learn that.
  */
-export function deskRing(flat: string[], desk: string[]): DeskRing {
+/**
+ * @param strict the window is open and this desk is what it really shows, even when that is nothing.
+ *               A swarm with no panes yet is an empty desk on purpose, and the carousel says so rather
+ *               than walking every agent the window is deliberately not showing.
+ */
+export function deskRing(flat: string[], desk: string[], strict = false): DeskRing {
   const known = new Set(flat)
   const onDesk = desk.filter((id) => known.has(id))
 
@@ -40,7 +45,11 @@ export function deskRing(flat: string[], desk: string[]): DeskRing {
   // from that desk would be empty: eight agents on the machine and a carousel showing none of them,
   // which reads as a broken dial rather than as a closed window. So with nothing to narrow to, the
   // walk is the whole list, exactly as it was before any of this existed.
-  if (onDesk.length === 0) return { order: [...flat], offRing: [] }
+  //
+  // UNLESS the window said so. `strict` is the window being present and describing an empty desk —
+  // a fresh swarm — and there the honest carousel is an empty one: the agents are still counted and
+  // still listed, they are simply not what the person chose to look at.
+  if (onDesk.length === 0) return strict ? { order: [], offRing: [...flat] } : { order: [...flat], offRing: [] }
 
   const deskSet = new Set(onDesk)
   return { order: onDesk, offRing: flat.filter((id) => !deskSet.has(id)) }

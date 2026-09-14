@@ -305,18 +305,13 @@ static void touch_read(lv_indev_t *indev, lv_indev_data_t *data)
         } else if (!pressed && nprev && ndrag) {          // release of a captured gesture
             int d = ndyl - ndy0;
             if (ui_notif_is_open()) { if (d < -SWIPE_MIN_PX) ui_notif_swipe_up(); }  // up → close (only if list at top)
-            else if (d > SWIPE_MIN_PX) ui_switch_open();                             // pull down from top → switcher
-            // A TAP anywhere in the band opens the notifications.
-            //
-            // The bell is a button, but this band swallows every press that starts inside it — and the
-            // bell sits INSIDE it, so only the few pixels below the band ever reached the button. It read
-            // as a control that ignores you. The band is what the finger actually hits, so the band is
-            // what answers.
-            //
-            // Only when the finger did not travel: the pull-down that opens the agent switcher starts in
-            // this same band, and it is the gesture reached for far more often. `d` separates them, and a
-            // tap is what is left when no swipe happened.
-            else if (d > -SWIPE_MIN_PX && d < SWIPE_MIN_PX) ui_notif_open();
+            // Pull down from the top → the NOTIFICATIONS (owner, 2026-09-14). The gesture opened the
+            // agent switcher for a while; the switcher is retired from the glass now that the carousel
+            // walks the window's swarm and the swarm line above the name picks between swarms, so the
+            // pull-down goes back to the list it first opened. A TAP in the band opens the same list —
+            // the bell is a button, but this band swallows every press that starts inside it, and the
+            // bell sits INSIDE it.
+            else if (d > SWIPE_MIN_PX || (d > -SWIPE_MIN_PX && d < SWIPE_MIN_PX)) ui_notif_open();
             ndrag = false; ncap = true;
         }
         nprev = pressed;

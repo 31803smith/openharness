@@ -10,6 +10,7 @@
 #include "freertos/task.h"   // TaskHandle_t — ui_set_reload_waiter
 #include "config_store.h"
 #include "../cable_machines.h"   // cable_machine_t — the wheel's row, already parsed and diffed
+#include "../cable_client.h"     // cable_swarm_t — one of the window's tabs, as the wire carries it
 
 struct cJSON;
 
@@ -212,6 +213,11 @@ void ui_machine_select_error(const char *machine_id, const char *code, const cha
 
 // Re-render the wheel if it is the visible page.
 void ui_machines_refresh(void);
+
+// --- Swarms (the window's tabs; see the block in ui_screens.c) ---
+// Replace the whole list from one `swarms` frame. `selected` names the one the window has on screen; it
+// is what every tile's swarm line draws. count 0 hides the line. Safe from the reader task.
+void ui_swarms_replace(const cable_swarm_t *rows, int count, const char *selected);
 
 // Whether the selected machine is the computer at the other end of this cable. Everything that acts on
 // "this desk" — the focus report, the scroll report — asks this first.

@@ -67,9 +67,11 @@ CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 CONFIG_LV_COLOR_DEPTH_16=y
 CONFIG_LV_USE_PERF_MONITOR=n
 # Fonts used by ui_screens.c (montserrat_14 default; _22 headers; _30 OTA title; _40 big pairing code).
-# 18 is the Model/Effort pills; 22 was 20% too big on the panel.
+# 18 is the Model/Effort pills; 22 was 20% too big on the panel. 24 is the swarm pill that replaced
+# them — one pill on the band where two sat, so it has the room the pair did not.
 CONFIG_LV_FONT_MONTSERRAT_18=y
 CONFIG_LV_FONT_MONTSERRAT_22=y
+CONFIG_LV_FONT_MONTSERRAT_24=y
 CONFIG_LV_FONT_MONTSERRAT_30=y
 CONFIG_LV_FONT_MONTSERRAT_40=y
 # Keep a small built-in internal LVGL pool and add a 64KiB PSRAM pool at

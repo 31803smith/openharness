@@ -168,6 +168,24 @@ export interface CableMachine {
   local: boolean
 }
 
+/**
+ * One of the window's swarms — a named group of agents arranged on one grid. The window owns them
+ * entirely (they live in its state file and nowhere else); the daemon relays the list so the dial can
+ * name the one on screen and offer the others, and relays a pick straight back.
+ */
+export interface CableSwarm {
+  id: string
+  name: string
+  /** How many agents it holds — the dial draws the count, never the members. */
+  agents: number
+}
+
+/** The window's swarms as it last described them, or null while no window is connected. */
+export interface AppSwarms {
+  active: string
+  swarms: Array<{ id: string; name: string; agentIds: string[] }>
+}
+
 /** Why the list is as short as it is. The dial renders this, instead of drawing an empty wheel. */
 export type CableMachineSource = 'backend' | 'local' | 'signed-out'
 
@@ -198,6 +216,10 @@ export interface CableHost {
    * so the dial needs no table for a set it does not own.
    */
   selectMachine(machineId: string): Promise<{ ok: true } | { ok: false; code: string; message: string }>
+  /** The window's swarms and which is on screen. Empty with no window: the dial then draws no swarm line. */
+  listSwarms(): { selected: string; swarms: CableSwarm[] }
+  /** The dial picked a swarm. Relayed to the window, which switches and re-describes its desk. */
+  selectSwarm(swarmId: string): void
   appName(): string
   voiceLang(): string
   listAgents(): Promise<CableAgent[]>
@@ -466,6 +488,9 @@ export class CableSession {
         this.machinesAt = Date.now()
         await this.syncMachines()
       }
+      // Swarms BEFORE agents: a swarm switch is a new swarm line and a new ring, and the line naming
+      // the tab should not lag the tiles that belong to it.
+      await this.syncSwarms()
       await this.syncAgents()
     }
   }
@@ -700,6 +725,15 @@ export class CableSession {
         return
       case 'machine.select':
         await this.selectMachine(str('machineId') ?? '')
+        return
+      case 'swarms.list':
+        await this.syncSwarms(true)
+        return
+      case 'swarm.select':
+        // Not answered here: the window switches, its desk changes, and the new `swarms` and ring
+        // pushes are the answer — the same shape as `machine.select`, minus the refusal, because the
+        // window never refuses to show a tab it has.
+        this.host.selectSwarm(str('swarmId') ?? '')
         return
       case 'models.list': {
         // The one round trip in this protocol: the dial cannot draw a picker until the catalog is in hand,
@@ -1122,8 +1156,30 @@ export class CableSession {
   /** Attach: tell the dial everything, whether or not any of it looks unchanged from here. */
   async pushAgents(): Promise<void> {
     await this.syncMachines(true)
+    await this.syncSwarms(true)
     await this.syncAgents(true)
     await this.pushRestores()
+  }
+
+  // ── swarms ────────────────────────────────────────────────────────────────────────────────────────
+
+  private lastSwarmsKey = ''
+
+  /** Push the window's swarms IF they differ from what the dial was last told. Same rule as the wheel:
+   *  the diff is what keeps the link idle while nothing changes. */
+  async syncSwarms(force = false): Promise<void> {
+    return this.queued(() => this.syncSwarmsNow(force))
+  }
+
+  private async syncSwarmsNow(force: boolean): Promise<void> {
+    const { selected, swarms } = this.host.listSwarms()
+    const key = `${selected}|${swarms.map((s) => `${s.id}:${s.name}:${s.agents}`).join('|')}`
+    if (!force && key === this.lastSwarmsKey) return
+    this.lastSwarmsKey = key
+    this.host.log(`cable: swarms → ${swarms.length}${selected ? ` (on ${selected})` : ''}${force ? ' [push]' : ''}`)
+    // ONE frame, not a begin/row/end stream: two dozen rows of an id, a name and a count fit in a
+    // kilobyte, and the dial replaces the whole list on arrival either way.
+    await this.send({ t: 'swarms', selected, items: swarms.map((s) => ({ id: s.id, name: s.name, agents: s.agents })) })
   }
 
   // ── machines ──────────────────────────────────────────────────────────────────────────────────────

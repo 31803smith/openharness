@@ -182,6 +182,44 @@ void main() {
     app.dispose();
   });
 
+  test(
+    'a dial_swarm frame switches the swarm, and an unknown id is ignored',
+    () async {
+      // The dial's swarm line. It sends the id it was given; the switch is the ordinary one, so the desk
+      // it re-describes is the other swarm's panes — which is what the dial's carousel then walks.
+      final app = await _withTiles(['a1', 'a2']);
+      final first = app.activeSwarmId;
+      app.newSwarm(name: 'Launch');
+      final second = app.activeSwarmId;
+      expect(second, isNot(first));
+
+      await app.handleEventForTest('m1', {
+        'type': 'dial_swarm',
+        'payload': {'swarmId': first},
+      });
+      expect(app.activeSwarmId, first);
+      expect(_desk(app), ['a1', 'a2']);
+
+      await app.handleEventForTest('m1', {
+        'type': 'dial_swarm',
+        'payload': {'swarmId': 'swarm-nope'},
+      });
+      expect(
+        app.activeSwarmId,
+        first,
+        reason: 'an id this window has no tab for changes nothing',
+      );
+
+      await app.handleEventForTest('m1', {
+        'type': 'dial_swarm',
+        'payload': {'swarmId': second},
+      });
+      expect(app.activeSwarmId, second);
+      expect(_desk(app), isEmpty, reason: 'the new swarm has no panes yet');
+      app.dispose();
+    },
+  );
+
   test('an edge from an older daemon is ignored, not obeyed', () async {
     // A daemon that predates this change still sends `edge` on its focus frames. The field is gone
     // here, and the frame must land as an ordinary selection rather than replacing a tile at an end

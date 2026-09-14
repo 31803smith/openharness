@@ -2919,6 +2919,14 @@ async function runForeground(session: AuthSession): Promise<void> {
     // An OPEN tile counts as seen, deliberately — not a focused one. With four
     // tiles on a grid all four are on screen, and asking which one the eye is
     // on is a question the window cannot answer honestly anyway.
+    // The window's swarms. Relayed to the dial as its own list — the dial names the one on screen above
+    // the agent and offers the rest — and, through setSwarms, what makes the desk strict: a present
+    // window with an empty swarm is an empty carousel, not the whole machine.
+    onAppSwarms: (swarms) => {
+      cableHostRef?.setSwarms(swarms)
+      void cableRef?.syncSwarms()
+      void cableRef?.syncAgents()
+    },
     onAppPanes: (agentIds) => {
       // ORDER matters here, not just membership. The dial's carousel is built
       // around these — tiles first, in tile order — so the thumb walks the same
@@ -4215,6 +4223,8 @@ async function runForeground(session: AuthSession): Promise<void> {
     // desk to replace; the carousel now only walks tiles that exist, so every focus is about one of them.
     focused: (machineId, agentId) =>
       backend.sendLocal({ type: 'dial_focus', payload: { machineId, agentId } }),
+    // The dial's swarm pick. Local-only like the two above: a tab is a thing THIS window has.
+    swarmSelected: (swarmId) => backend.sendLocal({ type: 'dial_swarm', payload: { swarmId } }),
     scrolled: (phase, dy, velocity) => backend.sendLocal({ type: 'dial_scroll', payload: { phase, dy, velocity } }),
     // Local-only like the three above: which desk has a dial on it is a fact about THIS computer.
     dialStatus: (status) => backend.sendLocal({ type: 'dial_status', payload: status }),
