@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'relay_codec.dart';
 
 import '../core/models.dart';
 import 'ws_conn.dart';
@@ -7,6 +8,9 @@ import 'ws_conn.dart';
 class WsPool {
   final String wsBaseUrl;
   final String autonomousEnv;
+
+  /// Handed to every relay connection — a viewer build's E2EE sessions (see [RelayCodec]).
+  final RelayCodecFactory? relayCodecs;
   final AccessTokenProvider accessTokenProvider;
   final void Function(String message) onAuthFailure;
   final void Function(String machineId, int code, String reason)?
@@ -20,6 +24,7 @@ class WsPool {
   WsPool({
     required this.wsBaseUrl,
     required this.autonomousEnv,
+    this.relayCodecs,
     required this.accessTokenProvider,
     required this.onAuthFailure,
     this.onLocalFailure,
@@ -47,6 +52,9 @@ class WsPool {
     final conn = WsConn(
       wsBaseUrl: wsBaseUrl,
       autonomousEnv: autonomousEnv,
+      relayCodecs: transportKind == WsTransportKind.cloudE2ee
+          ? relayCodecs
+          : null,
       machineId: machineId,
       accessTokenProvider: accessTokenProvider,
       onAuthFailure: onAuthFailure,
