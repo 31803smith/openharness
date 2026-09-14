@@ -95,6 +95,7 @@ class _TerminalPageState extends State<TerminalPage> {
             .where((a) => a.id == widget.agentId)
             .firstOrNull;
         final status = phoneSessionSummary(session);
+        final reclaim = phoneReclaimAction(session);
         return Scaffold(
           backgroundColor: AppPalette.windowBg,
           body: SafeArea(
@@ -122,12 +123,29 @@ class _TerminalPageState extends State<TerminalPage> {
                     subtitle: StatusPill(
                       fontSize: 12,
                       summary: (
-                        label:
-                            '${machine?.machine.displayName ?? ''} · ${status.label}',
+                        // The machine alone once the button beside it is saying
+                        // the state: two words for one fact, in a row this
+                        // narrow, is what truncated "Taken over" to "Ta…".
+                        label: reclaim == null
+                            ? '${machine?.machine.displayName ?? ''} · ${status.label}'
+                            : machine?.machine.displayName ?? '',
                         tone: status.tone,
                       ),
                     ),
                     trailing: [
+                      // Read-only is a state to get OUT of, so its way out is a
+                      // labelled button in the header rather than a line in the
+                      // actions sheet: the sheet is where you go having decided
+                      // to do something, and this is the thing telling you that
+                      // typing will go nowhere until you do.
+                      if (reclaim != null)
+                        _ReclaimButton(
+                          action: reclaim,
+                          onPressed: () => widget.notifier.selectAgent(
+                            widget.machineId,
+                            widget.agentId,
+                          ),
+                        ),
                       // Null while the agent is not loaded: there is nothing to act on yet, and a
                       // menu of actions that all fail is worse than no menu.
                       if (agent != null)
@@ -228,6 +246,42 @@ class _TerminalPageState extends State<TerminalPage> {
     final error = result.error;
     if (error == null || messenger == null || !mounted) return;
     messenger.showSnackBar(SnackBar(content: Text(error)));
+  }
+}
+
+/// The header's way back into a session this device is not driving.
+///
+/// Re-selecting the agent is what reclaims it — the same call the desktop tile's
+/// status chip makes, so one gesture means one thing on both.
+class _ReclaimButton extends StatelessWidget {
+  const _ReclaimButton({required this.action, required this.onPressed});
+
+  final PhoneSummary action;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    AppTheme.watch(context);
+    final color = phoneToneColor(action.tone);
+    return TextButton.icon(
+      onPressed: onPressed,
+      icon: Icon(
+        action.tone == PhoneTone.attention
+            ? LucideIcons.lock300
+            : LucideIcons.refreshCw300,
+        size: 15,
+      ),
+      label: Text(
+        action.label,
+        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+      ),
+      style: TextButton.styleFrom(
+        foregroundColor: color,
+        minimumSize: Size.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      ),
+    );
   }
 }
 

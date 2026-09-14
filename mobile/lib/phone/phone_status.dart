@@ -97,3 +97,26 @@ PhoneSummary phoneSessionSummary(
   TerminalSessionStatus.error => (label: 'Disconnected', tone: PhoneTone.bad),
   TerminalSessionStatus.closed => (label: 'Closed', tone: PhoneTone.quiet),
 };
+
+/// The way back into a session this device is not driving, or is no longer
+/// driving — and what the button offers to do about it.
+///
+/// `null` while the session is fine, or still coming up: there is nothing to
+/// reclaim from "Attaching…", and a button that only ever means "wait" is one
+/// the person learns to ignore.
+///
+/// The desktop puts the same two words on the same two states, in the tile
+/// header it draws (`widgets/terminal_panel.dart`); a phone hides that header
+/// and draws its own, which is how the way out went missing here.
+PhoneSummary? phoneReclaimAction(TerminalSession? session) =>
+    switch (session?.status) {
+      TerminalSessionStatus.takenOver => (
+        label: 'Take control',
+        tone: PhoneTone.attention,
+      ),
+      TerminalSessionStatus.error || TerminalSessionStatus.closed => (
+        label: 'Reconnect',
+        tone: PhoneTone.bad,
+      ),
+      _ => null,
+    };
