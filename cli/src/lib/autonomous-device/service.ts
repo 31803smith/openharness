@@ -29,7 +29,7 @@ export interface AutonomousDeviceServiceOptions {
   emit?: (frame: AutonomousDeviceFrame) => void
 }
 interface Entry { deviceId: string; digest: string; receipt: AutonomousDeviceReceipt }
-const CAPABILITIES = ['agents.list', 'turn.send', 'turn.stop', 'status', 'recap', 'question.answer', 'receipt.get'] as const
+const CAPABILITIES = ['focus.get', 'agents.list', 'turn.send', 'turn.stop', 'status', 'recap', 'question.answer', 'receipt.get'] as const
 export const AUTONOMOUS_DEVICE_CAPABILITIES: string[] = [...CAPABILITIES]
 const MUTATIONS = new Set(['turn.send', 'turn.stop', 'question.answer'])
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -54,6 +54,33 @@ export class AutonomousDeviceService {
   private readonly questions = new Map<string, { requestId: string; questions: unknown }>()
   private events: AutonomousDeviceFrame[] = []
   private sequence = 0
+  private focusOwner: string | undefined
+  private focused: { machineId: string; agentId: string } | null = null
+  private focusCounter = 0
+  /** Only explicit app focus updates own this state; disconnects cannot clear a newer owner. */
+  appFocus(machineId: string, agentId: string | null, connId: string): void {
+    if (agentId === null && this.focusOwner !== connId) return
+    if (machineId === this.options.machineId && agentId !== null && !this.options.agents().some(a => a.agentId === agentId)) agentId = null
+    this.focusOwner = agentId === null ? undefined : connId
+    if (agentId === null ? this.focused === null : this.focused?.machineId === machineId && this.focused?.agentId === agentId) return
+    this.focused = agentId === null ? null : { machineId, agentId }
+    this.focusCounter++
+    this.event('focus.changed', undefined, this.focusSnapshot())
+  }
+  focusSnapshot(): { focus: { machineId: string; agentId: string; name?: string } | null; focusRevision: string } {
+    const local = this.focused?.machineId === this.options.machineId
+    const agent = local ? this.options.agents().find(a => a.agentId === this.focused?.agentId) : undefined
+    if (local && !agent) {
+      this.focused = null
+      this.focusOwner = undefined
+      this.focusCounter++
+      const snapshot = { focus: null, focusRevision: `${this.serverInstanceId}:${this.focusCounter}` }
+      this.event('focus.changed', undefined, snapshot)
+      return snapshot
+    }
+    return { focus: this.focused ? { ...this.focused, ...(agent ? { name: agent.name } : {}) } : null,
+      focusRevision: `${this.serverInstanceId}:${this.focusCounter}` }
+  }
   constructor(private readonly options: AutonomousDeviceServiceOptions) {
     this.serverInstanceId = options.serverInstanceId ?? randomUUID()
     this.now = options.now ?? Date.now
@@ -162,13 +189,15 @@ export class AutonomousDeviceService {
     try {
       if (!UUID.test(String(req.requestId))) fail('INVALID_REQUEST', 'requestId must be a UUIDv4')
       if (!AUTONOMOUS_DEVICE_CAPABILITIES.includes(type)) fail('UNSUPPORTED_CAPABILITY', 'Operation is not supported')
-      const allowed = ['type', 'requestId', ...(type === 'agents.list' ? [] : type === 'receipt.get' ? ['idempotencyKey'] : ['machineId', 'agentId']),
-        ...(MUTATIONS.has(type) ? ['idempotencyKey'] : []), ...(type === 'turn.send' ? ['text'] : type === 'question.answer' ? ['questionRequestId', 'answers'] : type === 'recap' ? ['n'] : [])]
+      const allowed = ['type', 'requestId', ...(['agents.list', 'focus.get'].includes(type) ? [] : type === 'receipt.get' ? ['idempotencyKey'] : ['machineId', 'agentId']),
+        ...(MUTATIONS.has(type) ? ['idempotencyKey'] : []), ...(type === 'turn.send' ? ['text', 'focusRevision'] : type === 'question.answer' ? ['questionRequestId', 'answers', 'focusRevision'] : type === 'recap' ? ['n'] : [])]
       if (Object.keys(req).some(k => !allowed.includes(k))) fail('INVALID_REQUEST', 'Unknown request field')
       if (type === 'receipt.get') {
         if (!KEY.test(String(req.idempotencyKey ?? ''))) fail('INVALID_REQUEST', 'Invalid idempotencyKey')
         return response({ receipt: this.receipt(deviceId, String(req.idempotencyKey)) })
       }
+      if (type === 'focus.get') return response(this.focusSnapshot())
+      if ('focusRevision' in req && (typeof req.focusRevision !== 'string' || !req.focusRevision)) fail('INVALID_REQUEST', 'focusRevision must be a nonempty string')
       if (type === 'agents.list') return response({ machineId: this.options.machineId, agents: this.options.agents().map(a => ({ ...a, machineId: this.options.machineId })) })
       if (typeof req.agentId !== 'string' || !req.agentId || typeof req.machineId !== 'string') fail('MISSING_TARGET', 'machineId and agentId are required')
       if (req.machineId !== this.options.machineId) fail('MACHINE_MISMATCH', 'Only the paired machine is available')
@@ -185,6 +214,12 @@ export class AutonomousDeviceService {
       if (previous) {
         if (previous.digest !== digest) fail('IDEMPOTENCY_CONFLICT', 'Key already belongs to a different operation or payload')
         return response({ status: 'duplicate', receipt: structuredClone(previous.receipt) })
+      }
+      if ('focusRevision' in req) {
+        const snapshot = this.focusSnapshot()
+        if (req.focusRevision !== snapshot.focusRevision || snapshot.focus?.machineId !== req.machineId || snapshot.focus?.agentId !== agentId) {
+          fail('FOCUS_CHANGED', 'App focus changed before dispatch; no operation was reserved')
+        }
       }
       const agent = this.options.agents().find(a => a.agentId === agentId)
       if (!agent) fail('AGENT_NOT_FOUND', 'Agent is not available on the paired machine')

@@ -40,6 +40,8 @@ export interface LocalWsServerOptions {
   autonomousEnv?: string
   /** The desktop app opened an agent's terminal — which agent, and on which machine. Lets the dial follow
    *  the window, so the two screens stay one desk. */
+  /** Explicit app focus, including clear/disconnect, for voice routing independent of the dial. */
+  onAppFocusState?: (machineId: string, agentId: string | null, connId: string) => void
   onAppFocus?: (machineId: string, agentId: string) => void
   /** Every agent the window currently has a tile for, across all its machines. */
   onAppPanes?: (agentIds: string[]) => void
@@ -356,24 +358,20 @@ export function attachLocalWsServer(server: http.Server, options: LocalWsServerO
             return
           }
         }
-        if (!isBinary && options.onAppFocus && boundMachineId) {
+        if (!isBinary && boundMachineId && ws.readyState === WebSocket.OPEN) {
           const moved = jsonFrame(raw)
           const agentId = (moved?.payload as Record<string, unknown> | undefined)?.agentId
-          if (typeof agentId === 'string' && agentId) {
-            // `app_focus` is the window SAYING where it is looking. `terminal_open` is it being
-            // inferred from a side effect, which is all there was when a window could only show one
-            // terminal: every move opened a stream, so opening one meant it had moved.
-            //
-            // A pane grid breaks that equivalence. Clicking a tile that already holds a live session
-            // opens nothing at all, so the dial never heard about it and stayed on the agent the last
-            // rail click had opened. Both are still read: an older app build only sends the second.
-            if (moved?.type === 'app_focus') {
-              options.onAppFocus(boundMachineId, agentId)
-              // Consumed here. It describes a hand at THIS desk and the machine has no use for it —
-              // forwarding it would put an unknown frame type on the wire for every pane click.
-              return
+          if (moved?.type === 'app_focus') {
+            if (agentId === null || (typeof agentId === 'string' && agentId)) {
+              options.onAppFocusState?.(boundMachineId, agentId, connId)
+              if (agentId) options.onAppFocus?.(boundMachineId, agentId)
             }
-            if (moved?.type === 'terminal_open') options.onAppFocus(boundMachineId, agentId)
+            // Focus is local desk state and must never be forwarded to a remote machine.
+            return
+          }
+          // Preserve the old dial fallback; terminal streams never establish voice focus.
+          if (moved?.type === 'terminal_open' && typeof agentId === 'string' && agentId) {
+            options.onAppFocus?.(boundMachineId, agentId)
           }
         }
 
@@ -414,6 +412,7 @@ export function attachLocalWsServer(server: http.Server, options: LocalWsServerO
 
     const cleanup = (): void => {
       clearInterval(heartbeat)
+      if (boundMachineId) options.onAppFocusState?.(boundMachineId, null, connId)
       // A window that went away has no tiles open. Left standing, the roster
       // would keep silencing the dial for agents nobody can see any more —
       // exactly backwards, and permanently.

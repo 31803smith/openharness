@@ -46,6 +46,27 @@ crypto, không kết nối backend. Request agents.list/status/recap/turn.send/t
 receipt.get giữ target rõ và receipt/dedupe. Không replay mutation khi mất kết nối; unknown không
 có nghĩa chưa gửi. Cache512/ring500 và schema đầy đủ ở [bản EN](../autonomous-device-integration.md).
 
+## Focus của app cho voice
+
+CLI quảng bá capability `focus.get`; request `{type:"focus.get",requestId}` trả
+`{type:"focus.get_result",requestId,focus:null|{machineId,agentId,name?},focusRevision}`.
+Event `focus.changed` có payload `{focus,focusRevision}` cùng schema. Monitor Pairing hiển thị
+snapshot này; OS có thể poll để phục hồi khi bỏ lỡ event.
+
+Nguồn focus là frame local tường minh `app_focus {agentId}` từ Desktop, không phải `terminal_open`.
+Ban đầu focus là null. `app_focus {agentId:null}` hoặc đóng socket đang sở hữu focus sẽ xóa focus;
+socket cũ không được xóa focus của socket mới. Mỗi thay đổi focus đổi revision, kể cả A→B→A; thông báo lại cùng target giữ nguyên revision
+nhưng chuyển quyền sở hữu sang socket thông báo;
+revision là chuỗi opaque có server instance ID nên khác sau restart. Khi đọc snapshot, agent local
+đã bị xóa làm focus thành null và đổi revision. Focus máy remote giữ đúng machine ID remote;
+facade device chỉ hỗ trợ máy đã pair, không thay bằng agent local hoặc tự relay task.
+
+`turn.send` và `question.answer` nhận `focusRevision` tùy chọn bên cạnh target ID tường minh.
+Sau bước kiểm tra receipt trùng, service kiểm tra đồng bộ revision và target trước khi reserve/gửi.
+Sai revision hoặc target trả `FOCUS_CHANGED` không receipt: request đó chưa dispatch. Request trùng
+đã reserve vẫn trả receipt cũ dù focus đổi. Client cũ không truyền revision vẫn dùng target tường minh
+như trước. `turn.stop` không nhận trường này, tiếp tục nhắm target của lượt đang chạy.
+
 `turn.summary` và mỗi phần tử `recap.turns[]` mang ba mức của cùng một câu trả lời; bên tiêu thụ nên
 ưu tiên `turns[].fullText`, rồi `turn.summary.fullText`, rồi `text`:
 
