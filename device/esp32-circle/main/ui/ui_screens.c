@@ -603,7 +603,13 @@ static lv_obj_t *s_carousel_spacer;
 // Settings at ring len-2, Machine at ring len-1 (N = agent count). An EMPTY machine (N==0) keeps 4 positions
 // [overview, No agents, Settings, Machine] so the carousel stays swipeable.
 #define RING_LEAD  1                    // number of leading fixed tiles (overview) before the agents
-#define RING_FIXED 2                    // number of trailing fixed tiles (Settings + Machine)
+// THE MACHINES TILE IS OFF THE RING (owner, 2026-09-14: "bỏ luôn màn hình machines trên device"). The
+// carousel walks the window's swarm and the swarm line picks between tabs; which machine an agent lives
+// on is a fact the app decides and the tile only ever reported. The wheel, its rows, the select
+// round-trip and the link guide are all still built and still wired — set MACHINES_TILE to 1 and the
+// ring grows a trailing position again and every jump that used to land there lands there.
+#define MACHINES_TILE 0
+#define RING_FIXED (1 + MACHINES_TILE)      // number of trailing fixed tiles (Settings, + Machines when on)
 static void resize_spacer(void) { if (s_carousel_spacer) lv_obj_set_width(s_carousel_spacer, CAROUSEL_M * carousel_w()); }
 
 // How many agents the CAROUSEL walks, which is not how many the dial knows.
@@ -625,8 +631,12 @@ static int ring_agents(void)
 static bool agent_on_ring(int i) { return i >= 0 && i < ring_agents(); }
 static int ring_len(void)      { return RING_LEAD + (ring_agents() > 0 ? ring_agents() : 1) + RING_FIXED; }
 static int ring_agents_end(void) { return ring_len() - RING_FIXED; }   // first ring AFTER the agents (= first trailing tile)
-static int ring_settings(void) { return ring_len() - 2; }   // Settings tile — right after the agents
-static int ring_machines(void)   { return ring_len() - 1; }   // Machine tile — trailing / last (wraps back to overview)
+static int ring_settings(void) { return ring_agents_end(); }   // Settings tile — the first trailing tile, right after the agents
+// Machines tile — trailing / last (wraps back to overview). -1 while the tile is off: no column holds it,
+// so every "is this column the Machines page" reads false. A JUMP to it goes through ring_machines_home.
+static int ring_machines(void)   { return MACHINES_TILE ? ring_len() - 1 : -1; }
+// Where "go to Machines" lands: the tile when it exists, the Overview when it does not.
+static int ring_machines_home(void) { return MACHINES_TILE ? ring_len() - 1 : 0; }
 static int agent_of_ring(int r) { return r - RING_LEAD; }   // ring → agent index (valid RING_LEAD..ring_agents_end()-1)
 static int ring_of_agent(int i) { return i + RING_LEAD; }   // agent index → ring
 // WHICH WAY A SWIPE WALKS THE RING — the whole of the reversal, in one number.
@@ -2685,7 +2695,7 @@ void ui_enter_boot_loading(void)
     // (commander_client_start is called first) — in which case arming the spinner here would put the
     // device straight back into the state it just left. Honour what is already known.
     bool empty_account = s_machines_known && s_machine_count == 0;
-    int land_ring = empty_account ? ring_machines() : 0 /* overview */;
+    int land_ring = empty_account ? ring_machines_home() : 0 /* overview */;
     s_machine_landing_pending = !empty_account;
     s_overview_loading = !empty_account;   // spinner (not "0 agents") only while a list is actually coming
     rebuild_settings_tile();
@@ -4875,7 +4885,7 @@ void ui_project_set_ring_count(int n)
             // is always valid.
             int kept = keep_id[0] ? find_proj(keep_id) : -1;
             int target = keep_settings ? ring_settings()
-                         : keep_machines ? ring_machines()
+                         : keep_machines ? ring_machines_home()
                          : ring_of_agent(agent_on_ring(kept) ? kept : 0);
             carousel_goto(col_for_ring_near(carousel_col(), target), LV_ANIM_OFF);
             apply_active_from_col();
@@ -4928,7 +4938,7 @@ void ui_project_apply_order(const char *const *ids, int n)
 
     rebuild_overview_tile();
     int target_ring = keep_settings ? ring_settings()
-                      : keep_machines ? ring_machines()
+                      : keep_machines ? ring_machines_home()
                       : ring_of_agent(keep_id[0] && find_proj(keep_id) >= 0 ? find_proj(keep_id) : 0);
     carousel_goto(col_for_ring_near(carousel_col(), target_ring), LV_ANIM_OFF);
     apply_active_from_col();
@@ -4983,7 +4993,7 @@ void ui_project_remove(const char *project_id)
     if (keep_settings) {
         target_ring = ring_settings();         // stay on Settings (trailing)
     } else if (keep_machines) {
-        target_ring = ring_machines();           // stay on Machines
+        target_ring = ring_machines_home();      // stay on Machines
     } else if (s_proj_count == 0) {
         target_ring = ring_of_agent(0);        // empty slot at RING_LEAD = "No agents" page
     } else {
@@ -5012,7 +5022,7 @@ void ui_project_clear_all(void)
     rebuild_machines_tile();
     rebuild_overview_tile();
     rebuild_page_dots();
-    carousel_goto(col_for_ring_near(carousel_col(), ring_machines()), LV_ANIM_OFF);
+    carousel_goto(col_for_ring_near(carousel_col(), ring_machines_home()), LV_ANIM_OFF);
     apply_active_from_col();
     update_content_window();
     display_unlock();
@@ -5064,11 +5074,11 @@ static int add_proj(const char *id)
     // the list arrived; ui_land_after_reload owns the final conditional focus.
     if (i == 0) {
         int tr = keep_remote_reload_page
-            ? (reload_on_settings ? ring_settings() : reload_on_machines ? ring_machines() : 0 /* overview */)
+            ? (reload_on_settings ? ring_settings() : reload_on_machines ? ring_machines_home() : 0 /* overview */)
             : ring_of_agent(0);
         carousel_goto(col_for_ring_near(CAROUSEL_M / 2, tr), LV_ANIM_OFF);
     } else {
-        int tr = on_settings ? ring_settings() : on_machines ? ring_machines() : (on_agent >= 0 ? ring_of_agent(on_agent) : ring_settings());
+        int tr = on_settings ? ring_settings() : on_machines ? ring_machines_home() : (on_agent >= 0 ? ring_of_agent(on_agent) : ring_settings());
         carousel_goto(col_for_ring_near(carousel_col(), tr), LV_ANIM_OFF);
     }
     apply_active_from_col();
@@ -7629,7 +7639,7 @@ void ui_show_machines(void)
 {
     display_lock();
     if (lv_screen_active() != scr_projects) lv_screen_load(scr_projects);
-    carousel_goto(col_for_ring_near(carousel_col(), ring_machines()), LV_ANIM_ON);
+    carousel_goto(col_for_ring_near(carousel_col(), ring_machines_home()), LV_ANIM_ON);
     apply_active_from_col();
     update_content_window();
     rebuild_page_dots();
