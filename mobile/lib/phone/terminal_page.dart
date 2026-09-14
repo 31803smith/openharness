@@ -57,16 +57,6 @@ class _TerminalPageState extends State<TerminalPage> {
 
   /// The composer starts OPEN here, and the phone owns that answer rather than the pane.
   ///
-  /// On a desktop tile the box is off until asked for: the terminal itself takes the keyboard, and
-  /// the box only buys you a batched send. On a phone there is no other way to type — a software
-  /// keyboard has no Esc, no Tab and no Ctrl, so driving the pane per-keystroke was never the
-  /// point — so a terminal that opens with nothing to type into reads as broken.
-  ///
-  /// Local, not `TerminalPane.composerVisible`, on purpose: that field is persisted DESKTOP layout,
-  /// shared with the grid, and flipping its default there would turn the box on for every tile on
-  /// every machine. A phone shows one agent at a time and there is nothing to remember.
-  bool _composerVisible = true;
-
   @override
   Widget build(BuildContext context) {
     // Clear of the home indicator — except while the keyboard is up, which already is.
@@ -180,12 +170,14 @@ class _TerminalPageState extends State<TerminalPage> {
                                   session: session,
                                   focused: true,
                                   showHeader: false,
-                                  composerVisible: _composerVisible,
-                                  // Kept, and it is the only way back: a full-screen TUI wants the
-                                  // rows the box is standing on.
-                                  onToggleComposer: () => setState(
-                                    () => _composerVisible = !_composerVisible,
-                                  ),
+                                  // No composer, and so no grip above it: the
+                                  // page hands the pane its full height and the
+                                  // software keyboard drives the terminal
+                                  // directly — `TerminalPanel` autofocuses the
+                                  // view precisely when no box is covering it.
+                                  // What goes with the box is the batched send,
+                                  // and the Esc/Tab/Ctrl an on-screen keyboard
+                                  // never had anyway.
                                 ),
                         ),
                       ],
