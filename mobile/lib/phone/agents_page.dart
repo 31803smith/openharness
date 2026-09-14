@@ -7,10 +7,12 @@ import 'package:harness/shared/theme/app_theme.dart';
 import 'package:harness/shared/widgets/app_icon_button.dart';
 import 'package:harness/shared/widgets/empty_state.dart';
 import 'package:harness/state/app_state.dart';
+
 import 'agent_hero.dart';
 import 'agent_tile.dart';
 import 'link_page.dart';
 import 'phone_card.dart';
+import 'new_agent_page.dart';
 import 'phone_header.dart';
 import 'phone_navigation.dart';
 import 'phone_sheet.dart';
@@ -46,6 +48,19 @@ class AgentsPage extends StatelessWidget {
                     ? null
                     : StatusPill(summary: phoneMachineSummary(machine)),
                 trailing: [
+                  // Only once the machine is answering: creating needs it to
+                  // list its folders and say which engines it has, and a button
+                  // that opens a page with neither is a dead end.
+                  if (machine != null &&
+                      phoneMachineStatusOf(machine) == PhoneMachineStatus.ready)
+                    AppIconButton(
+                      icon: LucideIcons.plus300,
+                      size: 20,
+                      tooltip: 'New agent',
+                      color: AppPalette.textSecondary,
+                      onPressed: () =>
+                          _openNewAgent(context, notifier, machineId),
+                    ),
                   if (machine != null)
                     AppIconButton(
                       icon: LucideIcons.ellipsis300,
@@ -190,11 +205,14 @@ class _AgentsBody extends StatelessWidget {
       );
     }
     if (agents.isEmpty) {
-      return const EmptyState(
+      return EmptyState(
         icon: LucideIcons.squareTerminal300,
         title: 'No agents yet',
-        message:
-            'Start one from Harness on that machine and it will appear here.',
+        message: 'Start one here, or from Harness on that machine.',
+        action: FilledButton(
+          onPressed: () => _openNewAgent(context, notifier, _machineId),
+          child: const Text('New agent'),
+        ),
       );
     }
     return PhoneCardList(
@@ -214,3 +232,13 @@ class _AgentsBody extends StatelessWidget {
     );
   }
 }
+
+/// The one way into [NewAgentPage], so the header's button and the empty
+/// state's cannot drift into opening it two different ways.
+void _openNewAgent(
+  BuildContext context,
+  AppNotifier notifier,
+  String machineId,
+) => Navigator.of(context).push(
+  phoneRoute((_) => NewAgentPage(notifier: notifier, machineId: machineId)),
+);
