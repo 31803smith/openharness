@@ -6,6 +6,23 @@ Updated 2026-09-14 after integrating the continuation into main. This is a worki
 
 ## Continue directly on main
 
+- Added **Find existing agent…** to uncertain New agent forms. It opens shared
+  Add with the search query, original swarm and split preserved; a closed swarm
+  or stale split gets an explanation. The dialog releases keyboard ownership
+  before opening Add, and an empty tab created in the background cannot take
+  focus for its welcome input. Six new regressions cover both search entry
+  points, changed destinations and no duplicate launch/input. The affected
+  workflow suite passes 87 tests, plus one real-font render check at normal/2×
+  text; analysis has zero errors/warnings and 14 existing infos. Logs:
+  `/private/tmp/harness-find-created-{workflows,final-recovery,analyze}.log`.
+  The normal arm64 Release build succeeds at
+  `/private/tmp/harness-find-created-release/Build/Products/Release/Harness.app`;
+  log: `/private/tmp/harness-find-created-release.log`. It was not launched;
+  no running app or agent was replaced or restarted.
+  Main preserves the team's merged PR #38 (`fd02a15`, recap generation), whose
+  CLI files do not overlap this desktop change. Live remote qualification and
+  genuine first-install/provider flows remain outstanding; benchmarking stays
+  deferred. Archive/Resume remains a proposal.
 - Added [creation receipts and recovery](harness-agent-creation.md). A lost
   creation reply now leaves the original choices visible and changes Create to
   **Check status**, with keyboard focus on that action. Checking never launches

@@ -30,7 +30,7 @@ class SwarmInlineSearch extends StatefulWidget {
   final SwarmProjectStore projects;
   final List<String> recent;
   final List<SwarmDestination> Function()? commands;
-  final VoidCallback? onNewAgent;
+  final ValueChanged<String>? onNewAgent;
   final SwarmSearchCatalog? catalog;
   final void Function(SwarmSearchSelection choice, String target) onChoose;
 
@@ -117,7 +117,7 @@ class _SwarmInlineSearchState extends State<SwarmInlineSearch> {
   void _newAgent() {
     if (_search?.canCreate == false) return;
     _close();
-    widget.onNewAgent?.call();
+    widget.onNewAgent?.call(_text.text);
   }
 
   @override

@@ -60,6 +60,16 @@ to that action. Closing an uncertain request is labeled **Close**, not Cancel.
 A confirmed refusal unlocks the choices for correction; the next deliberate
 submission uses a new intent. Opening New agent also starts a fresh intent.
 
+In a swarm, the uncertain form also offers **Find existing agent…**. It closes
+the form and opens the shared Add picker, with its input focused and the query
+retained when creation began from search. This only searches the catalog; it
+does not infer the created agent from a matching name/folder or start another.
+The picker targets the original swarm and split, returning to that swarm if
+the active tab changed. A closed swarm or stale split shows an explanation
+and asks the user to choose a destination again. The modal handoff waits for
+the route to return keyboard ownership. An empty tab appearing behind the
+dialog cannot take that focus for its welcome search.
+
 Recovery opens the returned agent in the original swarm/position and counts the
 creation once. If that destination changed or closed, the runtime remains in
 the catalog for Add agent without opening a different tab or deleting anything.
@@ -85,3 +95,15 @@ Real process creation across a remote disconnect remains to be verified. A crash
 between launch and receipt completion is conservatively unconfirmed, not
 automatically reconciled with the runtime registry. Native benchmarking remains
 deferred.
+
+The subsequent Find existing continuation passes 87 affected creation,
+onboarding, Add, split and keyboard checks, plus a real-font render check with
+normal and 2× text. Six new regressions cover centered Add, the New swarm
+search shortcut, switched/closed swarms and valid/stale splits. All use fake
+creation replies and record that recovery sends no second launch or terminal
+input. Analysis still has zero errors/warnings and the same 14 existing infos.
+Logs: `/private/tmp/harness-find-created-{workflows,final-recovery,analyze}.log`.
+The normal arm64 Release build also passes with the production entry point at
+`/private/tmp/harness-find-created-release/Build/Products/Release/Harness.app`;
+log: `/private/tmp/harness-find-created-release.log`. The app was not launched
+and the user's running app and agents were not restarted.

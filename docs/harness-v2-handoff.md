@@ -34,6 +34,11 @@ it never creates another agent. A confirmed agent returns to the original swarm
 or stays discoverable in Add if that destination changed. Older CLIs can still
 create normally, but cannot recover a lost result through this new status RPC.
 Form intents currently last for that open dialog; do not claim app-restart recovery.
+An uncertain form also offers **Find existing agent…**, which opens shared Add
+after the modal releases keyboard focus. Creation opened from search carries its
+query back to Add and retains its original swarm/split. A closed swarm or changed
+split gets an explanation instead of redirecting the addition. A background
+empty tab cannot take focus from the open creation dialog.
 
 ## Goal
 
@@ -59,9 +64,19 @@ Research must lead to justified improvements, not feature accumulation.
 - Continue on **`main`**, tracking `origin/main`. The user's latest instruction
   is to work, commit, and push directly on main from now on. This supersedes
   the earlier preference for creating a fresh feature branch after each merge.
+- The creation-to-Add continuation passes 87 affected workflow tests, including
+  six new keyboard/destination regressions, plus a real-font render check at
+  880×560 with normal and 2× text. Analysis has zero errors/warnings and the same
+  14 existing infos. The team's already-merged recap change (`fd02a15`, PR #38)
+  was fast-forwarded without touching teammate branches; its CLI files do not
+  overlap this desktop work. Logs: `/private/tmp/harness-find-created-{workflows,final-recovery,analyze}.log`.
+  The normal arm64 Release build succeeds at
+  `/private/tmp/harness-find-created-release/Build/Products/Release/Harness.app`;
+  log: `/private/tmp/harness-find-created-release.log`. It was not launched or
+  used for a benchmark.
 - **`3585051`** records CLI creation receipts and encrypted status recovery.
   **`7ae2cba`** preserves the team's main through PR #37 (`012c171`, Option-Enter
-  inserts a line break). The corresponding desktop continuation keeps unknown
+  inserts a line break). **`c3db329`** keeps unknown
   outcomes on Check status, preserves the original destination and counts a
   recovered creation once. The affected desktop checks include that incoming
   terminal change: 127 checks pass, plus one real-font render check. Analysis

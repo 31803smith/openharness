@@ -519,108 +519,136 @@ class _SwarmScreenState extends State<SwarmScreen> {
     PaneSplitRequest? split,
     bool chooseFolderFirst = false,
     bool cloneRepositoryFirst = false,
-  }) => _dialog(() async {
-    final focused = app.focusedPane;
-    // A general New Agent action starts on this computer. Most launches are
-    // local, and silently inheriting a remote focused pane makes the uncommon
-    // destination look like the default. Splitting a pane is contextual by
-    // definition, so it keeps the focused agent's machine and folder.
-    final inherit =
-        machineId == null &&
-        split != null &&
-        !chooseFolderFirst &&
-        !cloneRepositoryFirst &&
-        focused?.agentId != null;
-    final focusedMachine = inherit
-        ? app.machineStates[focused!.machineId]
-        : null;
-    final focusedAgent = focusedMachine?.agents
-        .where((agent) => agent.id == focused?.agentId)
-        .firstOrNull;
-    final local = app.machineStates.values
-        .where(
-          (m) =>
-              m.isLocalMachine &&
-              (!(chooseFolderFirst || cloneRepositoryFirst) ||
-                  (!m.needsLink && m.nodeOnline != false)),
-        )
-        .firstOrNull;
-    final id =
-        machineId ??
-        focusedMachine?.machine.machineId ??
-        local?.machine.machineId ??
-        app.machineStates.keys.firstOrNull;
-    if (id == null) {
-      await showSwarmLinkDialog(context, app);
-      return;
-    }
+    String returnToAddQuery = '',
+  }) async {
     final targetId = swarmId ?? app.activeSwarmId;
-    final machine = app.machineStates[id];
-    if ((chooseFolderFirst || cloneRepositoryFirst) &&
-        (machine == null ||
+    NewAgentDialogResult? result;
+    await _dialog(() async {
+      final focused = app.focusedPane;
+      // A general New Agent action starts on this computer. Most launches are
+      // local, and silently inheriting a remote focused pane makes the uncommon
+      // destination look like the default. Splitting a pane is contextual by
+      // definition, so it keeps the focused agent's machine and folder.
+      final inherit =
+          machineId == null &&
+          split != null &&
+          !chooseFolderFirst &&
+          !cloneRepositoryFirst &&
+          focused?.agentId != null;
+      final focusedMachine = inherit
+          ? app.machineStates[focused!.machineId]
+          : null;
+      final focusedAgent = focusedMachine?.agents
+          .where((agent) => agent.id == focused?.agentId)
+          .firstOrNull;
+      final local = app.machineStates.values
+          .where(
+            (m) =>
+                m.isLocalMachine &&
+                (!(chooseFolderFirst || cloneRepositoryFirst) ||
+                    (!m.needsLink && m.nodeOnline != false)),
+          )
+          .firstOrNull;
+      final id =
+          machineId ??
+          focusedMachine?.machine.machineId ??
+          local?.machine.machineId ??
+          app.machineStates.keys.firstOrNull;
+      if (id == null) {
+        await showSwarmLinkDialog(context, app);
+        return;
+      }
+      final machine = app.machineStates[id];
+      if ((chooseFolderFirst || cloneRepositoryFirst) &&
+          (machine == null ||
+              !machine.isLocalMachine ||
+              machine.needsLink ||
+              machine.nodeOnline == false)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'This computer is unavailable. Reconnect and try again.',
+            ),
+          ),
+        );
+        return;
+      }
+      var selectedFolder =
+          folder ??
+          (focusedAgent == null
+              ? null
+              : focusedMachine?.projectOf(focusedAgent)?.cwd);
+      Future<void>? initialEngineProbe;
+      if ((chooseFolderFirst || cloneRepositoryFirst) &&
+          machine != null &&
+          machine.isLocalMachine) {
+        // Read availability while the user chooses a folder, so the form can
+        // prefer an installed agent without adding a second probe or wait.
+        initialEngineProbe = app.probeEngines(id, force: true);
+        try {
+          selectedFolder = cloneRepositoryFirst
+              ? await showCloneRepositoryDialog(context)
+              : await getDirectoryPath(confirmButtonText: 'Use folder');
+        } catch (error) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Could not choose a working folder: $error'),
+              ),
+            );
+          }
+          return;
+        }
+        if (!mounted ||
+            selectedFolder == null ||
+            app.activeSwarmId != targetId ||
+            app.machineStates[id] != machine ||
             !machine.isLocalMachine ||
-            machine.needsLink ||
-            machine.nodeOnline == false)) {
+            machine.nodeOnline == false ||
+            machine.needsLink) {
+          return;
+        }
+      }
+      result = await showNewAgentDialog(
+        context,
+        app,
+        id,
+        source: cloneRepositoryFirst
+            ? 'first_clone'
+            : chooseFolderFirst
+            ? 'first_folder'
+            : 'swarm',
+        initialFolder: selectedFolder,
+        initialEngineProbe: initialEngineProbe,
+        swarmId: targetId,
+        split: split,
+        offerFindExisting: true,
+      );
+    });
+    if (!mounted || result != NewAgentDialogResult.findExisting) return;
+    // The pop result arrives before the screen observes its current route.
+    // Let that frame release modal keyboard ownership before opening Add.
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted || !_routeIsCurrent) return;
+    final targetExists = app.swarms.any((swarm) => swarm.id == targetId);
+    final splitChanged = split != null && !app.isPaneSplitCurrent(split);
+    if (!targetExists || splitChanged) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
+        SnackBar(
           content: Text(
-            'This computer is unavailable. Reconnect and try again.',
+            !targetExists
+                ? 'That swarm was closed. Choose a swarm and use Add to find the agent.'
+                : 'That split changed. Open Add again to choose a position.',
           ),
         ),
       );
       return;
     }
-    var selectedFolder =
-        folder ??
-        (focusedAgent == null
-            ? null
-            : focusedMachine?.projectOf(focusedAgent)?.cwd);
-    Future<void>? initialEngineProbe;
-    if ((chooseFolderFirst || cloneRepositoryFirst) &&
-        machine != null &&
-        machine.isLocalMachine) {
-      // Read availability while the user chooses a folder, so the form can
-      // prefer an installed agent without adding a second probe or wait.
-      initialEngineProbe = app.probeEngines(id, force: true);
-      try {
-        selectedFolder = cloneRepositoryFirst
-            ? await showCloneRepositoryDialog(context)
-            : await getDirectoryPath(confirmButtonText: 'Use folder');
-      } catch (error) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Could not choose a working folder: $error'),
-            ),
-          );
-        }
-        return;
-      }
-      if (!mounted ||
-          selectedFolder == null ||
-          app.activeSwarmId != targetId ||
-          app.machineStates[id] != machine ||
-          !machine.isLocalMachine ||
-          machine.nodeOnline == false ||
-          machine.needsLink) {
-        return;
-      }
+    if (app.activeSwarmId != targetId) {
+      app.selectSwarm(targetId, attachPending: false);
     }
-    await showNewAgentDialog(
-      context,
-      app,
-      id,
-      source: cloneRepositoryFirst
-          ? 'first_clone'
-          : chooseFolderFirst
-          ? 'first_folder'
-          : 'swarm',
-      initialFolder: selectedFolder,
-      initialEngineProbe: initialEngineProbe,
-      swarmId: targetId,
-      split: split,
-    );
-  });
+    _openSearch(adding: true, split: split, query: returnToAddQuery);
+  }
 
   Future<void> _splitAgent(PaneResizeAxis axis) async {
     final split = app.preparePaneSplit(axis);
@@ -786,11 +814,12 @@ class _SwarmScreenState extends State<SwarmScreen> {
     if (search == null || !search.canCreate) return;
     final target = search.targetId;
     final split = search.split;
+    final query = search.query;
     // Let the creation dialog remember the original focus for Cancel. Blocking
     // canvas focus during the picker intentionally cleared route focus history.
     _closeSearch();
     FocusManager.instance.applyFocusChangesIfNeeded();
-    await _newAgent(swarmId: target, split: split);
+    await _newAgent(swarmId: target, split: split, returnToAddQuery: query);
   }
 
   void _addFromNavigation() {
@@ -1331,7 +1360,8 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                         catalog: _searchCatalog,
                                         commands: _searchCommands,
                                         onChoose: _activateSearch,
-                                        onNewAgent: _newAgent,
+                                        onNewAgent: (query) =>
+                                            _newAgent(returnToAddQuery: query),
                                       ),
                                       onAddProject: _addProject,
                                       onLinkMachine: () => _dialog(

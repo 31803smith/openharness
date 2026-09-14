@@ -31,13 +31,18 @@ const Map<String, String> kEngineBypassPermissionFlag = {
   'opencode': '--auto',
 };
 
+enum NewAgentDialogResult { created, findExisting }
+
 /// Opens the New agent dialog for [machineId].
 ///
 /// [source] names the door it was opened by — `machine_row`, `rail_empty`,
 /// `pane_empty` or `shortcut` — and is required rather than defaulted, so a
 /// fifth entry point has to say which one it is instead of quietly filing
 /// itself under an existing name.
-Future<void> showNewAgentDialog(
+///
+/// Hosts with an Add picker can set [offerFindExisting] and handle
+/// [NewAgentDialogResult.findExisting] after the dialog closes.
+Future<NewAgentDialogResult?> showNewAgentDialog(
   BuildContext context,
   AppNotifier notifier,
   String machineId, {
@@ -46,12 +51,13 @@ Future<void> showNewAgentDialog(
   String? swarmId,
   PaneSplitRequest? split,
   Future<void>? initialEngineProbe,
+  bool offerFindExisting = false,
 }) {
   // Reported here rather than at each call site: the doors are four and
   // growing, and one that forgets to track is a hole in the funnel that only
   // shows up as a number quietly being too small.
   analytics.newAgentOpened(source: source);
-  return showAppDialog<void>(
+  return showAppDialog<NewAgentDialogResult>(
     context: context,
     transitionDuration: Duration.zero,
     veilBlur: 0,
@@ -62,6 +68,7 @@ Future<void> showNewAgentDialog(
       swarmId: swarmId ?? notifier.activeSwarmId,
       split: split,
       initialEngineProbe: initialEngineProbe,
+      offerFindExisting: offerFindExisting,
     ),
   );
 }
@@ -73,6 +80,7 @@ class _NewAgentDialog extends StatefulWidget {
   final String swarmId;
   final PaneSplitRequest? split;
   final Future<void>? initialEngineProbe;
+  final bool offerFindExisting;
 
   const _NewAgentDialog({
     required this.notifier,
@@ -81,6 +89,7 @@ class _NewAgentDialog extends StatefulWidget {
     required this.swarmId,
     this.split,
     this.initialEngineProbe,
+    required this.offerFindExisting,
   });
 
   @override
@@ -427,7 +436,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
       return;
     }
     analytics.agentCreated(engine: engine, bypassPermission: bypassPermission);
-    Navigator.of(context).pop();
+    Navigator.of(context).pop(NewAgentDialogResult.created);
   }
 
   Future<void> _cloneRepository() async {
@@ -534,6 +543,18 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
           ),
           child: Text(_confirmationPending ? 'Close' : 'Cancel'),
         ),
+        if (widget.offerFindExisting &&
+            _confirmationPending &&
+            (!_submitting || _checkingCreation))
+          TextButton.icon(
+            onPressed: _submitting
+                ? null
+                : () =>
+                      Navigator.of(context)
+                          .pop(NewAgentDialogResult.findExisting),
+            icon: const Icon(LucideIcons.search, size: 16),
+            label: const Text('Find existing agent…'),
+          ),
         FilledButton(
           focusNode: _actionFocus,
           onPressed: canCreate ? _submit : null,

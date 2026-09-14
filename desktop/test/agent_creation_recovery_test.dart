@@ -1,14 +1,26 @@
 import 'dart:async';
 
+import 'package:file_selector_platform_interface/file_selector_platform_interface.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/state/app_state.dart';
 import 'package:harness/stats/harness_stats.dart';
+import 'package:harness/terminal/terminal_binary.dart';
 import 'package:harness/widgets/new_agent_dialog.dart';
 import 'package:harness/ws/ws_conn.dart';
 
 import 'swarm_state_test.dart' show createApp;
+import 'swarm_screen_test.dart' show mount, terminal;
+import 'swarm_interactions_test.dart' show chord;
+
+class _FolderPicker extends FileSelectorPlatform {
+  @override
+  Future<String?> getDirectoryPath({
+    String? initialDirectory,
+    String? confirmButtonText,
+  }) async => '/work';
+}
 
 class _Request {
   _Request(this.type, this.payload);
@@ -72,6 +84,119 @@ Future<void> _timeOut(
 }
 
 void main() {
+  for (final change in [
+    'unchanged',
+    'welcome',
+    'switch',
+    'closed',
+    'split',
+    'stale split',
+  ]) {
+    testWidgets('find an uncertain creation through Add after $change', (
+      tester,
+    ) async {
+      final files = FileSelectorPlatform.instance;
+      FileSelectorPlatform.instance = _FolderPicker();
+      addTearDown(() => FileSelectorPlatform.instance = files);
+      final connection = _Connection();
+      final app = createApp(connectionForTest: (_) => connection);
+      app.stateOf('m')!.localOnly = true;
+      final input = <TerminalBinaryFrame>[];
+      final welcome = change == 'welcome';
+      if (!welcome) app.adoptSessionForTest(terminal('a0', input));
+      await mount(tester, app);
+      tester.view.physicalSize = const Size(2000, 1200);
+      await tester.pump();
+      final original = app.activeSwarm;
+      final splitting = change.contains('split');
+      final search = find.byKey(const ValueKey('swarm-search-input'));
+      final queryInput = welcome
+          ? find.byKey(const ValueKey('swarm-welcome-search-input'))
+          : search;
+      if (splitting) {
+        await chord(tester, LogicalKeyboardKey.keyP);
+        await tester.enterText(search, '> split right');
+        await tester.pump();
+        await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+        await tester.pump();
+      } else if (!welcome) {
+        await chord(tester, LogicalKeyboardKey.keyN);
+      }
+      await tester.enterText(queryInput, 'Agent 12');
+      await tester.pump();
+      if (welcome) {
+        await chord(tester, LogicalKeyboardKey.keyN, shift: true);
+      } else {
+        await tester.tap(find.byKey(const ValueKey('swarm-search-new-agent')));
+      }
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('new-agent-folder')));
+      await tester.pumpAndSettle();
+      expect(find.text('Find existing agent…'), findsNothing);
+      await tester.tap(find.widgetWithText(FilledButton, 'Create agent'));
+      await tester.pump();
+      expect(find.text('Find existing agent…'), findsNothing);
+      connection.calls.last.reply.completeError(
+        const WsRequestTimeout('agent_create'),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Find existing agent…'), findsOneWidget);
+      if (change == 'switch' || change == 'closed') app.newSwarm();
+      if (change == 'closed') await app.closeSwarm(original.id);
+      if (change == 'stale split') {
+        app.adoptSessionForTest(terminal('a1', input));
+      }
+      await tester.pump();
+      // Check status owns focus after the timeout; Shift-Tab reaches the
+      // alternative without sending the key or Enter to the terminal.
+      expect(
+        tester
+            .widget<FilledButton>(
+              find.widgetWithText(FilledButton, 'Check status'),
+            )
+            .focusNode!
+            .hasFocus,
+        isTrue,
+      );
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shift);
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shift);
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsNothing);
+      if (change == 'closed' || change == 'stale split') {
+        expect(search, findsNothing);
+        expect(
+          find.textContaining(
+            change == 'closed' ? 'swarm was closed' : 'split changed',
+          ),
+          findsOneWidget,
+        );
+        expect(original.panes.any((p) => p.agentId == 'a12'), isFalse);
+      } else {
+        final field = tester.widget<TextField>(search);
+        expect(field.controller!.text, 'Agent 12');
+        expect(field.focusNode!.hasFocus, isTrue);
+        expect(app.activeSwarmId, original.id);
+        expect(original.panes.map((p) => p.agentId), welcome ? [] : ['a0']);
+        if (splitting) expect(find.text('Split right'), findsNWidgets(2));
+        await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+        await tester.pump();
+        expect(
+          original.panes.map((p) => p.agentId),
+          welcome ? ['a12'] : ['a0', 'a12'],
+        );
+        if (splitting) expect(original.manualLayout, isNotNull);
+      }
+      expect(connection.calls.map((c) => c.type), ['agent_create']);
+      expect(input, isEmpty);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+    });
+  }
+
   test(
     'lost creation reply recovers into the original swarm and counts once',
     () async {
