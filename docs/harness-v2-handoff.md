@@ -17,6 +17,11 @@ explicit Archive/Resume plus bulk cleanup, preserving ordinary view closure.
 This is a proposal for discussion, not implemented behavior or authorization to
 archive/delete existing user sessions.
 
+The existing close-view action is now consistently labeled **Remove from swarm**.
+History recovery also reuses a partially restored swarm: reopening an agent and
+then its original swarm adds the missing views to the same tab, retaining newer
+choices and live sessions. No runtime cleanup was introduced.
+
 ## Goal
 
 Build the best everyday workspace for people directing persistent AI agents:
@@ -41,6 +46,9 @@ Research must lead to justified improvements, not feature accumulation.
 - Continue on **`main`**, tracking `origin/main`. The user's latest instruction
   is to work, commit, and push directly on main from now on. This supersedes
   the earlier preference for creating a fresh feature branch after each merge.
+- **`d727360`** clarifies view removal and restores closed work into its existing
+  swarm. **`332546f`** keeps terminal relayout from taking keyboard focus from
+  resize controls. The combined desktop suite passes 1,317 tests, one skip.
 - **`339f008`** saves the opening continuation: it keeps the retained canvas
   built while a picker opens/closes and shares validated catalogs across openings. Warm Add
   opening measured 22.006 ms median versus 26.273 ms in the same headless
@@ -120,6 +128,10 @@ both patches are now superseded by production source. Do not reapply them.
 - Closing an agent view or swarm tab removes views; it must not stop or delete
   the underlying agent. Focus/navigation must not send terminal input or seize
   control of a runtime controlled elsewhere.
+- Reopening a swarm that was already partially restored returns to that same
+  identity and adds its missing views. Preserve its newer name, focus, pins and
+  presets. If all missing views cannot fit, retain the closure for later without
+  duplicating a tab, adding a subset, or evicting existing agents.
 - Keep native macOS tabs and traffic lights, compact pane headers, and a quiet
   canvas. Wallpaper belongs on the empty New swarm page. Existing palettes
   coordinate native chrome, Flutter UI, and terminal colors.
@@ -275,7 +287,23 @@ unverified; do not infer them from these UI changes.
 **Archived drafts:** both are superseded. The onboarding ideas were adapted into
 the common page, without adding another first-tab-only component.
 
-**Latest verification:** the first-agent Retry continuation, including the team's
+**Latest verification:** the History recovery and viewport-focus continuation on
+`e909396` passes **1,317 desktop tests**, one existing skip. The analyzer reports
+zero errors/warnings and the same 14 informational diagnostics. The isolated
+AppKit titlebar/menu fixture passes 335 checks, including hidden window layout.
+Logs: `/private/tmp/harness-reopen-existing-verified-full-tests.log`,
+`/private/tmp/harness-reopen-existing-analyze.log` and
+`/private/tmp/harness-reopen-existing-native.log`. The 54 focused History checks
+and 23 focused terminal/recovery checks also pass. No real agent received test
+input; the running preview was not restarted. These changes have not had a new
+Release app build or live native workflow run. Benchmarking remains deferred.
+
+The full suite caught viewport refresh taking focus from a resize handle. The
+fix keeps geometry updates from claiming keyboard ownership; pointer Escape,
+repeated resize arrow keys, and latest-output positioning across a real layout
+change are verified together.
+
+**Previous verification:** the first-agent Retry continuation, including the team's
 `5f279e1` pane-menu Delete action, passes 1,311 desktop tests with one existing skip.
 Main subsequently fast-forwarded through the team's independent socket, terminal,
 titlebar and device changes at `87f8fcd`; the results below describe the tested
@@ -436,6 +464,9 @@ that its isolated window can become active/key.
 - The first character typed after navigation reaches only the selected agent.
   Hidden/offscreen/zoomed destinations are revealed while retained sessions and
   reading positions survive switching away and back.
+- Reopening one agent followed by its original swarm restores a single workspace
+  with shared sessions, including at the tab limit. A full destination preserves
+  its recovery entry until the entire missing membership can fit.
 - All three Add entry points can add an existing agent and create a new agent.
   Both split directions preserve their exact original placement. Source swarms
   remain intact, and existing-agent addition starts no duplicate runtime.

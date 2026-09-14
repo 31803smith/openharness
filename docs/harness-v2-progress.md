@@ -6,6 +6,24 @@ Updated 2026-09-14 after integrating the continuation into main. This is a worki
 
 ## Continue directly on main
 
+- Clarified **Remove from swarm** in the pane/native menus and keyboard help.
+  The action still removes only a view. Fixed History recovery that created a
+  second same-named swarm after one of its agents had already been reopened:
+  missing views now return to the same swarm, preserving newer names, focus,
+  pins, presets and shared live sessions. Recovery can fit at the tab limit and
+  keeps its history entry if the full missing membership cannot fit.
+- The integrated desktop suite exposed a viewport-focus regression after the
+  team's terminal-tail change: relayout reclaimed keyboard focus from a resize
+  handle, so Escape could not cancel a drag. Geometry refresh now preserves
+  keyboard ownership. Existing pointer cancellation and repeated keyboard
+  resizing pass, alongside a strengthened latest-output check that actually
+  switches to a valid four-pane layout. Archive/Resume is still a proposal;
+  current user runtimes were not started, stopped or used as test fixtures.
+  Verification: **1,317 desktop tests pass**, one existing skip; zero analyzer
+  errors/warnings, 14 existing infos; 335 isolated AppKit checks pass. Logs:
+  `/private/tmp/harness-reopen-existing-{verified-full-tests,analyze,native}.log`.
+  The running preview was not restarted; this continuation has no new Release
+  build or live native workflow result. Benchmarking remains deferred.
 - Added **Retry** to failed New agent availability checks. The same form keeps
   the folder, explicit agent and permission choices while rechecking; recovered
   Codex profile support loads in place. Late replies for a previous machine
