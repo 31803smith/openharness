@@ -102,7 +102,7 @@ void main() {
     (
       'SPAWN_FAILED',
       'The machine could not allocate an agent process.',
-      'Create agent failed: The machine could not allocate an agent process.',
+      'Test host has not confirmed the new agent yet. Check status before creating another.',
     ),
   ]) {
     test(
@@ -140,7 +140,7 @@ void main() {
       connection.reply.completeError(const WsRequestTimeout('agent_create'));
       expect(
         await creation,
-        'Test host has not confirmed the new agent yet. Check Search before creating another.',
+        'Test host has not confirmed the new agent yet. Check status before creating another.',
       );
       expect(connection.calls, ['agent_create']);
       expect(app.panes, isEmpty);

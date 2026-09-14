@@ -99,6 +99,7 @@ class _Notifier extends AppNotifier {
     String? codexHome,
     String? swarmId,
     PaneSplitRequest? split,
+    AgentCreationAttempt? attempt,
   }) async {
     calls.add({'engine': engine, 'codexHome': codexHome, 'folder': folder});
     return null;

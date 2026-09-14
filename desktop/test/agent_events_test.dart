@@ -62,6 +62,7 @@ class FakeCreateAgentNotifier extends AppNotifier {
     String? codexHome,
     String? swarmId,
     PaneSplitRequest? split,
+    AgentCreationAttempt? attempt,
   }) async => null;
 }
 

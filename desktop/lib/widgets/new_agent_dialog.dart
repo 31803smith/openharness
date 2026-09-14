@@ -89,6 +89,11 @@ class _NewAgentDialog extends StatefulWidget {
 
 class _NewAgentDialogState extends State<_NewAgentDialog> {
   final _folderFocus = FocusNode(debugLabel: 'Working folder');
+  final _actionFocus = FocusNode(debugLabel: 'Create or check agent');
+  AgentCreationAttempt? _creation;
+  bool _checkingCreation = false;
+  bool get _confirmationPending => _creation?.awaitingConfirmation == true;
+  bool get _choicesLocked => _submitting || _confirmationPending;
   late String _engine = allEngines.first.id;
   bool _engineChosenByUser = false;
   late String _machineId = widget.machineId;
@@ -107,6 +112,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   @override
   void dispose() {
     _folderFocus.dispose();
+    _actionFocus.dispose();
     super.dispose();
   }
 
@@ -142,7 +148,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
 
   Future<void> _loadAgentPreference() async {
     await widget.notifier.agentPreference.load();
-    if (!mounted || _submitting || _engineChosenByUser) return;
+    if (!mounted || _choicesLocked || _engineChosenByUser) return;
     final remembered = widget.notifier.agentPreference.value;
     if (allEngines.any((identity) => identity.id == remembered)) {
       setState(() {
@@ -173,7 +179,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
         widget.notifier.probeEngines(machineId, force: true));
     if (!mounted ||
         revision != _machineRevision ||
-        _submitting ||
+        _choicesLocked ||
         _engineChosenByUser) {
       return;
     }
@@ -252,7 +258,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
       widget.notifier.stateOf(_machineId)?.engines.inFlight != null;
 
   void _retryEngineCheck() {
-    if (_submitting || _checkingEngines) return;
+    if (_choicesLocked || _checkingEngines) return;
     unawaited(_probeEngines());
   }
 
@@ -320,7 +326,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   ].join(' — ');
 
   Future<void> _browse() async {
-    if (_picking) return;
+    if (_picking || _choicesLocked) return;
     final restoreFocus = _folderFocus.hasFocus;
     // The agent runs on the MACHINE, so the folder has to exist on the machine
     // — which is the whole reason this branches.
@@ -352,7 +358,9 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
       if (!mounted) return;
       setState(() {
         _picking = false;
-        if (picked != null && pickingRevision == _machineRevision) {
+        if (picked != null &&
+            !_choicesLocked &&
+            pickingRevision == _machineRevision) {
           _folder = picked;
           _error = null;
         }
@@ -368,7 +376,9 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     } finally {
       if (mounted && restoreFocus) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted && !_submitting && pickingRevision == _machineRevision) {
+          if (mounted &&
+              !_choicesLocked &&
+              pickingRevision == _machineRevision) {
             _folderFocus.requestFocus();
           }
         });
@@ -378,12 +388,18 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
 
   Future<void> _submit() async {
     final folder = _folder;
-    if (folder == null || _submitting || _waitingForCodexProfile) return;
+    if (folder == null ||
+        _submitting ||
+        (!_confirmationPending && _waitingForCodexProfile)) {
+      return;
+    }
     final engine = _engine;
     final profile = _codexProfile;
     final bypassPermission =
         _bypassPermission && kEngineBypassPermissionFlag.containsKey(engine);
+    if (!_confirmationPending) _creation = AgentCreationAttempt();
     setState(() {
+      _checkingCreation = _confirmationPending;
       _submitting = true;
       _error = null;
     });
@@ -397,12 +413,16 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
       // Keep the explicit choice even if machine discovery changes mid-submit.
       // The notifier must reject a now-remote target, never use its default login.
       codexHome: engine == 'codex' ? profile?.path : null,
+      attempt: _creation,
     );
     if (!mounted) return;
     if (error != null) {
       setState(() {
         _submitting = false;
         _error = error;
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _actionFocus.requestFocus();
       });
       return;
     }
@@ -411,7 +431,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   }
 
   Future<void> _cloneRepository() async {
-    if (_picking || !_machineIsThisComputer) return;
+    if (_picking || _choicesLocked || !_machineIsThisComputer) return;
     final revision = _machineRevision;
     setState(() => _picking = true);
     final folder = await showCloneRepositoryDialog(
@@ -421,7 +441,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     if (!mounted) return;
     setState(() {
       _picking = false;
-      if (folder != null && revision == _machineRevision) {
+      if (folder != null && !_choicesLocked && revision == _machineRevision) {
         _folder = folder;
         _error = null;
       }
@@ -448,7 +468,10 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   Widget _buildDialog(BuildContext context) {
     final bypassFlag = kEngineBypassPermissionFlag[_engine];
     final canCreate =
-        _folder != null && !_submitting && !_waitingForCodexProfile;
+        _folder != null &&
+        !_picking &&
+        !_submitting &&
+        (_confirmationPending || !_waitingForCodexProfile);
 
     return AlertDialog(
       title: Text(switch (widget.split?.axis) {
@@ -479,9 +502,9 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
               // thing on the screen was setting the size of the window for
               // everybody who never turns it on.
               AbsorbPointer(
-                absorbing: _submitting,
+                absorbing: _choicesLocked,
                 child: ExcludeFocus(
-                  excluding: _submitting,
+                  excluding: _choicesLocked,
                   child: _choices(bypassFlag),
                 ),
               ),
@@ -491,8 +514,11 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                   liveRegion: true,
                   child: Text(
                     _error!,
-                    style: Theme.of(context).textTheme.bodySmall
-                        ?.copyWith(color: Theme.of(context).colorScheme.error),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: _confirmationPending
+                          ? grid.AppPalette.textSecondary
+                          : Theme.of(context).colorScheme.error,
+                    ),
                   ),
                 ),
               ],
@@ -506,9 +532,10 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
           style: TextButton.styleFrom(
             foregroundColor: grid.AppPalette.textSecondary,
           ),
-          child: const Text('Cancel'),
+          child: Text(_confirmationPending ? 'Close' : 'Cancel'),
         ),
         FilledButton(
+          focusNode: _actionFocus,
           onPressed: canCreate ? _submit : null,
           style: FilledButton.styleFrom(
             disabledForegroundColor: _submitting
@@ -518,21 +545,27 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
           child: _submitting
               ? Semantics(
                   liveRegion: true,
-                  child: const Row(
+                  child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      SizedBox(
+                      const SizedBox(
                         width: 14,
                         height: 14,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       ),
-                      SizedBox(width: 8),
-                      Text('Creating agent…'),
+                      const SizedBox(width: 8),
+                      Text(
+                        _checkingCreation
+                            ? 'Checking status…'
+                            : 'Creating agent…',
+                      ),
                     ],
                   ),
                 )
               : Text(
-                  _machineIsThisComputer
+                  _confirmationPending
+                      ? 'Check status'
+                      : _machineIsThisComputer
                       ? 'Create agent'
                       : 'Create on $_machineName',
                 ),
@@ -654,7 +687,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
         // folder" is the Create button being disabled. These two had nowhere
         // else, and losing them would have made a machine that Harness has not
         // managed to reach look exactly like one it has.
-        if (_willInstall || _engineCheckFailed) ...[
+        if (!_confirmationPending && (_willInstall || _engineCheckFailed)) ...[
           const SizedBox(height: 6),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -718,8 +751,11 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                       if (agent.engine == 'codex' && agent.codexHome != null)
                         agent.codexHome!,
                   },
-                  onChanged: (profile) =>
-                      setState(() => _codexProfile = profile),
+                  onChanged: (profile) {
+                    if (!_choicesLocked) {
+                      setState(() => _codexProfile = profile);
+                    }
+                  },
                   onBusyChanged: (busy) {
                     if (_codexProfilesBusy != busy) {
                       setState(() => _codexProfilesBusy = busy);

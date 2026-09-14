@@ -27,6 +27,14 @@ with in-place retry and latest-request ownership. A pending or failed hop cannot
 select the previous folder. These changes apply wherever the shared remote
 chooser is used: agent working folders, saved projects and profile folders.
 
+[Creation recovery](harness-agent-creation.md) now distinguishes a delayed reply
+from a refused launch. The form retains its choices and offers **Check status**
+after a timeout/disconnect. That action only reads the original creation receipt;
+it never creates another agent. A confirmed agent returns to the original swarm
+or stays discoverable in Add if that destination changed. Older CLIs can still
+create normally, but cannot recover a lost result through this new status RPC.
+Form intents currently last for that open dialog; do not claim app-restart recovery.
+
 ## Goal
 
 Build the best everyday workspace for people directing persistent AI agents:
@@ -51,6 +59,15 @@ Research must lead to justified improvements, not feature accumulation.
 - Continue on **`main`**, tracking `origin/main`. The user's latest instruction
   is to work, commit, and push directly on main from now on. This supersedes
   the earlier preference for creating a fresh feature branch after each merge.
+- **`3585051`** records CLI creation receipts and encrypted status recovery.
+  **`7ae2cba`** preserves the team's main through PR #37 (`012c171`, Option-Enter
+  inserts a line break). The corresponding desktop continuation keeps unknown
+  outcomes on Check status, preserves the original destination and counts a
+  recovered creation once. The affected desktop checks include that incoming
+  terminal change: 127 checks pass, plus one real-font render check. Analysis
+  has zero errors/warnings and 14 existing infos. The normal arm64 Release
+  build succeeds at `/private/tmp/harness-creation-release/Build/Products/Release/Harness.app`;
+  it was not launched. CLI typechecking, bundling and 150 related checks pass.
 - **`e73eb6e`** adds keyboard remote-folder selection and reliable asynchronous
   browsing. The affected workflow/render checks (58 total), analysis and normal
   Release build pass. **`8800c35`** preserves the team's concurrent main through
@@ -469,6 +486,11 @@ that its isolated window can become active/key.
    machine/project starters are implemented. Check fresh dependencies, provider sign-in, cloning,
    first task and adding a second agent; improve what the observation exposes.
    Preserve choices on failure and the distinction between Navigate and Add.
+   Creation recovery is implemented and tested with isolated replies. Verify a
+   deliberately delayed remote create on a disposable agent, including an older
+   CLI and a changed original swarm. A status check must remain read-only. A
+   durable desktop pending-creations list and crash-window registry reconciliation
+   are still future work; the current dialog cannot resume its intent after closure.
 3. **Recheck fresh terminal positioning and real workflows** on disposable
    local/remote agents: startup, delayed snapshots, resizing, returning to a
    scrolled view, reconnect, paste, selection, and IME.

@@ -72,6 +72,7 @@ class _FirstUseApp extends AppNotifier {
     String? codexHome,
     String? swarmId,
     PaneSplitRequest? split,
+    AgentCreationAttempt? attempt,
   }) async {
     launches.add((
       machine: machineId,

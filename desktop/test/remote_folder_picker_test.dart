@@ -47,6 +47,7 @@ class _Folders extends AppNotifier {
     String? codexHome,
     String? swarmId,
     PaneSplitRequest? split,
+    AgentCreationAttempt? attempt,
   }) async {
     launches.add((machine: machineId, engine: engine, folder: folder));
     return null;

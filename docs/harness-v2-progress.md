@@ -6,6 +6,23 @@ Updated 2026-09-14 after integrating the continuation into main. This is a worki
 
 ## Continue directly on main
 
+- Added [creation receipts and recovery](harness-agent-creation.md). A lost
+  creation reply now leaves the original choices visible and changes Create to
+  **Check status**, with keyboard focus on that action. Checking never launches
+  another agent, including on older/upgraded CLIs with no matching receipt.
+  Confirmed creation returns to the original swarm/position and counts once;
+  stale destinations leave it available in Add. The CLI retains completed and
+  uncertain outcomes across daemon restarts and rejects conflicting retries.
+  This does not implement Archive/Resume or restore closed desktop forms.
+  CLI typechecking, bundling and 150 affected checks pass; 127 desktop checks
+  pass, plus one real-font render check at 880×560 and normal/2× text. Analysis
+  has no errors/warnings and the same 14 existing infos. The normal arm64
+  Release build succeeds at
+  `/private/tmp/harness-creation-release/Build/Products/Release/Harness.app`.
+  Logs: `/private/tmp/harness-creation-{desktop-tests,final-recovery,analyze,release}.log`.
+  CLI code is saved in `3585051`; `7ae2cba` preserves the team's concurrent
+  Option-Enter fix from main (`012c171`). No real agent or running app was
+  started/stopped, and no benchmark ran. Live remote recovery remains unverified.
 - Made the shared remote folder chooser work by keyboard: enter a full path,
   browse with arrows/Enter, go up with Alt-Up, and select the loaded folder with
   Cmd-Enter (Ctrl-Enter elsewhere). It names the target machine and keeps Home

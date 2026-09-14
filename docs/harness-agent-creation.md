@@ -15,8 +15,9 @@ separate from the proposed Archive/Resume lifecycle; it stops no existing agent.
   report `missing`, `pending`, `created`, `failed`, `unconfirmed` or `unavailable`.
   `created` includes the current agent frame. `failed` carries `failure.code`
   and optional `failure.detail`, separate from RPC/transport errors.
-- A missing receipt reported by a supporting CLI permits retry with the same
-  id. An unsupported request, malformed reply or transport failure does not.
+- A missing receipt does not prove that nothing started: an older CLI may have
+  launched the agent before being upgraded. Desktop status checks never resend
+  creation, including for missing/unsupported receipts and transport failures.
   Do not use a `checkOnly` flag on `agent_create`: old CLIs would launch it.
 - Receipt-aware creation is detached from the connection's ordered request
   chain, so a status request can be answered while creation is still pending.
@@ -40,8 +41,9 @@ separate from the proposed Archive/Resume lifecycle; it stops no existing agent.
 
 Legacy callers without `creationId` keep the existing create response. An older
 CLI can also handle a new desktop's first create, ignoring the additional field.
-The desktop must check status before resending an uncertain request, including
-on old CLIs where status may be unsupported or time out.
+The desktop keeps an uncertain request on **Check status**. On old CLIs where
+status is unsupported or times out, it directs the user to **Add agent** to look
+for the existing runtime. It does not guess from a title or folder match.
 
 September 14 CLI checkpoint: 150 affected checks pass (receipt storage,
 BackendSocket creation, existing launch helper, E2EE and relay fixtures), along
@@ -49,7 +51,37 @@ with TypeScript checking and CLI bundling. The new BackendSocket recovery tests
 failed before integration. All launch callbacks use fakes and all state/sockets
 are disposable. The CLI bundle was not installed or restarted.
 
-The desktop recovery UI is the next part of this checkpoint. Real process
-creation across a remote disconnect remains to be verified. A crash between
-launch and receipt completion is conservatively unconfirmed, not automatically
-reconciled with the runtime registry. Native benchmarking remains deferred.
+## Desktop behavior
+
+The form keeps the same creation intent and original machine, folder, engine,
+profile, swarm and split. After an ambiguous reply, its choices stay visible and
+locked and the primary action becomes **Check status**. Keyboard focus returns
+to that action. Closing an uncertain request is labeled **Close**, not Cancel.
+A confirmed refusal unlocks the choices for correction; the next deliberate
+submission uses a new intent. Opening New agent also starts a fresh intent.
+
+Recovery opens the returned agent in the original swarm/position and counts the
+creation once. If that destination changed or closed, the runtime remains in
+the catalog for Add agent without opening a different tab or deleting anything.
+Concurrent submits for the same intent share one pending request. Late engine,
+profile and folder results cannot change the original launch choices.
+
+The receipt is durable on the CLI; the desktop form's intent is in memory. Closing
+the form or restarting the app currently ends that form's recovery path. A future
+pending-creations list could retain it across those boundaries. Do not describe
+this as automatic recovery across a desktop restart or an Archive/Resume feature.
+
+Desktop validation: 127 affected checks pass, including 15 creation-recovery
+regressions and the team's concurrent Option-Enter input tests. A separate
+real-font render check passes at 880×560 with normal and 2× text. Static analysis
+has no errors/warnings and the same 14 existing infos. The normal arm64 Release
+build succeeds at
+`/private/tmp/harness-creation-release/Build/Products/Release/Harness.app` with
+the production `lib/main.dart` entry point. It was not launched. Logs:
+`/private/tmp/harness-creation-{desktop-tests,final-recovery,analyze,release}.log`.
+The fixtures never create, stop or send input to a real agent.
+
+Real process creation across a remote disconnect remains to be verified. A crash
+between launch and receipt completion is conservatively unconfirmed, not
+automatically reconciled with the runtime registry. Native benchmarking remains
+deferred.

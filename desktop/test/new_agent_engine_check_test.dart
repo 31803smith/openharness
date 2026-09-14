@@ -299,6 +299,7 @@ class _RetryNotifier extends AppNotifier {
     String? codexHome,
     String? swarmId,
     PaneSplitRequest? split,
+    AgentCreationAttempt? attempt,
   }) async {
     launches.add({
       'machine': machineId,

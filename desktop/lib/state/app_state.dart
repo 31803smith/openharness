@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io' show exit, pid;
+import 'dart:math' show Random;
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
@@ -62,6 +63,34 @@ class RestartAgentResult {
   final bool resumed;
 
   const RestartAgentResult({this.error, this.resumed = true});
+}
+
+/// One deliberate creation, retained by the form if its reply is lost. Reusing
+/// it checks the original request; opening New agent starts a fresh intent.
+class AgentCreationAttempt {
+  AgentCreationAttempt() {
+    final random = Random.secure();
+    _id = List.generate(
+      16,
+      (_) => random.nextInt(256),
+    ).map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
+  }
+
+  late final String _id;
+  String? _machineId, _targetId;
+  Map<String, dynamic>? _choices;
+  PaneSplitRequest? _split;
+  Future<String?>? _inFlight;
+  bool _awaitingConfirmation = false, _finished = false;
+  String? _outcome;
+
+  bool get awaitingConfirmation => _awaitingConfirmation;
+
+  String? _complete(String? error) {
+    _finished = true;
+    _awaitingConfirmation = false;
+    return _outcome = error;
+  }
 }
 
 String? _normalizeComputerId(String? raw) {
@@ -3579,8 +3608,9 @@ class AppNotifier extends ChangeNotifier {
     }
   }
 
-  /// Spawns a new engine session on [machineId] via the harness CLI, then jumps into its terminal.
-  /// Returns null on success, or an error message to show inline in the New Agent dialog.
+  /// Starts an agent, or recovers this form's earlier request after a lost reply.
+  /// Returns null on success, or an inline message; [attempt] tells the form
+  /// whether to offer Check status instead of inviting another creation.
   Future<String?> createAgent(
     String machineId, {
     required String engine,
@@ -3589,76 +3619,198 @@ class AppNotifier extends ChangeNotifier {
     String? codexHome,
     String? swarmId,
     PaneSplitRequest? split,
-  }) async {
+    AgentCreationAttempt? attempt,
+  }) {
+    final creation = attempt ?? AgentCreationAttempt();
+    final choices = <String, dynamic>{
+      'engine': engine,
+      'cwd': folder,
+      'bypassPermission': bypassPermission,
+      'codexHome': ?codexHome,
+    };
+    if (creation._choices != null &&
+        (creation._machineId != machineId ||
+            !mapEquals(creation._choices, choices))) {
+      return Future.value(
+        'Check the original request before changing its choices.',
+      );
+    }
+    if (creation._finished) return Future.value(creation._outcome);
+    if (creation._inFlight case final inFlight?) return inFlight;
+    if (creation._choices == null) {
+      creation._choices = choices;
+      creation._machineId = machineId;
+      creation._targetId = split?.swarmId ?? swarmId ?? activeSwarmId;
+      creation._split = split;
+    }
+    final work = _createAgentWithReceipt(creation);
+    creation._inFlight = work;
+    return work.whenComplete(() => creation._inFlight = null);
+  }
+
+  String? _creationPlacementError(String targetId, PaneSplitRequest? split) {
     if (split != null && !isPaneSplitCurrent(split)) {
       return 'The layout changed. Close this dialog and split the agent again.';
     }
-    final targetId = split?.swarmId ?? swarmId ?? activeSwarmId;
-    if (!swarms.any((s) => s.id == targetId)) return 'This swarm was closed';
-    final target = swarms.firstWhere((s) => s.id == targetId);
+    final target = swarms.where((s) => s.id == targetId).firstOrNull;
+    if (target == null) return 'This swarm was closed';
     if (target.panes.length >= maxPanes) {
       return 'This swarm is full. Open a new swarm to create an agent.';
     }
-    final machine = machineStates[machineId];
-    if (machine == null) return 'Machine not found';
-    if (codexHome != null) {
-      if (engine != 'codex') {
-        return 'Choose a Codex profile only for Codex';
-      }
-      if (machine.engines['codex']?.supportsCodexHome != true) {
-        return 'Update the harness CLI on this machine to choose a Codex profile';
-      }
-    }
-    final connection = _conn(machineId);
-    Map<String, dynamic> result;
-    try {
-      result = await connection.request(
-        'agent_create',
-        payload: {
-          'engine': engine,
-          'cwd': folder,
-          'bypassPermission': bypassPermission,
-          'codexHome': ?codexHome,
-        },
-        timeout: const Duration(seconds: 20),
-      );
-    } on WsRequestFailure catch (failure) {
-      // A refusal the CLI MEANT arrives as a thrown WsRequestFailure, never as an `error` key on a
-      // reply that was returned — see that class. This used to be a branch on `result['error']`
-      // below, which could not run, so the user got the wire code in place of the sentence.
-      return switch (failure.code) {
+    return null;
+  }
+
+  String _creationFailureMessage(String code, String? detail, String machine) =>
+      switch (code) {
         'CWD_NOT_FOUND' || 'INVALID_CWD' =>
-          'The project folder is unavailable on ${machine.machine.displayName}. '
+          'The project folder is unavailable on $machine. '
               'Choose another folder and try again.',
         'TMUX_UNAVAILABLE' =>
-          'Harness needs tmux to start agents on ${machine.machine.displayName}. '
+          'Harness needs tmux to start agents on $machine. '
               'Install tmux there, then try again.',
         'UNSUPPORTED_ON_REMOTE' || 'UNSUPPORTED' =>
           'Update the harness CLI on this machine to use New Agent',
-        _ => 'Create agent failed: ${failure.detail ?? failure.code}',
+        _ => 'Create agent failed: ${detail ?? code}',
       };
-    } on WsRequestTimeout {
-      // The request may have succeeded while its reply was lost. Do not call
-      // that a definite failure or encourage blindly creating a duplicate.
-      return '${machine.machine.displayName} has not confirmed the new agent yet. '
-          'Check Search before creating another.';
-    } catch (error) {
-      return 'Create agent failed: $error';
+
+  Future<String?> _createAgentWithReceipt(AgentCreationAttempt creation) async {
+    final machineId = creation._machineId!;
+    final targetId = creation._targetId!;
+    final split = creation._split;
+    final choices = creation._choices!;
+    final machine = machineStates[machineId];
+    if (machine == null) return 'Machine not found';
+    final machineName = machine.machine.displayName;
+    // A status check must remain possible even if the destination closed or a
+    // capability probe changed while the first create was already in flight.
+    if (!creation.awaitingConfirmation) {
+      final placementError = _creationPlacementError(targetId, split);
+      if (placementError != null) return placementError;
+      if (choices['codexHome'] != null) {
+        if (choices['engine'] != 'codex') {
+          return 'Choose a Codex profile only for Codex';
+        }
+        if (machine.engines['codex']?.supportsCodexHome != true) {
+          return 'Update the harness CLI on this machine to choose a Codex profile';
+        }
+      }
+    }
+    final connection = _conn(machineId);
+    final operation = creation.awaitingConfirmation
+        ? 'agent_create_status'
+        : 'agent_create';
+    final unconfirmed =
+        '$machineName has not confirmed the new agent yet. '
+        'Check status before creating another.';
+    Map<String, dynamic> result;
+    creation._awaitingConfirmation = true;
+    try {
+      if (operation == 'agent_create_status') {
+        result = await connection.request(
+          operation,
+          payload: {'creationId': creation._id},
+          timeout: const Duration(seconds: 10),
+        );
+        if (result['creationId'] != creation._id) return unconfirmed;
+      } else {
+        result = await connection.request(
+          operation,
+          payload: {...choices, 'creationId': creation._id},
+          timeout: const Duration(seconds: 20),
+        );
+      }
+    } on WsRequestFailure catch (failure) {
+      if (operation == 'agent_create_status') {
+        if (failure.code == 'UNSUPPORTED' ||
+            failure.code == 'UNSUPPORTED_ON_REMOTE' ||
+            failure.code == 'E2EE_REQUIRED') {
+          return '$machineName cannot check this creation. '
+              'Use Add agent to look for it before creating another.';
+        }
+        return unconfirmed;
+      }
+      // Refusals that happen before a launch are safe to correct. INTERNAL,
+      // spawn timeouts and connection failures cannot prove nothing started.
+      const refusedBeforeLaunch = {
+        'CWD_NOT_FOUND',
+        'INVALID_CWD',
+        'INVALID_ENGINE',
+        'INVALID_GRID',
+        'INVALID_CODEX_HOME',
+        'TMUX_UNAVAILABLE',
+        'TMUX_TOO_OLD_FOR_GRID',
+        'GRID_CONFIG_FAILED',
+        'UNSUPPORTED_ON_REMOTE',
+        'UNSUPPORTED',
+      };
+      if (refusedBeforeLaunch.contains(failure.code)) {
+        return creation._complete(
+          _creationFailureMessage(failure.code, failure.detail, machineName),
+        );
+      }
+      return unconfirmed;
+    } catch (_) {
+      // Includes disconnects, malformed replies and timeouts. A transport error
+      // is not evidence that the machine did not execute the request.
+      return unconfirmed;
+    }
+    if ((result.containsKey('creationId') || result['state'] != null) &&
+        result['creationId'] != creation._id) {
+      return unconfirmed;
+    }
+    switch (result['state']) {
+      case 'missing':
+        // An old CLI may have created the agent before being updated to a
+        // receipt-aware version. Missing is not proof that nothing started.
+        // Check status stays read-only, even across upgrades and reconnects.
+        return '$machineName has no record of this request. '
+            'Use Add agent to look for it before creating another.';
+      case 'pending':
+        return '$machineName is still starting your agent. Check again in a moment.';
+      case 'unconfirmed':
+        return '$machineName could not confirm whether this agent started. '
+            'Use Add agent to look for it before creating another.';
+      case 'unavailable':
+        return creation._complete(
+          'This agent was created but is no longer available. '
+          'You can create a new one.',
+        );
+      case 'failed':
+        final failure = result['failure'];
+        if (failure is! Map || failure['code'] is! String) return unconfirmed;
+        return creation._complete(
+          _creationFailureMessage(
+            failure['code'] as String,
+            failure['detail'] is String ? failure['detail'] as String : null,
+            machineName,
+          ),
+        );
+      case 'created':
+      case null: // A successful first response from a CLI predating receipts.
+        break;
+      default:
+        return unconfirmed;
     }
     final raw = result['agent'];
-    if (raw is! Map) return 'Create agent failed: malformed response';
+    if (raw is! Map || raw['id'] is! String || (raw['id'] as String).isEmpty) {
+      return unconfirmed;
+    }
+    final Agent agent;
+    try {
+      agent = Agent.fromJson(Map<String, dynamic>.from(raw));
+    } catch (_) {
+      return unconfirmed;
+    }
+    creation._complete(null);
     if (_disposed || machineStates[machineId] != machine) return null;
-    final agent = Agent.fromJson(Map<String, dynamic>.from(raw));
-    // Idempotent on agent.id — safe even if the CLI's own agent_synced push for this session
-    // arrives separately (it's fire-and-forget on the CLI side and unordered relative to this reply).
     _upsertAgent(machine, agent);
-    // Counted HERE and not on the `agent_created` push, which also fires for
-    // agents another client made on the same machine. "Agents spawned" is a
-    // count of what this app launched.
+    // Apply each creation receipt once, even if its transport result is replayed.
     harnessStats.onAgentSpawned();
     notifyListeners();
-    if (split != null && !isPaneSplitCurrent(split)) {
-      _lastError = 'The agent was created, but the original layout changed. Find it in Search.';
+    if (_creationPlacementError(targetId, split) != null) {
+      _lastError =
+          'The agent was created, but its original swarm or layout changed. '
+          'Find it with Add agent.';
       _lastErrorRetryable = false;
       notifyListeners();
       return null;
