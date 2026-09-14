@@ -6,6 +6,24 @@ Updated 2026-09-14 after integrating the continuation into main. This is a worki
 
 ## Continue directly on main
 
+- Added hover split controls inside the right and bottom pane edges. Each **+**
+  opens shared Add Agent at that position; existing-agent reuse and Create Agent
+  both remain available. Headers retain only Zoom, Delete and Close. Hover is
+  local to the overlay, preserves terminal focus/geometry, and leaves resize
+  gaps untouched. The controls are suppressed for zoom/drag/capacity; minimum
+  pane sizes produce an explanatory disabled tooltip. Pulled the team's
+  agent-first main update (`16716d0`) and preserved its tabs, search and menu
+  changes. All 24 affected workflow checks pass, including mouse activation
+  on an unfocused pane in both directions, retained terminals, unchanged
+  neighbors, resize/cancel recovery and input routing. Analysis reports zero
+  errors/warnings and the 14 existing infos. Logs:
+  `/private/tmp/harness-split-edges-{tests,analyze}.log`. The arm64 Release build
+  succeeds (`/private/tmp/harness-split-edges-release.log`). At the user's request,
+  normally closed the exact workspace preview, replaced its bundle with the
+  verified build and reopened it. Confirmed PID 18687 active at
+  `desktop/build/macos/Build/Products/Release/Harness.app`; the installed app
+  remained running separately. These are process observations, not native
+  latency measurements. Benchmarking and the broader goal stay deferred.
 - Simplified the pane header to three direct outline icons: Zoom, Delete agent,
   Close pane. Removed the overflow menu and its split/pin controls. Delete still
   opens the shared confirmation; closing a pane preserves the agent and its

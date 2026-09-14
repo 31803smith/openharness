@@ -11,7 +11,7 @@ This is the current product contract and next-work order. It supersedes conflict
 historical checkpoints in [the progress log](harness-v2-progress.md). The user
 requested a portable checkpoint and later paused the broader goal pending a
 breaking change. The goal remains unfinished and is currently blocked. The latest
-pane-header simplification is a separately authorized, bounded change; wait for
+pane-header and hover-edge controls are separately authorized, bounded changes; wait for
 the user's instruction before resuming the broader backlog.
 
 **Latest priority:** the user explicitly deferred native benchmarking and further
@@ -28,9 +28,21 @@ archive/delete existing user sessions.
 Pane headers now have three direct outline icons, in order: **Zoom**, **Delete
 agent**, **Close pane**. The overflow menu, split actions and pin control are gone
 from the header. Delete opens the existing confirmation; Close removes only this
-view and keeps the agent running. The native/menu close-view action remains
-**Remove from swarm**. Narrow headers give the name priority over the branch
+view and keeps the agent running. The native/menu close-view action is now
+**Close Agent Pane**. Narrow headers give the name priority over the branch
 label; the identity tooltip retains the branch and working folder.
+
+Hover near a pane's right or bottom edge to reveal an inset **+** for that
+direction. Clicking it opens the shared Add Agent picker, supporting an existing
+agent or **Create Agent** in the chosen position. Keyboard split commands remain
+available. Hover does not change focus or rebuild the terminal; the resize gaps
+remain draggable. Controls stay hidden while zoomed or dragging, and a pane too
+small for the chosen split explains the required width/height in its tooltip.
+This was integrated after the team's agent-first update on main (`16716d0`).
+Twenty-four affected checks pass, with no analyzer errors or warnings. The arm64
+Release build was reopened from the exact workspace bundle at the user's request
+and confirmed active (PID 18687). Recheck the process before future app actions;
+this does not verify native latency. Log: `/private/tmp/harness-split-edges-release.log`.
 
 History recovery also reuses a partially restored swarm: reopening an agent and
 then its original swarm adds the missing views to the same tab, retaining newer

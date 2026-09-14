@@ -817,12 +817,13 @@ class AppNotifier extends ChangeNotifier {
     notifyListeners();
   }
 
-  PaneSplitRequest? preparePaneSplit(PaneResizeAxis axis) {
+  PaneSplitRequest? preparePaneSplit(PaneResizeAxis axis, {int? paneId}) {
     if (zoomedPaneId != null || panes.length >= maxPanes) return null;
+    final targetId = paneId ?? focusedPaneId;
     final before = activeSwarm.arranged;
     final minimum = activeSwarm.arrangedMinimum;
     final index = panes.indexWhere(
-      (p) => p.id == focusedPaneId && p.agentId != null,
+      (p) => p.id == targetId && p.agentId != null,
     );
     if (before == null ||
         minimum == null ||
@@ -830,10 +831,10 @@ class AppNotifier extends ChangeNotifier {
       return null;
     }
     final after = before.split(index, axis, minimum: minimum);
-    if (after == null || focusedPaneId == null) return null;
+    if (after == null || targetId == null) return null;
     return PaneSplitRequest(
       swarmId: activeSwarmId,
-      paneId: focusedPaneId!,
+      paneId: targetId,
       axis: axis,
       paneIds: panes.map((p) => p.id),
       before: before,
