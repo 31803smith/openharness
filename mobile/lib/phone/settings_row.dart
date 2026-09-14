@@ -16,13 +16,17 @@ const double kSettingsRowHeight = 50;
 
 /// How far a chevron's arrow stops short of the right edge of its own box.
 ///
-/// MEASURED, not eyeballed: in `lucide.ttf` the `chevron-right` outline runs from 334 to 666 across
-/// a 1000-unit advance, so at the 20pt this row draws it the arrow carries 6.68pt of blank on either
-/// side. A chevron laid flush against the row's 13pt padding therefore LOOKS inset by nearly 20,
-/// while "1.0.0" on the About row below — plain text, no built-in margin — really does end at 13.
-/// One padding value, two different right edges: the ragged margin the Font and Version rows showed.
-/// Cancelling the glyph's own blank puts the arrow where the text ends, which is where the eye reads
-/// the card's edge to be.
+/// MEASURED from the font binary, not eyeballed: `lucide.ttf` glyph 393 (U+E06F, `chevronRight300`)
+/// has a 1000-unit em, a 1000-unit advance, and ink spanning xMin 0 → xMax 666. So the blank is NOT
+/// split evenly around the arrow — the left bearing is 0 and all 334 units of it sit on the RIGHT.
+/// At the 20pt this row draws the icon that is 6.68pt of trailing air.
+///
+/// `Icon` boxes the glyph in a `size`×`size` square at `fontSize: size`, and here the advance fills
+/// that square exactly, so the box's own right edge lands 6.68pt past the last ink. A chevron laid
+/// flush against the row's 13pt padding therefore LOOKS inset by nearly 20, while "1.0.0" on the
+/// About row — plain text, no built-in margin — really does end at the padding. Cancelling the
+/// glyph's trailing blank puts the arrow where the text ends, which is where the eye reads the
+/// card's edge to be.
 ///
 /// Re-measure if the icon size or the icon pack changes; this number belongs to both.
 const double _chevronInk = 6.68;
@@ -200,14 +204,32 @@ class SettingsRow extends StatelessWidget {
             ),
           ),
           // Everything on the right sits in one run, so a value + chevron and a stepper end on the
-          // same margin. Previously the value was a bare `Flexible` between two other children,
-          // which let it settle wherever the title's `Expanded` left it — "SF Mono ›" floated in
-          // from the edge while the stepper below it stayed flush, and the card's right margin
-          // read as two different margins.
+          // same margin.
+          //
+          // ⚠️ NOT wrapped in `Flexible`, and that is the whole fix. MEASURED on an iPhone 17 Pro:
+          // with a `Flexible` here the value text ended 112pt from the card's right edge and
+          // "1.0.0" ended 140pt from it, while the stepper below sat correctly at 14pt.
+          //
+          // The reason is the title's `Expanded` above, which takes ALL the width left over before
+          // a `Flexible` sibling gets to ask for any. `MainAxisAlignment.end` then aligned the run
+          // inside that already-collapsed box — flush against a box that had itself been pushed in,
+          // which puts the value right after the title instead of at the card's edge. The narrower
+          // the value, the further in it landed, which is exactly why Version looked worse than
+          // Font. The stepper escaped only because it is passed through bare, so it keeps its own
+          // intrinsic width.
+          //
+          // Giving the run its intrinsic width makes `Expanded` yield that much instead, and a long
+          // value still can't run away with the row: the inner `Flexible` below caps it and
+          // ellipsises, so the title keeps its space.
           if (trailing != null)
             trailing!
           else if (value != null || onTap != null)
-            Flexible(
+            ConstrainedBox(
+              // Half the row, so a very long value ellipsises rather than crushing the title to
+              // nothing. Below that the run is sized by its content and ends on the margin.
+              constraints: BoxConstraints(
+                maxWidth: MediaQuery.sizeOf(context).width / 2,
+              ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 mainAxisAlignment: MainAxisAlignment.end,
