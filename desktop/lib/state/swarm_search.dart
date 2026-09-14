@@ -202,7 +202,14 @@ class SwarmSearchController extends ChangeNotifier {
             query,
             recent: recent,
           );
-    final index = rows.indexWhere((row) => row.id == _selectedId);
+    // The parent stays above its children visually, but Enter after a query
+    // still targets the best match, including an agent nested under that parent.
+    final preferred =
+        _selectedId ??
+        (navigating && !isCommandMode
+            ? rankSwarmDestinations(rows, query, recent: recent).firstOrNull?.id
+            : null);
+    final index = rows.indexWhere((row) => row.id == preferred);
     cursor = rows.isEmpty
         ? 0
         : index >= 0

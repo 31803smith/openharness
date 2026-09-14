@@ -6,6 +6,16 @@ Updated 2026-09-14 after integrating the continuation into main. This is a worki
 
 ## Continue directly on main
 
+- Corrected Navigate's hierarchy: each swarm appears once as a selectable
+  parent, with matching agents indented below it. Agent-only queries retain
+  their swarm context and keep the best matching agent selected for Enter.
+  Empty swarms appear once. Removed the 68px pane inset that reserved a footer
+  for the floating +; panes now use the normal 10px edge spacing beneath it.
+  All 33 affected navigation/Add/focus tests pass.
+- The user refined New swarm: search and Enter add to a draft list on the start
+  page, then **Create swarm** opens the chosen agents together. Machine/project
+  starters populate that list. This supersedes immediate activation of the
+  first welcome suggestion. The shared Add continuation is being implemented.
 - The user confirms the current menu and Navigate changes are visible. No
   further app restart or inspection is needed for that confirmation.
 - History focus updates now skip formatting unopened agents. A failing-before

@@ -13,6 +13,51 @@ import 'swarm_screen_test.dart' show mount, terminal;
 import 'swarm_state_test.dart' show createApp;
 
 void main() {
+  testWidgets('swarm parents appear once above their indented agents', (
+    tester,
+  ) async {
+    final app = createApp();
+    final pane = app.adoptSessionForTest(terminal('a0', []));
+    final populated = app.activeSwarm;
+    app.renameSwarm(populated.id, 'Release');
+    app.newSwarm(name: 'Empty');
+    final empty = app.activeSwarm;
+    await mount(tester, app);
+    await chord(tester, LogicalKeyboardKey.keyP);
+    final navigator = find.byType(SwarmNavigator);
+    final parent = find.byKey(ValueKey(swarmDestinationId(populated.id)));
+    final child = find.byKey(ValueKey(agentLocationId(populated.id, pane.id)));
+    final emptyParent = find.byKey(ValueKey(swarmDestinationId(empty.id)));
+    expect(
+      find.descendant(of: navigator, matching: find.text('Release')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: navigator, matching: find.text('Empty')),
+      findsOneWidget,
+    );
+    expect(
+      tester.getRect(parent).bottom,
+      lessThanOrEqualTo(tester.getRect(child).top),
+    );
+    final parentPadding =
+        tester.widget<ListTile>(parent).contentPadding! as EdgeInsets;
+    final childPadding =
+        tester.widget<ListTile>(child).contentPadding! as EdgeInsets;
+    expect(childPadding.left, greaterThan(parentPadding.left));
+    await tester.tap(parent);
+    await tester.pump();
+    expect(app.activeSwarm, same(populated));
+    await chord(tester, LogicalKeyboardKey.keyP);
+    await tester.tap(emptyParent);
+    await tester.pump();
+    expect(app.activeSwarm, same(empty));
+    expect(app.panes, isEmpty);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+    app.dispose();
+  });
+
   test('each membership is an exact destination, never an implicit add or fallback', () async {
     final app = createApp();
     addTearDown(app.dispose);
@@ -33,9 +78,12 @@ void main() {
       second.id,
       third.id,
     });
-    expect(search.rows.map((r) => r.id).toSet(), hasLength(3));
+    expect(search.rows.map((r) => r.id).toSet(), hasLength(6));
+    expect(search.selected?.agentId, 'a0');
     expect(search.previewVisible, isFalse);
-    final exact = search.rows.singleWhere((r) => r.swarmId == second.id);
+    final exact = search.rows.singleWhere(
+      (r) => r.swarmId == second.id && r.agentId != null,
+    );
     expect(search.canAdd(exact), isFalse);
     expect(
       await activateSwarmDestination(app, exact, destinationSwarmId: third.id),
@@ -84,8 +132,9 @@ void main() {
     app.dismissError();
     expect(catalog.read(app, []), same(first));
     final rows = rankSwarmLocations(first, 'Agent 0 Research');
-    expect(rows, hasLength(1));
-    expect(rows.single.swarmName, 'Research');
+    expect(rows, hasLength(2));
+    expect(rows.first.isSwarm, isTrue);
+    expect(rows.last.swarmName, 'Research');
   });
 
   test(
@@ -110,9 +159,10 @@ void main() {
       final updated = catalog.read(app, []);
       expect(updated, isNot(same(first)));
       final changed = rankSwarmLocations(updated, 'Changed updated hermes');
-      expect(changed, hasLength(1));
-      expect(changed.single.paneId, pane.id);
-      expect(changed.single.detail, contains('Updated project'));
+      expect(changed, hasLength(2));
+      expect(changed.first.isSwarm, isTrue);
+      expect(changed.last.paneId, pane.id);
+      expect(changed.last.detail, contains('Updated project'));
       app.machineStates.clear();
       final retained = catalog
           .read(app, [])

@@ -35,11 +35,9 @@ class SwarmNavigator extends StatefulWidget {
 class _SwarmNavigatorState extends State<SwarmNavigator> {
   final _scroll = ScrollController();
   final _offsets = <double>[];
-  double _rowHeight = 60, _headingHeight = 34;
+  double _rowHeight = 60;
   bool _scheduled = false;
   SwarmSearchController get search => widget.search;
-  bool startsGroup(int i) =>
-      i == 0 || search.rows[i - 1].swarmId != search.rows[i].swarmId;
 
   @override
   void initState() {
@@ -64,7 +62,7 @@ class _SwarmNavigatorState extends State<SwarmNavigator> {
     var offset = 8.0;
     for (var i = 0; i < search.rows.length; i++) {
       _offsets.add(offset);
-      offset += _rowHeight + (startsGroup(i) ? _headingHeight : 0);
+      offset += _rowHeight;
     }
     _offsets.add(offset);
   }
@@ -103,7 +101,6 @@ class _SwarmNavigatorState extends State<SwarmNavigator> {
   Widget build(BuildContext context) {
     final scale = MediaQuery.textScalerOf(context);
     _rowHeight = 28 + scale.scale(14) + scale.scale(12);
-    _headingHeight = 20 + scale.scale(11);
     _measure();
     final terms = swarmQueryTerms(search.query);
     return Column(
@@ -209,106 +206,72 @@ class _SwarmNavigatorState extends State<SwarmNavigator> {
                   controller: _scroll,
                   padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
                   itemCount: search.rows.length,
-                  itemExtentBuilder: (index, _) =>
-                      _rowHeight + (startsGroup(index) ? _headingHeight : 0),
+                  itemExtent: _rowHeight,
                   itemBuilder: (context, i) {
                     final row = search.rows[i];
                     final matches = searchResultMatches(row, terms);
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        if (startsGroup(i))
-                          SizedBox(
-                            height: _headingHeight,
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                              ),
-                              child: Row(
-                                children: [
-                                  const SwarmIcon(
-                                    size: 14,
-                                    color: Colors.white54,
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: SearchResultText(
-                                      row.swarmName,
-                                      matches: matches,
-                                      style: const TextStyle(
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.w600,
-                                        color: Colors.white60,
-                                      ),
-                                    ),
-                                  ),
-                                  if (row.swarmId == search.app.activeSwarmId)
-                                    const Text(
-                                      'Current swarm',
-                                      style: TextStyle(
-                                        fontSize: 10,
-                                        color: Colors.white38,
-                                      ),
-                                    ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        SizedBox(
-                          height: _rowHeight,
-                          child: ListTile(
-                            key: ValueKey(row.id),
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 14,
-                            ),
-                            minTileHeight: _rowHeight,
-                            selected: search.cursor == i,
-                            selectedColor: Colors.white,
-                            selectedTileColor: grid.AppPalette.swarmAccent
-                                .withValues(alpha: .12),
-                            hoverColor: Colors.transparent,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            leading: row.agentId == null
-                                ? const SwarmIcon(
-                                    size: 21,
-                                    color: Colors.white60,
-                                  )
-                                : EngineMark(engine: row.engine, size: 22),
-                            title: SearchResultText(
-                              row.title,
-                              matches: matches.where((m) => m.title),
-                              style: const TextStyle(
-                                fontSize: 14,
-                                color: Colors.white,
-                              ),
-                            ),
-                            subtitle: SearchResultText(
-                              row.detail,
-                              matches: matches.where((m) => !m.title),
-                              style: const TextStyle(
-                                fontSize: 12,
-                                color: Colors.white54,
-                              ),
-                            ),
-                            trailing: row.current
-                                ? const Icon(
-                                    Icons.check,
-                                    size: 16,
-                                    color: Colors.white38,
-                                  )
-                                : search.cursor == i
-                                ? const Icon(
-                                    Icons.keyboard_return,
-                                    size: 17,
-                                    color: Colors.white60,
-                                  )
-                                : null,
-                            onTap: () => _choose(row),
+                    return SizedBox(
+                      height: _rowHeight,
+                      child: ListTile(
+                        key: ValueKey(row.id),
+                        contentPadding: EdgeInsets.only(
+                          left: row.agentId == null ? 14 : 42,
+                          right: 14,
+                        ),
+                        minTileHeight: _rowHeight,
+                        selected: search.cursor == i,
+                        selectedColor: Colors.white,
+                        selectedTileColor: grid.AppPalette.swarmAccent
+                            .withValues(alpha: .12),
+                        hoverColor: Colors.transparent,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        leading: row.agentId == null
+                            ? const SwarmIcon(size: 21, color: Colors.white60)
+                            : EngineMark(engine: row.engine, size: 22),
+                        title: SearchResultText(
+                          row.title,
+                          matches: matches.where((m) => m.title),
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: row.agentId == null
+                                ? FontWeight.w600
+                                : FontWeight.w400,
+                            color: Colors.white,
                           ),
                         ),
-                      ],
+                        subtitle: SearchResultText(
+                          row.detail,
+                          matches: matches.where((m) => !m.title),
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Colors.white54,
+                          ),
+                        ),
+                        trailing: row.agentId == null && row.current
+                            ? const Text(
+                                'Current swarm',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  color: Colors.white54,
+                                ),
+                              )
+                            : row.current
+                            ? const Icon(
+                                Icons.check,
+                                size: 16,
+                                color: Colors.white38,
+                              )
+                            : search.cursor == i
+                            ? const Icon(
+                                Icons.keyboard_return,
+                                size: 17,
+                                color: Colors.white60,
+                              )
+                            : null,
+                        onTap: () => _choose(row),
+                      ),
                     );
                   },
                 ),

@@ -28,8 +28,15 @@ void main() {
       final add = find.byKey(const ValueKey('swarm-add-agent-button'));
       expect(tester.getRect(add).left, greaterThan(780));
       expect(
-        tester.getRect(add).top,
-        greaterThan(tester.getRect(find.byKey(existing.cellKey)).bottom),
+        tester.getRect(find.byKey(existing.cellKey)).bottom,
+        closeTo(550, 1),
+      );
+      expect(
+        tester
+            .getRect(find.byKey(existing.cellKey))
+            .overlaps(tester.getRect(add)),
+        isTrue,
+        reason: 'Add floats over the pane instead of reserving a footer',
       );
       await tester.tap(add);
       await tester.pump();
