@@ -106,7 +106,37 @@ class _TerminalComposerState extends State<TerminalComposer> {
     }
   }
 
-  /// Enter sends; Shift+Enter is left to the field so it inserts a newline.
+  /// Breaks the line at the caret, for ⌥⏎.
+  ///
+  /// Written into the controller rather than left to the field, which is what Shift+Enter does:
+  /// AppKit turns ⌥⏎ into `insertNewlineIgnoringFieldEditor:`, a selector Flutter's text input
+  /// client does not answer, so passing the key through would drop it on the floor. Doing it here
+  /// also makes the behaviour the same on every platform the app builds for.
+  void _insertNewline() {
+    final value = _controller.value;
+    final selection = value.selection;
+    if (!selection.isValid) {
+      // No caret to speak of (the field has never been placed in). Append.
+      _controller.value = TextEditingValue(
+        text: '${value.text}\n',
+        selection: TextSelection.collapsed(offset: value.text.length + 1),
+      );
+      return;
+    }
+    _controller.value = TextEditingValue(
+      text:
+          '${selection.textBefore(value.text)}\n'
+          '${selection.textAfter(value.text)}',
+      selection: TextSelection.collapsed(offset: selection.start + 1),
+    );
+  }
+
+  /// Enter sends; ⌥⏎ and Shift+Enter compose another line.
+  ///
+  /// ⌥⏎ is the one the muscle memory comes with — it is how Claude Code and Codex take a second
+  /// line at their own prompts, and it is what the shortcuts sheet promises for a pane
+  /// (`kTerminalOwnedKeys`). The composer is the same prompt wearing a Flutter field, so it has to
+  /// answer the same key. Shift+Enter is left to the field, which inserts for it natively.
   ///
   /// `TextField.onSubmitted` cannot do this — it never fires for a multi-line field.
   KeyEventResult _onKeyEvent(FocusNode node, KeyEvent event) {
@@ -117,6 +147,10 @@ class _TerminalComposerState extends State<TerminalComposer> {
         event.logicalKey == LogicalKeyboardKey.enter ||
         event.logicalKey == LogicalKeyboardKey.numpadEnter;
     if (!isEnter) return KeyEventResult.ignored;
+    if (HardwareKeyboard.instance.isAltPressed) {
+      _insertNewline();
+      return KeyEventResult.handled;
+    }
     if (HardwareKeyboard.instance.isShiftPressed) return KeyEventResult.ignored;
     unawaited(_submit());
     return KeyEventResult.handled;
