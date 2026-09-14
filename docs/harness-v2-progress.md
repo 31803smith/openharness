@@ -6,6 +6,35 @@ Updated 2026-09-14 after integrating the continuation into main. This is a worki
 
 ## Continue directly on main
 
+- Added **Retry** to failed New agent availability checks. The same form keeps
+  the folder, explicit agent and permission choices while rechecking; recovered
+  Codex profile support loads in place. Late replies for a previous machine
+  cannot replace the current choices. The two new regressions and surrounding
+  first-use/Add/profile checks pass (47 tests); analysis has zero errors/warnings
+  and 14 existing infos. Minimum-window renders with normal/2× text were checked.
+  Logs: `/private/tmp/harness-agent-check-retry-{verified,analyze,render}.log`.
+  Preserved the team's `5f279e1` pane-menu Delete action by fast-forwarding main.
+  The combined suite passes **1,311 tests**, one existing skip, with no analyzer
+  errors/warnings. A separate arm64 Release output succeeds; the running preview
+  was not replaced or restarted. Logs:
+  `/private/tmp/harness-agent-check-retry-{full-tests,integrated-analyze,release}.log`.
+  Main then fast-forwarded through the team's independent changes at `87f8fcd`.
+  Those files do not overlap this Retry change; the recorded full-suite and
+  Release results remain measurements of the preceding `5f279e1` base.
+- The user raised accumulating live sessions after closing panes. Saved an
+  [Archive/Resume lifecycle proposal](harness-agent-lifecycle.md) for discussion.
+  It has not been implemented; no existing user agents were stopped or removed.
+- The user approved the native run and brief workspace-preview quit/reopen.
+  Rebuilt the isolated arm64 Release fixture from `a6fe4a4`, including the later
+  titlebar change, at `/private/tmp/harness-native-benchmark-v99tt1m2`.
+  The 229 compared production Dart/Swift sources match the copy; all nine
+  isolation tests pass. App control cannot access windows while this Mac is
+  locked, confirmed by the read-only console lock flag. Both Harness processes
+  remain running; no benchmark was launched and no samples were collected.
+  The user then explicitly deferred benchmarking/performance optimization and
+  asked for feature work. Keep measurement deferred; do not request another
+  desktop/preview interruption while that priority stands.
+  Build receipt: `/private/tmp/harness-native-approved-prepare.log`.
 - Preserved the team's native Settings-button removal (`51c0d27`) in merge
   `3a7fe57`, then its independent device updates through `22653fe` in `51f62e7`.
   The combined desktop passes **1,309 tests**, one existing skip, 51 native

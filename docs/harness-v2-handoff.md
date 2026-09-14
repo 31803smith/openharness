@@ -6,6 +6,17 @@ historical checkpoints in [the progress log](harness-v2-progress.md). The user
 requested a portable checkpoint, then asked this session to resume building;
 the overall goal is still active and unfinished.
 
+**Latest priority:** the user explicitly deferred native benchmarking and further
+performance optimization. Focus on completing the agreed features and usability
+work. Do not interrupt them for a benchmark window or resume calibration merely
+because the desktop becomes available.
+
+**Current product discussion:** the user reports accumulating live agents after
+closing their views. [The lifecycle proposal](harness-agent-lifecycle.md) recommends
+explicit Archive/Resume plus bulk cleanup, preserving ordinary view closure.
+This is a proposal for discussion, not implemented behavior or authorization to
+archive/delete existing user sessions.
+
 ## Goal
 
 Build the best everyday workspace for people directing persistent AI agents:
@@ -251,7 +262,10 @@ Available existing work gets Add search, three direct agent choices and New
 agent. Machines and projects are visible as one-click swarm starters; the
 first agent opens immediately and optional multi-select lives in shared Add.
 A single usable local computer no longer needs a Machine dropdown
-in the creation form. Delayed discovery enables Enter on the primary action
+in the creation form. Failed agent checks now offer **Retry** in place, preserving
+the folder, chosen agent and permission setting; recovered Codex profile support
+loads into the same form. A late check for a different machine cannot change the
+current choice. Delayed discovery enables Enter on the primary action
 without stealing an explicit focus choice. Offline/linking cases expose their
 next action. Large text stacks the layout, and New agent now uses the shared
 darker modal veil. See [first-use details](harness-v2-appearance-onboarding.md).
@@ -261,16 +275,19 @@ unverified; do not infer them from these UI changes.
 **Archived drafts:** both are superseded. The onboarding ideas were adapted into
 the common page, without adding another first-tab-only component.
 
-**Latest verification:** the picker-opening continuation on main passes 1,309
-desktop tests with one existing skip.
+**Latest verification:** the first-agent Retry continuation, including the team's
+`5f279e1` pane-menu Delete action, passes 1,311 desktop tests with one existing skip.
+Main subsequently fast-forwarded through the team's independent socket, terminal,
+titlebar and device changes at `87f8fcd`; the results below describe the tested
+`5f279e1` base plus this Retry change, not a rerun of that later integration.
 Analyzer reports zero errors/warnings and 14 existing informational diagnostics
 (12 vendored, two inherited from main). Logs:
-`/private/tmp/harness-add-open-titlebar-{tests,analyze}.log`.
-The final macOS arm64 Release build succeeds with
-`FLUTTER_TARGET=lib/main.dart`; log:
-`/private/tmp/harness-add-open-titlebar-build.log`. The running app was not
+`/private/tmp/harness-agent-check-retry-{full-tests,integrated-analyze}.log`.
+The macOS arm64 Release build succeeds with `FLUTTER_TARGET=lib/main.dart`
+in a separate output directory, `/private/tmp/harness-agent-check-retry-release`;
+log: `/private/tmp/harness-agent-check-retry-release.log`. The running app was not
 restarted, so do not claim its process has loaded these source changes.
-The combined titlebar/picker source passes 51 native keymap decoder
+The preceding combined titlebar/picker source passed 51 native keymap decoder
 and 347 AppKit assertions, including the exported Dart keymap and hidden window
 layout. Native log: `/private/tmp/harness-add-open-titlebar-native.log`.
 The preceding Add/shortcut integrated
@@ -305,16 +322,15 @@ a distinct Harness Benchmark app. Nine isolated Python checks pass. Preflight
 distinguishes installed copies from workspace builds by exact location as well
 as identity. Preserve its isolation and foreground/key-window guards. The
 performance notes explain the earlier failed calibration; these tooling fixes
-provide no new latency measurements. The current disposable Release build
-succeeded at `/private/tmp/harness-native-benchmark-wt0_dt31`, with production
-source at `339f008`. The four changed picker source files match by SHA-256;
-the built bundle is `ai.autonomous.harness.benchmark`. Build receipt:
-`/private/tmp/harness-native-picker-prepare.log`. The earlier identity-fix runner
-correctly refused the running workspace preview, writing no timing result.
-This session confirmed that preview is still running; the new fixture was not
-launched. The later titlebar change supersedes that fixture's native source;
-rebuild it before measuring current main. The [performance record](harness-v2-performance.md)
-has the artifacts.
+provide no new latency measurements. The most recent disposable Release build
+is `/private/tmp/harness-native-benchmark-v99tt1m2`, pinned to production source
+`a6fe4a4`, including the later titlebar change. Its bundle identity is
+`ai.autonomous.harness.benchmark`; receipt:
+`/private/tmp/harness-native-approved-prepare.log`. It was not launched: the
+desktop was locked, and the user then deferred benchmarking to focus on
+features. Both Harness processes remained running. Rebuild from current source
+when measurement returns to scope. The [performance record](harness-v2-performance.md)
+retains the earlier fixtures and artifacts.
 
 ## Previous terminal fix and verification
 
@@ -390,17 +406,24 @@ that its isolated window can become active/key.
 3. **Recheck fresh terminal positioning and real workflows** on disposable
    local/remote agents: startup, delayed snapshots, resizing, returning to a
    scrolled view, reconnect, paste, selection, and IME.
-4. **Measure native responsiveness** under representative retained/output load,
+4. **Deferred: measure native responsiveness** under representative retained/output load,
    using the repaired benchmark identity checks for the team's new
    `ai.autonomous.harness` macOS bundle identifier (Linux now uses
    `com.autonomous.harness` and executable `harness`). Nine isolation tests pass;
-   a disposable Release fixture is available at
-   `/private/tmp/harness-native-benchmark-wt0_dt31` from source `339f008`.
-   Rebuild it for the team's later titlebar change when the measurement window
-   is available. The workspace preview is still
-   running. A request to briefly close/reopen that preview
-   for calibration is pending; elapsed time is not approval. No native samples
-   have been accepted. See the current performance record for exact artifacts.
+   a fresh disposable Release fixture is available at
+   `/private/tmp/harness-native-benchmark-v99tt1m2` from source `a6fe4a4`,
+   including the team's later titlebar change. The user explicitly answered
+   **“Run it now”** and authorized briefly quitting/reopening the workspace
+   preview while leaving installed Harness and underlying agents running.
+   Do not ask for that approval again. The attempted UI access returned
+   `cgWindowNotFound`; a read-only console check confirmed the Mac is locked
+   (`CGSSessionScreenIsLocked = Yes`). Neither Harness process was stopped and
+   the benchmark was not launched. The user then said to do the benchmark later
+   and focus on building features. Keep it deferred. When measurement is back
+   in scope, use an unlocked desktop, normally close the exact workspace
+   preview, accept calibration only with the active/key-window guards passing,
+   and reopen the preview even if calibration fails. No native samples have been
+   accepted. See the current performance record for exact artifacts.
    Then close remaining visual/platform/release qualification gaps. Maintain
    the main-branch handoff and keep it honest about what's still unverified.
 

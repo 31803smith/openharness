@@ -137,6 +137,28 @@ no native samples were collected. Rebuild it if production source changes.
 The team's later native titlebar change in `51c0d27` now requires that rebuild
 before qualifying current main; the prepared fixture remains pinned to `339f008`.
 
+The user subsequently approved the brief preview quit/reopen with **“Run it
+now.”** A fresh isolated arm64 Release build from `a6fe4a4`, including the later
+titlebar change, succeeded at
+`/private/tmp/harness-native-benchmark-v99tt1m2/desktop/build/macos/Build/Products/Release/Harness Benchmark.app`.
+All 229 production Dart/Swift sources compared with the fixture copy match
+(excluding the deliberately instrumented `MainFlutterWindow.swift`); the nine
+Python isolation checks pass. Receipt:
+`/private/tmp/harness-native-approved-prepare.log`; full build output is in that
+fixture's `build.log`.
+
+The approved attempt then encountered a locked desktop. App control returned
+`cgWindowNotFound` for the exact workspace preview, Activity Monitor, and Finder
+interaction; a read-only `ioreg` check reported
+`CGSSessionScreenIsLocked = Yes`. The workspace and installed Harness processes
+were left running, and the benchmark was not launched. No timing samples or
+percentiles were collected. The user then explicitly deferred benchmarking and
+performance optimization to focus on feature work. Do not resume just because
+the desktop becomes available. The quit/reopen authorization is recorded for
+when this work is back in scope. This confirms the cause of
+this attempt's unavailable desktop, not the cause of every earlier calibration
+failure.
+
 ### History focus hot path
 
 History now formats only agents with open views. Previously each focus change
