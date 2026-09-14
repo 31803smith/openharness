@@ -27,6 +27,8 @@ void main() {
       await tester.pump();
       final add = find.byKey(const ValueKey('swarm-add-agent-button'));
       expect(tester.getRect(add).left, greaterThan(780));
+      expect(tester.getRect(add).right, closeTo(880 - 28, 1));
+      expect(tester.getRect(add).bottom, closeTo(560 - 28, 1));
       expect(
         tester.getRect(find.byKey(existing.cellKey)).bottom,
         closeTo(550, 1),
@@ -45,7 +47,8 @@ void main() {
         'Agent 0',
       );
       await tester.pump();
-      expect(find.text('Add to this swarm'), findsOneWidget);
+      expect(find.text('Add to this swarm'), findsNWidgets(2));
+      expect(find.byKey(const ValueKey('swarm-row-action')), findsOneWidget);
       expect(find.text('Go to agent'), findsNothing);
       expect(find.byType(AlertDialog), findsNothing);
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);

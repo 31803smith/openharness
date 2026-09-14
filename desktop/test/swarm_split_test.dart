@@ -225,7 +225,8 @@ void main() {
       await tester.pump();
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pump();
-      expect(find.text('Split right'), findsOneWidget);
+      expect(find.byKey(const ValueKey('swarm-row-action')), findsOneWidget);
+      expect(find.text('Split right'), findsNWidgets(2));
       expect(find.byType(AlertDialog), findsNothing);
       await tester.tap(find.byKey(const ValueKey('swarm-search-new-agent')));
       await tester.pump();

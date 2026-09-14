@@ -352,7 +352,11 @@ const List<AppShortcut> kAppShortcuts = [
   // --- actions --------------------------------------------------------------
   AppShortcut(
     action: ShortcutAction.newAgent,
-    activator: SingleActivator(LogicalKeyboardKey.keyN, meta: true),
+    activator: SingleActivator(
+      LogicalKeyboardKey.keyN,
+      meta: true,
+      shift: true,
+    ),
     label: 'New agent',
     group: ShortcutGroup.actions,
   ),
@@ -413,6 +417,12 @@ List<AppShortcut> appShortcuts({bool swarmMode = true}) => [
 /// Swarm bindings replace the old workspace navigation in the retained legacy
 /// screen. Live Swarm bindings, tooltips, and help all use this same catalog.
 const kSwarmShortcuts = [
+  AppShortcut(
+    action: ShortcutAction.addAgent,
+    activator: SingleActivator(LogicalKeyboardKey.keyN, meta: true),
+    label: 'Add agent to this swarm',
+    group: ShortcutGroup.actions,
+  ),
   AppShortcut(
     action: ShortcutAction.showHistory,
     activator: SingleActivator(LogicalKeyboardKey.keyY, meta: true),

@@ -450,7 +450,11 @@ private extension SwarmTitlebar {
     let agent = main.item(withTitle: "Agent")!.submenu!
     let historyMenu = main.item(withTitle: "History")!.submenu!
     try checkTitlebar(swarm.items.compactMap { $0.representedObject as? String } == ["new", "renameActive", "closeActive", "linkMachine", "addProject"], "Swarm groups workspace actions")
-    try checkTitlebar(agent.items.compactMap { $0.representedObject as? String } == ["newAgent", "splitRight", "splitDown", "zoomPane", "pinPane", "closePane"], "Agent groups creation and pane actions")
+    try checkTitlebar(agent.items.compactMap { $0.representedObject as? String } == ["addAgent", "newAgent", "splitRight", "splitDown", "zoomPane", "pinPane", "closePane"], "Agent groups creation and pane actions")
+    let addAgent = agent.items.first(where: { $0.representedObject as? String == "addAgent" })!
+    let newAgent = agent.items.first(where: { $0.representedObject as? String == "newAgent" })!
+    try checkTitlebar(addAgent.keyEquivalent == "n" && addAgent.keyEquivalentModifierMask == [.command], "Command-N opens the shared Add agent picker")
+    try checkTitlebar(newAgent.keyEquivalent == "n" && newAgent.keyEquivalentModifierMask == [.command, .shift], "Shift-Command-N creates a fresh agent")
     let jump = edit.submenu!.items.first(where: { $0.representedObject as? String == "jump" })!
     try checkTitlebar(jump.keyEquivalent == "p" && jump.keyEquivalentModifierMask == [.command], "Command-P has a native menu owner while a terminal has focus")
     let reopen = historyMenu.items.first(where: { $0.representedObject as? String == "reopen" })!

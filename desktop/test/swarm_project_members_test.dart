@@ -60,8 +60,6 @@ void main() {
         ),
       );
       await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('swarm-start-browse')));
-      await tester.pump();
       await tester.tap(find.byTooltip('Project options for Workshop'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Choose agents…'));

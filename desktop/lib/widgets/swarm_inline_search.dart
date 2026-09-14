@@ -170,7 +170,6 @@ class _SwarmInlineSearchState extends State<SwarmInlineSearch> {
                     onChoose: _choose,
                     onRefocus: _focus.requestFocus,
                     onCommands: _showCommands,
-                    onNewAgent: widget.onNewAgent == null ? null : _newAgent,
                   ),
                 ),
               ),

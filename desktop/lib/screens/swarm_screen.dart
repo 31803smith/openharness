@@ -837,9 +837,6 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                 onCommands: search.allowsCommands
                                     ? _showSearchCommands
                                     : null,
-                                onNewAgent: search.adding
-                                    ? _newAgentFromSearch
-                                    : null,
                               ),
                             ),
                           ],
@@ -1145,14 +1142,19 @@ class _SwarmScreenState extends State<SwarmScreen> {
               backgroundColor: grid.AppPalette.swarmField,
               floatingActionButtonLocation:
                   FloatingActionButtonLocation.endFloat,
-              floatingActionButton: FloatingActionButton.small(
-                key: const ValueKey('swarm-add-agent-button'),
-                tooltip: 'Add agent',
-                onPressed: () => _openSearch(adding: true),
-                backgroundColor: grid.AppPalette.swarmAccent,
-                foregroundColor: grid.AppPalette.swarmField,
-                shape: const CircleBorder(),
-                child: const Icon(Icons.add, size: 24),
+              floatingActionButton: Padding(
+                padding: const EdgeInsets.only(right: 12, bottom: 12),
+                child: FloatingActionButton.small(
+                  key: const ValueKey('swarm-add-agent-button'),
+                  tooltip: _keymap.hint('agent.add') == null
+                      ? 'Add agent'
+                      : 'Add agent (${_keymap.hint('agent.add')})',
+                  onPressed: () => _openSearch(adding: true),
+                  backgroundColor: grid.AppPalette.swarmAccent,
+                  foregroundColor: grid.AppPalette.swarmField,
+                  shape: const CircleBorder(),
+                  child: const Icon(Icons.add, size: 24),
+                ),
               ),
               body: Column(
                 children: [

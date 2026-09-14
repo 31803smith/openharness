@@ -92,7 +92,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
   }
 
   private func sendTabAction(_ method: String, arguments: Any?) {
-    guard ["select", "close", "new", "rename", "jump", "commands", "notifications", "newAgent", "splitRight", "splitDown", "zoomPane", "pinPane"].contains(method) else {
+    guard ["select", "close", "new", "rename", "jump", "commands", "notifications", "addAgent", "newAgent", "splitRight", "splitDown", "zoomPane", "pinPane"].contains(method) else {
       channel.invokeMethod(method, arguments: arguments)
       return
     }
@@ -205,7 +205,8 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     add(swarm, "Add Project…", "", "addProject")
     install(swarm, at: 1)
     let agent = NSMenu(title: "Agent")
-    add(agent, "New Agent…", "n", "newAgent")
+    add(agent, "Add Agent…", "n", "addAgent")
+    add(agent, "New Agent…", "n", "newAgent", [.command, .shift])
     agent.addItem(.separator())
     add(agent, "Split Right…", "", "splitRight")
     add(agent, "Split Down…", "", "splitDown")

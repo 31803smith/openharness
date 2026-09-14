@@ -831,7 +831,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Start with one agent'), findsOneWidget);
       expect(find.text('New agent'), findsNothing);
-      expect(find.text('Add project'), findsNothing);
+      expect(find.text('Add project'), findsOneWidget);
       await tester.tap(find.text('Link a machine'));
       await tester.pumpAndSettle();
       expect(find.text('harness login\nharness start'), findsOneWidget);
@@ -1080,8 +1080,6 @@ void main() {
     await tester.pump();
     expect(find.text('Link this machine'), findsNothing);
 
-    await tester.tap(find.byKey(const ValueKey('swarm-start-browse')));
-    await tester.pump();
     await tester.ensureVisible(find.text('link-mac'));
     await tester.tap(find.text('link-mac'));
     // Same popup-transition reasoning as above.
@@ -1160,8 +1158,6 @@ void main() {
     await tester.pump();
     expect(find.text('Link this machine'), findsNothing);
 
-    await tester.tap(find.byKey(const ValueKey('swarm-start-browse')));
-    await tester.pump();
     await tester.ensureVisible(find.text('link-mac'));
     await tester.tap(find.text('link-mac'));
     await tester.pumpAndSettle();

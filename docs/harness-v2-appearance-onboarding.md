@@ -54,13 +54,19 @@ reported.
   Both lead to the ordinary New agent form, preserving the folder and original
   target. No example task or agent is started automatically.
 - With discovered or retained work, **Start a swarm** offers the shared Add
-  search, three existing-agent shortcuts, and **New agent**. Adding keeps the
-  user in this swarm and preserves source memberships. Offline retained work
+  search, **Add your first agent** shortcuts, and **New agent**. Search + Enter
+  opens the first agent immediately; no draft list or Create swarm step. Adding
+  keeps the user in this swarm and preserves source memberships. Offline retained work
   remains discoverable. No global-navigation action is introduced here.
-- Saved projects stay visible without expanding a catalog, including projects
-  with no agents. **Browse machines and projects** reveals the complete catalog
-  and its existing linking/project-management actions. Another offline computer
-  no longer hides a ready local computer's folder-first path.
+- Machines and projects stay visible as one-click swarm starters, including
+  saved projects with no agents. Their existing linking/project-management
+  actions remain available without expanding a Browse section. Another offline
+  computer no longer hides a ready local computer's folder-first path.
+- Cmd-N opens the shared Add picker. Its filled **+ New agent** button sits
+  beside the search field; Shift-Cmd-N opens the fresh-agent form directly.
+  Checkboxes or Shift+Enter optionally collect agents across searches, with
+  removable selections and an Add N agents action. Ordinary Enter still adds
+  the first agent immediately. Splits select one agent for the chosen position.
 - A single usable local computer no longer occupies a Machine dropdown in New
   agent. Multiple targets, remote targets, offline state and linking issues keep
   that choice visible. Agent selection, Advanced settings, explicit permission

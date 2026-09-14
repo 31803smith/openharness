@@ -43,7 +43,6 @@ class SwarmWelcome extends StatefulWidget {
 /// Every empty swarm uses this start surface. Available work, not whether the
 /// user has visited another tab, determines the useful next action.
 class _SwarmWelcomeState extends State<SwarmWelcome> {
-  bool _catalogOpen = false;
   bool _reconnecting = false;
 
   Future<void> _reconnect() async {
@@ -107,7 +106,6 @@ class _SwarmWelcomeState extends State<SwarmWelcome> {
         app.machineStates.values.every((machine) => machine.needsLink);
     final chooseFolder =
         !existing && local != null && widget.onChooseFirstFolder != null;
-    final saved = groups.where((group) => group.saved != null).toList();
     final waiting = !canCreate && finding;
 
     final primary = KeyedSubtree(
@@ -169,9 +167,7 @@ class _SwarmWelcomeState extends State<SwarmWelcome> {
         ),
         const SizedBox(height: 12),
         Text(
-          existing
-              ? 'Add existing agents or start a new one. Keep their work side by side in this tab.'
-              : 'Work with Codex, Claude Code, and other agents side by side. Start in a folder you already use.',
+          existing ? 'Start with one agent. Add more whenever you need them.' : 'Work with Codex, Claude Code, and other agents side by side. Start in a folder you already use.',
           style: const TextStyle(
             fontSize: 14,
             height: 1.55,
@@ -284,7 +280,7 @@ class _SwarmWelcomeState extends State<SwarmWelcome> {
                               const Padding(
                                 padding: EdgeInsets.fromLTRB(12, 8, 12, 4),
                                 child: Text(
-                                  'Add an existing agent',
+                                  'Add your first agent',
                                   style: TextStyle(
                                     fontSize: 13,
                                     fontWeight: FontWeight.w600,
@@ -352,38 +348,15 @@ class _SwarmWelcomeState extends State<SwarmWelcome> {
                                 ],
                               ),
                       ),
-                    if (saved.isNotEmpty && !_catalogOpen) ...[
-                      const SizedBox(height: 24),
-                      _Surface(
-                        child: _section(
-                          'Projects',
-                          'Add project',
-                          widget.onAddProject,
-                          [for (final group in saved) _project(group)],
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 20),
-                    Semantics(
-                      expanded: _catalogOpen,
-                      child: TextButton.icon(
-                        key: const ValueKey('swarm-start-browse'),
-                        onPressed: () =>
-                            setState(() => _catalogOpen = !_catalogOpen),
-                        icon: Icon(
-                          _catalogOpen ? Icons.expand_less : Icons.expand_more,
-                          size: 18,
-                        ),
-                        label: const Text('Browse machines and projects'),
-                        style: TextButton.styleFrom(
-                          foregroundColor: Colors.white70,
-                        ),
+                    const SizedBox(height: 24),
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 12),
+                      child: Text(
+                        'Or start with a machine or project',
+                        style: TextStyle(fontSize: 13, color: Colors.white70),
                       ),
                     ),
-                    if (_catalogOpen) ...[
-                      const SizedBox(height: 12),
-                      _catalog(app, groups),
-                    ],
+                    _catalog(app, groups),
                   ],
                 ),
               ),

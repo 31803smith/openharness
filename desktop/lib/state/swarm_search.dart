@@ -44,6 +44,7 @@ class SwarmSearchController extends ChangeNotifier {
   final _cache = SwarmSearchCatalog();
   final _locations = SwarmLocationCatalog();
   List<SwarmDestination> _catalog = const [];
+  Set<String> _catalogIds = const {};
   Set<String> _commandIds = const {};
   List<SwarmDestination> rows = const [];
   String query = '';
@@ -53,6 +54,67 @@ class SwarmSearchController extends ChangeNotifier {
   String? _previewId;
   bool? _splitCurrent;
   Set<String> _presentIds = const {};
+  final _checked = <String, SwarmDestination>{};
+  List<SwarmDestination> get checked => List.unmodifiable(_checked.values);
+  int get checkedCount => _checked.length;
+  bool get multiSelect => adding && split == null && !isCommandMode;
+  bool get hasSelection => multiSelect && _checked.isNotEmpty;
+
+  int get capacity {
+    final target = app.swarms
+        .where((swarm) => swarm.id == targetId)
+        .firstOrNull;
+    return target == null ? 0 : AppNotifier.maxPanes - target.panes.length;
+  }
+
+  bool isChecked(SwarmDestination row) {
+    final ids = _missingIds(row);
+    return ids.isNotEmpty && ids.every(_checked.containsKey);
+  }
+
+  bool canToggle(SwarmDestination row) =>
+      multiSelect &&
+      !row.isCommand &&
+      (isChecked(row) ||
+          (canAdd(row) &&
+              _checked.length +
+                      _missingIds(row)
+                          .where((id) => !_checked.containsKey(id))
+                          .length <=
+                  capacity));
+
+  void toggle([SwarmDestination? row]) {
+    row ??= selected;
+    if (row == null || !canToggle(row)) return;
+    final ids = _missingIds(row);
+    if (isChecked(row)) {
+      _checked.removeWhere((id, _) => ids.contains(id));
+    } else {
+      for (final entry in _catalog) {
+        if (entry.agentId != null && ids.contains(entry.id)) {
+          _checked[entry.id] = entry;
+        }
+      }
+    }
+    notifyListeners();
+  }
+
+  void removeChecked(String id) {
+    if (_checked.remove(id) != null) notifyListeners();
+  }
+
+  void clearChecked() {
+    if (_checked.isEmpty) return;
+    _checked.clear();
+    notifyListeners();
+  }
+
+  bool get canSubmitSelection =>
+      hasSelection &&
+      _checked.length <= capacity &&
+      _checked.values.every((row) => canAdd(row)) &&
+      _checked.keys.every(_catalogIds.contains);
+  bool get canAccept => hasSelection ? canSubmitSelection : canSubmit(selected);
 
   bool get canPreview =>
       !navigating &&
@@ -128,6 +190,8 @@ class SwarmSearchController extends ChangeNotifier {
 
   String actionLabel(SwarmDestination? row) => row?.isCommand == true
       ? action(row!)
+      : hasSelection
+      ? 'Add $checkedCount ${checkedCount == 1 ? 'agent' : 'agents'}'
       : adding
       ? row != null &&
                 row.agentId == null &&
@@ -142,6 +206,10 @@ class SwarmSearchController extends ChangeNotifier {
   String get unavailableMessage =>
       split != null && !app.isPaneSplitCurrent(split!)
       ? 'The layout changed. Split the agent again.'
+      : hasSelection && checkedCount > capacity
+      ? 'This swarm has room for $capacity more agents.'
+      : hasSelection && !canSubmitSelection
+      ? 'A selected agent is unavailable. Remove it or search again.'
       : selected != null && alreadyHere(selected!)
       ? 'This agent is already in this swarm.'
       : 'This swarm has no room for another agent.';
@@ -159,6 +227,7 @@ class SwarmSearchController extends ChangeNotifier {
       return;
     }
     _catalog = next;
+    _catalogIds = {for (final row in next) row.id};
     _splitCurrent = splitCurrent;
     _presentIds = {
       for (final swarm in app.swarms.where((s) => s.id == targetId))
@@ -166,6 +235,7 @@ class SwarmSearchController extends ChangeNotifier {
           if (pane.agentId != null)
             agentDestinationId(pane.machineId, pane.agentId!),
     };
+    _checked.removeWhere((id, _) => _presentIds.contains(id));
     _filter();
     notifyListeners();
   }
@@ -237,6 +307,9 @@ class SwarmSearchController extends ChangeNotifier {
   }
 
   SwarmSearchSelection? submit([SwarmDestination? row]) {
+    if (row == null && hasSelection) {
+      return canSubmitSelection ? SwarmSearchSelection.multiple(checked) : null;
+    }
     final destination = row ?? selected;
     if (destination == null || !canSubmit(destination)) return null;
     if (destination.isCommand &&
@@ -287,7 +360,9 @@ class SwarmSearchController extends ChangeNotifier {
                 AppNotifier.maxPanes,
       );
 
-  SwarmSearchSelection? addHere() => canAdd(selected)
+  SwarmSearchSelection? addHere() => adding
+      ? submit()
+      : canAdd(selected)
       ? SwarmSearchSelection(selected!, SwarmSearchAction.addHere)
       : null;
 

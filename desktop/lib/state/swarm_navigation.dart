@@ -190,9 +190,16 @@ class SwarmSearchSelection {
   const SwarmSearchSelection(
     this.destination, [
     this.action = SwarmSearchAction.open,
-  ]);
+  ]) : agents = const [];
+
+  SwarmSearchSelection.multiple(List<SwarmDestination> agents)
+    : assert(agents.isNotEmpty),
+      destination = agents.first,
+      action = SwarmSearchAction.addHere,
+      agents = List.unmodifiable(agents);
   final SwarmDestination destination;
   final SwarmSearchAction action;
+  final List<SwarmDestination> agents;
 }
 
 List<Object?> _catalogPresentation(
@@ -417,7 +424,7 @@ List<SwarmDestination> rankSwarmLocations(
   }
   return [
     for (final group in groups.entries) ...[
-      if (parents[group.key] case final parent?) parent,
+      ?parents[group.key],
       ...group.value.where((row) => row.agentId != null),
     ],
   ];
@@ -431,6 +438,50 @@ Future<bool> activateSwarmSearchSelection(
   PaneSplitRequest? split,
 }) async {
   final destination = selection.destination;
+  if (selection.agents.isNotEmpty) {
+    final target = app.swarms
+        .where((swarm) => swarm.id == destinationSwarmId)
+        .firstOrNull;
+    if (target == null || split != null) return false;
+    final catalog = SwarmSearchCatalog().read(app, projects);
+    final byId = {for (final row in catalog) row.id: row};
+    final members = <SwarmDestination>[];
+    final seen = <String>{};
+    for (final chosen in selection.agents) {
+      final row = byId[chosen.id];
+      if (row?.agentId == null ||
+          !(app.machineStates[row!.machineId]?.agents.any(
+                (agent) => agent.id == row.agentId,
+              ) ??
+              false)) {
+        return false;
+      }
+      if (seen.add(row.id) &&
+          !target.panes.any(
+            (pane) =>
+                pane.machineId == row.machineId && pane.agentId == row.agentId,
+          )) {
+        members.add(row);
+      }
+    }
+    if (members.isEmpty ||
+        target.panes.length + members.length > AppNotifier.maxPanes) {
+      return false;
+    }
+    // Validate the complete selection before recording any membership. Every
+    // add records its destination synchronously, before attachment can wait.
+    await Future.wait([
+      for (final row in members)
+        app.addAgentToSwarm(row.machineId!, row.agentId!, swarmId: target.id),
+    ]);
+    return app.swarms.contains(target) &&
+        members.every(
+          (row) => target.panes.any(
+            (pane) =>
+                pane.machineId == row.machineId && pane.agentId == row.agentId,
+          ),
+        );
+  }
   if (selection.action == SwarmSearchAction.open && !destination.isGroup) {
     return activateSwarmDestination(
       app,

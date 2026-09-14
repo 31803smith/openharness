@@ -73,8 +73,6 @@ void main() {
         },
       );
       await mount(tester, app);
-      await tester.tap(find.byKey(const ValueKey('swarm-start-browse')));
-      await tester.pump();
       expect(find.text('Existing project'), findsOneWidget);
       await tester.tap(
         find.byKey(const ValueKey('swarm-welcome-search-input')),
@@ -112,9 +110,6 @@ void main() {
       await mount(tester, app);
       expect(find.text('Start a swarm'), findsOneWidget);
       expect(find.text('Models'), findsNothing);
-      expect(find.text('Machines'), findsNothing);
-      await tester.tap(find.byKey(const ValueKey('swarm-start-browse')));
-      await tester.pump();
       expect(find.text('Machines'), findsOneWidget);
       await tester.tap(
         find.byKey(const ValueKey('swarm-welcome-search-input')),

@@ -12,10 +12,28 @@ Updated 2026-09-14 after integrating the continuation into main. This is a worki
   Empty swarms appear once. Removed the 68px pane inset that reserved a footer
   for the floating +; panes now use the normal 10px edge spacing beneath it.
   All 33 affected navigation/Add/focus tests pass.
-- The user refined New swarm: search and Enter add to a draft list on the start
-  page, then **Create swarm** opens the chosen agents together. Machine/project
-  starters populate that list. This supersedes immediate activation of the
-  first welcome suggestion. The shared Add continuation is being implemented.
+- The user chose instant first-agent startup after reconsidering a draft-list
+  flow. Welcome search/Enter and suggestions open one agent directly; there is
+  no Create swarm step. Machines/projects stay visible as one-click starters.
+  Shared Add now supports optional checkboxes/Shift+Enter across queries,
+  removable selected-agent chips, and Add N agents. Whole-selection validation
+  rejects stale members or insufficient capacity before adding any membership;
+  source swarms and retained sessions stay intact. Splits choose one agent.
+- The user's latest shortcut choice is **Cmd-N for Add**, with **Shift-Cmd-N
+  for fresh New agent** and Cmd-P unchanged for Navigate. The filled + New agent
+  button is beside Add's search field. Only the highlighted result shows its
+  action/Return hint. The floating + overlays the panes, now 28px from both
+  bottom and right edges; its tooltip shows the resolved Add shortcut.
+- Full desktop checks: **1,295 passed, one existing skip**. Analyzer: zero
+  errors/warnings, 14 existing informational diagnostics. Synthetic real-font
+  captures of the starters, Add, optional multi-select and Navigate were
+  reviewed at 1280×800 and 880×560 with 2× text. Fresh five-pane/latest-output
+  regressions pass, including delayed snapshots. These are not native display
+  latency or real remote reconnect measurements.
+- Native validation passes 51 keymap decoder and 347 AppKit assertions with
+  the resolved Dart binding payload. The normal arm64 macOS Release build
+  succeeds. No running-app restart was needed or performed. Logs:
+  `/private/tmp/harness-revised-add-{full-tests-final,analyze-final,keymap-native,release-build}.log`.
 - The user confirms the current menu and Navigate changes are visible. No
   further app restart or inspection is needed for that confirmation.
 - History focus updates now skip formatting unopened agents. A failing-before
@@ -25,10 +43,6 @@ Updated 2026-09-14 after integrating the continuation into main. This is a worki
   Full paired timings, including variable/worse fallback-tab tails, are in
   [the performance record](harness-v2-performance.md). Native latency is still
   unmeasured.
-- Latest approved work: restore visible machine/project swarm starters; let
-  shared Add select multiple existing agents across searches with an explicit
-  count/removal and Add N action; keep New agent visible and Navigate separate.
-  The bottom-right + must overlay the panes without reserving a footer.
 - The user now wants all subsequent work, commits and pushes on **main**.
   This supersedes the earlier fresh-feature-branch workflow. Only consolidate
   this user's own branches; other contributors' branches and PRs are excluded.
@@ -41,12 +55,11 @@ Updated 2026-09-14 after integrating the continuation into main. This is a worki
   merged local branch. The only local branch is main. No teammate branch or
   separate PR was merged or deleted. The author's remaining remote history and
   the account's PRs contain no additional unmerged work.
-- The integrated desktop source is unchanged from the validated `23d511e`
-  checkpoint. No new native timing result or release-readiness claim is made.
-- Performance investigation remains active. A temporary rebuild trace reproduced
+- Performance investigation remains active. An earlier rebuild trace reproduced
   620/964 widget rebuilds per focus change with 16/48 retained terminals and
-  identified fallback tab-button work in those totals. Next isolate the terminal
-  canvas from that non-native tab strip before choosing an optimization.
+  identified fallback tab-button work in those totals. The paired follow-up
+  separated native/fallback tab configurations and led to the History snapshot
+  improvement above; the performance record retains the variable fallback tails.
   Trace source/log: `/private/tmp/harness-swarm-rebuild-trace.{dart,log}`.
   The diagnostic source is outside the repository; generated Vite caches are
   now ignored alongside other build caches.

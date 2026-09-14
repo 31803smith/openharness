@@ -106,9 +106,9 @@ flows** for these two jobs.
 | --- | --- | --- |
 | Top-right navigation icon, replacing Search; Cmd-P | Navigate globally | Find agents/swarms and choose an exact existing destination. |
 | New swarm page | Add to this swarm | Find an existing agent or create a new one in this tab. |
-| Bottom-right floating + inside the swarm | Add to this swarm | The same Add agent experience as New swarm. |
+| Bottom-right floating + or Cmd-N | Add to this swarm | The same Add agent experience as New swarm. |
 | Pane menu: Split right / Split down | Add at this position | The same Add agent experience, preserving the selected neighbor and direction. |
-| New agent action, including Cmd-N | Create | Always create a fresh runtime in the intended swarm/position. |
+| New agent action, including Shift-Cmd-N | Create | Always create a fresh runtime in the intended swarm/position. |
 | Tab-strip + | New swarm | Create a new swarm tab. |
 
 ### Navigate
@@ -139,15 +139,23 @@ flows** for these two jobs.
 
 ### Add agent
 
-- Latest user approval: search and select one or several existing agents,
-  preserve that selection across queries, show a count with easy removal, then
-  add the selection to the target swarm. On New swarm, Search + Enter adds to
-  a draft list on the page; **Create swarm** opens the selected agents together.
-  Machine/project starters fill that draft list. Keep machines and projects visible
-  as swarm starters instead of hiding them behind Browse. New agent remains
-  the distinct action for a fresh runtime. This continuation is in progress.
-- The bottom-right + floats over the terminal canvas. Do not reserve a footer
-  or shorten every pane to make room for it.
+- Latest user decision: **start immediately with the first agent**. Search +
+  Enter or a welcome suggestion opens it directly. Keep “Add your first agent”
+  above the choices; no draft-list or Create swarm step. Machines and projects
+  stay visible as one-click swarm starters. This supersedes the briefly proposed
+  mandatory assembly step.
+- Multi-select is optional in Add: check rows or use Shift+Enter, retain the
+  selection across queries, remove selections in the visible strip, then use
+  Add N agents. Default click/Enter still adds one immediately. A split chooses
+  one agent for its specific position. New agent remains the fresh-runtime path.
+- Cmd-N opens Add; Shift-Cmd-N opens the fresh New agent form. This latest
+  user choice supersedes the old Cmd-N creation default. New agent must be a
+  large filled button beside the search field, not a small footer action. Only
+  the highlighted result shows the action label and Enter hint at its right
+  edge; do not repeat it on every row.
+- The bottom-right + floats over the terminal canvas, inset 28px from the right
+  and bottom edges. Do not reserve a footer or shorten every pane to make room
+  for it.
 - Build one shared Add interface for **New swarm, the floating +, and both
   split directions**. It must support existing agents and a clearly visible
   **New agent** action. A split must not immediately force the creation form.
@@ -215,8 +223,8 @@ bindings for that retired toggle no longer invalidate the rest of the keymap.
 start page. With no existing work, it leads with **Start with one agent**, a
 static workspace example, **Choose folder…** and separate **Clone repository…**.
 Available existing work gets Add search, three direct agent choices and New
-agent. Saved projects stay visible; the rest of the machine/project catalog is
-behind Browse. A single usable local computer no longer needs a Machine dropdown
+agent. Machines and projects are visible as one-click swarm starters; the
+first agent opens immediately and optional multi-select lives in shared Add. A single usable local computer no longer needs a Machine dropdown
 in the creation form. Delayed discovery enables Enter on the primary action
 without stealing an explicit focus choice. Offline/linking cases expose their
 next action. Large text stacks the layout, and New agent now uses the shared
@@ -227,17 +235,21 @@ unverified; do not infer them from these UI changes.
 **Archived drafts:** both are superseded. The onboarding ideas were adapted into
 the common page, without adding another first-tab-only component.
 
-**Latest verification:** after integration with updated main, 1,271 desktop
-tests passed with one existing skip. Analyzer reports zero errors/warnings and
-14 informational diagnostics (12 vendored, two inherited from main). The last
-native checks passed 51 keymap decoder and 344 AppKit assertions; the production
-native sources still match that checkpoint. Synthetic start-page/form captures with real
-fonts were reviewed at 1280×800 and 880×560 with 2× text; they are not a real
-native-session visual or latency measurement. Logs:
-`/private/tmp/harness-onboarding-main-{tests,analyze}.log`.
+**Latest verification:** 1,295 desktop tests passed with one existing skip.
+Analyzer reports zero errors/warnings and 14 existing informational diagnostics
+(12 vendored, two inherited from main). Native checks passed 51 keymap decoder
+and 347 AppKit assertions, including the exported Dart keymap and hidden window
+layout. The normal macOS arm64 Release build succeeded with
+`FLUTTER_TARGET=lib/main.dart`. Synthetic real-font captures of the visible
+starters, Add, multi-select and Navigate were reviewed at 1280×800 and 880×560
+with 2× text. These do not measure native display latency or real reconnect.
+Logs: `/private/tmp/harness-revised-add-full-tests-final.log`,
+`/private/tmp/harness-revised-add-analyze-final.log`,
+`/private/tmp/harness-revised-add-keymap-native.log`, and
+`/private/tmp/harness-revised-add-release-build.log`.
 Navigate/Add timings and their exact scope are in
 [the performance record](harness-v2-performance.md). The new navigation catalog
-build measured 0.188 ms median / 0.259 ms p95 in the latest integrated run for
+build measured 0.188 ms median / 0.259 ms p95 in the earlier integrated run for
 50 locations across 12 swarms. Add's 2,000-agent query measured 0.959 ms median /
 1.005 ms p95. The five benchmark cases passed; native event-to-display remains
 unmeasured. Log: `/private/tmp/harness-onboarding-main-benchmark.log`.
@@ -315,15 +327,16 @@ that its isolated window can become active/key.
 
 ## Plan for the next session
 
-1. **Confirm the latest source/build checkpoint.** The now-merged continuation
-   has a successful Release build; its running-window revision is
-   not confirmed. The last confirmed relaunch was `2d3c024`. Review
-   Navigate, Add, command mode, and the fresh terminal position in the native app
-   when computer-use access works. Preserve real running agents and input.
+1. **Continue from updated main and this handoff.** The user confirmed the
+   current menus and Navigate are visible and explicitly said no further check
+   was needed. The later Add/shortcut/padding changes have a successful Release
+   build; this session did not restart the running app. Do not repeat a relaunch
+   just to reconfirm menus. Preserve real running agents and input during any
+   targeted native workflow verification.
 2. **Observe genuine first use of the common start page.** Start with no
    account/runtime/agents/projects knowledge and record actual steps/errors to
-   a usable agent. The folder-first path, workspace example and secondary
-   catalog are implemented. Check fresh dependencies, provider sign-in, cloning,
+   a usable agent. The folder-first path, workspace example and visible
+   machine/project starters are implemented. Check fresh dependencies, provider sign-in, cloning,
    first task and adding a second agent; improve what the observation exposes.
    Preserve choices on failure and the distinction between Navigate and Add.
 3. **Recheck fresh terminal positioning and real workflows** on disposable
