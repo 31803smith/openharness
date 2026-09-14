@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import 'package:flutter/services.dart';
@@ -125,6 +126,16 @@ class _TerminalPanelState extends State<TerminalPanel>
 
   final TerminalController _controller = TerminalController();
   final ScrollController _scrollController = ScrollController();
+
+  /// Keep the view at the end as output lands, until the reader scrolls away.
+  ///
+  /// One jump at mount is not enough where the screen arrives AFTER that frame:
+  /// over the relay a pane opens empty and its retained scrollback is replayed a
+  /// moment later, so the jump lands on nothing and the reader is left at the
+  /// top of a screen that filled in under them. xterm does not close this — its
+  /// own `_scrollToBottom` answers typing and the keyboard opening, never new
+  /// output.
+  bool _stickToEnd = false;
   final FocusNode _focusNode = FocusNode();
   final FocusNode _composerFocus = FocusNode();
   final _findBarKey = GlobalKey<TerminalFindBarState>();
@@ -168,7 +179,7 @@ class _TerminalPanelState extends State<TerminalPanel>
     super.initState();
     _viewTerminal = widget.session.terminal;
     _viewTerminal.addListener(_scheduleLinkRefresh);
-    _scrollController.addListener(_scheduleLinkRefresh);
+    _scrollController.addListener(_onScroll);
     _terminalViewKey = GlobalKey<TerminalViewState>();
     _linkOpener = widget.linkOpener ?? TerminalLinkOpener();
     _mediaDownloader = widget.mediaDownloader ?? RemoteMediaDownloader();
@@ -182,7 +193,7 @@ class _TerminalPanelState extends State<TerminalPanel>
     // they still need a rebuild to reach it, and this widget reads the store
     // directly rather than through a builder.
     terminalThemeStore.addListener(_onFontChanged);
-    _afterTerminalMounted();
+    _afterTerminalMounted(follow: true);
   }
 
   @override
@@ -273,7 +284,7 @@ class _TerminalPanelState extends State<TerminalPanel>
     _tickerMode?.removeListener(_syncCursorBlink);
     _previewCancellation?.cancel();
     _viewTerminal.removeListener(_scheduleLinkRefresh);
-    _scrollController.removeListener(_scheduleLinkRefresh);
+    _scrollController.removeListener(_onScroll);
     _observeLinkModifiers(false);
     widget.session.setCursorBlinkPhase(true);
     widget.session.removeListener(_onSessionChanged);
@@ -311,9 +322,35 @@ class _TerminalPanelState extends State<TerminalPanel>
   /// [_onSessionChanged] the moment it starts accepting input.
   bool _composerFocusPending = false;
 
+  /// `userScrollDirection` is idle unless a drag is driving the position, which
+  /// is what separates the reader scrolling up from the content growing under a
+  /// still view — comparing pixels against `maxScrollExtent` cannot, because a
+  /// replayed screen moves the extent and not the offset.
+  void _onScroll() {
+    _scheduleLinkRefresh();
+    if (!_stickToEnd || !_scrollController.hasClients) return;
+    if (_scrollController.position.userScrollDirection !=
+        ScrollDirection.idle) {
+      _stickToEnd = false;
+    }
+  }
+
   void _onSessionChanged() {
     if (!mounted) return;
     _syncCursorBlink();
+    if (_stickToEnd) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_stickToEnd || !_scrollController.hasClients) return;
+        final position = _scrollController.position;
+        if (position.pixels != position.maxScrollExtent) {
+          position.jumpTo(position.maxScrollExtent);
+        }
+        // The screen has arrived: there is more of it than fits, and it is now
+        // showing its end. Following past this point would fight the reader
+        // over every later line.
+        if (position.maxScrollExtent > 0) _stickToEnd = false;
+      });
+    }
     if (!_composerFocusPending) return;
     if (!widget.focused || !_showsComposer) {
       _composerFocusPending = false;
@@ -561,6 +598,13 @@ class _TerminalPanelState extends State<TerminalPanel>
   void _afterTerminalMounted({
     bool clearSelection = false,
     bool scrollToEnd = true,
+    /// Keep following the end afterwards, not just jump to it once.
+    ///
+    /// The FIRST attach only. A pane coming back from parked, or handed a
+    /// replacement session, already has a screen and a place the reader left
+    /// off — `terminal_offline_view_test` and `swarm_screen_test` hold that
+    /// position, and following there would snap it to the end behind them.
+    bool follow = false,
   }) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !widget.visible) return;
@@ -576,8 +620,15 @@ class _TerminalPanelState extends State<TerminalPanel>
           renderSize.height ~/ cellSize.height,
         );
       }
-      if (scrollToEnd && _scrollController.hasClients) {
-        _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+      if (scrollToEnd) {
+        _stickToEnd = follow;
+        if (_scrollController.hasClients) {
+          final position = _scrollController.position;
+          position.jumpTo(position.maxScrollExtent);
+          // A pane that already has more screen than fits was not waiting for
+          // one — this jump was the whole of it.
+          if (position.maxScrollExtent > 0) _stickToEnd = false;
+        }
       }
       // Never over the composer: a rebuild that re-focuses this tile while someone is typing into
       // the box would pull the caret out from under them mid-sentence.
