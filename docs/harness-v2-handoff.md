@@ -1,6 +1,18 @@
 # Harness v2: goal, plan, and continuation handoff
 
-**Latest continuation checkpoint:** `87706a3` fixes command-mode entry from the
+**Latest continuation checkpoint:** `98fc760` makes New Harness immediately usable
+from the keyboard. The folder control receives focus when the dialog mounts;
+Enter opens its chooser. A valid keyboard selection focuses the enabled New
+Harness action. Cancel/error returns to the chooser, and a pending Codex account
+lookup neither focuses a disabled action nor steals focus when it completes.
+The next key after successful creation reaches the terminal. **Five current-flow
+checks** pass in `/private/tmp/harness-creation-keyboard-after.log` and **29 affected
+account/engine/entry checks** pass in `/private/tmp/harness-creation-regressions.log`.
+The macOS/Linux keyboard variants are widget checks, not native platform
+qualification. Analysis reports no issues in
+`/private/tmp/harness-creation-keyboard-analyze.log`.
+
+**Search checkpoints:** `87706a3` fixes command-mode entry from the
 collapsed/focused start-page field and keeps its displayed mode synchronized.
 `2aaa48a` stops search subscriptions and catalog work while that picker is
 dismissed; reopening preserves query/selection and reads current results. Both
@@ -12,15 +24,17 @@ The existing guarantee that arrow navigation rebuilds only changed rows remains
 verified. Analysis of the five changed source/test files reports no issues in
 `/private/tmp/harness-start-search-analyze.log`.
 
-The new Release build succeeds in `/private/tmp/harness-start-search-release.log`.
+The new Release build succeeds in `/private/tmp/harness-creation-keyboard-release.log`.
 Its framework and full bundle signatures verify at
 `/private/tmp/harness-pane-controls-release/Build/Products/Release/Harness.app`.
 **This newer bundle has not replaced the running preview yet.** Two exact-path
 CUA lookups returned `cgWindowNotFound`; the preview process was confirmed running
-(PID 92821, recheck) and the console reports `CGSSessionScreenIsLocked = Yes`.
+(PID 92821 at the prior check, recheck before acting). The console again reports
+`CGSSessionScreenIsLocked = Yes` after the latest build.
 Do not treat that as a stopped app or launch an old fixture. When accessible,
 use Quit and Keep Windows, replace only the current checkout's preview with the
-verified bundle, and check inline command entry/reopen. The visual and terminal
+verified bundle, and check inline command entry/reopen plus New Harness initial
+focus and folder cancellation. The visual and terminal
 checks below describe the preceding `b4baf68` preview. Native latency benchmarking
 remains deferred.
 
@@ -98,21 +112,20 @@ was exercised.
 Publication: the user explicitly requests **frequent commits and pushes**.
 `e8960fc` (separate titlebar actions) and `9288ea4` (terminal redraw scrolling) are
 pushed to main. The accompanying UI checkpoint contains the revised start page,
-shared inline search, device asset and New Harness dialog. The broader goal and
-native latency benchmarks remain paused by user instruction.
+shared inline search, device asset and New Harness dialog. The broader goal is
+unfinished, and native latency benchmarks remain deferred by user instruction.
 
 Updated September 14, 2026. **Read this first when resuming on another computer.**
 This is the current product contract and next-work order. It supersedes conflicting
 historical checkpoints in [the progress log](harness-v2-progress.md). The user
-requested a portable checkpoint and later paused the broader goal pending a
-breaking change. The goal remains unfinished and is currently blocked. The latest
-entry-page, picker, menu and pane-chrome changes are separately authorized; wait for
-the user's instruction before resuming the broader backlog.
+requested a portable checkpoint. Continue from the current New/Open design and
+the remaining acceptance criteria below; do not restore historical UI to satisfy
+obsolete fixtures. The larger performance goal remains unproven, including native
+latency, genuine first-use completion and Linux-host qualification.
 
-**Latest priority:** the user explicitly deferred native benchmarking and further
-performance optimization. Focus on completing the agreed features and usability
-work. Do not interrupt them for a benchmark window or resume calibration merely
-because the desktop becomes available.
+**Latest priority:** native benchmarking remains explicitly deferred. Continue
+current feature, keyboard and usability work. Do not interrupt the user for a
+benchmark window or resume calibration merely because the desktop becomes available.
 
 **Current product discussion:** the user reports accumulating live agents after
 closing their views. [The lifecycle proposal](harness-agent-lifecycle.md) recommends
