@@ -7,6 +7,7 @@ import {
 } from './engineBin.js'
 import { probeGatewayRuntime } from './gatewayRuntime.js'
 import { probeGridAssignment, type GridAssignment } from './gridAssignment.js'
+import { probeCodexHome } from './codexHomeProbe.js'
 import type { TerminalBackend } from './terminalBackend.js'
 import {
   ambiguousAgentProcess,
@@ -51,6 +52,12 @@ export interface DiscoveredTerminalAgent {
    * Backend-agnostic for the same reason `gateway` is: it is a fact about the process, not the pane.
    */
   grid?: GridAssignment | null
+  /**
+   * Codex only: the CODEX_HOME profile the process was launched under, when it is not this machine's
+   * default. null = the default profile (or not Codex); undefined = the probe could not read the
+   * process, and the registry keeps what it already knows. See `codexHomeProbe.ts`.
+   */
+  codexHome?: string | null
 }
 
 export interface TerminalTargetProbe {
@@ -245,6 +252,8 @@ export async function probeTerminalAgents(
     agent.gateway = runtime.kind
     // Same process, same cached read — the grid costs no extra `ps`.
     agent.grid = await probeGridAssignment(agent.processIdentity, agent.engine, agent.args)
+    // And, for Codex, the profile it runs under — a fact about the process the row cannot otherwise learn.
+    agent.codexHome = await probeCodexHome(agent.processIdentity, agent.engine)
   }))
   return { processTableAvailable: true, targets, ...discovered }
 }

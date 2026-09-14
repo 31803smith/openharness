@@ -66,6 +66,7 @@ import { claudeContinuation, findLiveSession } from './lib/sessionRepair.js'
 import { TmuxBackend } from './lib/tmuxBackend.js'
 import { createAndRegisterPane } from './lib/createAgentPane.js'
 import { restoreAgents } from './lib/restoreAgents.js'
+import { buildLaunchOverrides, validateLaunchOverrides, type LaunchOverridesDeps, type LaunchOverridesResult, type LaunchSource } from './lib/launchOverrides.js'
 import { buildHarnessSessionLabel } from './lib/harnessSessionLabel.js'
 import { basename } from 'node:path'
 import {
@@ -131,6 +132,7 @@ import { managedNodePath } from './lib/nodeRuntime.js'
 import { ensureLauncher, ensureManagedRuntime } from './lib/runtimeInstall.js'
 import { stat } from 'fs/promises'
 import { CodexNormalizer, codexTaskError, lastCodexTurnText } from './engines/codex/normalizer.js'
+import { codexSubagentResolverFor } from './engines/codex/subagent.js'
 import { CursorNormalizer, lastCursorTurnText } from './engines/cursor/normalizer.js'
 import { CursorTranscriptDiscovery, findCursorTranscript } from './engines/cursor/discovery.js'
 import { CursorSubagentManager } from './engines/cursor/subagent.js'
@@ -1533,7 +1535,7 @@ async function runForeground(session: AuthSession): Promise<void> {
       return out.turnOpen
     }
     if (session.engine === 'codex') {
-      const normalizer = new CodexNormalizer('live')
+      const normalizer = new CodexNormalizer('live', codexSubagentResolverFor(session.codexHome))
       // Hydrate state silently; never replay history live — except a turn left open, below.
       historyTurnOpen = fold((line) => normalizer.ingest(line), () => normalizer.turnOpen)
       codexNormalizers.set(session.sessionId, normalizer)
@@ -2363,6 +2365,7 @@ async function runForeground(session: AuthSession): Promise<void> {
         processIdentity: observed.processIdentity,
         gateway: observed.gateway,
         grid: observed.grid,
+        codexHome: observed.codexHome,
       })
       if (!opened) return
       if (opened.evicted) {
@@ -2399,6 +2402,10 @@ async function runForeground(session: AuthSession): Promise<void> {
       // agent passes through — so a row written before the flag was persisted at all (or by a build
       // that did not yet) learns it here, before any pane recreation ever needs it.
       registry.setBypassPermission(current.agentId, bypassPermissionActive(current.engine, observed.args))
+      // Same idea for a Codex profile: a row that never learned which CODEX_HOME its process runs
+      // under learns it from the process, before the hook path validates a transcript against it.
+      // Fill-only — a profile the row already knows is never re-derived.
+      if (observed.codexHome && !current.codexHome) registry.setCodexHome(current.agentId, observed.codexHome)
       if (wasLaunching) registry.setLaunch(current.agentId, { state: 'ready' })
       await bindObservedAgent(observed)
       if (wasDormant || wasLaunching) {
@@ -3121,7 +3128,7 @@ async function runForeground(session: AuthSession): Promise<void> {
       let events
       if (session.engine === 'codex') {
         let normalizer = codexNormalizers.get(evt.sessionId)
-        if (!normalizer) { normalizer = new CodexNormalizer('live'); codexNormalizers.set(evt.sessionId, normalizer) }
+        if (!normalizer) { normalizer = new CodexNormalizer('live', codexSubagentResolverFor(session.codexHome)); codexNormalizers.set(evt.sessionId, normalizer) }
         events = normalizer.ingest(evt.text)
         // Codex rides its failure ON task_complete, so the turn closes by itself — but with no text and
         // no reason, which reads as "the agent answered nothing". Announce the reason ahead of the
@@ -3208,6 +3215,40 @@ async function runForeground(session: AuthSession): Promise<void> {
       )
     }
   }
+  /**
+   * The config directory a grid launch should actually be given on THIS machine, or none.
+   *
+   * Only Hermes can lose one. Its web tools ride a managed-scope overlay, and `HERMES_MANAGED_DIR`
+   * REPLACES `/etc/hermes` rather than adding to it — so on a machine where an administrator pinned
+   * Hermes settings there, writing ours would take their policy away for as long as the agent runs.
+   * The agent still launches on the grid; it launches without web tools, which is the smaller loss
+   * and the one that can be said out loud.
+   *
+   * Here rather than in the contract because it is a fact about the machine: a `build()` that
+   * stats the filesystem answers differently on two of them, and its spec would follow.
+   */
+  const gridConfigDirFor = (engine: AgentEngine, launch: GridEngineLaunch): GridEngineLaunch['configDir'] => {
+    if (!launch.configDir || engine !== 'hermes' || !existsSync(HERMES_SYSTEM_MANAGED_DIR)) return launch.configDir
+    console.warn(`[grid] ${engine} starts without web tools · ${HERMES_SYSTEM_MANAGED_DIR} pins this `
+      + `machine's Hermes settings, and the overlay carrying the web tools would replace it`)
+    return undefined
+  }
+
+  /**
+   * What a relaunch of `session` must be given, beyond the engine's argv, to come back where it was —
+   * on its grid (the registry kept the launch, key included) or under its Codex profile. Restore and
+   * restart read the row; retarget passes the override the desktop just sent. The config directory is
+   * keyed on the agent, so relaunching the same agent rewrites one directory instead of leaving a trail.
+   */
+  const launchOverridesDeps: LaunchOverridesDeps = {
+    configDirFor: gridConfigDirFor,
+    writeGridConfigDir,
+    tmuxSupportsSessionEnv,
+    installCodexHooks: (codexHome) => { if (!env.DISABLE_HOOK_INSTALL) installCodexHooks(hookPort, codexHome) },
+  }
+  const relaunchOverrides = (session: RegisteredSession, source: LaunchSource = session): Promise<LaunchOverridesResult> =>
+    buildLaunchOverrides(launchOverridesDeps, session.engine, source, session.agentId)
+
   watcher.start()
   await cursorDiscovery.start()
   // Panes that died while the daemon was down (a reboot takes the whole tmux server with it) are
@@ -3224,17 +3265,22 @@ async function runForeground(session: AuthSession): Promise<void> {
       // and a pane that outlived the daemon in a session discovery no longer lists still has its
       // engine, which a second pane resuming the same session would collide with.
       liveProcess: (entry, runtime) => resolvePaneEngineProcess(runtime.paneId, entry.engine),
-      buildLaunch: (entry, opts) => {
-        // Mirrors `agent_create`: a Codex profile other than the default needs its hooks and its
-        // CODEX_HOME; the install check runs inside the pane's own shell.
-        if (entry.codexHome && !env.DISABLE_HOOK_INSTALL) installCodexHooks(hookPort, entry.codexHome)
+      buildLaunch: async (entry, opts) => {
+        // Mirrors `agent_create`: the same grid env/argv (and the same vendor variables cleared), or
+        // the same Codex profile with its hooks installed; the install check runs inside the pane's
+        // own shell.
+        const built = await relaunchOverrides(entry)
+        if (!built.ok) return { error: built.error, detail: built.detail }
+        const { env: launchEnv, extraArgs, clearEnv } = built.overrides
         const argv = buildEngineLaunchArgv(entry.engine, {
           ...opts,
           bypassPermission: entry.bypassPermission === true,
           installIfMissing: enginePathOverride(entry.engine) ? undefined : engineInstallRecipe(entry.engine),
           ...(entry.cwd ? { cwd: entry.cwd } : {}),
+          ...(extraArgs.length ? { extraArgs } : {}),
+          ...(clearEnv.length ? { clearEnv } : {}),
         })
-        return { argv, ...(entry.codexHome ? { env: { CODEX_HOME: entry.codexHome } } : {}) }
+        return { argv, ...(Object.keys(launchEnv).length ? { env: launchEnv } : {}) }
       },
       createPane: async (entry, launch) => {
         const created = await backend.create({
@@ -3399,24 +3445,6 @@ async function runForeground(session: AuthSession): Promise<void> {
    * The freshly-exec'd engine process may not be visible to `ps` the instant tmux returns, so one probe
    * pass can miss it — retry `triggerHint` a few times with backoff before giving up.
    */
-  /**
-   * The config directory a grid launch should actually be given on THIS machine, or none.
-   *
-   * Only Hermes can lose one. Its web tools ride a managed-scope overlay, and `HERMES_MANAGED_DIR`
-   * REPLACES `/etc/hermes` rather than adding to it — so on a machine where an administrator pinned
-   * Hermes settings there, writing ours would take their policy away for as long as the agent runs.
-   * The agent still launches on the grid; it launches without web tools, which is the smaller loss
-   * and the one that can be said out loud.
-   *
-   * Here rather than in the contract because it is a fact about the machine: a `build()` that
-   * stats the filesystem answers differently on two of them, and its spec would follow.
-   */
-  const gridConfigDirFor = (engine: AgentEngine, launch: GridEngineLaunch): GridEngineLaunch['configDir'] => {
-    if (!launch.configDir || engine !== 'hermes' || !existsSync(HERMES_SYSTEM_MANAGED_DIR)) return launch.configDir
-    console.warn(`[grid] ${engine} starts without web tools · ${HERMES_SYSTEM_MANAGED_DIR} pins this `
-      + `machine's Hermes settings, and the overlay carrying the web tools would replace it`)
-    return undefined
-  }
 
   backend.onCreateAgent = async ({ engine, cwd, bypassPermission, grid, codexHome }) => {
     if (!tmuxBackend) return { ok: false, error: 'TMUX_UNAVAILABLE' }
@@ -3506,6 +3534,7 @@ async function runForeground(session: AuthSession): Promise<void> {
       argv,
       env: gridLaunch?.env ?? (codexHome ? { CODEX_HOME: codexHome } : undefined),
       grid: grid ? { baseUrl: grid.baseUrl, model: grid.model ?? null } : null,
+      gridLaunch: grid ?? null,
       codexHome,
       bypassPermission,
     })
@@ -3580,7 +3609,7 @@ async function runForeground(session: AuthSession): Promise<void> {
   const paneSwapDeps = (
     session: RegisteredSession,
     runtime: TmuxRuntimeRef,
-    launch: { env?: Record<string, string>; extraArgs?: readonly string[] } = {},
+    launch: { env?: Record<string, string>; extraArgs?: readonly string[]; clearEnv?: readonly string[] } = {},
   ): RestartAgentDeps => ({
     holdOpen: async () => {
       const result = await tmuxBackend!.holdOpen(runtime)
@@ -3629,11 +3658,10 @@ async function runForeground(session: AuthSession): Promise<void> {
       // gap — a create cleared them, then moving that agent onto a grid from the pane header put them
       // straight back, so the engine came up on Anthropic with a grid selected above it.
       //
-      // Derived from what this swap actually provides, so the empty-env case — a retarget back to the
-      // engine's own login — clears nothing. There the user's own variables are the point.
-      ...(launch.env && Object.keys(launch.env).length
-        ? { clearEnv: gridConflictingEnvToClear({ env: launch.env, args: [] }) }
-        : {}),
+      // Named by the caller (`buildLaunchOverrides` derives it from what the grid launch provides), so
+      // a swap that sets no grid — back to the engine's own login, or a Codex profile's CODEX_HOME —
+      // clears nothing. There the user's own variables are the point.
+      ...(launch.clearEnv?.length ? { clearEnv: launch.clearEnv } : {}),
     }),
     log: (message) => console.log(message),
   })
@@ -3672,18 +3700,10 @@ async function runForeground(session: AuthSession): Promise<void> {
     // validate, and respawning over a pane whose occupant we cannot identify is how you replace
     // something that was not ours.
     if (!session.processIdentity) return { ok: false, error: 'NO_ACTIVE_PROCESS' }
-    const built = grid ? buildGridEngineLaunch(session.engine, grid) : null
-    if (built && !built.ok) return { ok: false, error: built.error, detail: built.detail }
-    // Only a launch that SETS variables needs the tmux that can set them. Clearing uses
-    // set-environment, which every supported tmux has.
-    if (built && !(await tmuxSupportsSessionEnv())) {
-      return {
-        ok: false,
-        error: 'TMUX_TOO_OLD_FOR_GRID',
-        detail: `this machine's tmux is older than ${TMUX_SESSION_ENV_MIN.major}.${TMUX_SESSION_ENV_MIN.minor}, `
-          + 'which is the first version that can give a respawned pane its own environment.',
-      }
-    }
+    // What this machine cannot do at all is said first, before the pane is even looked at.
+    const target: LaunchSource = { gridLaunch: grid, codexHome: session.codexHome }
+    const valid = await validateLaunchOverrides(launchOverridesDeps, session.engine, target)
+    if (!valid.ok) return { ok: false, error: valid.error, detail: valid.detail }
     // Mid-turn is the one state where restarting costs real work: the conversation comes back but
     // whatever the engine was doing does not. The app is told which agents these are so the user can
     // move them once they are done, rather than being asked to choose between losing a turn and losing
@@ -3694,21 +3714,15 @@ async function runForeground(session: AuthSession): Promise<void> {
     // Nothing may type into the pane while it is being replaced.
     const release = acquireTerminalControl(session.agentId)
     if (!release) return { ok: false, error: 'AGENT_BUSY' }
-    const gridEnv: Record<string, string> = built && built.ok ? { ...built.launch.env } : {}
-    const retargetConfigDir = built && built.ok ? gridConfigDirFor(session.engine, built.launch) : undefined
-    if (retargetConfigDir) {
-      // Keyed on the agent, so moving the same agent between grids rewrites one directory rather
-      // than leaving a trail of them.
-      const { envVar, files, pointAt, links } = retargetConfigDir
-      try {
-        const dir = await writeGridConfigDir(session.agentId, files, links)
-        // Same split as create: a directory for Pi, the file itself for OpenCode.
-        gridEnv[envVar] = pointAt ? join(dir, pointAt) : dir
-      } catch (error) {
-        release()
-        const detail = `could not write ${session.engine}'s grid configuration · ${error instanceof Error ? error.message : error}`
-        return { ok: false, error: 'GRID_CONFIG_FAILED', detail }
-      }
+    // The grid's env and argv, config directory written (keyed on the agent, so moving it between
+    // grids rewrites one directory) — or nothing at all for a move back to the engine's own login
+    // (clearing uses set-environment, which every supported tmux has). Built from the override the
+    // desktop just sent, never from the row: the row is what this call REPLACES. After the refusal
+    // guards, so a refused move leaves the live process's own configuration untouched.
+    const built = await relaunchOverrides(session, target)
+    if (!built.ok) {
+      release()
+      return { ok: false, error: built.error, detail: built.detail }
     }
 
     // ⚠️ THE AGENT MUST ADOPT THE NEW PROCESS, OR IT STOPS BEING THE SAME AGENT.
@@ -3743,7 +3757,7 @@ async function runForeground(session: AuthSession): Promise<void> {
       const outcome = await restartAgent(
         { engine: session.engine, sessionId: session.sessionId },
         await liveBypassPermission(session),
-        paneSwapDeps(session, pane, { env: gridEnv, extraArgs: built && built.ok ? built.launch.args : [] }),
+        paneSwapDeps(session, pane, built.overrides),
       )
       if (!outcome.ok) {
         console.warn(`[grid] retarget ${sid(session.agentId)} failed · ${outcome.detail}`)
@@ -3755,6 +3769,8 @@ async function runForeground(session: AuthSession): Promise<void> {
         probeGridAssignment(outcome.processIdentity, session.engine, outcome.processIdentity.executable),
       ])
       registry.updateProcessIdentity(session.agentId, outcome.processIdentity, gateway.kind, assignment)
+      // The launch that just worked is the one a restart or a post-reboot restore must repeat.
+      registry.setGridLaunch(session.agentId, grid)
       registry.setActive(session.agentId, true)
       await clearPaneRemainOnExit(pane.paneId)
       const refreshed = registry.byAgent(session.agentId)
@@ -3833,27 +3849,41 @@ async function runForeground(session: AuthSession): Promise<void> {
     const runtime: TmuxRuntimeRef = { backend: 'tmux', paneId: pane }
     const routeKey = terminalRouteKey(runtime)
 
+    // The replacement is launched WITH what the original was: its grid's env and argv (a bare
+    // respawn would inherit the tmux session's variables but never the codex `-c …` / pi `--model`
+    // half, and an agent moved here by a retarget has nothing in the session env at all), or its
+    // Codex profile. Refused before anything is killed, so a restart that cannot honour the grid
+    // leaves the running process alone.
+    const built = await relaunchOverrides(session)
+    if (!built.ok) return { ok: false, error: built.error, detail: built.detail }
+
     agentReconciler.holdRoute(routeKey)
     try {
       const bypassPermission = await liveBypassPermission(session)
       const outcome = await restartAgent(
         { engine, sessionId: session.sessionId },
         bypassPermission,
-        paneSwapDeps(session, runtime),
+        paneSwapDeps(session, runtime, built.overrides),
       )
 
       if (!outcome.ok) return { ok: false, error: 'RESTART_FAILED', detail: outcome.detail }
 
       // Address the CANONICAL agentId from the resolved session, not the raw RPC input — `resolve()`
       // accepts either an agentId or a bare sessionId, but `setActive`/`byAgent` only ever key on the
-      // real agentId.
-      registry.updateProcessIdentity(session.agentId, outcome.processIdentity)
+      // real agentId. Gateway and grid are re-read off the new pid now (one cached env read) rather
+      // than left to the next scan, so the announce below already says where the engine came back.
+      const [gateway, assignment] = await Promise.all([
+        probeGatewayRuntime(outcome.processIdentity),
+        probeGridAssignment(outcome.processIdentity, engine, outcome.processIdentity.executable),
+      ])
+      registry.updateProcessIdentity(session.agentId, outcome.processIdentity, gateway.kind, assignment)
       registry.setActive(session.agentId, true)
       await clearPaneRemainOnExit(pane)
       const refreshed = registry.byAgent(session.agentId)
       if (!refreshed) return { ok: false, error: 'RESTART_FAILED', detail: 'agent vanished from the registry mid-restart' }
       announceSession(refreshed)
-      console.log(`[restart] ${sid(session.agentId)} ${engine} · ${outcome.resumed ? 'resumed' : 'fresh session'}`)
+      console.log(`[restart] ${sid(session.agentId)} ${engine} · ${outcome.resumed ? 'resumed' : 'fresh session'}`
+        + (session.gridLaunch ? ` · grid ${session.gridLaunch.networkName}` : ''))
       return { ok: true, session: refreshed, resumed: outcome.resumed }
     } finally {
       agentReconciler.releaseRoute(routeKey)

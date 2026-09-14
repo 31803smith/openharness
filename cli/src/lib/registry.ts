@@ -36,6 +36,7 @@ import { env } from '../config/env.js'
 import { readCodexRolloutMeta, resolveCodexRollout } from '../engines/codex/rollout.js'
 import { ENGINES, type AgentEngine } from '../engines/types.js'
 import type { GridAssignment } from './gridAssignment.js'
+import { parseGridLaunchOverride, type GridLaunchOverride } from './gridLaunch.js'
 import { commandcodeTranscriptPath } from '../engines/commandcode/transcript.js'
 import { agyTranscriptPath } from '../engines/agy/session.js'
 import { copilotTranscriptPath } from '../engines/copilot/session.js'
@@ -96,9 +97,20 @@ export interface RegisteredSession {
   gateway?: 'ori' | null
   /**
    * The grid this pane's engine is pointed at, if any — read off the live process on every discovery
-   * exactly like `gateway`, never declared. See `gridAssignment.ts`. Carries no credential.
+   * exactly like `gateway`, never declared. See `gridAssignment.ts`. Carries no credential; the
+   * launch that put the engine there, credential included, is `gridLaunch` below.
    */
   grid?: GridAssignment | null
+  /**
+   * The full grid launch this agent was last created or retargeted with, apiKey included. Persisted
+   * (this file is 0600, see `secureState.ts`) so a pane recreated after a reboot (`restoreAgents`) or
+   * respawned in place (`agent_restart`) is launched onto the SAME grid with the SAME credential
+   * instead of silently coming back on the engine's own login. Never announced — `agentFrame` picks
+   * its fields explicitly — and never logged. `grid` stays the observed, credential-free projection.
+   * Null on a vendor-login agent; absent on a row written before this field existed, which restore
+   * treats as "grid agent without a credential".
+   */
+  gridLaunch?: GridLaunchOverride | null
   /**
    * The CODEX_HOME folder this agent was launched against, if one was chosen instead of `~/.codex`.
    * Codex only. Unlike `grid`, this is chosen once at creation and never re-derived from the live
@@ -682,6 +694,7 @@ class Registry {
         // This row's own CODEX_HOME profile, when it was created against one other than the default —
         // see RegisteredSession.codexHome.
         const rawCodexHome = raw?.codexHome ?? undefined
+        const rawGridLaunch = normalizedGridLaunch(raw?.gridLaunch)
         let repairedCodexTranscript = false
         if (engine === 'codex' && transcriptPath) {
           const meta = readCodexRolloutMeta(transcriptPath)
@@ -735,6 +748,7 @@ class Registry {
           gateway: raw.gateway === 'ori' ? 'ori' : null,
           grid: normalizedGridAssignment(raw.grid),
           codexHome: typeof rawCodexHome === 'string' && rawCodexHome ? rawCodexHome : null,
+          ...(rawGridLaunch !== undefined ? { gridLaunch: rawGridLaunch } : {}),
           ...(raw.bypassPermission === true ? { bypassPermission: true } : {}),
           transcriptPath,
           title: titleDisplayName(typeof raw.title === 'string' ? raw.title : null),
@@ -823,6 +837,9 @@ class Registry {
     processIdentity: ProcessIdentity
     gateway?: 'ori' | null
     grid?: GridAssignment | null
+    /** Codex only: the CODEX_HOME the process was launched under, read off its environment. Fills a
+     *  row that does not know its profile yet; never overwrites one that does (see `codexHome`). */
+    codexHome?: string | null
   }):
     {
       entry: RegisteredSession
@@ -873,6 +890,7 @@ class Registry {
       // the last good one said rather than silently downgrading a gateway agent to a vendor one.
       if (input.gateway !== undefined) existing.gateway = input.gateway
       if (input.grid !== undefined) existing.grid = input.grid
+      if (input.codexHome && !existing.codexHome) existing.codexHome = input.codexHome
       existing.updatedAt = Date.now()
       this.index(existing)
       this.terminalAvailableAgents.add(existing.agentId)
@@ -911,6 +929,9 @@ class Registry {
       engine,
       gateway: input.gateway ?? null,
       grid: input.grid ?? null,
+      // A discovered grid agent has no credential the daemon ever saw: it can be observed, not relaunched.
+      gridLaunch: null,
+      codexHome: input.codexHome ?? null,
       transcriptPath: null,
       projectDir: basename(input.cwd ?? '') || agentId,
       cwd: input.cwd ?? null,
@@ -940,6 +961,7 @@ class Registry {
     primaryRuntimeKey?: string
     cwd?: string | null
     grid?: GridAssignment | null
+    gridLaunch?: GridLaunchOverride | null
     codexHome?: string | null
     bypassPermission?: boolean
   }): RegisteredSession | null {
@@ -959,6 +981,7 @@ class Registry {
       engine: input.engine,
       gateway: null,
       grid: input.grid ?? null,
+      gridLaunch: input.gridLaunch ?? null,
       codexHome: input.codexHome ?? null,
       ...(input.bypassPermission ? { bypassPermission: true } : {}),
       transcriptPath: null,
@@ -1093,10 +1116,19 @@ class Registry {
     const entry: RegisteredSession = {
       schemaVersion: 2,
       active: existing?.active ?? true,
+      // No `launch`: a hook is the engine reporting for duty, so whatever the launch was — starting,
+      // or failed by a watcher that gave up too early — it is over, and the frame reads `ready`.
       agentId,
       sessionId,
       boundAt: isNew ? now : existing?.boundAt ?? now,
       engine,
+      // Both are facts about the live process the hook came from, re-read by discovery on every
+      // pass — but a bind must not blank them in between, or the very first SessionStart hook would
+      // announce a grid agent as "on no grid" until the next scan put it back.
+      gateway: existing?.gateway ?? null,
+      grid: existing?.grid ?? null,
+      // The credential-bearing launch. Like codexHome: written once, carried forward, never re-derived.
+      gridLaunch: existing?.gridLaunch ?? null,
       transcriptPath: effectiveTranscriptPath,
       projectDir: engine === 'grok' || engine === 'agy' || engine === 'copilot'
         ? basename(input.cwd ?? existing?.cwd ?? '') || sessionId
@@ -1285,6 +1317,28 @@ class Registry {
     if ((session.bypassPermission === true) === bypassPermission) return true
     if (bypassPermission) session.bypassPermission = true
     else delete session.bypassPermission
+    session.updatedAt = Date.now()
+    this.save()
+    return true
+  }
+
+  /** Fill in the Codex profile a row did not know (discovery read it off the live process). Never
+   *  replaces one it already has — the profile is chosen once, see `codexHome`. */
+  setCodexHome(agentId: string, codexHome: string): boolean {
+    const session = this.agents.get(agentId)
+    if (!session || session.engine !== 'codex' || session.codexHome) return false
+    session.codexHome = codexHome
+    session.updatedAt = Date.now()
+    this.save()
+    return true
+  }
+
+  /** Record the launch an agent was last put onto a grid with (`agent_create` / `agent_retarget`), or
+   *  null once it was moved back to the engine's own login. */
+  setGridLaunch(agentId: string, gridLaunch: GridLaunchOverride | null): boolean {
+    const session = this.agents.get(agentId)
+    if (!session) return false
+    session.gridLaunch = gridLaunch
     session.updatedAt = Date.now()
     this.save()
     return true
@@ -1549,6 +1603,16 @@ function titleDisplayName(title: string | null | undefined): string | null {
 function validProcessIdentity(value: unknown): value is ProcessIdentity {
   const p = value as Partial<ProcessIdentity> | null | undefined
   return !!p && Number.isSafeInteger(p.pid) && (p.pid ?? 0) > 0 && typeof p.executable === 'string' && typeof p.startMarker === 'string'
+}
+
+/** A persisted grid launch. Anything short of a complete, well-formed override is treated as
+ *  "no credential" — a half-remembered key is worse than none, because a launch built from it would
+ *  look like a grid launch and fail like one. `undefined` (the field was never written) is kept
+ *  distinct from `null` (vendor login) so restore can tell a pre-upgrade grid row apart. */
+function normalizedGridLaunch(value: unknown): GridLaunchOverride | null | undefined {
+  if (value === undefined) return undefined
+  const parsed = parseGridLaunchOverride(value)
+  return parsed.state === 'ok' ? parsed.override : null
 }
 
 /** A persisted grid assignment. Lenient on `model` on purpose: a row that only knows WHERE it pointed
