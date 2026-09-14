@@ -12,6 +12,26 @@ It prints `SWARM_BENCH` JSON records. Its filename deliberately does not end in 
 
 ## Current continuation benchmark (2026-09-14)
 
+### Immediate input after closing terminal Find
+
+Find previously waited for the next frame to return focus to the retained
+terminal. In the current SwarmScreen fixture, Escape or the close button followed
+immediately by an arrow key and committed text lost both inputs. The closing
+field could also receive text intended for the terminal and change the saved
+search query.
+
+Dismissal now returns input to the already-mounted terminal immediately. If a
+remote message composer is visible, its existing field gets focus instead, keeps
+its draft, and accepts the next edit without submitting it. The renderer and
+remembered Find query remain intact. The three regression checks exercise the
+hardware-key and text-input paths without an intervening frame; they do not
+measure native latency or qualify a live input-method session.
+
+All **70 affected Find/focus/composer/viewport/keymap checks** pass in
+`/private/tmp/harness-find-focus-checks.log`. Both changed files analyze cleanly
+in `/private/tmp/harness-find-focus-analyze.log`. The two failing-before terminal
+cases are recorded in `/private/tmp/harness-find-focus-before.log`.
+
 ### Terminal Find editor work and composition keys
 
 Ten matching output updates caused ten rebuilds of the Find text field even

@@ -769,7 +769,16 @@ class _TerminalPanelState extends State<TerminalPanel>
     _findOriginLine = null;
     _findOriginBuffer = null;
     if (rebuild && mounted) setState(() {});
-    if (focus) _claimFocusAfterFrame();
+    if (focus) {
+      // The retained terminal is already mounted. Return its input connection
+      // now: the next key can arrive before Find's removal is painted.
+      final view = _laidOutTerminalView();
+      if (view != null) {
+        _claimFocus(view);
+      } else {
+        _claimFocusAfterFrame();
+      }
+    }
   }
 
   @override

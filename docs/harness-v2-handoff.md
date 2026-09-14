@@ -76,11 +76,13 @@ are:
 
 ## Current source and verification
 
-The latest application change is **8b73106**; **d5785d6** records its verified
-Release. The application sources are unchanged by this documentation checkpoint.
+The current continuation restores keyboard/text input immediately when Find
+closes. All affected checks, analysis and full desktop regressions pass. The
+prepared Release still contains **8b73106** and needs rebuilding for this change.
 
 | Checkpoint | Verified change |
 | --- | --- |
+| **Current source** — Find dismissal | Escape or the close button previously lost an arrow key and text arriving before the next frame. Dismissal now immediately restores the retained terminal's input connection, or the visible composer's field and draft. The renderer and remembered Find query stay intact. |
 | **8b73106** — terminal Find | Ten output updates now rebuild the editor zero times instead of ten. Results update around it while match, caret, composition and focus remain stable. Enter/keypad Enter and Escape return to the platform input method during composition; normal navigation/dismissal resumes afterward. |
 | **99d1ac9** — workspace events | Routine heartbeats and dial scrolling no longer rebuild the workspace or visit unrelated retained terminal JSON handlers. Busy-state transitions, watchdog expiry, dial status, hidden ready replies and machine transport failures retain their routing. |
 | **d5756ab** — Layout | Repeating the configured Layout chord cycles choices; modified digits/arrows cannot accidentally apply a shape. Highlighting preserves geometry. Large text gets readable, scrollable choices and navigation follows actual wrapped rows. Confirmation retains the agent and latest output. |
@@ -91,17 +93,17 @@ Release. The application sources are unchanged by this documentation checkpoint.
 
 Current checks:
 
-- **1,435 desktop unit/widget checks pass**, with one optional CLI-media
-  placeholder skipped. Log: /private/tmp/harness-find-editor-full.log.
-- All **39 affected Find/search/reconnect/keymap checks pass**. Both changed
-  files analyze cleanly. Logs: /private/tmp/harness-find-editor-after.log and
-  /private/tmp/harness-find-editor-analyze.log. The before-fix failures are in
-  /private/tmp/harness-find-editor-before.log.
+- **1,438 desktop unit/widget checks pass**, with one optional CLI-media
+  placeholder skipped. Log: /private/tmp/harness-find-focus-full.log.
+- All **70 affected Find/focus/composer/viewport/keymap checks pass**. Both
+  changed files analyze cleanly. Logs: /private/tmp/harness-find-focus-checks.log
+  and /private/tmp/harness-find-focus-analyze.log. The two before-fix terminal
+  failures are in /private/tmp/harness-find-focus-before.log.
 - The current exported Dart bindings pass **84 native keyboard checks** and
   **363 AppKit titlebar checks**, including hidden native window layout.
   Log: /private/tmp/harness-current-native-contract.log. The script completed;
   it displayed no windows and opened no agents.
-- The normal arm64 **Release build succeeds** through 8b73106. Both rebuilt
+- The preceding arm64 **Release build succeeds** through 8b73106. Both rebuilt
   frameworks verified before refreshing the outer ad-hoc signature; the full
   bundle passed deep, strict signature verification.
   Build log: /private/tmp/harness-find-editor-release.log.
@@ -205,7 +207,8 @@ to another computer with Git.
    initially unfocused search, expansion/dismissal, command mode, Tab-focused
    rows, composition and the first key after activation through both native
    menu and keyboard entry. Check New Harness folder focus/cancellation,
-   Layout repeated chords and confirmation, and Find during output/composition.
+   Layout repeated chords and confirmation, and Find during output/composition,
+   including the immediate next key after closing it.
    Observe fresh dependencies, provider sign-in/browser return, native folder
    choice, clone, first task and a second harness. Record actual steps, errors
    and time to a usable agent. Public GitHub cloning passed a direct disposable

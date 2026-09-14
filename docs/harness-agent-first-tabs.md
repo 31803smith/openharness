@@ -129,6 +129,10 @@ output without scheduling paints. Regression fixtures cover delayed history and
 reconnects for local and remote sessions, multi-pane resize, retained-pane reuse,
 hidden output, and input arriving between output and the next layout.
 
+Closing Find returns keyboard and text input to the retained terminal or visible
+message composer immediately, without waiting for another frame. The next key
+cannot be lost in the closing search field or replace its remembered query.
+
 A relayout request also reaches panes whose dimensions are unchanged, including
 neighbors of an added pane and a reapplied preset. Returning to live output cancels
 in-flight scroll animation and dial inertia, so their next tick cannot pull the

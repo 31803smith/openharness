@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/terminal/terminal_binary.dart';
 import 'package:harness/terminal/terminal_session.dart';
 import 'package:harness/terminal/terminal_search.dart';
+import 'package:harness/widgets/terminal_composer.dart';
 import 'package:harness/widgets/terminal_find_bar.dart';
 import 'package:xterm/xterm.dart';
 
@@ -57,6 +58,87 @@ Future<void> output(
 );
 
 void main() {
+  for (final closeWithEscape in [true, false]) {
+    testWidgets(
+      'closing Find returns the next key before a frame (Escape=$closeWithEscape)',
+      (tester) async {
+        final app = createApp();
+        app.machineStates['m']!.nodeOnline = true;
+        final input = <TerminalBinaryFrame>[];
+        final session = terminal('a0', input);
+        await output(session, 0, 'first marker\r\n', keyframe: true);
+        app.adoptSessionForTest(session);
+        try {
+          await mount(tester, app);
+          await chord(tester, LogicalKeyboardKey.keyF);
+          await tester.enterText(findField, 'marker');
+          await finishFind(tester);
+          final view = terminalView(tester, session);
+          final renderer = view.renderTerminal;
+          if (closeWithEscape) {
+            await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+          } else {
+            await tester.tap(find.byTooltip('Close find (Esc)'));
+          }
+          // Two input events can arrive before the next frame. Search should
+          // have relinquished both hardware keys and the native text client.
+          await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+          tester.testTextInput.enterText('resume');
+          await tester.pump(const Duration(milliseconds: 10));
+          expect(findField, findsNothing);
+          expect(view.renderTerminal, same(renderer));
+          expect(
+            input.expand((frame) => frame.bytes).toList(),
+            [27, 91, 68, ...utf8.encode('resume')],
+          );
+          await chord(tester, LogicalKeyboardKey.keyF);
+          expect(tester.widget<TextField>(findField).controller!.text, 'marker');
+        } finally {
+          await tester.pumpWidget(const SizedBox());
+          app.dispose();
+        }
+      },
+    );
+  }
+
+  testWidgets('closing Find returns rapid typing to the visible composer', (
+    tester,
+  ) async {
+    final app = createApp();
+    app.machineStates['m']!.nodeOnline = true;
+    final input = <TerminalBinaryFrame>[];
+    final session = terminal('a0', input);
+    await output(session, 0, 'first marker\r\n', keyframe: true);
+    app.adoptSessionForTest(session);
+    app.toggleComposer(app.focusedPaneId!);
+    final composer = find.descendant(
+      of: find.byType(TerminalComposer),
+      matching: find.byType(TextField),
+    );
+    try {
+      await mount(tester, app);
+      await tester.enterText(composer, 'draft');
+      final controller = tester.widget<TextField>(composer).controller!;
+      await chord(tester, LogicalKeyboardKey.keyF);
+      await tester.enterText(findField, 'marker');
+      await finishFind(tester);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+      expect(controller.selection, const TextSelection.collapsed(offset: 4));
+      tester.testTextInput.enterText('draft continued');
+      await tester.pump(const Duration(milliseconds: 10));
+      expect(findField, findsNothing);
+      expect(controller.text, 'draft continued');
+      expect(tester.widget<TextField>(composer).focusNode!.hasFocus, isTrue);
+      expect(input, isEmpty, reason: 'the composer sends only on submission');
+      await chord(tester, LogicalKeyboardKey.keyF);
+      expect(tester.widget<TextField>(findField).controller!.text, 'marker');
+    } finally {
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+    }
+  });
+
   testWidgets(
     'live output refreshes matches without rebuilding the Find editor',
     (tester) async {
