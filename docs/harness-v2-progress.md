@@ -1,10 +1,34 @@
 # Harness App V2 — development handoff
 
-Updated 2026-09-14 after the common empty-swarm onboarding continuation and branch handoff. This is a working preview, not a release.
+Updated 2026-09-14 after integrating the continuation into main. This is a working preview, not a release.
 
 **Resume with [Harness v2: goal, plan, and continuation handoff](harness-v2-handoff.md).** It records the latest approved design, acceptance criteria, next-work order, and portable drafts. The checkpoints below are historical; the current handoff supersedes their conflicting toolbar, picker, preview, menu, and onboarding directions.
 
-## Common empty-swarm onboarding continuation
+## Continue directly on main
+
+- The user now wants all subsequent work, commits and pushes on **main**.
+  This supersedes the earlier fresh-feature-branch workflow. Only consolidate
+  this user's own branches; other contributors' branches and PRs are excluded.
+- PR #31 had merged the original app-v2 checkpoint, but the six newer
+  navigation, onboarding and performance commits were still on swarm-onboarding.
+  Merged them into main as `ccd1f35`, preserved the team's concurrent `4b2f783`
+  update in `fd3ced0`, and pushed normally. GitHub marks PR #34 merged.
+- Verified the pushed main contains the exact continuation tip `23d511e`,
+  deleted swarm-onboarding remotely with an exact-tip lease, and removed its
+  merged local branch. The only local branch is main. No teammate branch or
+  separate PR was merged or deleted. The author's remaining remote history and
+  the account's PRs contain no additional unmerged work.
+- The integrated desktop source is unchanged from the validated `23d511e`
+  checkpoint. No new native timing result or release-readiness claim is made.
+- Performance investigation remains active. A temporary rebuild trace reproduced
+  620/964 widget rebuilds per focus change with 16/48 retained terminals and
+  identified fallback tab-button work in those totals. Next isolate the terminal
+  canvas from that non-native tab strip before choosing an optimization.
+  Trace source/log: `/private/tmp/harness-swarm-rebuild-trace.{dart,log}`.
+  The diagnostic source is outside the repository; generated Vite caches are
+  now ignored alongside other build caches.
+
+## Common empty-swarm onboarding continuation (previous checkpoint)
 
 - Repaired the saved native benchmark for current Harness branding, bundle-ID
   preflight and the production Flutter-controller focus target. Six Python

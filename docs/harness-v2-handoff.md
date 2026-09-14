@@ -27,10 +27,22 @@ Research must lead to justified improvements, not feature accumulation.
 ## Repository and checkpoint
 
 - Repository: <https://github.com/autonomous-ai/autonomous-harness>.
-- Continue on **`swarm-onboarding`**, created from updated `origin/main`
-  (`0b9ac72`) after PR #31 merged, tracking `origin/swarm-onboarding`.
-- Draft [PR #34 — Separate navigation from adding agents and simplify first use](https://github.com/autonomous-ai/autonomous-harness/pull/34)
-  is open against main. Keep it draft while qualification remains incomplete.
+- Continue on **`main`**, tracking `origin/main`. The user's latest instruction
+  is to work, commit, and push directly on main from now on. This supersedes
+  the earlier preference for creating a fresh feature branch after each merge.
+- Only consolidate this user's own branches and PRs. The authenticated account
+  is `deehw`, matching this session's commits and PRs #31/#34. The user explicitly
+  excluded other team members' branches from merging or retirement. The audit
+  found no remaining remote commit by this session's author outside main and
+  no other open PR by this account. Teammates' branches and PR #28 remain untouched.
+- [PR #34 — Separate navigation from adding agents and simplify first use](https://github.com/autonomous-ai/autonomous-harness/pull/34)
+  is **merged**, with all six continuation commits preserved by `ccd1f35`.
+  `fd3ced0` also preserves the team's concurrent main update `4b2f783` and was
+  pushed successfully. `swarm-onboarding` was then deleted remotely with an
+  exact-tip lease and locally with the merged-branch check. Do not recreate it.
+- This repository consolidation does not qualify the desktop for release.
+  Native responsiveness, first-install behavior, and remote/platform checks
+  below remain unfinished.
 - [PR #31 — Harness: swarm workspaces for AI agents](https://github.com/autonomous-ai/autonomous-harness/pull/31)
   merged at `cb24361` on September 14, 2026 (02:56 UTC), with `744c1fe` as its
   app-v2 head. Its merge did **not** include the later Navigate/Add commits.
@@ -48,13 +60,11 @@ Research must lead to justified improvements, not feature accumulation.
   loading/focus recovery and simplified single-local-machine form.
 - **`a2888ef`** carries `2d3c024`, `ed9151a` and `e122b63` onto the fresh branch
   without rewriting them, preserving newer main changes including device focus.
-- The user explicitly authorized frequent public repository checkpoints and
-  requested deleting merged branches, then starting fresh from updated main.
-  The new remote branch preserves every app-v2 commit. After verifying that
-  ancestry and that no app-v2 PR remained open, app-v2 was deleted remotely with
-  an exact-tip lease and then deleted locally. Do not recreate it.
+- The user explicitly authorized frequent public repository checkpoints.
+  The earlier continuation preserved every app-v2 commit before app-v2 was
+  deleted remotely with an exact-tip lease and then locally. Do not recreate it.
 
-Start with a clean checkout of the remote branch and inspect its latest commit.
+Start with a clean checkout of main and inspect its latest commit.
 On an existing checkout, preserve local work before updating; use a fast-forward
 pull, not a reset. The prior computer's `/private/tmp` files, installed apps,
 saved account state, and localhost prototype server will not transfer with Git.
@@ -170,7 +180,7 @@ flows** for these two jobs.
 
 ## Current implementation and remaining work
 
-**Implemented on the branch:** swarm/session retention, native tabs, layouts,
+**Implemented on main:** swarm/session retention, native tabs, layouts,
 closed-work History, palettes, editable centered search and command mode,
 keyboard customization, pane split/zoom controls, the simplified New agent
 dialog, Harness branding, consistent short account labels, saved project-name
@@ -292,7 +302,7 @@ that its isolated window can become active/key.
 
 ## Plan for the next session
 
-1. **Confirm the latest source/build checkpoint.** The fresh-branch continuation
+1. **Confirm the latest source/build checkpoint.** The now-merged continuation
    has a successful Release build; its running-window revision is
    not confirmed. The last confirmed relaunch was `2d3c024`. Review
    Navigate, Add, command mode, and the fresh terminal position in the native app
@@ -308,7 +318,7 @@ that its isolated window can become active/key.
    scrolled view, reconnect, paste, selection, and IME.
 4. **Measure native responsiveness** under representative retained/output load,
    then close remaining visual/platform/release qualification gaps. Maintain
-   the draft PR and keep its description honest about what's still unverified.
+   the main-branch handoff and keep it honest about what's still unverified.
 
 ## Acceptance criteria
 
@@ -364,7 +374,7 @@ that its isolated window can become active/key.
   or take over another controller. Real remote reconnect still needs evidence.
 - Run meaningful affected tests, analyzer, native decoder/titlebar checks for
   native changes, and a Release build before claiming a new preview is loaded.
-  Full desktop regressions must pass before promoting the PR from draft.
+  Full desktop regressions must pass before declaring the desktop release ready.
 - Verify macOS native behavior directly and qualify Linux on a Linux host.
   Windows support is unexercised; do not claim it from macOS test success.
 
@@ -417,6 +427,7 @@ agent's prompt as a test input.
 
 Keep tests/benchmarks isolated with temporary stores and synthetic/disposable
 transports. Do not upgrade or restart the user's production CLI/daemon for
-qualification. Follow the fresh-branch checkpoint workflow; publishing a
-release, merging the follow-up draft, and production end-to-end operations are separate
-tasks. Keep handoff notes current as work progresses.
+qualification. Commit and push directly to main using ordinary fast-forward
+pushes. If the team advances main, fetch and integrate their commits without
+rewriting published history. Publishing a release and production end-to-end
+operations are separate tasks. Keep handoff notes current as work progresses.
