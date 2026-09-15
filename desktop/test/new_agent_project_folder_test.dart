@@ -117,71 +117,77 @@ Future<void> _mount(
 }
 
 void main() {
-  testWidgets(
-    'the shared composer preserves splits and blocks duplicate launch or dismissal',
-    (tester) async {
-      tester.view.devicePixelRatio = 1;
-      tester.view.physicalSize = const Size(1200, 900);
-      addTearDown(tester.view.reset);
-      final connection = _Connection();
-      final app = _App(connection, local: true);
-      await app.agentPreference.select('claude');
-      app.adoptSessionForTest(terminal('a0', []));
-      final original = app.activeSwarmId;
-      addTearDown(() async {
-        await tester.pumpWidget(const SizedBox());
-        app.dispose();
-      });
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: grid.buildAppTheme(brightness: Brightness.dark),
-          home: SwarmScreen(notifier: app, nativeTabs: false),
-        ),
-      );
-      await chord(tester, LogicalKeyboardKey.keyR);
-      await tester.pumpAndSettle();
-      final composer = find.byType(NewAgentComposer);
-      final split = tester.widget<NewAgentComposer>(composer).split;
-      expect(split, isNotNull);
-      expect(tester.widget<NewAgentComposer>(composer).swarmId, original);
-      final submit = find.byKey(const ValueKey('create-agent-submit'));
-      await tester.tap(submit);
-      await tester.pump();
-      expect(connection.calls, hasLength(1));
-      final creationId = connection.calls.single.$2['creationId'];
-      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-      await chord(tester, LogicalKeyboardKey.keyT);
-      await tester.tapAt(const Offset(10, 400));
-      await tester.pump();
-      expect(composer, findsOneWidget);
-      expect(app.activeSwarmId, original);
-      expect(tester.widget<NewAgentComposer>(composer).split, same(split));
-      expect(connection.calls, hasLength(1));
-      connection.calls.single.$3.completeError(
-        const WsRequestTimeout('agent_create'),
-      );
-      await tester.pumpAndSettle();
-      expect(find.text('Check status'), findsOneWidget);
-      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-      await tester.pump();
-      expect(composer, findsOneWidget);
-      await tester.tap(submit);
-      await tester.pump();
-      expect(connection.calls.last.$1, 'agent_create_status');
-      expect(connection.calls.last.$2, {'creationId': creationId});
-      connection.calls.last.$3.complete({
-        'creationId': creationId,
-        'state': 'created',
-        'agent': {'id': 'created', 'name': 'Created agent', 'engine': 'claude'},
-      });
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 200));
-      expect(composer, findsNothing);
-      expect(app.activeSwarmId, original);
-      expect(app.panes, hasLength(2));
-      expect(app.focusedPane?.agentId, 'created');
-    },
-  );
+  for (final inline in [false, true]) {
+    testWidgets(
+      'shared creation preserves its destination and blocks duplicate launch (inline=$inline)',
+      (tester) async {
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = const Size(1200, 900);
+        addTearDown(tester.view.reset);
+        final connection = _Connection();
+        final app = _App(connection, local: true);
+        await app.agentPreference.select('claude');
+        if (!inline) app.adoptSessionForTest(terminal('a0', []));
+        final original = app.activeSwarmId;
+        addTearDown(() async {
+          await tester.pumpWidget(const SizedBox());
+          app.dispose();
+        });
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: grid.buildAppTheme(brightness: Brightness.dark),
+            home: SwarmScreen(notifier: app, nativeTabs: false),
+          ),
+        );
+        if (!inline) await chord(tester, LogicalKeyboardKey.keyR);
+        await tester.pumpAndSettle();
+        final composer = find.byType(NewAgentComposer);
+        final split = tester.widget<NewAgentComposer>(composer).split;
+        expect(split, inline ? isNull : isNotNull);
+        expect(tester.widget<NewAgentComposer>(composer).swarmId, original);
+        final submit = find.byKey(const ValueKey('create-agent-submit'));
+        await tester.tap(submit);
+        await tester.pump();
+        expect(connection.calls, hasLength(1));
+        final creationId = connection.calls.single.$2['creationId'];
+        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+        await chord(tester, LogicalKeyboardKey.keyT);
+        await tester.tapAt(const Offset(10, 400));
+        await tester.pump();
+        expect(composer, findsOneWidget);
+        expect(app.activeSwarmId, original);
+        expect(tester.widget<NewAgentComposer>(composer).split, same(split));
+        expect(connection.calls, hasLength(1));
+        connection.calls.single.$3.completeError(
+          const WsRequestTimeout('agent_create'),
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('Check status'), findsOneWidget);
+        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+        await tester.pump();
+        expect(composer, findsOneWidget);
+        await tester.tap(submit);
+        await tester.pump();
+        expect(connection.calls.last.$1, 'agent_create_status');
+        expect(connection.calls.last.$2, {'creationId': creationId});
+        connection.calls.last.$3.complete({
+          'creationId': creationId,
+          'state': 'created',
+          'agent': {
+            'id': 'created',
+            'name': 'Created agent',
+            'engine': 'claude',
+          },
+        });
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 200));
+        expect(composer, findsNothing);
+        expect(app.activeSwarmId, original);
+        expect(app.panes, hasLength(inline ? 1 : 2));
+        expect(app.focusedPane?.agentId, 'created');
+      },
+    );
+  }
 
   for (final composer in [false, true]) {
     for (final local in [true, false]) {

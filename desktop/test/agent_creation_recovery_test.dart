@@ -117,7 +117,7 @@ void main() {
             await chord(tester, LogicalKeyboardKey.keyN, shift: true);
           case 'start page':
             await chord(tester, LogicalKeyboardKey.keyT);
-            await tester.tap(find.byKey(const ValueKey('harness-start-new')));
+            await chord(tester, LogicalKeyboardKey.keyN, shift: true);
           case 'search shortcut':
             await chord(tester, LogicalKeyboardKey.keyN);
             await tester.enterText(
@@ -138,7 +138,10 @@ void main() {
           await tester.sendKeyEvent(LogicalKeyboardKey.escape);
         }
         await tester.pumpAndSettle();
-        expect(find.byType(NewAgentComposer), findsNothing);
+        expect(
+          find.byType(NewAgentComposer),
+          entry == 'start page' ? findsOneWidget : findsNothing,
+        );
         expect(find.byType(SwarmSearchResults), findsNothing);
         if (entry == 'start page') {
           expect(app.swarms, hasLength(2));
@@ -146,7 +149,7 @@ void main() {
           final field = tester.widget<TextField>(
             find.byKey(const ValueKey('harness-start-search')),
           );
-          expect(field.focusNode!.hasFocus, isFalse);
+          expect(field.focusNode!.hasFocus, dismissal == 'escape');
           // The unused page remains usable and closes without a history entry.
           await chord(tester, LogicalKeyboardKey.keyW);
         }
@@ -177,7 +180,8 @@ void main() {
     expect(find.byType(NewAgentComposer), findsOneWidget);
     await tester.tapAt(const Offset(12, 72));
     await tester.pumpAndSettle();
-    expect(find.byType(NewAgentComposer), findsNothing);
+    expect(find.byKey(const ValueKey('agent-composer')), findsNothing);
+    expect(find.byType(NewAgentComposer), findsOneWidget);
     expect(find.byType(SwarmSearchResults), findsNothing);
     expect(
       tester
@@ -223,9 +227,9 @@ void main() {
         expect(find.byType(SwarmSearchResults), findsOneWidget);
         expect(
           find.text(switch (entry) {
-            'Split right' => 'New agent · split right',
-            'Split down' => 'New agent · split down',
-            _ => 'New agent',
+            'Split right' => 'New Agent · split right',
+            'Split down' => 'New Agent · split down',
+            _ => 'New Agent',
           }),
           findsWidgets,
         );
@@ -320,7 +324,7 @@ void main() {
       check.created();
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 200));
-      expect(find.byType(NewAgentComposer), findsNothing);
+      expect(find.byKey(const ValueKey('agent-composer')), findsNothing);
       expect(find.byType(SwarmSearchResults), findsNothing);
       expect(app.activeSwarmId, current);
       if (change == 'closed' || change == 'stale split') {

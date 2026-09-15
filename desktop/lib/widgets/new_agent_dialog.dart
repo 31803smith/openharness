@@ -233,10 +233,12 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     final remembered = widget.notifier.agentPreference.value;
     if (allEngines.any((identity) => identity.id == remembered)) {
       setState(() {
-        _engine = remembered!;
         _engineChosenByUser = true;
-        _codexProfile = null;
-        _codexProfilesBusy = true;
+        if (_engine != remembered) {
+          _engine = remembered!;
+          _codexProfile = null;
+          _codexProfilesBusy = true;
+        }
       });
     }
   }
@@ -709,7 +711,8 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
         options: options,
         onChanged: onChanged,
         focusNode: focusNode,
-        height: 58 * MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 1.5),
+        fillColor: grid.AppPalette.agentEntryField,
+        height: 64 * MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 1.5),
         trigger: Row(
           children: [
             icon,
@@ -732,7 +735,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
-                      fontSize: 14,
+                      fontSize: 15,
                       fontWeight: FontWeight.w500,
                     ),
                   ),
@@ -764,7 +767,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   Widget _buildComposer(BuildContext context) {
     final bypassFlag = kEngineBypassPermissionFlag[_engine];
     final scale = MediaQuery.textScalerOf(context).scale(1);
-    final height = 58 * scale.clamp(1.0, 1.5);
+    final height = 64 * scale.clamp(1.0, 1.5);
     final fields = <Widget>[
       _composerSelect(
         label: 'Agent',
@@ -832,8 +835,15 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
         style: FilledButton.styleFrom(
           backgroundColor: grid.AppPalette.swarmAccent,
           foregroundColor: grid.AppPalette.swarmTabBar,
+          disabledBackgroundColor: Colors.white12,
+          disabledForegroundColor: Colors.white38,
+          textStyle: TextStyle(
+            fontFamily: grid.AppFont.sans,
+            fontSize: 17,
+            fontWeight: FontWeight.w600,
+          ),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(10),
+            borderRadius: BorderRadius.circular(12),
           ),
         ),
         child: _submitting
@@ -864,14 +874,14 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
           },
         },
         child: Material(
-          color: grid.AppPalette.swarmSearchSurface,
+          color: grid.AppPalette.agentEntrySurface,
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(20),
             side: const BorderSide(color: Colors.white12),
           ),
           clipBehavior: Clip.antiAlias,
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+            padding: const EdgeInsets.fromLTRB(28, 24, 28, 18),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -881,12 +891,12 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                     Expanded(
                       child: Text(
                         switch (widget.split?.axis) {
-                          PaneResizeAxis.x => 'New agent · split right',
-                          PaneResizeAxis.y => 'New agent · split down',
-                          null => 'New agent',
+                          PaneResizeAxis.x => 'New Agent · split right',
+                          PaneResizeAxis.y => 'New Agent · split down',
+                          null => 'New Agent',
                         },
                         style: const TextStyle(
-                          fontSize: 15,
+                          fontSize: 26,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
@@ -898,7 +908,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                       ),
                   ],
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 20),
                 LayoutBuilder(
                   builder: (context, constraints) {
                     final wide =
@@ -914,13 +924,13 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                       return Row(
                         children: [
                           for (var i = 0; i < fields.length; i++) ...[
-                            Expanded(
-                              flex: i == 1 ? 3 : 2,
-                              child: choices(fields[i]),
-                            ),
-                            const SizedBox(width: 10),
+                            Expanded(child: choices(fields[i])),
+                            const SizedBox(width: 12),
                           ],
-                          SizedBox(width: 116 * scale, child: create),
+                          SizedBox(
+                            width: 160 * scale.clamp(1.0, 1.5),
+                            child: create,
+                          ),
                         ],
                       );
                     }
@@ -955,6 +965,13 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                     onSubmitted: (_) {
                       if (_canSubmit) _submit();
                     },
+                  ),
+                ],
+                if (_waitingForCodexProfile && !_confirmationPending) ...[
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Loading Codex profiles…',
+                    style: TextStyle(fontSize: 13, color: Colors.white60),
                   ),
                 ],
                 if (_error != null) ...[
@@ -1510,7 +1527,7 @@ class _Advanced extends StatelessWidget {
                           ?.copyWith(color: grid.AppPalette.textSecondary),
                 ),
                 const Spacer(),
-                if (!open)
+                if (!open && !compact)
                   Flexible(
                     child: Text(
                       key: const Key('new-agent-advanced-state'),

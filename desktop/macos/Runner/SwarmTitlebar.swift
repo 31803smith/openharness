@@ -283,6 +283,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
 
   private func rebuildMachinesMenu() {
     machinesMenu.removeAllItems()
+    machinesMenu.minimumWidth = 500
     let manager = NSMenuItem(title: "Open Machines Manager", action: #selector(menuAction(_:)), keyEquivalent: "")
     manager.target = self
     manager.representedObject = "manageMachines"
@@ -293,10 +294,14 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
       let item = NSMenuItem(title: machine.name, action: #selector(machineAction(_:)), keyEquivalent: "")
       item.target = self
       item.representedObject = machine.id
-      let label = NSMutableAttributedString(string: machine.name)
+      let paragraph = NSMutableParagraphStyle()
+      paragraph.tabStops = [NSTextTab(textAlignment: .right, location: 420)]
+      let label = NSMutableAttributedString(string: machine.name,
+        attributes: [.font: NSFont.menuFont(ofSize: 0), .paragraphStyle: paragraph])
       let count = machine.agentCount.map { "\($0) \($0 == 1 ? "agent" : "agents")" }
-      let detail = [machine.status, count].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
-      label.append(NSAttributedString(string: "  " + detail, attributes: [.foregroundColor: NSColor.secondaryLabelColor]))
+      label.append(NSAttributedString(string: "  " + machine.status + "\t" + (count ?? ""),
+        attributes: [.font: NSFont.menuFont(ofSize: 0), .paragraphStyle: paragraph,
+          .foregroundColor: NSColor.secondaryLabelColor]))
       item.attributedTitle = label
       item.image = NSImage(systemSymbolName: machine.local ? "laptopcomputer" : "desktopcomputer", accessibilityDescription: nil)
       let submenu = NSMenu(title: machine.name)

@@ -22,6 +22,8 @@ class SwarmSearchInput extends StatelessWidget {
     this.hintText,
     this.rounded = false,
     this.prominent = false,
+    this.outlined = false,
+    this.fillColor,
   });
 
   final Key inputKey;
@@ -37,6 +39,8 @@ class SwarmSearchInput extends StatelessWidget {
   final String? hintText;
   final bool rounded;
   final bool prominent;
+  final bool outlined;
+  final Color? fillColor;
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
@@ -50,16 +54,18 @@ class SwarmSearchInput extends StatelessWidget {
     final open = search != null;
     final border = OutlineInputBorder(
       borderRadius: BorderRadius.vertical(
-        top: Radius.circular(rounded && !open ? 999 : 12),
+        top: Radius.circular(rounded ? (prominent ? 32 : 28) : 12),
         bottom: Radius.circular(
-          open
+          open && !outlined
               ? 0
               : rounded
-              ? 999
+              ? (prominent ? 32 : 28)
               : 12,
         ),
       ),
-      borderSide: BorderSide(color: open ? Colors.transparent : Colors.white24),
+      borderSide: BorderSide(
+        color: open && !outlined ? Colors.transparent : Colors.white24,
+      ),
     );
     return TextField(
       key: inputKey,
@@ -98,9 +104,11 @@ class SwarmSearchInput extends StatelessWidget {
               )
             : null,
         filled: true,
-        fillColor: open
-            ? grid.AppPalette.swarmSearchSurface
-            : const Color(0xa6111521),
+        fillColor:
+            fillColor ??
+            (open
+                ? grid.AppPalette.swarmSearchSurface
+                : const Color(0xa6111521)),
         contentPadding: EdgeInsets.symmetric(
           horizontal: 18,
           vertical: prominent ? 22 : 18,

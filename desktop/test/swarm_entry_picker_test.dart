@@ -83,7 +83,7 @@ void main() {
   });
 
   for (final native in [false, true]) {
-    testWidgets('start page separates Open and New Agent (native=$native)', (
+    testWidgets('start page combines search and New Agent (native=$native)', (
       tester,
     ) async {
       const channel = MethodChannel('harness/swarm_tabs');
@@ -105,9 +105,7 @@ void main() {
       expect(find.byType(FloatingActionButton), findsNothing);
       expect(
         tester.getRect(_startInput).bottom,
-        lessThan(
-          tester.getRect(find.byKey(const ValueKey('harness-start-open'))).top,
-        ),
+        lessThan(tester.getRect(find.byType(NewAgentComposer)).top),
       );
       expect(
         tester.widget<TextField>(_startInput).decoration!.hintText,
@@ -150,14 +148,8 @@ void main() {
       app.renameSwarm(original, 'Background update');
       await tester.pump();
       expect(_results, findsNothing);
-      await tester.tap(find.byKey(const ValueKey('harness-start-new')));
-      await tester.pump(const Duration(milliseconds: 200));
       expect(find.byType(NewAgentComposer), findsOneWidget);
       expect(find.widgetWithText(FilledButton, 'Create'), findsOneWidget);
-      expect(find.byType(AlertDialog), findsNothing);
-      expect(_results, findsOneWidget);
-      await tester.tapAt(const Offset(20, 200));
-      await tester.pump(const Duration(milliseconds: 200));
       expect(find.byType(AlertDialog), findsNothing);
       expect(_results, findsNothing);
       expect(_startInput, findsOneWidget);

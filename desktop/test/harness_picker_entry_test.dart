@@ -80,7 +80,9 @@ void main() {
         find.byKey(const ValueKey('swarm-search-preview')),
         findsOneWidget,
       );
-      expect(find.byKey(const ValueKey('harness-picker-open')), findsOneWidget);
+      expect(find.byKey(const ValueKey('harness-picker-open')), findsNothing);
+      expect(tester.widget<TextField>(field).decoration!.hintText, '');
+      expect(find.text('Find an agent'), findsOneWidget);
       expect(find.byType(NewAgentComposer), findsOneWidget);
       final create = find.byKey(const ValueKey('create-agent-submit'));
       final createRect = tester.getRect(create);

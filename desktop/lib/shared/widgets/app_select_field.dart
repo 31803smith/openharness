@@ -75,6 +75,7 @@ class AppSelectField<T> extends StatefulWidget {
     this.height = AppControl.height,
     this.trigger,
     this.focusNode,
+    this.fillColor,
   });
 
   final T value;
@@ -90,6 +91,7 @@ class AppSelectField<T> extends StatefulWidget {
   /// Selection, keyboard navigation and menu rows remain shared.
   final Widget? trigger;
   final FocusNode? focusNode;
+  final Color? fillColor;
 
   @override
   State<AppSelectField<T>> createState() => _AppSelectFieldState<T>();
@@ -397,8 +399,13 @@ class _AppSelectFieldState<T> extends State<AppSelectField<T>> {
                   padding: const EdgeInsets.only(left: 10, right: 8),
                   decoration: BoxDecoration(
                     color: _hovered || _focused || controller.isOpen
-                        ? AppSurface.recessHover
-                        : AppSurface.recess,
+                        ? widget.fillColor == null
+                              ? AppSurface.recessHover
+                              : Color.alphaBlend(
+                                  Colors.white.withValues(alpha: .05),
+                                  widget.fillColor!,
+                                )
+                        : widget.fillColor ?? AppSurface.recess,
                     borderRadius: BorderRadius.circular(AppControl.radius),
                     border: Border.all(
                       color: _focused

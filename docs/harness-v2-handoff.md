@@ -41,18 +41,41 @@ user for a benchmark window.
   menus. **Harness** now names the tab container as well as the app/device/CLI:
   New Harness, Rename Harness, Close Harness, and navigation/help labels. Custom
   names and wire IDs stay; the old New Tab default restores as New Harness.
-- **Current refinement:** Cmd-N opens **Find an agent**, results and preview
-  above a compact, bottom-anchored **New agent** section. The row is **Agent /
-  Project / Machine / Create**, with selected defaults and keyboard dropdowns.
-  Query/result changes leave the row's position and choices intact. Open Agent
-  remains solid neutral beneath results; Shift-Cmd-N focuses the creation row.
-  This supersedes both the earlier compact-first modal and the separate full
-  workspace creation dialog. New Harness remains compact until search activation.
+- **Current refinement:** Cmd-N opens the result list and preview immediately.
+  Large **Find an agent** and **New Agent** headings sit on almost-black panels;
+  the modal field has no hint and the redundant Open Agent footer is removed.
+  Creation has equal-width Agent / Project / Machine dropdowns and a larger Create
+  button. Options no longer shows the collapsed profile summary.
+- New Harness includes the same creation row above its fixed device footer.
+  Search stays compact until activated, then expands with the same rounded outer
+  corners. Query/result changes leave creation and the device in place. From
+  inline search, Shift-Cmd-N focuses the adjacent creation row; Escape returns to
+  the compact field. No-machine New still opens machine linking.
+- Fixed a reproduced Create-button race: a late saved engine preference equal to
+  the active engine reset profile readiness without remounting the loaded field.
+  The loaded profile and readiness now survive; pending lookups have visible copy.
+- Connection status follows the session name on the left, preserving the project,
+  branch and machine's width on the right. Machines has a wider native menu and
+  right-aligned agent counts before its submenu chevrons.
 - The compact form reuses creation, folder preparation, account/engine checks
   and uncertain-outcome recovery. Defaults are the remembered agent, New project
   and this computer; splits inherit their source machine/project. Project offers
   New project, Local folder and Remote repository. Cached engine checks are reused;
   building a query does not scan agent metadata for project suggestions.
+- Current refinement verification: **138 Flutter checks pass**, covering the
+  combined/inline entry, larger-text rendering, profile readiness, launch/recovery,
+  shortcut routing, startup/linking and connection-status geometry. **388 isolated
+  AppKit checks pass**, including hidden native window layout and Machines counts.
+  All 15 changed Dart/test units analyze cleanly. The Release build and staged
+  bundle pass deep/strict codesign verification. Logs:
+  `/private/tmp/harness-entry-polish-final-tests.log`,
+  `/private/tmp/harness-entry-polish-analyze.log`,
+  `/private/tmp/harness-entry-polish-native.log`,
+  `/private/tmp/harness-entry-polish-build.log`.
+  Inspected captures: `/private/tmp/harness-entry-polish-picker` and
+  `/private/tmp/harness-entry-polish-captures`. The staged update has not yet
+  replaced the running c0fd824 preview; the receipt is
+  `/private/tmp/harness-entry-polish-install.json`.
 - Verification: the 56 navigation/picker checks, 27 creation/engine checks and
   54 combined recovery/render checks pass (overlapping suites). Captures at
   1280×900, 760×760 and 600×680 with double text were inspected; six palettes and
@@ -212,7 +235,7 @@ are:
   both actions participate in the configurable Search keymap.
 - The Harness application menu includes **Check for Updates…**, using the
   existing manual update-check dialog, directly above Flash Firmware.
-- The combined panel uses **New agent** for the creation heading and **Create**
+- The combined panel uses **New Agent** for the creation heading and **Create**
   for its action. Agent, Project and Machine dropdowns show selected defaults;
   keyboard input stays with the active menu or field. Options contains account
   and permission settings. Escape or one outside click dismisses the panel;

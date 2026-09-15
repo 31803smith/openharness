@@ -8,9 +8,11 @@ import 'package:harness/auth/auth_session.dart';
 import 'package:harness/core/config.dart';
 import 'package:harness/core/engine_availability.dart';
 import 'package:harness/core/models.dart';
+import 'package:harness/core/local_key_value_store.dart';
 import 'package:harness/state/app_state.dart';
 import 'package:harness/core/project_folder.dart';
 import 'package:harness/state/pane_arrangement.dart';
+import 'package:harness/state/pane_layout_store.dart';
 import 'package:harness/widgets/new_agent_dialog.dart';
 import 'package:harness/shared/widgets/app_choice_picker.dart';
 import 'package:harness/shared/widgets/app_select_field.dart';
@@ -21,6 +23,17 @@ class _Folders extends FileSelectorPlatform {
     String? initialDirectory,
     String? confirmButtonText,
   }) async => '/work';
+}
+
+class _DelayedPreferenceStore implements LocalKeyValueStore {
+  final preference = Completer<String?>();
+  @override
+  Future<String?> read(String key) async =>
+      key == 'new_agent_engine' ? await preference.future : null;
+  @override
+  Future<void> write(String key, String value) async {}
+  @override
+  Future<void> delete(String key) async {}
 }
 
 /// The visible profile field reports the account used for the next launch.
@@ -46,11 +59,15 @@ class _Notifier extends AppNotifier {
       '/accounts/codex1',
       '/accounts/codex2',
     ],
+    LocalKeyValueStore? storage,
   ]) : paths = {...initialPaths},
        super(
          config: AppConfig.dev,
          authSession: AuthSession(),
          configStore: null,
+         paneLayoutStore: storage == null
+             ? null
+             : PaneLayoutStore(storage: storage),
        );
 
   final Set<String> paths;
@@ -125,6 +142,7 @@ void main() {
     WidgetTester tester, {
     bool local = true,
     bool supported = true,
+    bool composer = false,
     Iterable<String>? initialPaths,
     _Notifier? notifier,
   }) async {
@@ -154,19 +172,37 @@ void main() {
       MaterialApp(
         home: Builder(
           builder: (context) => Scaffold(
-            body: TextButton(
-              onPressed: () => showNewAgentDialog(
-                context,
-                n,
-                'machine',
-                source: 'machine_row',
-              ),
-              child: const Text('open'),
-            ),
+            body: composer
+                ? Center(
+                    child: SizedBox(
+                      width: 900,
+                      child: NewAgentComposer(
+                        notifier: n,
+                        machineId: 'machine',
+                        swarmId: n.activeSwarmId,
+                        onFinished: () {},
+                        onBusyChanged: (_) {},
+                        onDismiss: () {},
+                      ),
+                    ),
+                  )
+                : TextButton(
+                    onPressed: () => showNewAgentDialog(
+                      context,
+                      n,
+                      'machine',
+                      source: 'machine_row',
+                    ),
+                    child: const Text('open'),
+                  ),
           ),
         ),
       ),
     );
+    if (composer) {
+      await tester.pumpAndSettle();
+      return n;
+    }
     await tester.tap(find.text('open'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('new-agent-engine-field')));
@@ -188,6 +224,40 @@ void main() {
     await tester.tap(find.text('codex2').last);
     await tester.pumpAndSettle();
   }
+
+  testWidgets(
+    'late identical agent preference keeps Create usable and its loaded profile',
+    (tester) async {
+      final storage = _DelayedPreferenceStore();
+      final notifier = _Notifier(const ['/custom/work-login'], storage);
+      await open(tester, notifier: notifier, composer: true);
+      final create = find.byKey(const ValueKey('create-agent-submit'));
+      expect(tester.widget<FilledButton>(create).onPressed, isNotNull);
+      storage.preference.complete('codex');
+      await tester.pumpAndSettle();
+      expect(tester.widget<FilledButton>(create).onPressed, isNotNull);
+      await tester.tap(create);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(notifier.calls.single['codexHome'], '/custom/work-login');
+      await tester.pumpWidget(const SizedBox());
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('compact creation explains a pending profile lookup', (
+    tester,
+  ) async {
+    final pending = Completer<void>();
+    final notifier = _Notifier()..pending = pending;
+    await open(tester, notifier: notifier, composer: true);
+    final create = find.byKey(const ValueKey('create-agent-submit'));
+    expect(find.text('Loading Codex profiles…'), findsOneWidget);
+    expect(tester.widget<FilledButton>(create).onPressed, isNull);
+    pending.complete();
+    await tester.pumpAndSettle();
+    expect(find.text('Loading Codex profiles…'), findsNothing);
+    expect(tester.widget<FilledButton>(create).onPressed, isNotNull);
+  });
 
   testWidgets('no profiles shows the default launch explicitly', (
     tester,

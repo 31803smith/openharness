@@ -616,6 +616,9 @@ private extension SwarmTitlebar {
     try checkTitlebar(messenger.calls.last?.method == "manageMachines",
       "Machines Manager opens through the Flutter command bridge")
     let destinations = machineMenu.items.filter { $0.action == #selector(machineAction(_:)) }
+    try checkTitlebar(machineMenu.minimumWidth >= 500 &&
+      destinations.first?.attributedTitle?.string.hasSuffix("\t2 agents") == true,
+      "Machines gives counts a separate trailing column in a roomy native submenu")
     try checkTitlebar(destinations.map { $0.representedObject as? String } == ["office", "home"],
       "Machines lists each linked computer as a destination")
     try checkTitlebar(destinations[0].attributedTitle?.string.contains("Online") == true &&

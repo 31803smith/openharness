@@ -615,7 +615,7 @@ void main() {
         }
         await tester.pumpAndSettle();
         expect(find.byType(NewAgentComposer), findsOneWidget);
-        expect(find.byType(SwarmSearchResults), findsOneWidget);
+        expect(find.byType(SwarmSearchResults), findsNothing);
         expect(
           find.byKey(const ValueKey('harness-start-results')),
           findsNothing,
@@ -633,7 +633,7 @@ void main() {
         await tester.pumpAndSettle();
         expect(find.byType(AlertDialog), findsNothing);
         expect(find.byType(SwarmSearchResults), findsNothing);
-        expect(tester.widget<TextField>(field).focusNode!.hasFocus, isFalse);
+        expect(tester.widget<TextField>(field).focusNode!.hasFocus, isTrue);
         expect(tester.widget<TextField>(field).controller!.text, 'Agent 12');
         expect(app.panes, isEmpty);
         expect(tester.takeException(), isNull);

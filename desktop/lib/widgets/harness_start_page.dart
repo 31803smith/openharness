@@ -17,11 +17,15 @@ class HarnessStartPage extends StatefulWidget {
     required this.createSearch,
     required this.onNew,
     required this.onChoose,
+    this.creation,
+    this.creationBusy = false,
   });
   final FocusNode focusNode;
   final SwarmSearchController Function() createSearch;
   final VoidCallback onNew;
   final ValueChanged<SwarmSearchSelection> onChoose;
+  final Widget? creation;
+  final bool creationBusy;
   @override
   State<HarnessStartPage> createState() => _HarnessStartPageState();
 }
@@ -39,6 +43,7 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
   bool get _showResults => _search != null;
 
   void _open() {
+    if (widget.creationBusy) return;
     // Commands can replace the editor value without a TextField onChanged.
     // Reveal results for the visible text, including on keyboard-only entry.
     if (_search == null) {
@@ -53,6 +58,7 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
   }
 
   void _close() {
+    if (widget.creationBusy) return;
     final search = _search;
     if (search != null) {
       _draft = search.draft;
@@ -63,11 +69,13 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
   }
 
   void _choose(SwarmSearchSelection selection) {
+    if (widget.creationBusy) return;
     _close();
     widget.onChoose(selection);
   }
 
   void _new() {
+    if (widget.creationBusy) return;
     _close();
     widget.onNew();
   }
@@ -83,7 +91,7 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
         elevation: _showResults ? 12 : 0,
         shadowColor: Colors.black54,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(_showResults ? 12 : 999),
+          borderRadius: BorderRadius.circular(32),
           side: _showResults
               ? const BorderSide(color: Colors.white24)
               : BorderSide.none,
@@ -287,25 +295,58 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
                             .clamp(72.0, 220.0)
                             .clamp(
                               0.0,
-                              (entryConstraints.maxHeight - 320).clamp(
-                                24.0,
-                                220.0,
-                              ),
+                              (entryConstraints.maxHeight -
+                                      (widget.creation == null ? 320 : 460))
+                                  .clamp(24.0, 220.0),
+                            );
+                        final available = entryConstraints.maxHeight - top;
+                        final minimumSearchHeight =
+                            112 + MediaQuery.textScalerOf(context).scale(56);
+                        final creationHeight =
+                            (available - minimumSearchHeight - 24).clamp(
+                              64.0,
+                              available * .55,
                             );
                         return Padding(
                           padding: EdgeInsets.only(top: top),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Flexible(child: _searchPanel()),
-                              if (!_showResults) ...[
-                                const SizedBox(height: 20),
-                                HarnessEntryActions(
-                                  onOpen: _open,
-                                  onNew: _new,
-                                  openKey: const ValueKey('harness-start-open'),
-                                  newKey: const ValueKey('harness-start-new'),
+                              if (widget.creation != null) ...[
+                                Expanded(
+                                  child: Align(
+                                    alignment: Alignment.topCenter,
+                                    child: AbsorbPointer(
+                                      absorbing: widget.creationBusy,
+                                      child: ExcludeFocus(
+                                        excluding: widget.creationBusy,
+                                        child: _searchPanel(),
+                                      ),
+                                    ),
+                                  ),
                                 ),
+                                const SizedBox(height: 24),
+                                ConstrainedBox(
+                                  constraints: BoxConstraints(
+                                    maxHeight: creationHeight,
+                                  ),
+                                  child: SingleChildScrollView(
+                                    child: widget.creation!,
+                                  ),
+                                ),
+                              ] else ...[
+                                Flexible(child: _searchPanel()),
+                                if (!_showResults) ...[
+                                  const SizedBox(height: 20),
+                                  HarnessEntryActions(
+                                    onOpen: _open,
+                                    onNew: _new,
+                                    openKey: const ValueKey(
+                                      'harness-start-open',
+                                    ),
+                                    newKey: const ValueKey('harness-start-new'),
+                                  ),
+                                ],
                               ],
                             ],
                           ),

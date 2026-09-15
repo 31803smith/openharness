@@ -1516,91 +1516,99 @@ class _TerminalHeader extends StatelessWidget {
                 EngineMark(engine: session.engineId, size: 17),
                 const SizedBox(width: 10),
                 Expanded(
-                  child: Tooltip(
-                    message: identityDetail,
-                    waitDuration: const Duration(milliseconds: 700),
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onDoubleTap: () => unawaited(
-                        showAgentRenameDialog(
-                          context,
-                          notifier,
-                          session.machineId,
-                          session.agentId,
-                          session.agentName,
+                  child: Row(
+                    children: [
+                      Flexible(
+                        child: Tooltip(
+                          message: identityDetail,
+                          waitDuration: const Duration(milliseconds: 700),
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onDoubleTap: () => unawaited(
+                              showAgentRenameDialog(
+                                context,
+                                notifier,
+                                session.machineId,
+                                session.agentId,
+                                session.agentName,
+                              ),
+                            ),
+                            child: Text(
+                              session.agentName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: AppColors.text,
+                                fontFamily: AppFonts.sans,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
                         ),
                       ),
-                      child: Text(
-                        session.agentName,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: AppColors.text,
-                          fontFamily: AppFonts.sans,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
+                      const SizedBox(width: 8),
+                      if (status != null)
+                        ConstrainedBox(
+                          constraints: BoxConstraints(
+                            maxWidth: math.max(
+                              0,
+                              math.min(
+                                constraints.maxWidth * .22,
+                                constraints.maxWidth - actionsWidth - 110,
+                              ),
+                            ),
+                          ),
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: Tooltip(
+                              message: status.detail,
+                              child: TextButton(
+                                onPressed: canReconnect
+                                    ? () => notifier.selectAgent(
+                                        session.machineId,
+                                        session.agentId,
+                                      )
+                                    : null,
+                                style: TextButton.styleFrom(
+                                  foregroundColor: color,
+                                  disabledForegroundColor: AppColors.textSoft,
+                                  minimumSize: Size.zero,
+                                  tapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 4,
+                                  ),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(status.icon, size: 14),
+                                    const SizedBox(width: 6),
+                                    Flexible(
+                                      child: Text(
+                                        status.label,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(fontSize: 11),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        )
+                      else if (!compact)
+                        Padding(
+                          padding: const EdgeInsets.all(4),
+                          child: Icon(Icons.circle, size: 8, color: color),
                         ),
-                      ),
-                    ),
+                    ],
                   ),
                 ),
                 const SizedBox(width: 8),
-                if (status != null)
-                  ConstrainedBox(
-                    constraints: BoxConstraints(
-                      maxWidth: math.max(
-                        0,
-                        math.min(
-                          constraints.maxWidth * .3,
-                          constraints.maxWidth - actionsWidth - 110,
-                        ),
-                      ),
-                    ),
-                    child: Align(
-                      alignment: Alignment.centerRight,
-                      child: Tooltip(
-                        message: status.detail,
-                        child: TextButton(
-                          onPressed: canReconnect
-                              ? () => notifier.selectAgent(
-                                  session.machineId,
-                                  session.agentId,
-                                )
-                              : null,
-                          style: TextButton.styleFrom(
-                            foregroundColor: color,
-                            disabledForegroundColor: AppColors.textSoft,
-                            minimumSize: Size.zero,
-                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 4,
-                            ),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(status.icon, size: 14),
-                              const SizedBox(width: 6),
-                              Flexible(
-                                child: Text(
-                                  status.label,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(fontSize: 11),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  )
-                else if (!compact)
-                  Padding(
-                    padding: const EdgeInsets.all(4),
-                    child: Icon(Icons.circle, size: 8, color: color),
-                  ),
                 // Which of the three paths carries this pane's bytes. Absent for a local machine's own
                 // terminal, which has no such distinction and so gets no badge.
                 //
@@ -1617,7 +1625,7 @@ class _TerminalHeader extends StatelessWidget {
                   constraints: BoxConstraints(
                     maxWidth: math.max(
                       actionsWidth,
-                      constraints.maxWidth * (status == null ? .55 : .3),
+                      constraints.maxWidth * .55,
                     ),
                   ),
                   child: PaneHeaderActions(

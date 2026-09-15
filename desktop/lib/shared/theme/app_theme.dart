@@ -193,6 +193,8 @@ abstract final class AppPalette {
   static Color get swarmAccent => AppTheme.palette.value.accent;
   // Shared with the native search field for a continuous input/results surface.
   static Color get swarmSearchSurface => AppTheme.palette.value.search;
+  static const agentEntrySurface = Color(0xff101113);
+  static const agentEntryField = Color(0xff1d1f22);
 
   // the conversation / content area — pure white in light, like Codex.
   //
