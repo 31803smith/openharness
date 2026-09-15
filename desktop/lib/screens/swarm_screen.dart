@@ -1499,6 +1499,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
       ),
       onPressed: create ? _newAgent : _addAgent,
       style: TextButton.styleFrom(
+        enabledMouseCursor: SystemMouseCursors.click,
         minimumSize: Size(create ? 122 : 128, 34),
         padding: const EdgeInsets.symmetric(horizontal: 20),
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -1506,11 +1507,12 @@ class _SwarmScreenState extends State<SwarmScreen> {
             ?.copyWith(fontSize: 12, fontWeight: FontWeight.w500),
         backgroundColor: create
             ? grid.AppPalette.swarmAccent
-            : grid.AppPalette.swarmSearchSurface,
+            : Colors.transparent,
         foregroundColor: create
             ? grid.AppPalette.swarmTabBar
             : grid.AppPalette.swarmAccent,
         shape: const StadiumBorder(),
+        side: create ? BorderSide.none : const BorderSide(color: Colors.white24),
       ),
       child: Text(label),
     );

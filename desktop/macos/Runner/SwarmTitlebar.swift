@@ -197,7 +197,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
         "new": "plus.square", "newAgent": "plus", "addAgent": "magnifyingglass",
         "renameActive": "pencil", "closeActive": "xmark",
         "splitRight": "rectangle.split.2x1", "splitDown": "rectangle.split.1x2",
-        "zoomPane": "arrow.up.left.and.arrow.down.right", "closePane": "xmark.square",
+        "zoomPane": "viewfinder", "closePane": "xmark",
         "commands": "command", "notifications": "bell",
       ]
       if let symbol = symbols[action] {
@@ -215,8 +215,8 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     add(file, "New Tab", "t", "new")
     add(file, "New Harness…", "n", "newAgent")
     add(file, "Open Harness…", "o", "addAgent")
-    add(file, "Rename Harness…", "r", "renameActive", [.command, .shift])
-    add(file, "Close Harness", "w", "closeActive")
+    add(file, "Rename Tab…", "r", "renameActive", [.command, .shift])
+    add(file, "Close Tab", "w", "closeActive")
     file.addItem(.separator())
     add(file, "Split Right…", "r", "splitRight")
     add(file, "Split Down…", "d", "splitDown")
@@ -727,10 +727,21 @@ private final class SwarmNotificationButton: NSButton {
 /// its own label color in active/inactive windows, ignoring contentTintColor.
 private final class SwarmActionButton: NSButton {
   var fillColor = NSColor.clear { didSet { needsDisplay = true } }
+  var borderColor: NSColor? { didSet { needsDisplay = true } }
   var labelColor = NSColor.labelColor { didSet { needsDisplay = true } }
   private var hovered = false
-  override var isEnabled: Bool { didSet { needsDisplay = true } }
+  override var isEnabled: Bool {
+    didSet {
+      needsDisplay = true
+      window?.invalidateCursorRects(for: self)
+    }
+  }
   override var mouseDownCanMoveWindow: Bool { false }
+
+  override func resetCursorRects() {
+    super.resetCursorRects()
+    if isEnabled { addCursorRect(bounds, cursor: .pointingHand) }
+  }
 
   override func updateTrackingAreas() {
     super.updateTrackingAreas()
@@ -743,11 +754,20 @@ private final class SwarmActionButton: NSButton {
 
   override func draw(_ dirtyRect: NSRect) {
     let opacity: CGFloat = isEnabled ? 1 : 0.35
-    let fill = isEnabled && (hovered || isHighlighted)
-      ? fillColor.blended(withFraction: isHighlighted ? 0.16 : 0.08, of: labelColor) ?? fillColor
-      : fillColor
-    fill.withAlphaComponent(opacity).setFill()
+    let emphasis: CGFloat = isHighlighted ? 0.16 : 0.08
+    let hoverFill = fillColor.alphaComponent == 0
+      ? labelColor.withAlphaComponent(emphasis)
+      : fillColor.blended(withFraction: emphasis, of: labelColor) ?? fillColor
+    let fill = isEnabled && (hovered || isHighlighted) ? hoverFill : fillColor
+    fill.withAlphaComponent(fill.alphaComponent * opacity).setFill()
     NSBezierPath(roundedRect: bounds, xRadius: bounds.height / 2, yRadius: bounds.height / 2).fill()
+    if let borderColor {
+      borderColor.withAlphaComponent(borderColor.alphaComponent * opacity).setStroke()
+      let border = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5),
+        xRadius: (bounds.height - 1) / 2, yRadius: (bounds.height - 1) / 2)
+      border.lineWidth = 1
+      border.stroke()
+    }
     let label = NSAttributedString(string: title, attributes: [
       .font: font ?? NSFont.systemFont(ofSize: 12, weight: .medium),
       .foregroundColor: labelColor.withAlphaComponent(opacity),
@@ -833,7 +853,8 @@ private final class SwarmTabStrip: NSView {
   private func updateActionColors() {
     createButton.fillColor = palette.accent
     createButton.labelColor = palette.tabBar
-    openButton.fillColor = palette.search
+    openButton.fillColor = .clear
+    openButton.borderColor = NSColor.white.withAlphaComponent(0.24)
     openButton.labelColor = palette.accent
   }
 
@@ -1042,7 +1063,7 @@ private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidati
     selectButton.target = self
     selectButton.action = #selector(selectSwarm)
     addSubview(selectButton)
-    closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close Harness")
+    closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close Tab")
     closeButton.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 10, weight: .semibold)
     closeButton.contentTintColor = NSColor(white: 0.78, alpha: 1)
     closeButton.isBordered = false
@@ -1050,7 +1071,7 @@ private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidati
     closeButton.action = #selector(closeSwarm)
     addSubview(closeButton)
     let menu = NSMenu()
-    for (title, action) in [("Rename Harness…", #selector(renameSwarm)), ("Close Harness", #selector(closeSwarm))] {
+    for (title, action) in [("Rename Tab…", #selector(renameSwarm)), ("Close Tab", #selector(closeSwarm))] {
       let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
       item.target = self
       menu.addItem(item)

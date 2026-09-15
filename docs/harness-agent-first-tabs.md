@@ -24,10 +24,12 @@ Opening the dropdown keeps its whole list viewport inside the window. Resizing
 or changing text size reveals the highlighted row without changing the selection.
 A small product image and introduction sit well below the controls and link to
 https://www.autonomous.ai/harness-device. The bundled image is the official
-device image from https://cdn.autonomous.ai/production/ecm/260731/1-2.webp,
-as shown on https://www.autonomous.ai/harness. The short introduction is
+device image from https://cdn.autonomous.ai/production/ecm/260731/2.webp,
+cropped in the viewport so the device is larger and centered. The short introduction is
 “The ultimate Harness setup” / “Scroll, switch panes, and give voice commands.”
-The start-page Open Harness button is transparent with a subtle border; New
+The start-page actions use the same pill shape as the titlebar. The device link
+and both pairs of New/Open buttons show a hand cursor. Open Harness on the start
+page is transparent with a subtle border; New
 Harness retains its accent fill.
 Unused default-name empty pages are excluded from Recently Closed.
 
@@ -39,7 +41,7 @@ no Back to Search button in creation, and no stacked dialog on dismissal.
 The titlebar actions are 34-point-high pills with generous horizontal padding,
 12 points between them and at the right edge. AppKit uses one unified toolbar
 row; the Flutter titlebar is 52 points high and uses the same accent/secondary
-treatment and app font. Titlebar and native menu hover hints are
+treatment and app font. Open Harness has a transparent fill and subtle border on both surfaces. Titlebar and native menu hover hints are
 removed. Accessible names remain, and menus and Keyboard Shortcuts show bindings.
 The creation dialog title and CTA are **New Harness**. Cancel is removed; Escape
 and clicking outside dismiss it. Launch-in-progress and uncertain-outcome states
@@ -88,9 +90,10 @@ agent disappears from discovery. Tab names remain editable. Former default names
 the first agent's name when opened.
 
 The macOS menus are **Harness, File, Edit, View, History, Models, Machines,
-Window, Help**. File groups **New Tab, New Harness, Open Harness, Rename Harness, Close Harness**;
+Window, Help**. File groups **New Tab, New Harness, Open Harness, Rename Tab, Close Tab**;
 then **Split Right, Split Down, Zoom Pane, Close Pane**. Pin/Unpin and Add Project
-are removed from this menu. File actions have native system icons. Machines starts with **Open Machines Manager**, then
+are removed from this menu. File actions have native system icons, with the same
+four-corner Zoom and plain Close cross as the pane header. Machines starts with **Open Machines Manager**, then
 linked computers with their status, followed by Link Machine and Refresh Machines.
 The manager has a visible **Rename** action on each computer and uses the existing
 machine rename API. It reports failures inline and refreshes names in the menu

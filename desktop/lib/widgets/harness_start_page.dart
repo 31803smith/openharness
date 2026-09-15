@@ -209,13 +209,13 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
                           key: const ValueKey('harness-start-open'),
                           onPressed: _open,
                           style: OutlinedButton.styleFrom(
+                            enabledMouseCursor: SystemMouseCursors.click,
                             minimumSize: const Size(160, 44),
+                            padding: const EdgeInsets.symmetric(horizontal: 24),
                             backgroundColor: Colors.transparent,
                             foregroundColor: Colors.white,
                             side: const BorderSide(color: Colors.white24),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(8),
-                            ),
+                            shape: const StadiumBorder(),
                           ),
                           child: const Text('Open Harness'),
                         ),
@@ -225,12 +225,12 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
                           icon: const Icon(Icons.add, size: 18),
                           label: const Text('New Harness'),
                           style: FilledButton.styleFrom(
+                            enabledMouseCursor: SystemMouseCursors.click,
                             minimumSize: const Size(160, 44),
+                            padding: const EdgeInsets.symmetric(horizontal: 24),
                             backgroundColor: grid.AppPalette.swarmAccent,
                             foregroundColor: grid.AppPalette.swarmTabBar,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(8),
-                            ),
+                            shape: const StadiumBorder(),
                           ),
                         ),
                       ],
@@ -240,6 +240,7 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
                       link: true,
                       child: InkWell(
                         key: const ValueKey('harness-device-link'),
+                        mouseCursor: SystemMouseCursors.click,
                         onTap: () => launchUrl(
                           Uri.parse('https://www.autonomous.ai/harness-device'),
                           mode: LaunchMode.externalApplication,
@@ -251,12 +252,18 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
                             children: [
                               ClipRRect(
                                 borderRadius: BorderRadius.circular(10),
-                                child: Image.asset(
-                                  'assets/harness_device.webp',
-                                  width: 256,
-                                  height: 144,
-                                  fit: BoxFit.contain,
-                                  semanticLabel: 'Harness Device',
+                                child: Transform.scale(
+                                  // Frame the device, which sits left of center
+                                  // in the original photo, without altering it.
+                                  scale: 1.7,
+                                  alignment: const Alignment(-0.5, 0.08),
+                                  child: Image.asset(
+                                    'assets/harness_device.webp',
+                                    width: 256,
+                                    height: 144,
+                                    fit: BoxFit.cover,
+                                    semanticLabel: 'Harness Device',
+                                  ),
                                 ),
                               ),
                               const SizedBox(height: 16),
