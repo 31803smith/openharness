@@ -26,6 +26,20 @@
 # from the app's New agent dialog, so a root container would quietly take a testable option away.
 FROM node:22-bookworm-slim
 
+# A UTF-8 locale, because the base image has none.
+#
+# `node:22-bookworm-slim` sets no LANG, which leaves `LC_CTYPE=POSIX` — and a program that decides
+# what it may draw from the locale rather than from the terminal takes its ASCII path there. tmux
+# negotiates UTF-8 with the client either way (`client_utf8=1` on this box), so the damage is not the
+# box-drawing a terminal shows; it is every engine, and every tool an agent runs inside one, that
+# reads the locale first and quietly degrades. A real developer machine has a UTF-8 locale, and this
+# container stands in for one.
+#
+# `C.UTF-8` rather than `en_US.UTF-8`: Debian ships it built in, so this needs no `locales` package
+# and no `locale-gen` layer, and it imposes no language on an agent's output.
+ENV LANG=C.UTF-8
+ENV LC_ALL=C.UTF-8
+
 # tmux: the daemon discovers and drives agents through it, so there is no agent without it.
 # procps: `ps` — the CLI reads a live engine's environment to answer "which grid is this agent on?"
 #   (`lib/processEnv.ts`). On Linux it reads /proc directly, but ps is what makes the same question
