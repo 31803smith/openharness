@@ -93,7 +93,6 @@ class _ReadyEnvironmentProvisioner extends EnvironmentProvisioner {
         for (final step in EnvironmentStep.values)
           step: EnvironmentStepStatus.ready,
       },
-      systemReady: true,
     );
     onProgress(ready);
     return ready;
@@ -267,7 +266,6 @@ void main() {
         },
         phase: EnvironmentSetupPhase.ready,
         mode: EnvironmentSetupMode.automatic,
-        systemReady: true,
       );
       final provisioner = _ScriptedEnvironmentProvisioner([missing, ready]);
       final app = AppNotifier(
@@ -320,7 +318,6 @@ void main() {
           for (final step in EnvironmentStep.values)
             step: EnvironmentStepStatus.ready,
         },
-        systemReady: true,
       );
       final storage = _FakeKeyValueStore();
       final provisioner = _ScriptedEnvironmentProvisioner([stuck, ready]);
@@ -398,7 +395,6 @@ void main() {
         },
         phase: EnvironmentSetupPhase.waitingForTerminal,
         mode: EnvironmentSetupMode.automatic,
-        systemReady: true,
       );
       final probing = waiting.copyWith(phase: EnvironmentSetupPhase.preflight);
       final reviewed = waiting.copyWith(
@@ -453,7 +449,17 @@ void main() {
         phase: EnvironmentSetupPhase.waitingForTerminal,
         mode: EnvironmentSetupMode.automatic,
         terminalSetup: EnvironmentTerminalSetup.linuxHost,
-        systemReady: false,
+        plan: [
+          EnvironmentPlanItem(
+            step: EnvironmentStep.harness,
+            title: 'Linux host dependencies',
+            detail: 'curl · one apt transaction',
+            command: 'sudo apt-get install -y curl',
+            requiresTerminal: true,
+            packages: ['curl'],
+          ),
+          EnvironmentPlanItem.harnessCli,
+        ],
       );
       final provisioner = _ScriptedEnvironmentProvisioner([waiting, waiting]);
       final app = AppNotifier(
@@ -617,9 +623,7 @@ void main() {
         EnvironmentStep.tmux: EnvironmentStepStatus.ready,
       },
       phase: EnvironmentSetupPhase.review,
-      systemReady: true,
-      homebrewReady: true,
-      tmuxBinaryReady: true,
+      plan: [EnvironmentPlanItem.harnessCli],
     );
     await tester.pumpWidget(
       ProviderScope(
@@ -655,7 +659,6 @@ void main() {
               step: EnvironmentStepStatus.ready,
           },
           phase: EnvironmentSetupPhase.ready,
-          systemReady: true,
         ),
       ]);
       final app = AppNotifier(
@@ -672,9 +675,7 @@ void main() {
           EnvironmentStep.tmux: EnvironmentStepStatus.ready,
         },
         phase: EnvironmentSetupPhase.review,
-        systemReady: true,
-        homebrewReady: true,
-        tmuxBinaryReady: true,
+        plan: [EnvironmentPlanItem.harnessCli],
       );
       await tester.pumpWidget(
         ProviderScope(
@@ -706,9 +707,7 @@ void main() {
       },
       phase: EnvironmentSetupPhase.chooseMethod,
       mode: EnvironmentSetupMode.automatic,
-      systemReady: true,
-      homebrewReady: false,
-      tmuxBinaryReady: false,
+      plan: [EnvironmentPlanItem.homebrew, EnvironmentPlanItem.tmuxViaHomebrew],
     );
     await tester.pumpWidget(
       ProviderScope(
@@ -749,9 +748,7 @@ void main() {
       },
       phase: EnvironmentSetupPhase.chooseMethod,
       mode: EnvironmentSetupMode.automatic,
-      systemReady: true,
-      homebrewReady: true,
-      tmuxBinaryReady: true,
+      plan: [EnvironmentPlanItem.harnessCli],
     );
     await tester.pumpWidget(
       ProviderScope(
@@ -768,30 +765,49 @@ void main() {
     expect(find.text('Admin prompts stay in Terminal'), findsNothing);
   });
 
-  testWidgets('review marks unusable Apple developer tools as missing', (
-    tester,
-  ) async {
-    final app = makeNotifier(AppStatus.preparingEnvironment);
-    app.environmentReadiness = const EnvironmentReadiness(
-      steps: {
-        EnvironmentStep.harness: EnvironmentStepStatus.ready,
-        EnvironmentStep.tmux: EnvironmentStepStatus.ready,
-      },
-      phase: EnvironmentSetupPhase.review,
-      systemReady: false,
-    );
-    await tester.pumpWidget(
-      ProviderScope(
-        overrides: [appStateProvider.overrideWithValue(app)],
-        child: const DesktopApp(),
-      ),
-    );
-    await tester.pump();
+  testWidgets(
+    'review lists the whole ladder when neither tmux nor Homebrew nor Xcode is there',
+    (tester) async {
+      // The plan is the provisioner's, in ladder order: the developer tools
+      // appear only because Homebrew was found missing, Homebrew only because
+      // tmux was.
+      final app = makeNotifier(AppStatus.preparingEnvironment);
+      app.environmentReadiness = const EnvironmentReadiness(
+        steps: {
+          EnvironmentStep.clipboard: EnvironmentStepStatus.notApplicable,
+          EnvironmentStep.harness: EnvironmentStepStatus.ready,
+          EnvironmentStep.tmux: EnvironmentStepStatus.failed,
+        },
+        phase: EnvironmentSetupPhase.review,
+        plan: [
+          EnvironmentPlanItem.appleDeveloperTools,
+          EnvironmentPlanItem.homebrew,
+          EnvironmentPlanItem.tmuxViaHomebrew,
+        ],
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [appStateProvider.overrideWithValue(app)],
+          child: const DesktopApp(),
+        ),
+      );
+      await tester.pump();
 
-    expect(find.text('Apple developer tools'), findsOneWidget);
-    expect(find.text('Install 1 tool'), findsOneWidget);
-    expect(find.text('tmux'), findsNothing);
-  });
+      expect(find.text('Apple developer tools'), findsOneWidget);
+      expect(find.text('Homebrew'), findsOneWidget);
+      expect(find.text('tmux'), findsOneWidget);
+      expect(find.text('Install 3 tools'), findsOneWidget);
+      expect(
+        tester.getTopLeft(find.text('Apple developer tools')).dy,
+        lessThan(tester.getTopLeft(find.text('Homebrew')).dy),
+      );
+      expect(
+        tester.getTopLeft(find.text('Homebrew')).dy,
+        lessThan(tester.getTopLeft(find.text('tmux')).dy),
+      );
+      expect(find.text('Apple developer tools'), findsOneWidget);
+    },
+  );
 
   testWidgets('RootShell rebuilds to LoginScreen when status flips after boot', (
     tester,

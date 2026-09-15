@@ -54,6 +54,12 @@ void main() {
       for (final missing in missingCommands) {
         if (shell.contains('command -v $missing ')) return result(1);
       }
+      // `for c in a b c; do command -v "$c" …` — the all-of-these probe.
+      final loop = RegExp(r'for c in ([^;]+); do command -v').firstMatch(shell);
+      if (loop != null) {
+        final names = loop.group(1)!.trim().split(' ');
+        return names.any(missingCommands.contains) ? result(1) : result(0);
+      }
       if (shell.contains('apt_as_root install -y')) {
         final packages = <String>[
           for (final package in [
@@ -65,6 +71,7 @@ void main() {
             'gawk',
             'coreutils',
             'tmux',
+            'procps',
             'xclip',
             'wl-clipboard',
           ])
@@ -161,11 +168,13 @@ void main() {
     },
   );
 
-  test('an installed tmux is ready whatever the developer tools say', () async {
-    // The developer tools exist to BUILD tmux. With tmux already there, an
-    // unusable toolchain — an unselected directory, an unaccepted licence —
-    // must not stand between the person and the app; it did, for a whole
-    // morning, on a desk with tmux 3.6 and an Xcode licence never clicked.
+  // The macOS ladder, one rung at a time. Each rung is probed only when the
+  // one above it is missing: tmux, else Homebrew, else the developer tools.
+  test('a computer with tmux is ready without Apple developer tools or Homebrew', () async {
+    // The tools are how tmux gets INSTALLED, not how it runs. A `brew install`
+    // from last year keeps working after a macOS upgrade invalidated the
+    // Command Line Tools or an Xcode update left its licence unaccepted —
+    // and this used to send that computer into Terminal to reinstall them.
     var terminalLaunches = 0;
     final calls = <String>[];
     final provisioner = EnvironmentProvisioner(
@@ -175,33 +184,39 @@ void main() {
       openTerminal: (_) async => terminalLaunches++,
       run: runner(
         developerToolsPresent: false,
+        homebrewPresent: () => false,
         tmuxPresent: () => true,
+        installHarness: createManagedHarness,
         calls: calls,
       ),
     );
 
     final readiness = await provisioner.ensureReady(
       onProgress: (_) {},
-      install: false,
+      install: true,
+      mode: EnvironmentSetupMode.automatic,
     );
 
-    expect(readiness.systemReady, isTrue);
-    expect(readiness.tmuxBinaryReady, isTrue);
+    expect(readiness.isReady, isTrue, reason: readiness.output.join('\n'));
     expect(readiness.steps[EnvironmentStep.tmux], EnvironmentStepStatus.ready);
-    expect(readiness.output.join('\n'), contains('tmux already installed'));
+    expect(readiness.plan, isEmpty);
+    expect(
+      calls.any((line) => line.contains('/usr/bin/xcrun --find clang')),
+      isFalse,
+    );
+    expect(calls.any((line) => line.contains('brew --version')), isFalse);
     expect(terminalLaunches, 0);
   });
 
-  test('an unusable selected developer directory is shown as missing when tmux is absent', () async {
-    var terminalLaunches = 0;
+  test('with Homebrew present the plan is tmux alone and Xcode is never asked about', () async {
     final calls = <String>[];
     final provisioner = EnvironmentProvisioner(
       harnessHome: scratch,
       isMacOS: true,
       isLinux: false,
-      openTerminal: (_) async => terminalLaunches++,
       run: runner(
         developerToolsPresent: false,
+        homebrewPresent: () => true,
         tmuxPresent: () => false,
         calls: calls,
       ),
@@ -213,16 +228,64 @@ void main() {
     );
 
     expect(readiness.phase, EnvironmentSetupPhase.review);
-    expect(readiness.systemReady, isFalse);
-    expect(readiness.output.join('\n'), contains('xcrun --find clang'));
+    expect(readiness.plan.map((item) => item.title), [
+      'tmux',
+      'Managed Node 20+ & Harness CLI',
+    ]);
+    expect(readiness.plan.first.requiresTerminal, isFalse);
     expect(
       calls.any((line) => line.contains('/usr/bin/xcrun --find clang')),
-      isTrue,
+      isFalse,
     );
-    expect(terminalLaunches, 0);
+    expect(readiness.output.join('\n'), contains('✓ brew --version'));
   });
 
-  test('automatic setup repairs or installs Apple developer tools in Terminal', () async {
+  test('without Homebrew the developer tools are probed, and listed only when missing', () async {
+    for (final developerTools in [true, false]) {
+      final calls = <String>[];
+      final provisioner = EnvironmentProvisioner(
+        harnessHome: scratch,
+        isMacOS: true,
+        isLinux: false,
+        run: runner(
+          developerToolsPresent: developerTools,
+          homebrewPresent: () => false,
+          tmuxPresent: () => false,
+          calls: calls,
+        ),
+      );
+
+      final readiness = await provisioner.ensureReady(
+        onProgress: (_) {},
+        install: false,
+      );
+
+      expect(readiness.phase, EnvironmentSetupPhase.review);
+      expect(
+        calls.where((line) => line.contains('/usr/bin/xcrun --find clang')),
+        hasLength(1),
+        reason: 'developerTools=$developerTools',
+      );
+      expect(readiness.plan.map((item) => item.title), [
+        if (!developerTools) 'Apple developer tools',
+        'Homebrew',
+        'tmux',
+        'Managed Node 20+ & Harness CLI',
+      ]);
+      expect(
+        readiness.plan.where((item) => item.requiresTerminal).length,
+        developerTools ? 1 : 2,
+      );
+      expect(
+        readiness.output.join('\n'),
+        developerTools
+            ? isNot(contains('xcrun --find clang'))
+            : contains('✗ xcrun --find clang'),
+      );
+    }
+  });
+
+  test('automatic setup hands the Homebrew rungs to Terminal, through the installer', () async {
     String? terminalScript;
     final calls = <String>[];
     final provisioner = EnvironmentProvisioner(
@@ -232,6 +295,7 @@ void main() {
       openTerminal: (path) async => terminalScript = path,
       run: runner(
         developerToolsPresent: false,
+        homebrewPresent: () => false,
         tmuxPresent: () => false,
         calls: calls,
       ),
@@ -244,24 +308,22 @@ void main() {
     );
 
     expect(readiness.phase, EnvironmentSetupPhase.waitingForTerminal);
-    expect(readiness.systemReady, isFalse);
-    expect(readiness.homebrewReady, isTrue);
-    expect(readiness.tmuxBinaryReady, isFalse);
-    expect(terminalScript, isNotNull);
-    expect(calls.where((line) => line.contains('install.sh')), isEmpty);
-    final script = await File(terminalScript!).readAsString();
-    expect(script, contains('/usr/bin/xcrun --find clang'));
     expect(
-      script,
-      contains(
-        'sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer',
-      ),
+      readiness.steps[EnvironmentStep.tmux],
+      EnvironmentStepStatus.needsTerminal,
     );
-    expect(script, contains('xcode-select --install'));
-    expect(script, contains('xcodebuild -license accept'));
-    expect(script, contains("tmux is already installed"));
-    expect(script, contains('did not become ready within 10 minutes'));
-    expect(script, contains('if ! command -v tmux'));
+    expect(readiness.terminalSetup, EnvironmentTerminalSetup.tmux);
+    expect(terminalScript, isNotNull);
+    expect(calls.where((line) => line.contains('brew install tmux')), isEmpty);
+    expect(calls.where((line) => line.contains('install.sh')), isEmpty);
+    // The ladder lives in the CLI installer's host mode; the window only adds
+    // the log and exit code the app polls.
+    final script = await File(terminalScript!).readAsString();
+    expect(script, contains(kHarnessHostSetupCommand));
+    expect(script, contains('terminal.log'));
+    expect(script, contains('terminal.exit'));
+    expect(script, isNot(contains('xcode-select')));
+    expect(script, isNot(contains('brew install')));
     if (File('/bin/zsh').existsSync()) {
       expect(
         (await Process.run('/bin/zsh', ['-n', terminalScript!])).exitCode,
@@ -296,8 +358,7 @@ void main() {
       );
 
       expect(readiness.isReady, isTrue);
-      expect(readiness.homebrewReady, isTrue);
-      expect(readiness.tmuxBinaryReady, isTrue);
+      expect(readiness.plan, isEmpty);
       expect(terminalLaunches, 0);
       expect(
         calls.where((line) => line.contains('brew install tmux')),
@@ -338,41 +399,6 @@ void main() {
     expect(readiness.output.join('\n'), contains('exited 7'));
     expect(readiness.output.join('\n'), contains('Terminal opened to retry'));
   });
-
-  test(
-    'missing Homebrew still opens Terminal before installing tmux',
-    () async {
-      String? terminalScript;
-      final calls = <String>[];
-      final provisioner = EnvironmentProvisioner(
-        harnessHome: scratch,
-        isMacOS: true,
-        isLinux: false,
-        openTerminal: (path) async => terminalScript = path,
-        run: runner(
-          homebrewPresent: () => false,
-          tmuxPresent: () => false,
-          calls: calls,
-        ),
-      );
-
-      final readiness = await provisioner.ensureReady(
-        onProgress: (_) {},
-        install: true,
-        mode: EnvironmentSetupMode.automatic,
-      );
-
-      expect(readiness.phase, EnvironmentSetupPhase.waitingForTerminal);
-      expect(readiness.homebrewReady, isFalse);
-      expect(readiness.tmuxBinaryReady, isFalse);
-      expect(terminalScript, isNotNull);
-      expect(
-        calls.where((line) => line.contains('brew install tmux')),
-        isEmpty,
-      );
-      expect(readiness.output.join('\n'), contains('brew --version'));
-    },
-  );
 
   test('automatic setup installs Harness, then verifies', () async {
     final calls = <String>[];
@@ -458,7 +484,6 @@ void main() {
       );
 
       expect(readiness.phase, EnvironmentSetupPhase.waitingForTerminal);
-      expect(readiness.systemReady, isTrue);
       expect(
         readiness.steps[EnvironmentStep.tmux],
         EnvironmentStepStatus.ready,
@@ -853,7 +878,7 @@ void main() {
         EnvironmentStepStatus.needsTerminal,
       );
       final script = await File(terminalScript!).readAsString();
-      expect(script, contains('apt_as_root install -y xclip tmux'));
+      expect(script, contains('apt_as_root install -y tmux xclip'));
       expect(
         script,
         contains('This window will close automatically in 5 seconds.'),
@@ -863,6 +888,97 @@ void main() {
         (await Process.run('/bin/bash', ['-n', terminalScript!])).exitCode,
         0,
       );
+    },
+  );
+
+  test('a Linux computer that runs tmux, ps and Harness is ready whatever else it lacks', () async {
+    // curl, tar and the rest download the runtime; with the runtime here they
+    // are not asked about, and neither is apt.
+    await createManagedHarness();
+    final calls = <String>[];
+    final provisioner = EnvironmentProvisioner(
+      harnessHome: scratch,
+      isMacOS: false,
+      isLinux: true,
+      platformEnvironment: const {},
+      run: runner(
+        tmuxPresent: () => true,
+        aptPresent: false,
+        missingCommands: const {'curl', 'tar', 'sed', 'awk', 'sha256sum'},
+        calls: calls,
+      ),
+    );
+
+    final readiness = await provisioner.ensureReady(
+      onProgress: (_) {},
+      install: false,
+    );
+
+    expect(readiness.isReady, isTrue, reason: readiness.output.join('\n'));
+    expect(readiness.plan, isEmpty);
+    expect(calls.any((line) => line.contains('command -v curl ')), isFalse);
+    expect(calls.any((line) => line.contains('for c in tar')), isFalse);
+    expect(calls.any((line) => line.contains('command -v apt-get')), isFalse);
+  });
+
+  test('a missing ps joins tmux in the one apt transaction', () async {
+    await createManagedHarness();
+    final provisioner = EnvironmentProvisioner(
+      harnessHome: scratch,
+      isMacOS: false,
+      isLinux: true,
+      platformEnvironment: const {},
+      run: runner(tmuxPresent: () => false, missingCommands: const {'ps'}),
+    );
+
+    final readiness = await provisioner.ensureReady(
+      onProgress: (_) {},
+      install: false,
+    );
+
+    expect(readiness.steps[EnvironmentStep.tmux], EnvironmentStepStatus.failed);
+    expect(readiness.plan.single.packages, ['tmux', 'procps']);
+    expect(readiness.plan.single.requiresTerminal, isTrue);
+    expect(readiness.output.join('\n'), contains('✗ ps'));
+  });
+
+  test(
+    'curl is added to the transaction only because Harness must be downloaded',
+    () async {
+      final calls = <String>[];
+      final provisioner = EnvironmentProvisioner(
+        harnessHome: scratch,
+        isMacOS: false,
+        isLinux: true,
+        platformEnvironment: const {},
+        run: runner(
+          tmuxPresent: () => true,
+          missingCommands: const {'curl'},
+          calls: calls,
+        ),
+      );
+
+      final readiness = await provisioner.ensureReady(
+        onProgress: (_) {},
+        install: false,
+      );
+
+      expect(
+        readiness.steps[EnvironmentStep.tmux],
+        EnvironmentStepStatus.ready,
+      );
+      expect(readiness.plan.map((item) => item.title), [
+        'Linux host dependencies',
+        'Managed Node 20+ & Harness CLI',
+      ]);
+      expect(readiness.plan.first.packages, ['curl']);
+      expect(readiness.plan.first.step, EnvironmentStep.harness);
+      // One probe for the lot; the per-tool probes run only when it fails.
+      expect(
+        calls.where((line) => line.contains('for c in tar')),
+        hasLength(1),
+      );
+      expect(calls.any((line) => line.contains('command -v tar ')), isFalse);
     },
   );
 

@@ -1707,7 +1707,7 @@ class AppNotifier extends ChangeNotifier {
             terminalLogPath: value.terminalLogPath,
             terminalResultPath: value.terminalResultPath,
             terminalSetup: value.terminalSetup,
-            systemReady: value.systemReady,
+            plan: value.plan,
           );
         } else {
           environmentReadiness = value;
@@ -1836,7 +1836,7 @@ class AppNotifier extends ChangeNotifier {
   }
 
   /// Rechecks a single stuck step (`failed`/`needsTerminal`) without re-running steps already
-  /// `ready` — the user fixed it by hand (see `environment_step_guidance.dart`'s command) and this
+  /// `ready` — the user fixed it by hand (with the command the review lists) and this
   /// confirms it, then falls through to whatever step comes next, exactly like a fresh `bootstrap()`
   /// would have. [step] identifies which row's Recheck button was pressed; the provisioner itself
   /// decides what to (re-)attempt from the current [environmentReadiness], so an already-resolved
@@ -1858,15 +1858,12 @@ class AppNotifier extends ChangeNotifier {
             environmentReadiness.phase ==
                 EnvironmentSetupPhase.waitingForTerminal,
       );
+      // Every host step done means only the Harness CLI is left, and that
+      // installs in-app without another prompt — so carry on into it.
       if (!result.isReady &&
           mode == EnvironmentSetupMode.automatic &&
           result.phase != EnvironmentSetupPhase.waitingForTerminal &&
-          result.systemReady &&
-          result.steps[EnvironmentStep.tmux] == EnvironmentStepStatus.ready &&
-          (result.steps[EnvironmentStep.clipboard] ==
-                  EnvironmentStepStatus.ready ||
-              result.steps[EnvironmentStep.clipboard] ==
-                  EnvironmentStepStatus.notApplicable)) {
+          result.hostReady) {
         result = await _runProvisioner(
           resumeFrom: result,
           install: true,
@@ -1882,7 +1879,7 @@ class AppNotifier extends ChangeNotifier {
             terminalLogPath: result.terminalLogPath,
             terminalResultPath: result.terminalResultPath,
             terminalSetup: result.terminalSetup,
-            systemReady: result.systemReady,
+            plan: result.plan,
           );
         }
         _scheduleEnvironmentRecheck();

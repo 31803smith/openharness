@@ -77,7 +77,6 @@ void main() {
       },
       phase: EnvironmentSetupPhase.ready,
       mode: EnvironmentSetupMode.automatic,
-      systemReady: true,
     );
     final provisioner = _ScriptedProvisioner([review, waiting, ready]);
     final app = AppNotifier(

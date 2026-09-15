@@ -170,7 +170,7 @@ class _EnvironmentSetupScreenState extends State<EnvironmentSetupScreen> {
 
   Widget _choose(EnvironmentReadiness state) {
     final mode = state.mode ?? EnvironmentSetupMode.automatic;
-    final items = _installItems(state);
+    final items = state.plan;
     final count = items.length;
     final countLabel = '$count ${count == 1 ? 'tool' : 'tools'}';
     final needsTerminal = items.any((item) => item.requiresTerminal);
@@ -286,54 +286,51 @@ class _EnvironmentSetupScreenState extends State<EnvironmentSetupScreen> {
     ],
   );
 
-  Widget _checkList(EnvironmentReadiness state, {bool checking = false}) =>
-      _Panel(
-        child: Column(
-          children: [
-            const _CheckSectionLabel('Host dependencies'),
-            _CheckRow(
-              label: 'System tools & writable home',
-              detail: Platform.isMacOS
-                  ? 'Shell, curl, tar, sed, awk, shasum · Xcode or Command Line Tools'
-                  : 'Shell, curl, tar, sed, awk, sha256sum · writable home',
-              status: _systemStatus(state),
-              checking:
-                  checking && state.phase == EnvironmentSetupPhase.preflight,
-            ),
-            _CheckRow(
-              label: Platform.isMacOS
-                  ? 'Homebrew & tmux terminal backend'
-                  : 'tmux terminal backend',
-              detail: 'Required for every terminal session',
-              status: state.steps[EnvironmentStep.tmux],
-            ),
-            if (Platform.isLinux)
-              _CheckRow(
-                label: 'Native image clipboard',
-                detail: _linuxClipboardDetail,
-                status: state.steps[EnvironmentStep.clipboard],
-              ),
-            const _CheckSectionLabel('Harness components'),
-            _CheckRow(
-              label: 'Managed Node 20+ & Harness CLI',
-              detail: '~/.harness/runtime · harness version',
-              status: state.steps[EnvironmentStep.harness],
-            ),
-          ],
+  /// One row per command Harness runs — never one per way of obtaining it.
+  /// What obtaining a missing one takes is the row's detail, read off the
+  /// plan the provisioner computed.
+  Widget _checkList(
+    EnvironmentReadiness state, {
+    bool checking = false,
+  }) => _Panel(
+    child: Column(
+      children: [
+        const _CheckSectionLabel('Host dependencies'),
+        _CheckRow(
+          label: 'tmux terminal backend',
+          detail: _tmuxDetail(state),
+          status: state.steps[EnvironmentStep.tmux],
+          checking: checking && state.phase == EnvironmentSetupPhase.preflight,
         ),
-      );
+        if (Platform.isLinux)
+          _CheckRow(
+            label: 'Native image clipboard',
+            detail: _linuxClipboardDetail,
+            status: state.steps[EnvironmentStep.clipboard],
+            checking:
+                checking && state.phase == EnvironmentSetupPhase.preflight,
+          ),
+        const _CheckSectionLabel('Harness components'),
+        _CheckRow(
+          label: 'Managed Node 20+ & Harness CLI',
+          detail: '~/.harness/runtime · harness version',
+          status: state.steps[EnvironmentStep.harness],
+          checking: checking && state.phase == EnvironmentSetupPhase.preflight,
+        ),
+      ],
+    ),
+  );
 
-  EnvironmentStepStatus? _systemStatus(EnvironmentReadiness state) {
-    if (state.systemReady) return EnvironmentStepStatus.ready;
-    if (state.phase == EnvironmentSetupPhase.preflight) return null;
-    if (state.phase == EnvironmentSetupPhase.waitingForTerminal &&
-        state.terminalSetup == EnvironmentTerminalSetup.linuxHost) {
-      return EnvironmentStepStatus.needsTerminal;
+  String _tmuxDetail(EnvironmentReadiness state) {
+    const base = 'Required for every terminal session';
+    final steps = state.planFor(EnvironmentStep.tmux);
+    if (steps.isEmpty) {
+      return Platform.isLinux ? '$base · tmux, ps' : base;
     }
-    if (state.phase == EnvironmentSetupPhase.installing) {
-      return EnvironmentStepStatus.running;
-    }
-    return EnvironmentStepStatus.failed;
+    if (Platform.isLinux) return '$base · installs with apt';
+    final titles = steps.map((item) => item.title).toList();
+    if (titles.length == 1) return '$base · installs with Homebrew';
+    return '$base · installs ${titles.join(', then ')}';
   }
 
   String? get _linuxClipboardPackage {
@@ -350,93 +347,7 @@ class _EnvironmentSetupScreenState extends State<EnvironmentSetupScreen> {
     _ => 'Not applicable · image paste uses file-path fallback',
   };
 
-  bool _needsInstall(EnvironmentStepStatus? status) =>
-      status != EnvironmentStepStatus.ready &&
-      status != EnvironmentStepStatus.notApplicable;
-
-  List<_InstallItem> _installItems(EnvironmentReadiness state) {
-    final items = <_InstallItem>[];
-    final tmuxStatusMissing = _needsInstall(state.steps[EnvironmentStep.tmux]);
-    final tmuxMissing =
-        state.tmuxBinaryReady == false ||
-        (state.tmuxBinaryReady == null && tmuxStatusMissing);
-
-    if (Platform.isMacOS) {
-      if (!state.systemReady) {
-        items.add(
-          const _InstallItem(
-            title: 'Apple developer tools',
-            detail: 'Xcode or Command Line Tools',
-            command: '/usr/bin/xcrun --find clang || { if [ -x /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild ]; then sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer; else xcode-select --install; fi; }',
-            requiresTerminal: true,
-          ),
-        );
-      }
-      final homebrewMissing =
-          state.homebrewReady == false ||
-          (state.homebrewReady == null && tmuxStatusMissing);
-      if (homebrewMissing) {
-        items.add(
-          const _InstallItem(
-            title: 'Homebrew',
-            detail: 'Required package manager for tmux',
-            command: '/bin/bash -c "\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"',
-            requiresTerminal: true,
-          ),
-        );
-      }
-      if (tmuxMissing) {
-        items.add(
-          const _InstallItem(
-            title: 'tmux',
-            detail: 'Required for every terminal session',
-            command: 'eval "\$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv)" && brew install tmux',
-          ),
-        );
-      }
-    } else if (Platform.isLinux) {
-      final packages = <String>{...state.missingLinuxPackages};
-      if (!state.systemReady && packages.isEmpty) {
-        packages.addAll(const [
-          'bash',
-          'curl',
-          'tar',
-          'sed',
-          'gawk',
-          'coreutils',
-        ]);
-      }
-      if (_needsInstall(state.steps[EnvironmentStep.clipboard]) &&
-          _linuxClipboardPackage != null) {
-        packages.add(_linuxClipboardPackage!);
-      }
-      if (tmuxMissing) packages.add('tmux');
-      if (packages.isNotEmpty) {
-        final names = packages.join(', ');
-        items.add(
-          _InstallItem(
-            title: 'Linux host dependencies',
-            detail: '$names · one apt transaction',
-            command: 'sudo apt-get install -y ${packages.join(' ')}',
-            requiresTerminal: true,
-          ),
-        );
-      }
-    }
-
-    if (_needsInstall(state.steps[EnvironmentStep.harness])) {
-      items.add(
-        const _InstallItem(
-          title: 'Managed Node 20+ & Harness CLI',
-          detail: '~/.harness only',
-          command: kHarnessDesktopInstallCommand,
-        ),
-      );
-    }
-    return items;
-  }
-
-  Widget _planList(List<_InstallItem> items) {
+  Widget _planList(List<EnvironmentPlanItem> items) {
     if (items.isEmpty) {
       return _notice(
         Icons.check_circle_outline,
@@ -487,7 +398,7 @@ class _EnvironmentSetupScreenState extends State<EnvironmentSetupScreen> {
     );
   }
 
-  Widget _manualList(List<_InstallItem> items) => Column(
+  Widget _manualList(List<EnvironmentPlanItem> items) => Column(
     children: [
       if (items.isEmpty)
         _notice(
@@ -625,7 +536,7 @@ class _EnvironmentSetupScreenState extends State<EnvironmentSetupScreen> {
   Widget _footer(EnvironmentReadiness state) {
     final busy = widget.notifier.environmentSetupInFlight;
     final mode = state.mode ?? EnvironmentSetupMode.automatic;
-    final missingCount = _installItems(state).length;
+    final missingCount = state.plan.length;
     final manual = mode == EnvironmentSetupMode.manual;
     String? label;
     VoidCallback? action;
@@ -727,20 +638,6 @@ class _EnvironmentSetupScreenState extends State<EnvironmentSetupScreen> {
       ),
     );
   }
-}
-
-class _InstallItem {
-  final String title;
-  final String detail;
-  final String command;
-  final bool requiresTerminal;
-
-  const _InstallItem({
-    required this.title,
-    required this.detail,
-    required this.command,
-    this.requiresTerminal = false,
-  });
 }
 
 class _Panel extends StatelessWidget {

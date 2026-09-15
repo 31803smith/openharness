@@ -58,7 +58,7 @@ Until that managed manifest covers a platform, the desktop build falls back to i
 official Node 22 archive for it. The fallback keeps first-run setup functional but is intentionally
 not a replacement for publishing the managed runtime channel before release.
 
-Homebrew and `apt` are still used for **tmux**, which is a separate step and unrelated to Node.
+Homebrew and `apt` are still used for **tmux**, which is a separate step and unrelated to Node — and only when tmux is missing; a computer that already runs it is never asked about either.
 
 ## Two macOS builds — Intel on Skia, Apple Silicon on Impeller
 

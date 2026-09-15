@@ -18,8 +18,14 @@ const _review = EnvironmentReadiness(
     EnvironmentStep.harness: EnvironmentStepStatus.failed,
   },
   phase: EnvironmentSetupPhase.review,
-  homebrewReady: false,
-  tmuxBinaryReady: false,
+  // The full ladder — nothing on this computer — so the layout tests see the
+  // longest plan the screen can render.
+  plan: [
+    EnvironmentPlanItem.appleDeveloperTools,
+    EnvironmentPlanItem.homebrew,
+    EnvironmentPlanItem.tmuxViaHomebrew,
+    EnvironmentPlanItem.harnessCli,
+  ],
 );
 
 class _Login extends CliLogin {
@@ -262,7 +268,6 @@ void main() {
           EnvironmentStep.harness: EnvironmentStepStatus.ready,
         },
         phase: EnvironmentSetupPhase.ready,
-        systemReady: true,
       ),
     );
     await tester.pump();

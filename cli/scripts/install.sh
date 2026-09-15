@@ -8,7 +8,8 @@
 # install.sh, but only as a redirect to the CDN one (its next.config.js) — kept for anyone with the old
 # link already saved.
 #   curl -fsSL https://cdn.autonomous.ai/harness/cli/install.sh | bash
-#   curl -fsSL https://cdn.autonomous.ai/harness/cli/install.sh | sh -s -- --desktop  # Desktop only
+#   curl -fsSL https://cdn.autonomous.ai/harness/cli/install.sh | sh -s -- --desktop  # Desktop: runtime + CLI only
+#   curl -fsSL https://cdn.autonomous.ai/harness/cli/install.sh | sh -s -- --host     # Desktop: host requirements only
 #   harness login
 #   harness start
 #
@@ -18,24 +19,33 @@
 # There is no system Node prerequisite. The CLI is plain JS (no native binary, no code-signing) and it runs on a
 # checksum-verified Node this installer puts in ~/.harness/runtime — the same runtime Desktop Harness
 # manages, shared on purpose so one cli.js is never run by two different Nodes. Your own Node and nvm
-# are neither required nor touched. In standalone mode, tmux is the only supported terminal backend,
-# so it is prepared and verified before any Harness runtime or CLI files are installed. On macOS the
-# supported tmux path is Homebrew; on Ubuntu it is apt. A Linux GUI also requires the clipboard
-# helper for its active display protocol. Desktop mode trusts the app's earlier host pre-flight and
-# skips that package work. The runtime's absolute path is baked into the launcher,
-# so a Finder launch — where PATH is launchd's bare /usr/bin:/bin:/usr/sbin:/sbin — resolves the CLI
-# exactly like a terminal does.
+# are neither required nor touched.
+#
+# What the CLI RUNS is a short list — tmux (its only terminal backend), `ps`, and on a Linux desktop
+# the clipboard helper for the active display — and step 1 checks exactly that list. Everything else
+# here (Homebrew, the Apple developer tools, apt, curl/tar/sed/awk/sha256sum) is only a way of
+# obtaining one of those or of downloading the runtime, and is looked at only when the thing it
+# obtains is missing: a Mac with tmux never hears about Homebrew, a Mac with Homebrew never hears
+# about Xcode, and the download tools are checked only when a runtime is actually downloaded.
+# Desktop mode (`--desktop`) trusts the app's own host pre-flight and skips step 1; host mode
+# (`--host`) is the app handing step 1 to a real terminal for its password prompts and stops after it.
+# The runtime's absolute path is baked into the launcher, so a Finder launch — where PATH is
+# launchd's bare /usr/bin:/bin:/usr/sbin:/sbin — resolves the CLI exactly like a terminal does.
 # POSIX sh (so `| sh` and `| bash` both work).
 set -eu
 
 # No argument is the complete standalone/server installer. Desktop owns host pre-flight and passes
 # --desktop so this script installs only the managed runtime and CLI instead of asking twice for the
-# same package-manager/admin work.
+# same package-manager/admin work — or --host for the opposite half.
 INSTALL_MODE=standalone
 case "${1:-}" in
   "") ;;
   --desktop)
     INSTALL_MODE=desktop
+    shift
+    ;;
+  --host)
+    INSTALL_MODE=host
     shift
     ;;
   *)
@@ -46,7 +56,7 @@ case "${1:-}" in
     ;;
 esac
 if [ "$#" -gt 0 ]; then
-  echo "✗ Desktop mode accepts no additional arguments." >&2
+  echo "✗ $INSTALL_MODE mode accepts no additional arguments." >&2
   echo "✗ This installer no longer accepts a machine token." >&2
   exit 2
 fi
@@ -62,9 +72,9 @@ CURRENT_NODE_FILE="$RUNTIME_DIR/current-node"
 BIN_DIR="$HOME/.local/bin"
 LAUNCHER="$BIN_DIR/harness"
 
-# 1. Standalone host setup. tmux is the CLI's only supported terminal backend, so prepare it before
-#    writing Node or Harness files and fail clearly if it cannot be verified. This installer already
-#    runs in a terminal, so package-manager password prompts stay with the OS — never Harness.
+# 1. Host requirements (standalone and --host). The CLI runs tmux, `ps`, and on a Linux desktop the
+#    clipboard helper — those are checked, and only what is missing is obtained. This installer
+#    already runs in a terminal, so package-manager password prompts stay with the OS — never Harness.
 require_command() {
   command -v "$1" >/dev/null 2>&1 || {
     echo "✗ Required system tool is missing: $1" >&2
@@ -92,43 +102,60 @@ install_with_apt() {
   apt_as_root install -y "$@"
 }
 
-if [ "$INSTALL_MODE" = "standalone" ]; then
+tmux_runs() {
+  command -v tmux >/dev/null 2>&1 && tmux -V >/dev/null 2>&1
+}
+
+if [ "$INSTALL_MODE" != "desktop" ]; then
 case "$(uname -s)" in
   Darwin)
-    require_command curl
-    require_command tar
-    require_command sed
-    require_command awk
-    command -v shasum >/dev/null 2>&1 || { echo "✗ Required system tool is missing: shasum" >&2; exit 11; }
-    if ! /usr/bin/xcrun --find clang >/dev/null 2>&1; then
-      echo "▸ Apple developer tools are required by Homebrew (Xcode or Command Line Tools)."
-      if [ -x /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild ]; then
-        echo "  Xcode is installed but is not the active developer directory."
-        echo "  macOS may ask for your password to select it."
-        sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
-      else
-        echo "  macOS will open its installer now. Finish it, then run this Harness installer again."
-        xcode-select --install >/dev/null 2>&1 || true
-        exit 20
+    if tmux_runs; then
+      : # tmux runs. Homebrew and the Apple developer tools are how it would have been installed;
+        # with it here they are nobody's business, and neither is looked at.
+    else
+      # A Homebrew installed for a different shell is still installed.
+      if ! command -v brew >/dev/null 2>&1; then
+        eval "$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv 2>/dev/null || true)"
       fi
-      /usr/bin/xcrun --find clang >/dev/null 2>&1 || {
-        echo "✗ Apple developer tools are selected but are not usable." >&2
-        exit 20
-      }
-    fi
-    if ! command -v brew >/dev/null 2>&1; then
-      echo "▸ Installing Homebrew (macOS may ask for your password)"
-      /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" || {
-        echo "✗ Homebrew installation failed. Review the output above, then retry." >&2
-        exit 21
-      }
-    fi
-    eval "$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv 2>/dev/null)"
-    command -v brew >/dev/null 2>&1 || {
-      echo "✗ Homebrew was installed but is not available to this shell." >&2
-      exit 21
-    }
-    if ! command -v tmux >/dev/null 2>&1; then
+      if ! command -v brew >/dev/null 2>&1; then
+        # Homebrew's own installer needs the Apple developer tools; this is the only place they matter.
+        if ! /usr/bin/xcrun --find clang >/dev/null 2>&1; then
+          echo "▸ Apple developer tools are required by Homebrew (Xcode or Command Line Tools)."
+          if [ -x /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild ]; then
+            # xcrun answers "not ready" for two different reasons, and only one of them is the
+            # developer directory. An unaccepted Xcode licence exits 69 and no amount of
+            # xcode-select fixes it.
+            if ! /usr/bin/xcodebuild -license check >/dev/null 2>&1; then
+              echo "  Xcode is installed but its licence has not been accepted."
+              echo "  macOS may ask for your password to accept it."
+              sudo /usr/bin/xcodebuild -license accept
+            fi
+            if ! /usr/bin/xcrun --find clang >/dev/null 2>&1; then
+              echo "  Xcode is installed but is not the active developer directory."
+              echo "  macOS may ask for your password to select it."
+              sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
+            fi
+          else
+            echo "  macOS will open its installer now. Finish it, then run this Harness installer again."
+            xcode-select --install >/dev/null 2>&1 || true
+            exit 20
+          fi
+          /usr/bin/xcrun --find clang >/dev/null 2>&1 || {
+            echo "✗ Apple developer tools are selected but are not usable." >&2
+            exit 20
+          }
+        fi
+        echo "▸ Installing Homebrew (macOS may ask for your password)"
+        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" || {
+          echo "✗ Homebrew installation failed. Review the output above, then retry." >&2
+          exit 21
+        }
+        eval "$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv 2>/dev/null)"
+        command -v brew >/dev/null 2>&1 || {
+          echo "✗ Homebrew was installed but is not available to this shell." >&2
+          exit 21
+        }
+      fi
       echo "▸ Installing tmux via Homebrew"
       brew install tmux || {
         echo "✗ Could not install tmux via Homebrew. Retry with: brew install tmux" >&2
@@ -137,45 +164,9 @@ case "$(uname -s)" in
     fi
     ;;
   Linux)
-    missing_system_packages=""
-    command -v bash >/dev/null 2>&1 || missing_system_packages="$missing_system_packages bash"
-    command -v curl >/dev/null 2>&1 || missing_system_packages="$missing_system_packages curl"
-    command -v tar >/dev/null 2>&1 || missing_system_packages="$missing_system_packages tar"
-    command -v sed >/dev/null 2>&1 || missing_system_packages="$missing_system_packages sed"
-    command -v awk >/dev/null 2>&1 || missing_system_packages="$missing_system_packages gawk"
-    command -v sha256sum >/dev/null 2>&1 || missing_system_packages="$missing_system_packages coreutils"
-    if [ -n "$missing_system_packages" ]; then
-      command -v apt-get >/dev/null 2>&1 || {
-        echo "✗ Required Linux system tools are missing. Automatic install supports apt-based Linux only." >&2
-        echo "  Install these packages with this distribution's package manager:$missing_system_packages" >&2
-        exit 11
-      }
-      echo "▸ Installing required Linux system tools (you may be asked for your password)"
-      # Intentional word splitting: this list contains only package names selected above.
-      # shellcheck disable=SC2086
-      install_with_apt $missing_system_packages || {
-        echo "✗ Could not install required Linux system tools via apt-get." >&2
-        exit 11
-      }
-    fi
-    require_command bash
-    require_command curl
-    require_command tar
-    require_command sed
-    require_command awk
-    require_command sha256sum
-    if ! command -v tmux >/dev/null 2>&1; then
-      command -v apt-get >/dev/null 2>&1 || {
-        echo "✗ tmux is required. Automatic install supports apt-based Linux only." >&2
-        echo "  Install tmux with this distribution's package manager, then retry." >&2
-        exit 22
-      }
-      echo "▸ Installing tmux (you may be asked for your password)"
-      install_with_apt tmux || {
-        echo "✗ Could not install tmux via apt-get. Retry with: sudo apt-get install -y tmux" >&2
-        exit 22
-      }
-    fi
+    missing_host_packages=""
+    tmux_runs || missing_host_packages="$missing_host_packages tmux"
+    command -v ps >/dev/null 2>&1 || missing_host_packages="$missing_host_packages procps"
     # Native image paste needs the helper for the display protocol this process will use. A
     # genuinely headless server has no OS clipboard, so installing either package there would add a
     # sudo prompt without adding a capability; the CLI deliberately uses its file-path fallback.
@@ -191,18 +182,29 @@ case "$(uname -s)" in
       echo "▸ No X11 or Wayland display detected; native image clipboard is not applicable."
     fi
     if [ -n "$clipboard_command" ] && ! command -v "$clipboard_command" >/dev/null 2>&1; then
+      missing_host_packages="$missing_host_packages $clipboard_package"
+    fi
+    if [ -n "$missing_host_packages" ]; then
       command -v apt-get >/dev/null 2>&1 || {
-        echo "✗ $clipboard_command is required for native image paste on this Linux desktop." >&2
-        echo "  Install $clipboard_package with this distribution's package manager, then retry." >&2
-        exit 23
+        echo "✗ Required Linux packages are missing:$missing_host_packages" >&2
+        echo "  Automatic install supports apt-based Linux only; install them with this distribution's package manager, then retry." >&2
+        exit 22
       }
-      echo "▸ Installing $clipboard_package for native image paste (you may be asked for your password)"
-      install_with_apt "$clipboard_package" || {
-        echo "✗ Could not install $clipboard_package via apt-get." >&2
-        echo "  Retry with: sudo apt-get install -y $clipboard_package" >&2
-        exit 23
+      echo "▸ Installing required Linux packages (you may be asked for your password):$missing_host_packages"
+      # Intentional word splitting: this list contains only package names selected above.
+      # shellcheck disable=SC2086
+      install_with_apt $missing_host_packages || {
+        echo "✗ Could not install${missing_host_packages} via apt-get." >&2
+        echo "  Retry with: sudo apt-get install -y$missing_host_packages" >&2
+        # 23 is the clipboard helper's own code, kept for a transaction that was only that.
+        if [ "$missing_host_packages" = " $clipboard_package" ]; then exit 23; fi
+        exit 22
       }
     fi
+    command -v ps >/dev/null 2>&1 || {
+      echo "✗ ps is required but did not pass verification." >&2
+      exit 22
+    }
     if [ -n "$clipboard_command" ]; then
       command -v "$clipboard_command" >/dev/null 2>&1 || {
         echo "✗ $clipboard_command is required but did not pass verification." >&2
@@ -217,11 +219,15 @@ case "$(uname -s)" in
     ;;
 esac
 
-command -v tmux >/dev/null 2>&1 && tmux -V >/dev/null 2>&1 || {
+tmux_runs || {
   echo "✗ tmux is required but did not pass verification." >&2
   exit 22
 }
 echo "✓ tmux ready ($(tmux -V))"
+if [ "$INSTALL_MODE" = "host" ]; then
+  echo "✓ Host requirements ready."
+  exit 0
+fi
 else
   echo "▸ Desktop mode: trusting the app's host pre-flight; skipping system packages and tmux setup."
 fi
@@ -315,6 +321,36 @@ fi
 
 if [ -z "$NODE_BIN" ]; then
 
+  # Fetching, unpacking and verifying the runtime is the only work in this file that needs these
+  # host tools (step 3 is Node, and Node needs none of them) — so they are asked for here, once the
+  # download is known to be happening, and nowhere earlier. macOS ships them all; a minimal Linux
+  # can lack curl, and that is what apt is for.
+  if [ "$(uname -s)" = "Linux" ]; then
+    missing_download_tools=""
+    command -v curl >/dev/null 2>&1 || missing_download_tools="$missing_download_tools curl"
+    command -v tar >/dev/null 2>&1 || missing_download_tools="$missing_download_tools tar"
+    command -v sed >/dev/null 2>&1 || missing_download_tools="$missing_download_tools sed"
+    command -v awk >/dev/null 2>&1 || missing_download_tools="$missing_download_tools gawk"
+    command -v sha256sum >/dev/null 2>&1 || missing_download_tools="$missing_download_tools coreutils"
+    if [ -n "$missing_download_tools" ]; then
+      command -v apt-get >/dev/null 2>&1 || {
+        echo "✗ Downloading the Node runtime needs tools this computer lacks:$missing_download_tools" >&2
+        echo "  Automatic install supports apt-based Linux only; install them with this distribution's package manager, then retry." >&2
+        exit 11
+      }
+      echo "▸ Installing the tools needed to download the runtime (you may be asked for your password):$missing_download_tools"
+      # shellcheck disable=SC2086
+      install_with_apt $missing_download_tools || {
+        echo "✗ Could not install the download tools via apt-get." >&2
+        exit 11
+      }
+    fi
+  fi
+  require_command curl
+  require_command tar
+  require_command sed
+  require_command awk
+
   # sha256 is the one tool that genuinely differs between the two platforms, and it is needed
   # BEFORE Node exists to smooth it over — hence this pair rather than step 2's single JS path.
   if command -v shasum >/dev/null 2>&1; then
@@ -323,7 +359,7 @@ if [ -z "$NODE_BIN" ]; then
     sha256_of() { sha256sum "$1" | awk '{print $1}'; }
   else
     echo "✗ Need shasum or sha256sum to verify the Node download, and found neither." >&2
-    exit 1
+    exit 11
   fi
 
   echo "▸ Installing the Harness Node runtime into $RUNTIME_DIR"
