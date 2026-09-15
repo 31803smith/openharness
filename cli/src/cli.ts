@@ -3867,7 +3867,14 @@ async function runForeground(session: AuthSession): Promise<void> {
     // the model. For claude the decoded value is already the vendor's alias (`opus`), which is what
     // ANTHROPIC_MODEL wants. Null when the daemon has not observed this pane's model yet, which is a
     // real answer: there is then nothing to come back to and the engine decides, as it did before.
-    const observed = parseRuntimeProfile(runtimeProfiles.selectedModel(session))?.model ?? null
+    // ⚠️ The profile's OWN engine has to match, not just the session it was read under. A model is
+    // only meaningful to the engine that named it — `opencode/big-pickle` handed back as
+    // ANTHROPIC_MODEL is not a Claude model, and Claude Code says so ("It may not exist or you may
+    // not have access to it") on a pane the user never chose it for. The keying bug that let one
+    // agent read another's model is fixed at its source in RuntimeProfileManager; this is the second
+    // lock, because the cost of being wrong here is a pane that answers on nothing.
+    const profile = parseRuntimeProfile(runtimeProfiles.selectedModel(session))
+    const observed = profile && profile.engine === session.engine ? profile.model : null
     const remembered = grid
       // Two guards, and both come from watching this go wrong:
       //
