@@ -10,8 +10,10 @@ import 'package:harness_mobile/shared/widgets/empty_state.dart';
 import 'package:harness_mobile/state/app_state.dart';
 
 import 'agent_tile.dart';
+import 'delete_agent.dart';
 import 'link_page.dart';
 import 'phone_card.dart';
+import 'phone_fab.dart';
 import 'new_agent_page.dart';
 import 'phone_header.dart';
 import 'phone_navigation.dart';
@@ -45,8 +47,26 @@ class AgentsPage extends StatelessWidget {
     builder: (context, _) {
       AppTheme.watch(context);
       final machine = notifier.stateOf(machineId);
+      // Only once the machine is answering: creating needs it to list its folders and say which
+      // engines it has, and a button that opens a page with neither is a dead end.
+      final canCreate =
+          machine != null &&
+          phoneMachineStatusOf(machine) == PhoneMachineStatus.ready;
       return Scaffold(
         backgroundColor: AppPalette.windowBg,
+        // Down here rather than in the header beside `⋯`, matching the Agents tab: the same act
+        // reached from two screens should be in the same place on both, and a list's primary
+        // action belongs under the thumb rather than at the far top corner.
+        //
+        // ⚠️ This page's Scaffold is the last one, unlike the tab's — nothing sits below it, so the
+        // button clears the home indicator on `SafeArea`'s account rather than a tab bar's.
+        floatingActionButton: !canCreate
+            ? null
+            : PhoneFab(
+                icon: LucideIcons.plus300,
+                tooltip: 'New agent',
+                onPressed: () => openNewAgent(context, notifier, machineId),
+              ),
         body: SafeArea(
           bottom: false,
           child: Column(
@@ -57,19 +77,6 @@ class AgentsPage extends StatelessWidget {
                     ? null
                     : StatusPill(summary: phoneMachineSummary(machine)),
                 trailing: [
-                  // Only once the machine is answering: creating needs it to
-                  // list its folders and say which engines it has, and a button
-                  // that opens a page with neither is a dead end.
-                  if (machine != null &&
-                      phoneMachineStatusOf(machine) == PhoneMachineStatus.ready)
-                    AppIconButton(
-                      icon: LucideIcons.plus300,
-                      size: 20,
-                      tooltip: 'New agent',
-                      color: AppPalette.textSecondary,
-                      onPressed: () =>
-                          _openNewAgent(context, notifier, machineId),
-                    ),
                   if (machine != null)
                     AppIconButton(
                       icon: LucideIcons.ellipsis300,
@@ -240,7 +247,7 @@ class _AgentsBody extends StatelessWidget {
         title: 'No agents yet',
         message: 'Start one here, or from Harness on that machine.',
         action: FilledButton(
-          onPressed: () => _openNewAgent(context, notifier, _machineId),
+          onPressed: () => openNewAgent(context, notifier, _machineId),
           child: const Text('New agent'),
         ),
       );
@@ -261,9 +268,9 @@ class _AgentsBody extends StatelessWidget {
 
 /// One agent's `⋯`, reached by holding its row.
 ///
-/// The desktop offers this from the rail row's menu and the pane's; a phone has neither, so the
-/// hold is the whole door. Kept public and out of [_AgentsBody] so the terminal page can open the
-/// same sheet if it ever grows one, rather than writing a second wording of the same act.
+/// The desktop offers this from the rail row's menu and the pane's; a phone has neither here, so
+/// the hold is this screen's whole door. The terminal page reaches the same act through its own
+/// `⋯`, and both go through [confirmDeleteAgent] rather than wording it twice.
 Future<void> showAgentActions(
   BuildContext context,
   AppNotifier notifier,
@@ -277,41 +284,20 @@ Future<void> showAgentActions(
       icon: LucideIcons.trash2300,
       label: 'Delete agent…',
       destructive: true,
-      onTap: () =>
-          unawaited(_confirmDeleteAgent(context, notifier, machineId, agent)),
+      onTap: () => unawaited(
+        confirmDeleteAgent(context, notifier, machineId, agent.id, agent.name),
+      ),
     ),
   ],
 );
 
-/// ⚠️ Deletion destroys the agent on the machine — unlike unlinking above, which only forgets a
-/// password. The wording has to carry that, because both arrive through the same red sheet row.
+/// The one way into [NewAgentPage] — this page's header button, its empty state, and the Agents
+/// tab's `+` all come through here rather than drifting into three ways of opening it.
 ///
-/// Nothing here removes the row: `AppNotifier.deleteAgent` drops the agent from the machine's list
-/// and detaches every pane still showing it, and this page rebuilds off that notifier.
-Future<void> _confirmDeleteAgent(
-  BuildContext context,
-  AppNotifier notifier,
-  String machineId,
-  Agent agent,
-) async {
-  final confirmed = await confirmPhoneAction(
-    context,
-    title: 'Delete ${agent.name}?',
-    message:
-        'The agent and its terminal session are removed from the machine, '
-        "along with any work it has not finished. This can't be undone.",
-    confirmLabel: 'Delete',
-  );
-  if (!confirmed || !context.mounted) return;
-  final error = await notifier.deleteAgent(machineId, agent.id);
-  if (error == null || !context.mounted) return;
-  ScaffoldMessenger.maybeOf(context)
-      ?.showSnackBar(SnackBar(content: Text(error)));
-}
-
-/// The one way into [NewAgentPage], so the header's button and the empty
-/// state's cannot drift into opening it two different ways.
-void _openNewAgent(
+/// ⚠️ [machineId] is not a detail the caller may guess at. A new agent needs the machine to list
+/// its folders and name the engines it has, so every door has to establish which machine FIRST:
+/// this page already knows, and the tab asks (`agents_tab.dart`).
+void openNewAgent(
   BuildContext context,
   AppNotifier notifier,
   String machineId,

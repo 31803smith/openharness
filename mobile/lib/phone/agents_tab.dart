@@ -4,13 +4,16 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:harness_mobile/shared/theme/app_theme.dart';
 import 'package:harness_mobile/shared/widgets/empty_state.dart';
 import 'package:harness_mobile/state/app_state.dart';
+
 import 'agent_index.dart';
 import 'agent_row.dart';
 import 'agents_page.dart';
 import 'account_button.dart';
 import 'machine_filter_bar.dart';
 import 'phone_card.dart';
+import 'phone_fab.dart';
 import 'phone_header.dart';
+import 'phone_sheet.dart';
 import 'phone_navigation.dart';
 import 'phone_status.dart';
 
@@ -51,8 +54,29 @@ class _AgentsTabState extends State<AgentsTab> {
           ? all
           : all.where((entry) => entry.machineId == selected).toList();
       final error = widget.notifier.lastError;
+      // Only machines that are answering. Creating needs one to list its folders and name the
+      // engines it has, so a machine that is offline or still wants its password cannot host a new
+      // agent — the same gate the machine's own page puts on its `+`.
+      final ready = [
+        for (final machine in machines)
+          if (phoneMachineStatusOf(machine) == PhoneMachineStatus.ready)
+            machine,
+      ];
       return Scaffold(
         backgroundColor: AppPalette.windowBg,
+        // ⚠️ Absent rather than disabled when nothing can host an agent. The empty state already
+        // says where that is fixed (the Machines tab), and a button whose only outcome is an
+        // explanation of why it does nothing is worse than no button.
+        //
+        // It floats above the tab bar without being told to: this Scaffold is the BODY of the
+        // shell's (`phone_shell.dart`), whose own `bottomNavigationBar` sits below it.
+        floatingActionButton: ready.isEmpty
+            ? null
+            : PhoneFab(
+                icon: LucideIcons.plus300,
+                tooltip: 'New agent',
+                onPressed: () => _pickMachine(context, ready),
+              ),
         body: SafeArea(
           bottom: false,
           child: Column(
@@ -87,6 +111,33 @@ class _AgentsTabState extends State<AgentsTab> {
       );
     },
   );
+
+  /// Which machine the new agent runs on, asked before anything else.
+  ///
+  /// This list is the one screen that does NOT already know: it is every agent on the account, and
+  /// the machine is a filter above it rather than the thing navigated through. So the `+` cannot
+  /// carry a machine the way [AgentsPage]'s does, and guessing one — the first, the filtered one —
+  /// would put an agent on a computer nobody named.
+  ///
+  /// ⚠️ Shown even when only one machine qualifies. A sheet of one still says WHERE the agent is
+  /// about to be created, and that is the question this step exists to answer.
+  void _pickMachine(BuildContext context, List<MachineState> ready) =>
+      showPhoneSheet(
+        context,
+        title: 'New agent on…',
+        actions: [
+          for (final machine in ready)
+            PhoneSheetAction(
+              icon: LucideIcons.laptopMinimal300,
+              label: machine.machine.displayName,
+              onTap: () => openNewAgent(
+                context,
+                widget.notifier,
+                machine.machine.machineId,
+              ),
+            ),
+        ],
+      );
 }
 
 class _Body extends StatelessWidget {
@@ -181,21 +232,24 @@ class _Body extends StatelessWidget {
     );
   }
 
-  Widget _row(BuildContext context, List<AgentEntry> ordered, AgentEntry entry) =>
-      Padding(
-        padding: const EdgeInsets.only(bottom: kPhoneCardGap),
-        child: AgentRow(
-          entry: entry,
-          // The whole visible list goes with the tap, so the page opens as a pager over exactly the
-          // agents on screen — the filter chip included. Swiping there walks this order.
-          onTap: () => openAgentPager(context, notifier, ordered, entry),
-          // The same sheet a machine's own page opens, from [AgentsPage] rather than written again
-          // here: one agent reached two ways must not offer two different sets of actions, and the
-          // delete wording in particular is the one that has to match.
-          onLongPress: () =>
-              showAgentActions(context, notifier, entry.machineId, entry.agent),
-        ),
-      );
+  Widget _row(
+    BuildContext context,
+    List<AgentEntry> ordered,
+    AgentEntry entry,
+  ) => Padding(
+    padding: const EdgeInsets.only(bottom: kPhoneCardGap),
+    child: AgentRow(
+      entry: entry,
+      // The whole visible list goes with the tap, so the page opens as a pager over exactly the
+      // agents on screen — the filter chip included. Swiping there walks this order.
+      onTap: () => openAgentPager(context, notifier, ordered, entry),
+      // The same sheet a machine's own page opens, from [AgentsPage] rather than written again
+      // here: one agent reached two ways must not offer two different sets of actions, and the
+      // delete wording in particular is the one that has to match.
+      onLongPress: () =>
+          showAgentActions(context, notifier, entry.machineId, entry.agent),
+    ),
+  );
 }
 
 class _SectionLabel extends StatelessWidget {

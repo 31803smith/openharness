@@ -10,6 +10,7 @@ import 'package:harness_mobile/widgets/engine_identity.dart';
 import 'package:harness_mobile/widgets/rename_agent_dialog.dart';
 import 'package:harness_mobile/widgets/terminal_panel.dart';
 
+import 'delete_agent.dart';
 import 'phone_header.dart';
 import 'phone_sheet.dart';
 import 'phone_status.dart';
@@ -335,6 +336,28 @@ class _TerminalPageState extends State<TerminalPage>
           icon: LucideIcons.refreshCw300,
           label: 'Restart agent',
           onTap: () => unawaited(_restart()),
+        ),
+        // Last, and alone in red: the two above are recoverable and this one is
+        // not, so it does not sit where a thumb lands on the way to them.
+        //
+        // ⚠️ Nothing here pops this page. Deleting detaches the pane, and the
+        // `_hadPane` branch above leaves on its own when that happens — the same
+        // path a delete from the list, or from the desktop, already takes. A pop
+        // here would be a second one, and the parked pages in this pager share
+        // the route.
+        PhoneSheetAction(
+          icon: LucideIcons.trash2300,
+          label: 'Delete agent…',
+          destructive: true,
+          onTap: () => unawaited(
+            confirmDeleteAgent(
+              context,
+              widget.notifier,
+              widget.machineId,
+              widget.agentId,
+              agentName,
+            ),
+          ),
         ),
       ],
     );
