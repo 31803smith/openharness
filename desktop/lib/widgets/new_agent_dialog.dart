@@ -10,6 +10,7 @@ import '../core/engine_availability.dart';
 import '../core/codex_profiles.dart';
 import '../shared/theme/app_theme.dart' as grid;
 import '../shared/widgets/app_checkbox.dart';
+import '../shared/widgets/app_choice_picker.dart';
 import '../shared/widgets/app_dialog.dart';
 import '../shared/widgets/app_select_field.dart';
 import '../shared/widgets/labeled_field.dart';
@@ -332,14 +333,13 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
       widget.notifier.stateOf(_machineId)?.machine.displayName ??
       'this machine';
 
-  String _machineLabel(MachineState machine) => [
-    machine.machine.displayName,
+  String _machineDetail(MachineState machine) => [
     machine.isLocalMachine ? 'This computer' : 'Remote',
     if (machine.nodeOnline == false)
       'Offline'
     else if (machine.needsLink)
       'Link required',
-  ].join(' — ');
+  ].join(' · ');
 
   Future<void> _browse() async {
     if (_picking || _choicesLocked) return;
@@ -625,17 +625,33 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
             widget.notifier.machineStates[_machineId]?.nodeOnline == false ||
             widget.notifier.machineStates[_machineId]?.needsLink == true) ...[
           const FieldLabel('Machine'),
-          AppSelectField<String>(
+          AppChoicePicker<String>(
             key: const Key('new-agent-machine-field'),
             value: _machineId,
+            moreKey: const Key('new-agent-machine-more'),
+            moreLabel: 'More machines',
+            optionKey: (id) => ValueKey('new-agent-machine-$id'),
+            showDetails: true,
+            preferredValues: [
+              for (final machine in widget.notifier.machineStates.values)
+                if (machine.isLocalMachine) machine.machine.machineId,
+            ],
             options: [
               for (final machine in widget.notifier.machineStates.values)
                 SelectOption(
                   value: machine.machine.machineId,
-                  label: _machineLabel(machine),
+                  label: machine.machine.displayName,
+                  detail: _machineDetail(machine),
+                  leading: () => Icon(
+                    machine.isLocalMachine
+                        ? LucideIcons.laptop
+                        : LucideIcons.monitor,
+                    size: 18,
+                  ),
                 ),
             ],
             onChanged: (id) {
+              if (id == _machineId || _choicesLocked) return;
               setState(() {
                 _machineRevision++;
                 _machineId = id;
@@ -679,13 +695,6 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
         ),
         const SizedBox(height: _gapField),
         const FieldLabel('Agent'),
-        // The app's own picker, not `DropdownButtonFormField`.
-        //
-        // Material's dropdown renders its own popup, anchors it OVER the field
-        // instead of under it, forces the panel to the field's width, and comes
-        // out square-cornered and edge-to-edge whatever you pass it — while
-        // ignoring both `menuTheme` and `popupMenuTheme`, so it could not be
-        // made to match any other menu in this app.
         AgentPicker(
           value: _engine,
           options: [

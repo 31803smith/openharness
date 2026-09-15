@@ -11,6 +11,7 @@ import 'package:harness/core/models.dart';
 import 'package:harness/state/app_state.dart';
 import 'package:harness/state/pane_arrangement.dart';
 import 'package:harness/widgets/new_agent_dialog.dart';
+import 'package:harness/shared/widgets/app_choice_picker.dart';
 import 'package:harness/shared/widgets/app_select_field.dart';
 
 class _Folders extends FileSelectorPlatform {
@@ -233,10 +234,11 @@ void main() {
         local: false,
         initialPaths: const ['/custom/work-login'],
       );
-      final machineField = tester.widget<AppSelectField<String>>(
+      final machineField = tester.widget<AppChoicePicker<String>>(
         find.byKey(const Key('new-agent-machine-field')),
       );
-      expect(machineField.options.single.label, 'This Mac — Remote');
+      expect(machineField.options.single.label, 'This Mac');
+      expect(machineField.options.single.detail, 'Remote');
       expect(find.widgetWithText(FilledButton, 'New Harness'), findsOneWidget);
       expect(
         find.text(
@@ -407,6 +409,9 @@ void main() {
         }),
       ]);
       await tester.pumpAndSettle();
+      await tester.ensureVisible(
+        find.byKey(const Key('new-agent-codex-profile-field')),
+      );
       await tester.tap(find.byKey(const Key('new-agent-codex-profile-field')));
       await tester.pumpAndSettle();
       expect(find.text('work-login'), findsOneWidget);
@@ -439,7 +444,9 @@ void main() {
     await selectSecond(tester);
     await tester.tap(find.byKey(const Key('new-agent-engine-field')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Claude').last);
+    await tester.ensureVisible(find.text('Claude Code').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Claude Code').last);
     await tester.pumpAndSettle();
     expect(
       find.byKey(const Key('new-agent-codex-profile-field')),

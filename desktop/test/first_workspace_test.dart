@@ -8,6 +8,7 @@ import 'package:harness/auth/auth_session.dart';
 import 'package:harness/core/config.dart';
 import 'package:harness/core/engine_availability.dart';
 import 'package:harness/core/models.dart';
+import 'package:harness/shared/widgets/app_choice_picker.dart';
 import 'package:harness/shared/widgets/app_select_field.dart';
 import 'package:harness/state/app_state.dart';
 import 'package:harness/state/pane_arrangement.dart';
@@ -157,15 +158,15 @@ void main() {
         expect(node.hasPrimaryFocus, isTrue);
       }
 
-      await tabTo(fieldFocus('new-agent-machine-field'), back: true);
-      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-      await tester.sendKeyEvent(LogicalKeyboardKey.keyW, character: 'w');
-      await tester.pumpAndSettle();
+      await tabTo(
+        Focus.of(tester.element(find.text('Workshop machine'))),
+        back: true,
+      );
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pumpAndSettle();
       expect(
         tester
-            .widget<AppSelectField<String>>(
+            .widget<AppChoicePicker<String>>(
               find.byKey(const Key('new-agent-machine-field')),
             )
             .value,
@@ -340,9 +341,12 @@ void main() {
       await tester.pump();
       expect(picker.opened, 1);
       expect(find.text('/work/my-project'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('new-agent-machine-m')));
+      await tester.pump();
+      expect(find.text('/work/my-project'), findsOneWidget);
       expect(
         tester
-            .widget<AppSelectField<String>>(
+            .widget<AppChoicePicker<String>>(
               find.byKey(const Key('new-agent-machine-field')),
             )
             .value,
@@ -350,13 +354,13 @@ void main() {
       );
       expect(
         tester
-            .widget<AppSelectField<String>>(
+            .widget<AppChoicePicker<String>>(
               find.byKey(const Key('new-agent-machine-field')),
             )
             .options
             .last
-            .label,
-        'Remote computer — Remote — Offline',
+            .detail,
+        'Remote · Offline',
       );
       expect(app.launches, isEmpty);
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
@@ -512,13 +516,17 @@ void main() {
         expect(find.byType(AlertDialog), findsOneWidget);
         expect(find.text('/work/existing'), findsNothing);
         expect(find.text('Choose a folder…'), findsOneWidget);
-        final machineField = tester.widget<AppSelectField<String>>(
+        final machineField = tester.widget<AppChoicePicker<String>>(
           find.byKey(const Key('new-agent-machine-field')),
         );
         expect(machineField.value, 'm');
+        expect(machineField.options.map((option) => option.detail), [
+          'This computer',
+          'Remote',
+        ]);
         expect(machineField.options.map((option) => option.label), [
-          'My computer — This computer',
-          'Remote computer — Remote',
+          'My computer',
+          'Remote computer',
         ]);
         expect(
           tester
