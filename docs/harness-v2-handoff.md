@@ -1,6 +1,6 @@
 # Harness v2: goal, plan, and continuation handoff
 
-Updated September 14, 2026. Resume on current **main**, preserve local work, and
+Updated September 15, 2026. Resume on current **main**, preserve local work, and
 commit/push completed changes frequently as the user requests.
 
 This is the current continuation guide. The detailed UI contract is
@@ -98,6 +98,8 @@ Recent pushed checkpoints:
 
 | Checkpoint | Change |
 | --- | --- |
+| **2292fe8** | Cached commit receipts show their existing outcome paragraphs, keeping useful earlier context visible. |
+| **08f4c98** | Retain earlier existing responses so an acknowledgement or commit receipt does not hide the session's purpose. |
 | **76bdf6e** | Disconnected previews retain text with honest state; all preview and existing desktop checks verified together. |
 | **91cfb6a** | Shared responsive previews in Cmd-O and inline search, waiting-first groups, retained keyboard ownership and visible actions after expansion. |
 | **7da0c12** | Bounded existing-content cache, two background reads at a time, independent request/response records, stale-session guards and live event isolation. |
@@ -111,9 +113,17 @@ found useful requests and full saved answers in several Codex sessions, and no
 meaningful text in one Claude session. It does not invent missing content or
 promise complete coverage for every engine. The protocol is unchanged.
 
-The final full run passed **1,562 desktop tests**, with one optional media
+The full run passed **1,562 desktop tests**, with one optional media
 placeholder skipped: /private/tmp/harness-preview-context-verified.log. All **13 changed
 Dart files analyze cleanly**: /private/tmp/harness-preview-context-analyze.log.
+After incorporating the separate alternate-screen scrolling fix and the final
+outcome-excerpt refinement, **18 focused preview tests pass**:
+/private/tmp/harness-preview-final-checks.log. The final three affected Dart files
+also analyze cleanly: /private/tmp/harness-preview-outcome-analyze.log.
+The **14 core preview tests** also pass after integrating the subsequent installer
+and dial-log commits through **1ce585c**:
+/private/tmp/harness-preview-latest-main-checks.log. The running preview remains
+the verified **2292fe8** build described below.
 The focused regression pass also covers large-text resize, remapped keyboard
 actions, retained focus, first-use actions, caching and session identity.
 The last unchanged native contract run passes
@@ -135,16 +145,21 @@ Only supported current preview location:
 
 /Users/ab/code/autonomous-harness/desktop/build/macos/Build/Products/Release/Harness.app
 
-The preview was updated through **518977c** using Quit and Keep Windows and
-verified visually. The console is accessible; older locked-console notes are
-obsolete. Before replacing it with later changes, verify the new Release build
+The preview was updated through **2292fe8** using Quit and Keep Windows. The
+Release build passed in /private/tmp/harness-preview-outcome-release.log; the
+prepared and installed bundles passed deep, strict signature verification. The
+native preview was inspected with real session data: the idle collaboration
+session shows its completed commit outcome and earlier feature explanations,
+with search focus retained. The original two working panes restored successfully.
+The console is accessible; older locked-console notes are obsolete. Before replacing
+it with later changes, verify the new Release build
 and signatures, use **Quit and Keep Windows**, then check the exact process is
 stopped. Back up and replace only the current checkout's bundle, verify it, and
 reopen that exact path. Ordinary Quit can terminate agents. Do not call getApp
 between quitting and copying, since that lookup can relaunch the app.
 
-A verified previous preview backup is
-/private/tmp/harness-before-518977c-o88b2e1p/Harness.app.
+The immediately previous preview backup is
+/private/tmp/harness-before-preview-outcome-6xdqf6tv/Harness.app.
 Do not open the other checkout's retired UI or /Applications/Harness.app. Do not
 restart/upgrade the user's CLI daemon or type test commands into working agents.
 Temporary logs, SDKs, builds, account state and preview processes do not transfer

@@ -35,8 +35,9 @@ class SessionPreview {
   String? get response => completedText ?? savedText;
   String? get responseExcerpt {
     final text = response;
-    if (text == null || completedText != null || contextResponse == text)
+    if (text == null || completedText != null || contextResponse == text) {
       return text;
+    }
     // Cached fullText may include the "I'll commit" preamble before the final
     // receipt. Keep the existing outcome paragraphs, not just the preamble.
     final paragraphs = text.split(RegExp(r'\n\s*\n'));
