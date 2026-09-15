@@ -9,6 +9,7 @@ import 'package:harness/core/config.dart';
 import 'package:harness/core/engine_availability.dart';
 import 'package:harness/core/models.dart';
 import 'package:harness/state/app_state.dart';
+import 'package:harness/core/project_folder.dart';
 import 'package:harness/state/pane_arrangement.dart';
 import 'package:harness/widgets/new_agent_dialog.dart';
 import 'package:harness/shared/widgets/app_choice_picker.dart';
@@ -97,6 +98,7 @@ class _Notifier extends AppNotifier {
     String machineId, {
     required String engine,
     required String folder,
+    ProjectFolderRequest? projectFolder,
     bool bypassPermission = false,
     String? codexHome,
     String? swarmId,
@@ -199,7 +201,7 @@ void main() {
     expect(find.text('Link a profile folder…'), findsOneWidget);
     await tester.tap(find.text('Browse…'));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'New Harness'));
+    await tester.tap(find.widgetWithText(FilledButton, 'New Agent'));
     await tester.pumpAndSettle();
     expect(notifier.calls.single['codexHome'], isNull);
   });
@@ -220,7 +222,7 @@ void main() {
     expect(find.text('Link a profile folder…'), findsOneWidget);
     await tester.tap(find.text('Browse…'));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'New Harness'));
+    await tester.tap(find.widgetWithText(FilledButton, 'New Agent'));
     await tester.pumpAndSettle();
     expect(notifier.calls.single['codexHome'], '/custom/work-login');
     expect(tester.takeException(), isNull);
@@ -239,10 +241,10 @@ void main() {
       );
       expect(machineField.options.single.label, 'This Mac');
       expect(machineField.options.single.detail, 'Remote');
-      expect(find.widgetWithText(FilledButton, 'New Harness'), findsOneWidget);
+      expect(find.widgetWithText(FilledButton, 'New Agent'), findsOneWidget);
       expect(
         find.text(
-          'This harness will run on This Mac. Its folders are browsed through '
+          'This agent will run on This Mac. Its folders are browsed through '
           'the remote CLI.',
         ),
         findsOneWidget,
@@ -299,7 +301,7 @@ void main() {
     await tester.pump();
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pumpAndSettle();
-    final createButton = find.widgetWithText(FilledButton, 'New Harness');
+    final createButton = find.widgetWithText(FilledButton, 'New Agent');
     expect(tester.widget<FilledButton>(createButton).onPressed, isNull);
     expect(folderFocus.hasPrimaryFocus, isTrue);
     expect(notifier.calls, isEmpty);
@@ -337,7 +339,7 @@ void main() {
     expectProfile(tester, 'codex1');
     await tester.tap(find.text('Browse…'));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'New Harness'));
+    await tester.tap(find.widgetWithText(FilledButton, 'New Agent'));
     await tester.pumpAndSettle();
     expect(notifier.calls.single['codexHome'], '/accounts/codex1');
   });
@@ -361,7 +363,7 @@ void main() {
     expectProfile(tester, 'Default profile');
     await tester.tap(find.text('Browse…'));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'New Harness'));
+    await tester.tap(find.widgetWithText(FilledButton, 'New Agent'));
     await tester.pumpAndSettle();
     expect(notifier.calls.single['codexHome'], isNull);
   });
@@ -374,7 +376,7 @@ void main() {
       expectProfile(tester, 'codex2');
       await tester.tap(find.text('Browse…'));
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(FilledButton, 'New Harness'));
+      await tester.tap(find.widgetWithText(FilledButton, 'New Agent'));
       await tester.pumpAndSettle();
       expect(notifier.calls, [
         {'engine': 'codex', 'codexHome': '/accounts/codex2', 'folder': '/work'},
@@ -454,7 +456,7 @@ void main() {
     );
     await tester.tap(find.text('Browse…'));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'New Harness'));
+    await tester.tap(find.widgetWithText(FilledButton, 'New Agent'));
     await tester.pumpAndSettle();
     expect(notifier.calls.single['codexHome'], isNull);
     expect(notifier.calls.single['engine'], 'claude');
@@ -474,7 +476,7 @@ void main() {
       );
       await tester.tap(find.text('Browse…'));
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(FilledButton, 'New Harness'));
+      await tester.tap(find.widgetWithText(FilledButton, 'New Agent'));
       await tester.pumpAndSettle();
       expect(notifier.calls.single['codexHome'], isNull);
     },

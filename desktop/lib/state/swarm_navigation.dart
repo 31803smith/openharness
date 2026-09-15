@@ -691,7 +691,7 @@ Swarm? _matchingGroupSwarm(AppNotifier app, SwarmDestination destination) {
 
 String _agentCountLabel(Iterable<String?> ids) {
   final count = ids.whereType<String>().length;
-  return '$count ${count == 1 ? 'harness' : 'harnesses'}';
+  return '$count ${count == 1 ? 'agent' : 'agents'}';
 }
 
 String _swarmMachineLabel(AppNotifier app, Iterable<String> machineIds) {

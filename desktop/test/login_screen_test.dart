@@ -78,7 +78,7 @@ void main() {
     await tester.pumpWidget(_host(app));
     await tester.pump(const Duration(milliseconds: 100));
 
-    expect(find.text('All your harnesses, on one screen'), findsOneWidget);
+    expect(find.text('All your agents, on one screen'), findsOneWidget);
     expect(find.text('Sign in'), findsOneWidget);
     expect(find.byType(WelcomeWorkspacePreview), findsOneWidget);
     // The real mark, from the bundle — `Icons.memory` used to stand here and
@@ -95,7 +95,7 @@ void main() {
     // The promise the screen exists to make, in words with no jargon in them.
     expect(
       find.textContaining(
-        'Start with one harness and add panes as your work grows',
+        'Start with one agent and add panes as your work grows',
       ),
       findsOneWidget,
     );

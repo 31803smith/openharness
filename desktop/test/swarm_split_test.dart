@@ -341,7 +341,7 @@ void main() {
           isTrue,
         );
         if (change != 'switch') {
-          expect(app.lastError, contains('harness was created'));
+          expect(app.lastError, contains('agent was created'));
         }
         expect(connection.calls, isNot(contains('agent_delete')));
         await tester.pumpWidget(const SizedBox());
@@ -377,11 +377,11 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pump();
     expect(find.byKey(const ValueKey('harness-picker-new')), findsOneWidget);
-    expect(find.byKey(const ValueKey('swarm-row-action')), findsNothing);
+    expect(find.byKey(const ValueKey('swarm-row-action')), findsOneWidget);
     expect(find.byType(AlertDialog), findsNothing);
     await chord(tester, LogicalKeyboardKey.keyN, shift: true);
     await tester.pump();
-    expect(find.text('New Harness to the right'), findsOneWidget);
+    expect(find.text('New Agent to the right'), findsOneWidget);
     expect(find.text('/work/checkout'), findsOneWidget);
     expect(app.panes, [pane]);
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);

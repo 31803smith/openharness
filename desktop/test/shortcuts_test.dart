@@ -299,7 +299,7 @@ void main() {
         ['⌘', '→'],
       ]);
 
-      final next = rows.firstWhere((row) => row.label == 'Next Harness');
+      final next = rows.firstWhere((row) => row.label == 'Next Tab');
       expect(next.chords, [
         ['⇧', '⌘', ']'],
         ['⌃', '⇥'],

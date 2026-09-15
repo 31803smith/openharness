@@ -53,6 +53,14 @@ const SUBMIT_MAX_RETRIES = 2
 // Non-cursor engines re-observe the pane (instead of erroring) while an accepted-but-not-yet-started
 // prompt is in flight. Bounded so a truly wedged session eventually reverts to the retry/error path.
 const SUBMIT_MAX_OBSERVES = 5
+// Engines whose own TUI queues a message typed while a turn is running, and runs it when the turn ends.
+// For these the daemon types immediately — the follow-up appears in the pane the moment it is spoken,
+// and the TUI's queue is the one the user can see and edit. Every other engine gets this file's FIFO,
+// pasted only once the pane is idle. Codex joined claude here on 2026-09-15 (owner: a voice command
+// spoken while a Codex task ran sat invisible until the task ended); Codex has queued composer input
+// since 0.36, and the retry path below already knows a prompt that left the composer without a
+// turn_started is "queued by the TUI as a follow-up", not lost.
+const TYPES_WHILE_BUSY: ReadonlySet<string> = new Set(['claude', 'codex'])
 
 export interface SessionInputDelivery {
   deliveryId: string
@@ -181,7 +189,7 @@ export class SessionInputController {
     this.dropExpired(sessionId, state)
     if (state.controlLocked
       || (deliveryId && (state.deliveryId || state.dispatching || state.turnOpen || state.awaitingFingerprint || state.settling))
-      || (session.engine !== 'claude' && (state.turnOpen || state.awaitingFingerprint || state.settling))) {
+      || (!TYPES_WHILE_BUSY.has(session.engine) && (state.turnOpen || state.awaitingFingerprint || state.settling))) {
       console.log(`[inject] ${sid(sessionId)} queued · engine=${session.engine} · depth=${state.queue.length + 1}`)
       this.enqueue(sessionId, state, content, deliveryId)
       return

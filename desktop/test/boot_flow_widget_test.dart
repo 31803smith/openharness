@@ -503,7 +503,7 @@ void main() {
 
     // The card leads with what the app does for you, not with its own name —
     // the wordmark left when the screen stopped being a logo over a button.
-    expect(find.text('All your harnesses, on one screen'), findsOneWidget);
+    expect(find.text('All your agents, on one screen'), findsOneWidget);
     expect(find.text('Sign in'), findsOneWidget);
     expect(find.byIcon(Icons.login), findsOneWidget);
   });
@@ -837,7 +837,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.text('New Harness'), findsWidgets);
+      expect(find.text('New Agent'), findsWidgets);
       expect(
         tester
             .widget<TextField>(
@@ -945,7 +945,7 @@ void main() {
   });
 
   testWidgets(
-    'offline selected harness retains its Swarm view with an offline message',
+    'offline selected agent retains its Swarm view with an offline message',
     (tester) async {
       final app = makeNotifier(AppStatus.authenticated);
       const machine = Machine(

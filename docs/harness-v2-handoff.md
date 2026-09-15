@@ -34,14 +34,72 @@ user for a benchmark window.
 
 ## Current product contract
 
+### September 15 continuation checkpoint
+
+- The user renamed the session concept to **Agent**: Open/New/Add/Stop/Restart
+  Agent, Find an agent, counts and recovery copy throughout Flutter and native
+  menus. Harness remains the app/device/CLI brand; saved names and wire IDs stay.
+- Cmd-N now opens results and preview immediately, with Open Agent / New Agent
+  below. This supersedes every earlier compact-first modal instruction. New Tab
+  remains compact until search activation.
+- New Agent is 760 logical pixels wide. Machines stay in one row; narrow/large
+  text moves excess machines into the overflow while preserving the selection.
+- Working folder now offers **New / Local / Remote**. New creates a unique
+  project under `~/Harness Projects`; Local browses the selected machine;
+  Remote clones a GitHub repository onto that machine. Folder preparation begins
+  only on submit. A known refused launch retains its prepared folder for retry.
+  Local works with the existing daemon protocol. Remote preparation needs this
+  checkout's accompanying CLI change; no real daemon was updated or restarted.
+- Machines is a native submenu tree with cached counts, names and engine icons.
+  Selection uses both machine and agent IDs. Existing views are revealed, stale
+  destinations are refused, and opening menus does no network work.
+- Verification: 339 affected Flutter tests, 57 CLI tests, TypeScript checking,
+  96 native keymap checks and 403 AppKit checks pass. No real agents were launched
+  or used for input tests, and no native latency benchmark was run. Captures:
+  `/private/tmp/harness-agent-folder-captures` and
+  `/private/tmp/harness-agent-picker-captures`.
+
+Saved and pushed to `origin/main`: **9d0150d** (remote project preparation),
+**e049348** (Agent terminology, creation and machine menus), **10811c3** (final
+validation cleanup). The 339-test pass was followed by six passing focused
+checks after the analyzer cleanup; changed Dart files now analyze without issues.
+
+The release build of **fb29d7d** succeeded and passed deep/strict codesign
+verification at
+`/private/tmp/harness-pane-controls-release/Build/Products/Release/Harness.app`.
+This includes the concurrently pushed busy-Codex input and dial navigation work
+(d9bd13c) and firmware version note (5c3a7fa), preserved by rebasing the final
+documentation commit. After that rebase, 17 desktop dial/creation/menu checks and
+40 CLI input checks passed. No real daemon or firmware was updated.
+Build log: `/private/tmp/harness-agent-rebased-release.log`; test logs:
+`/private/tmp/harness-agent-rebased-checks.log`,
+`/private/tmp/harness-agent-rebased-cli-tests.log`,
+`/private/tmp/harness-agent-ui-regressions.log`,
+`/private/tmp/harness-agent-final-checks.log`,
+`/private/tmp/harness-project-folder-cli-tests.log`,
+`/private/tmp/harness-agent-menus-native.log`.
+
+**Live installation is pending.** The supported running bundle below is still
+**d22b338**. CUA returned `cgWindowNotFound` for its window and Finder actions,
+although its app list and an exact process check show Harness running. No
+process was killed or bundle replaced while running. The user was asked to bring
+the window onto the current screen, or leave the running preview as is. Once
+visible, use **Quit and Keep Windows**, verify the exact process stopped, back
+up the live bundle, stage/codesign the new one, and swap it before relaunching.
+Do not launch the derived-data copy alongside the supported one.
+
+CUA-sent Command-N remains inconclusive from the earlier live preview, although
+native callback and exported shortcut checks pass. The current CUA window access
+failure does not justify changing keyboard dispatch.
+
 Use [the detailed entry/pane contract](harness-agent-first-tabs.md) when editing
 or validating UI. The decisions that previously conflicted with older handoffs
 are:
 
 - **Add Harness unifies search and creation.** A single titlebar button and
-  File → Add Harness… open the compact chooser: search plus Open/New actions.
-  Typing or explicit search activation reveals results and preview without
-  moving the field. New remains visible after searching and preserves split
+  File → Add Harness… open results and preview immediately, with the search
+  field focused and Open/New actions below. This supersedes compact-first modal
+  entry; the New Tab page stays compact until activated. New preserves split
   placement. The bell stays beside the traffic lights.
 - **Cmd-T: New Tab; Cmd-N: Add Harness; Shift-Cmd-N: direct New Harness; Cmd-S: Layout.**
   Cmd-O is unbound by default.
@@ -257,12 +315,10 @@ The approved visible-choice refinement is implemented in **620a868**. This remov
 the primary machine dropdown and the detached selected-agent line. It preserves
 engine discovery, profile checks, folder targeting and uncertain-launch recovery.
 
-The **larger project-creation workflow is not implemented**. The discussed
-shape is New Project / Existing Folder / Clone Repository, remembered agent,
-and compact This Machine / linked-machine choices in a spacious form. A new
-project would create its own folder, requiring no picker or typing. Do not infer
-the project from the current pane in a multiproject workspace. The visible-choice
-refinement is separate from that larger workflow.
+The **New / Local / Remote project-folder workflow is now implemented**; see the
+continuation checkpoint above and [creation recovery](harness-agent-creation.md).
+It preserves remembered agents, selected-machine targeting and the original split.
+Do not infer a project from the current pane in a multiproject workspace.
 
 Command-held tab number hints were discussed as a discoverability improvement:
 brief hold, subtle hints in each tab's right edge, no label movement. They have

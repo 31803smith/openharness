@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../shared/theme/app_theme.dart' as grid;
 import '../state/swarm_search.dart';
 
-/// The shared input for the start page, Open Harness and split searches.
+/// The shared input for the start page, Open Agent and split searches.
 /// Flutter owns the caret and result navigation; native chrome only opens it.
 class SwarmSearchInput extends StatelessWidget {
   const SwarmSearchInput({
@@ -77,7 +77,7 @@ class SwarmSearchInput extends StatelessWidget {
       decoration: InputDecoration(
         hintText: search?.isCommandMode == true
             ? search!.hint
-            : hintText ?? search?.hint ?? 'Find a harness',
+            : hintText ?? search?.hint ?? 'Find an agent',
         hintStyle: const TextStyle(fontSize: 16, color: Colors.white60),
         prefixIcon: const Icon(Icons.search, size: 20, color: Colors.white60),
         prefixIconConstraints: BoxConstraints(

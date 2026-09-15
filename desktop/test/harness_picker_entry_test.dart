@@ -35,7 +35,7 @@ void main() {
     (const Size(760, 760), 1.0),
     (const Size(600, 680), 2.0),
   ]) {
-    testWidgets('compact Add Harness keeps its editor stable at $size, $scale', (
+    testWidgets('Add Agent opens results and preview at $size, $scale', (
       tester,
     ) async {
       tester.view.devicePixelRatio = 1;
@@ -69,7 +69,11 @@ void main() {
       expect(field, findsNothing);
       await chord(tester, LogicalKeyboardKey.keyN);
       expect(field, findsOneWidget);
-      expect(find.byType(SwarmSearchResults), findsNothing);
+      expect(find.byType(SwarmSearchResults), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('swarm-search-preview')),
+        findsOneWidget,
+      );
       expect(find.byKey(const ValueKey('harness-picker-open')), findsOneWidget);
       expect(find.byKey(const ValueKey('harness-picker-new')), findsOneWidget);
       final before = tester.getRect(field);
@@ -93,16 +97,12 @@ void main() {
         });
       }
 
-      await capture('compact');
-      // Return reveals choices, never opens a result the user has not seen.
-      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-      await tester.pump();
-      expect(find.byType(SwarmSearchResults), findsOneWidget);
+      await capture('initial');
       expect(app.focusedPane, same(pane));
-      expect(tester.getRect(field), before);
-      expect(tester.widget<TextField>(field).controller, same(controller));
       await tester.enterText(field, 'idempotency');
       await tester.pump();
+      expect(tester.getRect(field), before);
+      expect(tester.widget<TextField>(field).controller, same(controller));
       expect(find.textContaining('Payment retries now reuse'), findsOneWidget);
       await capture('results');
       // Creation remains reachable after a query, including with the keyboard.
@@ -110,7 +110,7 @@ void main() {
         tester.element(
           find.descendant(
             of: find.byKey(const ValueKey('harness-picker-new')),
-            matching: find.text('New Harness'),
+            matching: find.text('New Agent'),
           ),
         ),
       ).requestFocus();
