@@ -1903,10 +1903,10 @@ async function runForeground(session: AuthSession): Promise<void> {
 
 
   // SUMMARY_MODE picks the recap writer.
-  //   model (default) — recap = llm(instruct, previous recap, the user's ask, the answer): a disposable
+  //   model — recap = llm(instruct, previous recap, the user's ask, the answer): a disposable
   //     one-shot of the session's own engine. The previous recap is what lets "same fix, other file"
   //     recap as what was done rather than as a fragment. Costs the one-shot's latency on every turn.
-  //   local — NO MODEL IN THE LOOP. The dial is cabled to the Mac whose window already shows this text
+  //   local (default) — NO MODEL IN THE LOOP. The dial is cabled to the Mac whose window already shows this text
   //     in full, so the recap is a glance and the detail is one turn of the head away; the one-shot cost
   //     ~9s of the user's turn to say something they were already looking at. Instant, but every recap
   //     stands alone.

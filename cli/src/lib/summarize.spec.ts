@@ -42,7 +42,7 @@ vi.mock('./oneshot.js', () => ({
   shutdownOneShotPool: vi.fn(),
 }))
 
-import { deriveTurnBody, summarizeTurnText, syncSummaryPoolSessions } from './summarize.js'
+import { deriveTurnBody, summarizeTurnText, syncSummaryPoolSessions, deriveTurnSummary } from './summarize.js'
 
 beforeEach(() => {
   mocks.runClaude.mockReset()
@@ -328,5 +328,24 @@ describe('the body under the headline', () => {
     expect(prompt).not.toContain('Part 2')
     expect(prompt).not.toContain('LAY PART 2')
     expect(prompt).not.toContain('two parts')
+  })
+})
+
+describe('deriveTurnSummary (the local recap)', () => {
+  it('headlines the END of the answer, not its opening line', () => {
+    // A Codex turn that asked a question: the engine's first message announces the question, its last
+    // states the outcome a minute later. The terminal is showing the outcome when the recap lands.
+    const text = 'I’ll ask for the colour choice.\n\nBlue selected.'
+    expect(deriveTurnSummary(text)?.split('\n')[0]).toBe('Blue selected.')
+  })
+
+  it('still skips a label at the top of the closing paragraph', () => {
+    const text = 'Working on it.\n\nKết quả:\nĐã sửa xong file cấu hình.'
+    expect(deriveTurnSummary(text)?.split('\n')[0]).toBe('Đã sửa xong file cấu hình.')
+  })
+
+  it('keeps the whole answer in the body', () => {
+    const text = 'I’ll ask for the colour choice.\n\nBlue selected.'
+    expect(deriveTurnSummary(text)?.split('\n\n')[1]).toBe('I’ll ask for the colour choice. Blue selected.')
   })
 })

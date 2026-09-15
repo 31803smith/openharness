@@ -60,6 +60,16 @@ export interface QuestionRow {
 export interface QuestionView {
   kind: 'question'
   permission?: boolean
+  /**
+   * The dialog is on screen but its top — the question and its first rows — is scrolled out of the pane
+   * (Codex's request_user_input keeps the footer anchored and lets a short pane cut the top off; measured
+   * in a four-pane window: rows 3–5 and the footer visible, "1." and the question gone). Enough to know a
+   * dialog is STILL OPEN — the watcher must not close it — and not enough to announce as a question.
+   */
+  partial?: boolean
+  /** The footer says a digit only highlights and Enter commits (`enter to submit answer` — Codex's
+   *  request_user_input). Absent where one digit selects and submits, which is every other dialog. */
+  enterSubmits?: boolean
   question: string
   rows: QuestionRow[]
   multi: boolean
@@ -514,6 +524,10 @@ export function parseQuestionPane(capture: string): PaneView {
     if (/^\s*[❯›>]?\s*\d+\.\s+\[/.test(lines[i])) checkbox = true
     if (row.number === '1') { start = i; break }
   }
+  const enterSubmits = /enter to submit answer/i.test(lines[footer])
+  if (rows.length && start < 0 && enterSubmits) {
+    return { kind: 'question', partial: true, enterSubmits, question: '', rows, multi: checkbox, typeRow: null }
+  }
   if (start < 0 || rows.length === 0) return null
 
   // The question is the nearest real text line above the rows. The dialog paints it between its header
@@ -533,6 +547,7 @@ export function parseQuestionPane(capture: string): PaneView {
   const answerable = rows.filter((r) => !CHAT_ROW.test(r.label) && !TYPE_ROW.test(r.label))
   return {
     kind: 'question',
+    ...(enterSubmits ? { enterSubmits } : {}),
     question,
     rows: answerable,
     multi: checkbox,
@@ -549,8 +564,9 @@ export function parseQuestionPane(capture: string): PaneView {
  * draws an unnumbered list navigated with the arrow keys, so its rows carry an index and are reached by
  * walking down to them.
  */
-function rowKeys(engine: AgentEngine, row: QuestionRow): string[] {
+function rowKeys(engine: AgentEngine, row: QuestionRow, view?: QuestionView): string[] {
   if (engine === 'amp') return ampSelectionKeys(row)
+  if (engine === 'codex') return codexRowKeys(row, view)
   // Kilo's rows sit side by side, so its walk is horizontal — see engines/kilo/askQuestion.ts.
   if (engine === 'kilo') return kiloSelectionKeys(row)
   // Same dialog, different engine: opencode numbers its ask dialog but not its permission prompt, so the
@@ -558,6 +574,16 @@ function rowKeys(engine: AgentEngine, row: QuestionRow): string[] {
   if (row.walk === 'right') return kiloSelectionKeys(row)
   if (row.walk === 'down') return ampSelectionKeys(row)
   return [row.number]
+}
+
+/**
+ * Codex, measured 2026-09-15 on 0.149: in its request_user_input dialog a digit only MOVES the highlight
+ * and Enter submits (`enter to submit answer`) — a digit alone left the dialog up and the device's answer
+ * reported as stuck. Its approval prompt is the other way round and was verified earlier: one digit
+ * selects and commits, so that one keeps the single key.
+ */
+export function codexRowKeys(row: QuestionRow, view?: QuestionView): string[] {
+  return view?.enterSubmits ? [row.number, 'Enter'] : [row.number]
 }
 
 export function matchRow(rows: QuestionRow[], answer: string): QuestionRow | null {
@@ -669,6 +695,14 @@ export class AskQuestionController {
         return answered > 0
       }
       if (!allowPermissions && view.kind === 'question' && view.permission) return false
+      if (view.kind === 'question' && view.partial) {
+        // The dialog's top is out of the pane. If we have keyed an answer it has not been taken yet;
+        // give the TUI a beat. If we have not, there is nothing to match an answer against.
+        if (answered === 0) { console.warn('[question] dialog scrolled out of view — cannot key an answer'); return false }
+        if (++repeats >= 2) { console.warn('[question] dialog stuck (scrolled)'); return false }
+        await wait(STEP_MS)
+        continue
+      }
       if (view.kind === 'review') {
         if (!allowPermissions && answered === 0) return false
         return this.deps.sendKey(terminalTarget, view.submitRow)
@@ -713,7 +747,7 @@ export class AskQuestionController {
       if (row) {
         // One digit selects AND submits — except on Amp, whose rows are unnumbered and reached by
         // walking the list, so this is a short sequence rather than a single key.
-        for (const key of rowKeys(engine, row)) {
+        for (const key of rowKeys(engine, row, view)) {
           if (!await this.deps.sendKey(terminalTarget, key)) return false
           await wait(TEXT_MS)
         }
@@ -927,6 +961,12 @@ export class QuestionWatcher {
     if (blocked) return
     const engine = this.deps.getSession(sessionId)?.engine ?? 'claude'
     const view = parseEngineQuestionPane(engine, await this.deps.capture(terminalTarget, CAPTURE_LINES) ?? '')
+    if (view?.kind === 'question' && view.partial) {
+      // Scrolled so its top is out of the pane: still open, so the client showing it keeps showing it —
+      // but there is no question text to announce, and the rows in view are whichever the scroll left.
+      this.misses.delete(sessionId)
+      return
+    }
     if (!view || view.kind !== 'question' || !view.question || view.rows.length === 0) {
       // Dialog closed, or moved to review. Either way it is no longer waiting on anybody, so the clients
       // showing it are told to stop — see noteGone for why this is not announced on the first miss.

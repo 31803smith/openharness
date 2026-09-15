@@ -330,11 +330,13 @@ const envSchema = z.object({
   AMP_SUMMARY_MODE: z.string().default('medium'),
   // Shared recap reasoning level for Claude and Codex. Cursor effort is part of its model identifier.
   SUMMARY_EFFORT: z.enum(['low', 'medium', 'high']).default('low'),
-  // How the device recap is written. `model`: a disposable one-shot of the session's own engine, fed the
-  // PREVIOUS recap, the user's ask and the answer — so a turn that says "same fix, other file" recaps as
-  // what it did, not as a fragment; costs the one-shot's latency per turn. `local`: no model in the loop,
-  // the answer's first sentence is excerpted — instant, but every recap stands alone.
-  SUMMARY_MODE: z.enum(['model', 'local']).default('model'),
+  // Who writes the device recap's headline. `local` (default since 2026-09-15): no model in the loop —
+  // the answer's first sentence is excerpted, instantly; the dial shows what the terminal shows, as it
+  // shows it. `model`: a disposable one-shot of the session's own engine, fed the previous recap, the
+  // user's ask and the answer — reads better across turns, but measured at ~9s of the user's turn to
+  // rephrase "Blue selected." as "Blue selected as the colour choice" (owner: the dial is cabled to the
+  // window already showing the answer in full; the recap is a glance, not prose).
+  SUMMARY_MODE: z.enum(['model', 'local']).default('local'),
   RECAP_WITHOUT_DEVICE: z.string().default('true').transform((v) => v !== 'false'),
   // Model for the voice router one-shot classifier (Overview voice → pick the agent). Small/fast by default.
   VOICE_ROUTE_MODEL: z.string().default('haiku'),
