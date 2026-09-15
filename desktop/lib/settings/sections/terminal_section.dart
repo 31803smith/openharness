@@ -6,7 +6,6 @@ import 'package:xterm/xterm.dart';
 import '../../shared/theme/app_theme.dart' as grid;
 import '../../shared/widgets/app_icon_button.dart';
 import '../../shared/widgets/app_select_field.dart';
-import '../../shared/widgets/section_scaffold.dart';
 import '../../shared/widgets/setting_row.dart';
 import '../../terminal/terminal_font_store.dart';
 import '../../terminal/terminal_theme.dart';
@@ -26,24 +25,21 @@ class TerminalSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     grid.AppTheme.watch(context);
-    return SectionScaffold(
-      title: 'Terminal',
-      subtitle: 'Colors and fonts for your agent terminals.',
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(20),
       // A SingleChildScrollView, never a ListView — same reason as Appearance:
       // a lazy list keeps children across a rebuild and strands them on the
       // palette they first mounted with.
-      child: SingleChildScrollView(
-        child: ValueListenableBuilder<TerminalStyle>(
-          valueListenable: terminalFontStore,
-          // Nested rather than merged into one builder: the two stores change
-          // independently, and this is the pane that has to show both at once.
-          builder: (context, style, _) =>
-              ValueListenableBuilder<TerminalThemeChoice>(
-                valueListenable: terminalThemeStore,
-                builder: (context, scheme, _) =>
-                    _Controls(style: style, scheme: scheme),
-              ),
-        ),
+      child: ValueListenableBuilder<TerminalStyle>(
+        valueListenable: terminalFontStore,
+        // Nested rather than merged into one builder: the two stores change
+        // independently, and this is the pane that has to show both at once.
+        builder: (context, style, _) =>
+            ValueListenableBuilder<TerminalThemeChoice>(
+              valueListenable: terminalThemeStore,
+              builder: (context, scheme, _) =>
+                  _Controls(style: style, scheme: scheme),
+            ),
       ),
     );
   }
@@ -65,22 +61,17 @@ class _Controls extends StatelessWidget {
         // person notices from across the room, and it is the one that
         // makes the two rows under it look different while they choose.
         SettingRow(
-          title: 'Colours',
-          detail: scheme.detail,
+          title: 'Colors',
           control: _SchemeField(scheme: scheme),
         ),
         const SizedBox(height: 10),
         SettingRow(
           title: 'Font',
-          detail: 'Font for agent output',
           control: _FamilyField(family: terminalFontStore.family),
         ),
         const SizedBox(height: 10),
         SettingRow(
           title: 'Size',
-          detail:
-              '${TerminalFontStore.minSize.round()}–'
-              '${TerminalFontStore.maxSize.round()}pt. Resize with ⌘+ and ⌘−',
           control: _SizeStepper(size: style.fontSize),
         ),
         const SizedBox(height: 14),
@@ -230,62 +221,17 @@ class _Preview extends StatelessWidget {
   final TerminalStyle style;
   final TerminalThemeChoice scheme;
 
-  /// The cell the renderer would derive from this style.
-  ///
-  /// Measured the way `TerminalPainter._measureCharSize` measures it — ten
-  /// `'m'` glyphs laid out and divided by ten — so the number shown is the one
-  /// the grid is actually built on, not an estimate of it.
-  static Size _cell(TerminalStyle style) {
-    final painter = TextPainter(
-      text: TextSpan(text: 'mmmmmmmmmm', style: style.toTextStyle()),
-      textDirection: TextDirection.ltr,
-      textScaler: TextScaler.noScaling,
-    )..layout();
-    return Size(painter.width / 10, painter.height);
-  }
-
   @override
   Widget build(BuildContext context) {
     grid.AppTheme.watch(context);
     final theme = Theme.of(context);
-    final cell = _cell(style);
-
-    return Container(
-      width: double.infinity,
-      decoration: BoxDecoration(
-        color: grid.AppGlass.surfaceFill,
-        borderRadius: BorderRadius.circular(14),
-        boxShadow: grid.AppGlass.cardShadow,
-      ),
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Wrap(
-            alignment: WrapAlignment.spaceBetween,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            spacing: 12,
-            runSpacing: 4,
-            children: [
-              Text('Preview', style: theme.textTheme.titleSmall),
-              // What the pick costs in geometry. This is the number that turns
-              // into a `terminal_resize` frame and a SIGWINCH at the far end,
-              // so the screen says it out loud rather than leaving the user to
-              // discover it by watching a TUI reflow.
-              Text(
-                'cell ${cell.width.toStringAsFixed(1)} × '
-                '${cell.height.toStringAsFixed(1)} pt',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: grid.AppPalette.textFaint,
-                  fontFeatures: const [FontFeature.tabularFigures()],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          _Screen(style: style, scheme: scheme),
-        ],
-      ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Preview', style: theme.textTheme.titleSmall),
+        const SizedBox(height: 10),
+        _Screen(style: style, scheme: scheme),
+      ],
     );
   }
 }
@@ -331,10 +277,6 @@ class _Screen extends StatelessWidget {
           TextSpan(
             style: base,
             children: [
-              // The row of `m`s is not decoration: it is the glyph the renderer
-              // measures the cell with, boxed so a face that fails to sit on
-              // the grid shows it as a rule that misses its corners.
-              const TextSpan(text: '┌─ mmmmmmmmmm ─┐\n'),
               TextSpan(text: 'agent@harness', style: dim),
               const TextSpan(text: ' ❯ flutter test\n'),
               TextSpan(text: '✓', style: ok),
@@ -384,7 +326,7 @@ class _ResetRow extends StatelessWidget {
           onPressed: atDefault
               ? null
               : () => unawaited(terminalFontStore.reset()),
-          child: const Text('Reset to default'),
+          child: const Text('Reset font'),
         ),
       ],
     );

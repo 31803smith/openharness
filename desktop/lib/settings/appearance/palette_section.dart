@@ -20,10 +20,8 @@ class PaletteSection extends StatelessWidget {
       builder: (context, prefs, _) => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const SectionHeading(
-            'Color palette',
-            subtitle: 'A coordinated look for your tabs, search and agents. Changes apply instantly.',
-          ),
+          const SectionHeading('Color palette'),
+          const SizedBox(height: 12),
           LayoutBuilder(
             builder: (context, constraints) {
               final columns = constraints.maxWidth >= 660
@@ -73,7 +71,7 @@ class _PaletteChoice extends StatelessWidget {
     button: true,
     selected: selected,
     onTap: onChoose,
-    label: '${palette.label} palette. ${palette.description}',
+    label: '${palette.label} palette',
     child: ExcludeSemantics(
       child: TextButton(
         key: ValueKey('palette-${palette.name}'),
@@ -91,7 +89,7 @@ class _PaletteChoice extends StatelessWidget {
             ),
           ),
           shape: WidgetStatePropertyAll(
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           ),
         ),
         child: Column(
@@ -118,11 +116,6 @@ class _PaletteChoice extends StatelessWidget {
                       : null,
                 ),
               ],
-            ),
-            const SizedBox(height: 2),
-            Text(
-              palette.description,
-              style: const TextStyle(fontSize: 11, color: Colors.white70),
             ),
           ],
         ),

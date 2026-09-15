@@ -34,7 +34,24 @@ user for a benchmark window.
 
 ## Current product contract
 
-### Latest: quiet device companion card
+### Latest: minimal Customize Harness
+
+The user explicitly prefers **less is better**: short labels, no repeated titles,
+no promotional descriptions and explanations only when a decision needs them.
+This preference is recorded in `harness-agent-first-tabs.md` and applies to future
+UI work. Background is now **Wallpaper**. All three customization tabs omit
+their redundant headers and intros; palette cards show names only. Font controls
+use quiet rows and previews omit explanatory paragraphs and cell measurements.
+Saved wallpaper, palette, typography and terminal settings retain their stores.
+Button order stays **New → Open** everywhere except **Open → New** under search
+on the New Harness page, as the user explicitly requested.
+Thirty-four affected checks pass, including keyboard selection, saved choices,
+focus restoration and terminal scale isolation. Captures and logs:
+`/private/tmp/harness-customize-minimal-captures`,
+`/private/tmp/harness-customize-minimal-tests.log` and
+`/private/tmp/harness-customize-minimal-analyze.log`.
+
+### Quiet device companion card — pushed f363c9f
 
 New Harness now shows a small **Meet the Harness device** card with a 36-pixel
 product image. The description and separate Learn more button are removed.

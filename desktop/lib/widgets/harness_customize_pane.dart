@@ -63,7 +63,7 @@ class HarnessCustomizePane extends StatelessWidget {
                   tabs: const [
                     Tab(
                       key: ValueKey('customize-background'),
-                      text: 'Background',
+                      text: 'Wallpaper',
                     ),
                     Tab(
                       key: ValueKey('customize-appearance'),
@@ -97,40 +97,25 @@ class _Backgrounds extends StatelessWidget {
   @override
   Widget build(BuildContext context) => SingleChildScrollView(
     padding: const EdgeInsets.all(20),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Change background',
-          style: Theme.of(context).textTheme.titleLarge,
+    child: ValueListenableBuilder<AppearancePrefs>(
+      valueListenable: store,
+      builder: (context, prefs, _) => LayoutBuilder(
+        builder: (context, constraints) => Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: [
+            for (final choice in HarnessBackground.values)
+              SizedBox(
+                width: (constraints.maxWidth - 12) / 2,
+                child: _BackgroundChoice(
+                  choice: choice,
+                  selected: prefs.background == choice,
+                  onChoose: () => unawaited(store.setBackground(choice)),
+                ),
+              ),
+          ],
         ),
-        const SizedBox(height: 8),
-        Text(
-          'For your New Harness page. Default matches the selected tab.',
-          style: Theme.of(context).textTheme.bodySmall,
-        ),
-        const SizedBox(height: 20),
-        ValueListenableBuilder<AppearancePrefs>(
-          valueListenable: store,
-          builder: (context, prefs, _) => LayoutBuilder(
-            builder: (context, constraints) => Wrap(
-              spacing: 12,
-              runSpacing: 12,
-              children: [
-                for (final choice in HarnessBackground.values)
-                  SizedBox(
-                    width: (constraints.maxWidth - 12) / 2,
-                    child: _BackgroundChoice(
-                      choice: choice,
-                      selected: prefs.background == choice,
-                      onChoose: () => unawaited(store.setBackground(choice)),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ),
-      ],
+      ),
     ),
   );
 }
@@ -149,7 +134,7 @@ class _BackgroundChoice extends StatelessWidget {
   Widget build(BuildContext context) => Semantics(
     selected: selected,
     button: true,
-    label: '${choice.label} background',
+    label: '${choice.label} wallpaper',
     onTap: onChoose,
     child: ExcludeSemantics(
       child: TextButton(

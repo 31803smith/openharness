@@ -14,13 +14,13 @@ class SettingRow extends StatelessWidget {
   const SettingRow({
     super.key,
     required this.title,
-    required this.detail,
+    this.detail,
     required this.control,
     this.alignTop = false,
   });
 
   final String title;
-  final String detail;
+  final String? detail;
   final Widget control;
 
   /// Align taller controls with the title; compact controls stay centered.
@@ -41,8 +41,10 @@ class SettingRow extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(title, style: Theme.of(context).textTheme.titleSmall),
-        const SizedBox(height: 2),
-        Text(detail, style: Theme.of(context).textTheme.bodySmall),
+        if (detail case final detail?) ...[
+          const SizedBox(height: 2),
+          Text(detail, style: Theme.of(context).textTheme.bodySmall),
+        ],
       ],
     );
 
@@ -50,12 +52,16 @@ class SettingRow extends StatelessWidget {
       // A raised block: fill plus a soft lift, no rim. The same recipe the rest
       // of the app gives a row you can act on, so a setting here sits at the
       // same height as a row anywhere else.
-      decoration: BoxDecoration(
-        color: AppGlass.surfaceFill,
-        borderRadius: BorderRadius.circular(14),
-        boxShadow: AppGlass.cardShadow,
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: detail == null
+          ? null
+          : BoxDecoration(
+              color: AppGlass.surfaceFill,
+              borderRadius: BorderRadius.circular(14),
+              boxShadow: AppGlass.cardShadow,
+            ),
+      padding: detail == null
+          ? const EdgeInsets.symmetric(vertical: 8)
+          : const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: LayoutBuilder(
         builder: (context, constraints) =>
             constraints.maxWidth <

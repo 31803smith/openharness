@@ -10,6 +10,18 @@ New Agent, Stop Agent, Restart Agent, and Find an agent. Harness
 also names the tab container, application, CLI and device. Custom saved names
 and protocol identifiers are unchanged.
 
+## UI preference
+
+The user prefers minimal, neat UI: **less is better**. Use short, direct labels.
+Avoid repeated headings, promotional taglines and descriptions of self-evident
+controls. Show a choice's name and useful preview; add explanation only when it
+helps someone decide or recover from an error. Prefer whitespace and restrained
+surfaces over extra rules and nested cards. Apply this consistently without
+waiting for the user to request copy removal one control at a time.
+
+Action order is **New → Open** in the titlebar, File menu and both split controls.
+The **New Harness page is the deliberate exception: Open → New** below search.
+
 ## Customize Harness
 
 The New Harness page defaults to the selected tab's solid fill, using the same
@@ -17,12 +29,13 @@ workspace palette color. **Customize Harness** is a pill at the bottom right on
 Default. With any wallpaper selected, it becomes a compact circular pencil
 button with the same tooltip and accessible label; switching back restores the
 full label immediately.
-It opens a right-hand pane with **Background / Appearance / Terminal** sections.
+It opens a right-hand pane with **Wallpaper / Appearance / Terminal** sections.
 Wide windows keep the page beside it; narrow windows overlay the pane without
 squeezing the search controls. Closing it restores focus to the Customize button
 and preserves the query. Escape closes an open settings menu before the pane.
 
-Background offers **Default, Aurora, Lake, Silk, Threads and Constellation**.
+Wallpaper offers **Default, Aurora, Lake, Silk, Threads and Constellation**.
+The choices appear directly below the tabs, with no repeated heading or intro.
 The lake and generated images are restored from the existing asset history;
 Aurora reuses the existing mesh. Choices apply immediately, persist under
 `harness_start_background`, and affect only empty Harness pages. Default stays
@@ -33,6 +46,10 @@ existing palette, UI font/size, terminal scheme, font/size, preview and reset
 controls and stores. Settings now starts at Usage. The device footer stays fixed
 above the bottom-right button while search opens and closes. No uploads,
 background downloads, theme editor or new dependency is added.
+Appearance shows **Color palette** with names only, then **Text** with font and
+size controls. Terminal has **Colors, Font, Size**, a working preview and
+**Reset font**. Repeated section titles, helper paragraphs, palette descriptions,
+terminal cell metrics and unnecessary card layers are removed.
 
 Validation: 46 affected Flutter tests pass, including wallpaper persistence and
 keyboard selection, focus restoration, dropdown dismissal, existing-agent entry,

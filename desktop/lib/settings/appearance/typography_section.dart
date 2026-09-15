@@ -100,16 +100,10 @@ class _TypographySectionState extends State<TypographySection> {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const SectionHeading(
-              'Typography',
-              subtitle:
-                  'The face the app is set in, and how big. The terminal keeps '
-                  'its own — see Terminal.',
-            ),
-            const SizedBox(height: 14),
+            const SectionHeading('Text'),
+            const SizedBox(height: 12),
             SettingRow(
               title: 'UI font',
-              detail: 'Every label, menu and heading in the app',
               control: FutureBuilder<List<SelectOption<String?>>>(
                 future: _families,
                 builder: (context, snapshot) {
@@ -133,7 +127,6 @@ class _TypographySectionState extends State<TypographySection> {
             const SizedBox(height: 10),
             SettingRow(
               title: 'UI font size',
-              detail: 'The base size everything else scales against',
               control: _SizeField(
                 value: prefs.uiSize,
                 onCommitted: (size) =>
@@ -252,33 +245,18 @@ class _TypePreview extends StatelessWidget {
   Widget build(BuildContext context) {
     grid.AppTheme.watch(context);
     final theme = Theme.of(context);
-    return Container(
-      width: double.infinity,
-      decoration: BoxDecoration(
-        color: grid.AppGlass.surfaceFill,
-        borderRadius: BorderRadius.circular(14),
-        boxShadow: grid.AppGlass.cardShadow,
-      ),
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text('Preview', style: theme.textTheme.titleSmall),
           const SizedBox(height: 10),
-          Text(
-            'Machines and the agents on them.',
-            style: theme.textTheme.titleMedium,
-          ),
+          Text('Aa Bb Cc 0123456789', style: theme.textTheme.titleMedium),
           const SizedBox(height: 6),
           Text(
-            'This is how a line of the app reads at the size you picked — a '
-            'heading above it, and the quieter line that explains one.',
+            'The quick brown fox jumps over the lazy dog.',
             style: theme.textTheme.bodyMedium,
-          ),
-          const SizedBox(height: 6),
-          Text(
-            'Secondary copy, the way a row subtitle is set.',
-            style: theme.textTheme.bodySmall,
           ),
         ],
       ),
