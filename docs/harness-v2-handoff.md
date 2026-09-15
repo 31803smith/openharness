@@ -34,7 +34,16 @@ user for a benchmark window.
 
 ## Current product contract
 
-### Latest: continuous search surface
+### Latest: quiet device companion card
+
+New Harness now shows a small **Meet the Harness device** card with a 36-pixel
+product image. The description and separate Learn more button are removed.
+The entire card remains a link, stays fixed as search opens, and fits larger text.
+Six existing entry/layout checks pass. Captures:
+`/private/tmp/harness-device-card-captures`; checks:
+`/private/tmp/harness-device-card-tests.log`.
+
+### Continuous search surface — pushed 74674f5
 
 The compact New Harness input and expanded results use the same palette fill,
 32-pixel outer corners and a subtle edge. Internal search/preview dividers and
@@ -308,15 +317,15 @@ are:
   precedence. Cmd-R splits right and Cmd-D splits down. Native menus, help and actual
   dispatch must agree; native menu and titlebar hover hints are removed.
 - New Harness defaults to the selected tab fill. Customize Harness offers the
-  prior Aurora mesh and restored images. The device cutout remains in its product strip.
+  prior Aurora mesh and restored images. The device cutout sits in a small companion card.
   The long search field is capped at 1120 logical pixels with a 64-pixel minimum
   height and **Find an agent** hint. It starts blank and focused, with results
   hidden until typing, clicking or pressing an arrow. Open Agent and New Agent
   sit underneath at the same left edge; the Open button is outlined here.
   Search retains its position and width; results and preview are side by side
-  from 700 pixels. Escape restores the actions and query. The product strip stays
-  above the bottom-right Customize button while search opens and closes, with
-  a compact form for short windows. Wallpaper is now an explicit saved choice.
+  from 700 pixels. Escape restores the actions and query. The small device card stays
+  above the bottom-right Customize button while search opens and closes.
+  Wallpaper is now an explicit saved choice.
 - Search is single-choice. Session names appear above **project · branch ·
   machine**, without repeated workspace titles. Only the highlighted row shows
   **Open Agent / Open N Agents**, or the explicit split action. The modal

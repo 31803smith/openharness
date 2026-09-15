@@ -155,111 +155,51 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
     ),
   );
 
-  /// The product strip along the bottom of the page (mockup/device-strip-final.html).
-  ///
-  /// What stood here before was the studio photograph — a light-grey box with
-  /// the dial in it — cropped into a rounded rectangle and set in the darkest
-  /// corner of a dark page, where a pale rectangle reads as a broken image
-  /// rather than a product. The asset is a cutout now: the render with its
-  /// ground keyed out, so the device — face, bezel, body, stand — floats on
-  /// whatever the page is painted, inside a glass strip the width of the
-  /// search field, with a name, one line on what it does, and a Learn more.
-  Widget _device({required bool compact}) {
-    final height = compact ? 84.0 : 120.0;
+  /// A quiet companion link below the agent controls.
+  Widget _device() {
     return Semantics(
       link: true,
-      child: InkWell(
-        key: const ValueKey('harness-device-link'),
-        mouseCursor: SystemMouseCursors.click,
-        onTap: _openDevicePage,
-        borderRadius: BorderRadius.circular(14),
-        child: Container(
-          height: height,
-          decoration: BoxDecoration(
-            color: grid.AppTheme.pick(
-              const Color(0x0A000000),
-              const Color(0x0EFFFFFF),
-            ),
-            border: Border.all(color: grid.AppGlass.hair),
-            borderRadius: BorderRadius.circular(14),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 320),
+        child: Material(
+          color: Colors.white.withValues(alpha: .025),
+          shape: RoundedRectangleBorder(
+            side: BorderSide(color: Colors.white.withValues(alpha: .07)),
+            borderRadius: BorderRadius.circular(12),
           ),
           clipBehavior: Clip.antiAlias,
-          child: Row(
-            children: [
-              const SizedBox(width: 10),
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 6),
-                child: Image.asset(
-                  'assets/harness_device.png',
-                  height: height - 12,
-                  fit: BoxFit.contain,
-                  semanticLabel: 'Harness Device',
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
+          child: InkWell(
+            key: const ValueKey('harness-device-link'),
+            mouseCursor: SystemMouseCursors.click,
+            onTap: _openDevicePage,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(10, 8, 14, 8),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Image.asset(
+                    'assets/harness_device.png',
+                    height: 36,
+                    width: 32,
+                    fit: BoxFit.contain,
+                    excludeFromSemantics: true,
+                  ),
+                  const SizedBox(width: 10),
+                  Flexible(
+                    child: Text(
                       'Meet the Harness device',
-                      maxLines: 1,
+                      maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: grid.AppFont.semibold,
-                        color: grid.AppPalette.textPrimary,
+                        fontSize: 12,
+                        height: 1.3,
+                        color: grid.AppPalette.textSecondary,
                       ),
                     ),
-                    if (!compact) ...[
-                      const SizedBox(height: 2),
-                      Text(
-                        'A device for your agents — scroll, switch panes, '
-                        'give voice commands.',
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 11.5,
-                          height: 1.35,
-                          color: grid.AppPalette.textFaint,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
+                  ),
+                ],
               ),
-              const SizedBox(width: 16),
-              Container(
-                height: 28,
-                padding: const EdgeInsets.symmetric(horizontal: 14),
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  border: Border.all(color: grid.AppGlass.hair),
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      'Learn more',
-                      style: TextStyle(
-                        fontSize: 11.5,
-                        fontWeight: grid.AppFont.semibold,
-                        color: grid.AppPalette.textPrimary,
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                    Icon(
-                      Icons.arrow_outward,
-                      size: 12,
-                      color: grid.AppPalette.textPrimary,
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 18),
-            ],
+            ),
           ),
         ),
       ),
@@ -403,7 +343,7 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
                     ),
                   ),
                   const SizedBox(height: 24),
-                  _device(compact: constraints.maxHeight < 600),
+                  _device(),
                 ],
               ),
             ),
