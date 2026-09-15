@@ -3,10 +3,12 @@
 #include "cable_client.h"
 #include "board_pins.h"
 #include "board_i2c.h"
+#include "board.h"
 #include "display.h"
 #include "ui_screens.h"   // ui_swipe_begin/end for the circular edge-swipe
 #include "driver/i2c_master.h"
 #include "esp_lcd_panel_io.h"
+#include "esp_lcd_touch_cst816s.h"
 #include "esp_lcd_touch_cst9217.h"
 #include "esp_log.h"
 #include "lvgl.h"
@@ -293,6 +295,10 @@ static void swipe_track(bool pressed, uint16_t x, uint16_t y)
 // CST9217 over I2C from here is fine (LVGL task holds no conflicting lock).
 static bool touch_open(void);
 static void touch_reinit(void);
+static const char *touch_chip_name(void)
+{
+    return board()->touch == TOUCH_CST816S ? "CST816S" : board()->touch == TOUCH_CST9217 ? "CST9217" : "no-touch";
+}
 
 static void touch_read(lv_indev_t *indev, lv_indev_data_t *data)
 {
@@ -316,7 +322,11 @@ static void touch_read(lv_indev_t *indev, lv_indev_data_t *data)
         s_noack_run = 0;
         pressed = esp_lcd_touch_get_coordinates(s_tp, &x, &y, &strength, &cnt, 1) && cnt > 0;
         if (pressed) ok_reads++;
-    } else if (rc == ESP_ERR_INVALID_RESPONSE) {
+    } else if (rc == ESP_ERR_INVALID_RESPONSE && board()->touch == TOUCH_CST9217) {
+        // CST9217 ONLY. The CST816S driver answers ESP_OK on every idle read (measured on that board, 30/30)
+        // and clears its own point table, so this rule would have nothing to do there — and must not run
+        // there, since an unexpected INVALID_RESPONSE from it would not mean "no finger".
+        //
         // The chip's report has no ACK byte. MEASURED, not assumed (2026-09-15, this log): every idle
         // read answers this way (~30/s with no finger near the glass), and NOT ONE read does while a
         // finger is down — a still 2.9s hold read `acked=84 stale=0`. So no ACK is no finger.
@@ -346,10 +356,10 @@ static void touch_read(lv_indev_t *indev, lv_indev_data_t *data)
         s_read_fail_total++;
         s_read_fail_run++;
         if (s_read_fail_run == 1 || s_read_fail_total % READ_FAIL_LOG_EVERY == 0)
-            ESP_LOGW(TAG, "cst9217 read failed: %s (run=%u total=%u)", esp_err_to_name(rc),
+            ESP_LOGW(TAG, "%s read failed: %s (run=%u total=%u)", touch_chip_name(), esp_err_to_name(rc),
                      (unsigned)s_read_fail_run, (unsigned)s_read_fail_total);
         if (s_read_fail_run >= READ_FAIL_REINIT) {
-            ESP_LOGW(TAG, "cst9217 dead after %u failed reads — reinit", (unsigned)s_read_fail_run);
+            ESP_LOGW(TAG, "%s dead after %u failed reads — reinit", touch_chip_name(), (unsigned)s_read_fail_run);
             s_read_fail_run = 0;
             reinit_at = lv_tick_get();
             touch_reinit();
@@ -511,7 +521,8 @@ static void touch_read(lv_indev_t *indev, lv_indev_data_t *data)
     }
 }
 
-// Bring the CST9217 up on the shared bus. Everything that can fail, logs and leaves s_tp NULL.
+// Bring the touch controller up on the shared bus — whichever one this dial has (board.h). Everything
+// that can fail, logs and leaves s_tp NULL.
 static bool touch_open(void)
 {
     i2c_master_bus_handle_t bus = board_i2c_get();
@@ -519,8 +530,15 @@ static bool touch_open(void)
         ESP_LOGW(TAG, "shared i2c bus unavailable — touch disabled");
         return false;
     }
+    const board_t *b = board();
+    if (b->touch == TOUCH_NONE) {
+        ESP_LOGW(TAG, "no touch controller answered on the bus — touch disabled");
+        return false;
+    }
 
-    esp_lcd_panel_io_i2c_config_t io_cfg = ESP_LCD_TOUCH_IO_I2C_CST9217_CONFIG();
+    esp_lcd_panel_io_i2c_config_t io_cfg = b->touch == TOUCH_CST816S
+        ? (esp_lcd_panel_io_i2c_config_t)ESP_LCD_TOUCH_IO_I2C_CST816S_CONFIG()
+        : (esp_lcd_panel_io_i2c_config_t)ESP_LCD_TOUCH_IO_I2C_CST9217_CONFIG();
     io_cfg.scl_speed_hz = BSP_I2C_FREQ_HZ;
     if (esp_lcd_new_panel_io_i2c(bus, &io_cfg, &s_tp_io) != ESP_OK) {
         ESP_LOGW(TAG, "touch panel io failed — touch disabled");
@@ -531,14 +549,18 @@ static bool touch_open(void)
     esp_lcd_touch_config_t tp_cfg = {
         .x_max = 466,
         .y_max = 466,
-        .rst_gpio_num = BSP_TOUCH_RST,
+        .rst_gpio_num = b->touch_rst,
         .int_gpio_num = BSP_TOUCH_INT,
-        // The CST9217 is mounted 180° relative to the CO5300 on this board, so BOTH axes are
-        // reversed vs the display (horizontal swipe and vertical scroll/taps). Mirror X and Y.
-        .flags = { .swap_xy = 0, .mirror_x = 1, .mirror_y = 1 },
+        // The CST9217 is mounted 180° relative to the CO5300 on its board, so BOTH axes are reversed vs
+        // the display (horizontal swipe and vertical scroll/taps). The CST816S reports panel-aligned
+        // coordinates — measured: mirrored, a touch landed 180° from the finger.
+        .flags = { .swap_xy = 0, .mirror_x = b->touch_mirror, .mirror_y = b->touch_mirror },
     };
-    if (esp_lcd_touch_new_i2c_cst9217(s_tp_io, &tp_cfg, &s_tp) != ESP_OK) {
-        ESP_LOGW(TAG, "CST9217 init failed — touch disabled");
+    esp_err_t err = b->touch == TOUCH_CST816S
+        ? esp_lcd_touch_new_i2c_cst816s(s_tp_io, &tp_cfg, &s_tp)
+        : esp_lcd_touch_new_i2c_cst9217(s_tp_io, &tp_cfg, &s_tp);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "%s init failed (%s) — touch disabled", touch_chip_name(), esp_err_to_name(err));
         s_tp = NULL;
         esp_lcd_panel_io_del(s_tp_io);
         s_tp_io = NULL;
@@ -555,8 +577,8 @@ static void touch_reinit(void)
 {
     if (s_tp) { esp_lcd_touch_del(s_tp); s_tp = NULL; }
     if (s_tp_io) { esp_lcd_panel_io_del(s_tp_io); s_tp_io = NULL; }
-    if (touch_open()) ESP_LOGI(TAG, "CST9217 back after reinit");
-    else ESP_LOGW(TAG, "CST9217 reinit failed — retrying in %ds", REINIT_RETRY_MS / 1000);
+    if (touch_open()) ESP_LOGI(TAG, "%s back after reinit", touch_chip_name());
+    else ESP_LOGW(TAG, "%s reinit failed — retrying in %ds", touch_chip_name(), REINIT_RETRY_MS / 1000);
 }
 
 void touch_stats(touch_stats_t *out)
@@ -576,5 +598,5 @@ void touch_init(void)
     lv_indev_t *indev = lv_indev_create();
     lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
     lv_indev_set_read_cb(indev, touch_read);
-    ESP_LOGI(TAG, "CST9217 touch ready");
+    ESP_LOGI(TAG, "%s touch ready", touch_chip_name());
 }

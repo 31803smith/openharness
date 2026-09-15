@@ -23,6 +23,8 @@
 #include "config_store.h"
 #include "fw_update.h"
 #include "last_words.h"
+#include "board/board.h"
+#include "board/board_probe.h"
 #include "driver/gpio.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -175,6 +177,7 @@ void app_main(void)
 {
     ram_telemetry_checkpoint("boot");
     last_words_boot();   // before the first log line, so the previous boot's ring is read, not overwritten
+    board_detect();      // which dial this is — the panel's reset pin comes from here, so before display_init
     config_store_init();
 
     if (boot_button_held()) {
@@ -182,6 +185,9 @@ void app_main(void)
         config_clear_all();
     }
 
+#ifdef BOARD_PROBE
+    board_probe_run();   // bring-up only — see board/board_probe.c
+#endif
     display_init();
     ui_init();
     ui_set_brightness(config_load_brightness());

@@ -30,3 +30,9 @@ cc -std=c11 -Wall -Wextra -Werror -O1 \
 cc -std=c11 -Wall -Wextra -Werror -O1 \
    -o "$out/test_carousel_ring" "$here/test_carousel_ring.c" "$here/../main/ui/carousel_ring.c"
 "$out/test_carousel_ring"
+
+# Which dial this image is on, decided from who answered on the I2C bus. Two boards ship on one image;
+# the table that tells them apart is arithmetic on a list of addresses, so it is proved here.
+cc -std=c11 -Wall -Wextra -Werror -O1 \
+   -o "$out/test_board" "$here/test_board.c" "$here/../main/board/board_table.c"
+"$out/test_board"
