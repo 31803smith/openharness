@@ -11,6 +11,7 @@ import 'account_button.dart';
 import 'machine_filter_bar.dart';
 import 'phone_card.dart';
 import 'phone_header.dart';
+import 'phone_sheet.dart';
 import 'phone_navigation.dart';
 import 'phone_status.dart';
 
@@ -51,8 +52,33 @@ class _AgentsTabState extends State<AgentsTab> {
           ? all
           : all.where((entry) => entry.machineId == selected).toList();
       final error = widget.notifier.lastError;
+      // Only machines that are answering. Creating needs one to list its folders and name the
+      // engines it has, so a machine that is offline or still wants its password cannot host a new
+      // agent — the same gate the machine's own page puts on its `+`.
+      final ready = [
+        for (final machine in machines)
+          if (phoneMachineStatusOf(machine) == PhoneMachineStatus.ready) machine,
+      ];
       return Scaffold(
         backgroundColor: AppPalette.windowBg,
+        // ⚠️ Absent rather than disabled when nothing can host an agent. The empty state already
+        // says where that is fixed (the Machines tab), and a button whose only outcome is an
+        // explanation of why it does nothing is worse than no button.
+        //
+        // It floats above the tab bar without being told to: this Scaffold is the BODY of the
+        // shell's (`phone_shell.dart`), whose own `bottomNavigationBar` sits below it.
+        floatingActionButton: ready.isEmpty
+            ? null
+            : FloatingActionButton(
+                onPressed: () => _pickMachine(context, ready),
+                backgroundColor: AppPalette.accent,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(AppCard.radius),
+                ),
+                tooltip: 'New agent',
+                child: const Icon(LucideIcons.plus300, size: 26),
+              ),
         body: SafeArea(
           bottom: false,
           child: Column(
@@ -87,6 +113,33 @@ class _AgentsTabState extends State<AgentsTab> {
       );
     },
   );
+
+  /// Which machine the new agent runs on, asked before anything else.
+  ///
+  /// This list is the one screen that does NOT already know: it is every agent on the account, and
+  /// the machine is a filter above it rather than the thing navigated through. So the `+` cannot
+  /// carry a machine the way [AgentsPage]'s does, and guessing one — the first, the filtered one —
+  /// would put an agent on a computer nobody named.
+  ///
+  /// ⚠️ Shown even when only one machine qualifies. A sheet of one still says WHERE the agent is
+  /// about to be created, and that is the question this step exists to answer.
+  void _pickMachine(BuildContext context, List<MachineState> ready) =>
+      showPhoneSheet(
+        context,
+        title: 'New agent on…',
+        actions: [
+          for (final machine in ready)
+            PhoneSheetAction(
+              icon: LucideIcons.laptopMinimal300,
+              label: machine.machine.displayName,
+              onTap: () => openNewAgent(
+                context,
+                widget.notifier,
+                machine.machine.machineId,
+              ),
+            ),
+        ],
+      );
 }
 
 class _Body extends StatelessWidget {
