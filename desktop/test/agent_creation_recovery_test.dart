@@ -1,3 +1,5 @@
+import 'support/new_agent_project.dart';
+
 import 'dart:async';
 
 import 'package:file_selector_platform_interface/file_selector_platform_interface.dart';
@@ -219,7 +221,7 @@ void main() {
           }),
           findsWidgets,
         );
-        await tester.tap(find.byKey(const Key('new-agent-folder')));
+        await browseNewAgentProject(tester);
         await tester.pumpAndSettle();
         await tester.tap(find.byKey(const ValueKey('create-agent-submit')));
         await tester.pump();
@@ -269,7 +271,7 @@ void main() {
       }
       await chord(tester, LogicalKeyboardKey.keyN);
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('new-agent-folder')));
+      await browseNewAgentProject(tester);
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('create-agent-submit')));
       await tester.pump();
@@ -345,7 +347,7 @@ void main() {
     await chord(tester, LogicalKeyboardKey.keyO);
     await chord(tester, LogicalKeyboardKey.keyN);
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('new-agent-folder')));
+    await browseNewAgentProject(tester);
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('create-agent-submit')));
     await tester.pump();

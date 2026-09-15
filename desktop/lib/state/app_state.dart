@@ -24,6 +24,8 @@ import '../core/local_git_projects.dart';
 import '../core/test_run.dart';
 import '../core/models.dart';
 import '../core/project_folder.dart';
+import '../core/project_history.dart';
+import '../core/project_preview.dart';
 import '../core/repository_clone.dart';
 import '../core/retry.dart';
 import '../settings/config_store.dart';
@@ -1084,6 +1086,7 @@ class AppNotifier extends ChangeNotifier {
        // without one (the tests) nothing is written anywhere.
        dial = DialState(paneLayoutStore?.storage),
        agentPreference = AgentPreference(paneLayoutStore?.storage),
+       projectHistory = ProjectHistory(paneLayoutStore?.storage),
        session = authSession,
        _store = configStore,
        cliLogin = cliLogin ?? CliLogin(),
@@ -1146,6 +1149,7 @@ class AppNotifier extends ChangeNotifier {
   /// without dragging the whole rail through a machine-list rebuild.
   final DialState dial;
   final AgentPreference agentPreference;
+  final ProjectHistory projectHistory;
 
   TerminalPane? get focusedPane {
     final id = focusedPaneId;
@@ -4022,6 +4026,36 @@ class AppNotifier extends ChangeNotifier {
     }
   }
 
+  /// Reads source material only on the machine that owns the selected path.
+  Future<Map<String, dynamic>> readProjectPreview(
+    String machineId,
+    String path,
+  ) async {
+    final machine = machineStates[machineId];
+    if (machine == null) return {'error': 'UNAVAILABLE'};
+    if (machine.isLocalMachine) {
+      return readLocalProjectPreview(path).timeout(
+        const Duration(seconds: 4),
+        onTimeout: () => {'error': 'UNAVAILABLE'},
+      );
+    }
+    if (machine.nodeOnline == false ||
+        machine.needsLink ||
+        machine.connectionStatus != ConnectionStatus.connected &&
+            connectionForTest == null) {
+      return {'error': 'UNAVAILABLE'};
+    }
+    try {
+      return await _conn(machineId).request(
+        'project_preview',
+        payload: {'path': path},
+        timeout: const Duration(seconds: 4),
+      );
+    } catch (_) {
+      return {'error': 'UNAVAILABLE'};
+    }
+  }
+
   /// Every Codex profile folder the CLI on [machineId] can offer, merged with [observedPaths]
   /// (Codex homes already known from this same machine's other Codex agents). Runs entirely on that
   /// machine — this app never touches a filesystem itself, which is what makes it work for a remote
@@ -4175,7 +4209,7 @@ class AppNotifier extends ChangeNotifier {
         return creation._complete(error.message);
       } catch (_) {
         return creation._complete(
-          'Could not prepare the project folder. Choose Local to select an existing folder.',
+          'Could not prepare the project folder. Browse for an existing folder.',
         );
       }
       // Preparation may be slow. Revalidate before starting a process, using
@@ -4314,6 +4348,11 @@ class AppNotifier extends ChangeNotifier {
     if (_disposed || machineStates[machineId] != machine) return null;
     _upsertAgent(machine, agent);
     // Apply each creation receipt once, even if its transport result is replayed.
+    final projectPath =
+        agent.project?.cwd ?? creation.preparedFolder ?? choices['cwd'];
+    if (projectPath is String && projectPath.isNotEmpty) {
+      unawaited(projectHistory.select(machineId, projectPath));
+    }
     harnessStats.onAgentSpawned();
     notifyListeners();
     if (_creationPlacementError(targetId, split) != null) {

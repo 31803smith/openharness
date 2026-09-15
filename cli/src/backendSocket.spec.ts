@@ -9,6 +9,7 @@ import { decodeTerminalLocal, TerminalBinaryKind } from './lib/terminalBinary.js
 import { registry, type RegisteredSession } from './lib/registry.js'
 import * as mediaPreview from './lib/mediaPreview.js'
 import * as projectFolder from './lib/projectFolder.js'
+import * as projectPreview from './lib/projectPreview.js'
 import { randomUUID } from 'node:crypto'
 
 const wsMock = vi.hoisted(() => {
@@ -432,6 +433,33 @@ describe('BackendSocket outbound queue', () => {
     await vi.waitFor(() => {
       expect(wrapReply).toHaveBeenCalledWith('web-1', 'usage_read_result', 'usage-1', { providers: readings })
     })
+    await socket.stop()
+  })
+
+  it('returns project previews only to the requesting encrypted connection', async () => {
+    vi.spyOn(registry, 'list').mockReturnValue([{ cwd: '/remote/workspace' }] as RegisteredSession[])
+    const preview = { path: '/remote/workspace', readme: 'Private project README', branch: 'main', files: ['README.md'], contributors: [] }
+    const read = vi.spyOn(projectPreview, 'projectPreview').mockResolvedValue(preview)
+    const socket = new BackendSocket('token')
+    socket.connect()
+    const ws = wsMock.instances[0]
+    ws.open()
+    vi.spyOn(socket.e2ee, 'unwrapDown').mockReturnValue({ type: 'project_preview', payload: {
+      requestId: 'preview-1', path: '/remote/workspace',
+    } })
+    vi.spyOn(socket.e2ee, 'hasSession').mockReturnValue(true)
+    const wrap = vi.spyOn(socket.e2ee, 'wrapRpcReply').mockReturnValue({
+      type: 'project_preview_result', payload: { __e2e: { v: 1, k: 'p', n: 1, ct: 'encrypted-preview' } },
+    })
+    ws.message({ t: 'down', connId: 'viewer-a', frame: {
+      type: 'project_preview', payload: { __e2e: { v: 1, k: 'p', n: 1, ct: 'encrypted-request' } },
+    } })
+    await vi.waitFor(() => expect(wrap).toHaveBeenCalledWith('viewer-a', 'project_preview_result', 'preview-1', preview))
+    expect(read).toHaveBeenCalledWith('/remote/workspace', ['/remote/workspace'])
+    expect(parseSent(ws)).toContainEqual(expect.objectContaining({ targetConnId: 'viewer-a', frame: {
+      type: 'project_preview_result', payload: { __e2e: { v: 1, k: 'p', n: 1, ct: 'encrypted-preview' } },
+    } }))
+    expect(JSON.stringify(parseSent(ws))).not.toContain('Private project README')
     await socket.stop()
   })
 

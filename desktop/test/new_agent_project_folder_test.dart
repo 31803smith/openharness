@@ -104,6 +104,8 @@ void main() {
       await _mount(tester, app);
       expect(app.prepared, isEmpty);
       expect(connection.calls, isEmpty);
+      await tester.tap(find.byKey(const Key('new-agent-project-bar')));
+      await tester.pumpAndSettle();
       await tester.tap(
         find.byKey(const ValueKey('new-agent-folder-newProject')),
       );
@@ -160,9 +162,9 @@ void main() {
         app.dispose();
       });
       await _mount(tester, app);
-      await tester.tap(find.byKey(const ValueKey('new-agent-folder-remote')));
+      await tester.tap(find.byKey(const Key('new-agent-project-bar')));
       await tester.pumpAndSettle();
-      final field = find.byKey(const ValueKey('new-agent-repository'));
+      final field = find.byKey(const Key('new-agent-project-search'));
       expect(tester.widget<TextField>(field).focusNode!.hasFocus, isTrue);
       expect(
         tester
@@ -170,9 +172,11 @@ void main() {
               find.byKey(const ValueKey('create-agent-submit')),
             )
             .onPressed,
-        isNull,
+        isNotNull,
       );
       await tester.enterText(field, 'owner/repo');
+      await tester.pump();
+      await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pump();
       await tester.tap(find.byKey(const ValueKey('create-agent-submit')));
       await tester.pump();

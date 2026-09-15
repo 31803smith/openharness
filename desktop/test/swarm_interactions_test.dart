@@ -1,3 +1,5 @@
+import 'support/new_agent_project.dart';
+
 import 'dart:async';
 
 import 'package:file_selector_platform_interface/file_selector_platform_interface.dart';
@@ -593,9 +595,8 @@ void main() {
       );
       await tester.tap(find.text('Open'));
       await tester.pump(const Duration(milliseconds: 300));
-      await tester.tap(find.text('Browse…'));
+      await browseNewAgentProject(tester);
       await tester.pump();
-      await tester.tap(find.byKey(const Key('new-agent-machine-toggle')));
       await tester.pump();
       final field = find.byKey(const Key('new-agent-machine-field'));
       tester.widget<AppChoicePicker<String>>(field).onChanged('b');
@@ -605,7 +606,7 @@ void main() {
       folder.answer.complete('/old-machine-folder');
       await tester.pump();
       expect(find.textContaining('/old-machine-folder'), findsNothing);
-      expect(find.text('Browse…'), findsOneWidget);
+      expect(find.text('New project'), findsOneWidget);
       await tester.pumpWidget(const SizedBox());
       app.dispose();
     },

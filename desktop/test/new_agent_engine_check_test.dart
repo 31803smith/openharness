@@ -7,6 +7,8 @@
 // does not refuse it either — the frame goes out over the relay and nothing ever comes back, so the
 // app waits out its 30s timeout and then knows nothing. Meanwhile the panel had already promised a
 // launch, and the create failed at the far end with `exec: opencode: not found`.
+import 'support/new_agent_project.dart';
+
 import 'dart:async';
 
 import 'package:file_selector_platform_interface/file_selector_platform_interface.dart';
@@ -75,7 +77,7 @@ void main() {
     await tester.tap(find.text('open'));
     await tester.pumpAndSettle();
     // 'Browse…' until a folder is chosen; 'Change' after.
-    await tester.tap(find.text('Browse…'));
+    await browseNewAgentProject(tester);
     await tester.pumpAndSettle();
     return notifier;
   }
@@ -218,7 +220,6 @@ void main() {
     final pending = app.pending['machine-1'] = Completer<void>();
     await tester.tap(find.byKey(const Key('new-agent-retry-check')));
     await tester.pump();
-    await tester.tap(find.byKey(const Key('new-agent-machine-toggle')));
     await tester.pump();
     await tester.tap(find.byKey(const ValueKey('new-agent-machine-machine-2')));
     await tester.pumpAndSettle();

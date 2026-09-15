@@ -15,7 +15,7 @@ export function parseProjectFolder(payload: Record<string, unknown>): ProjectFol
   if (payload.projectSource === undefined) return null
   if (payload.projectSource === 'new' && payload.repositoryUrl === undefined) return { source: 'new' }
   if (payload.projectSource !== 'remote' || typeof payload.repositoryUrl !== 'string') {
-    throw new ProjectFolderError('INVALID_PROJECT_SOURCE', 'Choose New, Local, or Remote for the project folder.')
+    throw new ProjectFolderError('INVALID_PROJECT_SOURCE', 'Choose a project.')
   }
   const raw = payload.repositoryUrl.trim()
   let path: string
@@ -66,16 +66,16 @@ export async function prepareProjectFolder(
       }
     }
     const destination = join(root, project.name)
-    if (await exists(destination)) throw new ProjectFolderError('PROJECT_EXISTS', `“${project.name}” already exists. Choose Local to open that folder.`)
+    if (await exists(destination)) throw new ProjectFolderError('PROJECT_EXISTS', `“${project.name}” already exists. Select that folder from your projects.`)
     staging = await mkdtemp(join(root, '.harness-clone-'))
     const checkout = join(staging, 'checkout')
     await (options.clone ?? cloneRepository)(project.repositoryUrl, checkout)
-    if (await exists(destination)) throw new ProjectFolderError('PROJECT_EXISTS', `“${project.name}” was created while cloning. Choose Local to open that folder.`)
+    if (await exists(destination)) throw new ProjectFolderError('PROJECT_EXISTS', `“${project.name}” was created while cloning. Select that folder from your projects.`)
     await rename(checkout, destination)
     return destination
   } catch (error) {
     if (error instanceof ProjectFolderError) throw error
-    throw new ProjectFolderError('PROJECT_PREPARATION_FAILED', 'Could not create a project folder on this machine. Choose Local to select a folder you can edit.')
+    throw new ProjectFolderError('PROJECT_PREPARATION_FAILED', 'Could not create a project folder on this machine. Browse for a folder you can edit.')
   } finally {
     if (staging) await rm(staging, { force: true, recursive: true }).catch(() => {})
   }

@@ -45,20 +45,38 @@ Fifty Flutter checks, 69 CLI checks, static analysis and CLI typechecking pass.
 Logs: `/private/tmp/harness-friendly-names-tests.log` and
 `/private/tmp/harness-friendly-names-cli-tests.log`.
 
-### Approved next: project picker in New Agent
+### Project picker in New Agent
 
-Build Agent → Machine → Project in a dialog as spacious as Open Agent. Keep
-Codex, Claude Code and OpenCode visible in stable order; show all machines.
-Project combines a pinned New project, recent folders, search, Git URL and
-Browse. Arrow selection updates a preview from README, Git history, contributors
-and files. Enter selects and collapses into a project bar; clicking it searches
-again. Remember the last project per machine; first use selects New project.
-Profiles and permissions stay in Options. Cmd-Return creates the agent.
+Agent → Machine → Project now replaces the old New / Local / Remote form.
+Codex, Claude Code and OpenCode stay visible in stable order; all machines are
+visible. Wide windows use quiet horizontal choice rows; small windows and large
+text wrap and scroll. Options retains Codex profiles and permission controls.
+
+Project combines a pinned New project, machine-scoped recent folders, search,
+existing GitHub HTTPS/SSH/owner-repo cloning, and Browse. Arrows update the
+README/Git/files preview, Enter selects into a compact project bar, and clicking
+it reopens search. Cmd-Return creates from the highlighted project. Unmatched
+searches never implicitly select New. Each machine remembers its last choice;
+first use selects New. Switching engines preserves the project. Prepared-folder
+recovery and uncertain-create status checks remain intact.
+
+Local previews read bounded existing files and Git metadata. Remote previews use
+the new encrypted `project_preview` RPC, requiring this CLI on the local relay
+and remote machine; older CLIs show an unavailable preview without blocking
+project selection. No live CLI daemon has been upgraded or restarted.
+
+81 desktop tests and 60 CLI tests pass, plus the final affected layout/keyboard
+rerun. Full desktop analysis has only 12 existing vendored xterm info messages;
+CLI typechecking passes. Logs: `/private/tmp/harness-launcher-final-tests.log`,
+`/private/tmp/harness-launcher-row-tests.log`,
+`/private/tmp/harness-launcher-final-cli-tests.log`, and
+`/private/tmp/harness-launcher-full-analyze.log`. Render captures:
+`/private/tmp/harness-project-launcher-captures`.
+
 The user has renewed authorization to push each completed feature separately.
-
-The latest installed preview is **0c764cf** (receipt
-`/private/tmp/harness-minimal-preview-install.json`); later search/device/chooser
-refinements have not been installed yet.
+The latest installed preview is still **0c764cf** (receipt
+`/private/tmp/harness-minimal-preview-install.json`); the new launcher and later
+search/device/chooser refinements are awaiting the next verified install.
 
 ### Quiet agent choices
 

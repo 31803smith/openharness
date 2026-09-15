@@ -1,3 +1,5 @@
+import 'support/new_agent_project.dart';
+
 import 'dart:async';
 
 import 'package:file_selector_platform_interface/file_selector_platform_interface.dart';
@@ -250,8 +252,7 @@ void main() {
     );
     expect(find.text('Codex profile'), findsOneWidget);
     expect(find.text('Link a profile folder…'), findsOneWidget);
-    await tester.ensureVisible(find.byKey(const Key('new-agent-folder')));
-    await tester.tap(find.text('Browse…'));
+    await browseNewAgentProject(tester);
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, 'Create Agent'));
     await tester.pumpAndSettle();
@@ -272,8 +273,7 @@ void main() {
     expect(find.text('Codex profile'), findsOneWidget);
     expectProfile(tester, 'work-login');
     expect(find.text('Link a profile folder…'), findsOneWidget);
-    await tester.ensureVisible(find.byKey(const Key('new-agent-folder')));
-    await tester.tap(find.text('Browse…'));
+    await browseNewAgentProject(tester);
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, 'Create Agent'));
     await tester.pumpAndSettle();
@@ -289,15 +289,14 @@ void main() {
         local: false,
         initialPaths: const ['/custom/work-login'],
       );
-      await tester.tap(find.byKey(const Key('new-agent-machine-toggle')));
       await tester.pump();
       final machineField = tester.widget<AppChoicePicker<String>>(
         find.byKey(const Key('new-agent-machine-field')),
       );
       expect(machineField.options.single.label, 'This Mac');
-      expect(machineField.options.single.detail, 'Remote');
+      expect(machineField.options.single.detail, isNull);
       expect(find.widgetWithText(FilledButton, 'Create Agent'), findsOneWidget);
-      expect(find.text('Choose a folder on This Mac.'), findsOneWidget);
+      expect(find.byKey(const Key('new-agent-project-bar')), findsOneWidget);
       expect(
         find.byKey(const Key('new-agent-codex-profile-field')),
         findsOneWidget,
@@ -344,21 +343,24 @@ void main() {
       ..pending = Completer<void>();
     await open(tester, notifier: notifier);
     final folderFocus = tester
-        .widget<InkWell>(find.byKey(const Key('new-agent-folder')))
+        .widget<InkWell>(find.byKey(const Key('new-agent-project-bar')))
         .focusNode!;
     folderFocus.requestFocus();
     await tester.pump();
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pumpAndSettle();
+    final searchFocus = tester
+        .widget<TextField>(find.byKey(const Key('new-agent-project-search')))
+        .focusNode!;
     final createButton = find.widgetWithText(FilledButton, 'Create Agent');
     expect(tester.widget<FilledButton>(createButton).onPressed, isNull);
-    expect(folderFocus.hasPrimaryFocus, isTrue);
+    expect(searchFocus.hasPrimaryFocus, isTrue);
     expect(notifier.calls, isEmpty);
     notifier.pending!.complete();
     await tester.pumpAndSettle();
     expect(tester.widget<FilledButton>(createButton).onPressed, isNotNull);
     expect(
-      folderFocus.hasPrimaryFocus,
+      searchFocus.hasPrimaryFocus,
       isTrue,
       reason: 'A late account lookup must not steal keyboard focus',
     );
@@ -386,8 +388,7 @@ void main() {
     await tester.tap(find.text('codex1').last);
     await tester.pumpAndSettle();
     expectProfile(tester, 'codex1');
-    await tester.ensureVisible(find.byKey(const Key('new-agent-folder')));
-    await tester.tap(find.text('Browse…'));
+    await browseNewAgentProject(tester);
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, 'Create Agent'));
     await tester.pumpAndSettle();
@@ -411,8 +412,7 @@ void main() {
       findsOneWidget,
     );
     expectProfile(tester, 'Default profile');
-    await tester.ensureVisible(find.byKey(const Key('new-agent-folder')));
-    await tester.tap(find.text('Browse…'));
+    await browseNewAgentProject(tester);
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, 'Create Agent'));
     await tester.pumpAndSettle();
@@ -425,8 +425,7 @@ void main() {
       final notifier = await open(tester);
       await selectSecond(tester);
       expectProfile(tester, 'codex2');
-      await tester.ensureVisible(find.byKey(const Key('new-agent-folder')));
-      await tester.tap(find.text('Browse…'));
+      await browseNewAgentProject(tester);
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, 'Create Agent'));
       await tester.pumpAndSettle();
@@ -507,8 +506,7 @@ void main() {
       find.byKey(const Key('new-agent-codex-profile-field')),
       findsNothing,
     );
-    await tester.ensureVisible(find.byKey(const Key('new-agent-folder')));
-    await tester.tap(find.text('Browse…'));
+    await browseNewAgentProject(tester);
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, 'Create Agent'));
     await tester.pumpAndSettle();
@@ -528,8 +526,7 @@ void main() {
         find.text('Update Harness CLI on This Mac to choose a Codex profile.'),
         findsOneWidget,
       );
-      await tester.ensureVisible(find.byKey(const Key('new-agent-folder')));
-      await tester.tap(find.text('Browse…'));
+      await browseNewAgentProject(tester);
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, 'Create Agent'));
       await tester.pumpAndSettle();

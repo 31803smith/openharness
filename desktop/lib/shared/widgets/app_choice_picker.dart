@@ -20,6 +20,8 @@ class AppChoicePicker<T> extends StatefulWidget {
     this.showDetails = false,
     this.wrap = true,
     this.compact = false,
+    this.quiet = false,
+    this.allVisible = false,
   });
 
   final T value;
@@ -32,6 +34,8 @@ class AppChoicePicker<T> extends StatefulWidget {
   final bool showDetails;
   final bool wrap;
   final bool compact;
+  final bool quiet;
+  final bool allVisible;
 
   @override
   State<AppChoicePicker<T>> createState() => _AppChoicePickerState<T>();
@@ -87,6 +91,7 @@ class _AppChoicePickerState<T> extends State<AppChoicePicker<T>> {
   @override
   Widget build(BuildContext context) {
     AppTheme.watch(context);
+    if (widget.quiet) return _quietChoices();
     final candidates = _visibleOptions;
     if (candidates.isEmpty) return const SizedBox.shrink();
     final textStyle = TextStyle(
@@ -210,6 +215,117 @@ class _AppChoicePickerState<T> extends State<AppChoicePicker<T>> {
                 ],
               );
       },
+    );
+  }
+
+  Widget _quietChoices() {
+    final visible = widget.allVisible
+        ? _orderedOptions
+        : [
+            ..._orderedOptions.take(3),
+            ..._orderedOptions
+                .skip(3)
+                .where((option) => option.value == widget.value),
+          ];
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        for (final option in visible)
+          Semantics(
+            selected: widget.value == option.value,
+            inMutuallyExclusiveGroup: true,
+            child: TextButton(
+              key: widget.optionKey(option.value),
+              onPressed: () => _choose(option.value),
+              style: TextButton.styleFrom(
+                foregroundColor: widget.value == option.value
+                    ? AppPalette.textPrimary
+                    : AppPalette.textSecondary,
+                backgroundColor: widget.value == option.value
+                    ? AppPalette.swarmAccent.withValues(alpha: .13)
+                    : Colors.transparent,
+                minimumSize: const Size(0, 44),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 15,
+                  vertical: 12,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (option.leading != null) ...[
+                    option.leading!(),
+                    const SizedBox(width: 9),
+                  ],
+                  Flexible(
+                    child: Text(
+                      option.label,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                  if (option.note != null) ...[
+                    const SizedBox(width: 8),
+                    Text(
+                      option.note!,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: AppPalette.textFaint,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(width: 10),
+                  Visibility(
+                    visible: widget.value == option.value,
+                    maintainSize: true,
+                    maintainState: true,
+                    maintainAnimation: true,
+                    child: const Icon(Icons.check, size: 16),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        if (!widget.allVisible && widget.options.length > visible.length)
+          AppSelectField<T>(
+            key: widget.moreKey,
+            value: widget.value,
+            options: widget.options,
+            onChanged: _choose,
+            width: math.max(
+              104,
+              MediaQuery.textScalerOf(context).scale(14) * 4.2 + 32,
+            ),
+            height: math.max(
+              44,
+              MediaQuery.textScalerOf(context).scale(14) * 1.5 + 24,
+            ),
+            fillColor: Colors.transparent,
+            trigger: Padding(
+              padding: const EdgeInsets.only(left: 5),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'More…',
+                  maxLines: 1,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: AppPalette.textSecondary,
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 

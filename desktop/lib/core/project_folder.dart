@@ -26,7 +26,7 @@ class ProjectFolderRequest {
         Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
     if (projectHome == null && (home == null || !p.isAbsolute(home))) {
       throw const RepositoryCloneException(
-        'Could not find your home folder. Choose Local to select a folder.',
+        'Could not find your home folder. Browse for a folder.',
       );
     }
     final root = Directory(projectHome ?? p.join(home!, 'harnesses'));
@@ -61,11 +61,11 @@ class ProjectFolderRequest {
       }
     } on FileSystemException {
       throw const RepositoryCloneException(
-        'Could not create a project folder. Choose Local to select a folder you can edit.',
+        'Could not create a project folder. Browse for a folder you can edit.',
       );
     } on ProcessException {
       throw const RepositoryCloneException(
-        'Could not create a project folder. Choose Local to select a folder you can edit.',
+        'Could not create a project folder. Browse for a folder you can edit.',
       );
     }
   }
