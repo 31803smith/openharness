@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../core/models.dart';
@@ -127,7 +128,7 @@ class _SwarmSearchPreviewState extends State<SwarmSearchPreview> {
                     key: ValueKey('preview-content:${row.id}'),
                     controller: _scroll,
                     padding: EdgeInsets.all(widget.compactHeader ? 16 : 24),
-                    cacheExtent: 120,
+                    scrollCacheExtent: const ScrollCacheExtent.pixels(120),
                     itemCount: agents.length + 1,
                     itemBuilder: (context, index) => index == 0
                         ? Padding(

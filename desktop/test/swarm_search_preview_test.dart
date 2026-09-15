@@ -81,6 +81,38 @@ void main() {
           rootBundle.load('packages/lucide_icons_flutter/assets/lucide.ttf'),
         ))
         .load();
+    await (FontLoader('packages/lucide_icons_flutter/Lucide300')..addFont(
+          rootBundle.load(
+            'packages/lucide_icons_flutter/assets/build_font/LucideVariable-w300.ttf',
+          ),
+        ))
+        .load();
+  });
+
+  testWidgets('offline previews retain text without claiming to work or wait', (
+    tester,
+  ) async {
+    final app = createApp();
+    await seedPreviews(app);
+    app.adoptSessionForTest(terminal('a69', []));
+    await mount(tester, app);
+    await chord(tester, LogicalKeyboardKey.keyO);
+    final field = find.byKey(const ValueKey('swarm-search-input'));
+    await tester.enterText(field, 'Workspace sync');
+    await tester.pump();
+    expect(find.text('Needs your input'), findsOneWidget);
+    app.machineStates['m']!.connectionStatus = ConnectionStatus.disconnected;
+    app.notifyListeners();
+    await tester.pump();
+    expect(find.text('Offline'), findsOneWidget);
+    expect(find.text('Needs your input'), findsNothing);
+    expect(
+      find.textContaining('Keep shared workspaces in sync'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Saved text'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    app.dispose();
   });
   for (final inline in [false, true]) {
     testWidgets(
