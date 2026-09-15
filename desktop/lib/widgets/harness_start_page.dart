@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../shared/theme/app_theme.dart' as grid;
+import '../shared/theme/appearance_prefs_store.dart';
+import '../shared/theme/harness_background.dart';
 import '../state/swarm_navigation.dart';
 import '../state/swarm_search.dart';
 import 'harness_entry_actions.dart';
@@ -296,20 +298,41 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
                   Positioned(
                     right: 20,
                     bottom: 16,
-                    child: FilledButton.icon(
-                      key: const ValueKey('harness-customize-button'),
-                      focusNode: _customizeButtonFocus,
-                      onPressed: _customizing
-                          ? _closeCustomization
-                          : _customize,
-                      icon: const Icon(Icons.edit_outlined, size: 16),
-                      label: const Text('Customize Harness'),
-                      style: FilledButton.styleFrom(
-                        backgroundColor: grid.AppPalette.swarmAccent,
-                        foregroundColor: grid.AppPalette.swarmTabBar,
-                        minimumSize: const Size(0, 36),
-                        shape: const StadiumBorder(),
-                      ),
+                    child: ValueListenableBuilder<AppearancePrefs>(
+                      valueListenable: appearancePrefsStore,
+                      builder: (context, prefs, _) {
+                        final onPressed = _customizing
+                            ? _closeCustomization
+                            : _customize;
+                        if (prefs.background != HarnessBackground.plain) {
+                          return IconButton.filled(
+                            key: const ValueKey('harness-customize-button'),
+                            focusNode: _customizeButtonFocus,
+                            onPressed: onPressed,
+                            tooltip: 'Customize Harness',
+                            icon: const Icon(Icons.edit_outlined, size: 18),
+                            style: IconButton.styleFrom(
+                              backgroundColor: grid.AppPalette.swarmAccent,
+                              foregroundColor: grid.AppPalette.swarmTabBar,
+                              fixedSize: const Size.square(40),
+                              shape: const CircleBorder(),
+                            ),
+                          );
+                        }
+                        return FilledButton.icon(
+                          key: const ValueKey('harness-customize-button'),
+                          focusNode: _customizeButtonFocus,
+                          onPressed: onPressed,
+                          icon: const Icon(Icons.edit_outlined, size: 16),
+                          label: const Text('Customize Harness'),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: grid.AppPalette.swarmAccent,
+                            foregroundColor: grid.AppPalette.swarmTabBar,
+                            minimumSize: const Size(0, 36),
+                            shape: const StadiumBorder(),
+                          ),
+                        );
+                      },
                     ),
                   ),
                   if (_customizing && !sideBySide)

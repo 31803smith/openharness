@@ -13,7 +13,10 @@ and protocol identifiers are unchanged.
 ## Customize Harness
 
 The New Harness page defaults to the selected tab's solid fill, using the same
-workspace palette color. **Customize Harness** is a pill at the bottom right.
+workspace palette color. **Customize Harness** is a pill at the bottom right on
+Default. With any wallpaper selected, it becomes a compact circular pencil
+button with the same tooltip and accessible label; switching back restores the
+full label immediately.
 It opens a right-hand pane with **Background / Appearance / Terminal** sections.
 Wide windows keep the page beside it; narrow windows overlay the pane without
 squeezing the search controls. Closing it restores focus to the Customize button

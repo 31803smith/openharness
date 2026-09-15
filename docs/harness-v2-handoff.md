@@ -34,7 +34,14 @@ user for a benchmark window.
 
 ## Current product contract
 
-### Latest: distinct New/Open edge actions
+### Latest: compact customization button on wallpapers
+
+Default retains the **Customize Harness** pill. Any wallpaper switches it to a
+40-pixel circular pencil button, keeping the tooltip and accessible label.
+The button listens to the existing appearance store so switching backgrounds
+updates it immediately without reopening the page.
+
+### Distinct New/Open edge actions — pushed 9fcaf27
 
 The right and bottom pane edges now reveal **+ New Agent** and **↗ Open Agent**
 together. New opens creation directly with the hovered pane's machine/project;
@@ -74,9 +81,18 @@ Logs: `/private/tmp/harness-separate-entry-final-tests.log`,
 `/private/tmp/harness-separate-entry-keymap-native.log`, and
 `/private/tmp/harness-separate-entry-final-analyze.log`.
 Captures: `/private/tmp/harness-separate-entry-picker`.
-The installed preview is still **8873f27** until the next build/install.
-The rollback was pushed first as **aa327c0**. The user requests one feature per
-commit and push; Customize Harness and distinct edge New/Open actions follow separately.
+The rollback was pushed first as **aa327c0**, then customization as **60a95d5**,
+then edge actions as **9fcaf27**. Preserve the user's one-feature-per-push order.
+
+The preview was refreshed to **9fcaf27** at the supported path. Release and
+deep/strict signature verification passed before and after the atomic swap.
+The exact old preview PID 66331 exited after SIGTERM when native Quit repeatedly
+failed; its bundle and saved layout were retained. CUA reopened the new build
+as PID 88857. A fresh app-control connection showed all four restored Harnesses,
+the original active Harness, and separate New/Open titlebar buttons. Subsequent
+actions were rejected as user-changed; the user is reviewing customization.
+The current local receipt is `/private/tmp/harness-agent-preview-install.json`,
+with this checkpoint retained in `/private/tmp/harness-entry-customize-install.json`.
 
 ### Earlier September 15 checkpoint (combined form superseded)
 
@@ -176,7 +192,7 @@ Saved and pushed to `origin/main`: **9d0150d** (remote project preparation),
 validation cleanup). The 339-test pass was followed by six passing focused
 checks after the analyzer cleanup; changed Dart files now analyze without issues.
 
-**8873f27 is installed and running at the supported preview path.** The user
+**Historical installation: 8873f27.** The user
 confirmed Quit Harness, but exact process lookup still found the old PID 68117.
 CUA could not reach that window or its Quit action. The saved four-Harness layout
 was backed up before sending SIGTERM to that exact remaining preview process.
