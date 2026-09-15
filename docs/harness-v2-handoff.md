@@ -32,6 +32,11 @@ evidence. **Native latency benchmarking is explicitly deferred by the user.**
 Do not run it, resume calibration when the console unlocks, or interrupt the
 user for a benchmark window.
 
+The requested UI list is **complete, pushed and reloaded**. This includes the
+compact inline settings row and New project as the default for each new dialog.
+There are no pending UI code changes. The user asked to finish UI first; the
+broader qualification backlog below is separate and has not been started here.
+
 ## Current product contract
 
 ### Friendly defaults
@@ -106,21 +111,24 @@ focused picker, project, keyboard and responsive-layout checks pass in
 cleanly in `/private/tmp/harness-single-choice-analyze.log`.
 
 The user has renewed authorization to push each completed feature separately.
-The latest installed preview is **2b332f2**, at the supported checkout path.
-Release build: `/private/tmp/harness-project-picker-release-build.log`.
+The latest installed preview is **86ad284**, at the supported checkout path.
+Release build: `/private/tmp/harness-inline-settings-release-build.log`.
 App.framework, FlutterMacOS.framework and the outer app passed signature checks.
 Normal Cmd-Q saved the layout; the old bundle was retained in
-`desktop/build/macos/Build/Products/Release/.harness-before-project-picker-0cd492es/`.
-The new app reopened as PID 93391, with the exact saved layout, three tab IDs and
-active tab preserved before review. Receipts:
-`/private/tmp/harness-project-picker-preview-install.json` and
+`desktop/build/macos/Build/Products/Release/.harness-before-inline-settings-orq0dbhp/`.
+The new app reopened as PID 40661. All three populated Harnesses retain their
+saved structure, identities and active tab. The unused empty New Harness tab
+was absent after reopening; no layout was restored over user activity. Receipts:
+`/private/tmp/harness-inline-settings-preview-install.json` and
 `/private/tmp/harness-agent-preview-install.json`.
 
-Live accessibility inspection showed the new Agent/Machine/Project form, local
-project results and real README/branch/commit/contributor content. The user was
-already interacting with it; a subsequent screenshot showed the selected project
-collapsed into the bar. No real agent was created for verification. The preview
-also includes the previously pushed search, device, chooser and naming UI work.
+Live accessibility inspection confirmed the restored workspace and the new
+Engine/Machine/Project form opening with no remembered recent-project label.
+The dialog was no longer open during the follow-up expanded-settings check;
+the final expanded layout is verified through the responsive fixture captures
+and alignment assertions above. No real agent was created for verification.
+The preview also includes the previously pushed search, device, chooser, menu,
+hover and naming UI work.
 
 ### Quiet agent choices
 
