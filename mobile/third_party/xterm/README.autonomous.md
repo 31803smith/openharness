@@ -113,3 +113,21 @@ it if one is dropped.
    vertical scrolling and app-owned Meta shortcuts keep their bindings.
    Regression: the macOS/Linux pair in `test/terminal_panel_focus_test.dart`
    exercises physical key events through `TerminalPanel` to binary PTY input.
+
+9. **A software keyboard is allowed to compose**
+   (`lib/src/ui/custom_text_edit.dart`). The strict
+   `autocorrect: false` / `enableSuggestions: false` this connection attached
+   with is right for a hardware keyboard — a desktop IME composes through
+   marked text, which neither flag touches — but on a phone those two flags ARE
+   the IME: iOS maps `autocorrect` onto `UITextAutocorrectionTypeNo` and
+   Android maps `enableSuggestions` onto `TYPE_TEXT_FLAG_NO_SUGGESTIONS`, and
+   with no pre-edit buffer to work in a Vietnamese Telex keyboard converted
+   nothing — `hoom` reached the pty as four raw letters instead of `hôm`, and a
+   CJK candidate window never opened. iOS and Android now attach with
+   composition left on (iOS needs `autocorrect`, the only knob it has; Android
+   needs `enableSuggestions` and keeps autocorrection itself off), and smart
+   dashes and quotes — which default to ENABLED, and which iOS only acts on
+   once autocorrect is on — are switched off on every platform so `"` and
+   `--flag` stay syntax rather than typography. Regression:
+   `mobile/test/terminal_ime_input_test.dart`, the only build that reaches the
+   mobile branch.

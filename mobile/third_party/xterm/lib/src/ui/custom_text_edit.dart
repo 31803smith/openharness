@@ -167,6 +167,13 @@ class CustomTextEditState extends State<CustomTextEdit> with TextInputClient {
 
   bool get _shouldCreateInputConnection => kIsWeb || !widget.readOnly;
 
+  /// Whether the platform's on-screen keyboard is the input method itself,
+  /// rather than a layer a hardware keyboard composes through. See the IME
+  /// note in [_openInputConnection].
+  static bool get _composesThroughSoftwareKeyboard =>
+      defaultTargetPlatform == TargetPlatform.iOS ||
+      defaultTargetPlatform == TargetPlatform.android;
+
   void _openInputConnection() {
     if (!_shouldCreateInputConnection) {
       return;
@@ -179,8 +186,29 @@ class CustomTextEditState extends State<CustomTextEdit> with TextInputClient {
         inputType: widget.inputType,
         inputAction: widget.inputAction,
         keyboardAppearance: widget.keyboardAppearance,
-        autocorrect: false,
-        enableSuggestions: false,
+        // ⚠️ On a phone the software keyboard IS the input method, and these two
+        // switches are what turn its pre-edit buffer off: iOS maps
+        // `autocorrect: false` onto `UITextAutocorrectionTypeNo`, Android maps
+        // `enableSuggestions: false` onto `TYPE_TEXT_FLAG_NO_SUGGESTIONS`. With
+        // either one set the keyboard has nowhere to compose, so Vietnamese
+        // Telex converted nothing and `hoom` reached the pty as four raw
+        // letters instead of `hôm`; a CJK candidate window dies the same way.
+        // A desktop IME composes through marked text, which neither flag
+        // touches, so those platforms keep the strict config — a terminal has
+        // no business autocorrecting a command.
+        //
+        // iOS has no finer knob: that one `autocorrect` gates its autocorrection
+        // AND its Telex conversion. Android's composing hangs off
+        // `enableSuggestions` alone, so its autocorrect flag
+        // (`TYPE_TEXT_FLAG_AUTO_CORRECT`) stays off there and Gboard rewrites
+        // nothing that was typed.
+        autocorrect: defaultTargetPlatform == TargetPlatform.iOS,
+        enableSuggestions: _composesThroughSoftwareKeyboard,
+        // Straight quotes and hyphens, always: `"` and `--flag` are syntax at a
+        // prompt, not typography. Both default to ENABLED, and turning
+        // autocorrect on above is what would finally let iOS act on them.
+        smartDashesType: SmartDashesType.disabled,
+        smartQuotesType: SmartQuotesType.disabled,
         enableIMEPersonalizedLearning: false,
       );
 
