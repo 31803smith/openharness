@@ -38,10 +38,13 @@ Use [the detailed entry/pane contract](harness-agent-first-tabs.md) when editing
 or validating UI. The decisions that previously conflicted with older handoffs
 are:
 
-- **New Harness creates; Open Harness finds existing work.** They are explicit
-  titlebar buttons with separate popups. The bell is beside the traffic lights.
-  The floating bottom-right plus is removed.
-- **Cmd-T: New Tab; Cmd-N: New Harness; Cmd-O: Open Harness; Cmd-S: Layout.**
+- **Add Harness unifies search and creation.** A single titlebar button and
+  File → Add Harness… open the compact chooser: search plus Open/New actions.
+  Typing or explicit search activation reveals results and preview without
+  moving the field. New remains visible after searching and preserves split
+  placement. The bell stays beside the traffic lights.
+- **Cmd-T: New Tab; Cmd-N: Add Harness; Shift-Cmd-N: direct New Harness; Cmd-S: Layout.**
+  Cmd-O is unbound by default.
   Cmd-H/J/K/L and Cmd-arrows focus panes; Cmd-1…9 select tabs. User bindings take
   precedence. Cmd-R splits right and Cmd-D splits down. Native menus, help and actual
   dispatch must agree; native menu and titlebar hover hints are removed.
@@ -50,12 +53,12 @@ are:
   harness**. Search starts blank and focused, with results hidden. Open Harness
   and New Harness sit underneath, aligned with the search field's left edge.
   Search has a **64-pixel minimum height** with more vertical padding; the
-  action buttons remain 48 pixels high. Cmd-O retains its existing input size.
+  action buttons remain 48 pixels high. The Cmd-N chooser shares the taller field.
   Activating search preserves the field position and width; results and preview
   appear side by side from 700 pixels wide, and the actions hide. The buttons
   wrap when needed. Escape restores the actions and query.
   Typing, clicking, or pressing an arrow
-  reveals the same results, selection, arrows and Enter behavior as Cmd-O.
+  reveals the same results, selection, arrows and Enter behavior as the Cmd-N chooser.
   Focus alone leaves results hidden and builds no catalog. Open Harness and
   accented **+ New Harness** share a row below search; a small official device
   image and **Meet the Harness device** caption stay in a footer 32 pixels above
@@ -68,7 +71,8 @@ are:
 - Search is single-choice. Session names appear above **project · branch ·
   machine**, without repeated workspace titles. Only the highlighted row shows
   **Open Harness / Open N Harnesses**, or the explicit split action. The modal
-  has a 90% black backdrop and no Commands footer, creation CTA or “or” divider.
+  has a 90% black backdrop. Its Open/New buttons remain beneath results;
+  there is no Commands footer or “or” divider.
   Commands remain available through Shift-Cmd-P or typing **>**.
 - Both search entry points show existing session excerpts. Working sessions lead
   with the observed request and activity; idle sessions show an existing response.
@@ -77,6 +81,8 @@ are:
   events. No `session_get`, full-history read, or terminal attachment. Cached
   selection is immediate; cold data fills asynchronously. Disconnected records
   retain saved text without claiming a live working/waiting state.
+  Query words also match those cached excerpts without additional reads; names
+  and metadata rank first. Live matches retain selection and stable row order.
   Page Up/Down scrolls preview content without changing selection or typing focus;
   both actions participate in the configurable Search keymap.
 - The Harness application menu includes **Check for Updates…**, using the
@@ -92,16 +98,19 @@ are:
   machine preserves the working folder; large text wraps the buttons.
 - A single-agent tab/search/history entry uses that agent's engine icon;
   multiple agents use four outlined tiles. An empty tab uses a plain plus, and
-  tab close marks appear only on hover/focus. Only one unused New Harness page
+  tab close marks appear only on hover/focus. Only one unused New Tab page
   is allowed; all New Tab actions reuse and focus it, including at the tab limit.
   Restore collapses old duplicate unused pages. Blank pages are excluded
   from Recently Closed. File uses Rename Tab / Close Tab, then pane actions;
+  Rename has a clean unlabeled field and muted pill actions. Double-clicks are
+  contained within the native tab, and modal appearance leaves the titlebar
+  button colors intact while blocking their actions.
   Pin/Unpin and Add Project are absent. Machines follows Models and starts with
   **Open Machines Manager**, with visible Rename actions.
 - Pane headers show agent icon/session on the left and folder/branch/machine
   on the right, with a small muted branch glyph before the branch. Header hover
   or keyboard focus reveals **Zoom Pane, Restart Harness, Stop Harness, Close Pane**, with
-  Keyboard first for remote sessions. Stop uses a circle-stop icon and a clear
+  Keyboard first for remote sessions. Stop uses a plain filled square and a clear
   confirmation; the existing action ends the process and removes its active
   entry, preserving project files and saved conversation history. Divider grips appear on
   hover/focus/drag. Right/bottom edge plus controls retain explicit split
@@ -179,6 +188,26 @@ inspected directly and the user approved its background, preview and footer
 placement. The restored native Check for Updates command was verified earlier:
 it opened the existing update offer; no update was installed.
 
+### September 15 unified entry checkpoint
+
+- **8ada851**: clean Rename Tab; consume native tab mouse-up so rename cannot
+  trigger window zoom; preserve titlebar action colors behind a modal.
+- **44148d7**: search existing cached session excerpts without extra reads.
+  Stop uses the standard filled square; incoming managed tmux work is retained.
+- **9af924f**: compact Add Harness chooser on Cmd-N; one titlebar/File entry;
+  New Tab label and legacy-name restoration; visible creation for both splits.
+- 355 affected Flutter checks are covered by the broad run and the focused
+  rerun of corrected expectations. Logs: /private/tmp/harness-unified-entry-regressions.log
+  and /private/tmp/harness-unified-entry-final-tests.log. The latter passes all 21.
+  Three real-font picker checks pass at 1280, 760 and 600 pixels, including 2×
+  text: /private/tmp/harness-picker-render-tests.log. Captures are in
+  /private/tmp/harness-picker-entry-captures. The editor retains exact geometry;
+  Enter on the focused New button opens creation rather than the selected result.
+- Native AppKit: 374 checks pass, including hidden-window geometry, tab click
+  isolation, menu/shortcut agreement and identical action colors under a modal.
+  Log: /private/tmp/harness-unified-entry-native.log. No benchmark ran.
+- Changed Dart analysis is clean after removing one unused test import.
+
 ### Prepared build versus running preview
 
 Prepared build location:
@@ -189,17 +218,25 @@ Only supported current preview location:
 
 /Users/ab/code/autonomous-harness/desktop/build/macos/Build/Products/Release/Harness.app
 
-The prepared build includes **021ef72** and passed in
-/private/tmp/harness-taller-search-release.log with deep, strict signature
-verification. Its window-preserving installation is pending while the user
-finishes an active folder chooser.
+The prepared and running builds now include **9af924f**. Release succeeded in
+/private/tmp/harness-unified-entry-release.log. Both bundles passed deep, strict
+signature verification. Installation used **Quit and Keep Windows**, an exact
+stopped-process check before and immediately before the swap, and a verified
+staging bundle. The previous live bundle is backed up at
+/private/tmp/harness-before-unified-entry-wyqay10k/Harness.app.
 
-The running preview was updated through **526b832** using Quit and Keep Windows. The
-Release build passed in /private/tmp/harness-lake-entry-release.log; the
-prepared and installed bundles passed deep, strict signature verification. The
-existing app v2, workshop and personal tabs restored successfully, along with
-the unused New Harness tab. The resting New Tab layout was inspected in this
-exact build; shared search interactions are covered by the widget checks above.
+Live verification confirmed the existing app v2 (three panes), workshop and
+personal tabs restored, together with the existing empty page now named New Tab.
+The titlebar and File menu each expose one Add Harness action. Both open the
+compact chooser; its New button opens the direct-choice creation form. Native
+tab double-click opened the cleaned-up Rename Tab without changing window size,
+and Add Harness retained its normal colors behind the modal. Rename and creation
+were dismissed without changing names or launching a session. The taller lake
+start page and fixed device footer were inspected, and New Tab was left selected
+for review. CUA's synthetic Command-modifier attempts had no observable effect
+for either Cmd-N or the unchanged Cmd-T; shortcut dispatch is covered by the
+Flutter and isolated native checks, not claimed as a live CUA keyboard result.
+
 The console is accessible; older locked-console notes are obsolete. Before replacing
 it with later changes, verify the new Release build
 and signatures, use **Quit and Keep Windows**, then check the exact process is
@@ -207,7 +244,7 @@ stopped. Back up and replace only the current checkout's bundle, verify it, and
 reopen that exact path. Ordinary Quit can terminate agents. Do not call getApp
 between quitting and copying, since that lookup can relaunch the app.
 
-The immediately previous preview backup is
+The older pre-lake preview backup remains at
 /private/tmp/harness-before-lake-entry-fmqz73k5/Harness.app.
 Do not open the other checkout's retired UI or /Applications/Harness.app. Do not
 restart/upgrade the user's CLI daemon or type test commands into working agents.
