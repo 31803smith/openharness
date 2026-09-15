@@ -1,8 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:harness/shared/widgets/app_select_field.dart';
-import 'package:harness/widgets/new_agent_dialog.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/screens/swarm_screen.dart';
@@ -382,7 +380,7 @@ void main() {
         if (inline) {
           await tester.tap(input);
         } else {
-          await key(tester, LogicalKeyboardKey.keyN, cmd: true);
+          await key(tester, LogicalKeyboardKey.keyO, cmd: true);
         }
         await tester.enterText(input, 'Agent');
         await tester.pump();
@@ -458,7 +456,7 @@ void main() {
     expect(find.byType(SwarmSearchResults), findsNothing);
     expect(tester.widget<TextField>(field).controller!.text, '> ');
     expect(tester.widget<TextField>(field).focusNode!.hasFocus, isFalse);
-    await key(tester, LogicalKeyboardKey.keyN, cmd: true);
+    await key(tester, LogicalKeyboardKey.keyO, cmd: true);
     final modal = find.byKey(const ValueKey('swarm-search-input'));
     expect(tester.widget<TextField>(modal).focusNode!.hasFocus, isTrue);
     expect(tester.widget<TextField>(modal).controller!.text, isEmpty);
@@ -583,7 +581,7 @@ void main() {
     (true, true),
   ]) {
     testWidgets(
-      'New moves from inline search to the shared creation row (native=$fromMenu, result focused=$resultFocused)',
+      'New closes inline search before opening its form (native=$fromMenu, result focused=$resultFocused)',
       (tester) async {
         tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
           nativeChannel,
@@ -611,20 +609,14 @@ void main() {
           await tester.pump();
           await opening;
         } else {
-          await key(tester, LogicalKeyboardKey.keyN, cmd: true, shift: true);
+          await key(tester, LogicalKeyboardKey.keyN, cmd: true);
         }
         await tester.pumpAndSettle();
-        expect(find.byType(NewAgentComposer), findsOneWidget);
+        expect(find.byType(AlertDialog), findsOneWidget);
         expect(find.byType(SwarmSearchResults), findsNothing);
         expect(
-          find.byKey(const ValueKey('harness-start-results')),
-          findsNothing,
-        );
-        expect(
           tester
-              .widget<AppSelectField<String>>(
-                find.byKey(const ValueKey('agent-composer-agent')),
-              )
+              .widget<InkWell>(find.byKey(const Key('new-agent-folder')))
               .focusNode!
               .hasPrimaryFocus,
           isTrue,
@@ -633,7 +625,7 @@ void main() {
         await tester.pumpAndSettle();
         expect(find.byType(AlertDialog), findsNothing);
         expect(find.byType(SwarmSearchResults), findsNothing);
-        expect(tester.widget<TextField>(field).focusNode!.hasFocus, isTrue);
+        expect(tester.widget<TextField>(field).focusNode!.hasFocus, isFalse);
         expect(tester.widget<TextField>(field).controller!.text, 'Agent 12');
         expect(app.panes, isEmpty);
         expect(tester.takeException(), isNull);
@@ -670,7 +662,7 @@ void main() {
         if (inline) {
           await tester.tap(field);
         } else {
-          await key(tester, LogicalKeyboardKey.keyN, cmd: true);
+          await key(tester, LogicalKeyboardKey.keyO, cmd: true);
         }
         await tester.enterText(field, 'Agent');
         await tester.pump();

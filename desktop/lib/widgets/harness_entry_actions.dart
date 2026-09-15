@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../shared/theme/app_theme.dart' as grid;
 import '../shortcuts/app_keymap.dart';
 import '../shortcuts/keymap.dart';
+import 'agent_action_icons.dart';
 
-/// The same search-or-create choice on New Harness and in the Add Agent picker.
+/// Separate Open Agent and New Agent actions on the Harness start page.
 class HarnessEntryActions extends StatelessWidget {
   const HarnessEntryActions({
     super.key,
@@ -60,7 +60,7 @@ class HarnessEntryActions extends StatelessWidget {
         _keyboardAction(
           context,
           onOpen,
-          OutlinedButton(
+          OutlinedButton.icon(
             key: openKey,
             onPressed: onOpen,
             style: OutlinedButton.styleFrom(
@@ -76,7 +76,8 @@ class HarnessEntryActions extends StatelessWidget {
                   : const BorderSide(color: Colors.white24),
               shape: const StadiumBorder(),
             ),
-            child: const Text('Open Agent'),
+            icon: const Icon(AgentActionIcons.open, size: 18),
+            label: const Text('Open Agent'),
           ),
         ),
         _keyboardAction(
@@ -85,7 +86,7 @@ class HarnessEntryActions extends StatelessWidget {
           FilledButton.icon(
             key: newKey,
             onPressed: onNew,
-            icon: const Icon(LucideIcons.plus300, size: 18),
+            icon: const Icon(AgentActionIcons.create, size: 18),
             label: const Text('New Agent'),
             style: FilledButton.styleFrom(
               enabledMouseCursor: SystemMouseCursors.click,

@@ -279,11 +279,7 @@ const List<AppShortcut> kAppShortcuts = [
   // --- actions --------------------------------------------------------------
   AppShortcut(
     action: ShortcutAction.newAgent,
-    activator: SingleActivator(
-      LogicalKeyboardKey.keyN,
-      meta: true,
-      shift: true,
-    ),
+    activator: SingleActivator(LogicalKeyboardKey.keyN, meta: true),
     label: 'New Agent',
     group: ShortcutGroup.actions,
   ),
@@ -345,8 +341,8 @@ List<AppShortcut> appShortcuts({bool swarmMode = true}) => [
 const kSwarmShortcuts = [
   AppShortcut(
     action: ShortcutAction.addAgent,
-    activator: SingleActivator(LogicalKeyboardKey.keyN, meta: true),
-    label: 'Add Agent',
+    activator: SingleActivator(LogicalKeyboardKey.keyO, meta: true),
+    label: 'Open Agent',
     group: ShortcutGroup.actions,
   ),
   AppShortcut(

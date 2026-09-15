@@ -34,7 +34,28 @@ user for a benchmark window.
 
 ## Current product contract
 
-### September 15 continuation checkpoint
+### Latest: separate New Agent and Open Agent
+
+The user rejected combined Add Agent. **Cmd-N / New Agent** now opens the dedicated
+creation dialog; **Cmd-O / Open Agent** opens search/results/preview only. Both
+buttons and File menu actions are restored. New Harness has search and the two
+actions, without embedded creation. Split search can still transition to creation
+with its New Agent header action or Cmd-N and retain the requested destination.
+The profile readiness race fix and unrelated wallpaper, device, Machines and
+connection-status improvements are retained. See the current entry contract.
+
+Verification: 203 affected Flutter tests, 96 exported native keyboard checks,
+407 hidden AppKit checks and analysis of all 28 changed Dart/test files pass.
+Logs: `/private/tmp/harness-separate-entry-final-tests.log`,
+`/private/tmp/harness-separate-entry-keymap-native.log`, and
+`/private/tmp/harness-separate-entry-final-analyze.log`.
+Captures: `/private/tmp/harness-separate-entry-picker`.
+The installed preview is still **8873f27** until the next build/install.
+Push this rollback first. The user then requested Customize Harness, followed by
+distinct New/Open edge actions; implement and push each feature separately.
+
+### Earlier September 15 checkpoint (combined form superseded)
+
 
 - The user renamed the session concept to **Agent**: Open/New/Add/Stop/Restart
   Agent, Find an agent, counts and recovery copy throughout Flutter and native
@@ -215,14 +236,11 @@ Use [the detailed entry/pane contract](harness-agent-first-tabs.md) when editing
 or validating UI. The decisions that previously conflicted with older handoffs
 are:
 
-- **Add Agent unifies search and creation.** A single titlebar button and
-  File → Add Agent… open results and preview immediately, with the search
-  field focused, Open Agent below results and the compact creation row anchored
-  beneath. This supersedes compact-first modal entry and separate creation;
-  the New Harness page stays compact until activated. Creation preserves split
-  placement. The bell stays beside the traffic lights.
-- **Cmd-T: New Harness; Cmd-N: Add Agent; Shift-Cmd-N: focus creation; Cmd-S: Layout.**
-  Cmd-O is unbound by default.
+- **New Agent and Open Agent are separate.** New opens creation; Open shows
+  search and preview immediately. The titlebar and File menu expose both.
+  The New Harness page stays compact until search is activated. Split creation
+  retains its requested position. The bell stays beside the traffic lights.
+- **Cmd-T: New Harness; Cmd-N: New Agent; Cmd-O: Open Agent; Cmd-S: Layout.**
   Cmd-H/J/K/L and Cmd-arrows focus panes; Cmd-1…9 select tabs. User bindings take
   precedence. Cmd-R splits right and Cmd-D splits down. Native menus, help and actual
   dispatch must agree; native menu and titlebar hover hints are removed.
@@ -239,8 +257,7 @@ are:
 - Search is single-choice. Session names appear above **project · branch ·
   machine**, without repeated workspace titles. Only the highlighted row shows
   **Open Agent / Open N Agents**, or the explicit split action. The modal
-  has a 90% black backdrop. Open Agent remains beneath results and the New agent
-  creation row stays below; there is no Commands footer or “or” divider.
+  has a 90% black backdrop. There is no footer button or embedded creation form.
   Commands remain available through Shift-Cmd-P or typing **>**.
 - Both search entry points show existing session excerpts. Working sessions lead
   with the observed request and activity; idle sessions show an existing response.
@@ -255,16 +272,10 @@ are:
   both actions participate in the configurable Search keymap.
 - The Harness application menu includes **Check for Updates…**, using the
   existing manual update-check dialog, directly above Flash Firmware.
-- The combined panel uses **New Agent** for the creation heading and **Create**
-  for its action. Agent, Project and Machine dropdowns show selected defaults;
-  keyboard input stays with the active menu or field. Options contains account
-  and permission settings. Escape or one outside click dismisses the panel;
-  an in-progress launch cannot be dismissed accidentally. An uncertain outcome
-  retains Close and Check status and the original receipt, never starting twice.
-  Search/destination controls are blocked during launch or uncertainty.
-  Opening a local/remote folder chooser preserves the mounted form and selections.
-  Creation success focuses the newly created pane instead of the old terminal.
-  The standalone direct-choice form remains for non-workspace entry points.
+- The dedicated **New Agent** form keeps Machine, Working folder, Agent and
+  Advanced choices. Pending creation cannot be dismissed accidentally; uncertain
+  results retain Close and Check status without creating again. Folder choosers
+  preserve the form, and successful creation focuses the new pane.
 - A single-agent tab/search/history entry uses that agent's engine icon;
   multiple agents use four outlined tiles. An empty tab uses a plain plus, and
   tab close marks appear only on hover/focus. Only one unused New Harness page

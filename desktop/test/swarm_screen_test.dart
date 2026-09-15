@@ -180,7 +180,7 @@ void main() {
       );
       await mount(tester, app);
       expect(find.text('Existing project'), findsNothing);
-      await chord(tester, LogicalKeyboardKey.keyN);
+      await chord(tester, LogicalKeyboardKey.keyO);
       await tester.pump();
       await tester.enterText(
         find.byKey(const ValueKey('swarm-search-input')),
@@ -216,7 +216,7 @@ void main() {
       );
       expect(find.text('Models'), findsNothing);
       expect(find.text('Machines'), findsNothing);
-      await chord(tester, LogicalKeyboardKey.keyN);
+      await chord(tester, LogicalKeyboardKey.keyO);
       await tester.pump();
       await tester.enterText(
         find.byKey(const ValueKey('swarm-search-input')),
@@ -228,11 +228,11 @@ void main() {
       await tester.pump();
       await app.addAgentToSwarm('m', 'a2');
       app.toggleZoomPane();
-      // The Add button appears when the first agent replaces the welcome page.
+      // The Open button appears when the first agent replaces the welcome page.
       await tester.pump(const Duration(milliseconds: 200));
       final zoom = app.zoomedPaneId;
       final before = tester.getSize(find.byType(PaneGrid));
-      await tester.tap(find.byKey(const ValueKey('swarm-add-harness-button')));
+      await tester.tap(find.byKey(const ValueKey('swarm-open-agent-button')));
       await tester.pump(const Duration(milliseconds: 300));
       expect(
         find.byKey(const ValueKey('swarm-search-results')),

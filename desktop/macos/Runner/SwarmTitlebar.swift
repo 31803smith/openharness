@@ -216,7 +216,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
       item.representedObject = action
       item.identifier = NSUserInterfaceItemIdentifier(HarnessKeymapMenu.actionPrefix + action)
       let symbols = [
-        "new": "plus.square", "newAgent": "plus", "addAgent": "plus",
+        "new": "plus.square", "newAgent": "plus", "addAgent": "arrow.up.right",
         "renameActive": "pencil", "closeActive": "xmark",
         "splitRight": "rectangle.split.2x1", "splitDown": "rectangle.split.1x2",
         "zoomPane": "viewfinder", "closePane": "xmark",
@@ -235,7 +235,8 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     if let file = main.item(withTitle: "File") { main.removeItem(file) }
     let file = NSMenu(title: "File")
     add(file, "New Harness", "t", "new")
-    add(file, "Add Agent…", "n", "addAgent")
+    add(file, "New Agent…", "n", "newAgent")
+    add(file, "Open Agent…", "o", "addAgent")
     add(file, "Rename Harness…", "r", "renameActive", [.command, .shift])
     add(file, "Close Harness", "w", "closeActive")
     file.addItem(.separator())
@@ -854,7 +855,11 @@ private final class SwarmActionButton: NSButton {
       .foregroundColor: labelColor,
     ])
     let size = label.size()
-    label.draw(at: NSPoint(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2))
+    let iconWidth: CGFloat = image == nil ? 0 : 20
+    let left = (bounds.width - size.width - iconWidth) / 2
+    image?.withSymbolConfiguration(NSImage.SymbolConfiguration(paletteColors: [labelColor]))?
+      .draw(in: NSRect(x: left, y: (bounds.height - 14) / 2, width: 14, height: 14))
+    label.draw(at: NSPoint(x: left + iconWidth, y: (bounds.height - size.height) / 2))
   }
 }
 
@@ -866,6 +871,7 @@ private final class SwarmTabStrip: NSView {
   fileprivate let newButton = NSButton()
   fileprivate let notificationButton = SwarmNotificationButton()
   fileprivate let openButton = SwarmActionButton()
+  fileprivate let createButton = SwarmActionButton()
   private var tabs: [SwarmTabButton] = []
   private let icons = SwarmHistoryIcons()
   private var activeId = ""
@@ -911,9 +917,12 @@ private final class SwarmTabStrip: NSView {
       button.isEnabled = false
       addSubview(button)
     }
-    textButton(openButton, "Add Agent", #selector(openHarness))
+    textButton(createButton, "New Agent", #selector(createAgent))
+    textButton(openButton, "Open Agent", #selector(openHarness))
+    createButton.image = NSImage(systemSymbolName: "plus", accessibilityDescription: nil)
+    openButton.image = NSImage(systemSymbolName: "arrow.up.right", accessibilityDescription: nil)
     updateActionColors()
-    setAccessibilityChildren([notificationButton, scroll, newButton, openButton])
+    setAccessibilityChildren([notificationButton, scroll, newButton, createButton, openButton])
     registerForDraggedTypes([swarmPasteboardType])
   }
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -930,8 +939,11 @@ private final class SwarmTabStrip: NSView {
   }
 
   private func updateActionColors() {
-    openButton.fillColor = palette.accent
-    openButton.labelColor = palette.tabBar
+    createButton.fillColor = palette.accent
+    createButton.labelColor = palette.tabBar
+    openButton.fillColor = .clear
+    openButton.labelColor = palette.accent
+    openButton.borderColor = palette.accent.withAlphaComponent(0.3)
   }
 
   func update(_ state: [String: Any]) {
@@ -977,6 +989,7 @@ private final class SwarmTabStrip: NSView {
     newButton.isEnabled = actionsEnabled && (state["canOpenNewTab"] as? Bool ?? (tabs.count < 24))
     notificationButton.isEnabled = actionsEnabled
     openButton.isEnabled = actionsEnabled
+    createButton.isEnabled = actionsEnabled
     let attention = state["attention"] as? Int ?? 0
     notificationButton.hasAttention = attention > 0
     notificationButton.setAccessibilityLabel(attention > 0 ? "\(attention) agents need input" : "Notifications")
@@ -1005,7 +1018,7 @@ private final class SwarmTabStrip: NSView {
     let spacious = bounds.width >= 480
     let openWidth: CGFloat = spacious ? 122 : 108
     let trailing: CGFloat = spacious ? 12 : 8
-    let actionsWidth = openWidth + trailing
+    let actionsWidth = openWidth * 2 + 10 + trailing
     newButton.isHidden = bounds.width < 420
     let available = max(32, bounds.width - leading - actionsWidth - (newButton.isHidden ? 0 : 36))
     let width = min(220, max(min(132, available), available / CGFloat(max(1, tabs.count))))
@@ -1021,6 +1034,7 @@ private final class SwarmTabStrip: NSView {
     newButton.frame = NSRect(x: leading + occupied + 4, y: buttonY, width: 28, height: 28)
     let actionY = (bounds.height - 34) / 2
     openButton.frame = NSRect(x: bounds.width - trailing - openWidth, y: actionY, width: openWidth, height: 34)
+    createButton.frame = NSRect(x: openButton.frame.minX - 10 - openWidth, y: actionY, width: openWidth, height: 34)
     let geometryChanged = scroll.frame.size != previousScrollSize || document.frame.size != previousDocumentSize
     if let active, revealActiveAfterLayout || (activeWasVisible && (geometryChanged || tabOrderChanged)) {
       document.scrollToVisible(active.frame)
@@ -1061,6 +1075,9 @@ private final class SwarmTabStrip: NSView {
   }
   @objc private func openHarness() {
     if actionsEnabled { emit?("addAgent", nil) }
+  }
+  @objc private func createAgent() {
+    if actionsEnabled { emit?("newAgent", nil) }
   }
 
   private func draggedTab(_ sender: NSDraggingInfo) -> SwarmTabButton? {

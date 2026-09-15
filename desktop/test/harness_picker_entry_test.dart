@@ -10,8 +10,7 @@ import 'package:harness/shared/theme/app_theme.dart' as grid;
 import 'package:harness/shortcuts/app_keymap.dart';
 import 'package:harness/terminal/terminal_binary.dart';
 import 'package:harness/widgets/swarm_switcher.dart';
-import 'package:harness/widgets/new_agent_dialog.dart';
-import 'package:harness/shared/widgets/app_select_field.dart';
+import 'package:harness/shared/widgets/app_choice_picker.dart';
 
 import 'swarm_interactions_test.dart' show chord;
 import 'swarm_screen_test.dart' show terminal;
@@ -41,114 +40,107 @@ void main() {
     (const Size(760, 760), 1.0),
     (const Size(600, 680), 2.0),
   ]) {
-    testWidgets('Add Agent opens results and preview at $size, $scale', (
-      tester,
-    ) async {
-      tester.view.devicePixelRatio = 1;
-      tester.view.physicalSize = size;
-      addTearDown(tester.view.reset);
-      final app = createApp();
-      await seedPreviews(app);
-      final frames = <TerminalBinaryFrame>[];
-      app.adoptSessionForTest(terminal('a69', frames));
-      final pane = app.focusedPane;
-      final keymap = AppKeymap();
-      final boundaryKey = GlobalKey();
-      await tester.pumpWidget(
-        RepaintBoundary(
-          key: boundaryKey,
-          child: MaterialApp(
-            debugShowCheckedModeBanner: false,
-            theme: grid.buildAppTheme(brightness: Brightness.dark),
-            builder: (context, child) => MediaQuery(
-              data: MediaQuery.of(context)
-                  .copyWith(textScaler: TextScaler.linear(scale)),
-              child: KeymapProvider(keymap: keymap, child: child!),
+    testWidgets(
+      'Open Agent shows results separately from New Agent at $size, $scale',
+      (tester) async {
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = size;
+        addTearDown(tester.view.reset);
+        final app = createApp();
+        await seedPreviews(app);
+        final frames = <TerminalBinaryFrame>[];
+        app.adoptSessionForTest(terminal('a69', frames));
+        final pane = app.focusedPane;
+        final keymap = AppKeymap();
+        final boundaryKey = GlobalKey();
+        await tester.pumpWidget(
+          RepaintBoundary(
+            key: boundaryKey,
+            child: MaterialApp(
+              debugShowCheckedModeBanner: false,
+              theme: grid.buildAppTheme(brightness: Brightness.dark),
+              builder: (context, child) => MediaQuery(
+                data: MediaQuery.of(context)
+                    .copyWith(textScaler: TextScaler.linear(scale)),
+                child: KeymapProvider(keymap: keymap, child: child!),
+              ),
+              home: SwarmScreen(notifier: app, nativeTabs: false),
             ),
-            home: SwarmScreen(notifier: app, nativeTabs: false),
           ),
-        ),
-      );
-      await tester.pump(const Duration(milliseconds: 100));
-      final field = find.byKey(const ValueKey('swarm-search-input'));
-      await chord(tester, LogicalKeyboardKey.keyO);
-      expect(field, findsNothing);
-      await chord(tester, LogicalKeyboardKey.keyN);
-      expect(field, findsOneWidget);
-      expect(find.byType(SwarmSearchResults), findsOneWidget);
-      expect(
-        find.byKey(const ValueKey('swarm-search-preview')),
-        findsOneWidget,
-      );
-      expect(find.byKey(const ValueKey('harness-picker-open')), findsNothing);
-      expect(tester.widget<TextField>(field).decoration!.hintText, '');
-      expect(find.text('Find an agent'), findsOneWidget);
-      expect(find.byType(NewAgentComposer), findsOneWidget);
-      final create = find.byKey(const ValueKey('create-agent-submit'));
-      final createRect = tester.getRect(create);
-      final before = tester.getRect(field);
-      final controller = tester.widget<TextField>(field).controller;
-      expect(tester.widget<TextField>(field).focusNode!.hasFocus, isTrue);
+        );
+        await tester.pump(const Duration(milliseconds: 100));
+        final field = find.byKey(const ValueKey('swarm-search-input'));
+        await chord(tester, LogicalKeyboardKey.keyO);
+        expect(field, findsOneWidget);
+        expect(find.byType(SwarmSearchResults), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('swarm-search-preview')),
+          findsOneWidget,
+        );
+        expect(find.byKey(const ValueKey('harness-picker-open')), findsNothing);
+        expect(tester.widget<TextField>(field).decoration!.hintText, '');
+        expect(find.text('Find an agent'), findsOneWidget);
+        expect(find.byKey(const ValueKey('create-agent-submit')), findsNothing);
+        final before = tester.getRect(field);
+        final controller = tester.widget<TextField>(field).controller;
+        expect(tester.widget<TextField>(field).focusNode!.hasFocus, isTrue);
 
-      Future<void> capture(String state) async {
-        final output = Platform.environment['HARNESS_PICKER_CAPTURE_DIR'];
-        if (output == null) return;
-        await tester.runAsync(() async {
-          await precacheImage(
-            const AssetImage('assets/engine-icons/codex.png'),
-            boundaryKey.currentContext!,
-          );
-        });
+        Future<void> capture(String state) async {
+          final output = Platform.environment['HARNESS_PICKER_CAPTURE_DIR'];
+          if (output == null) return;
+          await tester.runAsync(() async {
+            await precacheImage(
+              const AssetImage('assets/engine-icons/codex.png'),
+              boundaryKey.currentContext!,
+            );
+          });
+          await tester.pumpAndSettle();
+          final boundary =
+              boundaryKey.currentContext!.findRenderObject()!
+                  as RenderRepaintBoundary;
+          await tester.runAsync(() async {
+            final image = await boundary.toImage(pixelRatio: 1);
+            final bytes = await image.toByteData(
+              format: ui.ImageByteFormat.png,
+            );
+            await Directory(output).create(recursive: true);
+            await File('$output/${size.width.toInt()}-$scale-$state.png')
+                .writeAsBytes(bytes!.buffer.asUint8List());
+            image.dispose();
+          });
+        }
+
+        await capture('initial');
+        expect(app.focusedPane, same(pane));
+        await tester.enterText(field, 'idempotency');
+        await tester.pump();
+        expect(tester.getRect(field), before);
+        expect(tester.widget<TextField>(field).controller, same(controller));
+        expect(
+          find.textContaining('Payment retries now reuse'),
+          findsOneWidget,
+        );
+        await capture('results');
+        await chord(tester, LogicalKeyboardKey.keyN);
         await tester.pumpAndSettle();
-        final boundary =
-            boundaryKey.currentContext!.findRenderObject()!
-                as RenderRepaintBoundary;
-        await tester.runAsync(() async {
-          final image = await boundary.toImage(pixelRatio: 1);
-          final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
-          await Directory(output).create(recursive: true);
-          await File('$output/${size.width.toInt()}-$scale-$state.png')
-              .writeAsBytes(bytes!.buffer.asUint8List());
-          image.dispose();
-        });
-      }
-
-      await capture('initial');
-      expect(app.focusedPane, same(pane));
-      await tester.enterText(field, 'idempotency');
-      await tester.pump();
-      expect(tester.getRect(field), before);
-      expect(tester.widget<TextField>(field).controller, same(controller));
-      expect(find.textContaining('Payment retries now reuse'), findsOneWidget);
-      await capture('results');
-      // Search leaves the creation row, selected choices and focus ownership intact.
-      expect(tester.getRect(create), createRect);
-      await chord(tester, LogicalKeyboardKey.keyN, shift: true);
-      await tester.pumpAndSettle();
-      final agent = find.byKey(const ValueKey('agent-composer-agent'));
-      expect(
-        tester.widget<AppSelectField<String>>(agent).focusNode!.hasFocus,
-        isTrue,
-      );
-      expect(field, findsOneWidget);
-      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-      await tester.pumpAndSettle();
-      await tester.sendKeyEvent(LogicalKeyboardKey.keyC, character: 'c');
-      await tester.sendKeyEvent(LogicalKeyboardKey.keyL, character: 'l');
-      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-      await tester.pumpAndSettle();
-      expect(tester.widget<AppSelectField<String>>(agent).value, 'claude');
-      expect(tester.widget<TextField>(field).controller!.text, 'idempotency');
-      expect(find.byType(AlertDialog), findsNothing);
-      await capture('creation');
-      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-      await tester.pumpAndSettle();
-      expect(app.focusedPane, same(pane));
-      expect(frames, isEmpty);
-      expect(tester.takeException(), isNull);
-      await tester.pumpWidget(const SizedBox());
-      app.dispose();
-      keymap.dispose();
-    });
+        expect(field, findsNothing);
+        expect(find.byType(SwarmSearchResults), findsNothing);
+        expect(find.byType(AlertDialog), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('create-agent-submit')),
+          findsOneWidget,
+        );
+        expect(find.byType(AppChoicePicker<String>), findsWidgets);
+        await capture('creation');
+        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+        await tester.pumpAndSettle();
+        expect(app.focusedPane, same(pane));
+        expect(frames, isEmpty);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
+        app.dispose();
+        keymap.dispose();
+      },
+    );
   }
 }

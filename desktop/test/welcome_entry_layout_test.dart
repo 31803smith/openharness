@@ -94,10 +94,9 @@ void main() {
           await tester.pump();
         }
         final field = find.byKey(const ValueKey('harness-start-search'));
-        final create = find.byKey(const ValueKey('create-agent-submit'));
+        final create = find.byKey(const ValueKey('harness-start-new'));
+        final open = find.byKey(const ValueKey('harness-start-open'));
         final device = find.byKey(const ValueKey('harness-device-link'));
-        await tester.ensureVisible(create);
-        await tester.pumpAndSettle();
         expect(find.text('Harness'), findsNothing);
         expect(
           tester.widget<TextField>(field).decoration!.hintText,
@@ -107,14 +106,20 @@ void main() {
         expect(find.byType(ListTile), findsNothing);
         final fieldRect = tester.getRect(field);
         final createRect = tester.getRect(create);
+        final openRect = tester.getRect(open);
         final deviceRect = tester.getRect(device);
-        expect(createRect.top, greaterThan(fieldRect.bottom));
+        expect(createRect.center.dy, closeTo(openRect.center.dy, 1));
+        expect(openRect.top, greaterThan(fieldRect.bottom));
+        expect(openRect.left, closeTo(fieldRect.left, 1));
+        expect(createRect.left, greaterThan(openRect.right));
         expect(fieldRect.center.dx, closeTo(width / 2, 1));
         expect(deviceRect.left, closeTo(fieldRect.left, 1));
         expect(deviceRect.bottom, closeTo(height - 32, 1));
         expect(find.text('Meet the Harness device'), findsOneWidget);
         expect(create.hitTestable(), findsOneWidget);
+        expect(open.hitTestable(), findsOneWidget);
         expect(createRect.bottom, lessThanOrEqualTo(height));
+        expect(openRect.bottom, lessThanOrEqualTo(height));
         expect(deviceRect.top, greaterThanOrEqualTo(createRect.bottom + 24));
         final output = Platform.environment['HARNESS_ENTRY_CAPTURE_DIR'];
         if (output != null) {
@@ -139,7 +144,7 @@ void main() {
         await tester.pump();
         final results = find.byKey(const ValueKey('harness-start-results'));
         expect(results, findsOneWidget);
-        expect(tester.getRect(results).height, greaterThan(40));
+        expect(tester.getRect(results).height, greaterThan(140));
         expect(tester.getRect(results).width, tester.getRect(field).width);
         expect(tester.getRect(field).left, closeTo(fieldRect.left, 1));
         expect(tester.getRect(field).right, closeTo(fieldRect.right, 1));
@@ -149,14 +154,22 @@ void main() {
           tester.getRect(results).bottom,
           lessThanOrEqualTo(deviceRect.top - 24),
         );
-        expect(tester.getRect(create), createRect);
-        expect(create.hitTestable(), findsOneWidget);
+        expect(create, findsNothing);
+        expect(open, findsNothing);
         await tester.sendKeyEvent(LogicalKeyboardKey.escape);
         await tester.pump();
         expect(tester.getRect(field).width, closeTo(fieldRect.width, 1));
         expect(tester.getRect(device), deviceRect);
         await tester.ensureVisible(create);
         expect(create.hitTestable(), findsOneWidget);
+        await tester.tap(create);
+        await tester.pumpAndSettle();
+        expect(find.byType(AlertDialog), findsOneWidget);
+        expect(results, findsNothing);
+        expect(tester.takeException(), isNull);
+        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+        await tester.pumpAndSettle();
+        expect(find.byType(AlertDialog), findsNothing);
         expect(tester.widget<TextField>(field).focusNode!.hasFocus, isFalse);
         await tester.ensureVisible(device);
         await tester.pumpAndSettle();

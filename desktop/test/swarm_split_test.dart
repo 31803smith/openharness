@@ -379,7 +379,7 @@ void main() {
     expect(find.byKey(const ValueKey('harness-picker-new')), findsOneWidget);
     expect(find.byKey(const ValueKey('swarm-row-action')), findsOneWidget);
     expect(find.byType(AlertDialog), findsNothing);
-    await chord(tester, LogicalKeyboardKey.keyN, shift: true);
+    await chord(tester, LogicalKeyboardKey.keyN);
     await tester.pump();
     expect(find.text('New Agent to the right'), findsOneWidget);
     expect(find.text('/work/checkout'), findsOneWidget);

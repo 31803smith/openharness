@@ -6,103 +6,58 @@ This is the latest product direction; it supersedes earlier swarm and multi-sele
 proposals in the progress log.
 
 **Agent** is the user-facing name for a session and its actions: Open Agent,
-New Agent, Add Agent, Stop Agent, Restart Agent, and Find an agent. Harness
+New Agent, Stop Agent, Restart Agent, and Find an agent. Harness
 also names the tab container, application, CLI and device. Custom saved names
 and protocol identifiers are unchanged.
 
 ## Open and New Agent
 
-**Cmd-T / New Harness** and the tab-bar plus open the Harness start page over its
-Aurora mesh ground — the panel colour with three dim washes in the app's own
-accent, Claude and Codex colours, drawn rather than loaded (no photograph). A long search field, capped at 1120 logical pixels,
-has a prominent 64-pixel minimum height and shows **Find an agent** in place of
-a large heading. The same **New Agent** creation section used by Cmd-N sits below
-search, above the device footer. Search starts compact. Activating it keeps the
-field's position, width and 32-pixel outer corners fixed and reveals results and
-preview side by side at widths of 700 logical pixels and above. Results scroll
-in the space above creation; opening, filtering and closing them does not move
-the creation row or device. Escape retains the query. Without a linked machine,
-the page retains Open/New actions and New opens machine linking.
+**New Agent (Cmd-N)** opens the dedicated creation dialog. **Open Agent (Cmd-O)**
+opens existing-agent search with results and preview immediately. The titlebar
+and File menu expose both actions. This replaces the combined Add Agent form
+at the user's request; there is no embedded creation section in search or on
+the New Harness page. Custom key bindings retain precedence. The internal
+`agent.add` command and native `addAgent` action remain stable, labeled Open Agent.
+Agent actions share **+** for New and **↗** for Open, including the native menu
+and titlebar. Find fields keep the magnifying glass for search.
 
-The field starts empty and focused so typing works immediately. Typing, clicking
-it, or pressing an arrow reveals the same input, results,
-highlight, action arrow and keyboard navigation as the Cmd-N picker. Focus alone does not
-build a search catalog or reveal results. New Harness refocuses an existing unused
-page too. Typing filters immediately; arrows select and Enter opens. Escape or clicking
-outside closes the dropdown and hides the caret. The recent-agent list is removed.
-The closed page retains only search text and selection: it does not keep a live
-search subscription or build a catalog when an unused page closes. Reopening
-refreshes results against current app state. Command-mode shortcuts synchronize
-the field and results without adding editor rebuilds to arrow navigation.
-Opening the dropdown keeps its whole list viewport inside the window. Resizing
-or changing text size reveals the highlighted row without changing the selection.
-A product strip runs along the footer, the width of the search field, and
-links to https://www.autonomous.ai/harness-device: a glass band holding a
-cutout of the device (`assets/harness_device.png`, the render with its studio
-ground keyed out, so the device floats on the page's own ground), the title
-“Meet the Harness device”, the line “A device for your agents — scroll, switch
-panes, give voice commands.” and a Learn more pill. 120 points tall, 84 with
-the line dropped when the window is short.
-Unused default-name empty pages are excluded from Recently Closed.
+**Cmd-T / New Harness** opens the start page with a long, initially compact
+search field and **Open Agent / New Agent** buttons below it. The field is capped
+at 1120 logical pixels, has a 64-pixel minimum height and shows **Find an agent**.
+Its position, width and 32-pixel outer corners stay fixed when results open.
+Results and preview share the space above the fixed device footer. Typing,
+clicking or pressing an arrow opens search; focus alone does not build its catalog.
+Escape closes results and retains the query. The Aurora mesh ground and device
+product strip are preserved. New without a linked machine opens machine linking.
 
-The titlebar places the bell beside the traffic lights, then the tabs and tab
-plus. A single accented **Add Agent** button sits on the right. It and
-**Cmd-N** open a combined panel with a focused **Find an agent** field, results
-and preview above a compact **New Agent** section. Both sections use an almost-black surface and large
-matching headings; the modal search field is blank beneath its heading. There is
-no Open Agent footer button. The highlighted row action or Enter opens a result. This supersedes the two-button modal and separate workspace creation
-dialog; the New Harness page remains compact until search is activated.
+Open Agent has a large **Find an agent** heading, a blank rounded input and an
+almost-black surface over a 90% black canvas veil. Results appear immediately;
+arrows select and Enter or a row click opens the agent. There is no footer
+button or New Agent form. Results and preview sit side by side from 700 logical
+pixels; narrower windows stack them. Both scroll independently. Hover updates
+the preview without taking typing focus. Page Up/Down scrolls the preview while
+retaining the query and selection. Native menus and the titlebar retain normal
+colors while modal actions are blocked.
 
-The creation section stays anchored at the panel's bottom while queries and
-results change. Results scroll in the space above it. Search does not cover,
-push down or reset the creation controls. The main row is **Agent / Project /
-Machine / Create**, with three equal-width dropdowns displaying both a category
-and its selected value, beside a larger Create button. Defaults are the remembered agent, **New project**, and this
-computer. A split inherits the focused agent's machine and project instead.
-Project choices are **New project / Local folder… / Remote repository…**.
-Local browses the selected machine; Remote shows an inline repository field.
-Dropdowns support keyboard navigation and typeahead, and their arrow/Enter keys
-never activate search results. **Shift-Cmd-N** focuses the Agent control without
-clearing the query. Escape closes an open menu first, then the panel, restoring
-terminal focus. From inline search, Shift-Cmd-N collapses results and focuses the creation row
-already on the page. Escape there returns focus to its compact search field.
+New Agent uses the wide direct-choice dialog: Machine, Working folder and Agent,
+with up to three machine/engine choices and an overflow control. A selected
+overflow choice replaces the third visible choice. **New / Local / Remote** mean
+create a folder, choose an existing folder and clone a GitHub repository onto
+the selected machine. Local is initially selected. New and Remote prepare a
+unique folder under `~/Harness Projects` only on submission. Advanced retains
+profiles and permissions. A late saved preference equal to the selected engine
+preserves loaded profile readiness. Failure keeps the choices and prepared folder;
+an uncertain launch retains its receipt and offers **Check status** and **Close**
+without cloning or starting again. Success focuses the new agent.
 
-The row wraps on narrow windows or at large text sizes; creation details scroll
-within a bounded section. **Options** keeps account and permissions controls
-available without expanding the initial form; its collapsed row omits the profile
-summary. A pending Codex profile lookup is explained beneath the controls. Loading
-a saved engine preference identical to the current selection preserves the loaded
-profile and submit readiness. Cached engine availability is
-reused when opening the combined surface. No project list is rebuilt from every
-agent on each query change. Existing standalone creation entry points retain
-their direct-choice dialog and share the same creation and recovery logic.
-
-New creates a unique folder under `~/Harness Projects` without a picker or name
-prompt. Remote accepts the existing GitHub HTTPS/SSH URL or `owner/repository`
-forms and clones under the same root on the selected machine. Nothing is created
-until **Create** is submitted. A prepared folder is reused after a refused launch.
-An uncertain launch keeps its original receipt and offers **Check status** and
-an explicit **Close**, without cloning or starting again. Search, destination
-changes and accidental dismissal are blocked while creating or awaiting status.
-Successful creation focuses the new agent, including its requested split.
-Remote folder preparation requires the accompanying CLI change; this computer
-prepares folders locally and keeps the existing create protocol.
-
-The titlebar button is a 34-point-high pill with generous padding and a 12-point
-right margin. Native menu and titlebar hover hints remain removed; accessible
-names and shortcut help identify the actions. Workspace modals preserve the
-button's normal colors while its actions remain blocked.
-
-The Open popup keeps its full-width **Find an agent** field, single-choice
-results and 90% black backdrop. Only the highlighted row shows **Open Agent**,
-**Open N Agents**, or **Split right/down**, depending on context.
-Both Open and inline start-page search show the same session preview. The Cmd-N
-surface can grow to 1120 logical pixels, placing the list and preview side by
-side. Narrow windows stack them with a compact preview heading. Both sections
-scroll independently; the expanded panel stays within view. Hover selects a
-preview without taking typing focus. Enter opens the highlighted result.
-Page Up/Down scrolls the preview while retaining the query, focus and selection.
-The bindings are configurable in the same Search keymap as result navigation.
+Split Right/Down opens the existing-agent picker for that position. Its **New Agent**
+header action, or Cmd-N, replaces the picker with creation and preserves the split,
+machine and project. Dismissing creation returns directly to the original pane.
+Ordinary New Agent prefers this computer. Search and creation never stack.
+The restored flows pass 203 affected Flutter tests, 96 native keyboard checks,
+407 hidden AppKit checks, and analysis of all changed Dart/test files. Normal
+and larger-text render fixtures were inspected; live app inspection remains
+unavailable before installation of this change.
 
 Working sessions lead with the current observed request and latest activity.
 Idle sessions lead with an existing saved response or the latest response seen
@@ -121,18 +76,10 @@ Secondary text is **project · branch · machine**, with one small muted Git bra
 mark immediately before the branch in search and pane headers. Missing metadata is omitted
 and the containing workspace name is not repeated.
 The Commands footer stays removed; Shift-Cmd-P and typing `>` expose commands.
-The creation row retains the requested split position. Shift-Cmd-N focuses it
-while search remains available; dismissing the panel returns to the terminal.
 The input and result rows share one picker shortcut scope. Tab focus highlights
-the row that Enter will open. Arrow navigation and command-mode entry return
-focus to the input for continued typing; remapped or unbound navigation/Enter
-keys keep their meaning on a focused row. Closing the inline picker releases
-focus from the search surface. Escape from inline creation returns focus to the
-compact search input.
-Native New Agent and Search Commands actions use the focused picker's
-actions too. Command search stays in its field; the inline start-page dropdown
-closes before focusing its adjacent creation row. Native actions wait for the destination focus tree before
-handing keyboard ownership back to Flutter and preserve in-progress search composition.
+the row that Enter opens. Arrow navigation and command-mode entry return focus
+to the input; custom bindings retain their meaning. Native New Agent closes the
+picker before opening creation and restores keyboard ownership to Flutter.
 
 Pane connection states (Connecting, Restoring and Reconnect) follow the session
 name on the left. The project, branch and machine retain the same space on the
@@ -163,7 +110,7 @@ agent disappears from discovery. Tab names remain editable. Former default names
 the first agent's name when opened.
 
 The macOS menus are **Harness, File, Edit, View, History, Models, Machines,
-Window, Help**. File groups **New Harness, Add Agent…, Rename Harness, Close Harness**;
+Window, Help**. File groups **New Harness, New Agent…, Open Agent…, Rename Harness, Close Harness**;
 then **Split Right, Split Down, Zoom Pane, Close Pane**. Pin/Unpin and Add Project
 are removed from this menu. File actions have native system icons, with the same
 four-corner Zoom and plain Close cross as the pane header. Machines starts with **Open Machines Manager**, then
@@ -183,8 +130,8 @@ machine rename API. It reports failures inline and refreshes names in the menu
 and pane headers immediately after success. Find Agents opens the shared search
 with the computer's name filled in; no agent is opened until the user chooses a result.
 
-**Cmd-T** opens the start page and **Cmd-N** opens Add Agent.
-**Shift-Cmd-N** focuses creation in the combined panel; Cmd-O is unbound by default. **Cmd-S** opens Layout.
+**Cmd-T** opens the start page, **Cmd-N** opens New Agent and **Cmd-O** opens
+Open Agent. **Cmd-S** opens Layout.
 **Cmd-R** splits right and **Cmd-D** splits down, opening the shared picker for
 that position. Refresh Machines stays in the Machines menu and command search,
 without a default chord. The developer-only Debug shortcut is Shift-Cmd-D.

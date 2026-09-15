@@ -187,19 +187,19 @@ void main() {
           }
         }
         await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-        await chord(tester, LogicalKeyboardKey.keyN);
+        await chord(tester, LogicalKeyboardKey.keyO);
         await tester.pumpAndSettle();
         await capture('open');
         await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-        await chord(tester, LogicalKeyboardKey.keyN, shift: true);
+        await chord(tester, LogicalKeyboardKey.keyN);
         await tester.pumpAndSettle();
         await capture('new');
         expect(tester.takeException(), isNull);
-        for (final label in ['Agent', 'Project', 'Machine', 'Create']) {
+        for (final label in ['Codex', 'Claude Code', 'Cursor']) {
           if (tester
               .renderObject<RenderParagraph>(find.text(label))
               .didExceedMaxLines) {
-            issues.add('$label is truncated in the creation row');
+            issues.add('$label is truncated when choosing an agent');
           }
         }
         expect(issues, isEmpty);

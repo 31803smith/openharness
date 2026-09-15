@@ -59,7 +59,7 @@ void main() {
         expect(opened.name, 'New Harness');
         expect(opened.panes, isEmpty);
         expect(find.byType(AlertDialog), findsNothing);
-        await chord(tester, LogicalKeyboardKey.keyN);
+        await chord(tester, LogicalKeyboardKey.keyO);
         final field = find.byKey(const ValueKey('swarm-search-input'));
         expect(tester.widget<TextField>(field).focusNode!.hasFocus, isTrue);
         await tester.enterText(field, 'Agent 0');

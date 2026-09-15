@@ -142,7 +142,7 @@ void main() {
     WidgetTester tester, {
     bool local = true,
     bool supported = true,
-    bool composer = false,
+    bool revealOptions = true,
     Iterable<String>? initialPaths,
     _Notifier? notifier,
   }) async {
@@ -172,39 +172,23 @@ void main() {
       MaterialApp(
         home: Builder(
           builder: (context) => Scaffold(
-            body: composer
-                ? Center(
-                    child: SizedBox(
-                      width: 900,
-                      child: NewAgentComposer(
-                        notifier: n,
-                        machineId: 'machine',
-                        swarmId: n.activeSwarmId,
-                        onFinished: () {},
-                        onBusyChanged: (_) {},
-                        onDismiss: () {},
-                      ),
-                    ),
-                  )
-                : TextButton(
-                    onPressed: () => showNewAgentDialog(
-                      context,
-                      n,
-                      'machine',
-                      source: 'machine_row',
-                    ),
-                    child: const Text('open'),
-                  ),
+            body: TextButton(
+              onPressed: () => showNewAgentDialog(
+                context,
+                n,
+                'machine',
+                source: 'machine_row',
+                initialFolder: revealOptions ? null : '/work',
+              ),
+              child: const Text('open'),
+            ),
           ),
         ),
       ),
     );
-    if (composer) {
-      await tester.pumpAndSettle();
-      return n;
-    }
     await tester.tap(find.text('open'));
     await tester.pumpAndSettle();
+    if (!revealOptions) return n;
     await tester.tap(find.byKey(const Key('new-agent-engine-field')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Codex').last);
@@ -230,7 +214,7 @@ void main() {
     (tester) async {
       final storage = _DelayedPreferenceStore();
       final notifier = _Notifier(const ['/custom/work-login'], storage);
-      await open(tester, notifier: notifier, composer: true);
+      await open(tester, notifier: notifier, revealOptions: false);
       final create = find.byKey(const ValueKey('create-agent-submit'));
       expect(tester.widget<FilledButton>(create).onPressed, isNotNull);
       storage.preference.complete('codex');
@@ -244,18 +228,14 @@ void main() {
     },
   );
 
-  testWidgets('compact creation explains a pending profile lookup', (
-    tester,
-  ) async {
+  testWidgets('creation waits for its selected Codex profile', (tester) async {
     final pending = Completer<void>();
     final notifier = _Notifier()..pending = pending;
-    await open(tester, notifier: notifier, composer: true);
+    await open(tester, notifier: notifier, revealOptions: false);
     final create = find.byKey(const ValueKey('create-agent-submit'));
-    expect(find.text('Loading Codex profiles…'), findsOneWidget);
     expect(tester.widget<FilledButton>(create).onPressed, isNull);
     pending.complete();
     await tester.pumpAndSettle();
-    expect(find.text('Loading Codex profiles…'), findsNothing);
     expect(tester.widget<FilledButton>(create).onPressed, isNotNull);
   });
 

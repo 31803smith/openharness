@@ -92,7 +92,7 @@ void main() {
         reason:
             'Editing project membership does not attach or take over terminals',
       );
-      await tester.tap(find.byKey(const ValueKey('swarm-add-harness-button')));
+      await tester.tap(find.byKey(const ValueKey('swarm-open-agent-button')));
       await tester.pump();
       await tester.enterText(
         find.byKey(const ValueKey('swarm-search-input')),

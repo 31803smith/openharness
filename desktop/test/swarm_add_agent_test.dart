@@ -25,7 +25,7 @@ void main() {
       await mount(tester, app);
       tester.view.physicalSize = const Size(880, 560);
       await tester.pump();
-      final add = find.byKey(const ValueKey('swarm-add-harness-button'));
+      final add = find.byKey(const ValueKey('swarm-open-agent-button'));
       expect(tester.getRect(add).top, lessThan(44));
       expect(find.byType(FloatingActionButton), findsNothing);
       expect(

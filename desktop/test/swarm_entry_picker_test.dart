@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/terminal/terminal_binary.dart';
-import 'package:harness/widgets/new_agent_dialog.dart';
 import 'package:xterm/xterm.dart';
 
 import 'swarm_interactions_test.dart' show chord;
@@ -83,7 +82,7 @@ void main() {
   });
 
   for (final native in [false, true]) {
-    testWidgets('start page combines search and New Agent (native=$native)', (
+    testWidgets('start page separates Open and New Agent (native=$native)', (
       tester,
     ) async {
       const channel = MethodChannel('harness/swarm_tabs');
@@ -105,7 +104,9 @@ void main() {
       expect(find.byType(FloatingActionButton), findsNothing);
       expect(
         tester.getRect(_startInput).bottom,
-        lessThan(tester.getRect(find.byType(NewAgentComposer)).top),
+        lessThan(
+          tester.getRect(find.byKey(const ValueKey('harness-start-open'))).top,
+        ),
       );
       expect(
         tester.widget<TextField>(_startInput).decoration!.hintText,
@@ -148,8 +149,21 @@ void main() {
       app.renameSwarm(original, 'Background update');
       await tester.pump();
       expect(_results, findsNothing);
-      expect(find.byType(NewAgentComposer), findsOneWidget);
-      expect(find.widgetWithText(FilledButton, 'Create'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('harness-start-new')));
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(find.byType(AlertDialog), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.widgetWithText(FilledButton, 'New Agent'),
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Back to Search'), findsNothing);
+      expect(find.text('Cancel'), findsNothing);
+      expect(_results, findsNothing);
+      await tester.tapAt(const Offset(20, 200));
+      await tester.pump(const Duration(milliseconds: 200));
       expect(find.byType(AlertDialog), findsNothing);
       expect(_results, findsNothing);
       expect(_startInput, findsOneWidget);
@@ -173,7 +187,7 @@ void main() {
           expect(page, isNot(original));
           expect(_results, findsNothing);
           expect(_startInput, findsOneWidget);
-          await chord(tester, LogicalKeyboardKey.keyN);
+          await chord(tester, LogicalKeyboardKey.keyO);
           expect(_results, findsOneWidget);
           if (dismissal == 'outside') {
             await tester.tapAt(const Offset(20, 200));
@@ -204,7 +218,7 @@ void main() {
     (tester) async {
       final app = createApp();
       await mount(tester, app);
-      await chord(tester, LogicalKeyboardKey.keyN);
+      await chord(tester, LogicalKeyboardKey.keyO);
       await tester.enterText(_input, 'Agent 12');
       await tester.pump();
       final text = tester.widget<TextField>(_input).controller!;
@@ -247,7 +261,7 @@ void main() {
     app.newSwarm();
     final destination = app.activeSwarmId;
     await mount(tester, app);
-    await chord(tester, LogicalKeyboardKey.keyN);
+    await chord(tester, LogicalKeyboardKey.keyO);
     await tester.enterText(_input, 'Agent 0');
     await tester.pump();
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
