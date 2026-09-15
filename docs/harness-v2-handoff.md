@@ -46,13 +46,15 @@ are:
   precedence. Cmd-R splits right and Cmd-D splits down. Native menus, help and actual
   dispatch must agree; native menu and titlebar hover hints are removed.
 - New Tab uses the Google-like page with a **solid selected-tab background**,
-  lower centered controls and generous whitespace. Search is blank and focused
-  initially, retaining one responsive width (at most 1120 logical pixels) as
-  results and preview open beneath it.
+  lower centered controls and generous whitespace. A single row (at most 1120
+  logical pixels) contains search, Open Harness, and New Harness. Search starts
+  blank and focused, with results hidden. Activating search expands the field
+  into the buttons' space; the row edges stay fixed and results/preview appear
+  side by side. Escape restores the original row and query.
   Typing, clicking, or pressing an arrow
   reveals the same results, selection, arrows and Enter behavior as Cmd-O.
   Focus alone leaves results hidden and builds no catalog. Open Harness and
-  accented **+ New Harness** sit below it; a small official device image and
+  accented **+ New Harness** share the row; a small official device image and
   introduction sit well below, linking to autonomous.ai/harness-device.
   The five recent-agent rows are removed. Both pairs of actions are rounded
   pills, with transparent outlined Open buttons and hand cursors. The official
@@ -71,6 +73,8 @@ are:
   retain saved text without claiming a live working/waiting state.
   Page Up/Down scrolls preview content without changing selection or typing focus;
   both actions participate in the configurable Search keymap.
+- The Harness application menu includes **Check for Updates…**, using the
+  existing manual update-check dialog, directly above Flash Firmware.
 - Creation uses **New Harness** for its title and CTA, with no ordinary Cancel.
   Escape or one outside click dismisses it directly. A pending launch cannot be
   dismissed accidentally; an uncertain outcome retains Close and Check status.

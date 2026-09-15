@@ -82,7 +82,7 @@ class MainFlutterWindow: NSWindow {
     NSApp.orderFrontStandardAboutPanel(options: [.version: ""])
   }
 
-  /// Puts the app's own two commands in the application menu, below Show All.
+  /// Puts the app's own commands in the application menu, below Show All.
   ///
   /// Added here rather than in MainMenu.xib so the whole menu bar keeps coming
   /// from the nib — declaring it in Dart with PlatformMenuBar would replace the
@@ -112,12 +112,21 @@ class MainFlutterWindow: NSWindow {
     appMenu.insertItem(NSMenuItem.separator(), at: at + 1)
     appMenu.insertItem(
       menuItem(
+        title: "Check for Updates…",
+        action: #selector(checkForUpdates(_:)),
+        symbol: "arrow.triangle.2.circlepath",
+        tag: updateMenuItemTag
+      ),
+      at: at + 2
+    )
+    appMenu.insertItem(
+      menuItem(
         title: "Flash Firmware…",
         action: #selector(flashFirmware(_:)),
         symbol: "bolt.circle",
         tag: flashMenuItemTag
       ),
-      at: at + 2
+      at: at + 3
     )
 
   }

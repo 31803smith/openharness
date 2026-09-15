@@ -274,6 +274,8 @@ void main() {
     app.dismissError();
     await tester.pump();
     expect(tester.widget<TextField>(_startInput).focusNode!.hasFocus, isTrue);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pump();
     await tester.tap(_newHarness);
     await tester.pump();
     expect(picker.opened, 0);

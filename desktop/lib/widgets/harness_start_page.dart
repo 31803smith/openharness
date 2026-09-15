@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../shared/theme/app_theme.dart' as grid;
@@ -33,7 +34,7 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
     canRequestFocus: false,
   );
   final _searchGroup = Object();
-  final _entryActions = GlobalKey();
+  final _searchSurface = GlobalKey();
   bool _revealScheduled = false;
   SwarmSearchController? _search;
   SwarmSearchDraft? _draft;
@@ -45,10 +46,10 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _revealScheduled = false;
       if (!mounted || !_showResults || !_pickerFocus.hasFocus) return;
-      // Keep the actions below the expanded picker reachable. Its bounded
-      // viewport and internal list scrolling keep the highlighted row visible.
+      // Reveal the full search panel. The actions share its row while closed,
+      // and the activated field takes their space without moving the row edges.
       Scrollable.ensureVisible(
-        _entryActions.currentContext!,
+        _searchSurface.currentContext!,
         alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
       );
     });
@@ -88,6 +89,53 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
     widget.onNew();
   }
 
+  Widget _action({required bool create, required bool compact}) {
+    final label = create ? 'New Harness' : 'Open Harness';
+    final content = compact
+        ? Icon(create ? LucideIcons.plus300 : LucideIcons.search300, size: 20)
+        : Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (create) ...[
+                const Icon(LucideIcons.plus300, size: 18),
+                const SizedBox(width: 8),
+              ],
+              Text(label),
+            ],
+          );
+    final size = Size(compact ? 56 : 160, 56);
+    final padding = EdgeInsets.symmetric(horizontal: compact ? 16 : 24);
+    final button = create
+        ? FilledButton(
+            key: const ValueKey('harness-start-new'),
+            onPressed: _new,
+            style: FilledButton.styleFrom(
+              enabledMouseCursor: SystemMouseCursors.click,
+              minimumSize: size,
+              padding: padding,
+              backgroundColor: grid.AppPalette.swarmAccent,
+              foregroundColor: grid.AppPalette.swarmTabBar,
+              shape: const StadiumBorder(),
+            ),
+            child: content,
+          )
+        : OutlinedButton(
+            key: const ValueKey('harness-start-open'),
+            onPressed: _open,
+            style: OutlinedButton.styleFrom(
+              enabledMouseCursor: SystemMouseCursors.click,
+              minimumSize: size,
+              padding: padding,
+              backgroundColor: Colors.transparent,
+              foregroundColor: Colors.white,
+              side: const BorderSide(color: Colors.white24),
+              shape: const StadiumBorder(),
+            ),
+            child: content,
+          );
+    return compact ? Tooltip(message: label, child: button) : button;
+  }
+
   @override
   void dispose() {
     _search?.dispose();
@@ -124,117 +172,105 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
                       ),
                     ),
                     const SizedBox(height: 32),
-                    TextFieldTapRegion(
-                      groupId: _searchGroup,
-                      child: Focus(
-                        focusNode: _pickerFocus,
-                        child: Material(
-                          color: _showResults
-                              ? grid.AppPalette.swarmSearchSurface
-                              : Colors.transparent,
-                          elevation: _showResults ? 12 : 0,
-                          shadowColor: Colors.black54,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(
-                              _showResults ? 12 : 30,
-                            ),
-                            side: _showResults
-                                ? const BorderSide(color: Colors.white24)
-                                : BorderSide.none,
-                          ),
-                          clipBehavior: Clip.antiAlias,
-                          child: SwarmSearchKeys(
-                            search: _search,
-                            editing: _query,
-                            onChoose: _choose,
-                            onClose: _close,
-                            onOpen: _open,
-                            onNewAgent: _new,
-                            onRefocus: _focus.requestFocus,
-                            child: Column(
-                              children: [
-                                Semantics(
-                                  label: 'Find a harness',
-                                  child: SwarmSearchInput(
-                                    inputKey: const ValueKey(
-                                      'harness-start-search',
+                    LayoutBuilder(
+                      builder: (context, rowConstraints) {
+                        final compactActions =
+                            rowConstraints.maxWidth <
+                            700 *
+                                MediaQuery.textScalerOf(context).scale(14) /
+                                14;
+                        return Row(
+                          children: [
+                            Expanded(
+                              child: TextFieldTapRegion(
+                                groupId: _searchGroup,
+                                child: Focus(
+                                  focusNode: _pickerFocus,
+                                  child: Material(
+                                    key: _searchSurface,
+                                    color: _showResults
+                                        ? grid.AppPalette.swarmSearchSurface
+                                        : Colors.transparent,
+                                    elevation: _showResults ? 12 : 0,
+                                    shadowColor: Colors.black54,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(
+                                        _showResults ? 12 : 30,
+                                      ),
+                                      side: _showResults
+                                          ? const BorderSide(
+                                              color: Colors.white24,
+                                            )
+                                          : BorderSide.none,
                                     ),
-                                    controller: _query,
-                                    focusNode: _focus,
-                                    search: _search,
-                                    onClose: _close,
-                                    onChanged: (_) => _open(),
-                                    onOpen: _open,
-                                    onTapOutside: _close,
-                                    groupId: _searchGroup,
-                                    autofocus: true,
-                                    showClose: _showResults,
-                                    hintText: '',
-                                    rounded: true,
+                                    clipBehavior: Clip.antiAlias,
+                                    child: SwarmSearchKeys(
+                                      search: _search,
+                                      editing: _query,
+                                      onChoose: _choose,
+                                      onClose: _close,
+                                      onOpen: _open,
+                                      onNewAgent: _new,
+                                      onRefocus: _focus.requestFocus,
+                                      child: Column(
+                                        children: [
+                                          Semantics(
+                                            label: 'Find a harness',
+                                            child: SwarmSearchInput(
+                                              inputKey: const ValueKey(
+                                                'harness-start-search',
+                                              ),
+                                              controller: _query,
+                                              focusNode: _focus,
+                                              search: _search,
+                                              onClose: _close,
+                                              onChanged: (_) => _open(),
+                                              onOpen: _open,
+                                              onTapOutside: _close,
+                                              groupId: _searchGroup,
+                                              autofocus: true,
+                                              showClose: _showResults,
+                                              hintText: '',
+                                              rounded: true,
+                                            ),
+                                          ),
+                                          if (_showResults) ...[
+                                            const Divider(
+                                              height: 1,
+                                              color: Colors.white12,
+                                            ),
+                                            SizedBox(
+                                              height:
+                                                  (constraints.maxHeight * 0.54)
+                                                      .clamp(260, 480),
+                                              child: SwarmSearchResults(
+                                                key: const ValueKey(
+                                                  'harness-start-results',
+                                                ),
+                                                search: _search!,
+                                                onChoose: _choose,
+                                                onRefocus: _focus.requestFocus,
+                                              ),
+                                            ),
+                                          ],
+                                        ],
+                                      ),
+                                    ),
                                   ),
                                 ),
-                                if (_showResults) ...[
-                                  const Divider(
-                                    height: 1,
-                                    color: Colors.white12,
-                                  ),
-                                  SizedBox(
-                                    height: (constraints.maxHeight * 0.54)
-                                        .clamp(260, 480),
-                                    child: SwarmSearchResults(
-                                      key: const ValueKey(
-                                        'harness-start-results',
-                                      ),
-                                      search: _search!,
-                                      onChoose: _choose,
-                                      onRefocus: _focus.requestFocus,
-                                    ),
-                                  ),
-                                ],
-                              ],
+                              ),
                             ),
-                          ),
-                        ),
-                      ),
+                            if (!_showResults) ...[
+                              const SizedBox(width: 12),
+                              _action(create: false, compact: compactActions),
+                              const SizedBox(width: 12),
+                              _action(create: true, compact: compactActions),
+                            ],
+                          ],
+                        );
+                      },
                     ),
-                    const SizedBox(height: 20),
-                    Wrap(
-                      key: _entryActions,
-                      alignment: WrapAlignment.center,
-                      spacing: 12,
-                      runSpacing: 12,
-                      children: [
-                        OutlinedButton(
-                          key: const ValueKey('harness-start-open'),
-                          onPressed: _open,
-                          style: OutlinedButton.styleFrom(
-                            enabledMouseCursor: SystemMouseCursors.click,
-                            minimumSize: const Size(160, 44),
-                            padding: const EdgeInsets.symmetric(horizontal: 24),
-                            backgroundColor: Colors.transparent,
-                            foregroundColor: Colors.white,
-                            side: const BorderSide(color: Colors.white24),
-                            shape: const StadiumBorder(),
-                          ),
-                          child: const Text('Open Harness'),
-                        ),
-                        FilledButton.icon(
-                          key: const ValueKey('harness-start-new'),
-                          onPressed: _new,
-                          icon: const Icon(Icons.add, size: 18),
-                          label: const Text('New Harness'),
-                          style: FilledButton.styleFrom(
-                            enabledMouseCursor: SystemMouseCursors.click,
-                            minimumSize: const Size(160, 44),
-                            padding: const EdgeInsets.symmetric(horizontal: 24),
-                            backgroundColor: grid.AppPalette.swarmAccent,
-                            foregroundColor: grid.AppPalette.swarmTabBar,
-                            shape: const StadiumBorder(),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 160),
+                    const SizedBox(height: 224),
                     Semantics(
                       link: true,
                       child: InkWell(
