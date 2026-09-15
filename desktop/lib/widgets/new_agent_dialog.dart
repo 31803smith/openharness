@@ -177,7 +177,6 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
         // actionable control once the route and its focus tree are mounted.
         _folderFocus.requestFocus();
         unawaited(_probeEngines(initialProbe: widget.initialEngineProbe));
-        unawaited(_probeHarnesses());
         unawaited(_loadAgentPreference());
       }
     });
@@ -191,9 +190,11 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
           knownHarnesses.any((identity) => identity.id == id) ||
           _harness(id) != null);
 
-  /// Which harnesses this machine has or could install — asked on every open,
-  /// for the reason `_probeEngines` gives: an install this very dialog starts
-  /// is what makes the stored answer stale.
+  /// Which harnesses this machine has or could install — asked when a harness
+  /// is chosen, not on open: most creates never involve one, and the answer
+  /// costs the machine a request. Forced, for the reason `_probeEngines`
+  /// gives: an install this very dialog starts is what makes a stored answer
+  /// stale.
   Future<void> _probeHarnesses() =>
       widget.notifier.probeDsh(_machineId, force: true);
 
@@ -408,7 +409,12 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     });
     // A harness the machine does not have yet is installed FIRST, as its own
     // step with its own words: minutes of clone and toolchain under a button
-    // that said "Creating agent…" would read as a create that hung.
+    // that said "Creating agent…" would read as a create that hung. The
+    // machine's catalog decides "has it"; wait for its answer if it is out.
+    if (harness != null && !_confirmationPending && _harness(harness) == null) {
+      await _probeHarnesses();
+      if (!mounted) return;
+    }
     if (harness != null &&
         !_confirmationPending &&
         _willInstallHarness(harness)) {
@@ -768,6 +774,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                   _bypassPermission = false;
                 }
               });
+              if (isHarnessId(value)) unawaited(_probeHarnesses());
             },
           ),
           if (!_confirmationPending && _installStatus != null) ...[
@@ -1010,7 +1017,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
         _error = null;
       });
       unawaited(_probeEngines());
-      unawaited(_probeHarnesses());
+      if (_engineIsHarness) unawaited(_probeHarnesses());
     },
   );
 }

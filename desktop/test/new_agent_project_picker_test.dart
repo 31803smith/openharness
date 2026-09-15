@@ -66,6 +66,7 @@ class _App extends AppNotifier {
     String? codexHome,
     String? swarmId,
     PaneSplitRequest? split,
+    String? dsh,
     AgentCreationAttempt? attempt,
   }) async {
     calls.add({

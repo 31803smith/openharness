@@ -16,7 +16,6 @@ import 'package:harness/state/pane_arrangement.dart';
 import 'package:harness/state/swarm_catalog.dart';
 import 'package:harness/terminal/terminal_binary.dart';
 import 'package:harness/terminal/terminal_session.dart';
-import 'package:harness/widgets/agent_picker.dart';
 import 'package:xterm/xterm.dart';
 
 import 'swarm_screen_test.dart' show mount, terminal;

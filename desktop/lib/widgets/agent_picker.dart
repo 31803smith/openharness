@@ -19,12 +19,13 @@ class AgentPicker extends StatelessWidget {
   final ValueChanged<String> onChanged;
   final bool compact;
   final Size? tileSize;
-  /// The one-click choices: the two engines most people run, then the two
-  /// first-party domain harnesses. In the tile layout the third tile follows
-  /// the selection, so a harness is one tap away without crowding the row.
+  /// The preferred order: the three engines the tiles show, then the two
+  /// first-party domain harnesses, first in More; a chosen one is what the
+  /// More tile then shows.
   static const quickAgents = [
     'codex',
     'claude',
+    'opencode',
     'autonomous/circuit',
     'autonomous/workshop',
   ];
