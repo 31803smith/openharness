@@ -657,6 +657,18 @@ describe('web tools (grid ADR 0041)', () => {
     expect(launchOf('claude', WITH_MCP).args).not.toContain('--disallowedTools=WebSearch')
   })
 
+  it("pre-approves the harness web tools for Claude Code, so a permission mode cannot take them away", () => {
+    // The tools are the daemon's own gift to the agent, and Claude Code's permission system does not
+    // know that: in `default` mode every call prompts, and in `auto` mode the classifier DENIED
+    // `mcp__harness__web_search` outright on a real pane (2026-09-15) — the model then fell back to
+    // curl. An allow rule is honoured before either, so the two tools are listed by name.
+    expect(launchOf('claude', WITH_MCP).args).toContain('--allowedTools=mcp__harness__web_search,mcp__harness__web_read')
+    // ONE token, for the same reason as `--disallowedTools=`: the flag is variadic.
+    expect(launchOf('claude', WITH_MCP).args).not.toContain('--allowedTools')
+    // Nothing to approve when nothing was wired.
+    expect(launchOf('claude', WITH_MODEL).args.some((a) => a.startsWith('--allowedTools'))).toBe(false)
+  })
+
   it("turns Codex's native web search off on every grid launch, web tools or not", () => {
     // The native tool is an API-side feature of OpenAI's Responses endpoint. Verified on codex-cli
     // 0.154.0 with `--strict-config`: the key is `web_search`, the variants `disabled`, `cached`,

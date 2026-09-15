@@ -46,6 +46,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { AgentEngine } from '../engines/types.js'
 import {
+  CLAUDE_ALLOW_WEB_TOOLS_ARG,
   CLAUDE_DISALLOW_WEB_TOOLS_ARG,
   CODEX_DISABLE_WEB_SEARCH_ARGS,
   mcpServersConfig,
@@ -579,7 +580,11 @@ const GRID_ENGINE_CONTRACTS: Partial<Record<AgentEngine, GridEngineContract>> = 
         // that no grid runs, and the built-in fetch summarises through a model the grid does not
         // serve. See `CLAUDE_DISALLOW_WEB_TOOLS_ARG`.
         CLAUDE_DISALLOW_WEB_TOOLS_ARG,
-        ...(override.mcpUrl ? ['--mcp-config', mcpServersConfig(override.mcpUrl, GRID_KEY_VAR)] : []),
+        // With the server comes its approval: a tool the daemon wired in and a permission mode then
+        // refuses is worse than no tool at all. See `CLAUDE_ALLOW_WEB_TOOLS_ARG`.
+        ...(override.mcpUrl
+          ? ['--mcp-config', mcpServersConfig(override.mcpUrl, GRID_KEY_VAR), CLAUDE_ALLOW_WEB_TOOLS_ARG]
+          : []),
       ],
       webSearch: webSearchWhenWired(override),
     }),

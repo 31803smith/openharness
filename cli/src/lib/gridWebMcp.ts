@@ -43,7 +43,7 @@
  * authentication with nothing naming why.
  */
 
-import { HARNESS_MCP_SERVER_NAME } from './harnessWebTools.js'
+import { HARNESS_MCP_SERVER_NAME, HARNESS_MCP_TOOL_NAMES } from './harnessWebTools.js'
 
 /**
  * The variable Codex reads its header out of.
@@ -130,6 +130,23 @@ export function mcpServersConfig(mcpUrl: string, keyVar: string): string {
  * other tool — a plugin's 26 MCP tools included — was still offered.
  */
 export const CLAUDE_DISALLOW_WEB_TOOLS_ARG = '--disallowedTools=WebSearch,WebFetch'
+
+/**
+ * The harness web tools, pre-approved for every Claude Code agent launched onto a grid WITH them.
+ *
+ * The server is the daemon's own doing, and Claude Code's permission system has no way to know that:
+ * a call to `mcp__harness__web_search` is, to it, an MCP tool from a server it never saw configured.
+ * In `default` mode that is a prompt per call; in `auto` mode the classifier DENIED it outright —
+ * seen on a real pane (2026-09-15, Claude Code 2.1.272, `permissions.defaultMode: auto`): "The MCP
+ * web search tool was blocked by the auto-mode classifier", after which the model fell back to curl.
+ * The tools were put there on purpose, so they are allowed on purpose: an allow rule is honoured
+ * before a prompt and before the classifier.
+ *
+ * Only when there IS a server to allow — with no MCP url the names would match nothing — and only
+ * for the two tools by name (see [HARNESS_MCP_TOOL_NAMES]). The same one-token `=` form as
+ * [CLAUDE_DISALLOW_WEB_TOOLS_ARG], for the same variadic reason.
+ */
+export const CLAUDE_ALLOW_WEB_TOOLS_ARG = `--allowedTools=${HARNESS_MCP_TOOL_NAMES.join(',')}`
 
 /**
  * Codex's native `web_search`, turned off on every Codex agent launched onto a grid.

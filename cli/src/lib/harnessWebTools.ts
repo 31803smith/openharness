@@ -32,6 +32,13 @@ const WEB_READ_TOOL = 'web_read'
  */
 const mcpToolName = (tool: string): string => `mcp__${HARNESS_MCP_SERVER_NAME}__${tool}`
 
+/**
+ * The server's tools as an engine names them — the list a launch pre-approves. Exactly the two the
+ * control plane serves, by name rather than as a server-wide `mcp__harness` rule: a tool the server
+ * grows later is one nobody here has looked at, and it should prompt like any other.
+ */
+export const HARNESS_MCP_TOOL_NAMES: readonly string[] = [mcpToolName(WEB_SEARCH_TOOL), mcpToolName(WEB_READ_TOOL)]
+
 /** The canonical card the desktop and web already render, and the input shape it reads. */
 export interface HarnessWebToolCard {
   tool: 'WebSearch' | 'WebFetch'
