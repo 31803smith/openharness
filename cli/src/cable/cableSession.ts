@@ -711,6 +711,7 @@ export class CableSession {
           this.greetedMac = mac
           this.greetedFw = fw
           this.log(`cable: dial ${mac} ${returning ? 'back ' : ''}on fw ${fw} proto ${msg.proto}`)
+          this.dialLog.greeted()
           this.host.onDialStatus?.({ attached: true, fw })
           // BEFORE the state push, not after: the push reads the selected machine, and for a remote one
           // that means an RPC over a lane this is what re-opens.

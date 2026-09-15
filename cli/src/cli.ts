@@ -1418,6 +1418,7 @@ async function runForeground(session: AuthSession): Promise<void> {
   let emitSessionEvents = (
     sessionId: string,
     events: ReturnType<CursorNormalizer['ingest']>,
+    _opts?: { resumed?: boolean },
   ): void => {
     if (events.length) queuedSessionEvents.push({ sessionId, events })
   }
@@ -1705,7 +1706,7 @@ async function runForeground(session: AuthSession): Promise<void> {
       const opened = historyEvents.findLast((event) => event.type === 'turn_started')
       if (opened) {
         console.log(`[agent] ${sid(session.agentId)} resumed the turn already open at attach`)
-        emitSessionEvents(session.sessionId, [opened])
+        emitSessionEvents(session.sessionId, [opened], { resumed: true })
       }
     }
     // Watch this pane for a question from ATTACH, not only from the next turn_started.
@@ -2039,7 +2040,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     heartbeats.set(sessionId, timer)
   }
 
-  emitSessionEvents = (sessionId: string, events: ReturnType<CursorNormalizer['ingest']>): void => {
+  emitSessionEvents = (sessionId: string, events: ReturnType<CursorNormalizer['ingest']>, opts?: { resumed?: boolean }): void => {
     if (!events.length || !registry.bySession(sessionId)?.active) return
     for (const event of events) {
       const agentId = agentIdFor(sessionId)
@@ -2051,8 +2052,10 @@ async function runForeground(session: AuthSession): Promise<void> {
         autonomousDeviceService?.turnStarted(agentId)
         startHeartbeat(sessionId)
         questionWatcher.start(sessionId)   // Claude opens its dialog INSIDE a turn
-        // ...and anything already drawn belongs to the turn BEFORE this one.
-        questionWatcher.noteTurnStart(sessionId)
+        // ...and anything already drawn belongs to the turn BEFORE this one — unless this is a turn the
+        // daemon is picking back up at attach: a dialog on the pane then is THIS turn's, still waiting,
+        // and marking it pre-turn is how a restarted daemon never announced a question Codex had open.
+        if (!opts?.resumed) questionWatcher.noteTurnStart(sessionId)
       } else if (event.type === 'turn_ended') {
         const startedAt = turnStartedAt.get(sessionId)
         turnStartedAt.delete(sessionId)

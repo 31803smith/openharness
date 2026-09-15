@@ -178,7 +178,23 @@ export function parseEngineQuestionPane(engine: AgentEngine, capture: string): P
     const plain = unframe(capture)
     return opencodeReview(plain) ?? parseQuestionPane(plain)
   }
+  if (engine === 'codex') return withCodexLabels(parseQuestionPane(capture))
   return parseQuestionPane(capture)
+}
+
+/**
+ * Codex's request_user_input rows carry the option's description on the same line as its label, in
+ * an aligned column — `1. Red    Creates a bold, high-contrast` — and wrap the rest of the description
+ * onto plain lines below. The label is the part before the column gap; the dial has an 80-byte option
+ * buffer and a 466px face, and "Red" is what the person is choosing. The approval prompt's rows
+ * (`Yes, proceed (y)`) have no such gap and pass through unchanged.
+ */
+function withCodexLabels(view: PaneView): PaneView {
+  if (!view || view.kind !== 'question') return view
+  return {
+    ...view,
+    rows: view.rows.map((r) => ({ ...r, label: r.label.split(/\s{2,}/)[0].trim() || r.label })),
+  }
 }
 
 /**
@@ -450,7 +466,11 @@ export function parseQuestionPane(capture: string): PaneView {
   // Each CLI words its own footer, and OpenCode rewords it PER SCREEN — `enter submit` on a single
   // question, `enter toggle` on a multi-select, `enter confirm` on a step of a multi-question. They all
   // mark the same thing: the bottom of a live dialog.
-  const footer = lines.findLastIndex((l) => /enter to (select|confirm)|enter\s+(submit|confirm|toggle)/i.test(l))
+  // `enter to submit answer` is Codex's request_user_input dialog (plan mode; captured live in
+  // __fixtures__/question-codex.txt). Without it that dialog was never a question at all here: the dial
+  // showed nothing while the pane waited, and a question it DID show could never be closed, because
+  // the watcher had no fingerprint to notice leaving.
+  const footer = lines.findLastIndex((l) => /enter to (select|confirm|submit)|enter\s+(submit|confirm|toggle)/i.test(l))
   // The review screen paints no footer and puts its rows BELOW the prompt, so it needs its own anchor.
   // Whichever anchor is LOWER on screen is the live one (the other is scrollback from an earlier step).
   const review = lines.findLastIndex((l) => /Ready to submit your answers/i.test(l))
