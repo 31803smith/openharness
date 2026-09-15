@@ -60,7 +60,7 @@ import { ENGINE_CLI_COMMANDS, ENGINES, engineBin, enginePathOverride } from './l
 import type { AgentEngine } from './engines/types.js'
 import { engineInstallRecipe } from './lib/engineInstall.js'
 import { buildEngineCommandArgv, buildEngineLaunchArgv, commandAvailableInInteractiveShell } from './lib/engineLaunch.js'
-import { buildGridEngineLaunch, describeGridLaunch, gridConflictingEnvToClear, gridEnvVarNames, type GridLaunchMachine, type GridWebSearchStatus } from './lib/gridLaunch.js'
+import { buildGridEngineLaunch, describeGridLaunch, gridConflictingEnvToClear, gridEnvVarNames, gridProviderId, type GridLaunchMachine, type GridWebSearchStatus } from './lib/gridLaunch.js'
 import { HERMES_SYSTEM_MANAGED_DIR } from './lib/gridWebMcp.js'
 import { writeGridConfigDir } from './lib/gridConfigDir.js'
 import { tmuxSupportsSessionEnv, TMUX_SESSION_ENV_MIN } from './lib/tmuxVersion.js'
@@ -175,7 +175,7 @@ import { agentFrame, type AgentFrame } from './lib/agentFrame.js'
 import { SessionInputController } from './lib/sessionInput.js'
 import { adaptSlashCommand } from './lib/goalCommand.js'
 import { RuntimeProfileManager, parseRuntimeProfile } from './lib/runtimeProfile.js'
-import { RuntimeProfileController, inspectRuntimePane } from './lib/runtimeProfileController.js'
+import { RuntimeProfileControlError, RuntimeProfileController, inspectRuntimePane } from './lib/runtimeProfileController.js'
 import { deviceErrorText } from './lib/deviceErrors.js'
 import { correlateAgentEvent, turnHeartbeatFrame } from './lib/agentEvent.js'
 
@@ -3974,6 +3974,41 @@ async function runForeground(session: AuthSession): Promise<void> {
         ? describeGridLaunch(session.engine, record.override, record.webSearch)
         : `${session.engine} on its own login`
       console.log(`${where} · retargeted ${sid(session.agentId)} · ${how}`)
+      // OpenCode's TUI drops `-m` when it RESUMES a session — it restores the model stored on that
+      // session instead — so the respawn above lands the right provider, key and argv on a pane that
+      // then answers on the OLD model. Nothing else here can tell: the process is correct, and only
+      // the engine's own footer says otherwise. Selecting through its `/models` picker is what makes
+      // the move real; see [RuntimeProfileController.selectOpencodeModel] for the measurements.
+      //
+      // Only on a RESUME, and only when a model was actually named: a fresh session takes `-m`, and
+      // with nothing named there is nothing to select — the engine's own default is the right answer.
+      //
+      // ⚠️ The picker needs a `provider/model` id, and a grid override carries the model BARE
+      // (`Qwen3.6-35B-A3B`) — the provider is derived from the network name, exactly as the `-m` this
+      // same launch passes derives it. Handing the bare id over refused instantly as MODEL_UNAVAILABLE,
+      // which read as "the grid is not serving it" for a grid that was serving it fine.
+      const selecting = session.engine === 'opencode' && outcome.resumed
+        ? (grid
+            ? (grid.model ? `${gridProviderId(grid.networkName)}/${grid.model}` : null)
+            : remembered)
+        : null
+      if (selecting) {
+        try {
+          await runtimeController.selectOpencodeModel(session, selecting)
+        } catch (err) {
+          // The move HAPPENED — the registry above records the process that is really running — so
+          // this reports what is true rather than pretending either way: the agent is where it was
+          // asked to go, on a model it was not asked to be on. Saying `ok` here is the failure this
+          // handler exists to refuse; it would read as a working switch and bill the wrong account.
+          const detail = err instanceof RuntimeProfileControlError ? err.code : String(err)
+          console.warn(`[grid] ${sid(session.agentId)} moved but could not select ${selecting} · ${detail}`)
+          return {
+            ok: false,
+            error: 'MODEL_SELECT_FAILED',
+            detail: `moved, but opencode stayed on its previous model (${detail}) — pick ${selecting} from /models in the pane`,
+          }
+        }
+      }
       return { ok: true }
     } finally {
       release()

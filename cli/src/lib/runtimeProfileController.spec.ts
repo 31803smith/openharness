@@ -14,14 +14,14 @@ import {
 
 // The id inside a `runtime-v1:` string is the AGENT id ('h1' here) — a client only ever echoes back an id
 // the catalog minted, and the catalog is agent-scoped. `setProfile` is still addressed with either id.
-function session(engine: 'claude' | 'codex' | 'cursor'): RegisteredSession {
+function session(engine: 'claude' | 'codex' | 'cursor' | 'opencode'): RegisteredSession {
   return {
     schemaVersion: 2,
     active: true,
     sessionId: 's1', engine, launcherId: 'h1', agentId: 'h1', boundAt: 0, transcriptPath: '/tmp/s1.jsonl', projectDir: 'tmp', cwd: '/tmp',
     tmuxPane: '%1', source: null, title: null, model: null,
     runtimes: [{ backend: 'tmux', paneId: '%1' }], primaryRuntimeKey: 'tmux\u0000%1',
-    cliVersion: engine === 'codex' ? '0.144.5' : engine === 'cursor' ? '2026.07.20-8cc9c0b' : '2.1.212', processIdentity: null,
+    cliVersion: engine === 'codex' ? '0.144.5' : engine === 'cursor' ? '2026.07.20-8cc9c0b' : engine === 'opencode' ? '1.18.31' : '2.1.212', processIdentity: null,
     registeredAt: 1, updatedAt: 1, lastHookAt: 1, lastTranscriptAt: 1,
   }
 }
@@ -76,6 +76,62 @@ describe('runtime pane parsing', () => {
       'opencode',
       [box(['', '  LSP là gì thế', '']), 'answer text', box(['', '', ''])].join('\n'),
     )).toMatchObject({ idle: true, draft: false })
+  })
+
+  it('reads opencode past a card floating over its composer', () => {
+    // Copied off a live pane (2026-09-15). OpenCode's `Getting started` card is drawn on the RIGHT,
+    // which puts its text on the composer's own rows — a TUI paints one terminal row at a time, so
+    // anything floating over the box lands inside the box's lines. Reading to end-of-line took
+    // `Connect provider /connect` as something the user had typed, so an EMPTY composer read as a
+    // draft, the pane was never idle, and every model switch came back AGENT_BUSY.
+    const PANE = '\u001b[48;2;10;10;10m'
+    const BOX = '\u001b[48;2;30;30;30m'
+    const SIDEBAR = '\u001b[48;2;20;20;20m'
+    const BLUE = '\u001b[38;2;92;156;245m'
+    const WHITE = '\u001b[38;2;255;255;255m'
+    const row = (composer: string, card: string) =>
+      `${PANE}  ${BLUE}┃${WHITE}${BOX}${composer.padEnd(40)}`
+      + `${PANE}  ${SIDEBAR}  ${BOX}    \u001b[38;2;238;238;238m${card}`
+    const pane = (composer: readonly string[]) => [
+      ...composer.map((line) => row(line, 'Connect provider        /connect')),
+      row('  Build · Big Pickle OpenCode Zen', ''),
+      `  ${BLUE}╹\u001b[38;2;30;30;30m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀`,
+    ].join('\n')
+
+    expect(inspectRuntimePane('opencode', pane(['', '', '']))).toMatchObject({ idle: true, draft: false })
+    // The card must not be able to hide a draft either: text INSIDE the box still counts, on the
+    // very row the card writes into. Reading a real draft as an empty prompt respawns the engine
+    // under text the user typed — the one direction this must never be wrong in.
+    expect(inspectRuntimePane('opencode', pane(['', '  what changed in this repo', ''])))
+      .toMatchObject({ idle: false, draft: true })
+  })
+
+  it('reads OpenCode\'s grey placeholder as a placeholder, not a draft', () => {
+    // Copied off a live pane (1.18.31). The third placeholder styling this module has had to learn:
+    // claude/codex/devin draw dim, hermes draws italic, and OpenCode draws a plain TRUECOLOR GREY
+    // with neither attribute — so nothing recognised it and a BRAND-NEW pane read as one holding a
+    // draft. It was never idle, and every model switch on an agent with no messages yet refused as
+    // AGENT_BUSY over an empty composer.
+    const BOX = '\u001b[48;2;30;30;30m'
+    const PANE = '\u001b[48;2;10;10;10m'
+    const WHITE = '\u001b[38;2;255;255;255m'
+    const GREY = '\u001b[38;2;128;128;128m'
+    const pane = (composer: string) => [
+      `  \u001b[38;2;92;156;245m┃${WHITE}${BOX}  ${composer}${WHITE}     ${PANE}`,
+      `  \u001b[38;2;92;156;245m┃${WHITE}${BOX}  \u001b[38;2;92;156;245mBuild${WHITE} ${GREY}·${WHITE} Big Pickle${PANE}`,
+      '  \u001b[38;2;92;156;245m╹\u001b[38;2;30;30;30m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
+    ].join('\n')
+
+    expect(inspectRuntimePane('opencode', pane(`${GREY}Ask anything… "What is the tech stack of this project?"`)))
+      .toMatchObject({ idle: true, draft: false })
+    // ⚠️ The direction that must never be wrong: text the user typed is drawn in the composer's own
+    // near-white, and reading it as a placeholder would respawn the engine under a real draft.
+    expect(inspectRuntimePane('opencode', pane(`${WHITE}switch me please`)))
+      .toMatchObject({ idle: false, draft: true })
+    // A grey hint sitting BESIDE typed text does not make the line a placeholder — every visible
+    // character has to be muted, not merely some of them.
+    expect(inspectRuntimePane('opencode', pane(`${WHITE}fix the parser${GREY}  ⏎ send`)))
+      .toMatchObject({ idle: false, draft: true })
   })
 
   it('reads copilot, whose composer carries no marker while its sent messages do', () => {
@@ -284,6 +340,152 @@ describe('runtime pane parsing', () => {
 })
 
 describe('RuntimeProfileController', () => {
+  it('selects a grid model through OpenCode\'s own picker, which a resumed pane needs', async () => {
+    // OpenCode's TUI honours `-m` only when it STARTS a session; resuming one restores the model
+    // stored on that session and drops the flag. Measured on 1.18.31 outside the harness:
+    //   opencode -m <grid>/Qwen3.6-35B-A3B                → Build · Qwen3.6-35B-A3B <grid>
+    //   opencode --session <id> -m <grid>/Qwen3.6-35B-A3B → Build · Big Pickle OpenCode Zen
+    // So a retarget landed the right provider, key and argv and the engine answered on the OLD
+    // model. The grid's models are in that pane's picker — the provider block is in the config the
+    // respawn points OPENCODE_CONFIG at — so the picker is what makes the move real.
+    const value = session('opencode')
+    const footer = (model: string) => `  ┃  Build · ${model}\n`
+    let model = 'Big Pickle OpenCode Zen'
+    let picker = ''
+    let filter = ''
+    const controller = new RuntimeProfileController({
+      manager: new RuntimeProfileManager(),
+      getSession: () => value,
+      validateRuntime: async () => true,
+      capture: async () => footer(model) + picker,
+      sendText: async (_pane, command) => {
+        // The picker lists BOTH the subscription model and the grid one, as the live pane does.
+        if (command === '/models') {
+          picker = [
+            'Select model                                     esc',
+            '● Big Pickle OpenCode Zen                        Free',
+            `Qwen3.6-35B-A3B                 ${'minhduccm90-cecb9724'}`,
+            'Connect provider ctrl+a  Favorite ctrl+f',
+          ].join('\n')
+        }
+        return true
+      },
+      sendLiteral: async (_pane, text) => {
+        filter = text
+        // Typing narrows it to the one row, which is the only state this drive ever acts on.
+        picker = [
+          'Select model                                     esc',
+          text,
+          `Qwen3.6-35B-A3B                 ${'minhduccm90-cecb9724'}`,
+          'Connect provider ctrl+a  Favorite ctrl+f',
+        ].join('\n')
+        return true
+      },
+      sendKey: async (_pane, key) => {
+        if (key === 'Enter') { model = 'Qwen3.6-35B-A3B minhduccm90-cecb9724'; picker = '' }
+        return true
+      },
+      acquireInput: () => () => {},
+    })
+
+    await expect(controller.selectOpencodeModel(value, 'minhduccm90-cecb9724/Qwen3.6-35B-A3B'))
+      .resolves.toBeUndefined()
+    // The filter is built from the model's last segment plus the provider, the same rule the
+    // subscription drive uses — a second rule here would drift from the one the picker was measured
+    // against.
+    expect(filter).toBe('qwen3.6 35b a3b minhduccm90 cecb9724')
+    expect(model).toBe('Qwen3.6-35B-A3B minhduccm90-cecb9724')
+  })
+
+  it('falls back to the model-only filter when a row carries no provider', async () => {
+    // Measured on a live picker with ONE provider connected: the row is bare (`Big Pickle  ·  Free`),
+    // the provider name is only the heading above it, and `big pickle opencode` matches NOTHING while
+    // `big pickle` returns the row. This is the way HOME from a grid — the subscription model named
+    // here — and it refused with MODEL_UNAVAILABLE until the filter dropped its provider half.
+    const value = session('opencode')
+    let pane = '  ┃  Build · Qwen3.6-35B-A3B minhduccm90-cecb9724\n'
+    const filters: string[] = []
+    let chosen: string | null = null
+    const rowsFor = (filter: string) => (
+      // OpenCode's own matcher: the provider is not in the row, so a filter naming it finds nothing.
+      'bigpickle'.startsWith(filter.replace(/[^a-z0-9]/g, '')) || filter.replace(/[^a-z0-9]/g, '') === 'bigpickle'
+        ? ['● Big Pickle                                      Free']
+        : []
+    )
+    const controller = new RuntimeProfileController({
+      manager: new RuntimeProfileManager(),
+      getSession: () => value,
+      validateRuntime: async () => true,
+      capture: async () => pane,
+      sendText: async () => {
+        pane += '\nSelect model                                     esc\nConnect provider ctrl+a'
+        return true
+      },
+      sendLiteral: async (_pane, text) => {
+        filters.push(text)
+        pane = pane.slice(0, pane.lastIndexOf('Select model'))
+          + ['Select model                                     esc', text, ...rowsFor(text), 'Connect provider ctrl+a'].join('\n')
+        return true
+      },
+      sendKey: async (_pane, key) => {
+        if (key !== 'Enter') return true
+        chosen = 'opencode/big-pickle'
+        // Selecting repaints the footer, which is what the drive confirms from.
+        pane = '  ┃  Build · Big Pickle OpenCode Zen\n'
+        return true
+      },
+      acquireInput: () => () => {},
+    })
+
+    await controller.selectOpencodeModel(value, 'opencode/big-pickle')
+    // The qualified filter is tried FIRST — dropping it would lose the only thing that tells two
+    // same-named models apart when the provider IS rendered.
+    expect(filters).toEqual(['big pickle opencode', 'big pickle'])
+    expect(chosen).toBe('opencode/big-pickle')
+  }, 15_000)
+
+  it('refuses when OpenCode\'s picker never offers the grid model', async () => {
+    // The confirmation is read from the FOOTER, not from the manager's observed profile: that
+    // resolves what it sees against `opencode models`, which cannot list a provider written for one
+    // agent — so it would answer null for a switch that had actually worked.
+    const value = session('opencode')
+    // Scrollback ACCUMULATES, the way a real capture does: a closed picker stays on screen above, which
+    // is why the drive counts openings rather than asking whether one is open.
+    let pane = '  ┃  Build · Big Pickle OpenCode Zen\n'
+    let opens = 0
+    const picker = (filter: string) => [
+      'Select model                                     esc',
+      filter,
+      '● Big Pickle OpenCode Zen                        Free',
+      'Connect provider ctrl+a  Favorite ctrl+f',
+    ].join('\n')
+    const controller = new RuntimeProfileController({
+      manager: new RuntimeProfileManager(),
+      getSession: () => value,
+      validateRuntime: async () => true,
+      capture: async () => pane,
+      sendText: async () => {
+        // The picker opens, and the grid's provider is not in it — the config the respawn points at
+        // did not take, or the provider names no models.
+        opens += 1
+        pane += '\n' + picker('')
+        return true
+      },
+      sendLiteral: async (_pane, text) => {
+        pane = pane.slice(0, pane.lastIndexOf('Select model')) + picker(text)
+        return true
+      },
+      sendKey: async () => true,
+      acquireInput: () => () => {},
+    })
+
+    await expect(controller.selectOpencodeModel(value, 'minhduccm90-cecb9724/Qwen3.6-35B-A3B'))
+      .rejects.toMatchObject({ code: 'MODEL_UNAVAILABLE' })
+    // Both filters were tried — the provider-qualified one and the model-only fallback — before it gave
+    // up, and neither pressed Enter on a row that was not the target.
+    expect(opens).toBe(2)
+  })
+
   it('sets Claude model and effort only after transcript confirmations', async () => {
     const value = session('claude')
     const manager = new RuntimeProfileManager()
