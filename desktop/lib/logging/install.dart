@@ -1,6 +1,7 @@
 import 'app_log.dart';
 import 'cli_log.dart';
 import 'debug_surface.dart';
+import 'dial_log_tail.dart';
 import 'log_file.dart';
 import 'log_stream.dart';
 import 'log_stream_sinks.dart';
@@ -32,4 +33,7 @@ void installFileLogs() {
   // copy is already written.
   appLog = FanoutAppLog([file, StreamAppLog(logStream)]);
   cliLog = FanoutCliLog([cli, StreamCliLog(logStream)]);
+  // The dial's log is the daemon's to write; this app only reads it. Tailed
+  // into the same ring so Settings ▸ Debug has a Dial lens.
+  DialLogTail(directory, logStream).start();
 }

@@ -16,7 +16,10 @@ void display_set_brightness(uint8_t level);
 
 // Lock/unlock the LVGL mutex. ANY code that touches LVGL objects from outside
 // the LVGL task (e.g. the WiFi/WS tasks via ui_screens.c) must hold this.
-void display_lock(void);
+// `display_lock()` carries the caller's name so a wait past 2s can be logged with who is waiting and
+// who is holding — see display_lock_at. The macro keeps every call site as it was.
+void display_lock_at(const char *who);
+#define display_lock() display_lock_at(__func__)
 void display_unlock(void);
 
 // Idle battery-save: turn the AMOLED panel off / back on. `display_wake()` repaints the current

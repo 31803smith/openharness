@@ -230,6 +230,10 @@ const envSchema = z.object({
     .default(join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'devin', 'config.json')),
   // Where the tmux-session registry and daemon-local state are persisted.
   ADAPTER_DATA_DIR: z.string().default(adapterDataDir),
+  // Logs meant to be READ and sent — the dial's `dial-YYYYMMDD.log` — beside the desktop app's own
+  // `app-*.log`/`cli-*.log`, so one directory holds everything a bug report needs. Not the data dir:
+  // `harness.log` there is the daemon's console, and `harness reset` wipes it.
+  HARNESS_LOGS_DIR: z.string().default(join(adapterRootDir, 'logs')),
   // This computer's stable id, minted once and never regenerated (see computerIdFile above). Pin it
   // explicitly on a box with no durable home — a container or CI job that gets a fresh ~/.harness on
   // every boot would otherwise look like a NEW computer each time and collect a machine per start.

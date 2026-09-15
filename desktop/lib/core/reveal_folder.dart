@@ -25,3 +25,19 @@ Future<bool> revealFolder(String path) async {
     return false;
   }
 }
+
+/// Selects [path] in the file manager — Finder's "Reveal", or the containing
+/// folder where the platform has no such thing. For a file the app just wrote
+/// and wants the user to find: the exported log bundle.
+Future<bool> revealFile(String path) async {
+  if (!File(path).existsSync()) return false;
+  if (Platform.isMacOS) {
+    try {
+      final result = await Process.run('/usr/bin/open', ['-R', path]);
+      return result.exitCode == 0;
+    } on ProcessException {
+      return false;
+    }
+  }
+  return revealFolder(File(path).parent.path);
+}

@@ -233,19 +233,36 @@ void audio_client_start_cable(const char *agent_id, voice_cmd_t cmd)
 
 void audio_client_stop(void)
 {
-    if (s_active) s_stop_req = true;
+    if (!s_active) return;
+    if (!s_stop_req) ESP_LOGI(TAG, "voice stop requested");
+    s_stop_req = true;
 }
 
 void audio_client_abort(void)
 {
     if (!s_active) return;
+    if (!s_abort_req) ESP_LOGI(TAG, "voice abort requested");
     s_abort_req = true;
     s_stop_req = true;
 }
 
+// While a turn is active, touch.c forwards NOTHING to LVGL — a swipe does not switch tiles and the Voice
+// button does nothing, while the tile keeps following the app. That is the stuck-dial report to the
+// letter, so a turn that never ends is worth a loud line: once past ten minutes, and again every ten.
+#define VOICE_LONG_MS (10 * 60 * 1000)
+
 bool audio_client_active(void)
 {
-    return s_active;
+    static int64_t since_us, warned_us;
+    if (!s_active) { since_us = 0; return false; }
+    int64_t now = esp_timer_get_time();
+    if (!since_us) { since_us = now; warned_us = now; }
+    if (now - warned_us >= (int64_t)VOICE_LONG_MS * 1000) {
+        warned_us = now;
+        ESP_LOGW(TAG, "voice turn active for %llu min (recording=%d stop_req=%d abort_req=%d) — touch is held off LVGL",
+                 (unsigned long long)((now - since_us) / 60000000), s_recording, s_stop_req, s_abort_req);
+    }
+    return true;
 }
 
 bool audio_client_upload_matches(const char *upload_id)

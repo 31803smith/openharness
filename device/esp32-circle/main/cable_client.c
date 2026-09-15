@@ -12,6 +12,7 @@
 #include "audio_capture.h"   // audio_notify_done() — the completion beep
 #include "esp_timer.h"
 #include "fw_update.h"
+#include "last_words.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -437,6 +438,9 @@ static void session_up(const cJSON *p)
         // dial would sit on an empty carousel opposite a daemon convinced it had already spoken.
         send_json(msg("machines.list"));
         send_json(msg("agents.list"));
+        // Now that someone is listening: why this boot happened, and what was said before it if the
+        // answer is a crash. Framed like every other line, so it lands in the same file.
+        last_words_report();
     }
 }
 

@@ -8,6 +8,7 @@ idf_component_register(
         "device_mac.c"
         "cable_frame.c"
         "cable_link.c"
+        "last_words.c"
         "cable_client.c"
         "cable_machines.c"
         "fw_update.c"
