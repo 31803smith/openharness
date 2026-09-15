@@ -108,7 +108,8 @@ Recent pushed checkpoints:
 
 | Checkpoint | Change |
 | --- | --- |
-| **f5d293c** | One row for search/Open/New; search takes the buttons' space while the outer edges stay fixed. Restores Check for Updates in the Harness menu. |
+| **1dd7c4b** | Long fixed-width search with the Find a harness hint; restores the mesh wallpaper and aligns smaller actions and the device card left, removing the large heading. |
+| **f5d293c** | Restores Check for Updates in the Harness menu. |
 | **90b6f68** | Page Up/Down reads preview content without moving search selection or focus; bindings support remapping, repeats and composition guards. |
 | **2292fe8** | Cached commit receipts show their existing outcome paragraphs, keeping useful earlier context visible. |
 | **08f4c98** | Retain earlier existing responses so an acknowledgement or commit receipt does not hide the session's purpose. |
@@ -126,11 +127,12 @@ meaningful text in one Claude session. It does not invent missing content or
 promise complete coverage for every engine. The protocol is unchanged.
 
 The current entry/search pass has **131 passing desktop tests**:
-/private/tmp/harness-search-row-verified.log. It covers previews, default/remapped
+/private/tmp/harness-wallpaper-entry-tests.log. It covers previews, default/remapped
 paging, composition, retained focus, responsive entry geometry, first use,
 bootstrap and creation recovery. Changed Dart files analyze cleanly in
 /private/tmp/harness-preview-keyboard-analyze.log and
-/private/tmp/harness-search-row-analyze.log.
+/private/tmp/harness-compact-entry-analyze.log and
+/private/tmp/harness-wallpaper-entry-analyze.log.
 
 The exported keyboard bindings pass **93 native keymap checks** and **388 AppKit
 checks**, including hidden window layout, in
@@ -140,12 +142,14 @@ one optional media placeholder skipped, in
 /private/tmp/harness-preview-context-verified.log; that full run predates the latest
 entry and installer changes.
 
-The current start-page row was rendered with real fonts at normal, narrow and
-larger-text sizes in /private/tmp/harness-search-row-captures. These widget renders
-use synthetic session data. The installed app was also inspected directly: the
-field expands across both actions, the side-by-side panel retains the row's edges,
-and Escape restores both buttons. The restored native Check for Updates command
-successfully opens the existing update offer; no update was installed.
+The current start page was rendered with real fonts at normal, narrow and
+larger-text sizes in /private/tmp/harness-wallpaper-entry-captures. These widget
+renders use synthetic session data. The installed app was also inspected directly:
+the mesh wallpaper, long hinted field, smaller actions, aligned device card and
+absence of the large heading are visible. Widget checks verify fixed search edges,
+side-by-side preview, Escape, and retained keyboard navigation. The restored native
+Check for Updates command was verified in the preceding build: it successfully
+opened the existing update offer; no update was installed.
 
 ### Prepared build versus running preview
 
@@ -157,11 +161,12 @@ Only supported current preview location:
 
 /Users/ab/code/autonomous-harness/desktop/build/macos/Build/Products/Release/Harness.app
 
-The preview was updated through **f5d293c** using Quit and Keep Windows. The
-Release build passed in /private/tmp/harness-search-row-menu-release.log; the
+The preview was updated through **1dd7c4b** using Quit and Keep Windows. The
+Release build passed in /private/tmp/harness-wallpaper-entry-release.log; the
 prepared and installed bundles passed deep, strict signature verification. The
-existing app v2 and workshop tabs restored successfully. Live session content and
-the entry/menu behavior described above were inspected in this exact build.
+existing app v2, workshop and personal tabs restored successfully, along with
+the unused New Harness tab. The resting New Tab layout was inspected in this
+exact build; shared search interactions are covered by the widget checks above.
 The console is accessible; older locked-console notes are obsolete. Before replacing
 it with later changes, verify the new Release build
 and signatures, use **Quit and Keep Windows**, then check the exact process is
@@ -170,7 +175,7 @@ reopen that exact path. Ordinary Quit can terminate agents. Do not call getApp
 between quitting and copying, since that lookup can relaunch the app.
 
 The immediately previous preview backup is
-/private/tmp/harness-before-search-row-8hg6ykz9/Harness.app.
+/private/tmp/harness-before-wallpaper-entry-wj6uz8mn/Harness.app.
 Do not open the other checkout's retired UI or /Applications/Harness.app. Do not
 restart/upgrade the user's CLI daemon or type test commands into working agents.
 Temporary logs, SDKs, builds, account state and preview processes do not transfer
