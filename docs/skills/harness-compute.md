@@ -40,13 +40,30 @@ this file describes is something you do when the user tells you what they want i
 never something you tell them to do themselves in a terminal. If a command's own output prints
 its internal name (it will), summarize what it means instead of repeating the raw line back.
 
-**No network name, ever, anywhere you'd have to say it out loud.** Harness Compute is one thing
-per account — the user doesn't pick it, name it, or switch between several. Commands that need to
-know which one discover it themselves (`grid info --json`, `grid ls --json`); you never surface
-the raw name or ask the user to choose one. If a lookup comes back empty, stop and say so in
-plain words: "Harness Compute isn't set up on your account yet." Don't invent a name or create
-one — that's provisioned automatically at sign-in, and a guessed name can collide with someone
-else's account on the same shared service.
+**Which grid: derive it, then pass it everywhere. Never the user, never the active one.** This
+computer's `grid` CLI is usually signed into several grids — a team's, a community one — and
+whichever `grid use` last selected is *not* the user's. The user's own grid is the one Harness
+minted at sign-in, and it is recognisable without asking anyone: its name is the user's email
+local-part (lowercased, runs of non-alphanumerics → `-`, trimmed) followed by `-` and 8 hex, and
+its type is `permissioned-public`. Find it once, at the start of any section:
+
+    python3 - <<'EOF'
+    import json, os, re, subprocess
+    email = next(l.split('=',1)[1].strip().strip('"') for l in open(os.path.expanduser('~/.grid/credentials.toml')) if l.startswith('email'))
+    slug = re.sub(r'[^a-z0-9]+', '-', email.split('@')[0].lower()).strip('-') or 'user'
+    grids = json.loads(subprocess.run(['grid','ls','--json'], capture_output=True, text=True).stdout)
+    print(*[g['grid'] for g in grids if g['type'] == 'permissioned-public' and re.fullmatch(rf'{re.escape(slug)}-[0-9a-f]{{8}}', g['grid'])])
+    EOF
+
+Exactly one name is the answer. Give it to **every** `grid` command as its grid argument — the
+positional `[grid]` on `models`, `info`, `join`, `leave`, `stats`, `usage`, `engines`; `--grid`
+on `chat`. Never rely on the active grid, never run `grid use`, never ask the user which grid —
+they don't know, and there is nothing for them to choose. The name stays out of what you say:
+it's an argument you pass, not a thing you mention.
+
+No name (or more than one) means it isn't provisioned: stop and say, in plain words, "Harness
+Compute isn't set up on your account yet — sign in to Harness again and it will be." Don't invent
+a name or create one; a guessed name can collide with someone else's on the same shared service.
 
 **If a command fails because the user isn't signed in**, stop and tell them to run
 `harness login`. That's the only command in this whole feature that's ever theirs to run by hand.
@@ -132,7 +149,7 @@ for "fast"). Offer 2–3, through a tool, each with size, context and speed. Pul
 
 **Step 5 — join.**
 
-    grid join --serve Qwen3.8-27B-UD-Q4_K_XL.gguf \
+    grid join <grid> --serve Qwen3.8-27B-UD-Q4_K_XL.gguf \
       --advertise-as Qwen3.8-27B \
       --name this-machines-display-name \
       --max-concurrency 2 \
@@ -157,7 +174,7 @@ there's no excuse to guess here.
 This returns as soon as the model is up; it keeps serving in the background. **Prove it answers
 before saying it's ready** — the join's exit code and `grid stats` only show it is listed:
 
-    grid chat -m Qwen3.8-27B "say ok"
+    grid chat --grid <grid> -m Qwen3.8-27B "say ok"
 
 The `-m` is the `--advertise-as` name. A reply means the whole path works. No reply, or an error
 about context size, means it is not ready — fix it (see "When something fails") before telling
@@ -169,8 +186,8 @@ Never as a side effect of starting a model.
 
 **To stop it, don't name the command — offer to do it.** Say something like "tell me when you
 want it stopped and I'll turn it off," never "stop it with `grid leave`." The user asking you to
-stop it is itself the trigger: run `grid leave` yourself right then (`--all` if this box is
-serving more than one model), and confirm in plain words that it's stopped. The command is
+stop it is itself the trigger: run `grid leave <grid>` yourself right then (`--all` if this box
+is serving more than one model), and confirm in plain words that it's stopped. The command is
 something you run, never something you hand the user to type.
 
 
@@ -181,7 +198,7 @@ the way that agent itself adds one; every coding agent has its own flow for a cu
 OpenAI-compatible provider, and it knows its own config better than this file does. This file
 only supplies the values to put in:
 
-    eval "$(grid info --env)" && curl -s -H "Authorization: Bearer $OPENAI_API_KEY" \
+    eval "$(grid info <grid> --env)" && curl -s -H "Authorization: Bearer $OPENAI_API_KEY" \
       "$OPENAI_BASE_URL/models"
 
 One invocation, never split: each shell command is its own process, so an export in one dies
@@ -209,12 +226,12 @@ sign-in mints a new one): redo this section, which rewrites it.
 
 ## 3. Show what's running
 
-None of these need env vars or setup. Read-only, safe to run any time.
+Read-only, safe to run any time. `<grid>` is the name derived in the ground rules.
 
-    grid stats --verbose     # uptime, memory, and a card per machine
-    grid usage --by member   # who used it
-    grid usage --by model    # which models did the work
-    grid usage --by engine   # which machines did the work
+    grid stats <grid> --verbose     # uptime, memory, and a card per machine
+    grid usage <grid> --by member   # who used it
+    grid usage <grid> --by model    # which models did the work
+    grid usage <grid> --by engine   # which machines did the work
 
 `grid stats` without `--verbose` is just the summary block. Every one takes `--json` for
 computing on the output rather than displaying it.
@@ -237,7 +254,7 @@ repeat a raw line that names the underlying CLI.
   - **"Not signed in"** → the user's to fix: `harness login`.
   - **"isn't up"** → Harness Compute is stopped for this account. Say so; ask before restarting
     it.
-  - **404 on a model** → wrong id, or nothing is currently serving it. `grid stats --verbose`
+  - **404 on a model** → wrong id, or nothing is currently serving it. `grid stats <grid> --verbose`
     shows what each machine actually has loaded.
   - **`exceeds the available context size`** (an agent may show it as a garbled "expected array
     `choices`") → the model was served with too small a window, usually `--ctx-size` left off.
@@ -253,8 +270,8 @@ generic `grid` product's multi-network `grid use`/`grid start <name>`/member-man
 (present in `autonomous-grid/docs/opencode.txt`, sections D/E) because Harness auto-provisions
 one private network per account at `harness login` and never exposes selection or naming to the
 user (Change 2/2b of that plan). If that backend auto-provisioning (Change 7) isn't live yet on
-the account this runs against, `grid info --json`/`grid ls --json` will simply come back empty —
-this file tells the agent to stop and say so rather than inventing a network name, since names
+the account this runs against, no grid matches the name rule — this file tells the agent to
+stop and say so rather than inventing a network name, since names
 are globally unique and a guessed one can collide with another user's account.
 
 There is deliberately no per-agent page and no fixed provider name: section 2 says "add a custom
