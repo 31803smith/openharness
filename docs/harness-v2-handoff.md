@@ -59,8 +59,10 @@ The current form uses three rows of four equal tiles:
 Only the folder or repository name appears inside the selected project tile;
 the full path/URL line below is removed. More tiles have a grid icon for engines
 and a monitor for machines, replaced by the chosen option’s own icon.
-Each machine remembers
-its choice; switching engines keeps it. The settings gear is small and quiet at
+Every new dialog defaults to New project. Recent is history only; choices made
+within an open dialog survive machine switches without carrying into the next
+dialog. Explicit split project context and prepared-folder retries retain their
+destination. Switching engines keeps the project. The settings gear is small and quiet at
 the bottom left; Create is a larger 192 × 56 primary button. Escape/outside click
 still dismiss, and Cmd-Return creates. Repeated-label tooltips are removed from
 the form and shared choices, sidebar rows, section labels, and picker hints.

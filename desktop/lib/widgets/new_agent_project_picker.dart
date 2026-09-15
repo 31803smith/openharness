@@ -40,6 +40,12 @@ class NewAgentProjectPicker extends StatefulWidget {
 
 enum _ProjectSource { newProject, local, git, recent }
 
+typedef _ProjectChoice = ({
+  _ProjectSource source,
+  String? folder,
+  GitHubRepository? repository,
+});
+
 class _NewAgentProjectPickerState extends State<NewAgentProjectPicker> {
   late _ProjectSource _source = widget.initialFolder == null
       ? _ProjectSource.newProject
@@ -64,6 +70,7 @@ class _NewAgentProjectPickerState extends State<NewAgentProjectPicker> {
       _folder = widget.initialFolder;
       _repository = null;
       _source = _ProjectSource.local;
+      _rememberChoice();
     }
   }
 
@@ -73,17 +80,27 @@ class _NewAgentProjectPickerState extends State<NewAgentProjectPicker> {
     if (!mounted || widget.locked || _chosen || widget.initialFolder != null) {
       return;
     }
-    final path = history.selected(widget.machineId);
-    if (path != null) {
+    // The dialog owns this bucket. Choices survive machine switches, never a
+    // new dialog or app launch. History only supplies the Recent menu.
+    final choice = PageStorage.maybeOf(context)
+        ?.readState(context, identifier: ('project-choice', widget.machineId));
+    if (choice is _ProjectChoice) {
       setState(() {
-        _folder = path;
-        _source = _ProjectSource.recent;
+        _folder = choice.folder;
+        _repository = choice.repository;
+        _source = choice.source;
       });
-      widget.onSelected(path, null);
+      widget.onSelected(choice.folder, choice.repository);
     } else {
       setState(() {});
     }
   }
+
+  void _rememberChoice() => PageStorage.maybeOf(context)?.writeState(
+    context,
+    (source: _source, folder: _folder, repository: _repository),
+    identifier: ('project-choice', widget.machineId),
+  );
 
   List<SelectOption<String>> get _recent {
     final machine = widget.notifier.stateOf(widget.machineId);
@@ -125,6 +142,7 @@ class _NewAgentProjectPickerState extends State<NewAgentProjectPicker> {
       _folder = folder;
       _repository = repository;
     });
+    _rememberChoice();
     widget.onSelected(folder, repository);
     if (repository == null) {
       unawaited(

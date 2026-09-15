@@ -113,6 +113,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   GitHubRepository? _repository;
   final _advancedKey = GlobalKey();
   final _choicesScroll = ScrollController();
+  final _projectChoices = PageStorageBucket();
   late _FolderSource _folderSource = widget.initialFolder == null
       ? _FolderSource.newProject
       : _FolderSource.local;
@@ -686,29 +687,32 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
           _machineOptions(tileSize),
           const SizedBox(height: _gapField),
           _sectionLabel('Which project will this agent work in?'),
-          NewAgentProjectPicker(
-            key: ValueKey('new-agent-projects-$_machineId'),
-            notifier: widget.notifier,
-            machineId: _machineId,
-            initialFolder: _folder,
-            focusNode: _folderFocus,
-            tileSize: tileSize,
-            locked: _choicesLocked,
-            onBrowse: _browse,
-            onSelected: (folder, repository) {
-              if (_choicesLocked) return;
-              setState(() {
-                _folder = folder;
-                _repository = repository;
-                _folderSource = repository != null
-                    ? _FolderSource.remote
-                    : folder != null
-                    ? _FolderSource.local
-                    : _FolderSource.newProject;
-                _preparedFolder = null;
-                _error = null;
-              });
-            },
+          PageStorage(
+            bucket: _projectChoices,
+            child: NewAgentProjectPicker(
+              key: ValueKey('new-agent-projects-$_machineId'),
+              notifier: widget.notifier,
+              machineId: _machineId,
+              initialFolder: _folder,
+              focusNode: _folderFocus,
+              tileSize: tileSize,
+              locked: _choicesLocked,
+              onBrowse: _browse,
+              onSelected: (folder, repository) {
+                if (_choicesLocked) return;
+                setState(() {
+                  _folder = folder;
+                  _repository = repository;
+                  _folderSource = repository != null
+                      ? _FolderSource.remote
+                      : folder != null
+                      ? _FolderSource.local
+                      : _FolderSource.newProject;
+                  _preparedFolder = null;
+                  _error = null;
+                });
+              },
+            ),
           ),
           _Advanced(
             key: _advancedKey,

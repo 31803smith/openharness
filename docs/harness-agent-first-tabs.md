@@ -124,8 +124,10 @@ Projects offer **New project / Local / Git / Recent ⌄**. New selects an empty
 project without creating anything yet. Local opens the folder picker on the
 chosen machine; Git opens a small URL dialog; Recent lists that machine’s
 previous projects. The selected folder or repository name appears only inside
-its tile, without a repeated full path or URL below. Each machine
-remembers its last choice; first use selects New. New folders use
+its tile, without a repeated full path or URL below. Every new dialog defaults
+to New project; Recent never preselects a saved folder. Choices survive machine
+switches only within that open dialog. An explicitly supplied project from a
+split entry and a prepared-folder retry retain their destination. New folders use
 `~/harnesses/agent-1`, `agent-2`, …. Switching engines keeps the project.
 
 A small settings icon at the bottom left reveals Codex profiles and permissions.

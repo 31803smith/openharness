@@ -80,11 +80,14 @@ class _App extends AppNotifier {
 
 void main() {
   late _App app;
-  Future<void> mount(WidgetTester tester) async {
+  Future<void> mount(WidgetTester tester, {String? rememberedProject}) async {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(1280, 1000);
     addTearDown(tester.view.reset);
     app = _App();
+    if (rememberedProject != null) {
+      await app.projectHistory.select('local', rememberedProject);
+    }
     await app.agentPreference.select('claude');
     addTearDown(() async {
       await tester.pumpWidget(const SizedBox());
@@ -122,6 +125,39 @@ void main() {
     await tester.tap(button);
     await tester.pumpAndSettle();
   }
+
+  testWidgets('every new dialog starts with New and leaves history in Recent', (
+    tester,
+  ) async {
+    await mount(tester, rememberedProject: '/local/remembered');
+    final newProject = find.byKey(const Key('new-agent-folder-newProject'));
+    final recentProject = find.byKey(const Key('new-agent-project-recent'));
+    expect(tester.widget<AppChoiceTile>(newProject).selected, isTrue);
+    expect(
+      tester.widget<AppSelectField<String>>(recentProject).selected,
+      isFalse,
+    );
+    expect(find.text('remembered'), findsNothing);
+    await recent(tester, 'remembered');
+    expect(tester.widget<AppChoiceTile>(newProject).selected, isFalse);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Open'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<AppChoiceTile>(newProject).selected, isTrue);
+    expect(
+      tester.widget<AppSelectField<String>>(recentProject).selected,
+      isFalse,
+    );
+    await tester.tap(recentProject);
+    await tester.pumpAndSettle();
+    expect(find.text('remembered'), findsOneWidget);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('create-agent-submit')));
+    await tester.pumpAndSettle();
+    expect(app.calls.single['project'], {'projectSource': 'new'});
+  });
 
   testWidgets('recent projects support type-select and keyboard selection', (
     tester,
@@ -200,6 +236,11 @@ void main() {
       );
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
       await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('new-agent-machine-remote')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('new-agent-machine-local')));
+      await tester.pumpAndSettle();
+      expect(find.text('repo'), findsOneWidget);
       await tester.tap(find.byKey(const Key('create-agent-submit')));
       await tester.pumpAndSettle();
       expect(app.calls.single['project'], {
