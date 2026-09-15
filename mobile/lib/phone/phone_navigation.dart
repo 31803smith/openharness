@@ -9,9 +9,33 @@ import 'agents_page.dart';
 import 'link_page.dart';
 import 'machine_swipe.dart';
 
-/// Every phone page slides in the iOS way, and goes back with the edge swipe.
-Route<void> phoneRoute(WidgetBuilder builder) =>
-    CupertinoPageRoute<void>(builder: builder);
+/// Every phone page slides in the iOS way, and goes back with the edge swipe — unless
+/// [swipeToGoBack] is off, which is how a page that wants the horizontal axis for itself keeps it.
+Route<void> phoneRoute(WidgetBuilder builder, {bool swipeToGoBack = true}) =>
+    swipeToGoBack
+    ? CupertinoPageRoute<void>(builder: builder)
+    : _NoSwipeBackRoute<void>(builder: builder);
+
+/// A phone page that slides and animates exactly like every other one, but cannot be dragged away
+/// from the left edge.
+///
+/// ⚠️ **It turns off the GESTURE only, and that distinction is the whole point.** `popGestureEnabled`
+/// is read by `_CupertinoBackGestureDetector` and by nothing else, so every other way out still
+/// works untouched: the header's chevron and its back band (`Navigator.maybePop`), Android's back
+/// button and predictive-back (which go through `popDisposition`), and a page popping itself — the
+/// terminal page does exactly that when its pane disappears.
+///
+/// Used by the agent pager, where the horizontal drag belongs to the pager. The edge swipe and the
+/// PageView were competing for the same axis: the route's detector sits ABOVE the pager in the tree
+/// and wins at the left margin, so a swipe started near the edge to reach the previous AGENT left
+/// the screen instead. Only the header now goes back, which is what the whole band across the top is
+/// widened for.
+class _NoSwipeBackRoute<T> extends CupertinoPageRoute<T> {
+  _NoSwipeBackRoute({required super.builder});
+
+  @override
+  bool get popGestureEnabled => false;
+}
 
 /// Where a tap on a machine goes. A machine this device holds no link to opens on ITS password
 /// form — each machine has its own remote password — and only a linked one opens on its agents.
@@ -93,6 +117,9 @@ void openAgent(
         agentId: agentId,
         neighbours: swipeNeighbours,
       ),
+      // The horizontal axis belongs to the pager here — see [_NoSwipeBackRoute]. The way out is the
+      // header's back band, and on Android the back button as well.
+      swipeToGoBack: false,
     ),
   );
   unawaited(_openPane(notifier, machineId, agentId, keepOthers: swipeNeighbours != null));

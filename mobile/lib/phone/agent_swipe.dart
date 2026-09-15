@@ -185,9 +185,11 @@ class _AgentSwipeHostState extends State<AgentSwipeHost> {
     return PageView.builder(
       controller: controller,
       // The terminal below scrolls vertically and selects text only with a mouse, so the horizontal
-      // axis is free. The one gesture still competing for it is the route's own edge-swipe back,
-      // which wins at the left margin because it is registered above this in the tree — deliberately
-      // kept: that is how a page goes back on iOS, and the page slides out the way it came in.
+      // axis is free — and here it is the pager's ALONE. The route's own edge-swipe back used to
+      // compete for it and win at the left margin, being registered above this in the tree: a drag
+      // started near the edge to reach the previous AGENT left the screen instead. The route is
+      // pushed without that gesture now (see `phoneRoute`'s `swipeToGoBack`), so going back is the
+      // header's back band, or Android's back button.
       physics: const PageScrollPhysics(),
       // No count is what makes it endless: the builder answers for any page, and the modulo below
       // wraps it back onto the list. A one-agent list keeps its single page instead — see
