@@ -4,6 +4,30 @@ The user has approved building this preview. First establish useful real content
 then implement the shared UI and cache; the earlier content-quality requirement
 still applies. This document records the proposed design and its acceptance bar.
 
+**Content rule:** never generate a summary or start a model for previews. Display
+only text and metadata already available from the session.
+
+## Implemented content path
+
+The desktop now keeps bounded excerpts from the ordinary normalized session
+stream and the existing `agent_recent` cache. A read-only audit found useful
+requests and full saved responses for several existing Codex sessions; a Claude
+session had neither cached text nor a meaningful transcript excerpt. Missing
+content remains explicitly unavailable instead of being invented.
+
+The cache retains up to 256 session records. Discovery warms up to 32 agents per
+batch with two lightweight requests in flight, and at most 64 queued. Each
+request asks for three existing entries. A one-minute freshness window coalesces
+repeat reads. Agent/session replacement, removal and logout invalidate old data.
+Live requests, response text and tool names update only the preview notifier;
+reasoning, raw tool output and terminal buffers are not retained.
+
+`session_get` is deliberately excluded: its response limit does not bound the
+underlying transcript read. There is no full-history fallback, terminal attach,
+model call, or per-keystroke request. Cached selection is synchronous; a cold
+selection can schedule a lightweight read after a short dwell. First remote
+content still depends on that machine responding.
+
 ## What decision should it help with?
 
 Before opening a harness, a person should be able to answer:
