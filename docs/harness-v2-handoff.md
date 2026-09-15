@@ -96,16 +96,16 @@ dial/creation/menu tests and 40 CLI input tests. Earlier build/test logs:
 `/private/tmp/harness-project-folder-cli-tests.log`,
 `/private/tmp/harness-agent-menus-native.log`.
 
-**Leave the running preview as is — explicit user choice.** The user declined
-the window-preserving quit and update. Do not quit, restart, replace or relaunch
-the running preview, or repeat the quit request. Installation waits for a new
-explicit user request. The last verified running bundle is **d22b338**; the
-signed **bef8cd6** update remains staged separately for later.
-`/private/tmp/harness-agent-preview-install.json` records its exact location and
-the user hold. No process was killed or live bundle replaced. CUA had continued
-to return `cgWindowNotFound` even after the user made the window visible, so live
-verification remains incomplete. Do not launch the derived-data copy alongside
-the supported one.
+**The staged installation is authorized again.** After initially choosing to
+leave the running preview as is, the user explicitly said “do it.” The signed
+**bef8cd6** update is ready, and the current **d22b338** bundle has a verified
+backup. `/private/tmp/harness-agent-preview-install.json` records both paths.
+CUA still returns `cgWindowNotFound` for the exact supported app, while its
+process remains running normally. The user was asked to choose **Quit and Keep
+Windows** because app control cannot reach that menu. Once it closes, confirm
+the exact process is gone, revalidate the staged copy, and swap it into the
+supported path before relaunching. No process has been killed or live bundle
+replaced. Do not launch the derived-data copy alongside the supported one.
 
 CUA-sent Command-N remains inconclusive from the earlier live preview, although
 native callback and exported shortcut checks pass. The current CUA window access
