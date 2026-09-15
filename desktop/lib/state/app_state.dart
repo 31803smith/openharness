@@ -1385,6 +1385,15 @@ class AppNotifier extends ChangeNotifier {
     if (_dismissedLinkPrompts.add(machineId)) notifyListeners();
   }
 
+  /// The person asked to see the prompt again — a deliberate open, not the
+  /// reactive gate. Without this, every way in that does not go through
+  /// [showMachinePane] (the welcome's Machines row) opened a dialog that its
+  /// own "still needed?" check closed on the first frame: one popup, then
+  /// nothing, for as long as the app ran.
+  void revisitLinkPrompt(String machineId) {
+    if (_dismissedLinkPrompts.remove(machineId)) notifyListeners();
+  }
+
   // ── ⌘B: a typed task, and which agent it belongs to ────────────────────────────────────────────
 
   /// The machine this window is running ON — where the daemon that ANSWERS ⌘B lives.
