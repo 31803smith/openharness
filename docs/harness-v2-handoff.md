@@ -74,7 +74,7 @@ are:
   **Open Machines Manager**, with visible Rename actions.
 - Pane headers show agent icon/session on the left and folder/branch/machine
   on the right, with a small muted branch glyph before the branch. Header hover
-  or keyboard focus reveals **Zoom Pane, Stop Harness, Close Pane**, with
+  or keyboard focus reveals **Zoom Pane, Restart Harness, Stop Harness, Close Pane**, with
   Keyboard first for remote sessions. Stop uses a circle-stop icon and a clear
   confirmation; the existing action ends the process and removes its active
   entry, preserving project files and saved conversation history. Divider grips appear on
@@ -142,7 +142,7 @@ restart/upgrade the user's CLI daemon or type test commands into working agents.
 Temporary logs, SDKs, builds, account state and preview processes do not transfer
 with Git.
 
-## Discussion still pending implementation
+## Creation discussion and approved preview work
 
 The **larger New Harness creation form is not implemented**. The discussed
 shape is New Project / Existing Folder / Clone Repository, remembered agent,
@@ -151,7 +151,11 @@ project would create its own folder, requiring no picker or typing. Do not infer
 the project from the current pane in a multiproject workspace. The user has been
 told candidly that entry/chrome polish is separate from this form redesign.
 
-The **search preview remains discussion-only**, explicitly by user request.
+The user has now explicitly approved **building a useful, beautiful, fast search
+preview** in Cmd-O and New Tab. Validate real excerpt content first, then build
+the shared UI and cache. The [preview proposal](harness-search-preview.md) records
+the acceptance criteria. The [Rex study](mitchellh-rex-study.md) is saved, pushed,
+and open for the user in Chrome. The following audit remains relevant:
 The old implementation at f04f6d3 read only already-attached terminal buffers,
 showed at most twelve nonblank tail lines, provided no group preview, and froze
 the snapshot while the selection stayed put. Terminal prompts/tool noise rarely

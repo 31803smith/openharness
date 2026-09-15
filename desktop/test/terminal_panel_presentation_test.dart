@@ -19,6 +19,7 @@ void main() {
       final revision = ValueNotifier(0);
       final closed = <int>[];
       final deleted = <int>[];
+      final restarted = <int>[];
       final zoomed = <int>[];
       final composed = <int>[];
       tester.view.devicePixelRatio = 1;
@@ -35,6 +36,7 @@ void main() {
               compactHeader: true,
               onClose: () => closed.add(version),
               onDelete: () => deleted.add(version),
+              onRestart: () => restarted.add(version),
               onToggleZoom: () => zoomed.add(version),
               zoomed: version >= 2,
               onToggleComposer: () => composed.add(version),
@@ -52,11 +54,13 @@ void main() {
       await tester.pump(const Duration(milliseconds: 120));
       await tester.tap(find.byTooltip('Show message composer'));
       await tester.tap(find.byTooltip('Zoom Pane'));
+      await tester.tap(find.byTooltip('Restart Harness'));
       await tester.tap(find.byTooltip('Stop Harness'));
       await tester.tap(find.byTooltip('Close Pane'));
       await tester.pump();
       expect(closed, [1]);
       expect(deleted, [1]);
+      expect(restarted, [1]);
       expect(zoomed, [1]);
       expect(composed, [1]);
       session.agentName = 'Renamed terminal';
@@ -160,7 +164,7 @@ void main() {
         expect(find.byTooltip('Stop Harness').hitTestable(), findsNothing);
         expect(
           find.descendant(of: controls, matching: find.byType(IconButton)),
-          findsNWidgets(local ? 3 : 4),
+          findsNWidgets(local ? 4 : 5),
         );
         final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
         await mouse.addPointer(location: tester.getCenter(title));

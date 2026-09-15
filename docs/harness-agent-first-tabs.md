@@ -152,14 +152,17 @@ shows **folder • branch • machine**, omitting unavailable folder/branch data
 Long details truncate, with full context in the session-name tooltip.
 
 Hovering anywhere on the header replaces the details with small, muted controls:
-**Zoom Pane, Stop Harness, Close Pane**, with **Keyboard** first for remote sessions. Keyboard
+**Zoom Pane, Restart Harness, Stop Harness, Close Pane**, with **Keyboard** first for remote sessions. Keyboard
 focus also reveals the controls. The title keeps the same space during the swap,
 and hovering retains the terminal renderer. Stop uses a Lucide circle-stop icon
 and an explicit confirmation: it ends the engine process and removes the active
 harness, preserving project files and saved conversation history. The existing
 `agent_delete` protocol remains unchanged. It is not Pause and promises no live
 process suspension/resume. Close Pane removes only this view and leaves the agent
-running. Keyboard toggles the remote message composer.
+running. Restart uses the same circular-arrow icon and existing restart action as
+the agent menu. It relaunches the same harness, resuming the conversation where
+supported; failures and a fresh-session fallback are shown in a snackbar. It is
+disabled for unavailable or unlinked machines. Keyboard toggles the remote message composer.
 
 Resize grips are invisible while idle and appear on divider hover, keyboard
 focus or active drag. Their hit targets and resize behavior stay the same. The

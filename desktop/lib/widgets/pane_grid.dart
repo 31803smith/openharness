@@ -24,6 +24,7 @@ import 'agent_drag.dart';
 import 'harness_join_guide_screen.dart';
 import 'new_agent_dialog.dart';
 import 'delete_agent_dialog.dart';
+import 'restart_agent_action.dart';
 import 'terminal_panel.dart';
 import 'pane_resize_handle.dart';
 import 'pane_split_edges.dart';
@@ -1332,6 +1333,10 @@ class _PaneContent extends StatelessWidget {
           notice: notice,
           onToggleComposer: () => notifier.toggleComposer(pane.id),
           onClose: single && !swarmMode ? null : close,
+          onRestart: agent == null || offline || needsLink
+              ? null
+              : () =>
+                    restartHarness(context, notifier, pane.machineId, agent.id),
           // The same confirmation the rail's row menu opens. Only for an
           // agent the machine still lists — a pane whose agent is already
           // gone has nothing to end.

@@ -10,6 +10,7 @@ class PaneHeaderActions extends StatelessWidget {
     super.key,
     required this.zoomed,
     this.onZoom,
+    this.onRestart,
     this.onDelete,
     this.onClose,
     this.onToggleComposer,
@@ -18,7 +19,7 @@ class PaneHeaderActions extends StatelessWidget {
   });
 
   final bool zoomed, composerVisible;
-  final VoidCallback? onZoom, onDelete, onClose, onToggleComposer;
+  final VoidCallback? onZoom, onRestart, onDelete, onClose, onToggleComposer;
 
   /// Folder, branch and machine share the controls' space while idle. Both
   /// layers keep their size so hovering never changes the title's width.
@@ -83,6 +84,8 @@ class PaneHeaderActions extends StatelessWidget {
               zoomed ? LucideIcons.minimize : LucideIcons.maximize,
               onZoom,
             ),
+            const SizedBox(width: 2),
+            action('Restart Harness', LucideIcons.refreshCw, onRestart),
             const SizedBox(width: 2),
             action('Stop Harness', LucideIcons.circleStop, onDelete),
             const SizedBox(width: 2),
