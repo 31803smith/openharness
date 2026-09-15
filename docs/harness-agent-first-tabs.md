@@ -171,7 +171,10 @@ Machine and Refresh Machines. Each computer is a submenu of named agents with
 engine icons. Selecting an agent opens its exact machine/agent identity, reusing
 an existing pane when present. The submenu retains Find Agents for the full
 search. Empty/unavailable lists are explicit; unknown counts are not shown as
-zero. Menus use existing cached discovery, with no fetch on opening. A stale
+zero. Menus use existing cached discovery, with no fetch on opening. Native
+inventory updates are separate from tab updates, so switching tabs does not
+resend or decode the agent list. Names, counts and availability still refresh
+when they change; leaving the workspace clears the list. A stale
 agent or unlinked machine cannot redirect a menu action.
 The manager has a visible **Rename** action on each computer and uses the existing
 machine rename API. It reports failures inline and refreshes names in the menu

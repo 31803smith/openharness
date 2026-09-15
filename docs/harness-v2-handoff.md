@@ -53,6 +53,18 @@ user for a benchmark window.
 - Machines is a native submenu tree with cached counts, names and engine icons.
   Selection uses both machine and agent IDs. Existing views are revealed, stale
   destinations are refused, and opening menus does no network work.
+- **bef8cd6** removes the full agent inventory from native tab updates. A
+  separate cached `machinesState` message refreshes visible menu data only when
+  it changes. A 512-agent regression reproduced the old resend and now confirms
+  six tab switches send no inventory, while renames and retained-pane
+  availability still update it. 28 affected Flutter checks passed, followed by
+  four focused checks covering availability and menu clearing; changed files
+  analyze cleanly. 387 hidden AppKit checks passed, including retained menu
+  controls across tab updates. No latency measurement was attempted.
+  Logs: `/private/tmp/harness-machine-menu-isolation.log`,
+  `/private/tmp/harness-machine-menu-isolation-final.log`,
+  `/private/tmp/harness-machine-menu-isolation-analyze.log`,
+  `/private/tmp/harness-machine-menu-isolation-native.log`.
 - Verification: 339 affected Flutter tests, 57 CLI tests, TypeScript checking,
   96 native keymap checks and 403 AppKit checks pass. No real agents were launched
   or used for input tests, and no native latency benchmark was run. Captures:
@@ -64,17 +76,19 @@ Saved and pushed to `origin/main`: **9d0150d** (remote project preparation),
 validation cleanup). The 339-test pass was followed by six passing focused
 checks after the analyzer cleanup; changed Dart files now analyze without issues.
 
-The release build of **fb29d7d** succeeded. Its incremental build left a stale
-outer app seal after rebuilding App.framework; the framework verified separately,
-and refreshing the existing ad-hoc outer signature resolved it. Deep/strict
-codesign verification passed for the prepared app and its separate staged copy.
-Prepared app:
+The latest Release preview was built from **bef8cd6** and passes deep/strict
+codesign verification, both before and after staging. Prepared app:
 `/private/tmp/harness-pane-controls-release/Build/Products/Release/Harness.app`.
-This includes the concurrently pushed busy-Codex input and dial navigation work
-(d9bd13c) and firmware version note (5c3a7fa), preserved by rebasing the final
-documentation commit. After that rebase, 17 desktop dial/creation/menu checks and
-40 CLI input checks passed. No real daemon or firmware was updated.
-Build log: `/private/tmp/harness-agent-rebased-release.log`; test logs:
+Build log: `/private/tmp/harness-menu-isolation-release.log`.
+The previous incremental build left a stale outer app seal after rebuilding
+App.framework; verifying the framework separately and refreshing the existing
+ad-hoc outer signature resolved it. The latest build verifies without that repair.
+
+Incoming main work was preserved, including terminal theme synchronization
+(4c7af5e), Codex question detection (12a63a9), and CLI status cleanup (afc9e77).
+No real daemon or firmware was updated. Earlier rebased checks passed 17 desktop
+dial/creation/menu tests and 40 CLI input tests. Earlier build/test logs:
+`/private/tmp/harness-agent-rebased-release.log`,
 `/private/tmp/harness-agent-rebased-checks.log`,
 `/private/tmp/harness-agent-rebased-cli-tests.log`,
 `/private/tmp/harness-agent-ui-regressions.log`,
@@ -391,7 +405,7 @@ post-inspired implementation:
   session/buffer/controller and leaves source workspaces intact.
 - Each workspace retains arrangement and focus. Closing views or tabs preserves
   runtimes; navigation never sends terminal input or takes over another controller.
-  Stop Harness continues to use its explicit confirmation; files and saved
+  Stop Agent continues to use its explicit confirmation; files and saved
   conversations are preserved, but the live process ends.
 - Reopening one agent and then its original swarm reuses that workspace and adds
   missing views, retaining newer names, layout, focus and retained sessions. If
@@ -410,7 +424,7 @@ post-inspired implementation:
 - [Creation recovery](harness-agent-creation.md) distinguishes refused creation
   from a delayed/lost response. **Check status reads the original receipt; it
   never submits another launch.** A confirmed runtime returns to its validated
-  destination or remains discoverable in Open Harness. Older CLIs can create
+  destination or remains discoverable in Open Agent. Older CLIs can create
   without supporting receipt recovery. Intents last only for the open dialog;
   durable pending-creation and crash-window reconciliation remain future work.
 - Browser sign-in supports reopen/copy/cancel with stale-attempt isolation.
@@ -436,13 +450,13 @@ post-inspired implementation:
 2. **Complete current keyboard and genuine first-use qualification.** Check
    initially focused search with hidden results, expansion/dismissal, command mode, Tab-focused
    rows, composition and the first key after activation through both native
-   menu and keyboard entry. Check New Harness folder focus/cancellation,
+   menu and keyboard entry. Check New Agent folder focus/cancellation,
    Layout repeated chords and confirmation, and Find during output/composition,
    including the immediate next key after closing it. Ready navigation, Find
    and dialog-return transitions are now fixture-checked before their next
    frame; current-preview observation remains the next level of evidence.
    Observe fresh dependencies, provider sign-in/browser return, native folder
-   choice, clone, first task and a second harness. Record actual steps, errors
+   choice, clone, first task and a second agent. Record actual steps, errors
    and time to a usable agent. Public GitHub cloning passed a direct disposable
    service check; private access/native chooser and real provider return remain
    unobserved. Check delayed remote creation on a disposable agent, an older CLI
@@ -481,7 +495,7 @@ post-inspired implementation:
   or failed actions give a clear result and never alter the wrong workspace.
 - Partial History restoration retains a single workspace/shared sessions, even
   at the tab limit. Capacity failure preserves the whole recovery entry.
-- Closing/dismissing New Harness returns directly to the intended page/terminal;
+- Closing/dismissing New Agent returns directly to the intended page/terminal;
   launch-in-progress and uncertain-outcome recovery remain protected.
 
 ### Visual quality and first impression
