@@ -45,6 +45,7 @@ class TerminalPanel extends StatefulWidget {
   /// Takes this tile off the grid. Null when the terminal is the whole window,
   /// where there is nothing to close it back to.
   final VoidCallback? onClose;
+  final VoidCallback? onRestart;
   final VoidCallback? onDelete;
 
   final VoidCallback? onToggleZoom;
@@ -106,6 +107,7 @@ class TerminalPanel extends StatefulWidget {
     this.notice,
     this.onToggleComposer,
     this.onClose,
+    this.onRestart,
     this.onDelete,
     this.onToggleZoom,
     this.zoomed = false,
@@ -1377,6 +1379,7 @@ class _TerminalPanelState extends State<TerminalPanel>
       project: agent == null ? null : machine?.projectOf(agent),
       compact: widget.compactHeader,
       close: widget.onClose != null,
+      restart: widget.onRestart != null,
       delete: widget.onDelete != null,
       composer: widget.composerVisible,
       toggleComposer: widget.onToggleComposer != null,
@@ -1398,6 +1401,9 @@ class _TerminalPanelState extends State<TerminalPanel>
             ? null
             : () => widget.onToggleZoom?.call(),
         onClose: widget.onClose == null ? null : () => widget.onClose?.call(),
+        onRestart: widget.onRestart == null
+            ? null
+            : () => widget.onRestart?.call(),
         onDelete: widget.onDelete == null
             ? null
             : () => widget.onDelete?.call(),
@@ -1418,6 +1424,7 @@ class _TerminalHeader extends StatelessWidget {
   final TerminalNotice? notice;
   final bool readOnly;
   final VoidCallback? onClose;
+  final VoidCallback? onRestart;
 
   /// Ends the agent (with a confirmation), as the rail's row menu does. Null
   /// where the pane cannot name a live agent to end.
@@ -1444,6 +1451,7 @@ class _TerminalHeader extends StatelessWidget {
     this.notice,
     this.readOnly = false,
     this.onClose,
+    this.onRestart,
     this.onDelete,
     this.compact = false,
     this.onToggleZoom,
@@ -1521,7 +1529,7 @@ class _TerminalHeader extends StatelessWidget {
     final remoteComposer = machine != null && !machine.isLocalMachine
         ? onToggleComposer
         : null;
-    final actionsWidth = remoteComposer == null ? 88.0 : 118.0;
+    final actionsWidth = remoteComposer == null ? 118.0 : 148.0;
     final folder =
         project?.cwd
             .split(RegExp(r'[/\\]'))
@@ -1652,9 +1660,9 @@ class _TerminalHeader extends StatelessWidget {
                     ),
                   ),
                   child: PaneHeaderActions(
-                    name: session.agentName,
                     zoomed: zoomed,
                     onZoom: onToggleZoom,
+                    onRestart: onRestart,
                     onDelete: onDelete,
                     onClose: onClose,
                     onToggleComposer: remoteComposer,

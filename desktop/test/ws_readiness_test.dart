@@ -180,11 +180,18 @@ void main() {
       await load;
       expect(machine.terminalCapabilityAvailable, isTrue);
       expect(app.panes, isEmpty);
+      await hub.receive('agent_recent');
       expect(hub.frames.map((f) => f['type']), [
         'machine_select',
         'terminal_capabilities',
         'agents_list',
+        'agent_recent',
       ]);
+      await hub.reply('agent_recent', {
+        'agentId': 'a',
+        'events': [],
+        'asks': [],
+      });
     },
   );
 

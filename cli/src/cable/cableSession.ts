@@ -21,9 +21,9 @@
 //
 //   3. SAY NOTHING WHEN NOTHING CHANGED. That is what keeps the link idle during a long turn, and it is
 //      why rule 2 has to exist at all.
-import { appendFile } from 'node:fs/promises'
 
 import { CableDecoder, CableType, encodeCableFrame } from './cableFrame.js'
+import { DialLog } from './dialLog.js'
 import { FirmwareTransfer } from './fwPush.js'
 import { SerialLink, findDialPort } from './serial.js'
 
@@ -411,10 +411,20 @@ export class CableSession {
 
   constructor(
     private readonly host: CableHost,
-    /** Where framed device logs are appended. The dial has one USB port, so this file is its console. */
-    private readonly logPath: string,
+    /** The dial's console, as a file: framed device logs and this side's `cable:` events, one day each. */
+    private readonly dialLog: DialLog,
     private readonly openPort: PortOpener = openDialPort,
   ) {}
+
+  /**
+   * Every `cable:` event goes two ways: to the daemon's console as before, and into the dial's log with a
+   * `[daemon]` prefix — the stuck-dial report is read end to end from ONE file, device lines and what the
+   * desk did to it interleaved.
+   */
+  private log(line: string): void {
+    this.host.log(line)
+    this.dialLog.daemon(line.replace(/^cable: /, ''))
+  }
 
   get isConnected(): boolean {
     return this.link?.isOpen === true && this.greetedMac !== null
@@ -438,6 +448,8 @@ export class CableSession {
 
   private async tick(): Promise<void> {
     if (this.stopped) return
+    // The firmware beats once a minute; the gap is marked in the dial's own log, where it is read.
+    this.dialLog.tick(this.isConnected)
     if (!this.link?.isOpen) {
       await this.tryOpen()
       return
@@ -456,14 +468,14 @@ export class CableSession {
       // fail to open rather than steal it back — this interval only decides how soon we would find OUR
       // dial if the user unplugged theirs and plugged ours into the same socket.
       this.foreignRetryAt = Date.now() + 60_000
-      this.host.log(`cable: ${this.link.path} is not a Harness dial (${this.bytesSinceOpen} B, no frames) — releasing it`)
+      this.log(`cable: ${this.link.path} is not a Harness dial (${this.bytesSinceOpen} B, no frames) — releasing it`)
       await this.link.close('not ours')
       this.link = null
       return
     }
     // Rule 2. The read never fails on a dead handle, so silence is the only symptom there is.
     if (Date.now() - this.lastRx > SILENCE_MS) {
-      this.host.log('cable: silent, reopening the port')
+      this.log('cable: silent, reopening the port')
       // close() runs onClosed, which is where onDialGone fires — one path for "the dial is not there",
       // whether the cable was pulled or the far end simply stopped answering.
       await this.link.close('silence')
@@ -559,7 +571,7 @@ export class CableSession {
     } catch (err) {
       // A port that another process holds is the ordinary case, not a fault: esptool, a serial monitor,
       // or a second daemon. Say so and try again on the next tick.
-      this.host.log(`cable: cannot open the dial: ${(err as Error).message}`)
+      this.log(`cable: cannot open the dial: ${(err as Error).message}`)
       return
     } finally {
       this.opening = false
@@ -596,11 +608,11 @@ export class CableSession {
     // keyed by MAC and outlives the port precisely so this one does not have to.
     this.offered.clear()
     this.lastRx = Date.now()
-    this.host.log(`cable: open on ${opened.path}`)
+    this.log(`cable: open on ${opened.path}`)
   }
 
   private onClosed(why: string): void {
-    this.host.log(`cable: closed (${why})`)
+    this.log(`cable: closed (${why})`)
     this.host.onDialGone?.()
     this.host.onDialStatus?.({ attached: false })
     this.link = null
@@ -637,8 +649,7 @@ export class CableSession {
       if (frame.type === CableType.Log) {
         // The dial's console. It shares its one USB port with this protocol, so these frames are the only
         // way its log survives at all while the daemon holds the port.
-        const line = Buffer.from(frame.payload).toString('utf8')
-        void appendFile(this.logPath, `${new Date().toISOString()} ${line}\n`).catch(() => {})
+        this.dialLog.device(Buffer.from(frame.payload).toString('utf8'))
         return
       }
       if (frame.type === CableType.Pcm) {
@@ -646,7 +657,7 @@ export class CableSession {
         return
       }
       // An unknown type is a dial running ahead of this daemon. Visible, never fatal.
-      this.host.log(`cable: unknown frame type 0x${frame.type.toString(16)}`)
+      this.log(`cable: unknown frame type 0x${frame.type.toString(16)}`)
     })
   }
 
@@ -667,7 +678,7 @@ export class CableSession {
         const product = str('product')
         if (product !== CABLE_PRODUCT) {
           if (this.foreignPort !== this.link?.path) {
-            this.host.log(`cable: greeted by a '${product ?? 'nameless'}' dial, not a ${CABLE_PRODUCT} one — releasing the port`)
+            this.log(`cable: greeted by a '${product ?? 'nameless'}' dial, not a ${CABLE_PRODUCT} one — releasing the port`)
           }
           this.foreignPort = this.link?.path ?? null
           this.foreignRetryAt = Date.now() + 60_000
@@ -699,7 +710,7 @@ export class CableSession {
           const returning = mac === this.greetedMac
           this.greetedMac = mac
           this.greetedFw = fw
-          this.host.log(`cable: dial ${mac} ${returning ? 'back ' : ''}on fw ${fw} proto ${msg.proto}`)
+          this.log(`cable: dial ${mac} ${returning ? 'back ' : ''}on fw ${fw} proto ${msg.proto}`)
           this.host.onDialStatus?.({ attached: true, fw })
           // BEFORE the state push, not after: the push reads the selected machine, and for a remote one
           // that means an RPC over a lane this is what re-opens.
@@ -743,7 +754,7 @@ export class CableSession {
         try {
           items = await this.host.listModels(agentId)
         } catch (err) {
-          this.host.log(`cable: models for ${agentId} failed (${(err as Error).message})`)
+          this.log(`cable: models for ${agentId} failed (${(err as Error).message})`)
         }
         // Answered either way. An empty catalog closes the dial's picker cleanly; silence strands it on a
         // spinner until its own timeout, which reads as a hang rather than "this engine has no choices".
@@ -765,7 +776,7 @@ export class CableSession {
             } else {
               // SAID OUT LOUD. A dropped report is a dial and a window on different agents, and dropping
               // it silently is how that state became impossible to explain from the log.
-              this.host.log(`cable: dropped dial focus ${agentId} — waiting for ${this.expectedAppFocusEcho}`)
+              this.log(`cable: dropped dial focus ${agentId} — waiting for ${this.expectedAppFocusEcho}`)
             }
             return
           }
@@ -783,7 +794,7 @@ export class CableSession {
           // is fixed at the source now (carousel_goto in the firmware), which leaves only the stale repeat
           // of the tile the dial was already on to guard against.
           if (this.drivingAppFocus && now - this.drivingSince < APP_SWITCH_REPAINT_MS) {
-            this.host.log(`cable: dropped dial focus ${agentId} — repaint from the switch in flight`)
+            this.log(`cable: dropped dial focus ${agentId} — repaint from the switch in flight`)
             return
           }
           // Remember where the dial IS, not just that it said so: followApp() compares against this to
@@ -884,7 +895,7 @@ export class CableSession {
         this.host.onDialStatus?.({ attached: true, fw: this.greetedFw ?? undefined })
         return
       default:
-        this.host.log(`cable: unhandled message '${msg.t}'`)
+        this.log(`cable: unhandled message '${msg.t}'`)
     }
   }
 
@@ -905,13 +916,13 @@ export class CableSession {
   private mayOffer(mac: string, version: string): boolean {
     const key = `${mac}:${version}`
     if (this.written.has(key)) {
-      this.host.log(`cable: firmware ${version} already written to ${mac} — not offering it again`)
+      this.log(`cable: firmware ${version} already written to ${mac} — not offering it again`)
       return false
     }
     const now = Date.now()
     const recent = (this.writeLog.get(mac) ?? []).filter((at) => now - at < 60 * 60 * 1000)
     if (recent.length >= FW_WRITES_PER_HOUR) {
-      this.host.log(`cable: ${mac} has taken ${recent.length} firmware writes this hour — holding off`)
+      this.log(`cable: ${mac} has taken ${recent.length} firmware writes this hour — holding off`)
       return false
     }
     this.written.add(key)
@@ -933,7 +944,7 @@ export class CableSession {
     if (!this.mayOffer(mac, candidate.version)) return
     this.offered.add(offerKey)
 
-    this.host.log(`cable: offering firmware ${candidate.version} (${candidate.image.length} B)`)
+    this.log(`cable: offering firmware ${candidate.version} (${candidate.image.length} B)`)
     this.offeringTo = candidate.version
     this.transfer = new FirmwareTransfer(
       candidate.image,
@@ -942,7 +953,7 @@ export class CableSession {
         if (!this.link?.isOpen) throw new Error('port closed mid-transfer')
         await this.link.write(encodeCableFrame(CableType.Fw, slice))
       },
-      (line) => this.host.log(line),
+      (line) => this.log(line),
     )
     await this.send({ t: 'fw.offer', version: candidate.version, size: candidate.image.length, sha256: candidate.sha256 })
   }
@@ -951,7 +962,7 @@ export class CableSession {
     if (!this.voice) return // audio outside a turn is a dial that restarted mid-capture
     this.voice.bytes += chunk.length
     if (this.voice.bytes > VOICE_MAX_BYTES) {
-      this.host.log('cable: voice over the length cap, dropped')
+      this.log('cable: voice over the length cap, dropped')
       this.voice = null
       return
     }
@@ -967,7 +978,7 @@ export class CableSession {
     }
 
     const seconds = turn.bytes / (turn.rate * 2)
-    this.host.log(`cable: voice ${seconds.toFixed(1)}s (${Math.round(turn.bytes / 1024)} KB) → stt`)
+    this.log(`cable: voice ${seconds.toFixed(1)}s (${Math.round(turn.bytes / 1024)} KB) → stt`)
 
     let transcript: string
     try {
@@ -996,7 +1007,7 @@ export class CableSession {
         ? await this.host.routeInWindow(transcript, turn.cmd)
         : ({ t: 'unavailable' } as const)
       if (inWindow.t === 'sent') {
-        this.host.log(`cable: the window routed the spoken task → ${inWindow.agentId.slice(0, 8)}`)
+        this.log(`cable: the window routed the spoken task → ${inWindow.agentId.slice(0, 8)}`)
         await this.send({
           t: 'voice.transcript',
           routeId: '',
@@ -1025,7 +1036,7 @@ export class CableSession {
       try {
         const decision = await this.host.route(transcript, agents)
         agentId = decision.agentId
-        this.host.log(`cable: routed → ${agentId} (${decision.reason})`)
+        this.log(`cable: routed → ${agentId} (${decision.reason})`)
       } catch (err) {
         await this.send({ t: 'voice.error', message: (err as Error).message })
         return
@@ -1050,7 +1061,7 @@ export class CableSession {
       await this.link.write(encodeCableFrame(CableType.Json, Buffer.from(JSON.stringify(msg), 'utf8')))
       return true
     } catch (err) {
-      this.host.log(`cable: write failed (${(err as Error).message})`)
+      this.log(`cable: write failed (${(err as Error).message})`)
       await this.link.close('write failed')
       return false
     }
@@ -1089,7 +1100,7 @@ export class CableSession {
     this.lastAgentsKey = key
     // Every push, and only pushes. The dial showing a different number from the daemon is a question this
     // line answers in one look: either the daemon never said it, or it said it and the dial disagreed.
-    this.host.log(`cable: agents → ${agents.length}${force ? ' (attach)' : ''}`)
+    this.log(`cable: agents → ${agents.length}${force ? ' (attach)' : ''}`)
 
     await this.send({ t: 'agents.begin' })
     for (const a of agents) {
@@ -1176,7 +1187,7 @@ export class CableSession {
     const key = `${selected}|${swarms.map((s) => `${s.id}:${s.name}:${s.agents}`).join('|')}`
     if (!force && key === this.lastSwarmsKey) return
     this.lastSwarmsKey = key
-    this.host.log(`cable: swarms → ${swarms.length}${selected ? ` (on ${selected})` : ''}${force ? ' [push]' : ''}`)
+    this.log(`cable: swarms → ${swarms.length}${selected ? ` (on ${selected})` : ''}${force ? ' [push]' : ''}`)
     // ONE frame, not a begin/row/end stream: two dozen rows of an id, a name and a count fit in a
     // kilobyte, and the dial replaces the whole list on arrival either way.
     await this.send({ t: 'swarms', selected, items: swarms.map((s) => ({ id: s.id, name: s.name, agents: s.agents })) })
@@ -1210,7 +1221,7 @@ export class CableSession {
     const key = CableSession.machinesKey(machines, source, selected)
     if (!force && key === this.lastMachinesKey) return
     this.lastMachinesKey = key
-    this.host.log(`cable: machines → ${machines.length} (${source})${force ? ' [push]' : ''}`)
+    this.log(`cable: machines → ${machines.length} (${source})${force ? ' [push]' : ''}`)
 
     await this.send({ t: 'machines.begin' })
     for (const m of machines) {
@@ -1236,11 +1247,11 @@ export class CableSession {
     }
     const result = await this.host.selectMachine(machineId)
     if (!result.ok) {
-      this.host.log(`cable: machine.select ${machineId} refused (${result.code})`)
+      this.log(`cable: machine.select ${machineId} refused (${result.code})`)
       await this.send({ t: 'machine.error', machineId, code: result.code, message: result.message })
       return
     }
-    this.host.log(`cable: machine.select → ${machineId}`)
+    this.log(`cable: machine.select → ${machineId}`)
     // REQUIRED, not hygiene: two machines whose agents happen to share names and engines produce an equal
     // agentsKey, and the new machine's list would then never be sent at all.
     this.lastAgentsKey = ''
@@ -1330,7 +1341,7 @@ export class CableSession {
       this.drivingAppFocus = true
       try {
         if (machineId && machineId !== this.host.selectedMachine()) {
-          this.host.log(`cable: following the app to machine ${machineId}`)
+          this.log(`cable: following the app to machine ${machineId}`)
           await this.selectMachine(machineId)
         }
         // A newer selection can arrive while the remote machine RPC/list push is in flight. Never let
@@ -1340,7 +1351,7 @@ export class CableSession {
         if (generation !== this.appFocusGeneration || agentId === this.desiredFocus) return
         // Said before the frame goes out, not after: the frame itself succeeds either way.
         const unknown = this.host.knows?.(agentId) === false
-        this.host.log(`cable: following the app to agent ${agentId}${unknown ? ' — NOT in this daemon\'s list, the dial has no tile for it' : ''}`)
+        this.log(`cable: following the app to agent ${agentId}${unknown ? ' — NOT in this daemon\'s list, the dial has no tile for it' : ''}`)
         this.expectedAppFocusEcho = agentId
         this.expectedAppFocusEchoUntil = Date.now() + APP_FOCUS_SETTLE_MS
         // THE LIST FIRST, THEN THE FOCUS — the fix for "clicking a rail agent that has no tile does not
@@ -1368,7 +1379,7 @@ export class CableSession {
     // fire-and-forgets followApp, so the session log is the only place an unexpected rejection would
     // otherwise be visible; consume it here rather than creating an unhandled rejection.
     this.appFocusTail = task.catch((err) => {
-      this.host.log(`cable: could not follow app focus (${(err as Error).message})`)
+      this.log(`cable: could not follow app focus (${(err as Error).message})`)
     })
     await this.appFocusTail
   }

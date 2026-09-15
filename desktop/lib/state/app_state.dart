@@ -43,6 +43,7 @@ import '../ws/ws_pool.dart';
 import 'pane_preset.dart';
 import 'pane_arrangement.dart';
 import 'pending_question.dart';
+import 'session_preview.dart';
 import '../usage/remote_usage.dart';
 import '../usage/usage_accounts.dart';
 
@@ -307,6 +308,36 @@ class AppNotifier extends ChangeNotifier {
   @visibleForTesting
   final WsConn Function(String machineId)? connectionForTest;
   final Map<String, Timer> _turnActivityWatchdogs = {};
+
+  late final sessionPreviews = SessionPreviewStore(
+    canFetch: _canFetchPreview,
+    fetchRecent: (key) => _conn(key.machineId).request(
+      'agent_recent',
+      payload: {'agentId': key.agentId, 'n': 3},
+      timeout: const Duration(seconds: 6),
+    ),
+  );
+
+  SessionPreviewKey previewKey(String machineId, Agent agent) =>
+      (machineId: machineId, agentId: agent.id, sessionId: agent.sessionId);
+
+  bool _canFetchPreview(SessionPreviewKey key) {
+    if (_disposed || (_pool == null && connectionForTest == null)) return false;
+    final machine = machineStates[key.machineId];
+    return machine != null &&
+        machine.nodeOnline != false &&
+        !machine.needsLink &&
+        (machine.connectionStatus == ConnectionStatus.connected ||
+            connectionForTest != null) &&
+        machine.agents.any(
+          (agent) =>
+              agent.id == key.agentId && agent.sessionId == key.sessionId,
+        );
+  }
+
+  void _warmPreviews(MachineState machine) => sessionPreviews.warm(
+    machine.agents.map((agent) => previewKey(machine.machine.machineId, agent)),
+  );
 
   /// When this launch became signed in, and by which route — until the first
   /// message of that session has been reported, after which it is null.
@@ -1719,7 +1750,7 @@ class AppNotifier extends ChangeNotifier {
             terminalLogPath: value.terminalLogPath,
             terminalResultPath: value.terminalResultPath,
             terminalSetup: value.terminalSetup,
-            systemReady: value.systemReady,
+            plan: value.plan,
           );
         } else {
           environmentReadiness = value;
@@ -1853,7 +1884,7 @@ class AppNotifier extends ChangeNotifier {
   }
 
   /// Rechecks a single stuck step (`failed`/`needsTerminal`) without re-running steps already
-  /// `ready` — the user fixed it by hand (see `environment_step_guidance.dart`'s command) and this
+  /// `ready` — the user fixed it by hand (with the command the review lists) and this
   /// confirms it, then falls through to whatever step comes next, exactly like a fresh `bootstrap()`
   /// would have. [step] identifies which row's Recheck button was pressed; the provisioner itself
   /// decides what to (re-)attempt from the current [environmentReadiness], so an already-resolved
@@ -1875,15 +1906,12 @@ class AppNotifier extends ChangeNotifier {
             environmentReadiness.phase ==
                 EnvironmentSetupPhase.waitingForTerminal,
       );
+      // Every host step done means only the Harness CLI is left, and that
+      // installs in-app without another prompt — so carry on into it.
       if (!result.isReady &&
           mode == EnvironmentSetupMode.automatic &&
           result.phase != EnvironmentSetupPhase.waitingForTerminal &&
-          result.systemReady &&
-          result.steps[EnvironmentStep.tmux] == EnvironmentStepStatus.ready &&
-          (result.steps[EnvironmentStep.clipboard] ==
-                  EnvironmentStepStatus.ready ||
-              result.steps[EnvironmentStep.clipboard] ==
-                  EnvironmentStepStatus.notApplicable)) {
+          result.hostReady) {
         result = await _runProvisioner(
           resumeFrom: result,
           install: true,
@@ -1899,7 +1927,7 @@ class AppNotifier extends ChangeNotifier {
             terminalLogPath: result.terminalLogPath,
             terminalResultPath: result.terminalResultPath,
             terminalSetup: result.terminalSetup,
-            systemReady: result.systemReady,
+            plan: result.plan,
           );
         }
         _scheduleEnvironmentRecheck();
@@ -2465,6 +2493,7 @@ class AppNotifier extends ChangeNotifier {
     currentUser = null;
     machines = [];
     machineStates.clear();
+    sessionPreviews.clear();
     expandedMachines.clear();
     selectedMachineId = null;
     status = AppStatus.unauthenticated;
@@ -3445,6 +3474,18 @@ class AppNotifier extends ChangeNotifier {
 
   void _replaceAgents(MachineState machine, List<Agent> agents) {
     final nextIds = agents.map((agent) => agent.id).toSet();
+    for (final old in machine.agents.where(
+      (agent) => !nextIds.contains(agent.id),
+    )) {
+      sessionPreviews.removeAgent(machine.machine.machineId, old.id);
+    }
+    for (final agent in agents) {
+      sessionPreviews.retainAgent(
+        machine.machine.machineId,
+        agent.id,
+        agent.sessionId,
+      );
+    }
     for (final agentId in machine.processingAgentIds.difference(nextIds)) {
       _cancelTurnActivity(machine.machine.machineId, agentId);
     }
@@ -3471,6 +3512,7 @@ class AppNotifier extends ChangeNotifier {
       machine.pendingProcessingSessions.remove(sessionId);
       _markAgentProcessing(machine, agentId);
     }
+    _warmPreviews(machine);
   }
 
   void _upsertAgent(MachineState machine, Agent agent) {
@@ -3481,6 +3523,12 @@ class AppNotifier extends ChangeNotifier {
     } else {
       machine.agents = [...machine.agents]..[index] = agent;
     }
+    sessionPreviews.retainAgent(
+      machine.machine.machineId,
+      agent.id,
+      agent.sessionId,
+    );
+    sessionPreviews.warm([previewKey(machine.machine.machineId, agent)]);
     machine.sessionAgentIds.removeWhere((_, id) => id == agent.id);
     final sessionId = agent.sessionId;
     if (sessionId != null) {
@@ -3512,6 +3560,7 @@ class AppNotifier extends ChangeNotifier {
   }
 
   Future<void> _removeAgent(MachineState machine, String agentId) async {
+    sessionPreviews.removeAgent(machine.machine.machineId, agentId);
     machine.agents = machine.agents
         .where((agent) => agent.id != agentId)
         .toList();
@@ -4149,8 +4198,8 @@ class AppNotifier extends ChangeNotifier {
     return null;
   }
 
-  /// Deletes an agent via `agent_delete`. Returns null on success, or an error message to show
-  /// inline in the caller's dialog.
+  /// Stops an agent via the legacy `agent_delete` request, removing its active
+  /// entry while preserving files and saved history. Returns an error on failure.
   Future<String?> deleteAgent(String machineId, String agentId) async {
     final machine = machineStates[machineId];
     if (machine == null) return 'Machine not found';
@@ -4159,10 +4208,10 @@ class AppNotifier extends ChangeNotifier {
       result = await _conn(machineId)
           .request('agent_delete', payload: {'agentId': agentId});
     } catch (error) {
-      return 'Delete failed: $error';
+      return 'Stop failed: $error';
     }
     final error = result['error'];
-    if (error is String) return 'Delete failed: $error';
+    if (error is String) return 'Stop failed: $error';
     await _removeAgent(machine, agentId);
     notifyListeners();
     return null;
@@ -5298,6 +5347,33 @@ class AppNotifier extends ChangeNotifier {
       }
       return;
     }
+    if (SessionPreviewStore.eventTypes.contains(type)) {
+      final agentId = _eventAgentId(machine, event, payload);
+      final agent = machine.agents
+          .where((agent) => agent.id == agentId)
+          .firstOrNull;
+      final sessionId = _eventSessionId(event, payload);
+      if (agent != null &&
+          sessionId != null &&
+          agent.sessionId != null &&
+          sessionId != agent.sessionId) {
+        return;
+      }
+      if (agent != null &&
+          (sessionId == null ||
+              agent.sessionId == null ||
+              sessionId == agent.sessionId)) {
+        sessionPreviews.ingest(
+          previewKey(machineId, agent),
+          type,
+          payload,
+          streamingText: agent.engine == 'opencode' || agent.engine == 'kilo',
+        );
+      }
+      // Content belongs to the preview's notifier. It must not invalidate the
+      // entire workspace and catalog for every token or tool event.
+      if (type != 'turn_started' && type != 'turn_ended') return;
+    }
     switch (type) {
       // ── the dial, over the cable, forwarded by the local daemon ──────────────────────────────────
       // Local-only frames (backend.sendLocal in the harness CLI): they describe a hand at THIS desk, so
@@ -5587,6 +5663,7 @@ class AppNotifier extends ChangeNotifier {
   @override
   void dispose() {
     _localGitProjects.dispose();
+    sessionPreviews.dispose();
     _disposed = true;
     if (signingIn) cliLogin.cancel();
     _closedHistory.clear();

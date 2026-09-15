@@ -69,6 +69,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
       SwarmProjectStore(storage: kUnderTest ? null : HarnessFileStore.shared);
   StreamSubscription<SpokenTaskRequest>? _spokenTasks;
   final _shellFocus = FocusNode(debugLabel: 'Swarm shell');
+  final _startSearchFocus = FocusNode(debugLabel: 'Start page search');
   final _canvasFocus = FocusNode(
     debugLabel: 'Swarm canvas',
     canRequestFocus: false,
@@ -158,6 +159,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
     _searchText.dispose();
     _canvasFocus.dispose();
     _shellFocus.dispose();
+    _startSearchFocus.dispose();
     unawaited(_spokenTasks?.cancel());
     if (_native) {
       _modelsMenu?.removeListener(_syncModels);
@@ -900,8 +902,11 @@ class _SwarmScreenState extends State<SwarmScreen> {
               Align(
                 alignment: const Alignment(0, -0.12),
                 child: SizedBox(
-                  width: (constraints.maxWidth - 64).clamp(280.0, 720.0),
-                  height: (constraints.maxHeight - 96).clamp(220.0, 540.0),
+                  width: (constraints.maxWidth - 64).clamp(
+                    280.0,
+                    commandsOnly ? 720.0 : 1120.0,
+                  ),
+                  height: (constraints.maxHeight - 96).clamp(220.0, 600.0),
                   child: Column(
                     children: [
                       Expanded(
@@ -987,6 +992,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
 
   void _newTab() {
     app.newSwarm();
+    if (app.panes.isEmpty) _startSearchFocus.requestFocus();
   }
 
   Future<void> _addProject() => _dialog(() async {
@@ -1217,7 +1223,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
           onPending: (keys) => setState(() => _pendingKeys = keys),
           child: Focus(
             focusNode: _shellFocus,
-            autofocus: true,
+            autofocus: app.panes.isNotEmpty,
             child: Scaffold(
               backgroundColor: grid.AppPalette.swarmField,
               body: Column(
@@ -1330,6 +1336,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                             key: ValueKey(
                                               'harness-start:${app.activeSwarmId}',
                                             ),
+                                            focusNode: _startSearchFocus,
                                             createSearch: () =>
                                                 SwarmSearchController(
                                                   app,

@@ -15,6 +15,7 @@ import '../state/swarm_navigation.dart';
 import '../state/swarm_search.dart';
 import 'engine_identity.dart';
 import 'swarm_icon.dart';
+import 'swarm_search_preview.dart';
 
 Future<SwarmSearchSelection?> showSwarmHistory(
   BuildContext context,
@@ -325,10 +326,10 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
   void _scrollToSelection() {
     if (!_scroll.hasClients || search.rows.isEmpty) return;
     final top = 8 + search.cursor * _rowHeight;
-    final bottom = top + _rowHeight;
+    final bottom = top + _rowHeight + 8;
     final position = _scroll.position;
-    final offset = top < position.pixels
-        ? top
+    final offset = top - 8 < position.pixels
+        ? top - 8
         : bottom > position.pixels + position.viewportDimension
         ? bottom - position.viewportDimension
         : position.pixels;
@@ -374,6 +375,11 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
     );
     return LayoutBuilder(
       builder: (context, constraints) {
+        final compactAction =
+            (constraints.maxWidth >= 800
+                ? constraints.maxWidth / 2
+                : constraints.maxWidth) <
+            380;
         final geometry = (constraints.biggest, _rowHeight);
         if (_geometry != geometry) {
           _geometry = geometry;
@@ -422,6 +428,7 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                                 ? (search.canAccept, search.actionLabel(row))
                                 : null,
                             _rowHeight,
+                            compactAction,
                             scale.scale(11),
                             grid.AppTheme.palette.value,
                           );
@@ -521,6 +528,7 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                                       ),
                                       child: SwarmSearchActionLabel(
                                         search.actionLabel(row),
+                                        compact: compactAction,
                                       ),
                                     ),
                                   )
@@ -537,12 +545,15 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                           );
                           _rowWidgets[row.id] = (
                             presentation: presentation,
-                            child: tile,
+                            child: MouseRegion(
+                              onEnter: (_) => _focusResult(row.id),
+                              child: tile,
+                            ),
                           );
                           if (_rowWidgets.length > 48) {
                             _rowWidgets.remove(_rowWidgets.keys.first);
                           }
-                          return tile;
+                          return _rowWidgets[row.id]!.child;
                         },
                       ),
               ),
@@ -579,7 +590,33 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
             ],
           ),
         );
-        if (KeymapTheme.of(context) == null) return results;
+        final preview =
+            !search.isCommandMode && search.history == null && selected != null
+            ? SwarmSearchPreview(
+                key: const ValueKey('swarm-search-preview'),
+                search: search,
+                compactHeader: constraints.maxWidth < 800,
+              )
+            : null;
+        final content = preview == null
+            ? results
+            : constraints.maxWidth >= 800
+            ? Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(flex: 5, child: results),
+                  const VerticalDivider(width: 1, color: Colors.white12),
+                  Expanded(flex: 5, child: preview),
+                ],
+              )
+            : Column(
+                children: [
+                  Expanded(flex: 5, child: results),
+                  const Divider(height: 1, color: Colors.white12),
+                  Expanded(flex: 6, child: preview),
+                ],
+              );
+        if (KeymapTheme.of(context) == null) return content;
         // The early keymap handler owns these keys across the whole picker.
         // If unbound, do not fall through to ListTile's default activation or
         // directional focus traversal and silently perform the removed action.
@@ -590,7 +627,7 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
             SingleActivator(LogicalKeyboardKey.arrowDown): DoNothingIntent(),
             SingleActivator(LogicalKeyboardKey.arrowUp): DoNothingIntent(),
           },
-          child: results,
+          child: content,
         );
       },
     );
@@ -602,9 +639,11 @@ class SwarmSearchActionLabel extends StatelessWidget {
     this.label, {
     super.key,
     this.command = 'picker.accept',
+    this.compact = false,
   });
   final String label;
   final String command;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -613,41 +652,45 @@ class SwarmSearchActionLabel extends StatelessWidget {
       command,
       contextKind: KeymapContext.picker,
     );
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Flexible(
-          child: Text(
-            label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 11),
-          ),
-        ),
-        if (hint != null) ...[
-          const SizedBox(width: 8),
-          if (RegExp(r'^[⌃⌥⇧⌘]*↵$').hasMatch(hint)) ...[
-            if (hint.length > 1)
-              Text(
-                hint.substring(0, hint.length - 1),
+    return Semantics(
+      label: compact ? label : null,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (!compact || hint == null)
+            Flexible(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: const TextStyle(fontSize: 11),
               ),
-            const Icon(Icons.keyboard_return, size: 14),
-          ] else
-            Tooltip(
-              message: hint,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 96),
-                child: Text(
-                  hint.replaceAll('↵', 'Return').replaceAll('⇥', 'Tab'),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+            ),
+          if (hint != null) ...[
+            if (!compact) const SizedBox(width: 8),
+            if (RegExp(r'^[⌃⌥⇧⌘]*↵$').hasMatch(hint)) ...[
+              if (hint.length > 1)
+                Text(
+                  hint.substring(0, hint.length - 1),
                   style: const TextStyle(fontSize: 11),
                 ),
+              const Icon(Icons.keyboard_return, size: 14),
+            ] else
+              Tooltip(
+                message: hint,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 96),
+                  child: Text(
+                    hint.replaceAll('↵', 'Return').replaceAll('⇥', 'Tab'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 11),
+                  ),
+                ),
               ),
-            ),
+          ],
         ],
-      ],
+      ),
     );
   }
 }

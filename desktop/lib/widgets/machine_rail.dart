@@ -18,6 +18,7 @@ import '../shortcuts/app_shortcuts.dart';
 import '../state/app_state.dart';
 import 'agent_drag.dart';
 import 'delete_agent_dialog.dart';
+import 'restart_agent_action.dart';
 import 'rename_agent_dialog.dart';
 import 'account_footer.dart';
 import 'device_row.dart';
@@ -1020,31 +1021,8 @@ class _AgentRowState extends State<_AgentRow> {
     agent.name,
   );
 
-  // Restart is disruptive (it briefly kills the current process) but NOT destructive — the same
-  // agent survives, resumed where possible — so unlike delete it fires straight away, no
-  // confirmation dialog, and just surfaces a failure the same lightweight way.
-  Future<void> _restartAgent() async {
-    final result = await notifier.restartAgent(
-      state.machine.machineId,
-      agent.id,
-    );
-    if (!mounted) return;
-    final error = result.error;
-    if (error != null) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(error)));
-      return;
-    }
-    if (!result.resumed) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Restarted with a new session — the previous one could not be resumed.',
-          ),
-        ),
-      );
-    }
-  }
+  Future<void> _restartAgent() =>
+      restartHarness(context, notifier, state.machine.machineId, agent.id);
 
   @override
   Widget build(BuildContext context) {
@@ -1225,7 +1203,7 @@ class _AgentRowState extends State<_AgentRow> {
                 const AppMenuDivider(),
                 AppMenuItem(
                   icon: LucideIcons.refreshCw300,
-                  label: 'Restart',
+                  label: 'Restart Harness',
                   onPressed: () {
                     _agentMenu.close();
                     _restartAgent();
@@ -1233,8 +1211,8 @@ class _AgentRowState extends State<_AgentRow> {
                 ),
                 const AppMenuDivider(),
                 AppMenuItem(
-                  icon: LucideIcons.trash2300,
-                  label: 'Delete',
+                  icon: LucideIcons.circleStop300,
+                  label: 'Stop Harness',
                   danger: true,
                   onPressed: () {
                     _agentMenu.close();

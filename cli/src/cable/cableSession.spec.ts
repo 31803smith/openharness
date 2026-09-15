@@ -13,6 +13,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { CableDecoder, CableType, encodeCableFrame } from './cableFrame.js'
 import { CableSession, type CableAgent, type CableHost, type CableMachine, type CablePort } from './cableSession.js'
+import { DialLog } from './dialLog.js'
 
 /** A port whose two ends are both in this process. */
 class LoopbackPort implements CablePort {
@@ -104,9 +105,12 @@ function makeHost(over: Partial<CableHost> = {}) {
 }
 
 /** Start a session on a loopback and hand back both ends. Never touches the real serial layer. */
-async function connect(host: CableHost = makeHost(), logPath = '/dev/null') {
+/** A throwaway log directory per session, so no test reads another's lines. */
+function tmpLog() { return new DialLog(mkdtempSync(join(tmpdir(), 'cable-'))) }
+
+async function connect(host: CableHost = makeHost(), log = tmpLog()) {
   let port!: LoopbackPort
-  const session = new CableSession(host, logPath, async (onData, onClosed) => {
+  const session = new CableSession(host, log, async (onData, onClosed) => {
     port = new LoopbackPort(onData, onClosed)
     return port
   })
@@ -314,7 +318,7 @@ describe('cable session', () => {
     vi.useFakeTimers()
     try {
       let attempts = 0
-      const session = new CableSession(makeHost(), '/dev/null', async (onData, onClosed) => {
+      const session = new CableSession(makeHost(), tmpLog(), async (onData, onClosed) => {
         attempts += 1
         if (attempts === 1) return new Promise<never>(() => {})   // the hang
         return new LoopbackPort(onData, onClosed)
@@ -918,10 +922,12 @@ describe('cable session', () => {
     // The dial has ONE USB port, shared by its console and this protocol. While the daemon holds it,
     // these frames are the only copy of that console which exists anywhere — `idf.py monitor` cannot open
     // the port at the same time.
-    const path = join(mkdtempSync(join(tmpdir(), 'cable-')), 'dial.log')
-    const { session, port } = await connect(makeHost(), path)
+    const log = tmpLog()
+    const { session, port } = await connect(makeHost(), log)
     port.logLine('I (1234) cable: link up')
-    await vi.waitFor(() => expect(readFileSync(path, 'utf8')).toContain('I (1234) cable: link up'))
+    await vi.waitFor(() => expect(readFileSync(log.currentPath, 'utf8')).toContain('I (1234) cable: link up'))
+    // The daemon's side of the story lands in the SAME file, marked as the daemon's.
+    expect(readFileSync(log.currentPath, 'utf8')).toMatch(/\[daemon\] open on /)
     await session.stop()
   })
 
@@ -1127,7 +1133,7 @@ describe('cable session', () => {
     ]
     const host = makeHost({ listMachines: async () => ({ machines: rows, source: 'backend' as const }) })
     let port!: SlowPort
-    const session = new CableSession(host, '/dev/null', async (onData) => {
+    const session = new CableSession(host, tmpLog(), async (onData) => {
       port = new SlowPort(onData)
       return port
     })

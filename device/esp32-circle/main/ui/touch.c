@@ -14,6 +14,32 @@
 
 static const char *TAG = "touch";
 static esp_lcd_touch_handle_t s_tp;
+static esp_lcd_panel_io_handle_t s_tp_io;   // kept so a dead controller can be torn down and brought back
+
+// ── what the log is for ─────────────────────────────────────────────────────────────────────────────
+// The dial has been seen to stop taking touch — no swipe, Voice dead, the tile still following the app —
+// with nothing to read afterwards. Everything below that prints is there so the NEXT such report has a
+// signature: was data arriving from the controller at all, was a press being held by one of the gesture
+// flags, did the finger ever lift. One line per press, one per release, one per verdict; never per
+// sample. Kept at INFO on purpose — a shipped build has to carry them, because the report comes from a
+// shipped build.
+
+// Read failures from the CST9217. The driver resets the chip itself on an I2C error; what it does NOT do
+// on a bad ACK is clear its last point, so a controller that stops answering mid-press leaves LVGL — and
+// every recognizer in this file — holding a finger that is no longer there. Which is the reported shape.
+static uint32_t s_read_fail_total;
+static uint32_t s_read_fail_run;      // consecutive; reset by any good read
+#define READ_FAIL_REINIT   50         // ~1s of nothing but errors → tear the controller down and bring it back
+#define READ_FAIL_LOG_EVERY 100
+#define REINIT_RETRY_MS    5000       // a reinit that failed is tried again this often
+
+static uint32_t s_presses;            // lifetime, for the heartbeat
+static uint32_t s_last_press_tick;    // lv tick of the last press-down
+static uint32_t s_press_t0;           // lv tick of the current press-down
+static uint16_t s_last_x, s_last_y;   // last PRESSED point, so the release line has a place
+static bool     s_stuck_warned;       // the ">held 5s" line for this press already went out
+#define STUCK_PRESS_MS     5000
+#define STUCK_PRESS_EVERY_MS 30000
 
 // How far a finger may drift and still count as "held still". Shared by the near-still TAP test and the
 // GOAL hold — it outlived the create-project long-press that introduced it.
@@ -94,6 +120,10 @@ static bool s_goal_swallow;
 // (otherwise swipe_track starts mid-gesture on the read after wake and classifies the release as a tap →
 // stray "open detail" on the very tap that woke the screen).
 static bool s_swallow_until_release;
+// The other two owners of a press, file-scope so the stuck-press line can name them: the Overview's round
+// buttons (action_capture) and the notification band (s_band_drag). Set and cleared in touch_read only.
+static bool s_action_capture;
+static bool s_band_drag;
 
 static int      s_scroll_acc;    // travel not yet reported, device px (positive = down the glass)
 static uint32_t s_scroll_at;     // when the last report went out
@@ -221,10 +251,13 @@ static void swipe_track(bool pressed, uint16_t x, uint16_t y)
         int home_edge = reader ? READER_HOME_EDGE_PX : BOTTOM_EDGE_PX;
         // HOME gesture: an upward swipe that STARTED at the bottom edge → jump to Overview. (y grows downward;
         // the driver already applies the panel mirror, so sy near y_max = the physical bottom.)
-        if (!voice && sy >= home_edge && dy < -SWIPE_MIN_PX && abs(dy) > abs(dx))
+        if (!voice && sy >= home_edge && dy < -SWIPE_MIN_PX && abs(dy) > abs(dx)) {
+            ESP_LOGI(TAG, "gesture: home (dy=%d)", dy);
             ui_home_overview();
-        else if (!voice && (dx > SWIPE_MIN_PX || dx < -SWIPE_MIN_PX) && abs(dx) > abs(dy))
+        } else if (!voice && (dx > SWIPE_MIN_PX || dx < -SWIPE_MIN_PX) && abs(dx) > abs(dy)) {
+            ESP_LOGI(TAG, "gesture: swipe %+d (dx=%d dy=%d)", dx > 0 ? 1 : -1, dx, dy);
             ui_swipe_end(dx > 0 ? 1 : -1);         // reader → back to the agent; carousel screens → wrap next/prev
+        }
         // A vertical drag is NOT classified here any more — it went out as it happened (above). One
         // gesture cannot mean two things: while it also opened the detail reader, every scroll ended by
         // opening a screen nobody asked for. Tapping the recap card opens it, which is the route it kept.
@@ -239,40 +272,118 @@ static void swipe_track(bool pressed, uint16_t x, uint16_t y)
             // because its indicator state is set asynchronously, a few frames later; the cabled path sets
             // it inline and exposed it. Compare start times: a turn that began at or after this press is
             // this press's own doing and must not be stopped by its release.
-            if (rec_at_down && (int32_t)(ui_voice_start_tick() - t0) < 0) ui_voice_stop();
-            else if (!reader) { s_tap_pending = true; s_tap_pending_ms = t0; s_tap_x = sx; s_tap_y = sy; }
+            if (rec_at_down && (int32_t)(ui_voice_start_tick() - t0) < 0) {
+                ESP_LOGI(TAG, "gesture: tap (%d,%d) → stop voice", sx, sy);
+                ui_voice_stop();
+            } else if (!reader) {
+                ESP_LOGI(TAG, "gesture: tap (%d,%d) held=%ums%s", sx, sy, (unsigned)lv_tick_elaps(t0),
+                         voice ? " (voice active — not a UI tap)" : "");
+                s_tap_pending = true; s_tap_pending_ms = t0; s_tap_x = sx; s_tap_y = sy;
+            }
+        } else {
+            // Nothing matched. Worth a line precisely because it is the "I swiped and nothing happened"
+            // case: it says whether the stroke was too short, too slow, or refused because voice held it.
+            ESP_LOGI(TAG, "gesture: none (dx=%d dy=%d held=%ums voice=%d reader=%d)", dx, dy,
+                     (unsigned)lv_tick_elaps(t0), voice, reader);
         }
-        // (a swipe while recording matches none of the above → ignored; only a still tap stops the voice)
     }
     prev = pressed;
 }
 
 // LVGL reads the latest touch point. Marshalled by LVGL's own task; reading the
 // CST9217 over I2C from here is fine (LVGL task holds no conflicting lock).
+static bool touch_open(void);
+static void touch_reinit(void);
+
 static void touch_read(lv_indev_t *indev, lv_indev_data_t *data)
 {
     static bool activity_prev;
+    static uint32_t reinit_at;
     (void)indev;
-    if (!s_tp) { data->state = LV_INDEV_STATE_RELEASED; return; }
+    if (!s_tp) {
+        // The controller is gone (init or a reinit failed). Keep trying — a touch panel that comes back
+        // after a brown moment is worth more than one written off at boot.
+        if (lv_tick_elaps(reinit_at) >= REINIT_RETRY_MS) { reinit_at = lv_tick_get(); touch_reinit(); }
+        data->state = LV_INDEV_STATE_RELEASED;
+        return;
+    }
     uint16_t x = 0, y = 0, strength = 0;
     uint8_t cnt = 0;
-    esp_lcd_touch_read_data(s_tp);
-    bool pressed = esp_lcd_touch_get_coordinates(s_tp, &x, &y, &strength, &cnt, 1) && cnt > 0;
-    if (pressed && !activity_prev) s_activity_gen++;
+    esp_err_t rc = esp_lcd_touch_read_data(s_tp);
+    bool pressed;
+    static uint32_t ok_reads, stale_reads;   // per press, for the release line — see below
+    if (rc == ESP_OK) {
+        s_read_fail_run = 0;
+        pressed = esp_lcd_touch_get_coordinates(s_tp, &x, &y, &strength, &cnt, 1) && cnt > 0;
+        if (pressed) ok_reads++;
+    } else if (rc == ESP_ERR_INVALID_RESPONSE) {
+        // The chip's report has no ACK byte — measured on the desk, this is what EVERY idle read returns
+        // (~30/s with no finger near the glass), so it is not an error and never a reason to reinit. The
+        // driver leaves its point table untouched on this path, which is the part that matters: what
+        // LVGL sees is the LAST ACKED frame. Kept as such here, for now, and counted per press so the
+        // release line says how many stale reads a held finger produces — that number decides whether
+        // "no ACK" can be read as "no finger" (the fix for a release frame the chip showed once and this
+        // task missed, which leaves the glass held forever).
+        pressed = esp_lcd_touch_get_coordinates(s_tp, &x, &y, &strength, &cnt, 1) && cnt > 0;
+        if (pressed) stale_reads++;
+    } else {
+        // A real I2C failure. The driver has already reset the chip (with 60ms of delays, on this task).
+        // No answer is no finger: the point table is whatever it was, and trusting it is how a finger
+        // that lifted during the fault is held forever.
+        pressed = false;
+        s_read_fail_total++;
+        s_read_fail_run++;
+        if (s_read_fail_run == 1 || s_read_fail_total % READ_FAIL_LOG_EVERY == 0)
+            ESP_LOGW(TAG, "cst9217 read failed: %s (run=%u total=%u)", esp_err_to_name(rc),
+                     (unsigned)s_read_fail_run, (unsigned)s_read_fail_total);
+        if (s_read_fail_run >= READ_FAIL_REINIT) {
+            ESP_LOGW(TAG, "cst9217 dead after %u failed reads — reinit", (unsigned)s_read_fail_run);
+            s_read_fail_run = 0;
+            reinit_at = lv_tick_get();
+            touch_reinit();
+        }
+    }
+    if (pressed && !activity_prev) {
+        s_activity_gen++;
+        s_presses++;
+        s_press_t0 = s_last_press_tick = lv_tick_get();
+        s_stuck_warned = false;
+        ESP_LOGI(TAG, "press (%u,%u)%s", x, y, display_is_asleep() ? " asleep" : "");
+    }
+    if (pressed) { s_last_x = x; s_last_y = y; }
+    if (!pressed && activity_prev) {
+        ESP_LOGI(TAG, "release (%u,%u) held=%ums acked=%lu stale=%lu", s_last_x, s_last_y,
+                 (unsigned)lv_tick_elaps(s_press_t0), (unsigned long)ok_reads, (unsigned long)stale_reads);
+        ok_reads = stale_reads = 0;
+    }
+    // A press that never ends. Either the controller is repeating a stale point, or one of the flags
+    // below has taken the finger and the release it is waiting for is not coming. The line names every
+    // owner at once, so the report says which.
+    if (pressed && lv_tick_elaps(s_press_t0) >= STUCK_PRESS_MS) {
+        static uint32_t warned_at;
+        if (!s_stuck_warned || lv_tick_elaps(warned_at) >= STUCK_PRESS_EVERY_MS) {
+            s_stuck_warned = true;
+            warned_at = lv_tick_get();
+            ESP_LOGW(TAG, "press held %us at (%u,%u): swallow=%d goal=%d action=%d band=%d voice=%d asleep=%d switch=%d notif=%d",
+                     (unsigned)(lv_tick_elaps(s_press_t0) / 1000), x, y,
+                     s_swallow_until_release, s_goal_swallow, s_action_capture, s_band_drag,
+                     ui_voice_is_active(), display_is_asleep(), ui_switch_is_open(), ui_notif_is_open());
+        }
+    }
     activity_prev = pressed;
 
     // A touch that STARTS on one of Overview's two round voice actions belongs to that LVGL button until
     // release. Feed `false` to the screen-wide recognizers for the whole gesture, but keep the real pointer
     // state for LVGL below. This prevents Voice-button holds/double-taps from also firing the hidden global
     // Goal/Voice gestures. A drag can still leave the button and scroll the carousel through LVGL normally.
-    static bool action_prev, action_capture;
+    static bool action_prev;
     if (pressed && !action_prev) {
-        action_capture = ui_action_hit(x, y);
-        if (action_capture) s_tap_pending = false;
+        s_action_capture = ui_action_hit(x, y);
+        if (s_action_capture) { s_tap_pending = false; ESP_LOGI(TAG, "press on a round action — LVGL's until release"); }
     }
-    bool action_touch = action_capture && (pressed || action_prev);
+    bool action_touch = s_action_capture && (pressed || action_prev);
     bool gesture_pressed = pressed && !action_touch;
-    if (!pressed && action_prev) action_capture = false;
+    if (!pressed && action_prev) s_action_capture = false;
     action_prev = pressed;
 
     bool dbl = double_tap(gesture_pressed, x, y);     // call every read to keep edge tracking valid
@@ -285,7 +396,7 @@ static void touch_read(lv_indev_t *indev, lv_indev_data_t *data)
     // feed LVGL only if the drawer is open (so the list scrolls + rows/background tap); otherwise swallow
     // (a top-zone pull must not drive the projects UI underneath). On release, decide open/close.
     {
-        static bool ndrag, nprev; static int ndy0, ndyl;
+        static bool nprev; static int ndy0, ndyl;
         bool ncap = false;
         if (pressed && !nprev) {
             // Not on the reader: notifications aren't openable there, and swallowing the top band would break
@@ -297,23 +408,26 @@ static void touch_read(lv_indev_t *indev, lv_indev_data_t *data)
             // top of the face, inside a 90px band this would otherwise swallow whole, so the one control
             // that leaves the screen could never be pressed. A modal chooser also has no business
             // offering a pull-to-notifications on top of itself.
-            ndrag = !display_is_asleep() && !ui_reader_is_open() && !ui_switch_is_open() &&
-                    !ui_picker_is_open() &&
+            s_band_drag = !display_is_asleep() && !ui_reader_is_open() && !ui_switch_is_open() &&
+                    !ui_picker_is_open() && !ui_notif_pill_hit(x, y) &&
                     (ui_notif_is_open() || y < ui_notif_pull_zone_px());
-            ndy0 = ndyl = y; ncap = ndrag;
-        } else if (pressed && ndrag) {
+            ndy0 = ndyl = y; ncap = s_band_drag;
+            if (s_band_drag) ESP_LOGI(TAG, "band: captured at y=%u (drawer %s)", y, ui_notif_is_open() ? "open" : "closed");
+        } else if (pressed && s_band_drag) {
             ndyl = y; ncap = true;
-        } else if (!pressed && nprev && ndrag) {          // release of a captured gesture
+        } else if (!pressed && nprev && s_band_drag) {          // release of a captured gesture
             int d = ndyl - ndy0;
+            ESP_LOGI(TAG, "band: released d=%+d → %s", d,
+                     ui_notif_is_open() ? (d < -SWIPE_MIN_PX ? "close drawer" : "nothing")
+                                        : (d > SWIPE_MIN_PX ? "agent list" : "nothing"));
             if (ui_notif_is_open()) { if (d < -SWIPE_MIN_PX) ui_notif_swipe_up(); }  // up → close (only if list at top)
-            // Pull down from the top → the NOTIFICATIONS (owner, 2026-09-14). The gesture opened the
-            // agent switcher for a while; the switcher is retired from the glass now that the carousel
-            // walks the window's swarm and the swarm line above the name picks between swarms, so the
-            // pull-down goes back to the list it first opened. A TAP in the band opens the same list —
-            // the bell is a button, but this band swallows every press that starts inside it, and the
-            // bell sits INSIDE it.
-            else if (d > SWIPE_MIN_PX || (d > -SWIPE_MIN_PX && d < SWIPE_MIN_PX)) ui_notif_open();
-            ndrag = false; ncap = true;
+            // Pull down from the top → the AGENT LIST (owner, 2026-09-15: "vuốt xuống hiển thị danh
+            // sách agent như cũ"). The notifications are the bell's alone now: the bell is a button,
+            // and a press that starts ON it is handed to LVGL rather than captured by this band — see
+            // the capture test above — so a tap on the bell opens the drawer and a tap anywhere else
+            // in the band does nothing.
+            else if (d > SWIPE_MIN_PX) ui_switch_open();
+            s_band_drag = false; ncap = true;
         }
         nprev = pressed;
         if (ncap) {
@@ -342,6 +456,7 @@ static void touch_read(lv_indev_t *indev, lv_indev_data_t *data)
             if (!gmoved && !display_is_asleep() && !ui_voice_is_active() && lv_tick_elaps(gt0) >= GOAL_HOLD_MS) {
                 gfired = true;
                 s_goal_swallow = true; // swallow until the finger lifts (no stray UI tap)
+                ESP_LOGI(TAG, "goal hold at (%u,%u) → voice goal, swallowing until release", x, y);
                 ui_voice_start_goal();
             }
         }
@@ -353,13 +468,17 @@ static void touch_read(lv_indev_t *indev, lv_indev_data_t *data)
     if (dbl) s_tap_pending = false;
     else if (s_tap_pending && lv_tick_elaps(s_tap_pending_ms) >= DOUBLE_TAP_MS) {
         s_tap_pending = false;
-        if (!display_is_asleep() && !ui_voice_is_active()) ui_tap(s_tap_x, s_tap_y);
+        if (!display_is_asleep() && !ui_voice_is_active()) {
+            ESP_LOGI(TAG, "tap → ui (%d,%d)", s_tap_x, s_tap_y);
+            ui_tap(s_tap_x, s_tap_y);
+        } else ESP_LOGI(TAG, "tap dropped (asleep=%d voice=%d)", display_is_asleep(), ui_voice_is_active());
     }
 
     // After a double-tap starts voice, the finger is usually STILL down. Keep swallowing until it lifts,
     // so the two taps don't also land as UI presses (a stray tile/settings click).
     if (s_swallow_until_release || s_goal_swallow) {
         if (pressed) { data->state = LV_INDEV_STATE_RELEASED; return; }
+        ESP_LOGI(TAG, "swallow cleared (wake=%d goal=%d)", s_swallow_until_release, s_goal_swallow);
         s_swallow_until_release = false;
         s_goal_swallow = false;   // finger lifted → goal-hold press fully consumed
     }
@@ -367,7 +486,11 @@ static void touch_read(lv_indev_t *indev, lv_indev_data_t *data)
     if (display_is_asleep()) {
         // Asleep: a SINGLE tap WAKES the screen (Button A also wakes/sleeps). Wake on press-down and swallow
         // until the finger lifts so the waking tap doesn't fall through as a UI tap / start voice.
-        if (pressed) { display_wake(); s_swallow_until_release = true; }
+        if (pressed) {
+            ESP_LOGI(TAG, "wake tap at (%u,%u) — swallowing until release", x, y);
+            display_wake();
+            s_swallow_until_release = true;
+        }
         data->state = LV_INDEV_STATE_RELEASED;
         return;
     }
@@ -391,21 +514,21 @@ static void touch_read(lv_indev_t *indev, lv_indev_data_t *data)
     }
 }
 
-void touch_init(void)
+// Bring the CST9217 up on the shared bus. Everything that can fail, logs and leaves s_tp NULL.
+static bool touch_open(void)
 {
-    // Shared I2C master bus (touch + audio codecs live on the same bus).
     i2c_master_bus_handle_t bus = board_i2c_get();
     if (!bus) {
         ESP_LOGW(TAG, "shared i2c bus unavailable — touch disabled");
-        return;
+        return false;
     }
 
-    esp_lcd_panel_io_handle_t tp_io = NULL;
     esp_lcd_panel_io_i2c_config_t io_cfg = ESP_LCD_TOUCH_IO_I2C_CST9217_CONFIG();
     io_cfg.scl_speed_hz = BSP_I2C_FREQ_HZ;
-    if (esp_lcd_new_panel_io_i2c(bus, &io_cfg, &tp_io) != ESP_OK) {
+    if (esp_lcd_new_panel_io_i2c(bus, &io_cfg, &s_tp_io) != ESP_OK) {
         ESP_LOGW(TAG, "touch panel io failed — touch disabled");
-        return;
+        s_tp_io = NULL;
+        return false;
     }
 
     esp_lcd_touch_config_t tp_cfg = {
@@ -417,11 +540,40 @@ void touch_init(void)
         // reversed vs the display (horizontal swipe and vertical scroll/taps). Mirror X and Y.
         .flags = { .swap_xy = 0, .mirror_x = 1, .mirror_y = 1 },
     };
-    if (esp_lcd_touch_new_i2c_cst9217(tp_io, &tp_cfg, &s_tp) != ESP_OK) {
+    if (esp_lcd_touch_new_i2c_cst9217(s_tp_io, &tp_cfg, &s_tp) != ESP_OK) {
         ESP_LOGW(TAG, "CST9217 init failed — touch disabled");
         s_tp = NULL;
-        return;
+        esp_lcd_panel_io_del(s_tp_io);
+        s_tp_io = NULL;
+        return false;
     }
+    return true;
+}
+
+// Tear the controller down and bring it back. Runs on the LVGL task (the indev read), where the driver's
+// own I2C use already lives, so nothing else can be mid-transaction with it. The first real FIX in this
+// file rather than a description: a controller that stopped answering gets a reset and a fresh init, and
+// the log says whether that brought it back.
+static void touch_reinit(void)
+{
+    if (s_tp) { esp_lcd_touch_del(s_tp); s_tp = NULL; }
+    if (s_tp_io) { esp_lcd_panel_io_del(s_tp_io); s_tp_io = NULL; }
+    if (touch_open()) ESP_LOGI(TAG, "CST9217 back after reinit");
+    else ESP_LOGW(TAG, "CST9217 reinit failed — retrying in %ds", REINIT_RETRY_MS / 1000);
+}
+
+void touch_stats(touch_stats_t *out)
+{
+    out->presses = s_presses;
+    out->last_press_ms_ago = s_presses ? lv_tick_elaps(s_last_press_tick) : 0;
+    out->read_failures = s_read_fail_total;
+    out->controller_ok = s_tp != NULL;
+    out->held_now = s_stuck_warned;
+}
+
+void touch_init(void)
+{
+    if (!touch_open()) return;
 
     lv_indev_t *indev = lv_indev_create();
     lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);

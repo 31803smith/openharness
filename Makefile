@@ -4,7 +4,7 @@
 #   make install-cli ARGS="--no-restart"
 #   make upload-cli  ARGS="0.1.0"
 
-.PHONY: cli-test install-cli upload-cli release-cli release-backend release-desktop remote-machine upload-circle device-test
+.PHONY: cli-test install-cli upload-cli upload-cli-install-sh release-cli release-backend release-desktop remote-machine upload-circle device-test
 
 ## cli-test: typecheck + run the CLI test suite.
 cli-test:
@@ -44,6 +44,13 @@ install-cli:
 ## Running daemons pick the new version up within ~1 min.
 upload-cli:
 	bash cli/scripts/upload-cli.sh $(ARGS)
+
+## upload-cli-install-sh: publish cli/scripts/install.sh — the `curl ... | bash` installer — to
+## harness/cli/install.sh in the release bucket (-> https://cdn.autonomous.ai/harness/cli/install.sh).
+## One static file, no version; MAINTAINER ONLY, same credential as upload-cli. Verify the CDN edge
+## serves the new bytes afterwards (the script prints the command).
+upload-cli-install-sh:
+	bash cli/scripts/upload-install-sh.sh
 
 ## remote-machine: drive a SECOND harness machine in Docker, so the app's remote path (relay ->
 ## another machine's daemon) can be tested from one laptop. ARGS picks the step:

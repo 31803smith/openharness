@@ -22,6 +22,7 @@
 #include "cable_client.h"
 #include "config_store.h"
 #include "fw_update.h"
+#include "last_words.h"
 #include "driver/gpio.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -173,6 +174,7 @@ static void refresh_task(void *arg)
 void app_main(void)
 {
     ram_telemetry_checkpoint("boot");
+    last_words_boot();   // before the first log line, so the previous boot's ring is read, not overwritten
     config_store_init();
 
     if (boot_button_held()) {

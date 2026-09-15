@@ -112,7 +112,7 @@ void main() {
                     )
                     .focusNode!
                     .hasFocus,
-                isFalse,
+                isTrue,
               );
             } else if (action == 'waiting composer') {
               expect(app.focusedPane, same(first));

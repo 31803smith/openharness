@@ -141,7 +141,18 @@ class _TerminalScrollGestureHandlerState
       },
       child: InfiniteScrollView(
         onScroll: _onScroll,
-        child: widget.child,
+        // The alternate screen has no history to read, but the buffer's own
+        // Scrollable can still have extent here: a remote grid taller than the
+        // pane (`resizeBuffer: false`). A Scrollable with somewhere to go wins
+        // the trackpad pan and the wheel signal from this view, so the program
+        // received nothing. It takes no user scrolling while the alternate
+        // screen is up; programmatic tail alignment is unaffected.
+        child: ScrollConfiguration(
+          behavior: ScrollConfiguration.of(
+            context,
+          ).copyWith(physics: const NeverScrollableScrollPhysics()),
+          child: widget.child,
+        ),
       ),
     );
   }

@@ -241,7 +241,7 @@ void main() {
     expect(_startInput, findsOneWidget);
     expect(_newHarness, findsOneWidget);
     expect(find.byKey(const ValueKey('harness-start-open')), findsOneWidget);
-    expect(tester.widget<TextField>(_startInput).focusNode!.hasFocus, isFalse);
+    expect(tester.widget<TextField>(_startInput).focusNode!.hasFocus, isTrue);
     expect(find.byType(ListTile), findsNothing);
     expect(find.byType(AlertDialog), findsNothing);
     expect(find.text('Saved project'), findsNothing);
@@ -273,7 +273,7 @@ void main() {
     app.machinesLoading = false;
     app.dismissError();
     await tester.pump();
-    expect(tester.widget<TextField>(_startInput).focusNode!.hasFocus, isFalse);
+    expect(tester.widget<TextField>(_startInput).focusNode!.hasFocus, isTrue);
     await tester.tap(_newHarness);
     await tester.pump();
     expect(picker.opened, 0);
@@ -670,7 +670,7 @@ void main() {
     expect(find.text('Projects'), findsNothing);
     expect(app.launches, isEmpty);
     expect(_startInput, findsOneWidget);
-    expect(tester.widget<TextField>(_startInput).focusNode!.hasFocus, isFalse);
+    expect(tester.widget<TextField>(_startInput).focusNode!.hasFocus, isTrue);
     await tester.tap(_newHarness);
     await tester.pump();
     final engine = tester.widget<AppSelectField<String>>(

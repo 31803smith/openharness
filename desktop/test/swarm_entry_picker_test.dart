@@ -51,13 +51,14 @@ void main() {
     );
   }
 
-  testWidgets('start-page results filter and open with arrows and Enter', (
+  testWidgets('start page accepts typing immediately, then arrows and Enter', (
     tester,
   ) async {
     final app = createApp();
     await mount(tester, app);
-    await tester.tap(_startInput);
-    await tester.enterText(_startInput, 'Agent 1');
+    expect(find.byKey(const ValueKey('harness-start-results')), findsNothing);
+    expect(tester.widget<TextField>(_startInput).focusNode!.hasFocus, isTrue);
+    tester.testTextInput.enterText('Agent 1');
     await tester.pump();
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
     await tester.pump();
@@ -106,10 +107,7 @@ void main() {
         tester.widget<TextField>(_startInput).decoration!.hintText,
         isEmpty,
       );
-      expect(
-        tester.widget<TextField>(_startInput).focusNode!.hasFocus,
-        isFalse,
-      );
+      expect(tester.widget<TextField>(_startInput).focusNode!.hasFocus, isTrue);
       expect(find.byKey(const ValueKey('harness-device-link')), findsOneWidget);
       expect(find.byType(ListTile), findsNothing);
       await tester.tap(_startInput);
@@ -235,10 +233,11 @@ void main() {
       await tester.pump();
       expect(_results, findsNothing);
       expect(_startInput, findsOneWidget);
+      expect(tester.widget<TextField>(_startInput).focusNode!.hasFocus, isTrue);
       await chord(tester, LogicalKeyboardKey.keyP, shift: true);
-      expect(tester.widget<TextField>(_input).controller!.text, '> ');
+      expect(tester.widget<TextField>(_startInput).controller!.text, '> ');
       expect(
-        tester.widget<TextField>(_input).decoration!.hintText,
+        tester.widget<TextField>(_startInput).decoration!.hintText,
         'Search commands…',
       );
       await tester.pumpWidget(const SizedBox());

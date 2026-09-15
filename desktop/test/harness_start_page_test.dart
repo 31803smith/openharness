@@ -16,11 +16,14 @@ void main() {
   ) async {
     final app = createApp();
     addTearDown(app.dispose);
+    final focus = FocusNode();
+    addTearDown(focus.dispose);
     var searches = 0;
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
           body: HarnessStartPage(
+            focusNode: focus,
             createSearch: () {
               searches++;
               return SwarmSearchController(app, [], adding: true);
@@ -31,6 +34,9 @@ void main() {
         ),
       ),
     );
+    await tester.pump();
+    expect(focus.hasFocus, isTrue);
+    expect(_results, findsNothing);
     expect(searches, 0);
     await tester.pumpWidget(const SizedBox());
     expect(searches, 0, reason: 'Closing an unused page must not index agents');
@@ -41,6 +47,8 @@ void main() {
   ) async {
     final app = createApp();
     addTearDown(app.dispose);
+    final focus = FocusNode();
+    addTearDown(focus.dispose);
     var commandReads = 0;
     var updated = false;
     String? chosen;
@@ -48,6 +56,7 @@ void main() {
       MaterialApp(
         home: Scaffold(
           body: HarnessStartPage(
+            focusNode: focus,
             createSearch: () => SwarmSearchController(
               app,
               [],

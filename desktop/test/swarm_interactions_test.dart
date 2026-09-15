@@ -134,7 +134,29 @@ void main() {
         final input = tester.widget<TextField>(
           find.byKey(const ValueKey('harness-start-search')),
         );
+        expect(input.focusNode!.hasFocus, isTrue);
+        expect(
+          find.byKey(const ValueKey('harness-start-results')),
+          findsNothing,
+        );
+        tester.testTextInput.enterText('Agent 1');
+        await tester.pump();
+        expect(
+          find.byKey(const ValueKey('harness-start-results')),
+          findsOneWidget,
+        );
+        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+        await tester.pump();
         expect(input.focusNode!.hasFocus, isFalse);
+        await newFromChrome();
+        await tester.pump();
+        expect(app.activeSwarmId, starter);
+        expect(app.swarms, hasLength(2));
+        expect(input.focusNode!.hasFocus, isTrue);
+        expect(
+          find.byKey(const ValueKey('harness-start-results')),
+          findsNothing,
+        );
       }
       await tester.pumpWidget(const SizedBox());
       app.dispose();
@@ -197,7 +219,7 @@ void main() {
     },
   );
 
-  testWidgets('pane controls zoom, confirm deletion and close only this view', (
+  testWidgets('pane controls zoom, confirm stopping and close only this view', (
     tester,
   ) async {
     final app = createApp();
@@ -215,9 +237,9 @@ void main() {
     final controls = find.byType(PaneHeaderActions).first;
     expect(
       find.descendant(of: controls, matching: find.byType(IconButton)),
-      findsNWidgets(4),
+      findsNWidgets(5),
     );
-    expect(find.byTooltip('Delete Harness').first.hitTestable(), findsNothing);
+    expect(find.byTooltip('Stop Harness').first.hitTestable(), findsNothing);
     final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
     await mouse.addPointer(location: const Offset(1, 1));
     Future<void> hover() async {
@@ -234,20 +256,20 @@ void main() {
     await tester.pump();
     expect(pane.composerVisible, isFalse);
     await hover();
-    await tester.tap(find.byTooltip('Zoom Session a0'));
+    await tester.tap(find.byTooltip('Zoom Pane').first);
     await tester.pump();
     expect(app.zoomedPaneId, pane.id);
     await hover();
-    await tester.tap(find.byTooltip('Restore panes'));
+    await tester.tap(find.byTooltip('Zoom Pane'));
     await tester.pump();
     expect(app.zoomedPaneId, isNull);
     await hover();
 
     await tester.tap(
-      find.descendant(of: controls, matching: find.byTooltip('Delete Harness')),
+      find.descendant(of: controls, matching: find.byTooltip('Stop Harness')),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Delete Harness'), findsOneWidget);
+    expect(find.text('Stop Harness'), findsNWidgets(2));
     expect(app.panes, contains(pane));
     expect(original.panes.single.session, same(session));
     await tester.tap(find.text('Cancel'));
@@ -256,7 +278,7 @@ void main() {
     await hover();
 
     await tester.tap(
-      find.descendant(of: controls, matching: find.byTooltip('Close pane')),
+      find.descendant(of: controls, matching: find.byTooltip('Close Pane')),
     );
     await tester.pump();
     await mouse.removePointer();

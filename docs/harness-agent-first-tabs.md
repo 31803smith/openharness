@@ -9,12 +9,14 @@ proposals in the progress log.
 
 **Cmd-T / New Tab** and the tab-bar plus open the Harness start page. Its solid
 background matches the selected tab. The centered title and search controls sit
-lower with generous empty space. The field is no wider than 640 logical pixels,
+lower with generous empty space. The resting field is no wider than 640 logical pixels,
 with **Open Harness** and accented **+ New Harness** buttons underneath.
 
-The field starts empty and unfocused. Clicking it or Open Harness reveals the
-same input, results, highlight, action arrow and keyboard navigation as Cmd-O.
-Typing filters immediately; arrows select and Enter opens. Escape or clicking
+The field starts empty and focused so typing works immediately. Typing, clicking
+it or Open Harness, or pressing an arrow reveals the same input, results,
+highlight, action arrow and keyboard navigation as Cmd-O. Focus alone does not
+build a search catalog or reveal results. New Tab refocuses an existing unused
+page too. Typing filters immediately; arrows select and Enter opens. Escape or clicking
 outside closes the dropdown and hides the caret. The recent-agent list is removed.
 The closed page retains only search text and selection: it does not keep a live
 search subscription or build a catalog when an unused page closes. Reopening
@@ -61,6 +63,25 @@ also work immediately after opening the menu, before its first frame.
 The Open popup keeps its full-width **Find a harness** field, single-choice
 results and 90% black backdrop. Only the highlighted row shows **Open Harness**,
 **Open N Harnesses**, or **Split right/down**, depending on context.
+Both Open and inline start-page search show the same session preview. The open
+surface can grow to 1120 logical pixels, placing the list and preview side by
+side. Narrow windows stack them with a compact preview heading. Both sections
+scroll independently; the start-page actions stay reachable. Hover selects a
+preview without taking typing focus. Enter opens the highlighted result.
+
+Working sessions lead with the current observed request and latest activity.
+Idle sessions lead with an existing saved response or the latest response seen
+in the live stream. Pending questions appear prominently. Recent requests and
+saved responses without a shared turn identity are labeled separately; old
+responses never masquerade as the current turn's answer. Groups show readable
+member excerpts, waiting first, and build only visible members. Offline content
+is labeled as saved; missing content stays explicit.
+
+No previews generate summaries or start models. The bounded shared cache uses
+only existing `agent_recent` content and ordinary session events. It does not
+read full histories or attach terminals. Arrow selection reads cached records;
+background refresh fills cold records without blocking editing. Details and
+limits are recorded in [the preview design](harness-search-preview.md).
 Secondary text is **project · branch · machine**, with one small muted Git branch
 mark immediately before the branch in search and pane headers. Missing metadata is omitted
 and the containing workspace name is not repeated.
@@ -137,8 +158,8 @@ Switching between panes or tabs, closing them, or moving between zoomed panes
 transfers keyboard and text input to the ready retained view before the next
 rendered frame. Its existing terminal, composer or
 Find field receives the next key with its draft and selection intact. Blank
-pages release the previous terminal immediately and leave welcome search
-unfocused. A connecting composer releases the old input connection and receives
+pages release the previous terminal immediately and focus the start-page search
+without showing results until interaction. A connecting composer releases the old input connection and receives
 focus once ready. Dialogs keep input while background destinations or connection
 state change; dismissal returns it to the current destination without restoring an
 older agent's focus.
@@ -150,10 +171,17 @@ shows **folder • branch • machine**, omitting unavailable folder/branch data
 Long details truncate, with full context in the session-name tooltip.
 
 Hovering anywhere on the header replaces the details with small, muted controls:
-**Zoom, Delete, Close**, with **Keyboard** first for remote sessions. Keyboard
+**Zoom Pane, Restart Harness, Stop Harness, Close Pane**, with **Keyboard** first for remote sessions. Keyboard
 focus also reveals the controls. The title keeps the same space during the swap,
-and hovering retains the terminal renderer. Delete uses the existing confirmation;
-Close removes only this view. Keyboard toggles the remote message composer.
+and hovering retains the terminal renderer. Stop uses a Lucide circle-stop icon
+and an explicit confirmation: it ends the engine process and removes the active
+harness, preserving project files and saved conversation history. The existing
+`agent_delete` protocol remains unchanged. It is not Pause and promises no live
+process suspension/resume. Close Pane removes only this view and leaves the agent
+running. Restart uses the same circular-arrow icon and existing restart action as
+the agent menu. It relaunches the same harness, resuming the conversation where
+supported; failures and a fresh-session fallback are shown in a snackbar. It is
+disabled for unavailable or unlinked machines. Keyboard toggles the remote message composer.
 
 Resize grips are invisible while idle and appear on divider hover, keyboard
 focus or active drag. Their hit targets and resize behavior stay the same. The

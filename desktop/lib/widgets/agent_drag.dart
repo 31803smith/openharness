@@ -80,7 +80,7 @@ class PaneCloseButton extends StatelessWidget {
   Widget build(BuildContext context) {
     grid.AppTheme.watch(context);
     return Tooltip(
-      message: 'Close pane',
+      message: 'Close Pane',
       child: IconButton(
         onPressed: onPressed,
         icon: Icon(Icons.close, size: 15, color: AppColors.muted),

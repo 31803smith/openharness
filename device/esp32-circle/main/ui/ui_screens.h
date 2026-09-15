@@ -161,6 +161,9 @@ bool ui_switch_is_open(void);
 void ui_switch_open(void);
 void ui_notif_close(void);
 bool ui_notif_is_open(void);
+// True when a press lands on the bell pill. touch.c asks before capturing the top band, so the one
+// button that lives inside that band can be pressed — the drawer opens from the bell and nowhere else.
+bool ui_notif_pill_hit(uint16_t x, uint16_t y);
 // A swipe-up inside the open drawer → close it, but only if the list is already scrolled to the top
 // (otherwise the gesture is just scrolling the list).
 void ui_notif_swipe_up(void);
@@ -345,3 +348,7 @@ void ui_lock_init_gate(void);
 void ui_lock_setup(void);
 // True while the unlock overlay is blocking the UI.
 bool ui_lock_active(void);
+
+// One line on the log whenever what covers the face changes (screen, overlay, drawer, lock, sleep).
+// Called from the LVGL task every loop; cheap when nothing changed.
+void ui_log_state_if_changed(void);
