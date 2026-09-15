@@ -108,8 +108,26 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
       guard let self, let window = self.window, generation == self.tabActionGeneration,
             !(result is FlutterError), result as? NSObject !== FlutterMethodNotImplemented,
             window.firstResponder === responder || window.firstResponder === window else { return }
-      window.makeFirstResponder(window.contentViewController)
+      self.focusContent(in: window)
     }
+  }
+
+  private func focusContent(in window: NSWindow) {
+    guard let content = window.contentViewController?.view else { return }
+    // Keep a text field/Flutter input that already took focus while Dart was
+    // handling the action. The controller accepts ordinary keys, but Flutter's
+    // view wrapper only forwards Command equivalents for its input view.
+    if let current = window.firstResponder as? NSView,
+       current.isDescendant(of: content) { return }
+    func input(in view: NSView) -> NSView? {
+      guard !view.isHidden else { return nil }
+      if view.acceptsFirstResponder { return view }
+      for child in view.subviews {
+        if let target = input(in: child) { return target }
+      }
+      return nil
+    }
+    window.makeFirstResponder(input(in: content) ?? window.contentViewController)
   }
 
   private func setKeymap(_ map: HarnessNativeKeymap) {
@@ -159,7 +177,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     installWorkspaceMenus()
     if let keymap { setKeymap(keymap) }
     // Toolbar controls must not become the window's initial input owner.
-    window.makeFirstResponder(window.contentViewController)
+    focusContent(in: window)
   }
 
   private func resize() {

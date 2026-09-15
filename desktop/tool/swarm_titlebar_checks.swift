@@ -292,8 +292,9 @@ private extension SwarmTabStrip {
       try checkTitlebar(window.firstResponder === button,
         "Typing stays out of the old workspace until the tab action is acknowledged")
       messenger.finishNextReply()
-      try checkTitlebar(window.firstResponder === window.contentViewController,
+      try checkTitlebar(window.firstResponder === window.contentInput,
         "Activating a tab action returns the next key to Flutter content")
+      try window.checkContentCommand()
       try tab.checkCloseVisibility(false)
       try checkTitlebar(messenger.calls.count == before + 1, "Each native tab activation sends one action")
     }
@@ -306,7 +307,7 @@ private extension SwarmTabStrip {
     let rename = tab.menu!.items.first!
     NSApp.sendAction(rename.action!, to: rename.target, from: rename)
     messenger.finishNextReply()
-    try checkTitlebar(window.firstResponder === window.contentViewController && messenger.calls.last?.method == "rename",
+    try checkTitlebar(window.firstResponder === window.contentInput && messenger.calls.last?.method == "rename",
       "Renaming gives the Flutter form native keyboard ownership")
     let stale = tab
     update(["enabled": true, "activeId": "survivor", "tabs": [["id": "survivor", "name": "Survivor"]]])
@@ -316,7 +317,7 @@ private extension SwarmTabStrip {
     try checkTitlebar(window.makeFirstResponder(newButton), "New swarm accepts keyboard focus")
     newButton.performClick(nil)
     messenger.finishNextReply()
-    try checkTitlebar(window.firstResponder === window.contentViewController && messenger.calls.last?.method == "new",
+    try checkTitlebar(window.firstResponder === window.contentInput && messenger.calls.last?.method == "new",
       "New swarm returns keyboard ownership to the workspace")
     let current = tabs[0].accessibilityChildren()!.first as! NSButton
     window.makeFirstResponder(current)
@@ -327,7 +328,7 @@ private extension SwarmTabStrip {
     try checkTitlebar(window.firstResponder === newButton,
       "A delayed tab reply cannot steal focus from a newer search action")
     messenger.finishNextReply()
-    try checkTitlebar(window.firstResponder === window.contentViewController,
+    try checkTitlebar(window.firstResponder === window.contentInput,
       "The search button hands the next keystroke to the shared Flutter picker")
     window.makeFirstResponder(current)
     current.performClick(nil)
@@ -335,7 +336,7 @@ private extension SwarmTabStrip {
     messenger.finishNextReply()
     try checkTitlebar(window.firstResponder === current, "An older tab action cannot release a newer action's focus")
     messenger.finishNextReply()
-    try checkTitlebar(window.firstResponder === window.contentViewController,
+    try checkTitlebar(window.firstResponder === window.contentInput,
       "The latest acknowledged tab action restores content focus")
     for (button, method) in [(notificationButton, "notifications")] {
       window.makeFirstResponder(button)
@@ -346,7 +347,7 @@ private extension SwarmTabStrip {
       try checkTitlebar(window.firstResponder === button,
         "The toolbar waits for Flutter's destination focus tree")
       messenger.finishNextReply()
-      try checkTitlebar(window.firstResponder === window.contentViewController,
+      try checkTitlebar(window.firstResponder === window.contentInput,
         "Notification control returns keyboard ownership to Flutter")
     }
     messenger.holdReplies = false
@@ -466,6 +467,7 @@ private extension SwarmTitlebar {
     let edit = original.item(withTitle: "Edit")!.submenu!
     let agent = original.item(withTitle: "File")!.submenu!
     let newSwarm = agent.items.first(where: { $0.representedObject as? String == "new" })!
+    let addHarness = agent.items.first(where: { $0.representedObject as? String == "addAgent" })!
     let nativeCopy = NSMenuItem(title: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
     edit.addItem(nativeCopy)
     setKeymap(defaults)
@@ -474,6 +476,8 @@ private extension SwarmTitlebar {
       "The main-menu dispatcher retains the actual Edit submenu and its targets")
     try checkTitlebar(newSwarm.keyEquivalent == "t" && newSwarm.toolTip == nil,
       "Native shortcuts display in the menu without duplicate hover hints")
+    try checkTitlebar(addHarness.keyEquivalent == "n" && addHarness.keyEquivalentModifierMask == [.command],
+      "The exported keymap keeps Add Harness on Command-N")
     setKeymap(changed)
     try checkTitlebar(NSApp.mainMenu === main && newSwarm.keyEquivalent == "o",
       "Hot reload updates the existing menu to the remapped key")
@@ -507,7 +511,9 @@ private extension SwarmTitlebar {
     try checkTitlebar(!main.performKeyEquivalent(with: open), "Menu equivalents defer before input dispatch")
     setKeymap(defaults)
     try checkTitlebar(strip.newButton.toolTip == nil, "Keymap reload does not restore hover hints")
-    try checkTitlebar(strip.newButton.accessibilityLabel() == "New Tab", "The plus announces New Harness")
+    try checkTitlebar(strip.newButton.accessibilityLabel() == "New Tab", "The plus announces New Tab")
+    try checkTitlebar(main.defersToInput(event("n", 45, .command)) && !main.defersToInput(event("o", 31, .command)),
+      "Command-N reaches the shared chooser while Command-O stays unbound")
     try checkTitlebar(!main.defersToInput(event("p", 35, .command)), "Command-P no longer opens Navigate")
     try checkTitlebar(main.defersToInput(event("p", 35, [.command, .shift])), "Command-Shift-P reaches command search")
     flutterKeyContext = "picker"
@@ -559,7 +565,8 @@ private extension SwarmTitlebar {
     try checkTitlebar(window.backgroundColor == startupPalette.tabBar,
       "Leaving the workspace preserves the saved native background")
     try strip.checkStartupPalette(startupPalette)
-    try checkTitlebar(window.firstResponder === window.contentViewController,
+    try window.checkContentCommand()
+    try checkTitlebar(window.firstResponder === window.contentInput,
       "Adding toolbar buttons does not take initial keyboard focus from the workspace")
     try checkTitlebar(main.items.map(\.title) == ["Harness", "File", "Edit", "View", "History", "Models", "Machines", "Window", "Help"], "File leads the standard macOS menus, with Machines after Models")
     let settings = appItem.submenu!.items[0]
@@ -782,12 +789,64 @@ private extension SwarmTitlebar {
       try strip.checkWindowGeometry(window)
     }
     try strip.checkTabKeyboardFocus(window, messenger: messenger)
+    let editor = TitlebarCheckInputView()
+    window.contentViewController!.view.addSubview(editor)
+    window.makeFirstResponder(editor)
+    messenger.holdReplies = true
+    sendTabAction("new", arguments: nil)
+    messenger.finishNextReply()
+    try checkTitlebar(window.firstResponder === editor,
+      "An acknowledged menu action preserves an already focused content editor")
+    messenger.holdReplies = false
+    editor.removeFromSuperview()
     try checkTitlebar(!window.isVisible, "Native layout check never displays its window")
   }
 }
 
 private final class TitlebarCheckContentController: NSViewController {
   override var acceptsFirstResponder: Bool { true }
+}
+
+private final class TitlebarCheckInputView: NSView {
+  var keys: [UInt16] = []
+  override var acceptsFirstResponder: Bool { true }
+  override func keyDown(with event: NSEvent) { keys.append(event.keyCode) }
+}
+
+/// Flutter's wrapper dispatches key equivalents only when its input view owns
+/// focus. A bare accepting controller lets ordinary keys through but misses
+/// that condition, so test the wrapper/input relationship as well as focus.
+private final class TitlebarCheckContentView: NSView {
+  let input = TitlebarCheckInputView()
+  override init(frame: NSRect) {
+    super.init(frame: frame)
+    input.frame = bounds
+    input.autoresizingMask = [.width, .height]
+    addSubview(input)
+  }
+  required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+  override func performKeyEquivalent(with event: NSEvent) -> Bool {
+    guard window?.firstResponder === input else { return false }
+    input.keyDown(with: event)
+    return true
+  }
+}
+
+private extension NSWindow {
+  var contentInput: TitlebarCheckInputView {
+    (contentViewController!.view as! TitlebarCheckContentView).input
+  }
+  func checkContentCommand() throws {
+    let count = contentInput.keys.count
+    let event = NSEvent.keyEvent(with: .keyDown, location: .zero,
+      modifierFlags: .command, timestamp: 1, windowNumber: windowNumber,
+      context: nil, characters: "n", charactersIgnoringModifiers: "n",
+      isARepeat: false, keyCode: 45)!
+    try checkTitlebar(performKeyEquivalent(with: event),
+      "The content wrapper accepts Command-N after native focus handoff")
+    try checkTitlebar(contentInput.keys.count == count + 1 && contentInput.keys.last == 45,
+      "Command-N reaches content exactly once")
+  }
 }
 
 let titlebarCheckApp = NSApplication.shared
@@ -842,7 +901,7 @@ do {
       styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
     window.isReleasedWhenClosed = false
     let content = TitlebarCheckContentController()
-    content.view = NSView(frame: NSRect(x: 0, y: 0, width: 1280, height: 700))
+    content.view = TitlebarCheckContentView(frame: NSRect(x: 0, y: 0, width: 1280, height: 700))
     window.contentViewController = content
     let messenger = TitlebarCheckMessenger()
     let titlebar = SwarmTitlebar(window: window, messenger: messenger)
