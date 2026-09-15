@@ -1,10 +1,10 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../shared/theme/app_theme.dart' as grid;
 import '../state/pane_arrangement.dart';
 import '../theme/app_theme.dart';
+import 'agent_action_icons.dart';
 
 /// Reveals split controls inside the pane, leaving the resize gap untouched.
 /// Hover state stays here so pointer movement never rebuilds the terminal.
@@ -16,11 +16,13 @@ class PaneSplitEdges extends StatefulWidget {
     required this.canSplitRight,
     required this.canSplitDown,
     required this.onSplit,
+    this.onNewSplit,
   });
 
   final Widget child;
   final bool enabled, canSplitRight, canSplitDown;
   final ValueChanged<PaneResizeAxis>? onSplit;
+  final ValueChanged<PaneResizeAxis>? onNewSplit;
 
   @override
   State<PaneSplitEdges> createState() => _PaneSplitEdgesState();
@@ -28,6 +30,7 @@ class PaneSplitEdges extends StatefulWidget {
 
 class _PaneSplitEdgesState extends State<PaneSplitEdges> {
   static const _buttonSize = 32.0;
+  static const _actionsSize = _buttonSize * 2 + 4;
   static const _inset = 8.0;
   static const _edgeWidth = 44.0;
   PaneResizeAxis? _edge;
@@ -66,34 +69,33 @@ class _PaneSplitEdgesState extends State<PaneSplitEdges> {
     );
   }
 
-  Rect _buttonRect(PaneResizeAxis axis) => axis == PaneResizeAxis.x
+  Rect _actionsRect(PaneResizeAxis axis) => axis == PaneResizeAxis.x
       ? Rect.fromLTWH(
           _size.width - _inset - _buttonSize,
-          (_size.height - _buttonSize) / 2,
+          (_size.height - _actionsSize) / 2,
           _buttonSize,
-          _buttonSize,
+          _actionsSize,
         )
       : Rect.fromLTWH(
-          (_size.width - _buttonSize) / 2,
+          (_size.width - _actionsSize) / 2,
           _size.height - _inset - _buttonSize,
-          _buttonSize,
+          _actionsSize,
           _buttonSize,
         );
 
   void _pressed(PointerDownEvent event) {
     final edge = _edge;
-    if (edge != null && !_buttonRect(edge).contains(event.localPosition)) {
+    if (edge != null && !_actionsRect(edge).contains(event.localPosition)) {
       _reveal(null);
     }
   }
 
-  Widget _button(PaneResizeAxis axis) {
+  Widget _actions(PaneResizeAxis axis) {
     final visible = widget.enabled && _edge == axis;
     final right = axis == PaneResizeAxis.x;
     final available = right ? widget.canSplitRight : widget.canSplitDown;
-    final label = right ? 'Split right' : 'Split down';
     return Positioned.fromRect(
-      rect: _buttonRect(axis),
+      rect: _actionsRect(axis),
       child: IgnorePointer(
         ignoring: !visible,
         child: ExcludeFocus(
@@ -105,39 +107,62 @@ class _PaneSplitEdgesState extends State<PaneSplitEdges> {
               duration: MediaQuery.disableAnimationsOf(context)
                   ? Duration.zero
                   : const Duration(milliseconds: 100),
-              child: IconButton(
-                key: ValueKey(right ? 'pane-split-right' : 'pane-split-down'),
-                tooltip: available
-                    ? label
-                    : right
-                    ? 'Make this pane wider to split right'
-                    : 'Make this pane taller to split down',
-                onPressed: available && widget.onSplit != null
-                    ? () {
-                        _reveal(null);
-                        widget.onSplit!(axis);
-                      }
-                    : null,
-                icon: const Icon(LucideIcons.plus, size: 18),
-                style: IconButton.styleFrom(
-                  fixedSize: const Size.square(_buttonSize),
-                  minimumSize: const Size.square(_buttonSize),
-                  padding: EdgeInsets.zero,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  visualDensity: VisualDensity.standard,
-                  foregroundColor: grid.AppPalette.swarmAccent,
-                  disabledForegroundColor: AppColors.mutedStrong,
-                  backgroundColor: AppColors.surface,
-                  disabledBackgroundColor: AppColors.surface,
-                  hoverColor: grid.AppSurface.hoverFill,
-                  shape: CircleBorder(
-                    side: BorderSide(color: AppColors.borderStrong),
-                  ),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  border: Border.all(color: AppColors.borderStrong),
+                  borderRadius: BorderRadius.circular(_buttonSize / 2),
+                ),
+                child: Flex(
+                  direction: right ? Axis.vertical : Axis.horizontal,
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    _button(axis, create: true, available: available),
+                    _button(axis, create: false, available: available),
+                  ],
                 ),
               ),
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _button(
+    PaneResizeAxis axis, {
+    required bool create,
+    required bool available,
+  }) {
+    final right = axis == PaneResizeAxis.x;
+    final action = create ? 'New Agent' : 'Open Agent';
+    final direction = right ? 'right' : 'down';
+    final callback = create ? widget.onNewSplit : widget.onSplit;
+    return IconButton(
+      key: ValueKey('pane-${create ? 'new' : 'open'}-$direction'),
+      tooltip: available
+          ? '$action · Split $direction'
+          : '$action: make this pane ${right ? 'wider' : 'taller'} to split $direction',
+      onPressed: available && callback != null
+          ? () {
+              _reveal(null);
+              callback(axis);
+            }
+          : null,
+      icon: Icon(
+        create ? AgentActionIcons.create : AgentActionIcons.open,
+        size: 18,
+      ),
+      style: IconButton.styleFrom(
+        fixedSize: const Size.square(_buttonSize),
+        minimumSize: const Size.square(_buttonSize),
+        padding: EdgeInsets.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        visualDensity: VisualDensity.standard,
+        foregroundColor: grid.AppPalette.swarmAccent,
+        disabledForegroundColor: AppColors.mutedStrong,
+        hoverColor: grid.AppSurface.hoverFill,
+        shape: const CircleBorder(),
       ),
     );
   }
@@ -157,8 +182,8 @@ class _PaneSplitEdgesState extends State<PaneSplitEdges> {
               fit: StackFit.expand,
               children: [
                 widget.child,
-                _button(PaneResizeAxis.x),
-                _button(PaneResizeAxis.y),
+                _actions(PaneResizeAxis.x),
+                _actions(PaneResizeAxis.y),
               ],
             ),
           ),

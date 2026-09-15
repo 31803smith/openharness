@@ -753,11 +753,19 @@ class _SwarmScreenState extends State<SwarmScreen> {
     await _ensureEmptyEntry();
   }
 
-  Future<void> _splitAgent(PaneResizeAxis axis, {int? paneId}) async {
+  Future<void> _splitAgent(
+    PaneResizeAxis axis, {
+    int? paneId,
+    bool create = false,
+  }) async {
     final split = app.preparePaneSplit(axis, paneId: paneId);
     if (split == null) return;
     if (paneId != null) app.focusPane(split.paneId);
-    _openSearch(adding: true, split: split);
+    if (create) {
+      await _newAgent(split: split);
+    } else {
+      _openSearch(adding: true, split: split);
+    }
   }
 
   Future<void> _showHistory() async {
@@ -1422,6 +1430,13 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                     swarmMode: true,
                                     onSplit: (paneId, axis) => unawaited(
                                       _splitAgent(axis, paneId: paneId),
+                                    ),
+                                    onNewSplit: (paneId, axis) => unawaited(
+                                      _splitAgent(
+                                        axis,
+                                        paneId: paneId,
+                                        create: true,
+                                      ),
                                     ),
                                     empty: app.panes.isEmpty
                                         ? HarnessStartPage(

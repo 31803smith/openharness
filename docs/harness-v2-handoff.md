@@ -34,7 +34,17 @@ user for a benchmark window.
 
 ## Current product contract
 
-### Latest: Customize Harness
+### Latest: distinct New/Open edge actions
+
+The right and bottom pane edges now reveal **+ New Agent** and **↗ Open Agent**
+together. New opens creation directly with the hovered pane's machine/project;
+Open retains the existing-agent split picker. Hovering does not move focus or
+rebuild the terminal; both actions preserve the split and adjacent pane geometry.
+Forty-seven split, resize and recovery tests and analysis of all four changed
+Dart/test files pass. Logs: `/private/tmp/harness-agent-edge-tests.log` and
+`/private/tmp/harness-agent-edge-analyze.log`.
+
+### Customize Harness — pushed 60a95d5
 
 New Harness defaults to the selected tab's solid color. The bottom-right
 **Customize Harness** button opens Background, Appearance and Terminal in a
@@ -45,8 +55,8 @@ Choices apply immediately and persist; only empty Harness pages get wallpaper.
 Forty-six affected checks and analysis of all 17 changed Dart/test units pass.
 Logs: `/private/tmp/harness-customize-final-tests.log`,
 `/private/tmp/harness-customize-analyze.log`. Captures:
-`/private/tmp/harness-customize-captures`. The incoming edge New/Open actions
-remain a separate feature and push.
+`/private/tmp/harness-customize-captures`. The macOS Release build and deep/strict
+signature verification pass. Pushed separately after the New/Open rollback.
 
 ### Separate New Agent and Open Agent — pushed aa327c0
 

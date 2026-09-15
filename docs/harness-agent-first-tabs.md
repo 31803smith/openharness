@@ -220,8 +220,18 @@ disabled for unavailable or unlinked machines. Keyboard toggles the remote messa
 
 Resize grips are invisible while idle and appear on divider hover, keyboard
 focus or active drag. Their hit targets and resize behavior stay the same. The
-right/bottom edge plus controls continue to open search at that split position, and
-keyboard split commands remain available.
+right/bottom edges reveal two actions in a small capsule: **+ New Agent** and
+**↗ Open Agent**. On the right they stack; along the bottom they sit side by side.
+Both name the split direction in their tooltip. New opens creation directly with
+the hovered pane's machine/project; Open shows existing-agent search for that
+position. Hovering and crossing between the buttons preserves keyboard focus,
+terminal views and neighbor geometry. Keyboard split commands remain available.
+
+The edge change passes 47 split, resize and creation-recovery checks, including
+both directions for New and Open and dismissal back to the intended terminal.
+Analysis of the four changed Dart/test files is clean. Logs:
+`/private/tmp/harness-agent-edge-tests.log` and
+`/private/tmp/harness-agent-edge-analyze.log`.
 
 ## Latest terminal output
 
