@@ -208,7 +208,9 @@ class _WebPanePanelState extends State<WebPanePanel> {
               ),
               const SizedBox(width: 8),
               if (widget.verdict case final verdict?) ...[
-                if (!compact && verdict.phases.isNotEmpty)
+                // Flexible: the strip yields to the title and the chip when
+                // the pane is narrow; at three quarters of a tab it has room.
+                if (verdict.phases.isNotEmpty)
                   Flexible(
                     child: Padding(
                       padding: const EdgeInsets.only(right: 10),
