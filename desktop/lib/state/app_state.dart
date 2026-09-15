@@ -3,6 +3,9 @@ import 'dart:io' show exit, pid;
 import 'dart:math' show Random;
 
 import 'package:dio/dio.dart';
+
+import 'dart:ui' show Color;
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -26,6 +29,10 @@ import '../core/retry.dart';
 import '../settings/config_store.dart';
 import '../stats/harness_stats.dart';
 import '../terminal/terminal_session.dart';
+import '../terminal/terminal_theme.dart';
+import '../terminal/terminal_theme_store.dart';
+import '../logging/app_log.dart';
+import '../shared/theme/app_theme.dart' as grid;
 import '../terminal/remote_media_download.dart';
 import '../widgets/engine_identity.dart' show allEngines;
 import 'dial_status.dart';
@@ -1077,6 +1084,11 @@ class AppNotifier extends ChangeNotifier {
        config = configStore?.config ?? config {
     _autonomousEnv = this.config.autonomousEnv;
     api = ApiClient(config: this.config, session: session);
+    // `grid.AppTheme.palette`, not the prefs store: main.dart copies the saved
+    // choice into the palette notifier while rebuilding, so the store fires
+    // before the colours the panes actually use have moved.
+    grid.AppTheme.palette.addListener(_announceTerminalThemeEverywhere);
+    terminalThemeStore.addListener(_announceTerminalThemeEverywhere);
   }
 
   String? get lastError => _lastError;
@@ -1345,6 +1357,101 @@ class AppNotifier extends ChangeNotifier {
   /// Publish the selected pane to the existing local CLI connection. The CLI
   /// shares this focus with paired devices and the dial; terminal attachments
   /// and operating-system window activation do not define the selected agent.
+  /// The colours the panes are actually painted with — the terminal theme in
+  /// force, not the app palette by assumption (Tango is its own scheme).
+  static Map<String, String> terminalThemeColours() {
+    final theme = terminalThemeFor(
+      grid.AppTheme.palette.value,
+      terminalThemeStore.value,
+    );
+    String hex(Color color) =>
+        '#${(color.toARGB32() & 0xFFFFFF).toRadixString(16).padLeft(6, '0')}';
+    return {
+      'background': hex(theme.background),
+      'foreground': hex(theme.foreground),
+    };
+  }
+
+  /// Tells one machine's daemon the pane colours (`theme_set`, answered by
+  /// the CLI's lib/hostTheme.ts). Fire-and-forget: a daemon that predates the
+  /// type cannot open the envelope and goes silent, and that is nothing to
+  /// put on the error strip — the pane still opens, only a TUI's palette may
+  /// guess wrong there.
+  void _announceTerminalTheme(String machineId) {
+    if (_disposed) return;
+    final connection = _pool != null || connectionForTest != null
+        ? _conn(machineId)
+        : null;
+    if (connection == null) return;
+    unawaited(
+      connection
+          .request(
+            'theme_set',
+            payload: terminalThemeColours(),
+            timeout: const Duration(seconds: 5),
+          )
+          .catchError((Object error) {
+            appLog.debug('ws', 'theme_set not applied on $machineId: $error');
+            return <String, dynamic>{};
+          }),
+    );
+  }
+
+  /// The palette or terminal theme changed: every connected machine hears it,
+  /// so a session created after this on any of them starts with the new
+  /// colours and existing ones are restyled on the daemon's next scan.
+  void _announceTerminalThemeEverywhere() {
+    for (final entry in machineStates.entries) {
+      if (entry.value.connectionStatus != ConnectionStatus.connected) continue;
+      _announceTerminalTheme(entry.key);
+    }
+  }
+
+  /// What a machine hears the moment its socket is up — first connect, or a
+  /// reconnect after its daemon restarted, which has forgotten all of it.
+  void _onMachineConnected(String machineId, MachineState machine) {
+    machine.needsLink = false;
+    _stopLinkRetry(machineId);
+    // A daemon that just came up — first connect, or a reconnect after it
+    // restarted — has never been told what is on the grid. Without this
+    // the dial goes back to beeping about tiles in plain sight until the
+    // next time a pane happens to change.
+    _announceOpenPanesToDial();
+    // ...nor which tile this window is looking at. The daemon repeats that to the dial after every
+    // list push, which is what keeps the two screens from drifting apart — but it can only repeat
+    // something it has been told, and until now the first telling waited for the focus to CHANGE.
+    // A daemon restarted mid-session therefore had nothing to say, and a dial that re-anchored onto
+    // the wrong tile stayed there.
+    _announceAppFocus();
+    // ...nor what colour its panes are. tmux answers a TUI's "what is my background?"
+    // (OSC 10/11 — Codex picks its light or dark diff palette from it) with whichever
+    // terminal attached first, unless told; this tells it, for the sessions it owns.
+    _announceTerminalTheme(machineId);
+    // The local CLI never hands back `connected` until it has terminated E2EE (or confirmed
+    // none is needed, for its own machine) — every machine's data is ready to load right away,
+    // with no separate app-side readiness gate to wait on anymore.
+    if (machine.isLocalMachine) {
+      machine.transportMode = MachineTransportMode.localPlaintext;
+    } else {
+      machine.transportMode = MachineTransportMode.cloudE2ee;
+    }
+    // Route through _applyNodeStatus (not just `machine.nodeOnline = true`) for every machine,
+    // not only the local one — a successful select IS the machine being reachable again, and
+    // this is what lets a pending agent (captured below on disconnect) reattach automatically
+    // instead of leaving the user stuck on the empty "select a machine" placeholder.
+    unawaited(_applyNodeStatus(machine, true));
+    unawaited(_loadMachineData(machine, force: true));
+    _startAgentSyncTimer(machineId);
+  }
+
+  @visibleForTesting
+  void onMachineConnectedForTest(String machineId) {
+    final machine = machineStates[machineId];
+    if (machine == null) return;
+    machine.connectionStatus = ConnectionStatus.connected;
+    _onMachineConnected(machineId, machine);
+  }
+
   void _announceAppFocus() {
     final pane = focusedPane;
     final machineId = pane?.agentId == null ? null : pane?.machineId;
@@ -2497,34 +2604,7 @@ class AppNotifier extends ChangeNotifier {
         if (machine == null) return;
         machine.connectionStatus = nextStatus;
         if (nextStatus == ConnectionStatus.connected) {
-          machine.needsLink = false;
-          _stopLinkRetry(machineId);
-          // A daemon that just came up — first connect, or a reconnect after it
-          // restarted — has never been told what is on the grid. Without this
-          // the dial goes back to beeping about tiles in plain sight until the
-          // next time a pane happens to change.
-          _announceOpenPanesToDial();
-          // ...nor which tile this window is looking at. The daemon repeats that to the dial after every
-          // list push, which is what keeps the two screens from drifting apart — but it can only repeat
-          // something it has been told, and until now the first telling waited for the focus to CHANGE.
-          // A daemon restarted mid-session therefore had nothing to say, and a dial that re-anchored onto
-          // the wrong tile stayed there.
-          _announceAppFocus();
-          // The local CLI never hands back `connected` until it has terminated E2EE (or confirmed
-          // none is needed, for its own machine) — every machine's data is ready to load right away,
-          // with no separate app-side readiness gate to wait on anymore.
-          if (machine.isLocalMachine) {
-            machine.transportMode = MachineTransportMode.localPlaintext;
-          } else {
-            machine.transportMode = MachineTransportMode.cloudE2ee;
-          }
-          // Route through _applyNodeStatus (not just `machine.nodeOnline = true`) for every machine,
-          // not only the local one — a successful select IS the machine being reachable again, and
-          // this is what lets a pending agent (captured below on disconnect) reattach automatically
-          // instead of leaving the user stuck on the empty "select a machine" placeholder.
-          unawaited(_applyNodeStatus(machine, true));
-          unawaited(_loadMachineData(machine, force: true));
-          _startAgentSyncTimer(machineId);
+          _onMachineConnected(machineId, machine);
         } else if (nextStatus == ConnectionStatus.reconnecting ||
             nextStatus == ConnectionStatus.disconnected) {
           _stopAgentSyncTimer(machineId);
@@ -5658,6 +5738,8 @@ class AppNotifier extends ChangeNotifier {
 
   @override
   void dispose() {
+    grid.AppTheme.palette.removeListener(_announceTerminalThemeEverywhere);
+    terminalThemeStore.removeListener(_announceTerminalThemeEverywhere);
     _localGitProjects.dispose();
     sessionPreviews.dispose();
     _disposed = true;

@@ -41,6 +41,7 @@ import { listFileTree, readProjectFile } from './lib/files.js'
 import { MediaPreviewError, readMediaPreviewChunk } from './lib/mediaPreview.js'
 import { codexMessagesToEvents, windowCodexLines } from './engines/codex/normalizer.js'
 import { codexSubagentResolverFor } from './engines/codex/subagent.js'
+import { parseHostTheme, type HostTheme } from './lib/hostTheme.js'
 import { cursorMessagesToEvents, windowCursorLines } from './engines/cursor/normalizer.js'
 import { loadCursorReplayTaskLinks } from './engines/cursor/subagent.js'
 import { opencodeMessagesToEvents, windowOpencodeMessages } from './engines/opencode/normalizer.js'
@@ -382,6 +383,9 @@ export class BackendSocket {
   /** Answers `usage_read` — this machine's own agent-account usage (lib/accountUsage.ts). A field
    *  rather than a direct call so a spec answers it without a real home, Keychain or network. */
   accountUsageReader: () => Promise<AccountUsageReading[]> = readAccountUsage
+  /** Receives `theme_set` — the desktop's pane colours, to become this machine's tmux
+   *  `window-style` (lib/hostTheme.ts). Wired by cli.ts; null answers with UNSUPPORTED. */
+  hostThemeSink: ((theme: HostTheme) => void) | null = null
   runtimeProfileProvider: ((session: RegisteredSession) => string | null) | null = null
   onRuntimeProfileUpdate: ((sessionId: string, selectedModel: string) => Promise<void>) | null = null
   /** Web↔adapter E2EE: group-encrypts user events, runs the CPace pairing, holds per-conn sessions. */
@@ -1814,6 +1818,17 @@ export class BackendSocket {
         // back as it came: see lib/accountUsage.ts for why the parsing stays on the client.
         case 'usage_read': {
           reply(type, requestId, { providers: await this.accountUsageReader() })
+          return
+        }
+
+        // The colours the desktop paints its panes with, so tmux answers a TUI's OSC 10/11 with
+        // them instead of with whatever terminal happened to attach first (lib/hostTheme.ts).
+        case 'theme_set': {
+          if (!this.hostThemeSink) { reply(type, requestId, { error: 'UNSUPPORTED' }); return }
+          const theme = parseHostTheme(payload)
+          if (!theme) { reply(type, requestId, { error: 'BAD_THEME' }); return }
+          this.hostThemeSink(theme)
+          reply(type, requestId, { applied: true })
           return
         }
 

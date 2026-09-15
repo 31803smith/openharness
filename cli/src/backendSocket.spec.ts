@@ -280,6 +280,40 @@ describe('BackendSocket outbound queue', () => {
     await socket.stop()
   })
 
+  it('hands theme_set to the host-theme sink and acknowledges it to the requester', async () => {
+    const socket = new BackendSocket('token')
+    const received: unknown[] = []
+    socket.hostThemeSink = (theme) => received.push(theme)
+    socket.connect()
+    const ws = wsMock.instances[0]
+    ws.open()
+    const unwrap = vi.spyOn(socket.e2ee, 'unwrapDown')
+    vi.spyOn(socket.e2ee, 'hasSession').mockReturnValue(true)
+    const wrapReply = vi.spyOn(socket.e2ee, 'wrapRpcReply').mockReturnValue({
+      type: 'theme_set_result', payload: { __e2e: { v: 1, k: 's', n: 1, ct: 'ciphertext' } },
+    })
+    const envelope = { __e2e: { v: 1, k: 's', n: 1, ct: 'ciphertext' } }
+
+    unwrap.mockReturnValueOnce({
+      type: 'theme_set', payload: { requestId: 't-1', background: '#171B29', foreground: '#f5f5f5' },
+    })
+    ws.message({ t: 'down', connId: 'web-1', frame: { type: 'theme_set', payload: envelope } })
+    await vi.waitFor(() => {
+      expect(wrapReply).toHaveBeenCalledWith('web-1', 'theme_set_result', 't-1', { applied: true })
+    })
+    // Normalised to lowercase, and a full pair — never half a style.
+    expect(received).toEqual([{ background: '#171b29', foreground: '#f5f5f5' }])
+
+    // A malformed colour is refused, not half-applied.
+    unwrap.mockReturnValueOnce({ type: 'theme_set', payload: { requestId: 't-2', background: 'dark' } })
+    ws.message({ t: 'down', connId: 'web-1', frame: { type: 'theme_set', payload: envelope } })
+    await vi.waitFor(() => {
+      expect(wrapReply).toHaveBeenCalledWith('web-1', 'theme_set_result', 't-2', { error: 'BAD_THEME' })
+    })
+    expect(received).toHaveLength(1)
+    await socket.stop()
+  })
+
   it('answers usage_read with this machine\'s own readings, wrapped for the requester', async () => {
     // What goes back names what the person spends and on whose account, so it must leave encrypted.
     // The reader is the socket's own field: this never touches a real home, Keychain or network.

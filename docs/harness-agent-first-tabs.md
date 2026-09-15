@@ -46,8 +46,7 @@ cropped in the viewport so the device is larger and centered. The caption is
 “Meet the Harness device”.
 The start-page actions use the same pill shape as the titlebar. The device link
 and both pairs of New/Open buttons show a hand cursor. Open Agent on the start
-page is transparent with a subtle border; New
-Harness retains its accent fill.
+page is transparent with a subtle border; New Agent retains its accent fill.
 Unused default-name empty pages are excluded from Recently Closed.
 
 The titlebar places the bell beside the traffic lights, then the tabs and tab
@@ -101,7 +100,7 @@ also work immediately after opening the menu, before its first frame.
 
 The Open popup keeps its full-width **Find an agent** field, single-choice
 results and 90% black backdrop. Only the highlighted row shows **Open Agent**,
-**Open N Harnesses**, or **Split right/down**, depending on context.
+**Open N Agents**, or **Split right/down**, depending on context.
 Both Open and inline start-page search show the same session preview. The Cmd-N
 surface can grow to 1120 logical pixels, placing the list and preview side by
 side. Narrow windows stack them with a compact preview heading. Both sections
@@ -148,7 +147,7 @@ not also trigger the window's titlebar zoom behavior.
 
 ## Tabs and menus
 
-One harness shows its engine mark; multiple agents use four separate outlined
+One agent shows its engine mark; multiple agents use four separate outlined
 tiles, matching the native square.grid.2x2 symbol. An empty tab uses a plain plus.
 Only one unused **New Tab** is kept. New Tab from the plus, File menu,
 Cmd-T or command search selects that existing page, even at the tab limit.
@@ -176,8 +175,8 @@ zero. Menus use existing cached discovery, with no fetch on opening. A stale
 agent or unlinked machine cannot redirect a menu action.
 The manager has a visible **Rename** action on each computer and uses the existing
 machine rename API. It reports failures inline and refreshes names in the menu
-and pane headers immediately after success. Selecting a computer opens the shared search with its
-name filled in; no agent is opened until the user chooses a result.
+and pane headers immediately after success. Find Agents opens the shared search
+with the computer's name filled in; no agent is opened until the user chooses a result.
 
 **Cmd-T** opens the start page and **Cmd-N** opens Add Agent.
 **Shift-Cmd-N** remains a direct creation shortcut; Cmd-O is unbound by default. **Cmd-S** opens Layout.
@@ -229,11 +228,11 @@ Hovering anywhere on the header replaces the details with small, muted controls:
 focus also reveals the controls. The title keeps the same space during the swap,
 and hovering retains the terminal renderer. Stop uses a plain filled square
 and an explicit confirmation: it ends the engine process and removes the active
-harness, preserving project files and saved conversation history. The existing
+agent, preserving project files and saved conversation history. The existing
 `agent_delete` protocol remains unchanged. It is not Pause and promises no live
 process suspension/resume. Close Pane removes only this view and leaves the agent
 running. Restart uses the same circular-arrow icon and existing restart action as
-the agent menu. It relaunches the same harness, resuming the conversation where
+the agent menu. It relaunches the same agent, resuming the conversation where
 supported; failures and a fresh-session fallback are shown in a snackbar. It is
 disabled for unavailable or unlinked machines. Keyboard toggles the remote message composer.
 

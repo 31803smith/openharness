@@ -168,6 +168,17 @@ from `node_status` pushes — distinct from our own socket status, pending offli
   sessions get `handleFrame` first (a session returns true for any terminal frame, even one not
   addressed to it), then the app-level switch handles `node_status`, `agent_*`, `turn_*`, and the
   hardware-dial events `dial_scroll`/`dial_focus`.
+- **A pane's colours are told to the daemon** (`theme_set`, `AppNotifier._announceTerminalTheme`, on
+  every connect and whenever `grid.AppTheme.palette` or `terminalThemeStore` changes; CLI side
+  `lib/hostTheme.ts`). tmux answers a TUI's `OSC 10;?`/`OSC 11;?` — which is how Codex picks a light
+  or dark diff palette, once, at startup — from whichever client attached to the session FIRST, so a
+  person who `tmux attach`ed a light terminal before the daemon's control client made Codex draw
+  pale-green diff rows with dark text inside a dark pane. tmux's `window-style` wins over every
+  client in that reply and changes nothing a control-mode client receives, so the daemon sets it,
+  window-scoped, on the sessions it created (`TmuxBackend.create` chains it into `new-session`;
+  `inventory()` restyles existing panes on each scan). ⚠️ `theme_set`/`theme_set_result` are in the
+  E2EE type sets in `cli/src/lib/e2ee/core.ts`, which re-pinned the interop keystone; a daemon
+  that predates the type goes silent, which the app treats as "not supported" — never an error.
 - `third_party/xterm` is a **vendored, patched** xterm 4.0.0 (atomic `replaceRange` fix for scroll
   regions — see its `README.autonomous.md`). Do not replace it with the pub package; the regression
   lives in `test/terminal_session_test.dart`.
