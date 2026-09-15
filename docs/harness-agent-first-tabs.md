@@ -18,6 +18,9 @@ controls. Show a choice's name and useful preview; add explanation only when it
 helps someone decide or recover from an error. Prefer whitespace and restrained
 surfaces over extra rules and nested cards. Apply this consistently without
 waiting for the user to request copy removal one control at a time.
+Icon buttons share a quiet rounded background on hover and keyboard focus.
+Apply this to native tab close, new-tab and notification icons as well as
+Flutter controls. Disabled icons do not highlight; decorative icons stay inert.
 
 Action order is **New → Open** in the titlebar, File menu and both split controls.
 The **New Harness page is the deliberate exception: Open → New** below search.

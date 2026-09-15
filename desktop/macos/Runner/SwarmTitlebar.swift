@@ -836,7 +836,54 @@ private struct SwarmNativePalette: Equatable {
   }
 }
 
-private final class SwarmNotificationButton: NSButton {
+/// Match the quiet rounded hover well used by the app's pane controls.
+private class SwarmIconButton: NSButton {
+  private var hovered = false
+  private(set) var hasKeyboardFocus = false
+  var showsHoverFill: Bool { true }
+  override var acceptsFirstResponder: Bool { isEnabled }
+  override var mouseDownCanMoveWindow: Bool { false }
+  override var isEnabled: Bool {
+    didSet {
+      needsDisplay = true
+      window?.invalidateCursorRects(for: self)
+    }
+  }
+
+  override func updateTrackingAreas() {
+    super.updateTrackingAreas()
+    trackingAreas.forEach(removeTrackingArea)
+    addTrackingArea(NSTrackingArea(rect: .zero,
+      options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
+  }
+  override func mouseEntered(with event: NSEvent) { hovered = true; needsDisplay = true }
+  override func mouseExited(with event: NSEvent) { hovered = false; needsDisplay = true }
+  override func resetCursorRects() {
+    super.resetCursorRects()
+    if isEnabled { addCursorRect(bounds, cursor: .pointingHand) }
+  }
+  override func becomeFirstResponder() -> Bool {
+    guard super.becomeFirstResponder() else { return false }
+    hasKeyboardFocus = true
+    needsDisplay = true
+    return true
+  }
+  override func resignFirstResponder() -> Bool {
+    guard super.resignFirstResponder() else { return false }
+    hasKeyboardFocus = false
+    needsDisplay = true
+    return true
+  }
+  override func draw(_ dirtyRect: NSRect) {
+    if showsHoverFill && isEnabled && (hovered || hasKeyboardFocus || isHighlighted) {
+      NSColor.white.withAlphaComponent(isHighlighted ? 0.10 : 0.05).setFill()
+      NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: 7, yRadius: 7).fill()
+    }
+    super.draw(dirtyRect)
+  }
+}
+
+private final class SwarmNotificationButton: SwarmIconButton {
   var hasAttention = false { didSet { needsDisplay = true } }
   override func draw(_ dirtyRect: NSRect) {
     super.draw(dirtyRect)
@@ -911,7 +958,7 @@ private final class SwarmTabStrip: NSView {
   var emit: ((String, Any?) -> Void)?
   private let scroll = NSScrollView()
   private let document = NSView()
-  fileprivate let newButton = NSButton()
+  fileprivate let newButton = SwarmIconButton()
   fileprivate let notificationButton = SwarmNotificationButton()
   fileprivate let openButton = SwarmActionButton()
   fileprivate let createButton = SwarmActionButton()
@@ -1324,20 +1371,17 @@ private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidati
 
 /// Selection and closing are sibling accessibility buttons, so VoiceOver and
 /// UI automation can reach the close action without treating the tab as a leaf.
-private class SwarmTabActionButton: NSButton {
+private class SwarmTabActionButton: SwarmIconButton {
   weak var owner: SwarmTabButton?
-  private(set) var hasKeyboardFocus = false
-  override var mouseDownCanMoveWindow: Bool { false }
+  override var showsHoverFill: Bool { false }
   override func becomeFirstResponder() -> Bool {
     guard super.becomeFirstResponder() else { return false }
-    hasKeyboardFocus = true
     owner?.updateCloseVisibility()
     if let owner { owner.scrollToVisible(owner.bounds) }
     return true
   }
   override func resignFirstResponder() -> Bool {
     guard super.resignFirstResponder() else { return false }
-    hasKeyboardFocus = false
     owner?.updateCloseVisibility()
     return true
   }
@@ -1346,6 +1390,7 @@ private class SwarmTabActionButton: NSButton {
 /// Keep the close action reachable by keyboard and VoiceOver while its glyph
 /// rests quietly. Reserving its space avoids shifting labels on hover.
 private final class SwarmCloseButton: SwarmTabActionButton {
+  override var showsHoverFill: Bool { true }
   var showsGlyph = false { didSet { if showsGlyph != oldValue { needsDisplay = true } } }
   override func draw(_ dirtyRect: NSRect) {
     if showsGlyph { super.draw(dirtyRect) }

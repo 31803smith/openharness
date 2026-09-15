@@ -16,7 +16,7 @@ private final class TitlebarMouseUpProbe: NSResponder {
   override func mouseUp(with event: NSEvent) { mouseUps += 1 }
 }
 
-private extension SwarmActionButton {
+private extension NSButton {
   func renderedPixels() -> Data {
     let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil,
       pixelsWide: Int(bounds.width), pixelsHigh: Int(bounds.height),
@@ -316,7 +316,10 @@ private extension SwarmTabStrip {
     let beforeStale = messenger.calls.count
     stale.clickBothActions()
     try checkTitlebar(messenger.calls.count == beforeStale, "A removed tab's retained controls cannot dispatch actions")
+    let unfocusedNew = newButton.renderedPixels()
     try checkTitlebar(window.makeFirstResponder(newButton), "New swarm accepts keyboard focus")
+    try checkTitlebar(newButton.hasKeyboardFocus && newButton.renderedPixels() != unfocusedNew,
+      "Keyboard focus gives the new-tab icon the same visible background as hover")
     newButton.performClick(nil)
     messenger.finishNextReply()
     try checkTitlebar(window.firstResponder === window.contentInput && messenger.calls.last?.method == "new",
@@ -910,6 +913,23 @@ do {
   try checkTitlebar(swarmRow.menuTitle().string == "My swarm", "Empty swarm rows have no invented machine label")
   let sharedSwarm = SwarmHistoryEntry(["id": "shared", "title": "Workshop", "swarm": true, "machineName": "2 machines"])!
   try checkTitlebar(sharedSwarm.menuTitle().string == "Workshop\t2 machines", "Swarm machine counts use the same trailing column as agent machines")
+  for button in [SwarmIconButton(), SwarmNotificationButton(), SwarmCloseButton()] {
+    button.frame = NSRect(x: 0, y: 0, width: 28, height: 28)
+    button.image = NSImage(systemSymbolName: "plus", accessibilityDescription: nil)
+    button.isBordered = false
+    (button as? SwarmCloseButton)?.showsGlyph = true
+    let rest = button.renderedPixels()
+    let hover = NSEvent.mouseEvent(with: .mouseMoved, location: .zero, modifierFlags: [],
+      timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, clickCount: 0, pressure: 0)!
+    button.mouseEntered(with: hover)
+    try checkTitlebar(button.renderedPixels() != rest, "Native icon buttons draw a hover background")
+    button.mouseExited(with: hover)
+    try checkTitlebar(button.renderedPixels() == rest, "Native icon backgrounds clear when the pointer leaves")
+    button.isEnabled = false
+    let disabled = button.renderedPixels()
+    button.mouseEntered(with: hover)
+    try checkTitlebar(button.renderedPixels() == disabled, "Disabled native icons do not highlight")
+  }
   var assetReads = 0
   let icons = SwarmHistoryIcons(assetURL: { asset in
     assetReads += 1

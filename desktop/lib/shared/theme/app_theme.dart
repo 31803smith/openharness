@@ -1082,6 +1082,24 @@ ThemeData buildAppTheme({Brightness brightness = Brightness.light}) {
     textTheme: textTheme,
     primaryTextTheme: textTheme,
     iconTheme: IconThemeData(color: scheme.onSurfaceVariant, size: 18),
+    iconButtonTheme: IconButtonThemeData(
+      style: ButtonStyle(
+        shape: WidgetStatePropertyAll(
+          RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
+        ),
+        overlayColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.disabled)) return Colors.transparent;
+          if (states.contains(WidgetState.pressed)) {
+            return isDark ? const Color(0x1AFFFFFF) : const Color(0x0D000000);
+          }
+          if (states.contains(WidgetState.hovered) ||
+              states.contains(WidgetState.focused)) {
+            return isDark ? const Color(0x0DFFFFFF) : const Color(0x07000000);
+          }
+          return Colors.transparent;
+        }),
+      ),
+    ),
     switchTheme: SwitchThemeData(
       thumbColor: WidgetStateProperty.all(Colors.white),
       trackColor: WidgetStateProperty.resolveWith(
