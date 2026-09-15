@@ -122,7 +122,7 @@ void main() {
             for (final asset in [
               'assets/engine-icons/codex.png',
               'assets/engine-icons/cursor.png',
-              'assets/harness_device.webp',
+              'assets/harness_device.png',
             ]) {
               await precacheImage(
                 AssetImage(asset),

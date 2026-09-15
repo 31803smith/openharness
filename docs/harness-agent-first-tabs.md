@@ -13,7 +13,8 @@ identifiers are unchanged.
 ## Open and New Agent
 
 **Cmd-T / New Tab** and the tab-bar plus open the Harness start page over its
-restored lake-at-dusk wallpaper. A long search field, capped at 1120 logical pixels,
+Aurora mesh ground — the panel colour with three dim washes in the app's own
+accent, Claude and Codex colours, drawn rather than loaded (no photograph). A long search field, capped at 1120 logical pixels,
 has a prominent 64-pixel minimum height and shows **Find an agent** in place of
 a large heading. **Open Agent** and accented
 **+ New Agent** sit underneath, aligned with the field's left edge. The pill
@@ -39,11 +40,13 @@ refreshes results against current app state. Command-mode shortcuts synchronize
 the field and results without adding editor rebuilds to arrow navigation.
 Opening the dropdown keeps its whole list viewport inside the window. Resizing
 or changing text size reveals the highlighted row without changing the selection.
-A small product image and caption stay in the footer and link to
-https://www.autonomous.ai/harness-device. The bundled image is the official
-device image from https://cdn.autonomous.ai/production/ecm/260731/2.webp,
-cropped in the viewport so the device is larger and centered. The caption is
-“Meet the Harness device”.
+A product strip runs along the footer, the width of the search field, and
+links to https://www.autonomous.ai/harness-device: a glass band holding a
+cutout of the device (`assets/harness_device.png`, the render with its studio
+ground keyed out, so the device floats on the page's own ground), the title
+“Meet the Harness device”, the line “A device for your agents — scroll, switch
+panes, give voice commands.” and a Learn more pill. 120 points tall, 84 with
+the line dropped when the window is short.
 The start-page actions use the same pill shape as the titlebar. The device link
 and both pairs of New/Open buttons show a hand cursor. Open Agent on the start
 page is transparent with a subtle border; New Agent retains its accent fill.

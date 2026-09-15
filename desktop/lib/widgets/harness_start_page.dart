@@ -141,64 +141,121 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
     ),
   );
 
+  /// The product strip along the bottom of the page (mockup/device-strip-final.html).
+  ///
+  /// What stood here before was the studio photograph — a light-grey box with
+  /// the dial in it — cropped into a rounded rectangle and set in the darkest
+  /// corner of a dark page, where a pale rectangle reads as a broken image
+  /// rather than a product. The asset is a cutout now: the render with its
+  /// ground keyed out, so the device — face, bezel, body, stand — floats on
+  /// whatever the page is painted, inside a glass strip the width of the
+  /// search field, with a name, one line on what it does, and a Learn more.
   Widget _device({required bool compact}) {
-    final photo = ClipRRect(
-      borderRadius: BorderRadius.circular(10),
-      child: Transform.scale(
-        // Frame the device, which sits left of center in the original photo.
-        scale: 1.7,
-        alignment: const Alignment(-0.5, 0.08),
-        child: Image.asset(
-          'assets/harness_device.webp',
-          width: compact ? 96 : 256,
-          height: compact ? 54 : 144,
-          fit: BoxFit.cover,
-          semanticLabel: 'Harness Device',
-        ),
-      ),
-    );
-    const caption = Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Flexible(
-          child: Text(
-            'Meet the Harness device',
-            style: TextStyle(fontSize: 13, color: Colors.white70),
-          ),
-        ),
-        SizedBox(width: 4),
-        Icon(Icons.arrow_outward, size: 12, color: Colors.white70),
-      ],
-    );
+    final height = compact ? 84.0 : 120.0;
     return Semantics(
       link: true,
       child: InkWell(
         key: const ValueKey('harness-device-link'),
         mouseCursor: SystemMouseCursors.click,
-        onTap: () => launchUrl(
-          Uri.parse('https://www.autonomous.ai/harness-device'),
-          mode: LaunchMode.externalApplication,
-        ),
-        borderRadius: BorderRadius.circular(12),
-        child: SizedBox(
-          width: compact ? 320 : 256,
-          child: compact
-              ? Row(
-                  children: [
-                    photo,
-                    const SizedBox(width: 12),
-                    const Expanded(child: caption),
-                  ],
-                )
-              : Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [photo, const SizedBox(height: 12), caption],
+        onTap: _openDevicePage,
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          height: height,
+          decoration: BoxDecoration(
+            color: grid.AppTheme.pick(
+              const Color(0x0A000000),
+              const Color(0x0EFFFFFF),
+            ),
+            border: Border.all(color: grid.AppGlass.hair),
+            borderRadius: BorderRadius.circular(14),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Row(
+            children: [
+              const SizedBox(width: 10),
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                child: Image.asset(
+                  'assets/harness_device.png',
+                  height: height - 12,
+                  fit: BoxFit.contain,
+                  semanticLabel: 'Harness Device',
                 ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Meet the Harness device',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: grid.AppFont.semibold,
+                        color: grid.AppPalette.textPrimary,
+                      ),
+                    ),
+                    if (!compact) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        'A device for your agents — scroll, switch panes, '
+                        'give voice commands.',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          height: 1.35,
+                          color: grid.AppPalette.textFaint,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(width: 16),
+              Container(
+                height: 28,
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  border: Border.all(color: grid.AppGlass.hair),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Learn more',
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: grid.AppFont.semibold,
+                        color: grid.AppPalette.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Icon(
+                      Icons.arrow_outward,
+                      size: 12,
+                      color: grid.AppPalette.textPrimary,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 18),
+            ],
+          ),
         ),
       ),
     );
   }
+
+  void _openDevicePage() => launchUrl(
+    Uri.parse('https://www.autonomous.ai/harness-device'),
+    mode: LaunchMode.externalApplication,
+  );
 
   @override
   void dispose() {

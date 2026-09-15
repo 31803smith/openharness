@@ -84,18 +84,12 @@ void main() {
         if (Platform.environment['HARNESS_ENTRY_CAPTURE_DIR'] != null) {
           await tester.runAsync(() async {
             final context = tester.element(find.byType(SwarmScreen));
-            await Future.wait([
-              precacheImage(
-                const AssetImage('assets/harness_device.webp'),
-                context,
-              ),
-              precacheImage(
-                const AssetImage(
-                  'assets/swarm-wallpapers/swarm-welcome-dusk.jpg',
-                ),
-                context,
-              ),
-            ]);
+            // Only the device image: the ground behind the page is drawn
+            // (swarm_wallpaper.dart), not loaded.
+            await precacheImage(
+              const AssetImage('assets/harness_device.png'),
+              context,
+            );
           });
           await tester.pump();
         }
