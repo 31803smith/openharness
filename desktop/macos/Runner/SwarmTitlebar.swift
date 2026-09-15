@@ -754,16 +754,17 @@ private final class SwarmActionButton: NSButton {
   override func mouseExited(with event: NSEvent) { hovered = false; needsDisplay = true }
 
   override func draw(_ dirtyRect: NSRect) {
-    let opacity: CGFloat = isEnabled ? 1 : 0.35
+    // A workspace modal dims the canvas, not this native chrome. Keep the
+    // normal appearance while isEnabled still prevents actions behind it.
     let emphasis: CGFloat = isHighlighted ? 0.16 : 0.08
     let hoverFill = fillColor.alphaComponent == 0
       ? labelColor.withAlphaComponent(emphasis)
       : fillColor.blended(withFraction: emphasis, of: labelColor) ?? fillColor
     let fill = isEnabled && (hovered || isHighlighted) ? hoverFill : fillColor
-    fill.withAlphaComponent(fill.alphaComponent * opacity).setFill()
+    fill.setFill()
     NSBezierPath(roundedRect: bounds, xRadius: bounds.height / 2, yRadius: bounds.height / 2).fill()
     if let borderColor {
-      borderColor.withAlphaComponent(borderColor.alphaComponent * opacity).setStroke()
+      borderColor.setStroke()
       let border = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5),
         xRadius: (bounds.height - 1) / 2, yRadius: (bounds.height - 1) / 2)
       border.lineWidth = 1
@@ -771,7 +772,7 @@ private final class SwarmActionButton: NSButton {
     }
     let label = NSAttributedString(string: title, attributes: [
       .font: font ?? NSFont.systemFont(ofSize: 12, weight: .medium),
-      .foregroundColor: labelColor.withAlphaComponent(opacity),
+      .foregroundColor: labelColor,
     ])
     let size = label.size()
     label.draw(at: NSPoint(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2))
@@ -1171,6 +1172,9 @@ private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidati
     if event.clickCount == 2 { renameSwarm() }
     else { emit?("select", ["id": swarmId]) }
   }
+  // The tab owns the full click sequence, including clicks on its padding.
+  // Forwarding mouseUp lets AppKit also treat a rename as a titlebar zoom.
+  override func mouseUp(with event: NSEvent) {}
   override func mouseDragged(with event: NSEvent) {
     guard actionsEnabled else { return }
     if hypot(event.locationInWindow.x - downPoint.x, event.locationInWindow.y - downPoint.y) < 5 { return }
@@ -1196,6 +1200,7 @@ private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidati
 private class SwarmTabActionButton: NSButton {
   weak var owner: SwarmTabButton?
   private(set) var hasKeyboardFocus = false
+  override var mouseDownCanMoveWindow: Bool { false }
   override func becomeFirstResponder() -> Bool {
     guard super.becomeFirstResponder() else { return false }
     hasKeyboardFocus = true
@@ -1225,6 +1230,7 @@ private final class SwarmSelectButton: SwarmTabActionButton {
     guard isEnabled else { return }
     owner?.mouseDown(with: event)
   }
+  override func mouseUp(with event: NSEvent) {}
   override func mouseDragged(with event: NSEvent) {
     guard isEnabled else { return }
     owner?.mouseDragged(with: event)

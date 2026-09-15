@@ -11,7 +11,59 @@ private func checkTitlebar(_ condition: @autoclosure () -> Bool, _ message: Stri
   titlebarCheckCount += 1
 }
 
+private final class TitlebarMouseUpProbe: NSResponder {
+  var mouseUps = 0
+  override func mouseUp(with event: NSEvent) { mouseUps += 1 }
+}
+
+private extension SwarmActionButton {
+  func renderedPixels() -> Data {
+    let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil,
+      pixelsWide: Int(bounds.width), pixelsHigh: Int(bounds.height),
+      bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+      colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+    let count = bitmap.bytesPerRow * bitmap.pixelsHigh
+    bitmap.bitmapData!.initialize(repeating: 0, count: count)
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+    draw(bounds)
+    NSGraphicsContext.restoreGraphicsState()
+    return Data(bytes: bitmap.bitmapData!, count: count)
+  }
+}
+
 private extension SwarmTabButton {
+  func checkDoubleClickIsolation() throws {
+    let parent = nextResponder
+    let originalEmit = emit
+    let probe = TitlebarMouseUpProbe()
+    nextResponder = probe
+    var actions: [String] = []
+    emit = { method, _ in actions.append(method) }
+    defer {
+      nextResponder = parent
+      emit = originalEmit
+      actionsEnabled = true
+    }
+    func event(_ type: NSEvent.EventType, _ count: Int) -> NSEvent {
+      NSEvent.mouseEvent(with: type, location: NSPoint(x: 60, y: 20),
+        modifierFlags: [], timestamp: Double(count) / 10, windowNumber: 0,
+        context: nil, eventNumber: count, clickCount: count, pressure: 1)!
+    }
+    selectButton.mouseDown(with: event(.leftMouseDown, 1))
+    selectButton.mouseUp(with: event(.leftMouseUp, 1))
+    selectButton.mouseDown(with: event(.leftMouseDown, 2))
+    // Rename can open a modal before the second mouse-up arrives.
+    actionsEnabled = false
+    selectButton.mouseUp(with: event(.leftMouseUp, 2))
+    mouseUp(with: event(.leftMouseUp, 2))
+    try checkTitlebar(actions == ["select", "rename"], "A tab double-click selects and renames exactly once")
+    try checkTitlebar(probe.mouseUps == 0,
+      "Tab mouse-up events cannot reach the window's titlebar double-click handler")
+    try checkTitlebar(!selectButton.mouseDownCanMoveWindow && !closeButton.mouseDownCanMoveWindow,
+      "Tab action buttons opt out of automatic window movement")
+  }
+
   func checkAccessibility(expectedName: String, active: Bool) throws {
     try checkTitlebar(accessibilityLabel() == expectedName, "Tab group name is available before paint")
     let children = accessibilityChildren()?.compactMap { $0 as? NSButton } ?? []
@@ -103,6 +155,7 @@ private extension SwarmTabStrip {
       ["tabs": rows, "activeId": active, "enabled": enabled, "attention": 2]
     }
     update(state(rows, active: "swarm-11"))
+    try tabs[0].checkDoubleClickIsolation()
     let hover = NSEvent.mouseEvent(with: .mouseMoved, location: .zero, modifierFlags: [],
       timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, clickCount: 0, pressure: 0)!
     func click(_ count: Int, at point: NSPoint, time: TimeInterval) -> NSEvent {
@@ -206,10 +259,13 @@ private extension SwarmTabStrip {
     original.clickBothActions()
     try checkTitlebar(events == ["select", "close"], "Native selection and close dispatch once each")
 
+    let actionPixels = [createButton.renderedPixels(), openButton.renderedPixels()]
     events.removeAll()
     update(state([["id": "swarm-0", "name": "Renamed tab"]], active: "swarm-0", enabled: false))
     try original.checkEnabled(false)
     try checkTitlebar(!newButton.isEnabled && !notificationButton.isEnabled && !createButton.isEnabled && !openButton.isEnabled, "Titlebar actions disable with a modal")
+    try checkTitlebar(actionPixels == [createButton.renderedPixels(), openButton.renderedPixels()],
+      "New and Open Harness keep their rendered colors when a workspace modal opens")
     original.clickBothActions()
     newButton.performClick(nil)
     notificationButton.performClick(nil)

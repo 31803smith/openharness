@@ -1211,7 +1211,7 @@ class _AgentRowState extends State<_AgentRow> {
                 ),
                 const AppMenuDivider(),
                 AppMenuItem(
-                  icon: LucideIcons.circleStop300,
+                  icon: Icons.stopRounded,
                   label: 'Stop Harness',
                   danger: true,
                   onPressed: () {
