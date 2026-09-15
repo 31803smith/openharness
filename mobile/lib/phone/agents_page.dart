@@ -13,6 +13,7 @@ import 'agent_tile.dart';
 import 'delete_agent.dart';
 import 'link_page.dart';
 import 'phone_card.dart';
+import 'phone_fab.dart';
 import 'new_agent_page.dart';
 import 'phone_header.dart';
 import 'phone_navigation.dart';
@@ -46,8 +47,26 @@ class AgentsPage extends StatelessWidget {
     builder: (context, _) {
       AppTheme.watch(context);
       final machine = notifier.stateOf(machineId);
+      // Only once the machine is answering: creating needs it to list its folders and say which
+      // engines it has, and a button that opens a page with neither is a dead end.
+      final canCreate =
+          machine != null &&
+          phoneMachineStatusOf(machine) == PhoneMachineStatus.ready;
       return Scaffold(
         backgroundColor: AppPalette.windowBg,
+        // Down here rather than in the header beside `⋯`, matching the Agents tab: the same act
+        // reached from two screens should be in the same place on both, and a list's primary
+        // action belongs under the thumb rather than at the far top corner.
+        //
+        // ⚠️ This page's Scaffold is the last one, unlike the tab's — nothing sits below it, so the
+        // button clears the home indicator on `SafeArea`'s account rather than a tab bar's.
+        floatingActionButton: !canCreate
+            ? null
+            : PhoneFab(
+                icon: LucideIcons.plus300,
+                tooltip: 'New agent',
+                onPressed: () => openNewAgent(context, notifier, machineId),
+              ),
         body: SafeArea(
           bottom: false,
           child: Column(
@@ -58,19 +77,6 @@ class AgentsPage extends StatelessWidget {
                     ? null
                     : StatusPill(summary: phoneMachineSummary(machine)),
                 trailing: [
-                  // Only once the machine is answering: creating needs it to
-                  // list its folders and say which engines it has, and a button
-                  // that opens a page with neither is a dead end.
-                  if (machine != null &&
-                      phoneMachineStatusOf(machine) == PhoneMachineStatus.ready)
-                    AppIconButton(
-                      icon: LucideIcons.plus300,
-                      size: 20,
-                      tooltip: 'New agent',
-                      color: AppPalette.textSecondary,
-                      onPressed: () =>
-                          openNewAgent(context, notifier, machineId),
-                    ),
                   if (machine != null)
                     AppIconButton(
                       icon: LucideIcons.ellipsis300,

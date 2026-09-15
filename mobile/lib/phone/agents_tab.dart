@@ -4,12 +4,14 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:harness_mobile/shared/theme/app_theme.dart';
 import 'package:harness_mobile/shared/widgets/empty_state.dart';
 import 'package:harness_mobile/state/app_state.dart';
+
 import 'agent_index.dart';
 import 'agent_row.dart';
 import 'agents_page.dart';
 import 'account_button.dart';
 import 'machine_filter_bar.dart';
 import 'phone_card.dart';
+import 'phone_fab.dart';
 import 'phone_header.dart';
 import 'phone_sheet.dart';
 import 'phone_navigation.dart';
@@ -57,7 +59,8 @@ class _AgentsTabState extends State<AgentsTab> {
       // agent — the same gate the machine's own page puts on its `+`.
       final ready = [
         for (final machine in machines)
-          if (phoneMachineStatusOf(machine) == PhoneMachineStatus.ready) machine,
+          if (phoneMachineStatusOf(machine) == PhoneMachineStatus.ready)
+            machine,
       ];
       return Scaffold(
         backgroundColor: AppPalette.windowBg,
@@ -69,15 +72,10 @@ class _AgentsTabState extends State<AgentsTab> {
         // shell's (`phone_shell.dart`), whose own `bottomNavigationBar` sits below it.
         floatingActionButton: ready.isEmpty
             ? null
-            : FloatingActionButton(
-                onPressed: () => _pickMachine(context, ready),
-                backgroundColor: AppPalette.accent,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(AppCard.radius),
-                ),
+            : PhoneFab(
+                icon: LucideIcons.plus300,
                 tooltip: 'New agent',
-                child: const Icon(LucideIcons.plus300, size: 26),
+                onPressed: () => _pickMachine(context, ready),
               ),
         body: SafeArea(
           bottom: false,
@@ -234,21 +232,24 @@ class _Body extends StatelessWidget {
     );
   }
 
-  Widget _row(BuildContext context, List<AgentEntry> ordered, AgentEntry entry) =>
-      Padding(
-        padding: const EdgeInsets.only(bottom: kPhoneCardGap),
-        child: AgentRow(
-          entry: entry,
-          // The whole visible list goes with the tap, so the page opens as a pager over exactly the
-          // agents on screen — the filter chip included. Swiping there walks this order.
-          onTap: () => openAgentPager(context, notifier, ordered, entry),
-          // The same sheet a machine's own page opens, from [AgentsPage] rather than written again
-          // here: one agent reached two ways must not offer two different sets of actions, and the
-          // delete wording in particular is the one that has to match.
-          onLongPress: () =>
-              showAgentActions(context, notifier, entry.machineId, entry.agent),
-        ),
-      );
+  Widget _row(
+    BuildContext context,
+    List<AgentEntry> ordered,
+    AgentEntry entry,
+  ) => Padding(
+    padding: const EdgeInsets.only(bottom: kPhoneCardGap),
+    child: AgentRow(
+      entry: entry,
+      // The whole visible list goes with the tap, so the page opens as a pager over exactly the
+      // agents on screen — the filter chip included. Swiping there walks this order.
+      onTap: () => openAgentPager(context, notifier, ordered, entry),
+      // The same sheet a machine's own page opens, from [AgentsPage] rather than written again
+      // here: one agent reached two ways must not offer two different sets of actions, and the
+      // delete wording in particular is the one that has to match.
+      onLongPress: () =>
+          showAgentActions(context, notifier, entry.machineId, entry.agent),
+    ),
+  );
 }
 
 class _SectionLabel extends StatelessWidget {
