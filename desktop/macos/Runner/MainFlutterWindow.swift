@@ -44,6 +44,7 @@ class MainFlutterWindow: NSWindow {
 
     installAppMenuItems()
     installViewMenuItems()
+    installHelpMenuItems()
     takeOverAboutItem()
 
     super.awakeFromNib()
@@ -120,6 +121,24 @@ class MainFlutterWindow: NSWindow {
       at: at + 2
     )
 
+  }
+
+  /// Help ▸ Export Logs… — the bug-report zip, from a menu every build has.
+  /// Settings ▸ Debug carries the same action but is hidden in a shipped app,
+  /// and the person whose dial got stuck is running a shipped app.
+  private func installHelpMenuItems() {
+    guard let helpMenu = NSApp.mainMenu?.item(withTitle: "Help")?.submenu else { return }
+    guard helpMenu.indexOfItem(withTag: exportLogsMenuItemTag) == -1 else { return }
+    helpMenu.insertItem(
+      menuItem(
+        title: "Export Logs…",
+        action: #selector(exportLogs(_:)),
+        symbol: "doc.zipper",
+        tag: exportLogsMenuItemTag
+      ),
+      at: 0
+    )
+    helpMenu.insertItem(NSMenuItem.separator(), at: 1)
   }
 
   /// The Safari/Chrome/Terminal.app "Font" convention, in the SAME menu and the SAME order those
@@ -264,6 +283,7 @@ class MainFlutterWindow: NSWindow {
   private var biggerFontMenuItemTag: Int { 7305 }
   private var smallerFontMenuItemTag: Int { 7306 }
   private var layoutMenuItemTag: Int { 7307 }
+  private var exportLogsMenuItemTag: Int { 7308 }
 
   @objc private func checkForUpdates(_ sender: Any?) {
     menuChannel?.invokeMethod("checkForUpdates", arguments: nil)
@@ -271,6 +291,10 @@ class MainFlutterWindow: NSWindow {
 
   @objc private func flashFirmware(_ sender: Any?) {
     menuChannel?.invokeMethod("flashFirmware", arguments: nil)
+  }
+
+  @objc private func exportLogs(_ sender: Any?) {
+    menuChannel?.invokeMethod("exportLogs", arguments: nil)
   }
 
   @objc private func showLayout(_ sender: Any?) {
