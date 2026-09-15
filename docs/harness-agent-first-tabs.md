@@ -9,9 +9,12 @@ proposals in the progress log.
 
 **Cmd-T / New Tab** and the tab-bar plus open the Harness start page. Its solid
 background matches the selected tab. The centered title and search controls sit
-lower with generous empty space. The search field keeps the same responsive width
-whether results are closed or open, capped at 1120 logical pixels,
-with **Open Harness** and accented **+ New Harness** buttons underneath.
+lower with generous empty space. A single row, capped at 1120 logical pixels,
+contains a compact search field, **Open Harness**, and accented **+ New Harness**.
+Activating search expands the field into the buttons' space and hides the buttons;
+the overall row edges remain fixed. Results and preview appear side by side.
+Escape restores the compact field and both actions. At narrow widths or large text
+sizes, the actions use labeled icons so the search field remains usable.
 
 The field starts empty and focused so typing works immediately. Typing, clicking
 it or Open Harness, or pressing an arrow reveals the same input, results,
@@ -67,7 +70,7 @@ results and 90% black backdrop. Only the highlighted row shows **Open Harness**,
 Both Open and inline start-page search show the same session preview. The open
 surface can grow to 1120 logical pixels, placing the list and preview side by
 side. Narrow windows stack them with a compact preview heading. Both sections
-scroll independently; the start-page actions stay reachable. Hover selects a
+scroll independently; the expanded panel stays within view. Hover selects a
 preview without taking typing focus. Enter opens the highlighted result.
 Page Up/Down scrolls the preview while retaining the query, focus and selection.
 The bindings are configurable in the same Search keymap as result navigation.

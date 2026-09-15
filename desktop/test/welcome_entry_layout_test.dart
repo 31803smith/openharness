@@ -20,6 +20,12 @@ void main() {
     await (FontLoader(
       'MaterialIcons',
     )..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'))).load();
+    await (FontLoader('packages/lucide_icons_flutter/Lucide300')..addFont(
+          rootBundle.load(
+            'packages/lucide_icons_flutter/assets/build_font/LucideVariable-w300.ttf',
+          ),
+        ))
+        .load();
   });
   for (final (width, height, scale) in [
     (1280.0, 800.0, 1.0),
@@ -95,10 +101,11 @@ void main() {
         final fieldRect = tester.getRect(field);
         final createRect = tester.getRect(create);
         final openRect = tester.getRect(open);
-        expect(createRect.top, greaterThanOrEqualTo(fieldRect.bottom + 16));
-        expect(openRect.top, greaterThanOrEqualTo(fieldRect.bottom + 16));
-        expect(fieldRect.center.dx, closeTo(width / 2, 1));
-        expect(fieldRect.width, closeTo((width - 48).clamp(0, 640), 1));
+        expect(createRect.center.dy, closeTo(fieldRect.center.dy, 1));
+        expect(openRect.center.dy, closeTo(fieldRect.center.dy, 1));
+        expect(openRect.left, greaterThan(fieldRect.right));
+        expect(createRect.left, greaterThan(openRect.right));
+        expect((fieldRect.left + createRect.right) / 2, closeTo(width / 2, 1));
         expect(create.hitTestable(), findsOneWidget);
         expect(open.hitTestable(), findsOneWidget);
         expect(createRect.bottom, lessThanOrEqualTo(height));
@@ -132,6 +139,13 @@ void main() {
         expect(results, findsOneWidget);
         expect(tester.getRect(results).height, greaterThan(140));
         expect(tester.getRect(results).width, tester.getRect(field).width);
+        expect(tester.getRect(field).left, closeTo(fieldRect.left, 1));
+        expect(tester.getRect(field).right, closeTo(createRect.right, 1));
+        expect(create, findsNothing);
+        expect(open, findsNothing);
+        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+        await tester.pump();
+        expect(tester.getRect(field).width, closeTo(fieldRect.width, 1));
         await tester.ensureVisible(create);
         expect(create.hitTestable(), findsOneWidget);
         await tester.tap(create);

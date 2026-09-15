@@ -102,7 +102,12 @@ void main() {
       expect(_results, findsNothing);
       expect(_startInput, findsOneWidget);
       expect(find.byType(FloatingActionButton), findsNothing);
-      expect(tester.getSize(_startInput).width, lessThanOrEqualTo(640));
+      expect(
+        tester.getRect(_startInput).right,
+        lessThan(
+          tester.getRect(find.byKey(const ValueKey('harness-start-open'))).left,
+        ),
+      );
       expect(
         tester.widget<TextField>(_startInput).decoration!.hintText,
         isEmpty,
