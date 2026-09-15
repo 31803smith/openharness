@@ -361,6 +361,11 @@ class AppNotifier extends ChangeNotifier {
   // successful bootstrap (see `ensureCliDaemonReady`), cancelled on dispose. Cancelling only stops this
   // Dart-side loop; the daemon itself self-daemonizes and must keep running after the app quits.
   Timer? _daemonSupervisionTimer;
+  // Backend REST can fail while the daemon and its WebSocket remain ready. Recover that list
+  // independently, with capped backoff and the same in-flight request as a manual retry.
+  Timer? _machineRecoveryTimer;
+  int _machineRecoveryAttempts = 0;
+  String? _machineLoadError;
 
   /// The last [ensureCliDaemonReady] did not reach a ready daemon — the one
   /// error the supervisor's ready transition is allowed to retry away.
@@ -386,6 +391,8 @@ class AppNotifier extends ChangeNotifier {
       !_disposed && revision == _authRevision;
 
   int _invalidateAuthWork() {
+    _stopMachineRecovery();
+    _machineLoadError = null;
     _resetLoginBrowser();
     _loginAuthorized = false;
     _profileInFlight = null;
@@ -2123,8 +2130,7 @@ class AppNotifier extends ChangeNotifier {
       await refreshMachines();
     } catch (error) {
       if (!_authWorkCurrent(revision)) return;
-      _lastError = 'Could not load machines: ${describeApiError(error)}';
-      _lastErrorRetryable = true;
+      _reportMachineLoadError(error);
     }
     if (_authWorkCurrent(revision)) notifyListeners();
   }
@@ -2655,6 +2661,23 @@ class AppNotifier extends ChangeNotifier {
     }
     try {
       await _refreshMachines(revision);
+      if (_authWorkCurrent(revision)) {
+        _stopMachineRecovery();
+        if (_lastError != null && _lastError == _machineLoadError) {
+          _lastError = null;
+          notifyListeners();
+        }
+        _machineLoadError = null;
+      }
+    } catch (error) {
+      if (_authWorkCurrent(revision)) {
+        if (isTransientApiError(error)) {
+          _scheduleMachineRecovery(revision);
+        } else {
+          _stopMachineRecovery();
+        }
+      }
+      rethrow;
     } finally {
       // Said out loud: the list's own notify fires before this, so a flag
       // dropped silently here would leave the rail on its placeholders.
@@ -2663,6 +2686,49 @@ class AppNotifier extends ChangeNotifier {
         notifyListeners();
       }
     }
+  }
+
+  void _stopMachineRecovery() {
+    _machineRecoveryTimer?.cancel();
+    _machineRecoveryTimer = null;
+    _machineRecoveryAttempts = 0;
+  }
+
+  void _scheduleMachineRecovery(int revision) {
+    if (!_authWorkCurrent(revision) ||
+        status != AppStatus.authenticated ||
+        _machineRecoveryTimer != null) {
+      return;
+    }
+    const seconds = [2, 4, 8, 16, 30];
+    final delay = seconds[_machineRecoveryAttempts];
+    if (_machineRecoveryAttempts < seconds.length - 1) {
+      _machineRecoveryAttempts++;
+    }
+    _machineRecoveryTimer = Timer(Duration(seconds: delay), () {
+      _machineRecoveryTimer = null;
+      if (_authWorkCurrent(revision) && status == AppStatus.authenticated) {
+        unawaited(
+          _retryMachines(automatic: true).whenComplete(() {
+            // A timer can join a manual retry already in progress. Keep recovering if that run
+            // stopped at the daemon gate; success and non-transient errors reset the counter.
+            if (_machineRecoveryAttempts > 0) {
+              _scheduleMachineRecovery(revision);
+            }
+          }),
+        );
+      }
+    });
+  }
+
+  void _reportMachineLoadError(Object error, {bool automatic = false}) {
+    final message = 'Could not load machines: ${describeApiError(error)}';
+    // A recovery must not replace a later agent error or redisplay a dismissed strip.
+    if (!automatic || (_lastError != null && _lastError == _machineLoadError)) {
+      _lastError = message;
+      _lastErrorRetryable = true;
+    }
+    _machineLoadError = message;
   }
 
   Future<void> _refreshMachines(int revision) async {
@@ -2739,7 +2805,7 @@ class AppNotifier extends ChangeNotifier {
     api.machines,
     maxAttempts: 2,
     initialDelay: const Duration(milliseconds: 500),
-    isRetryable: (error) => error is DioException,
+    isRetryable: (error) => error is DioException && isTransientApiError(error),
   );
 
   void _startOfflineRetry(MachineState machine) {
@@ -3038,12 +3104,14 @@ class AppNotifier extends ChangeNotifier {
   /// the error strip's own retry.
   Future<void>? _retryInFlight;
 
-  Future<void> retryMachines() {
+  Future<void> retryMachines() => _retryMachines(automatic: false);
+
+  Future<void> _retryMachines({required bool automatic}) {
     if (_disposed) return Future<void>.value();
     final inFlight = _retryInFlight;
     if (inFlight != null) return inFlight;
     late final Future<void> run;
-    run = _performRetryMachines().whenComplete(() {
+    run = _performRetryMachines(automatic: automatic).whenComplete(() {
       if (identical(_retryInFlight, run)) {
         _retryInFlight = null;
         if (!_disposed) notifyListeners();
@@ -3054,7 +3122,7 @@ class AppNotifier extends ChangeNotifier {
     return run;
   }
 
-  Future<void> _performRetryMachines() async {
+  Future<void> _performRetryMachines({required bool automatic}) async {
     final revision = _authRevision;
     if (!_authWorkCurrent(revision)) return;
     // Re-verify the daemon first: a retry that skips straight to `refreshMachines()` can hit
@@ -3063,8 +3131,12 @@ class AppNotifier extends ChangeNotifier {
       await ensureCliDaemonReady();
     } catch (error) {
       if (!_authWorkCurrent(revision)) return;
-      _lastError = '$error';
-      _lastErrorRetryable = true;
+      if (automatic) {
+        _scheduleMachineRecovery(revision);
+      } else {
+        _lastError = '$error';
+        _lastErrorRetryable = true;
+      }
       notifyListeners();
       return;
     }
@@ -3075,11 +3147,10 @@ class AppNotifier extends ChangeNotifier {
     try {
       await refreshMachines();
       if (!_authWorkCurrent(revision)) return;
-      _lastError = null;
+      if (!automatic) _lastError = null;
     } catch (error) {
       if (!_authWorkCurrent(revision)) return;
-      _lastError = 'Could not load machines: ${describeApiError(error)}';
-      _lastErrorRetryable = true;
+      _reportMachineLoadError(error, automatic: automatic);
       notifyListeners();
       return;
     }
@@ -5743,6 +5814,7 @@ class AppNotifier extends ChangeNotifier {
     _localGitProjects.dispose();
     sessionPreviews.dispose();
     _disposed = true;
+    _stopMachineRecovery();
     if (signingIn) cliLogin.cancel();
     _closedHistory.clear();
     _daemonSupervisionTimer?.cancel();

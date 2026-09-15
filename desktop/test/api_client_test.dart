@@ -101,4 +101,36 @@ void main() {
       },
     );
   });
+
+  test('only transient connection and gateway errors qualify for recovery', () {
+    for (final status in [502, 503, 504]) {
+      expect(
+        isTransientApiError(ApiException('unavailable', status: status)),
+        isTrue,
+      );
+    }
+    for (final status in [400, 401, 403, 404]) {
+      expect(
+        isTransientApiError(ApiException('refused', status: status)),
+        isFalse,
+      );
+    }
+    final options = RequestOptions(path: '/api/machines');
+    expect(
+      isTransientApiError(
+        DioException(
+          requestOptions: options,
+          type: DioExceptionType.connectionTimeout,
+        ),
+      ),
+      isTrue,
+    );
+    expect(
+      isTransientApiError(
+        DioException(requestOptions: options, type: DioExceptionType.cancel),
+      ),
+      isFalse,
+    );
+    expect(isTransientApiError(StateError('invalid response')), isFalse);
+  });
 }

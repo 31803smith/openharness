@@ -93,6 +93,21 @@ bool isUnauthorizedError(Object error) =>
     error is DioException && error.response?.statusCode == 401 ||
     error is ApiException && error.status == 401;
 
+/// The local daemon can answer normally while its separate backend request fails.
+/// Those gateway errors need recovery just as a broken loopback connection does.
+bool isTransientApiError(Object error) {
+  if (error is ApiException) {
+    return const {502, 503, 504}.contains(error.status);
+  }
+  return error is DioException &&
+      const {
+        DioExceptionType.connectionError,
+        DioExceptionType.connectionTimeout,
+        DioExceptionType.sendTimeout,
+        DioExceptionType.receiveTimeout,
+      }.contains(error.type);
+}
+
 /// The sentence a failed local-CLI call earns on an error strip. A raw
 /// `DioException` is a paragraph about `RequestOptions.receiveTimeout` — true,
 /// and useless to the person reading it: what they need is which leg failed.

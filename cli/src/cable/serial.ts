@@ -4,12 +4,19 @@
 // dependencies; a serial library would be its first native module and would drag node-gyp, prebuilds and
 // a per-platform release matrix into a distribution that is currently a download. A tty is a file, `stty`
 // puts it in raw mode, and that is the whole of what this needs.
-import { exec } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { constants, existsSync, readFileSync, readdirSync } from 'node:fs'
 import { open, type FileHandle } from 'node:fs/promises'
 import { promisify } from 'node:util'
 
-const execFile = promisify(exec)
+const runFile = promisify(execFile)
+
+const waitForPort = () => new Promise<void>((resolve) => setTimeout(resolve, 5))
+
+function wouldBlock(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException).code
+  return code === 'EAGAIN' || code === 'EWOULDBLOCK' || code === 'EINTR'
+}
 
 /** The SoC's own USB peripheral. The dial exposes this and nothing else — measured, see findDialPort. */
 export const DIAL_VENDOR_ID = 0x303a
@@ -48,7 +55,7 @@ function depthOf(line: string): number {
 async function findDarwin(): Promise<DialPort | null> {
   let dump: string
   try {
-    const { stdout } = await execFile('ioreg -p IOService -w0 -l', { maxBuffer: 64 * 1024 * 1024 })
+    const { stdout } = await runFile('ioreg', ['-p', 'IOService', '-w0', '-l'], { maxBuffer: 64 * 1024 * 1024 })
     dump = stdout
   } catch {
     return null
@@ -123,6 +130,7 @@ export class SerialLink {
   ) {}
 
   private closed = false
+  private closePromise: Promise<void> | null = null
 
   static async open(
     path: string,
@@ -137,7 +145,7 @@ export class SerialLink {
     // carrier — which is what unplugging a USB serial device looks like — does not hang the port up
     // underneath us.
     const flag = process.platform === 'darwin' ? '-f' : '-F'
-    await execFile(`stty ${flag} ${JSON.stringify(path)} raw clocal -echo -echoe -echok -echoctl -echoke`)
+    await runFile('stty', [flag, path, 'raw', 'clocal', '-echo', '-echoe', '-echok', '-echoctl', '-echoke', 'min', '1', 'time', '0'])
 
     // O_NOCTTY IS LOAD-BEARING, AND ITS ABSENCE KILLED THE DAEMON.
     //
@@ -149,7 +157,12 @@ export class SerialLink {
     //
     // Measured 2026-08-24: the daemon died at the exact second the cable came out, every time, and the
     // dial then greeted an empty room until it timed out and showed no agents.
-    const handle = await open(path, constants.O_RDWR | constants.O_NOCTTY)
+    // An async FileHandle read still occupies a libuv worker until the syscall returns. With a
+    // blocking tty, close() waits for that read forever when the dial is silent. Reopening strands
+    // another worker each time; after four opens even DNS lookup and unrelated file I/O stop.
+    // O_NONBLOCK makes idle reads/writes return EAGAIN so they can yield without holding a worker,
+    // and lets close finish without needing the device to send another byte.
+    const handle = await open(path, constants.O_RDWR | constants.O_NOCTTY | constants.O_NONBLOCK)
     const link = new SerialLink(path, handle, onData, onClosed)
     void link.readLoop()
     return link
@@ -160,6 +173,7 @@ export class SerialLink {
     while (!this.closed) {
       try {
         const { bytesRead } = await this.handle.read(buf, 0, buf.length, null)
+        if (this.closed) return
         if (bytesRead > 0) this.onData(Buffer.from(buf.subarray(0, bytesRead)))
         // A zero-byte read on a tty means EOF, which for a USB CDC device means it went away.
         else if (bytesRead === 0) return this.fail('end of stream')
@@ -167,8 +181,8 @@ export class SerialLink {
         const code = (err as NodeJS.ErrnoException).code
         if (this.closed) return
         // EAGAIN is a port with nothing to say, not a broken one.
-        if (code === 'EAGAIN') {
-          await new Promise((r) => setTimeout(r, 5))
+        if (wouldBlock(err)) {
+          await waitForPort()
           continue
         }
         return this.fail(code ?? String(err))
@@ -177,10 +191,7 @@ export class SerialLink {
   }
 
   private fail(why: string): void {
-    if (this.closed) return
-    this.closed = true
-    void this.handle.close().catch(() => {})
-    this.onClosed(why)
+    void this.close(why)
   }
 
   /**
@@ -211,9 +222,15 @@ export class SerialLink {
     if (this.closed) throw new Error('port closed')
     let off = 0
     while (off < bytes.length) {
-      const { bytesWritten } = await this.handle.write(bytes, off, bytes.length - off)
-      if (bytesWritten <= 0) throw new Error('short write')
-      off += bytesWritten
+      if (this.closed) throw new Error('port closed')
+      try {
+        const { bytesWritten } = await this.handle.write(bytes, off, bytes.length - off)
+        if (bytesWritten <= 0) throw new Error('short write')
+        off += bytesWritten
+      } catch (err) {
+        if (this.closed || !wouldBlock(err)) throw err
+        await waitForPort()
+      }
     }
   }
 
@@ -221,10 +238,10 @@ export class SerialLink {
     return !this.closed
   }
 
-  async close(why = 'closed'): Promise<void> {
-    if (this.closed) return
+  close(why = 'closed'): Promise<void> {
+    if (this.closePromise) return this.closePromise
     this.closed = true
-    await this.handle.close().catch(() => {})
-    this.onClosed(why)
+    this.closePromise = this.handle.close().catch(() => {}).then(() => this.onClosed(why))
+    return this.closePromise
   }
 }
