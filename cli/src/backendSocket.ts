@@ -284,6 +284,7 @@ async function enrichSubagentStats(events: SessionEvent[], transcriptPath: strin
 export class BackendSocket {
   private ws: WebSocket | null = null
   private connecting = false
+  /** A 401 on the upgrade is being answered with a token refresh; that refresh owns the next connect. */
   private retryingAuth = false
   private readonly auth: AuthSessionManager
   /** Constructor-without-auth is retained for isolated unit tests only. */
@@ -627,6 +628,9 @@ export class BackendSocket {
       this.replayCommanderOnNextSnapshot = true
       this.onStatus(false)
       if (this.closed) return
+      // A 401 refresh owns the next connect (see the error handler below): no competing backoff timer,
+      // or two sockets would race for the one machine claim.
+      if (this.retryingAuth) { console.log(`[backend] disconnected (${why}) — refreshing the token before reconnecting`); return }
       const delay = Math.min(MAX_DELAY_MS, BASE_DELAY_MS * 2 ** Math.min(this.attempts++, 5))
       console.log(`[backend] disconnected (${why}) — retrying in ${Math.round(delay / 1000)}s (attempt ${this.attempts})`)
       setTimeout(() => this.connect(), delay)
@@ -636,14 +640,36 @@ export class BackendSocket {
       const e = err as Error & { code?: string }
       const msg = e.message || e.code || String(err)
       console.error('[backend] socket error:', msg)
-      // 401/403 on the upgrade = this machine is gone/invalid (deleted while we were offline, or a bad
-      // token). Retrying cannot help → stop for good and let CLI clear the saved SSO session.
+      // 401 on the upgrade = the access token was refused. Refresh it and come back; the socket is
+      // torn down the ordinary way below (`ws.close()` → onGone: timers, status, streams), which is
+      // what the previous shape skipped — it nulled `this.ws` first, so onGone returned at its first
+      // line, status kept saying connected, and a refresh that failed for ANY reason (a network blip
+      // included) wiped the SSO session. Only a refresh token the backend itself rejects means the
+      // session is over; everything else is a transient and re-enters the backoff.
       if (/Unexpected server response: 401\b/.test(msg) && !this.retryingAuth) {
         this.retryingAuth = true
-        this.ws = null
         void this.auth.accessToken({ force: true, failedToken: token })
-          .then(() => { this.retryingAuth = false; this.connect() })
-          .catch(() => { this.retryingAuth = false; this.closed = true; this.onRevoked?.() })
+          .then(() => {
+            this.retryingAuth = false
+            // onGone has normally run by now (the close lands long before a network round trip
+            // returns); if this socket is somehow still ours, let go of it before dialing again.
+            if (this.ws === ws) { this.ws = null; try { ws.terminate() } catch { /* ignore */ } }
+            this.connect()
+          })
+          .catch((error: unknown) => {
+            this.retryingAuth = false
+            // No session to refresh, or a refresh token the backend rejects: the session is over.
+            if (error instanceof AuthSessionError && (error.code === 'INVALID_REFRESH' || error.code === 'MISSING')) {
+              this.closed = true
+              this.onRevoked?.()
+              return
+            }
+            if (this.closed) return
+            if (this.ws === ws) { this.ws = null; try { ws.terminate() } catch { /* ignore */ } }
+            const delay = Math.min(MAX_DELAY_MS, BASE_DELAY_MS * 2 ** Math.min(this.attempts++, 5))
+            console.log(`[backend] token refresh failed (${error instanceof Error ? error.message : String(error)}) — retrying in ${Math.round(delay / 1000)}s (attempt ${this.attempts})`)
+            setTimeout(() => this.connect(), delay)
+          })
       } else if (/Unexpected server response: 40[13]\b/.test(msg)) {
         this.closed = true
         this.onRevoked?.()

@@ -155,11 +155,31 @@ export function confirm(dir: string): void {
 export interface Poller { stop(): void }
 
 /**
+ * Milliseconds from `nowMs` to the next tick. With a slot, ticks land on the wall-clock instant
+ * `slotSecond` seconds past each `intervalMs` boundary (`:45` of every minute for the defaults) —
+ * strictly in the future, so a call made exactly on the slot waits a whole interval rather than
+ * firing twice. Without a usable slot (negative, or an interval that does not divide a minute) it is
+ * the plain interval.
+ */
+export function msUntilSlot(nowMs: number, slotSecond: number | undefined, intervalMs: number): number {
+  if (slotSecond === undefined || slotSecond < 0 || intervalMs <= 0 || 60_000 % intervalMs !== 0) return intervalMs
+  const slotMs = (slotSecond * 1000) % intervalMs
+  const phase = ((nowMs % intervalMs) + intervalMs) % intervalMs
+  const wait = slotMs - phase
+  return wait > 0 ? wait : wait + intervalMs
+}
+
+/**
  * Poll on an interval; on the first build {@link shouldAutoUpdate} allows that also verifies and
  * passes its canary, STAGE it and call `onStaged(version)` exactly once, then stop polling (the
  * caller restarts immediately). Every failure
  * (fetch/parse/sha/canary/disk) is swallowed and simply retried next tick — the daemon never crashes
  * on a bad update.
+ *
+ * Ticks are SCHEDULED, not immediate: the first one lands on the next slot (see {@link msUntilSlot}),
+ * and each tick books the next from the clock rather than from its own end, so a slow download does
+ * not drift the slot. `harness start` already staged the newest build before spawning this daemon,
+ * which is why nothing is lost by not checking at start.
  */
 export function startSelfUpdater(opts: {
   currentVersion: string
@@ -167,6 +187,10 @@ export function startSelfUpdater(opts: {
   key: string
   dir: string
   intervalMs: number
+  /** Wall-clock second the ticks land on; omit or negative for a plain interval. */
+  slotSecond?: number
+  /** The clock (tests). */
+  now?: () => number
   /** Awaited: the section from the byte swap through whatever `onStaged` does (the daemon's restart
    *  handoff) is ONE critical section, and the lock `withLock` takes must outlive all of it. */
   onStaged: (version: string) => void | Promise<void>
@@ -183,10 +207,23 @@ export function startSelfUpdater(opts: {
   // swap again, not the whole download.
   let verified: { version: string; cliBuf: Buffer; notifyBuf: Buffer } | null = null
 
-  const stop = (): void => { if (timer) { clearInterval(timer); timer = null } }
+  const now = opts.now ?? Date.now
+  const stop = (): void => { if (timer) { clearTimeout(timer); timer = null } }
+  const schedule = (): void => {
+    if (done) return
+    stop()
+    timer = setTimeout(() => void tick(), msUntilSlot(now(), opts.slotSecond, opts.intervalMs))
+    timer.unref?.()
+  }
 
   const tick = async (): Promise<void> => {
-    if (checking || done) return
+    if (done) return
+    // Booked before the work, from the clock: the next tick is on the next slot whatever this one
+    // costs; a tick that stages calls `stop()` below and cancels it. Booked even when this slot is
+    // skipped because the previous check is still running (a download on a slow link can outlast a
+    // minute) — otherwise the chain would end there and the daemon would never look again.
+    schedule()
+    if (checking) return
     checking = true
     try {
       const entry = await fetchManifest(opts.url, opts.key)
@@ -221,7 +258,6 @@ export function startSelfUpdater(opts: {
     }
   }
 
-  timer = setInterval(() => void tick(), opts.intervalMs)
-  void tick() // also check immediately on start
+  schedule()
   return { stop }
 }

@@ -2223,6 +2223,7 @@ class AppNotifier extends ChangeNotifier {
   /// a not-ready daemon is what lets a boot that landed mid-update recover without a click.
   void _startDaemonSupervision(LocalCliDiscovery discovery) {
     _daemonSupervisionTimer ??= discovery.startSupervising(
+      spawnAllowedAt: inSpawnSlot,
       stillSignedIn: () async => (await cliLogin.checkStatus()).loggedIn,
       onSignedOut: () => _signedOutAtRuntime(_signedOutMessage),
       onSnapshot: _updateLocalProjectSnapshot,

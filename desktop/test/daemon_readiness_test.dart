@@ -37,6 +37,7 @@ class _ScriptedDiscovery extends LocalCliDiscovery {
     Duration initialBackoff = const Duration(seconds: 2),
     Duration maxBackoff = const Duration(seconds: 30),
     int spawnAfter = 2,
+    bool Function(DateTime now)? spawnAllowedAt,
     Future<bool> Function()? stillSignedIn,
     void Function()? onSignedOut,
     void Function(LocalCliEndpoint endpoint)? onReady,

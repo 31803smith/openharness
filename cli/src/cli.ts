@@ -803,6 +803,19 @@ async function startCommand(foreground: boolean, repair: boolean = false): Promi
   // cli.js/.prev, and two writers there can leave `.prev` holding the NEW bytes — which is what a
   // later rollback would then "restore". The lock is re-entrant, so `launch` below just joins it.
   if (!foreground) {
+    // A daemon that is already up is left ALONE — bundle included. Staging is for the daemon this
+    // command is about to spawn; a live one updates itself (and hands off under the spawn lock). The
+    // desktop app re-runs `harness start` whenever its 400ms probe misreads a busy daemon as down, and
+    // staging on each of those swapped cli.js/notify.mjs under the running process and dropped its
+    // `.prev` — so the daemon's own updater later wrote `.prev` from the NEW bytes, and a rollback
+    // "restored" the very build that had just failed. `spawnDaemon` repeats this check under the
+    // lock, for the daemon that comes up while we are waiting our turn.
+    const running = readPid()
+    if (running && isAlive(running)) {
+      console.log(`machine already running (pid ${running}) — it auto-reconnects.`)
+      console.log('  check: harness status   ·   stop: harness stop   ·   update now: harness update')
+      process.exit(0)
+    }
     await withSpawnLock('start', async () => {
       const [v] = await Promise.all([
         stageLatestBundle((m) => console.log(m)),
@@ -4130,6 +4143,7 @@ async function runForeground(session: AuthSession): Promise<void> {
       key: env.ADAPTER_UPDATE_KEY,
       dir: env.ADAPTER_CLI_DIR,
       intervalMs: env.ADAPTER_UPDATE_CHECK_MS,
+      slotSecond: env.ADAPTER_UPDATE_SLOT_SEC,
       // The lock spans the byte swap AND the handoff it triggers, as one critical section: a
       // `harness start` that lands between the two would otherwise stage over our .prev, and one
       // that lands during the handoff would spawn a second daemon.
@@ -4144,7 +4158,9 @@ async function runForeground(session: AuthSession): Promise<void> {
         handoffChild = null
       }),
     })
-    console.log(`[update] self-update on · v${VERSION} · every ${Math.round(env.ADAPTER_UPDATE_CHECK_MS / 1000)}s`)
+    const slotted = env.ADAPTER_UPDATE_SLOT_SEC >= 0 && 60_000 % env.ADAPTER_UPDATE_CHECK_MS === 0
+    console.log(`[update] self-update on · v${VERSION} · every ${Math.round(env.ADAPTER_UPDATE_CHECK_MS / 1000)}s`
+      + (slotted ? ` at :${String(env.ADAPTER_UPDATE_SLOT_SEC % 60).padStart(2, '0')}` : ''))
   } else if (!env.ADAPTER_UPDATE_DISABLE) {
     console.log(`[update] self-update off · running a dev/repo build (v${VERSION}), not the installed copy`)
   }

@@ -82,10 +82,15 @@ It's one file, not a rotation — 10 MB is the total on disk. A log left under a
 (`machine.log`, or the older `adapter.log`) is adopted by rename on the first start, so existing history
 carries over.
 
-The daemon **auto-updates itself** — it polls the release manifest (default every 60 s) and, on a newer
-build, downloads + verifies + swaps its own bundle and restarts when idle (with rollback on a bad
-build). See [`RELEASE.md`](RELEASE.md) for publishing and the update internals. Disable with
-`ADAPTER_UPDATE_DISABLE=true`.
+The daemon **auto-updates itself** — it polls the release manifest once a minute, at second :45 of
+each minute (`ADAPTER_UPDATE_SLOT_SEC`), and, on a newer build, downloads + verifies + swaps its own
+bundle and restarts at once (with rollback on a bad build). The slot is deliberate: the desktop app
+spawns `harness start` only around :15, so an update handoff and a spawn never contend for the daemon's
+spawn lock. `harness start` itself stages the newest build only for a daemon it is about to spawn —
+with one already running it says so and touches nothing, leaving the update to that daemon. A `401`
+on the backend link refreshes the SSO token and reconnects; only a refresh token the backend rejects
+signs the computer out. See [`RELEASE.md`](RELEASE.md) for publishing and the update internals.
+Disable with `ADAPTER_UPDATE_DISABLE=true`.
 
 Custom Herdr-capable builds must keep self-update disabled or use a fork-owned signed
 `ADAPTER_UPDATE_URL` until that build is available in the configured upstream manifest. Otherwise the
@@ -247,7 +252,8 @@ reported as such, not described as exercised.
 | `TMUX_REAP_INTERVAL_MS` | `5000` | process discovery interval (removal requires two confirmed misses) |
 | `ADAPTER_UPDATE_URL` | `…/adapter/metadata.json` | GCS release manifest the daemon polls for a newer build |
 | `ADAPTER_UPDATE_KEY` | `cli` | manifest key for this CLI |
-| `ADAPTER_UPDATE_CHECK_MS` | `60000` | how often (ms) to poll for a newer build (check also runs on start) |
+| `ADAPTER_UPDATE_CHECK_MS` | `60000` | how often (ms) to poll for a newer build (no check on start — `harness start` already staged the newest) |
+| `ADAPTER_UPDATE_SLOT_SEC` | `45` | the wall-clock second each poll lands on; keeps clear of the desktop's `harness start` slot at :15. Negative = plain interval |
 | `ADAPTER_UPDATE_DISABLE` | `false` | set `true` to turn self-update off |
 | `ADAPTER_CLI_DIR` | `~/.harness/cli` | install dir holding the `cli.js`/`notify.mjs` the updater swaps |
 | `LOG_FRAMES` | `false` | one log line per backend frame — type, audience and opaque ids, never a payload body. Every content-bearing frame is encrypted before it reaches the socket, so this is the only way to see what the daemon actually sent |

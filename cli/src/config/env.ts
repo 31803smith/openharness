@@ -373,6 +373,11 @@ const envSchema = z.object({
   // How often the daemon checks for a newer build (ms). The poll is a tiny no-cache metadata fetch;
   // the artifact is downloaded only when the manifest version is strictly newer.
   ADAPTER_UPDATE_CHECK_MS: z.string().default('60000').transform(Number),
+  // The wall-clock second each check lands on, when the interval divides a minute. The desktop app
+  // spawns `harness start` only around :15 (see desktop/lib/ws/local_cli_discovery.dart `inSpawnSlot`);
+  // keeping the update handoff 30s away from that is what stops the two from fighting over the spawn
+  // lock. Set to a negative number to keep the plain interval.
+  ADAPTER_UPDATE_SLOT_SEC: z.string().default('45').transform(Number),
   // Set 'true' to disable self-update entirely.
   ADAPTER_UPDATE_DISABLE: z.string().default('false').transform((v) => v === 'true'),
   // Install dir holding the packaged cli.js + notify.mjs that the self-updater swaps in place.
