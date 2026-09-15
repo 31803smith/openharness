@@ -6,8 +6,10 @@ and remaining coverage limits.
 
 The start page uses a long field capped at 1120 logical pixels, with **Find a
 harness** as its hint. Open Harness and New Harness sit underneath, aligned left,
-and the device card shares that left edge over the restored mesh wallpaper.
-The field keeps its width when search opens; results and preview appear side by
+and the device card shares that left edge over the restored lake wallpaper.
+The card stays 32 pixels above the window bottom with the caption **Meet the
+Harness device**. Search uses the remaining space above it. The field keeps its
+position and width when search opens; results and preview appear side by
 side from 700 pixels wide. The actions hide while searching. The pill buttons
 retain their compact 48-pixel height, with reduced input padding. Cmd-O retains
 its existing size. Escape restores the actions and retains the query.
