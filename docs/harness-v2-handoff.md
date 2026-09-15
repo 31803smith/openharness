@@ -64,8 +64,11 @@ Saved and pushed to `origin/main`: **9d0150d** (remote project preparation),
 validation cleanup). The 339-test pass was followed by six passing focused
 checks after the analyzer cleanup; changed Dart files now analyze without issues.
 
-The release build of **fb29d7d** succeeded and passed deep/strict codesign
-verification at
+The release build of **fb29d7d** succeeded. Its incremental build left a stale
+outer app seal after rebuilding App.framework; the framework verified separately,
+and refreshing the existing ad-hoc outer signature resolved it. Deep/strict
+codesign verification passed for the prepared app and its separate staged copy.
+Prepared app:
 `/private/tmp/harness-pane-controls-release/Build/Products/Release/Harness.app`.
 This includes the concurrently pushed busy-Codex input and dial navigation work
 (d9bd13c) and firmware version note (5c3a7fa), preserved by rebasing the final
@@ -83,9 +86,12 @@ Build log: `/private/tmp/harness-agent-rebased-release.log`; test logs:
 **d22b338**. CUA returned `cgWindowNotFound` for its window and Finder actions,
 although its app list and an exact process check show Harness running. No
 process was killed or bundle replaced while running. The user was asked to bring
-the window onto the current screen, or leave the running preview as is. Once
-visible, use **Quit and Keep Windows**, verify the exact process stopped, back
-up the live bundle, stage/codesign the new one, and swap it before relaunching.
+the window onto the current screen. They confirmed it was visible, but a fresh
+CUA connection still failed with the same error. They were then asked to choose
+**Quit and Keep Windows** themselves. The signed build is staged separately;
+`/private/tmp/harness-agent-preview-install.json` records its exact location.
+Once the user confirms quitting, verify the exact process stopped, back up the
+live bundle, and swap the verified staged copy before relaunching.
 Do not launch the derived-data copy alongside the supported one.
 
 CUA-sent Command-N remains inconclusive from the earlier live preview, although
@@ -96,20 +102,20 @@ Use [the detailed entry/pane contract](harness-agent-first-tabs.md) when editing
 or validating UI. The decisions that previously conflicted with older handoffs
 are:
 
-- **Add Harness unifies search and creation.** A single titlebar button and
-  File → Add Harness… open results and preview immediately, with the search
+- **Add Agent unifies search and creation.** A single titlebar button and
+  File → Add Agent… open results and preview immediately, with the search
   field focused and Open/New actions below. This supersedes compact-first modal
   entry; the New Tab page stays compact until activated. New preserves split
   placement. The bell stays beside the traffic lights.
-- **Cmd-T: New Tab; Cmd-N: Add Harness; Shift-Cmd-N: direct New Harness; Cmd-S: Layout.**
+- **Cmd-T: New Tab; Cmd-N: Add Agent; Shift-Cmd-N: direct New Agent; Cmd-S: Layout.**
   Cmd-O is unbound by default.
   Cmd-H/J/K/L and Cmd-arrows focus panes; Cmd-1…9 select tabs. User bindings take
   precedence. Cmd-R splits right and Cmd-D splits down. Native menus, help and actual
   dispatch must agree; native menu and titlebar hover hints are removed.
 - New Tab uses the **restored lake-at-dusk wallpaper**, a long search field capped
-  at 1120 logical pixels, and no large Harness heading. The hint is **Find a
-  harness**. Search starts blank and focused, with results hidden. Open Harness
-  and New Harness sit underneath, aligned with the search field's left edge.
+  at 1120 logical pixels, and no large Harness heading. The hint is **Find an
+  agent**. Search starts blank and focused, with results hidden. Open Agent
+  and New Agent sit underneath, aligned with the search field's left edge.
   Search has a **64-pixel minimum height** with more vertical padding; the
   action buttons remain 48 pixels high. The Cmd-N chooser shares the taller field.
   Activating search preserves the field position and width; results and preview
@@ -117,8 +123,8 @@ are:
   wrap when needed. Escape restores the actions and query.
   Typing, clicking, or pressing an arrow
   reveals the same results, selection, arrows and Enter behavior as the Cmd-N chooser.
-  Focus alone leaves results hidden and builds no catalog. Open Harness and
-  accented **+ New Harness** share a row below search; a small official device
+  Focus alone leaves results hidden and builds no catalog. Open Agent and
+  accented **+ New Agent** share a row below search; a small official device
   image and **Meet the Harness device** caption stay in a footer 32 pixels above
   the bottom, aligned to the same left edge and linking to autonomous.ai/harness-device.
   Search uses the remaining space above the footer, which stays still when results
@@ -128,7 +134,7 @@ are:
   `2.webp` device photo is cropped and centered in its viewport, with a hand cursor.
 - Search is single-choice. Session names appear above **project · branch ·
   machine**, without repeated workspace titles. Only the highlighted row shows
-  **Open Harness / Open N Harnesses**, or the explicit split action. The modal
+  **Open Agent / Open N Agents**, or the explicit split action. The modal
   has a 90% black backdrop. Its Open/New buttons remain beneath results;
   there is no Commands footer or “or” divider.
   Commands remain available through Shift-Cmd-P or typing **>**.
@@ -145,7 +151,7 @@ are:
   both actions participate in the configurable Search keymap.
 - The Harness application menu includes **Check for Updates…**, using the
   existing manual update-check dialog, directly above Flash Firmware.
-- Creation uses **New Harness** for its title and CTA, with no ordinary Cancel.
+- Creation uses **New Agent** for its title and CTA, with no ordinary Cancel.
   Escape or one outside click dismisses it directly. A pending launch cannot be
   dismissed accidentally; an uncertain outcome retains Close and Check status.
   The form does not restore search underneath it. Machine and Agent show up to
@@ -153,7 +159,9 @@ are:
   third slot and remains available while switching between the first two.
   Selected choices use an accent tint and check, distinct from the focus outline.
   Machine names retain local/remote and offline/link details. Clicking the current
-  machine preserves the working folder; large text wraps the buttons.
+  machine preserves the working folder. The form is 760 logical pixels wide;
+  machines stay on one row, moving excess choices into **…** when needed.
+  Working folder offers New / Local / Remote as described above.
 - A single-agent tab/search/history entry uses that agent's engine icon;
   multiple agents use four outlined tiles. An empty tab uses a plain plus, and
   tab close marks appear only on hover/focus. Only one unused New Tab page
@@ -167,7 +175,7 @@ are:
   **Open Machines Manager**, with visible Rename actions.
 - Pane headers show agent icon/session on the left and folder/branch/machine
   on the right, with a small muted branch glyph before the branch. Header hover
-  or keyboard focus reveals **Zoom Pane, Restart Harness, Stop Harness, Close Pane**, with
+  or keyboard focus reveals **Zoom Pane, Restart Agent, Stop Agent, Close Pane**, with
   Keyboard first for remote sessions. Stop uses a plain filled square and a clear
   confirmation; the existing action ends the process and removes its active
   entry, preserving project files and saved conversation history. Divider grips appear on
