@@ -32,6 +32,7 @@ import { readAccountUsage, type AccountUsageReading } from './lib/accountUsage.j
 import { probeEngines } from './lib/engineProbe.js'
 import { AgentCreationReceipts, AgentCreationReceiptError, creationFingerprint, validCreationId, type AgentCreationStatus } from './lib/agentCreationReceipt.js'
 import { engineInstallRecipe } from './lib/engineInstall.js'
+import { parseProjectFolder, prepareProjectFolder, ProjectFolderError } from './lib/projectFolder.js'
 import { agentFrame, type AgentFrame } from './lib/agentFrame.js'
 import { routeVoiceTask } from './lib/voiceRouter.js'
 import { tailFile } from './lib/sessions.js'
@@ -1556,11 +1557,19 @@ export class BackendSocket {
           const engine = payload.engine as AgentEngine | undefined
           const cwd = payload.cwd
           if (typeof engine !== 'string' || !ENGINES.includes(engine)) { reply(type, requestId, { error: 'INVALID_ENGINE' }); return }
-          if (typeof cwd !== 'string' || !isAbsolute(cwd)) { reply(type, requestId, { error: 'INVALID_CWD' }); return }
+          let projectFolder
+          try { projectFolder = parseProjectFolder(payload) }
+          catch (error) {
+            reply(type, requestId, { error: error instanceof ProjectFolderError ? error.code : 'INVALID_PROJECT_SOURCE' }); return
+          }
+          if (!projectFolder && (typeof cwd !== 'string' || !isAbsolute(cwd))) { reply(type, requestId, { error: 'INVALID_CWD' }); return }
           if (!this.onCreateAgent) { reply(type, requestId, { error: 'UNSUPPORTED_ON_REMOTE' }); return }
           const creationId = payload.creationId
           if (creationId !== undefined && !validCreationId(creationId)) {
             reply(type, requestId, { error: 'INVALID_CREATION_ID' }); return
+          }
+          if (projectFolder && (!validCreationId(creationId) || cwd !== undefined)) {
+            reply(type, requestId, { error: 'INVALID_PROJECT_SOURCE' }); return
           }
           // Absent is the ordinary case and stays indistinguishable from a client that predates grids;
           // present-but-malformed is refused here rather than half-applied at launch, because an agent
@@ -1581,7 +1590,7 @@ export class BackendSocket {
           }
           const input = {
             engine,
-            cwd,
+            cwd: typeof cwd === 'string' ? cwd : '',
             bypassPermission: payload.bypassPermission === true,
             grid: grid.state === 'ok' ? grid.override : null,
             codexHome,
@@ -1592,13 +1601,21 @@ export class BackendSocket {
             // on this connection, just as engines_probe is detached above.
             const create = this.onCreateAgent
             try {
-              void this.agentCreations.run(creationId, creationFingerprint(input), async () => {
-                const result = await create(input)
+              void this.agentCreations.run(creationId, creationFingerprint(projectFolder ? { ...input, projectFolder } : input), async () => {
+                let preparedFolder: string | undefined
+                if (projectFolder) {
+                  try { preparedFolder = await prepareProjectFolder(projectFolder) }
+                  catch (error) {
+                    return { state: 'failed', error: error instanceof ProjectFolderError ? error.code : 'PROJECT_PREPARATION_FAILED',
+                      detail: error instanceof ProjectFolderError ? error.message : 'Could not prepare the project folder.' }
+                  }
+                }
+                const result = await create(preparedFolder ? { ...input, cwd: preparedFolder } : input)
                 if (result.ok) return { state: 'created', agentId: result.session.agentId }
                 // tmux may have executed before a timeout; registration cleanup is best-effort.
                 // Neither can prove that no process started, so never encourage another launch.
                 if (result.error === 'SPAWN_FAILED' || result.error === 'REGISTRATION_FAILED') return { state: 'unconfirmed' }
-                return { state: 'failed', error: result.error, ...(result.detail ? { detail: result.detail.slice(0, 2000) } : {}) }
+                return { state: 'failed', error: result.error, ...(preparedFolder ? { preparedFolder } : {}), ...(result.detail ? { detail: result.detail.slice(0, 2000) } : {}) }
               }).then(async (status) => {
                 reply(type, requestId, { creationId, ...await this.creationStatusPayload(status) })
               }).catch(() => reply(type, requestId, { error: 'INTERNAL' }))
@@ -1828,7 +1845,7 @@ export class BackendSocket {
     // A recorded refusal is a completed outcome. Keep it separate from transport/dispatch errors
     // so clients can distinguish "safe to correct the choices" from "outcome still unknown".
     if (status.state === 'failed') {
-      return { state: 'failed', failure: { code: status.error, ...(status.detail ? { detail: status.detail } : {}) } }
+      return { state: 'failed', ...(status.preparedFolder ? { preparedFolder: status.preparedFolder } : {}), failure: { code: status.error, ...(status.detail ? { detail: status.detail } : {}) } }
     }
     return status
   }
