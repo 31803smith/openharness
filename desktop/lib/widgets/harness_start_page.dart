@@ -127,7 +127,7 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
         elevation: _showResults ? 12 : 0,
         shadowColor: Colors.black54,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(_showResults ? 12 : 30),
+          borderRadius: BorderRadius.circular(_showResults ? 12 : 999),
           side: _showResults
               ? const BorderSide(color: Colors.white24)
               : BorderSide.none,
@@ -160,7 +160,7 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
                   showClose: _showResults,
                   hintText: 'Find a harness',
                   rounded: true,
-                  compact: true,
+                  prominent: true,
                 ),
               ),
               if (_showResults) ...[

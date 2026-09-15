@@ -21,7 +21,7 @@ class SwarmSearchInput extends StatelessWidget {
     this.autofocus = true,
     this.hintText,
     this.rounded = false,
-    this.compact = false,
+    this.prominent = false,
   });
 
   final Key inputKey;
@@ -36,7 +36,7 @@ class SwarmSearchInput extends StatelessWidget {
   final bool showClose, autofocus;
   final String? hintText;
   final bool rounded;
-  final bool compact;
+  final bool prominent;
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
@@ -50,12 +50,12 @@ class SwarmSearchInput extends StatelessWidget {
     final open = search != null;
     final border = OutlineInputBorder(
       borderRadius: BorderRadius.vertical(
-        top: Radius.circular(rounded && !open ? 30 : 12),
+        top: Radius.circular(rounded && !open ? 999 : 12),
         bottom: Radius.circular(
           open
               ? 0
               : rounded
-              ? 30
+              ? 999
               : 12,
         ),
       ),
@@ -82,7 +82,7 @@ class SwarmSearchInput extends StatelessWidget {
         prefixIcon: const Icon(Icons.search, size: 20, color: Colors.white60),
         prefixIconConstraints: BoxConstraints(
           minWidth: 52,
-          minHeight: compact ? 48 : 56,
+          minHeight: prominent ? 64 : 56,
         ),
         suffixIcon: showClose
             ? Padding(
@@ -103,7 +103,7 @@ class SwarmSearchInput extends StatelessWidget {
             : const Color(0xa6111521),
         contentPadding: EdgeInsets.symmetric(
           horizontal: 18,
-          vertical: compact ? 14 : 18,
+          vertical: prominent ? 22 : 18,
         ),
         isDense: true,
         border: border,
