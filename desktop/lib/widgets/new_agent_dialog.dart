@@ -693,7 +693,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
             child: Align(
               alignment: Alignment.centerLeft,
               child: Text(
-                'Creates a new folder in ~/Harness Projects.',
+                'Creates a new folder in ~/harnesses.',
                 style: Theme.of(context).textTheme.bodySmall
                     ?.copyWith(color: grid.AppPalette.textSecondary),
               ),
@@ -729,7 +729,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
           ),
           const SizedBox(height: 6),
           Text(
-            'Clone into ~/Harness Projects on $_machineName.',
+            'Clone into ~/harnesses on $_machineName.',
             style: Theme.of(context).textTheme.bodySmall
                 ?.copyWith(color: grid.AppPalette.textSecondary),
           ),

@@ -129,6 +129,8 @@ export interface RegisteredSession {
   launcherId?: string
   transcriptPath: string | null
   projectDir: string
+  /** Stable default for agents created by Harness; discovered agents keep their existing names. */
+  defaultName?: string
   cwd: string | null
   /** Authoritative backend-neutral terminal placements for this one process-owned agent. */
   runtimes: TerminalRuntimeRef[]
@@ -168,11 +170,10 @@ export interface RegisterInput {
 }
 
 /** Display name for a session's "project" tab/tile. A user rename (persisted override) is
- *  authoritative and FIXED — it must NOT drift back to the tmux pane title, which Claude keeps
- *  rewriting to the latest convo topic. Only a session the user never renamed auto-follows the title,
- *  then falls back to "<folder> · <id4>". */
+ *  authoritative and FIXED. Harness-created agents start with a numbered name;
+ *  discovered sessions retain their title/folder fallback. */
 export function projectDisplayName(s: RegisteredSession): string {
-  return NAME_OVERRIDES.get(s.sessionId) || NAME_OVERRIDES.get(s.agentId) || titleDisplayName(s.title) || defaultProjectDisplayName(s)
+  return NAME_OVERRIDES.get(s.sessionId) || NAME_OVERRIDES.get(s.agentId) || s.defaultName || titleDisplayName(s.title) || defaultProjectDisplayName(s)
 }
 
 const FILE = join(env.ADAPTER_DATA_DIR, 'registry.json')
@@ -371,6 +372,8 @@ function strictPersistedRow(value: unknown): RegisteredSession | null {
     engine: row.engine as AgentEngine,
     transcriptPath: typeof row.transcriptPath === 'string' ? row.transcriptPath : null,
     projectDir: row.projectDir,
+    defaultName: typeof row.defaultName === 'string' && /^agent-[1-9]\d*$/.test(row.defaultName)
+      ? row.defaultName : undefined,
     cwd: typeof row.cwd === 'string' ? row.cwd : null,
     runtimes,
     primaryRuntimeKey: normalizedPrimary,
@@ -751,6 +754,8 @@ class Registry {
           ...(rawGridLaunch !== undefined ? { gridLaunch: rawGridLaunch } : {}),
           ...(raw.bypassPermission === true ? { bypassPermission: true } : {}),
           transcriptPath,
+          defaultName: typeof raw.defaultName === 'string' && /^agent-[1-9]\d*$/.test(raw.defaultName)
+            ? raw.defaultName : undefined,
           title: titleDisplayName(typeof raw.title === 'string' ? raw.title : null),
           sessionId: bound ? rawSessionId : '',
           projectDir: !repairedCodexTranscript && typeof raw.projectDir === 'string' && raw.projectDir
@@ -975,6 +980,7 @@ class Registry {
       schemaVersion: 2,
       active: true,
       launch: { state: 'starting' },
+      defaultName: this.nextAgentName(),
       agentId,
       sessionId: '',
       boundAt: null,
@@ -1004,6 +1010,19 @@ class Registry {
     this.terminalAvailableAgents.add(entry.agentId)
     this.save()
     return entry
+  }
+
+  private nextAgentName(): string {
+    let next = 1n
+    const names = [
+      ...this.list().flatMap(agent => [agent.defaultName, projectDisplayName(agent)]),
+      ...NAME_OVERRIDES.values(),
+    ]
+    for (const name of names) {
+      const match = name && /^agent-([1-9]\d*)$/.exec(name)
+      if (match && BigInt(match[1]!) >= next) next = BigInt(match[1]!) + 1n
+    }
+    return `agent-${next}`
   }
 
   /** Discovered process agents that have no engine session bound yet. */
@@ -1129,6 +1148,7 @@ class Registry {
       grid: existing?.grid ?? null,
       // The credential-bearing launch. Like codexHome: written once, carried forward, never re-derived.
       gridLaunch: existing?.gridLaunch ?? null,
+      defaultName: existing?.defaultName,
       transcriptPath: effectiveTranscriptPath,
       projectDir: engine === 'grok' || engine === 'agy' || engine === 'copilot'
         ? basename(input.cwd ?? existing?.cwd ?? '') || sessionId

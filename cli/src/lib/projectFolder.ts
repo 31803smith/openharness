@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { lstat, mkdir, mkdtemp, rename, rm } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, readdir, rename, rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -48,11 +48,23 @@ export async function prepareProjectFolder(
   project: ProjectFolder,
   options: { root?: string; clone?: (url: string, destination: string) => Promise<void> } = {},
 ): Promise<string> {
-  const root = options.root ?? join(homedir(), 'Harness Projects')
+  const root = options.root ?? join(homedir(), 'harnesses')
   let staging: string | undefined
   try {
     await mkdir(root, { recursive: true })
-    if (project.source === 'new') return await mkdtemp(join(root, 'project-'))
+    if (project.source === 'new') {
+      const numbers = (await readdir(root)).map(name => /^agent-([1-9]\d*)$/.exec(name)?.[1])
+      let next = numbers.reduce((max, value) => value && BigInt(value) > max ? BigInt(value) : max, 0n) + 1n
+      for (;;) {
+        const folder = join(root, `agent-${next++}`)
+        try { await mkdir(folder); return folder }
+        catch (error) {
+          // mkdir reserves the name atomically, including simultaneous desktop
+          // and remote creates. Files and symlinks also count as occupied.
+          if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+        }
+      }
+    }
     const destination = join(root, project.name)
     if (await exists(destination)) throw new ProjectFolderError('PROJECT_EXISTS', `“${project.name}” already exists. Choose Local to open that folder.`)
     staging = await mkdtemp(join(root, '.harness-clone-'))

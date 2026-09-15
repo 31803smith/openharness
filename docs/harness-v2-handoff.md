@@ -34,22 +34,31 @@ user for a benchmark window.
 
 ## Current product contract
 
-### Pending: friendly defaults and a fresh New Agent design
+### Friendly defaults
 
-The user requests `~/Harnesses` instead of `~/Harness Projects`, default agent
-names `agent-1`, `agent-2`, …, and automatic tab names `harness-1`, `harness-2`, ….
-These naming changes are not implemented yet. Preserve existing folders and
-custom names. Folder creation lives in `desktop/lib/core/project_folder.dart`
-and `cli/src/lib/projectFolder.ts`; agent naming is in the CLI registry; tab
-auto-naming is in `AppNotifier.assignAgentToPane`.
+New project folders use `~/harnesses/agent-1`, `agent-2`, …, with exclusive
+creation so simultaneous requests never share a folder. New Harness-created
+agents receive stable `agent-1`, `agent-2`, … names; user names and existing
+discovered agents remain unchanged. The first agent in an unnamed tab gives it
+`harness-1`, `harness-2`, …, skipping current and recently closed names.
+Fifty Flutter checks, 69 CLI checks, static analysis and CLI typechecking pass.
+Logs: `/private/tmp/harness-friendly-names-tests.log` and
+`/private/tmp/harness-friendly-names-cli-tests.log`.
 
-The user now wants to discuss a fresh New Agent design before implementation:
-as spacious as Open Agent, focused on the fastest path to starting an agent.
-Do not merely enlarge the existing form. The quiet picker cleanup below is
-verified locally, but publishing was rejected by automatic approval review and
-a renewed GitHub approval question is pending. The latest installed preview is
-**0c764cf** (receipt `/private/tmp/harness-minimal-preview-install.json`);
-subsequent search/device/chooser refinements have not been installed yet.
+### Approved next: project picker in New Agent
+
+Build Agent → Machine → Project in a dialog as spacious as Open Agent. Keep
+Codex, Claude Code and OpenCode visible in stable order; show all machines.
+Project combines a pinned New project, recent folders, search, Git URL and
+Browse. Arrow selection updates a preview from README, Git history, contributors
+and files. Enter selects and collapses into a project bar; clicking it searches
+again. Remember the last project per machine; first use selects New project.
+Profiles and permissions stay in Options. Cmd-Return creates the agent.
+The user has renewed authorization to push each completed feature separately.
+
+The latest installed preview is **0c764cf** (receipt
+`/private/tmp/harness-minimal-preview-install.json`); later search/device/chooser
+refinements have not been installed yet.
 
 ### Quiet agent choices
 

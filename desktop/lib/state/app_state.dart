@@ -2764,8 +2764,7 @@ class AppNotifier extends ChangeNotifier {
   ) {
     if (state.localOnly && localEndpoint?.computerId == localComputerId) {
       state.localEndpoint = localEndpoint;
-      state.transportMode =
-          state.connectionStatus == ConnectionStatus.connected
+      state.transportMode = state.connectionStatus == ConnectionStatus.connected
           ? MachineTransportMode.localPlaintext
           : MachineTransportMode.localOffline;
     } else if (state.localOnly) {
@@ -2793,14 +2792,14 @@ class AppNotifier extends ChangeNotifier {
     // threw first and threw away an answer that was already correct, while awaiting it FIRST would let a
     // slow probe hold up the list. Latch it as it lands instead, and use it on both paths.
     LocalCliEndpoint? probed;
-    final localSettled = localFuture.then((value) => probed = value).catchError((
-      Object error,
-    ) {
-      // A probe that fails is the CLI being unreachable, which the transport decision below already
-      // handles — but swallowing it silently leaves nothing to diagnose from.
-      debugPrint('local CLI probe failed: $error');
-      return null;
-    });
+    final localSettled = localFuture.then((value) => probed = value).catchError(
+      (Object error) {
+        // A probe that fails is the CLI being unreachable, which the transport decision below already
+        // handles — but swallowing it silently leaves nothing to diagnose from.
+        debugPrint('local CLI probe failed: $error');
+        return null;
+      },
+    );
     final List<Machine> list;
     try {
       list = await _fetchMachines();
@@ -4789,10 +4788,7 @@ class AppNotifier extends ChangeNotifier {
       target.arrangedKey = key;
     }
     if (firstAgent && target.name == Swarm.defaultName) {
-      final name = agent.name.trim();
-      if (name.isNotEmpty) {
-        target.name = name.length > 80 ? name.substring(0, 80) : name;
-      }
+      target.name = _nextHarnessName();
     }
     if (replaced != null && !allPanes.contains(replaced)) {
       // Release just the desktop stream. The CLI agent process keeps running.
@@ -5275,6 +5271,25 @@ class AppNotifier extends ChangeNotifier {
 
   Future<void> flushPaneLayout() =>
       _paneLayout?.flushSwarms() ?? Future<void>.value();
+
+  String _nextHarnessName() {
+    var next = BigInt.one;
+    final names = [
+      for (final swarm in swarms) swarm.name,
+      for (final entry in _closedHistory)
+        if (entry is ClosedSwarm)
+          entry.name
+        else if (entry is ClosedAgent)
+          entry.swarmName,
+    ];
+    for (final name in names) {
+      final match = RegExp(r'^harness-([1-9]\d*)$').firstMatch(name);
+      if (match == null) continue;
+      final number = BigInt.parse(match.group(1)!);
+      if (number >= next) next = number + BigInt.one;
+    }
+    return 'harness-$next';
+  }
 
   void _persistLayout() {
     _draftSwarmReturns.removeWhere((id, _) {
