@@ -9,7 +9,8 @@ proposals in the progress log.
 
 **Cmd-T / New Tab** and the tab-bar plus open the Harness start page. Its solid
 background matches the selected tab. The centered title and search controls sit
-lower with generous empty space. The resting field is no wider than 640 logical pixels,
+lower with generous empty space. The search field keeps the same responsive width
+whether results are closed or open, capped at 1120 logical pixels,
 with **Open Harness** and accented **+ New Harness** buttons underneath.
 
 The field starts empty and focused so typing works immediately. Typing, clicking
@@ -68,6 +69,8 @@ surface can grow to 1120 logical pixels, placing the list and preview side by
 side. Narrow windows stack them with a compact preview heading. Both sections
 scroll independently; the start-page actions stay reachable. Hover selects a
 preview without taking typing focus. Enter opens the highlighted result.
+Page Up/Down scrolls the preview while retaining the query, focus and selection.
+The bindings are configurable in the same Search keymap as result navigation.
 
 Working sessions lead with the current observed request and latest activity.
 Idle sessions lead with an existing saved response or the latest response seen

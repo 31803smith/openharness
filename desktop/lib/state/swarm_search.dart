@@ -52,6 +52,15 @@ class SwarmSearchController extends ChangeNotifier {
   bool get allowsCommands => split == null && history == null;
   bool get isCommandMode =>
       allowsCommands && (commandsOnly || query.trimLeft().startsWith('>'));
+  bool get hasPreview => !isCommandMode && history == null && selected != null;
+
+  // Paging the preview must not rebuild the result list or its text editor.
+  final _previewPage = ValueNotifier<int>(0);
+  ValueListenable<int> get previewPage => _previewPage;
+  void pagePreview(int pages) {
+    if (hasPreview) _previewPage.value += pages;
+  }
+
   final String targetId, targetName;
   // The workspace can retain normalized metadata across picker openings. Each
   // read still validates its snapshot; query, selection and output stay local.
@@ -282,6 +291,7 @@ class SwarmSearchController extends ChangeNotifier {
   void dispose() {
     app.removeListener(_refresh);
     projects?.removeListener(_refresh);
+    _previewPage.dispose();
     super.dispose();
   }
 }
