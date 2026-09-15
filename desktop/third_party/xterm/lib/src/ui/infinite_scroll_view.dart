@@ -76,9 +76,12 @@ class _RenderInfiniteScrollView extends RenderShiftedBox {
   ViewportOffset _position;
   set position(ViewportOffset value) {
     if (_position == value) return;
-    if (attached) _position.removeListener(markNeedsLayout);
+    // Move the listener attach() installed. Scrollable replaces its position
+    // whenever its dependencies change (a reparent is enough); leaving
+    // _onScroll on the discarded one silently stopped every later scroll.
+    if (attached) _position.removeListener(_onScroll);
     _position = value;
-    if (attached) _position.addListener(markNeedsLayout);
+    if (attached) _position.addListener(_onScroll);
     markNeedsLayout();
   }
 
