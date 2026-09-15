@@ -87,6 +87,47 @@ void main() {
   );
 
   testWidgets(
+    'Return submits once, and the newline iOS appends after it is not typed '
+    'into the pty',
+    (tester) async {
+      final terminal = newTerminal();
+      final outbound = <String>[];
+      terminal.onOutput = outbound.add;
+      await pumpTerminal(tester, terminal);
+
+      tester.testTextInput.updateEditingValue(
+        const TextEditingValue(
+          text: 'hi',
+          selection: TextSelection.collapsed(offset: 2),
+        ),
+      );
+      await tester.pump();
+      expect(outbound, ['hi']);
+      outbound.clear();
+
+      // UIKit answers Return by calling the action FIRST...
+      await tester.testTextInput.receiveAction(TextInputAction.newline);
+      await tester.pump();
+
+      // ...and then inserting the `\n` into its own buffer anyway, which comes
+      // back as an editing value the terminal has already acted on.
+      tester.testTextInput.updateEditingValue(
+        const TextEditingValue(
+          text: 'hi\n',
+          selection: TextSelection.collapsed(offset: 3),
+        ),
+      );
+      await tester.pump();
+
+      // Only the Enter. Replaying that value would retype the whole line and
+      // then a literal LF, which a TUI reads as Ctrl+J — a soft newline, not a
+      // submit — leaving the line sitting in the prompt.
+      expect(outbound, ['\r']);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
+
+  testWidgets(
     'Telex sends the composed word, not the letters it was typed from',
     (tester) async {
       final terminal = newTerminal();

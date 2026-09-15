@@ -15,6 +15,7 @@ import 'phone_header.dart';
 import 'phone_sheet.dart';
 import 'phone_status.dart';
 import 'status_pill.dart';
+import 'terminal_key_bar.dart';
 
 /// One agent's terminal, filling the phone. The header says whose it is and whether it is live;
 /// everything below it is the same [TerminalPanel] a desktop tile draws, minus that tile's own
@@ -94,6 +95,12 @@ class _TerminalPageState extends State<TerminalPage>
   /// claiming has been off for as long as the keyboard has been visible.
   bool _claimSpent = false;
 
+  /// Whether the software keyboard is up, and with it [TerminalKeyBar].
+  ///
+  /// Read from [View] for the reason [didChangeMetrics] gives: MediaQuery's
+  /// bottom inset is pinned at zero inside this page.
+  bool _keyboardUp = false;
+
   @override
   void initState() {
     super.initState();
@@ -123,10 +130,19 @@ class _TerminalPageState extends State<TerminalPage>
     // The FIRST frame of the keyboard rising is enough — it need not finish.
     // Spending the claim this early is the point: it is off long before any
     // Back press can arrive.
-    if (View.of(context).viewInsets.bottom > 0 && !_claimSpent) {
-      setState(() => _claimSpent = true);
-    }
+    final up = View.of(context).viewInsets.bottom > 0;
+    final claim = _claimSpent || up;
+    if (up == _keyboardUp && claim == _claimSpent) return;
+    setState(() {
+      _keyboardUp = up;
+      _claimSpent = claim;
+    });
   }
+
+  /// Puts the keyboard away without leaving the page — the `⌄` key on
+  /// [TerminalKeyBar]. Dropping focus is what closes the input connection;
+  /// xterm reopens it on the next tap in the pane.
+  void _dismissKeyboard() => FocusManager.instance.primaryFocus?.unfocus();
 
   /// The composer starts OPEN here, and the phone owns that answer rather than the pane.
   ///
@@ -264,6 +280,21 @@ class _TerminalPageState extends State<TerminalPage>
                                 // never had anyway.
                               ),
                       ),
+                      // The bottom of this page IS just above the keyboard:
+                      // `PhoneShell`'s Scaffold has already resized for it —
+                      // the same resize that empties this page's MediaQuery
+                      // insets (see [didChangeMetrics]).
+                      if (_keyboardUp && session != null)
+                        ListenableBuilder(
+                          listenable: session,
+                          builder: (context, _) => TerminalKeyBar(
+                            terminal: session.terminal,
+                            enabled: session.acceptsInput,
+                            controlArmed: session.controlArmed,
+                            onControlToggle: session.armControl,
+                            onDismissKeyboard: _dismissKeyboard,
+                          ),
+                        ),
                     ],
                   ),
                 ),

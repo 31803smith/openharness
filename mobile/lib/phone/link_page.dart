@@ -11,12 +11,28 @@ import 'phone_navigation.dart';
 /// up, since the exchange behind it is the same.
 ///
 /// It leaves by itself both ways: forward onto the machine's agents once the link lands, and
-/// back when the form's own Close is pressed.
+/// back when the form's own Close is pressed — unless it is [embedded], where moving on is somebody
+/// else's job.
 class LinkPage extends StatefulWidget {
-  const LinkPage({super.key, required this.notifier, required this.machineId});
+  const LinkPage({
+    super.key,
+    required this.notifier,
+    required this.machineId,
+    this.embedded = false,
+  });
 
   final AppNotifier notifier;
   final String machineId;
+
+  /// Whether this form is a PAGE INSIDE something else — [MachinePage] in the machine pager — rather
+  /// than a route of its own.
+  ///
+  /// ⚠️ **It turns off every navigation this page does, and it has to.** The route belongs to the
+  /// pager, not to this page: a `pushReplacement` here would swap out the PAGER and take the swipe
+  /// with it, and a `maybePop` would drop the person back to the tab from a page they were only
+  /// swiping past. Embedded, the page just draws the form; the builder above it watches the same
+  /// `needsLink` and puts the agents there the moment the link lands.
+  final bool embedded;
 
   @override
   State<LinkPage> createState() => _LinkPageState();
@@ -26,8 +42,9 @@ class _LinkPageState extends State<LinkPage> {
   /// The form's Close marks the prompt dismissed. One already dismissed before this page opened
   /// must not shut the page on its first frame.
   ///
-  /// Always false in practice now that [initState] clears the mark — kept as the guard it is, so
-  /// the rule below still reads on its own if that ever stops being true.
+  /// Always false in practice on a pushed page, now that [initState] clears the mark — kept as the
+  /// guard it is, so the rule below still reads on its own if that ever stops being true. An
+  /// embedded page never reaches it: [_follow] is not even subscribed there.
   late final bool _dismissedBefore = widget.notifier.isLinkPromptDismissed(
     widget.machineId,
   );
@@ -41,8 +58,15 @@ class _LinkPageState extends State<LinkPage> {
     // form was Closed once could never be reached again: [_follow] reads the mark on its first
     // run and pops the page on the frame it opened. The desktop fixes the same bug the same way
     // (`revisitLinkPrompt`, 051ea5b), where the reactive gates check the mark before calling.
-    widget.notifier.revisitLinkPrompt(widget.machineId);
-    widget.notifier.addListener(_follow);
+    //
+    // ⚠️ Embedded, mounting is NOT somebody asking. A pager builds the pages either side of the one
+    // on screen, so this would clear the dismissal of a machine nobody has opened — reopening a form
+    // that was Closed, one page over, out of sight. There the mark is [MachinePage]'s to read and the
+    // "Enter password" button's to clear, and both act on the machine actually being looked at.
+    if (!widget.embedded) {
+      widget.notifier.revisitLinkPrompt(widget.machineId);
+      widget.notifier.addListener(_follow);
+    }
   }
 
   @override
@@ -52,7 +76,9 @@ class _LinkPageState extends State<LinkPage> {
   }
 
   void _follow() {
-    if (_leaving || !mounted) return;
+    // Embedded, there is nowhere for this page to go: [MachinePage] rebuilds off the same notifier
+    // and swaps the form for the agents itself. Listening at all would only risk the pops below.
+    if (widget.embedded || _leaving || !mounted) return;
     final machine = widget.notifier.stateOf(widget.machineId);
     final navigator = Navigator.of(context);
     if (machine != null && !machine.needsLink) {

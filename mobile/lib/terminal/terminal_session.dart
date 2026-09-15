@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:xterm/xterm.dart';
 
 import '../core/crash_log.dart';
+import 'control_chord.dart';
 import 'terminal_binary.dart';
 import 'terminal_input.dart';
 import 'terminal_viewport.dart';
@@ -795,6 +796,35 @@ class TerminalSession extends ChangeNotifier {
     result.onResize = (width, height, _, _) => resize(width, height);
   }
 
+  /// Whether the next character typed leaves as a control chord.
+  ///
+  /// The phone's key bar has a `ctrl` KEY where a desktop has a modifier to
+  /// hold down. Nothing on a software keyboard can be held while another key is
+  /// pressed, and the characters it produces arrive as TEXT rather than as key
+  /// events, so the translation cannot live in a keymap. It happens here
+  /// instead — the one point every keystroke crosses on its way to the pty.
+  bool get controlArmed => _controlArmed;
+  bool _controlArmed = false;
+
+  /// Arms, or clears, the modifier described by [controlArmed].
+  void armControl(bool armed) {
+    if (_controlArmed == armed) return;
+    _controlArmed = armed;
+    notifyListeners();
+  }
+
+  /// Spends [controlArmed] on [data].
+  ///
+  /// One shot, and spent on whatever arrives next whether or not it has a chord:
+  /// the alternative is a modifier that silently stays armed across a keystroke
+  /// it could not translate, and then eats a later one.
+  String _spendArmedControl(String data) {
+    if (!_controlArmed) return data;
+    _controlArmed = false;
+    notifyListeners();
+    return controlChordFor(data) ?? data;
+  }
+
   /// Sends a composed message as one turn.
   ///
   /// This does NOT write bytes into the pane. It sends the same `message` frame the web client
@@ -1004,6 +1034,7 @@ class TerminalSession extends ChangeNotifier {
 
   void _onTerminalOutput(String data) {
     if (!acceptsInput || data.isEmpty) return;
+    data = _spendArmedControl(data);
     final bytes = utf8.encode(data);
     final isBoundary =
         data.contains('\r') ||
