@@ -30,6 +30,7 @@ import { linkCodexProfile, listCodexProfiles } from './lib/codexProfiles.js'
 import { parseGridLaunchOverride, type GridLaunchOverride } from './lib/gridLaunch.js'
 import { readAccountUsage, type AccountUsageReading } from './lib/accountUsage.js'
 import { probeEngines } from './lib/engineProbe.js'
+import { AgentCreationReceipts, AgentCreationReceiptError, creationFingerprint, validCreationId, type AgentCreationStatus } from './lib/agentCreationReceipt.js'
 import { engineInstallRecipe } from './lib/engineInstall.js'
 import { agentFrame, type AgentFrame } from './lib/agentFrame.js'
 import { routeVoiceTask } from './lib/voiceRouter.js'
@@ -329,6 +330,7 @@ export class BackendSocket {
     codexHome: string | null
   }) =>
     Promise<{ ok: true; session: RegisteredSession } | { ok: false; error: string; detail?: string }>) | null = null
+  private readonly agentCreations = new AgentCreationReceipts(join(env.ADAPTER_DATA_DIR, 'agent-creations'))
   /** Injectable for queue-isolation tests; production uses the machine-local probe. */
   engineProbeProvider: typeof probeEngines = probeEngines
   /**
@@ -1539,12 +1541,27 @@ export class BackendSocket {
           return
         }
 
+        case 'agent_create_status': {
+          const creationId = payload.creationId
+          if (!validCreationId(creationId)) { reply(type, requestId, { error: 'INVALID_CREATION_ID' }); return }
+          try {
+            reply(type, requestId, { creationId, ...await this.creationStatusPayload(this.agentCreations.status(creationId)) })
+          } catch (error) {
+            reply(type, requestId, { error: error instanceof AgentCreationReceiptError ? error.code : 'INTERNAL' })
+          }
+          return
+        }
+
         case 'agent_create': {
           const engine = payload.engine as AgentEngine | undefined
-          const cwd = payload.cwd as string | undefined
-          if (!engine || !ENGINES.includes(engine)) { reply(type, requestId, { error: 'INVALID_ENGINE' }); return }
-          if (!cwd || !isAbsolute(cwd)) { reply(type, requestId, { error: 'INVALID_CWD' }); return }
+          const cwd = payload.cwd
+          if (typeof engine !== 'string' || !ENGINES.includes(engine)) { reply(type, requestId, { error: 'INVALID_ENGINE' }); return }
+          if (typeof cwd !== 'string' || !isAbsolute(cwd)) { reply(type, requestId, { error: 'INVALID_CWD' }); return }
           if (!this.onCreateAgent) { reply(type, requestId, { error: 'UNSUPPORTED_ON_REMOTE' }); return }
+          const creationId = payload.creationId
+          if (creationId !== undefined && !validCreationId(creationId)) {
+            reply(type, requestId, { error: 'INVALID_CREATION_ID' }); return
+          }
           // Absent is the ordinary case and stays indistinguishable from a client that predates grids;
           // present-but-malformed is refused here rather than half-applied at launch, because an agent
           // that quietly ran on the engine's own login would look like it worked.
@@ -1562,13 +1579,36 @@ export class BackendSocket {
             reply(type, requestId, { error: 'INVALID_CODEX_HOME', detail: 'codexHome is only valid for codex, without a grid' })
             return
           }
-          const result = await this.onCreateAgent({
+          const input = {
             engine,
             cwd,
             bypassPermission: payload.bypassPermission === true,
             grid: grid.state === 'ok' ? grid.override : null,
             codexHome,
-          })
+          }
+          if (creationId !== undefined) {
+            // Reserve before spawning. A transport retry carries the SAME creationId; a deliberate
+            // New agent action carries a new one. Detach so a status check can pass a slow create
+            // on this connection, just as engines_probe is detached above.
+            const create = this.onCreateAgent
+            try {
+              void this.agentCreations.run(creationId, creationFingerprint(input), async () => {
+                const result = await create(input)
+                if (result.ok) return { state: 'created', agentId: result.session.agentId }
+                // tmux may have executed before a timeout; registration cleanup is best-effort.
+                // Neither can prove that no process started, so never encourage another launch.
+                if (result.error === 'SPAWN_FAILED' || result.error === 'REGISTRATION_FAILED') return { state: 'unconfirmed' }
+                return { state: 'failed', error: result.error, ...(result.detail ? { detail: result.detail.slice(0, 2000) } : {}) }
+              }).then(async (status) => {
+                reply(type, requestId, { creationId, ...await this.creationStatusPayload(status) })
+              }).catch(() => reply(type, requestId, { error: 'INTERNAL' }))
+            } catch (error) {
+              reply(type, requestId, { error: error instanceof AgentCreationReceiptError ? error.code : 'INTERNAL' })
+            }
+            return
+          }
+          // Clients predating receipts retain their existing response shape.
+          const result = await this.onCreateAgent(input)
           // `detail` carries the underlying cause (tmux's own message) so the person who clicked
           // Create can read it, rather than having to open a log on the machine that failed.
           if (!result.ok) {
@@ -1775,6 +1815,22 @@ export class BackendSocket {
       console.error(`[backend] dispatch ${type} failed:`, err)
       if (requestId !== undefined) reply(type, requestId, { error: 'INTERNAL' })
     }
+  }
+
+  /** Recover by stable runtime identity; a deleted agent must never become a fresh launch. */
+  private async creationStatusPayload(status: AgentCreationStatus): Promise<Record<string, unknown>> {
+    if (status.state === 'created') {
+      const session = registry.byAgent(status.agentId)
+      return session
+        ? { state: 'created', agent: await this.toProject(session) }
+        : { state: 'unavailable' }
+    }
+    // A recorded refusal is a completed outcome. Keep it separate from transport/dispatch errors
+    // so clients can distinguish "safe to correct the choices" from "outcome still unknown".
+    if (status.state === 'failed') {
+      return { state: 'failed', failure: { code: status.error, ...(status.detail ? { detail: status.detail } : {}) } }
+    }
+    return status
   }
 
   /** Map a registered tmux session onto the web's Project shape (tabs in ProjectTabs). */

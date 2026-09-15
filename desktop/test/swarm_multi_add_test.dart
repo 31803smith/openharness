@@ -31,7 +31,7 @@ void main() {
     expect(app.panes, [pane]);
     await chord(tester, LogicalKeyboardKey.keyN, shift: true);
     expect(find.byType(AlertDialog), findsOneWidget);
-    expect(find.text('Create agent'), findsOneWidget);
+    expect(find.text('Create on Test host'), findsOneWidget);
     expect(app.panes, [pane]);
     expect(input, isEmpty);
     await tester.tap(find.text('Cancel'));

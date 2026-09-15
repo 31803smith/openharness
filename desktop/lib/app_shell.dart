@@ -10,6 +10,8 @@ import 'core/crash_log.dart';
 import 'core/desktop_window.dart';
 import 'screens/login_screen.dart';
 import 'state/app_state.dart';
+import 'viewer/viewer_services.dart';
+import 'ws/terminal_transport_plugin.dart';
 import 'shared/theme/app_theme.dart' as grid;
 import 'shared/theme/appearance_prefs_store.dart';
 import 'terminal/terminal_font_store.dart';
@@ -41,8 +43,12 @@ typedef AuthenticatedScreenBuilder = Widget Function(AppNotifier app);
 /// stranded from the desktop it shared a codebase with.
 Future<void> startHarness({
   required AuthenticatedScreenBuilder authenticatedScreen,
+  /// A viewer build's second wire to each machine (see
+  /// [TerminalTransportPlugin]); the desktop passes none.
+  TerminalTransportPluginFactory? transportPlugins,
 }) async {
   WidgetsFlutterBinding.ensureInitialized();
+  harnessTransportPlugins = transportPlugins;
   // Before anything else can fail. The file sinks come first so CrashLog's own
   // install has somewhere to mirror to — see CrashLog.record.
   installFileLogs();

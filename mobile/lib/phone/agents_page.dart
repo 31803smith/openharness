@@ -3,12 +3,12 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import 'package:harness/core/models.dart';
 import 'package:harness/shared/theme/app_theme.dart';
 import 'package:harness/shared/widgets/app_icon_button.dart';
 import 'package:harness/shared/widgets/empty_state.dart';
 import 'package:harness/state/app_state.dart';
 
-import 'agent_hero.dart';
 import 'agent_tile.dart';
 import 'link_page.dart';
 import 'phone_card.dart';
@@ -221,16 +221,62 @@ class _AgentsBody extends StatelessWidget {
       itemBuilder: (context, index) => AgentTile(
         machine: machine,
         agent: agents[index],
-        onTap: () => openAgent(
-          context,
-          notifier,
-          _machineId,
-          agents[index].id,
-          heroSource: AgentHeroSource.machine,
-        ),
+        onTap: () => openAgent(context, notifier, _machineId, agents[index].id),
+        onLongPress: () =>
+            showAgentActions(context, notifier, _machineId, agents[index]),
       ),
     );
   }
+}
+
+/// One agent's `⋯`, reached by holding its row.
+///
+/// The desktop offers this from the rail row's menu and the pane's; a phone has neither, so the
+/// hold is the whole door. Kept public and out of [_AgentsBody] so the terminal page can open the
+/// same sheet if it ever grows one, rather than writing a second wording of the same act.
+Future<void> showAgentActions(
+  BuildContext context,
+  AppNotifier notifier,
+  String machineId,
+  Agent agent,
+) => showPhoneSheet(
+  context,
+  title: agent.name,
+  actions: [
+    PhoneSheetAction(
+      icon: LucideIcons.trash2300,
+      label: 'Delete agent…',
+      destructive: true,
+      onTap: () =>
+          unawaited(_confirmDeleteAgent(context, notifier, machineId, agent)),
+    ),
+  ],
+);
+
+/// ⚠️ Deletion destroys the agent on the machine — unlike unlinking above, which only forgets a
+/// password. The wording has to carry that, because both arrive through the same red sheet row.
+///
+/// Nothing here removes the row: `AppNotifier.deleteAgent` drops the agent from the machine's list
+/// and detaches every pane still showing it, and this page rebuilds off that notifier.
+Future<void> _confirmDeleteAgent(
+  BuildContext context,
+  AppNotifier notifier,
+  String machineId,
+  Agent agent,
+) async {
+  final confirmed = await confirmPhoneAction(
+    context,
+    title: 'Delete ${agent.name}?',
+    message:
+        'The agent and its terminal session are removed from the machine, '
+        "along with any work it has not finished. This can't be undone.",
+    confirmLabel: 'Delete',
+  );
+  if (!confirmed || !context.mounted) return;
+  final error = await notifier.deleteAgent(machineId, agent.id);
+  if (error == null || !context.mounted) return;
+  ScaffoldMessenger.maybeOf(context)
+      ?.showSnackBar(SnackBar(content: Text(error)));
 }
 
 /// The one way into [NewAgentPage], so the header's button and the empty

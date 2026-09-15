@@ -153,4 +153,60 @@ void main() {
       },
     );
   }
+  testWidgets(
+    'a fresh hidden terminal follows its keyframe when its swarm is opened',
+    (tester) async {
+      final app = createApp();
+      final session = terminal('a0', []);
+      app.adoptSessionForTest(session);
+      final original = app.activeSwarmId;
+      await mount(tester, app);
+      app.newSwarm();
+      await tester.pump();
+      final history = List.generate(500, (i) => 'Output line $i\r\n').join();
+      await output(session, 0, history, keyframe: true);
+      await tester.pump();
+      app.selectSwarm(original);
+      await tester.pump();
+      final scroll = terminalView(tester, session).widget.scrollController!;
+      expect(scroll.position.maxScrollExtent, greaterThan(0));
+      expect(scroll.offset, scroll.position.maxScrollExtent);
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+    },
+  );
+
+  testWidgets('a relayout keeps tail-following panes at latest output', (
+    tester,
+  ) async {
+    final app = createApp();
+    final sessions = [for (var i = 0; i < 4; i++) terminal('a$i', [])];
+    final history = List.generate(500, (i) => 'Output line $i\r\n').join();
+    for (final session in sessions) {
+      session.terminal.write(history);
+      app.adoptSessionForTest(session);
+    }
+    await mount(tester, app);
+    final reading = terminalView(
+      tester,
+      sessions.first,
+    ).widget.scrollController!;
+    reading.jumpTo(100);
+    await tester.pump();
+    final before = terminalView(tester, sessions.first).renderTerminal.size;
+    app.setPreset(4, PanePreset.mainAndStack);
+    await tester.pump();
+    expect(app.presetFor(4), PanePreset.mainAndStack);
+    expect(
+      terminalView(tester, sessions.first).renderTerminal.size,
+      isNot(before),
+    );
+    expect(reading.offset, 100);
+    for (final session in sessions.skip(1)) {
+      final scroll = terminalView(tester, session).widget.scrollController!;
+      expect(scroll.offset, scroll.position.maxScrollExtent);
+    }
+    await tester.pumpWidget(const SizedBox());
+    app.dispose();
+  });
 }

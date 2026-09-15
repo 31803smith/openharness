@@ -109,11 +109,12 @@ import { RemoteRelayPool } from './lib/remoteRelay.js'
 import { TERMINAL_BINARY_VERSION } from './lib/terminalBinary.js'
 import { foldTranscript, lastTurnTextFromRawLines, lineToEvents, newTurnState, type LiveEvent, type TurnState } from './lib/normalize.js'
 import { AskQuestionController, pollsQuestions, QuestionWatcher } from './lib/askQuestion.js'
-import { CommanderMirror } from './lib/commander.js'
+import { CommanderMirror, type CommanderMirrorOpts } from './lib/commander.js'
 import {
   setSummaryPoolDeviceConnected,
   shutdownSummaryPool,
   deriveTurnSummary,
+  summarizeTurnText,
   syncSummaryPoolSessions,
 } from './lib/summarize.js'
 import type { CableAgent } from './cable/cableSession.js'
@@ -1881,6 +1882,27 @@ async function runForeground(session: AuthSession): Promise<void> {
   })
 
 
+  // SUMMARY_MODE picks the recap writer.
+  //   model (default) — recap = llm(instruct, previous recap, the user's ask, the answer): a disposable
+  //     one-shot of the session's own engine. The previous recap is what lets "same fix, other file"
+  //     recap as what was done rather than as a fragment. Costs the one-shot's latency on every turn.
+  //   local — NO MODEL IN THE LOOP. The dial is cabled to the Mac whose window already shows this text
+  //     in full, so the recap is a glance and the detail is one turn of the head away; the one-shot cost
+  //     ~9s of the user's turn to say something they were already looking at. Instant, but every recap
+  //     stands alone.
+  const summarizer: Pick<CommanderMirrorOpts, 'summarize' | 'summarizeIsLocal'> = env.SUMMARY_MODE === 'local'
+    ? { summarize: async (text) => deriveTurnSummary(text), summarizeIsLocal: true }
+    : {
+        summarize: async (text, signal, userMessage, sessionId, previousRecap) => {
+          const session = sessionId ? registry.bySession(sessionId) : undefined
+          // Gateway agents recap through OpenRouter directly (no vendor credential to spend). The probe is
+          // cached per live process, so this resolves without touching the process table again.
+          const gateway = session?.gateway === 'ori' && session.processIdentity
+            ? await probeGatewayRuntime(session.processIdentity)
+            : undefined
+          return summarizeTurnText(text, signal, userMessage, session?.engine ?? 'claude', gateway, previousRecap)
+        },
+      }
   const mirror = new CommanderMirror({
     send: (frame) => backend.sendCommander(frame),
     sendWeb: (frame) => backend.send(frame), // turn_summary_pending / turn_summary → web indicator
@@ -1888,11 +1910,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     // Live cards stream to whatever is actually rendering. The dial has one screen and it is always the
     // one in front of the user, so a cable session counts as active by construction.
     active: () => backend.hasActiveCommander() || cableWatchingLocal(),
-    // NO MODEL IN THE LOOP. The dial is cabled to the Mac whose window already shows this text in
-    // full, so the recap is a glance and the detail is one turn of the head away. A one-shot recap
-    // cost ~9s of the user's turn to say something they were already looking at.
-    summarize: async (text) => deriveTurnSummary(text),
-    summarizeIsLocal: true,
+    ...summarizer,
     nameFor: (sessionId) => { const s = registry.bySession(sessionId); return s ? projectDisplayName(s) : undefined },
     agentIdFor: (sessionId) => registry.bySession(sessionId)?.agentId,
     readLastTurn: async (sessionId) => {
@@ -1917,6 +1935,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     },
     dataDir: env.ADAPTER_DATA_DIR,
     recapForce: env.RECAP_FORCE,
+    alwaysGenerate: env.RECAP_WITHOUT_DEVICE,
   })
   // Recaps are STORED under the engine session id — that is what lets `--resume` bring the last recap
   // back under a brand-new agent — but they are ASKED FOR by agent id, which is the only id the device

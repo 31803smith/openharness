@@ -9,6 +9,12 @@ import 'package:harness/shared/widgets/app_icon_button.dart';
 ///
 /// [large] is the first page's big title, the iOS way. Every other page gets a back chevron and
 /// a compact title that can carry a [leading] mark and a quieter [subtitle] line.
+///
+/// On a page that can pop, the whole left band — chevron, [leading] mark, title and [subtitle] —
+/// is the back target, not just the 24px chevron box. A 30px glyph at the very edge of the screen
+/// is the hardest thing on the page to hit one-handed, and everything beside it names the page you
+/// are leaving rather than doing anything of its own. [trailing] stays outside the band: those are
+/// real controls, and swallowing their taps would be the worse bug.
 class PhoneHeader extends StatelessWidget {
   const PhoneHeader({
     super.key,
@@ -38,23 +44,64 @@ class PhoneHeader extends StatelessWidget {
       ),
       child: Row(
         children: [
-          if (canPop) ...[
-            AppIconButton(
-              icon: LucideIcons.chevronLeft300,
-              size: 30,
-              tooltip: 'Back',
-              color: AppPalette.textPrimary,
-              onPressed: () => Navigator.of(context).maybePop(),
-            ),
-            const SizedBox(width: 2),
-          ],
-          if (leading != null) ...[leading!, const SizedBox(width: 10)],
           Expanded(
-            child: _Titles(title: title, subtitle: subtitle, large: large),
+            child: _BackBand(
+              // The band only pops on a page that has somewhere to go back to; the first page's
+              // large title is not a control at all.
+              onTap: canPop ? () => Navigator.of(context).maybePop() : null,
+              child: Row(
+                children: [
+                  if (canPop) ...[
+                    // Still drawn as a button — it is what the user aims at, and it keeps its own
+                    // hover ink on a pointer device. The band around it only widens the target.
+                    AppIconButton(
+                      icon: LucideIcons.chevronLeft300,
+                      size: 30,
+                      tooltip: 'Back',
+                      color: AppPalette.textPrimary,
+                      onPressed: () => Navigator.of(context).maybePop(),
+                    ),
+                    const SizedBox(width: 2),
+                  ],
+                  if (leading != null) ...[leading!, const SizedBox(width: 10)],
+                  Expanded(
+                    child: _Titles(
+                      title: title,
+                      subtitle: subtitle,
+                      large: large,
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
           ...trailing,
         ],
       ),
+    );
+  }
+}
+
+/// The left band of the header, tappable as a whole when there is a page to pop.
+///
+/// [HitTestBehavior.opaque] is what makes the *gaps* count — the padding around the chevron, the
+/// space beside a title shorter than the row. Without it a tap between the glyphs falls through to
+/// the header's background and nothing happens, which is the bug the widened target exists to fix.
+class _BackBand extends StatelessWidget {
+  const _BackBand({required this.onTap, required this.child});
+
+  final VoidCallback? onTap;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    if (onTap == null) return child;
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      // The band is chrome, not a row you point at: no hover fill and no cursor change, so the
+      // chevron inside it stays the thing that looks pressable.
+      child: child,
     );
   }
 }

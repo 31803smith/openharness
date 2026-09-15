@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import 'package:harness/state/app_state.dart';
+
+import '../p2p/phone_terminal_p2p.dart';
 import 'agent_index.dart';
 import 'agents_tab.dart';
 import 'machines_tab.dart';
@@ -26,7 +28,7 @@ class PhoneShell extends StatefulWidget {
   State<PhoneShell> createState() => _PhoneShellState();
 }
 
-class _PhoneShellState extends State<PhoneShell> {
+class _PhoneShellState extends State<PhoneShell> with WidgetsBindingObserver {
   PhoneTab _tab = PhoneTab.agents;
 
   final _navigators = {
@@ -39,11 +41,26 @@ class _PhoneShellState extends State<PhoneShell> {
   };
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     for (final controller in _heroControllers.values) {
       controller.dispose();
     }
     super.dispose();
+  }
+
+  /// Back in the foreground: a p2p retry waiting out its delay fires now. Going to
+  /// the background needs nothing — the OS suspends the socket, and its redial
+  /// tears the old wire down and negotiates a fresh one.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) phoneTerminalP2p.kickRetry();
   }
 
   NavigatorState? get _currentNavigator => _navigators[_tab]?.currentState;

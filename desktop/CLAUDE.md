@@ -448,8 +448,11 @@ from `node_status` pushes — distinct from our own socket status, pending offli
   ▸ Keyboard shortcuts, group cards reflowed across the pane, plus the recessed "the terminal keeps"
   card built from `kTerminalOwnedKeys`). Same rows behind both, so they cannot disagree; keycaps come
   from `shortcuts/key_cap.dart`. Every shortcut is ⌘-based — Ctrl belongs to the shell/tmux, ⌥ is a
-  Meta prefix for the pty, and ⌘C/⌘V/⌘A are owned by xterm — with one pinned exception, `⌃⇥`/`⌃⇧⇥`
-  for the panes, which the terminal is made to let past.
+  Meta prefix for the pty (⌥⏎ only — `MetaEnterInputHandler` in
+  `lib/terminal/terminal_input.dart` turns it into `ESC` + Return so the engine's prompt breaks the
+  line instead of submitting; ⌥ stays the compose key everywhere else, and the composer answers the
+  same chord by writing the newline itself), and ⌘C/⌘V/⌘A are owned by xterm — with one pinned
+  exception, `⌃⇥`/`⌃⇧⇥` for the panes, which the terminal is made to let past.
 - `lib/flash/` flashes the ESP32-S3 dial through the CLI runner; `SerialPortLease` pauses daemon
   supervision while the port is held so `harness start` cannot steal it mid-write.
 - `lib/update/desktop_updater.dart` self-updates from the GCS manifest (sha256-verified, strictly

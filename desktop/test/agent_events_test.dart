@@ -62,6 +62,7 @@ class FakeCreateAgentNotifier extends AppNotifier {
     String? codexHome,
     String? swarmId,
     PaneSplitRequest? split,
+    AgentCreationAttempt? attempt,
   }) async => null;
 }
 
@@ -168,7 +169,9 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, 'Select this folder'));
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(FilledButton, 'Create agent'));
+      await tester.tap(
+        find.widgetWithText(FilledButton, 'Create on ${machine.displayName}'),
+      );
       await tester.pumpAndSettle();
     }
 

@@ -124,7 +124,7 @@ class _EnvironmentSetupScreenState extends State<EnvironmentSetupScreen> {
           'Get this computer ready',
           count == 0
               ? 'Nothing is left to install. Harness will run one final verification.'
-              : 'Harness brings your coding agents together in one workspace. '
+              : 'Harness brings your agents together in one workspace. '
                     'Set up the $countLabel below, then sign in to get started.',
         ),
         Row(

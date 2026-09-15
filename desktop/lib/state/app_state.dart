@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io' show exit, pid;
+import 'dart:math' show Random;
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
@@ -66,6 +67,34 @@ class RestartAgentResult {
   final bool resumed;
 
   const RestartAgentResult({this.error, this.resumed = true});
+}
+
+/// One deliberate creation, retained by the form if its reply is lost. Reusing
+/// it checks the original request; opening New agent starts a fresh intent.
+class AgentCreationAttempt {
+  AgentCreationAttempt() {
+    final random = Random.secure();
+    _id = List.generate(
+      16,
+      (_) => random.nextInt(256),
+    ).map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
+  }
+
+  late final String _id;
+  String? _machineId, _targetId;
+  Map<String, dynamic>? _choices;
+  PaneSplitRequest? _split;
+  Future<String?>? _inFlight;
+  bool _awaitingConfirmation = false, _finished = false;
+  String? _outcome;
+
+  bool get awaitingConfirmation => _awaitingConfirmation;
+
+  String? _complete(String? error) {
+    _finished = true;
+    _awaitingConfirmation = false;
+    return _outcome = error;
+  }
 }
 
 String? _normalizeComputerId(String? raw) {
@@ -327,6 +356,8 @@ class AppNotifier extends ChangeNotifier {
       !_disposed && revision == _authRevision;
 
   int _invalidateAuthWork() {
+    _resetLoginBrowser();
+    _loginAuthorized = false;
     _profileInFlight = null;
     _retryInFlight = null;
     machinesLoading = false;
@@ -388,9 +419,11 @@ class AppNotifier extends ChangeNotifier {
       List.unmodifiable(_closedHistory.reversed);
   List<ClosedSwarm> get closedSwarms =>
       List.unmodifiable(_closedHistory.reversed.whereType<ClosedSwarm>());
-  bool get canReopenClosedSwarm =>
-      _closedHistory.any((entry) => entry is ClosedSwarm) &&
-      swarms.length < maxSwarms;
+  bool get canReopenClosedSwarm {
+    final saved = _closedHistory.whereType<ClosedSwarm>().lastOrNull;
+    return saved != null && _canReopenSwarm(saved);
+  }
+
   bool get canReopenLastClosed =>
       _closedHistory.isNotEmpty &&
       canReopenClosed(_closedHistory.last.historyId);
@@ -400,7 +433,7 @@ class AppNotifier extends ChangeNotifier {
     final entry = _closedHistory
         .where((entry) => entry.historyId == historyId)
         .firstOrNull;
-    if (entry is ClosedSwarm) return swarms.length < maxSwarms;
+    if (entry is ClosedSwarm) return _canReopenSwarm(entry);
     if (entry is! ClosedAgent) return false;
     final target = swarms.where((s) => s.id == entry.swarmId).firstOrNull;
     return target == null
@@ -411,6 +444,21 @@ class AppNotifier extends ChangeNotifier {
                     p.machineId == entry.machineId &&
                     p.agentId == entry.agentId,
               );
+  }
+
+  bool _canReopenSwarm(ClosedSwarm saved) {
+    if (_disposed) return false;
+    final target = swarms.where((swarm) => swarm.id == saved.id).firstOrNull;
+    if (target == null) return swarms.length < maxSwarms;
+    final present = {
+      for (final pane in target.panes) (pane.machineId, pane.agentId),
+    };
+    final missing = {
+      for (final pane in saved.panes)
+        if (!present.contains((pane.machineId, pane.agentId)))
+          (pane.machineId, pane.agentId),
+    };
+    return target.panes.length + missing.length <= maxPanes;
   }
 
   void _rememberClosed(ClosedWork entry) {
@@ -558,25 +606,57 @@ class AppNotifier extends ChangeNotifier {
   }
 
   void reopenClosedSwarm({String? historyId}) {
-    if (_disposed || !canReopenClosedSwarm) return;
+    if (_disposed) return;
     final index = _closedHistory.lastIndexWhere(
       (entry) =>
           entry is ClosedSwarm &&
           (historyId == null || entry.historyId == historyId),
     );
     if (index < 0) return;
-    final saved = _closedHistory.removeAt(index) as ClosedSwarm;
+    final saved = _closedHistory[index] as ClosedSwarm;
+    if (!_canReopenSwarm(saved)) return;
+    _closedHistory.removeAt(index);
     if (swarms.length == 1 && saved.replacesUntouchedWelcome(swarms.single)) {
       swarms.clear();
     }
     final pool = {
       for (final pane in allPanes) (pane.machineId, pane.agentId): pane,
     };
-    var id = saved.id;
-    while (swarms.any((swarm) => swarm.id == id)) {
-      id = 'swarm-${_nextSwarmId++}';
+    final target = swarms.where((swarm) => swarm.id == saved.id).firstOrNull;
+    if (target != null) {
+      // Reopening an individual agent may have restored this swarm already.
+      // Reunite its missing views without cloning the tab or overwriting edits
+      // made since then. Live peers keep their terminal, draft and selection.
+      final present = {
+        for (final pane in target.panes) (pane.machineId, pane.agentId),
+      };
+      final previousCount = target.panes.length;
+      for (final entry in saved.panes) {
+        if (!present.add((entry.machineId, entry.agentId))) continue;
+        target.panes.add(
+          pool.putIfAbsent(
+            (entry.machineId, entry.agentId),
+            () => TerminalPane(
+              id: _nextPaneId++,
+              machineId: entry.machineId,
+              agentId: entry.agentId,
+            )..composerVisible = entry.composerVisible,
+          ),
+        );
+      }
+      if (target.panes.length != previousCount) {
+        // An old manual shape for this count describes different membership.
+        // Keep current presets/pins and use the normal layout for added views.
+        target.paneSizes.remove('${target.panes.length}:manual');
+        target.arranged = null;
+        target.arrangedKey = null;
+      }
+      target.focusedPaneId ??= target.panes.firstOrNull?.id;
+      _paneFocusRequest++;
+      selectSwarm(target.id);
+      return;
     }
-    final restored = Swarm(id: id, name: saved.name)
+    final restored = Swarm(id: saved.id, name: saved.name)
       ..gridColumns = saved.gridColumns
       ..presets.addAll(saved.presets)
       ..paneSizes.addAll(saved.paneSizes);
@@ -827,9 +907,14 @@ class AppNotifier extends ChangeNotifier {
   static const maxPanes = 64;
   // Set only while `harness login --force --json` is waiting for the user to finish SSO in their system
   // browser. It arrives PART WAY THROUGH the flow — the CLI has to start before it can hand one
-  // over — so it says "the browser is open", not "a sign-in is running". Use [signingIn] for the
-  // second question; see the note there.
+  // over. It identifies the current sign-in link; [signingIn] tracks the whole
+  // attempt, including CLI startup and workspace restoration.
   String? pendingAuthorizeUrl;
+  bool openingLoginBrowser = false;
+  String? loginBrowserError;
+  int _loginBrowserRevision = 0;
+  bool _loginAuthorized = false;
+  bool get canCancelLogin => signingIn && !_loginAuthorized;
 
   /// True from the moment the user presses Sign in until the flow settles, one way or the other.
   ///
@@ -2124,16 +2209,22 @@ class AppNotifier extends ChangeNotifier {
       await cliLogin.login(
         onAuthorizeUrl: (url) {
           if (!_authWorkCurrent(revision)) return;
+          if (pendingAuthorizeUrl == url) return;
+          _resetLoginBrowser();
           pendingAuthorizeUrl = url;
           notifyListeners();
-          // Which browser, and why, is decided in `viewer/sign_in_browser.dart`:
-          // the system browser on a desktop, an in-app browser view on a phone,
-          // where handing the person to Safari would suspend this app and with
-          // it the loopback listener the page redirects back to.
-          unawaited(openSignInPage(Uri.parse(url)));
+          // Through [openLoginBrowser] rather than straight to the launcher, so
+          // the first handoff is the same one the login screen's retry button
+          // takes and reports its outcome the same way. WHICH browser it opens
+          // is decided in `viewer/sign_in_browser.dart`.
+          unawaited(openLoginBrowser());
         },
       );
       if (!_authWorkCurrent(revision)) return;
+      _loginAuthorized = true;
+      pendingAuthorizeUrl = null;
+      _resetLoginBrowser();
+      notifyListeners();
       await _finishBootstrapSignedIn();
       if (!_authWorkCurrent(revision) || status != AppStatus.authenticated)
         return;
@@ -2162,6 +2253,8 @@ class AppNotifier extends ChangeNotifier {
       // Cleared last, and only here: everything above may still be running when the URL goes, and
       // dropping the flag any earlier is what put a bare spinner over the user's own screen.
       if (_authWorkCurrent(revision)) {
+        _resetLoginBrowser();
+        _loginAuthorized = false;
         pendingAuthorizeUrl = null;
         signingIn = false;
       }
@@ -2169,11 +2262,73 @@ class AppNotifier extends ChangeNotifier {
     if (_authWorkCurrent(revision)) notifyListeners();
   }
 
-  /// Aborts an in-flight [login] — the embedded sign-in webview's close button calls this.
-  void cancelLogin() => cliLogin.cancel();
+  void _resetLoginBrowser() {
+    ++_loginBrowserRevision;
+    openingLoginBrowser = false;
+    loginBrowserError = null;
+  }
+
+  /// Reopens the current authorization URL without creating another login.
+  Future<void> openLoginBrowser() async {
+    final url = pendingAuthorizeUrl;
+    if (_disposed || !signingIn || url == null || openingLoginBrowser) return;
+    final authRevision = _authRevision;
+    final browserRevision = ++_loginBrowserRevision;
+    openingLoginBrowser = true;
+    loginBrowserError = null;
+    notifyListeners();
+    var opened = false;
+    try {
+      final uri = Uri.tryParse(url);
+      if (uri != null &&
+          uri.hasAuthority &&
+          (uri.scheme == 'https' || uri.scheme == 'http')) {
+        // Not `launchUrl(..., externalApplication)` directly: on a desktop
+        // [openSignInPage] IS that call, and on a phone it must not be. Handing
+        // a phone to Safari suspends this app, and with it the loopback listener
+        // the page redirects back to — the sign-in could then never land.
+        // ⚠️ The reason the desktop insists on a real browser survives here: this
+        // SSO page's Google button uses Google's popup-based Identity Services
+        // flow, where a popup window posts the result back to its opener. Whether
+        // an in-app browser view can satisfy that is open, and flagged in
+        // `sign_in_browser.dart`; it is why the phone case is confined to phones
+        // rather than made the rule.
+        opened = await openSignInPage(uri);
+      }
+    } catch (_) {
+      // Browser handoff failure is recoverable within the same sign-in. Never
+      // put a credential-bearing URL or a raw platform exception in the UI.
+    }
+    if (!_authWorkCurrent(authRevision) ||
+        browserRevision != _loginBrowserRevision ||
+        pendingAuthorizeUrl != url) {
+      return;
+    }
+    openingLoginBrowser = false;
+    if (!opened) {
+      loginBrowserError =
+          'Couldn’t open your browser. Open it again or copy the sign-in link.';
+    }
+    notifyListeners();
+  }
+
+  /// Return immediately; late URLs, results and browser replies belong to the
+  /// cancelled attempt and cannot change a subsequent sign-in.
+  void cancelLogin() {
+    if (_disposed || !canCancelLogin) return;
+    _invalidateAuthWork();
+    signingIn = false;
+    pendingAuthorizeUrl = null;
+    status = AppStatus.unauthenticated;
+    _lastError = null;
+    _lastErrorRetryable = false;
+    cliLogin.cancel();
+    notifyListeners();
+  }
 
   Future<void> logout() async {
     final revision = _invalidateAuthWork();
+    cliLogin.cancel();
     signingIn = false;
     pendingAuthorizeUrl = null;
     _closedHistory.clear();
@@ -2258,6 +2413,7 @@ class AppNotifier extends ChangeNotifier {
         );
       },
       relayCodecs: viewer?.relayCodecs,
+      transportPlugins: viewer?.transportPlugins,
       onAuthFailure: _signedOutAtRuntime,
       onLocalFailure: _onLocalFailure,
       onEvent: _handleEvent,
@@ -3591,8 +3747,9 @@ class AppNotifier extends ChangeNotifier {
     }
   }
 
-  /// Spawns a new engine session on [machineId] via the harness CLI, then jumps into its terminal.
-  /// Returns null on success, or an error message to show inline in the New Agent dialog.
+  /// Starts an agent, or recovers this form's earlier request after a lost reply.
+  /// Returns null on success, or an inline message; [attempt] tells the form
+  /// whether to offer Check status instead of inviting another creation.
   Future<String?> createAgent(
     String machineId, {
     required String engine,
@@ -3601,76 +3758,198 @@ class AppNotifier extends ChangeNotifier {
     String? codexHome,
     String? swarmId,
     PaneSplitRequest? split,
-  }) async {
+    AgentCreationAttempt? attempt,
+  }) {
+    final creation = attempt ?? AgentCreationAttempt();
+    final choices = <String, dynamic>{
+      'engine': engine,
+      'cwd': folder,
+      'bypassPermission': bypassPermission,
+      'codexHome': ?codexHome,
+    };
+    if (creation._choices != null &&
+        (creation._machineId != machineId ||
+            !mapEquals(creation._choices, choices))) {
+      return Future.value(
+        'Check the original request before changing its choices.',
+      );
+    }
+    if (creation._finished) return Future.value(creation._outcome);
+    if (creation._inFlight case final inFlight?) return inFlight;
+    if (creation._choices == null) {
+      creation._choices = choices;
+      creation._machineId = machineId;
+      creation._targetId = split?.swarmId ?? swarmId ?? activeSwarmId;
+      creation._split = split;
+    }
+    final work = _createAgentWithReceipt(creation);
+    creation._inFlight = work;
+    return work.whenComplete(() => creation._inFlight = null);
+  }
+
+  String? _creationPlacementError(String targetId, PaneSplitRequest? split) {
     if (split != null && !isPaneSplitCurrent(split)) {
       return 'The layout changed. Close this dialog and split the agent again.';
     }
-    final targetId = split?.swarmId ?? swarmId ?? activeSwarmId;
-    if (!swarms.any((s) => s.id == targetId)) return 'This swarm was closed';
-    final target = swarms.firstWhere((s) => s.id == targetId);
+    final target = swarms.where((s) => s.id == targetId).firstOrNull;
+    if (target == null) return 'This swarm was closed';
     if (target.panes.length >= maxPanes) {
       return 'This swarm is full. Open a new swarm to create an agent.';
     }
-    final machine = machineStates[machineId];
-    if (machine == null) return 'Machine not found';
-    if (codexHome != null) {
-      if (engine != 'codex') {
-        return 'Choose a Codex profile only for Codex';
-      }
-      if (machine.engines['codex']?.supportsCodexHome != true) {
-        return 'Update the harness CLI on this machine to choose a Codex profile';
-      }
-    }
-    final connection = _conn(machineId);
-    Map<String, dynamic> result;
-    try {
-      result = await connection.request(
-        'agent_create',
-        payload: {
-          'engine': engine,
-          'cwd': folder,
-          'bypassPermission': bypassPermission,
-          'codexHome': ?codexHome,
-        },
-        timeout: const Duration(seconds: 20),
-      );
-    } on WsRequestFailure catch (failure) {
-      // A refusal the CLI MEANT arrives as a thrown WsRequestFailure, never as an `error` key on a
-      // reply that was returned — see that class. This used to be a branch on `result['error']`
-      // below, which could not run, so the user got the wire code in place of the sentence.
-      return switch (failure.code) {
+    return null;
+  }
+
+  String _creationFailureMessage(String code, String? detail, String machine) =>
+      switch (code) {
         'CWD_NOT_FOUND' || 'INVALID_CWD' =>
-          'The project folder is unavailable on ${machine.machine.displayName}. '
+          'The project folder is unavailable on $machine. '
               'Choose another folder and try again.',
         'TMUX_UNAVAILABLE' =>
-          'Harness needs tmux to start agents on ${machine.machine.displayName}. '
+          'Harness needs tmux to start agents on $machine. '
               'Install tmux there, then try again.',
         'UNSUPPORTED_ON_REMOTE' || 'UNSUPPORTED' =>
           'Update the harness CLI on this machine to use New Agent',
-        _ => 'Create agent failed: ${failure.detail ?? failure.code}',
+        _ => 'Create agent failed: ${detail ?? code}',
       };
-    } on WsRequestTimeout {
-      // The request may have succeeded while its reply was lost. Do not call
-      // that a definite failure or encourage blindly creating a duplicate.
-      return '${machine.machine.displayName} has not confirmed the new agent yet. '
-          'Check Search before creating another.';
-    } catch (error) {
-      return 'Create agent failed: $error';
+
+  Future<String?> _createAgentWithReceipt(AgentCreationAttempt creation) async {
+    final machineId = creation._machineId!;
+    final targetId = creation._targetId!;
+    final split = creation._split;
+    final choices = creation._choices!;
+    final machine = machineStates[machineId];
+    if (machine == null) return 'Machine not found';
+    final machineName = machine.machine.displayName;
+    // A status check must remain possible even if the destination closed or a
+    // capability probe changed while the first create was already in flight.
+    if (!creation.awaitingConfirmation) {
+      final placementError = _creationPlacementError(targetId, split);
+      if (placementError != null) return placementError;
+      if (choices['codexHome'] != null) {
+        if (choices['engine'] != 'codex') {
+          return 'Choose a Codex profile only for Codex';
+        }
+        if (machine.engines['codex']?.supportsCodexHome != true) {
+          return 'Update the harness CLI on this machine to choose a Codex profile';
+        }
+      }
+    }
+    final connection = _conn(machineId);
+    final operation = creation.awaitingConfirmation
+        ? 'agent_create_status'
+        : 'agent_create';
+    final unconfirmed =
+        '$machineName has not confirmed the new agent yet. '
+        'Check status before creating another.';
+    Map<String, dynamic> result;
+    creation._awaitingConfirmation = true;
+    try {
+      if (operation == 'agent_create_status') {
+        result = await connection.request(
+          operation,
+          payload: {'creationId': creation._id},
+          timeout: const Duration(seconds: 10),
+        );
+        if (result['creationId'] != creation._id) return unconfirmed;
+      } else {
+        result = await connection.request(
+          operation,
+          payload: {...choices, 'creationId': creation._id},
+          timeout: const Duration(seconds: 20),
+        );
+      }
+    } on WsRequestFailure catch (failure) {
+      if (operation == 'agent_create_status') {
+        if (failure.code == 'UNSUPPORTED' ||
+            failure.code == 'UNSUPPORTED_ON_REMOTE' ||
+            failure.code == 'E2EE_REQUIRED') {
+          return '$machineName cannot check this creation. '
+              'Use Add agent to look for it before creating another.';
+        }
+        return unconfirmed;
+      }
+      // Refusals that happen before a launch are safe to correct. INTERNAL,
+      // spawn timeouts and connection failures cannot prove nothing started.
+      const refusedBeforeLaunch = {
+        'CWD_NOT_FOUND',
+        'INVALID_CWD',
+        'INVALID_ENGINE',
+        'INVALID_GRID',
+        'INVALID_CODEX_HOME',
+        'TMUX_UNAVAILABLE',
+        'TMUX_TOO_OLD_FOR_GRID',
+        'GRID_CONFIG_FAILED',
+        'UNSUPPORTED_ON_REMOTE',
+        'UNSUPPORTED',
+      };
+      if (refusedBeforeLaunch.contains(failure.code)) {
+        return creation._complete(
+          _creationFailureMessage(failure.code, failure.detail, machineName),
+        );
+      }
+      return unconfirmed;
+    } catch (_) {
+      // Includes disconnects, malformed replies and timeouts. A transport error
+      // is not evidence that the machine did not execute the request.
+      return unconfirmed;
+    }
+    if ((result.containsKey('creationId') || result['state'] != null) &&
+        result['creationId'] != creation._id) {
+      return unconfirmed;
+    }
+    switch (result['state']) {
+      case 'missing':
+        // An old CLI may have created the agent before being updated to a
+        // receipt-aware version. Missing is not proof that nothing started.
+        // Check status stays read-only, even across upgrades and reconnects.
+        return '$machineName has no record of this request. '
+            'Use Add agent to look for it before creating another.';
+      case 'pending':
+        return '$machineName is still starting your agent. Check again in a moment.';
+      case 'unconfirmed':
+        return '$machineName could not confirm whether this agent started. '
+            'Use Add agent to look for it before creating another.';
+      case 'unavailable':
+        return creation._complete(
+          'This agent was created but is no longer available. '
+          'You can create a new one.',
+        );
+      case 'failed':
+        final failure = result['failure'];
+        if (failure is! Map || failure['code'] is! String) return unconfirmed;
+        return creation._complete(
+          _creationFailureMessage(
+            failure['code'] as String,
+            failure['detail'] is String ? failure['detail'] as String : null,
+            machineName,
+          ),
+        );
+      case 'created':
+      case null: // A successful first response from a CLI predating receipts.
+        break;
+      default:
+        return unconfirmed;
     }
     final raw = result['agent'];
-    if (raw is! Map) return 'Create agent failed: malformed response';
+    if (raw is! Map || raw['id'] is! String || (raw['id'] as String).isEmpty) {
+      return unconfirmed;
+    }
+    final Agent agent;
+    try {
+      agent = Agent.fromJson(Map<String, dynamic>.from(raw));
+    } catch (_) {
+      return unconfirmed;
+    }
+    creation._complete(null);
     if (_disposed || machineStates[machineId] != machine) return null;
-    final agent = Agent.fromJson(Map<String, dynamic>.from(raw));
-    // Idempotent on agent.id — safe even if the CLI's own agent_synced push for this session
-    // arrives separately (it's fire-and-forget on the CLI side and unordered relative to this reply).
     _upsertAgent(machine, agent);
-    // Counted HERE and not on the `agent_created` push, which also fires for
-    // agents another client made on the same machine. "Agents spawned" is a
-    // count of what this app launched.
+    // Apply each creation receipt once, even if its transport result is replayed.
     harnessStats.onAgentSpawned();
     notifyListeners();
-    if (split != null && !isPaneSplitCurrent(split)) {
-      _lastError = 'The agent was created, but the original layout changed. Find it in Search.';
+    if (_creationPlacementError(targetId, split) != null) {
+      _lastError =
+          'The agent was created, but its original swarm or layout changed. '
+          'Find it with Add agent.';
       _lastErrorRetryable = false;
       notifyListeners();
       return null;
@@ -5173,6 +5452,7 @@ class AppNotifier extends ChangeNotifier {
   void dispose() {
     _localGitProjects.dispose();
     _disposed = true;
+    if (signingIn) cliLogin.cancel();
     _closedHistory.clear();
     _daemonSupervisionTimer?.cancel();
     _updateCheckTimer?.cancel();

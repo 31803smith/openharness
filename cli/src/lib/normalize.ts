@@ -103,6 +103,24 @@ export function stripSystemBlocks(text: string): string {
     .trim()
 }
 
+/**
+ * Bash mode (`!command` in Claude Code) writes the command and its output back into the transcript as a
+ * `type:'user'` line — `<bash-input>…</bash-input>` and the `<bash-stdout>`/`<bash-stderr>` that follow.
+ * It is the person running a local shell, NOT a prompt to the agent, so it must not open a turn: if it
+ * did, the per-turn recap would summarise shell mechanics ("paste the command on one line") instead of
+ * what the agent is actually working on, and the tile would drift off-task with every `!`. Stripped ONLY
+ * for the turn-detection decision (see `realUserText`), never for display — the transcript still shows
+ * the commands. A line carrying real prose ALONGSIDE a bash block keeps counting; only a bash-only line
+ * is skipped.
+ */
+export function stripBashModeBlocks(text: string): string {
+  return text
+    .replace(/<bash-input>[\s\S]*?<\/bash-input>\s*/g, '')
+    .replace(/<bash-stdout>[\s\S]*?<\/bash-stdout>\s*/g, '')
+    .replace(/<bash-stderr>[\s\S]*?<\/bash-stderr>\s*/g, '')
+    .trim()
+}
+
 // Built-in CLI commands that only drive the local TUI and never dispatch an agent turn. Surfacing
 // them as a user prompt would open a turn nothing ever closes (device tile stuck busy), so they stay
 // invisible — same as before. Anything else (a custom `~/.claude/commands/*.md`, `/goal`, `/review`,
@@ -403,6 +421,9 @@ function isInterruptLine(msg: NormalizedMessage): boolean {
 function realUserText(msg: NormalizedMessage): string | null {
   const text = userTextRaw(msg)
   if (text === null || INTERRUPT_MARKER.test(text)) return null
+  // A `!command` line is not a prompt — skip it so the turn (and its recap) stays anchored to the last
+  // real ask. Only when nothing but bash blocks remain: a message that also carries prose still counts.
+  if (!stripBashModeBlocks(text)) return null
   return text
 }
 

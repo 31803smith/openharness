@@ -8,6 +8,7 @@ import 'package:xterm/xterm.dart';
 
 import '../core/crash_log.dart';
 import 'terminal_binary.dart';
+import 'terminal_input.dart';
 import 'terminal_viewport.dart';
 
 typedef TerminalFrameSender = Future<bool> Function(
@@ -777,6 +778,9 @@ class TerminalSession extends ChangeNotifier {
     final result = Terminal(
       maxLines: 10000,
       platform: TerminalTargetPlatform.macos,
+      // ⌥⏎ has to become a Meta-prefixed Return before it reaches the pty, or the engine's prompt
+      // reads it as the submit it is byte-identical to. See [MetaEnterInputHandler].
+      inputHandler: harnessInputHandler,
       // The remote pane owns its grid and redraws after resize. Reflowing TUI
       // rows locally both changes their geometry and exercises an xterm.dart
       // circular-buffer bug when a remote/local switch changes viewport size.

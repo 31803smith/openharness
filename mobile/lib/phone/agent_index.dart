@@ -59,16 +59,37 @@ List<AgentEntry> waitingAgents(List<AgentEntry> entries) =>
 /// the one worth putting where the eye lands.
 List<AgentEntry> otherAgents(List<AgentEntry> entries) {
   final rest = entries.where((entry) => !entry.isWaiting).toList();
-  rest.sort((a, b) {
-    if (a.isWorking != b.isWorking) return a.isWorking ? -1 : 1;
-    // Then agents that can actually be opened, so a row with no terminal never heads the list.
-    final aOpen = a.agent.terminalAvailable;
-    final bOpen = b.agent.terminalAvailable;
-    if (aOpen != bOpen) return aOpen ? -1 : 1;
-    return 0;
-  });
-  return rest;
+  // A stable sort, which `List.sort` is not — see [filterableMachines] for the same technique and
+  // the same reason. It matters more here than it does for the chips: the terminal page walks this
+  // order to find the next agent along, so an unstable tie would let two idle agents swap places on
+  // an unrelated rebuild and send a swipe to a different agent than the list was offering.
+  final indexed = [for (final (index, entry) in rest.indexed) (index, entry)]
+    ..sort((a, b) {
+      final aEntry = a.$2;
+      final bEntry = b.$2;
+      if (aEntry.isWorking != bEntry.isWorking) {
+        return aEntry.isWorking ? -1 : 1;
+      }
+      // Then agents that can actually be opened, so a row with no terminal never heads the list.
+      final aOpen = aEntry.agent.terminalAvailable;
+      final bOpen = bEntry.agent.terminalAvailable;
+      if (aOpen != bOpen) return aOpen ? -1 : 1;
+      return a.$1.compareTo(b.$1);
+    });
+  return [for (final (_, entry) in indexed) entry];
 }
+
+/// Every agent the list draws, in the order a finger meets them.
+///
+/// The tab draws two sections from the same entries — [waitingAgents] then [otherAgents] — and that
+/// concatenation, not [agentIndex], is the order somebody actually sees. The terminal page swipes
+/// along it, so it has to be built in ONE place: a page computing "the next agent" from a slightly
+/// different order than the list it was opened from would skip an agent, or hand back the one just
+/// left, and nothing on screen would explain why.
+List<AgentEntry> visibleAgents(List<AgentEntry> entries) => [
+  ...waitingAgents(entries),
+  ...otherAgents(entries),
+];
 
 /// The machines the filter chips offer, in the order they are drawn.
 ///

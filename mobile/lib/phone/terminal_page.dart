@@ -9,7 +9,7 @@ import 'package:harness/state/app_state.dart';
 import 'package:harness/widgets/engine_identity.dart';
 import 'package:harness/widgets/rename_agent_dialog.dart';
 import 'package:harness/widgets/terminal_panel.dart';
-import 'agent_hero.dart';
+
 import 'phone_header.dart';
 import 'phone_sheet.dart';
 import 'phone_status.dart';
@@ -27,22 +27,31 @@ class TerminalPage extends StatefulWidget {
     required this.notifier,
     required this.machineId,
     required this.agentId,
-    required this.heroSource,
+    this.isActive = true,
   });
 
   final AppNotifier notifier;
   final String machineId;
   final String agentId;
 
-  /// Which list opened this page — one half of the engine mark's Hero tag, so the flight pairs with
-  /// the row it came from rather than an identical row in the other mounted tab.
-  final AgentHeroSource heroSource;
+  /// Whether this is the page being LOOKED AT, rather than one parked beside it in the pager.
+  ///
+  /// ⚠️ **Load-bearing for correctness, not just for tidiness.** [TerminalPanel] claims the keyboard
+  /// whenever it is built focused — `requestKeyboard()` reopens the input connection on purpose — so
+  /// two mounted pages both passing `focused: true` race for the software keyboard, and the winner
+  /// can be the page off-screen. What gets typed then reaches an agent nobody is looking at.
+  ///
+  /// It also drives the panel's `visible`, which is what releases focus and stops the renderer and
+  /// the auto-resize for a page that has slid away — three terminals all resizing themselves to the
+  /// layout would send SIGWINCH to three remote shells at once.
+  final bool isActive;
 
   @override
   State<TerminalPage> createState() => _TerminalPageState();
 }
 
-class _TerminalPageState extends State<TerminalPage> {
+class _TerminalPageState extends State<TerminalPage>
+    with WidgetsBindingObserver {
   /// Whether this page's pane ever existed.
   ///
   /// ⚠️ Load-bearing, and the reason this page is stateful at all. The page is pushed BEFORE the
@@ -55,12 +64,73 @@ class _TerminalPageState extends State<TerminalPage> {
   /// TerminalPage still sitting in the Agents tab's stack.
   bool _hadPane = false;
 
+  /// Whether this page has already used its one chance to summon the keyboard.
+  ///
+  /// It starts `false`, so the terminal is focused on arrival and the keyboard
+  /// rises by itself. It flips the moment the keyboard IS up, and NEVER goes
+  /// back: from then on `TerminalPanel` is passed `focused: false` and stops
+  /// claiming, for the life of the page. Bringing the keyboard back is the
+  /// terminal's own job — xterm's tap handler calls `requestKeyboard()` without
+  /// consulting this flag, so nothing here needs to re-arm.
+  ///
+  /// ⚠️ Without this, Back could not put the keyboard away at all:
+  /// `TerminalPanel._claimFocus` calls `TerminalView.requestKeyboard()`, which
+  /// RE-TAKES focus when it finds none, so the keyboard returned a frame after
+  /// the system dismissed it. Measured on a Pixel 8 Pro — `onRequestShow`
+  /// ELEVEN times against a single `onRequestHide`.
+  ///
+  /// ⚠️ It flips on the keyboard APPEARING, not on it going away, and that is
+  /// the difference between Back working on the first press and on the second.
+  /// `_claimFocus` runs from a post-frame callback and BEATS `didChangeMetrics`
+  /// to the news that the keyboard is gone:
+  ///
+  ///     onDispatched            keyboard hidden
+  ///     CLAIM focused=true      claim ran first — re-took focus
+  ///     onRequestShow           keyboard on its way back
+  ///     KB raw=0.0              our metrics callback, one beat too late
+  ///
+  /// Arming on the way up removes the race: by the time any Back arrives,
+  /// claiming has been off for as long as the keyboard has been visible.
+  bool _claimSpent = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  /// Watches the keyboard through [View], because MediaQuery lies to this page.
+  ///
+  /// ⚠️ `MediaQuery.viewInsetsOf(context).bottom` is ALWAYS ZERO here, keyboard
+  /// up or down. `PhoneShell` puts this page's Navigator inside a `Scaffold`
+  /// body, and a Scaffold that has already resized for the keyboard STRIPS the
+  /// bottom inset from the MediaQuery it hands its body — the body must not
+  /// subtract it twice. Every descendant therefore reads zero.
+  ///
+  /// [View.of] is the raw platform value, in PHYSICAL pixels, and no widget can
+  /// intercept it.
+  @override
+  void didChangeMetrics() {
+    super.didChangeMetrics();
+    if (!mounted) return;
+    // The FIRST frame of the keyboard rising is enough — it need not finish.
+    // Spending the claim this early is the point: it is off long before any
+    // Back press can arrive.
+    if (View.of(context).viewInsets.bottom > 0 && !_claimSpent) {
+      setState(() => _claimSpent = true);
+    }
+  }
+
   /// The composer starts OPEN here, and the phone owns that answer rather than the pane.
   ///
   @override
   Widget build(BuildContext context) {
-    // Clear of the home indicator — except while the keyboard is up, which already is.
-    final keyboardUp = MediaQuery.viewInsetsOf(context).bottom > 0;
     return ListenableBuilder(
       listenable: widget.notifier,
       builder: (context, _) {
@@ -74,9 +144,14 @@ class _TerminalPageState extends State<TerminalPage> {
             .firstOrNull;
         if (pane != null) {
           _hadPane = true;
-        } else if (_hadPane) {
+        } else if (_hadPane && widget.isActive) {
           // The pane this page was showing is gone — another tab opened a different agent, or the
           // agent was deleted. Leave rather than spin: there is nothing here to come back.
+          //
+          // ⚠️ Only the ACTIVE page may leave, and only it ever should. A page parked beside the one
+          // being read shares the route, so popping from there would take the whole pager down —
+          // including the terminal actually on screen. A parked page whose pane went away simply
+          // waits: swiping to it is what makes it attach again.
           _leave();
         }
         final session = pane?.session;
@@ -88,100 +163,107 @@ class _TerminalPageState extends State<TerminalPage> {
         final reclaim = phoneReclaimAction(session);
         return Scaffold(
           backgroundColor: AppPalette.windowBg,
+          // ⚠️ Plain `SafeArea`. A `bottom: !keyboardUp` toggle was here,
+          // computed from `MediaQuery.viewInsetsOf(context).bottom > 0` — and
+          // that value is pinned at ZERO inside this page (see
+          // [didChangeMetrics]). The toggle therefore never toggled.
           body: SafeArea(
-            bottom: !keyboardUp,
             child: Column(
               children: [
-                // The header alone carries the flight — see [AgentHeroHeader]. Only once the agent
-                // is known: the row's end of the flight is built from the agent, and a flight begun
-                // against a placeholder would land on content that then changes under it.
-                AgentHeroHeader(
-                  tag: agent == null
-                      ? null
-                      : agentHeroTag(
-                          machineId: widget.machineId,
-                          agentId: widget.agentId,
-                          source: widget.heroSource,
-                        ),
-                  child: PhoneHeader(
-                    title: agent?.name ?? 'Agent',
-                    leading: EngineMark(
-                      engine: agent?.engine,
-                      displayName: agent?.engineDisplayName,
-                      size: 22,
-                    ),
-                    subtitle: StatusPill(
-                      fontSize: 12,
-                      summary: (
-                        // The machine alone once the button beside it is saying
-                        // the state: two words for one fact, in a row this
-                        // narrow, is what truncated "Taken over" to "Ta…".
-                        label: reclaim == null
-                            ? '${machine?.machine.displayName ?? ''} · ${status.label}'
-                            : machine?.machine.displayName ?? '',
-                        tone: status.tone,
-                      ),
-                    ),
-                    trailing: [
-                      // Read-only is a state to get OUT of, so its way out is a
-                      // labelled button in the header rather than a line in the
-                      // actions sheet: the sheet is where you go having decided
-                      // to do something, and this is the thing telling you that
-                      // typing will go nowhere until you do.
-                      if (reclaim != null)
-                        _ReclaimButton(
-                          action: reclaim,
-                          onPressed: () => widget.notifier.selectAgent(
-                            widget.machineId,
-                            widget.agentId,
-                          ),
-                        ),
-                      // Null while the agent is not loaded: there is nothing to act on yet, and a
-                      // menu of actions that all fail is worse than no menu.
-                      if (agent != null)
-                        AppIconButton(
-                          icon: LucideIcons.ellipsis300,
-                          size: 20,
-                          tooltip: 'Agent actions',
-                          color: AppPalette.textSecondary,
-                          onPressed: () => _showActions(
-                            machineName: machine?.machine.displayName ?? '',
-                            agentName: agent.name,
-                          ),
-                        ),
-                    ],
+                PhoneHeader(
+                  title: agent?.name ?? 'Agent',
+                  leading: EngineMark(
+                    engine: agent?.engine,
+                    displayName: agent?.engineDisplayName,
+                    size: 22,
                   ),
-                ),
-                // Everything under the header arrives after the flight lands, rising a little into
-                // place — see [AgentBodyReveal]. Drawn full-screen from the first frame it would be
-                // a second layer crossing the header still in flight, which is what made the old
-                // whole-page version flash.
-                Expanded(
-                  child: AgentBodyReveal(
-                    child: Column(
-                      children: [
-                        Divider(height: 1, color: AppGlass.hair),
-                        Expanded(
-                          child: pane == null || session == null
-                              ? const _Attaching()
-                              : TerminalPanel(
-                                  key: ValueKey(pane.id),
-                                  notifier: widget.notifier,
-                                  session: session,
-                                  focused: true,
-                                  showHeader: false,
-                                  // No composer, and so no grip above it: the
-                                  // page hands the pane its full height and the
-                                  // software keyboard drives the terminal
-                                  // directly — `TerminalPanel` autofocuses the
-                                  // view precisely when no box is covering it.
-                                  // What goes with the box is the batched send,
-                                  // and the Esc/Tab/Ctrl an on-screen keyboard
-                                  // never had anyway.
-                                ),
-                        ),
-                      ],
+                  subtitle: StatusPill(
+                    fontSize: 12,
+                    summary: (
+                      // The machine alone once the button beside it is saying
+                      // the state: two words for one fact, in a row this
+                      // narrow, is what truncated "Taken over" to "Ta…".
+                      label: reclaim == null
+                          ? '${machine?.machine.displayName ?? ''} · ${status.label}'
+                          : machine?.machine.displayName ?? '',
+                      tone: status.tone,
                     ),
+                  ),
+                  trailing: [
+                    // Read-only is a state to get OUT of, so its way out is a
+                    // labelled button in the header rather than a line in the
+                    // actions sheet: the sheet is where you go having decided
+                    // to do something, and this is the thing telling you that
+                    // typing will go nowhere until you do.
+                    if (reclaim != null)
+                      _ReclaimButton(
+                        action: reclaim,
+                        onPressed: () => widget.notifier.selectAgent(
+                          widget.machineId,
+                          widget.agentId,
+                        ),
+                      ),
+                    // Null while the agent is not loaded: there is nothing to act on yet, and a
+                    // menu of actions that all fail is worse than no menu.
+                    if (agent != null)
+                      AppIconButton(
+                        icon: LucideIcons.ellipsis300,
+                        size: 20,
+                        tooltip: 'Agent actions',
+                        color: AppPalette.textSecondary,
+                        onPressed: () => _showActions(
+                          machineName: machine?.machine.displayName ?? '',
+                          agentName: agent.name,
+                        ),
+                      ),
+                  ],
+                ),
+                Expanded(
+                  child: Column(
+                    children: [
+                      Divider(height: 1, color: AppGlass.hair),
+                      Expanded(
+                        child: pane == null || session == null
+                            ? const _Attaching()
+                            // ⚠️ Nothing re-arms [_claimSpent] on tap, and that
+                            // is deliberate. A `Listener` doing so was written
+                            // and removed: xterm's own `_onTapDown` already
+                            // calls `requestKeyboard()`, so the tap opened the
+                            // keyboard and THEN the re-armed claim asked for it
+                            // a second time — Android answers a show arriving
+                            // mid-animation by cancelling and restarting it.
+                            // Measured: two `onRequestShow` and two
+                            // `onCancelled at PHASE_CLIENT_APPLY_ANIMATION` per
+                            // tap. The claim exists only to raise the keyboard
+                            // on arrival; after that the terminal handles it.
+                            : TerminalPanel(
+                                key: ValueKey(pane.id),
+                                notifier: widget.notifier,
+                                session: session,
+                                // Only the page on screen takes the keyboard — see
+                                // [TerminalPage.isActive]. `visible` is the same answer for the
+                                // panel's other half: a page parked beside this one releases
+                                // focus, stops rendering and stops resizing its remote shell.
+                                //
+                                // AND only until the keyboard is actually up —
+                                // see [_claimSpent]. Both gates, not either:
+                                // `isActive` keeps a parked page from stealing
+                                // the keyboard, `_claimSpent` keeps this one
+                                // from taking it back after Back.
+                                focused: widget.isActive && !_claimSpent,
+                                visible: widget.isActive,
+                                showHeader: false,
+                                // No composer, and so no grip above it: the
+                                // page hands the pane its full height and the
+                                // software keyboard drives the terminal
+                                // directly — `TerminalPanel` autofocuses the
+                                // view precisely when no box is covering it.
+                                // What goes with the box is the batched send,
+                                // and the Esc/Tab/Ctrl an on-screen keyboard
+                                // never had anyway.
+                              ),
+                      ),
+                    ],
                   ),
                 ),
               ],

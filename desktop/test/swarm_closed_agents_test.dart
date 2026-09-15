@@ -5,13 +5,15 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/core/models.dart';
 import 'package:harness/state/app_state.dart';
+import 'package:harness/state/pane_preset.dart';
 import 'package:harness/state/swarm.dart';
 import 'package:harness/state/swarm_navigation.dart';
+import 'package:harness/terminal/terminal_binary.dart';
 import 'package:harness/terminal/terminal_session.dart';
 
 import 'swarm_interactions_test.dart' show chord;
 import 'swarm_screen_test.dart' show mount, terminal;
-import 'swarm_state_test.dart' show createApp;
+import 'swarm_state_test.dart' show createApp, MemoryStore;
 
 void main() {
   test(
@@ -83,27 +85,172 @@ void main() {
     },
   );
 
-  test('a closed parent gets a swarm when its agent alone is reopened', () async {
-    final app = createApp();
+  test(
+    'a closed parent gets a swarm when its agent alone is reopened',
+    () async {
+      final app = createApp();
+      addTearDown(app.dispose);
+      app.renameSwarm(app.activeSwarmId, 'Workshop');
+      final origin = app.activeSwarmId;
+      await app.addAgentToSwarm('m', 'a0');
+      await app.addAgentToSwarm('m', 'a1');
+      await app.closePane(app.panes.first.id);
+      final closure = app.closedHistory.single.historyId;
+      await app.closeSwarm(origin);
+      expect(app.reopenClosed(historyId: closure), isTrue);
+      expect(app.activeSwarmId, origin);
+      expect(app.activeSwarm.name, 'Workshop');
+      expect(app.panes.single.agentId, 'a0');
+      expect(app.closedHistory.single, isA<ClosedSwarm>());
+      expect(app.reopenClosed(historyId: closure), isFalse);
+      final restored = app.activeSwarm;
+      // Restoring the remaining group returns to the same workspace.
+      expect(app.reopenClosed(), isTrue);
+      expect(app.activeSwarm, same(restored));
+      expect(app.panes.map((pane) => pane.agentId), ['a0', 'a1']);
+      expect(
+        app.swarms.where((swarm) => swarm.name == 'Workshop'),
+        hasLength(1),
+      );
+      expect(app.swarms.map((s) => s.id).toSet().length, app.swarms.length);
+    },
+  );
+
+  test('swarm recovery keeps newer choices and shared live sessions', () async {
+    final store = MemoryStore();
+    final app = createApp(store: store);
     addTearDown(app.dispose);
-    app.renameSwarm(app.activeSwarmId, 'Workshop');
+    final input = <TerminalBinaryFrame>[];
+    final first = app.adoptSessionForTest(terminal('a0', input));
+    final second = app.adoptSessionForTest(terminal('a1', input));
     final origin = app.activeSwarmId;
+    app.renameSwarm(origin, 'Workshop');
+    app.newSwarm(name: 'Live work');
+    final peer = app.activeSwarm;
     await app.addAgentToSwarm('m', 'a0');
     await app.addAgentToSwarm('m', 'a1');
-    await app.closePane(app.panes.first.id);
-    final closure = app.closedHistory.single.historyId;
+    app.selectSwarm(origin);
+    await app.closePane(first.id);
+    final agentClosure = app.closedHistory.single.historyId;
     await app.closeSwarm(origin);
-    expect(app.reopenClosed(historyId: closure), isTrue);
-    expect(app.activeSwarmId, origin);
-    expect(app.activeSwarm.name, 'Workshop');
-    expect(app.panes.single.agentId, 'a0');
-    expect(app.closedHistory.single, isA<ClosedSwarm>());
-    expect(app.reopenClosed(historyId: closure), isFalse);
-    // Restoring the separately closed group cannot duplicate a Swarm identity.
-    expect(app.reopenClosed(), isTrue);
-    expect(app.panes.single.agentId, 'a1');
-    expect(app.swarms.map((s) => s.id).toSet().length, app.swarms.length);
+    final swarmClosure = app.closedHistory.first.historyId;
+    expect(app.reopenClosed(historyId: agentClosure), isTrue);
+    final restored = app.activeSwarm;
+    app.renameSwarm(origin, 'Current work');
+    await app.addAgentToSwarm('m', 'a2');
+    app.focusPane(first.id);
+    app.togglePinPane(first.id);
+    app.toggleZoomPane();
+    app.toggleComposer(first.id);
+    app.setPreset(3, PanePreset.oneOverTwo);
+    second.session!.terminal.write('Keep this output');
+    final liveSession = second.session;
+    final before = app.swarms.toList();
+
+    expect(app.reopenClosed(historyId: swarmClosure), isTrue);
+    expect(app.swarms, before);
+    expect(app.activeSwarm, same(restored));
+    expect(restored.name, 'Current work');
+    expect(restored.panes.map((pane) => pane.agentId), ['a0', 'a2', 'a1']);
+    expect(restored.panes.last, same(second));
+    expect(peer.panes.last.session, same(liveSession));
+    expect(
+      second.session!.terminal.buffer.getText(),
+      contains('Keep this output'),
+    );
+    expect(app.focusedPaneId, first.id);
+    expect(app.zoomedPaneId, first.id);
+    expect(app.isPanePinned(first), isTrue);
+    expect(first.composerVisible, isTrue);
+    expect(app.presetFor(3), PanePreset.oneOverTwo);
+    expect(input, isEmpty);
+    expect(app.closedHistory, isEmpty);
+
+    await app.flushPaneLayout();
+    final reloaded = createApp(store: store);
+    addTearDown(reloaded.dispose);
+    await reloaded.restorePaneLayoutForTest();
+    expect(
+      reloaded.swarms.map((swarm) => swarm.id),
+      before.map((swarm) => swarm.id),
+    );
+    expect(reloaded.activeSwarm.name, 'Current work');
+    expect(reloaded.panes.map((pane) => pane.agentId), ['a0', 'a2', 'a1']);
   });
+
+  test(
+    'swarm recovery fits at the tab limit without duplicating agents',
+    () async {
+      final app = createApp();
+      addTearDown(app.dispose);
+      await app.addAgentToSwarm('m', 'a0');
+      await app.addAgentToSwarm('m', 'a1');
+      final origin = app.activeSwarmId;
+      await app.closePane(app.panes.first.id);
+      final agentClosure = app.closedHistory.single.historyId;
+      await app.closeSwarm(origin);
+      final swarmClosure = app.closedHistory.first.historyId;
+      expect(app.reopenClosed(historyId: agentClosure), isTrue);
+      final restored = app.activeSwarm;
+      await app.addAgentToSwarm('m', 'a1');
+      final existing = restored.panes.toList();
+      while (app.swarms.length < AppNotifier.maxSwarms) {
+        app.newSwarm();
+      }
+      expect(app.canReopenClosedSwarm, isTrue);
+      expect(app.canReopenClosed(swarmClosure), isTrue);
+      app.reopenClosedSwarm();
+      expect(app.activeSwarm, same(restored));
+      expect(restored.panes, existing);
+      expect(app.swarms, hasLength(AppNotifier.maxSwarms));
+      expect(app.closedHistory, isEmpty);
+    },
+  );
+
+  test(
+    'a full partial swarm keeps its recovery until every view fits',
+    () async {
+      final app = createApp();
+      addTearDown(app.dispose);
+      await app.addAgentToSwarm('m', 'a0');
+      await app.addAgentToSwarm('m', 'a1');
+      await app.addAgentToSwarm('m', 'a2');
+      final origin = app.activeSwarmId;
+      await app.closePane(app.panes.first.id);
+      final agentClosure = app.closedHistory.single.historyId;
+      await app.closeSwarm(origin);
+      final swarmClosure = app.closedHistory.first.historyId;
+      expect(app.reopenClosed(historyId: agentClosure), isTrue);
+      final restored = app.activeSwarm;
+      for (var i = 3; i < AppNotifier.maxPanes + 1; i++) {
+        await app.addAgentToSwarm('m', 'a$i');
+      }
+      final before = restored.panes.toList();
+      expect(before, hasLength(AppNotifier.maxPanes - 1));
+      expect(app.canReopenClosed(swarmClosure), isFalse);
+      expect(app.canReopenClosedSwarm, isFalse);
+      app.reopenClosedSwarm(historyId: swarmClosure);
+      expect(app.reopenClosed(historyId: swarmClosure), isFalse);
+      expect(restored.panes, before);
+      expect(app.closedHistory.single.historyId, swarmClosure);
+
+      await app.closePane(restored.panes.last.id);
+      expect(app.reopenClosed(historyId: swarmClosure), isTrue);
+      expect(app.activeSwarm, same(restored));
+      expect(restored.panes, hasLength(AppNotifier.maxPanes));
+      expect(
+        restored.panes.map((pane) => pane.agentId).toSet(),
+        hasLength(AppNotifier.maxPanes),
+      );
+      expect(
+        restored.panes
+            .skip(AppNotifier.maxPanes - 2)
+            .map((pane) => pane.agentId),
+        ['a1', 'a2'],
+      );
+      expect(app.closedHistory.single, isA<ClosedAgent>());
+    },
+  );
 
   test(
     'agent recovery can fit at the tab limit when swarm recovery cannot',
@@ -226,6 +373,40 @@ void main() {
     expect(app.activeSwarm, same(origin));
     expect(app.panes.single.agentId, 'a0');
     expect(app.closedHistory, isEmpty);
+    await tester.pumpWidget(const SizedBox());
+    app.dispose();
+  });
+
+  testWidgets('keyboard swarm recovery returns input to its existing view', (
+    tester,
+  ) async {
+    final app = createApp();
+    final input = <TerminalBinaryFrame>[];
+    final otherInput = <TerminalBinaryFrame>[];
+    final first = app.adoptSessionForTest(terminal('a0', input));
+    final second = app.adoptSessionForTest(terminal('a1', otherInput));
+    final origin = app.activeSwarmId;
+    app.newSwarm(name: 'Live work');
+    await app.addAgentToSwarm('m', 'a0');
+    await app.addAgentToSwarm('m', 'a1');
+    app.selectSwarm(origin);
+    await app.closePane(first.id);
+    final agentClosure = app.closedHistory.single.historyId;
+    await app.closeSwarm(origin);
+    expect(app.reopenClosed(historyId: agentClosure), isTrue);
+    final restored = app.activeSwarm;
+    await mount(tester, app);
+
+    await chord(tester, LogicalKeyboardKey.keyT, shift: true);
+    await tester.pump();
+    expect(app.activeSwarm, same(restored));
+    expect(restored.panes, [first, second]);
+    expect(app.swarms, hasLength(2));
+    expect(app.focusedPaneId, first.id);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+    await tester.pump(const Duration(milliseconds: 10));
+    expect(input.single.bytes, [27, 91, 68]);
+    expect(otherInput, isEmpty);
     await tester.pumpWidget(const SizedBox());
     app.dispose();
   });

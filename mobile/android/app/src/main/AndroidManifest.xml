@@ -1,4 +1,14 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Without this the app cannot open a socket at all: Android gates the
+         syscall on group membership, so bind() fails with EPERM long before any
+         address is consulted. Debug and profile builds get it from the manifests
+         Flutter generates for devtools, which is why only release broke — the
+         sign-in loopback server died on 127.0.0.1 and it read as localhost being
+         blocked. Needed here for the relay socket and that loopback alike. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Lets libwebrtc notice a wifi↔cellular change and restart ICE rather than
+         wait out the disconnect grace. Not a runtime permission. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <application
         android:label="harness"
         android:name="${applicationName}"
