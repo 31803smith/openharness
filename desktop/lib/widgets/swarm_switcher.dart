@@ -169,8 +169,7 @@ class SwarmSearchKeys extends StatelessWidget {
             'picker.next': () => move(1),
             'picker.previous': () => move(-1),
             if (search != null) ...{
-              'picker.preview_page_up': () =>
-                  run(() => search.pagePreview(-1)),
+              'picker.preview_page_up': () => run(() => search.pagePreview(-1)),
               'picker.preview_page_down': () =>
                   run(() => search.pagePreview(1)),
             },
@@ -297,10 +296,12 @@ class SwarmSearchResults extends StatefulWidget {
     required this.search,
     required this.onChoose,
     required this.onRefocus,
+    this.sideBySideMinWidth = 800,
   });
   final SwarmSearchController search;
   final ValueChanged<SwarmSearchSelection> onChoose;
   final VoidCallback onRefocus;
+  final double sideBySideMinWidth;
   @override
   State<SwarmSearchResults> createState() => _SwarmSearchResultsState();
 }
@@ -387,10 +388,9 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
     );
     return LayoutBuilder(
       builder: (context, constraints) {
+        final sideBySide = constraints.maxWidth >= widget.sideBySideMinWidth;
         final compactAction =
-            (constraints.maxWidth >= 800
-                ? constraints.maxWidth / 2
-                : constraints.maxWidth) <
+            (sideBySide ? constraints.maxWidth / 2 : constraints.maxWidth) <
             380;
         final geometry = (constraints.biggest, _rowHeight);
         if (_geometry != geometry) {
@@ -611,7 +611,7 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
             : null;
         final content = preview == null
             ? results
-            : constraints.maxWidth >= 800
+            : sideBySide
             ? Row(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [

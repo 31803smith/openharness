@@ -9,8 +9,10 @@ proposals in the progress log.
 
 **Cmd-T / New Tab** and the tab-bar plus open the Harness start page. Its solid
 background matches the selected tab. The centered title and search controls sit
-lower with generous empty space. A single row, capped at 1120 logical pixels,
+lower with generous empty space. A single row, capped at 784 logical pixels,
 contains a compact search field, **Open Harness**, and accented **+ New Harness**.
+The pill buttons use a smaller 48-pixel height, with reduced input padding. The New Tab
+preview stays beside its results at widths of 700 logical pixels and above.
 Activating search expands the field into the buttons' space and hides the buttons;
 the overall row edges remain fixed. Results and preview appear side by side.
 Escape restores the compact field and both actions. At narrow widths or large text
@@ -67,7 +69,7 @@ also work immediately after opening the menu, before its first frame.
 The Open popup keeps its full-width **Find a harness** field, single-choice
 results and 90% black backdrop. Only the highlighted row shows **Open Harness**,
 **Open N Harnesses**, or **Split right/down**, depending on context.
-Both Open and inline start-page search show the same session preview. The open
+Both Open and inline start-page search show the same session preview. The Cmd-O
 surface can grow to 1120 logical pixels, placing the list and preview side by
 side. Narrow windows stack them with a compact preview heading. Both sections
 scroll independently; the expanded panel stays within view. Hover selects a

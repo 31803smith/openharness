@@ -103,8 +103,8 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
               Text(label),
             ],
           );
-    final size = Size(compact ? 56 : 160, 56);
-    final padding = EdgeInsets.symmetric(horizontal: compact ? 16 : 24);
+    final size = Size(compact ? 48 : 140, 48);
+    final padding = EdgeInsets.symmetric(horizontal: compact ? 12 : 20);
     final button = create
         ? FilledButton(
             key: const ValueKey('harness-start-new'),
@@ -160,7 +160,7 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
             ),
             child: Center(
               child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 1120),
+                constraints: const BoxConstraints(maxWidth: 784),
                 child: Column(
                   children: [
                     const Text(
@@ -232,6 +232,7 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
                                               showClose: _showResults,
                                               hintText: '',
                                               rounded: true,
+                                              compact: true,
                                             ),
                                           ),
                                           if (_showResults) ...[
@@ -248,6 +249,7 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
                                                   'harness-start-results',
                                                 ),
                                                 search: _search!,
+                                                sideBySideMinWidth: 700,
                                                 onChoose: _choose,
                                                 onRefocus: _focus.requestFocus,
                                               ),
@@ -261,9 +263,9 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
                               ),
                             ),
                             if (!_showResults) ...[
-                              const SizedBox(width: 12),
+                              const SizedBox(width: 10),
                               _action(create: false, compact: compactActions),
-                              const SizedBox(width: 12),
+                              const SizedBox(width: 10),
                               _action(create: true, compact: compactActions),
                             ],
                           ],

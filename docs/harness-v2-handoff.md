@@ -46,11 +46,13 @@ are:
   precedence. Cmd-R splits right and Cmd-D splits down. Native menus, help and actual
   dispatch must agree; native menu and titlebar hover hints are removed.
 - New Tab uses the Google-like page with a **solid selected-tab background**,
-  lower centered controls and generous whitespace. A single row (at most 1120
+  lower centered controls and generous whitespace. A single row (at most 784
   logical pixels) contains search, Open Harness, and New Harness. Search starts
   blank and focused, with results hidden. Activating search expands the field
   into the buttons' space; the row edges stay fixed and results/preview appear
-  side by side. Escape restores the original row and query.
+  side by side from 700 pixels wide. The pill buttons use a compact 48-pixel
+  height, with reduced input padding; Cmd-O retains its existing width. Escape restores the original
+  row and query.
   Typing, clicking, or pressing an arrow
   reveals the same results, selection, arrows and Enter behavior as Cmd-O.
   Focus alone leaves results hidden and builds no catalog. Open Harness and
