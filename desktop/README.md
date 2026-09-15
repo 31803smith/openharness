@@ -6,8 +6,8 @@ and Linux (Ubuntu)** and includes an unexercised Windows runner.
 
 ## Development
 
-Install a compatible Flutter SDK, then run the project from this repository
-root:
+Install a compatible Flutter SDK, then run the project from this directory
+(`desktop/` in the monorepo):
 
 ```bash
 flutter pub get
@@ -57,7 +57,7 @@ The optional A/B smoke test uses isolated identities, two loopback WebSockets,
 the CLI's real E2EE handshake/media reader and ffmpeg-generated PNG/MP4 fixtures:
 
 ```bash
-REMOTE_MEDIA_CLI_ROOT=../autonomous-harness/cli flutter test test/remote_media_smoke_test.dart
+REMOTE_MEDIA_CLI_ROOT=../cli flutter test test/remote_media_smoke_test.dart
 ```
 
 Install the companion CLI's npm dependencies first; ffmpeg must be on PATH.
