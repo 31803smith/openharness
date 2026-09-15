@@ -4,7 +4,7 @@ import 'package:flutter/widgets.dart';
 import '../logging/debug_surface.dart';
 
 /// Harness uses Command as a direct prefix for frequent workspace actions.
-/// T opens a tab, N adds an existing or new harness, S changes layout,
+/// T opens a tab, N adds an existing or new agent, S changes layout,
 /// H/J/K/L and arrows focus panes, B routes a task, D splits down and R splits
 /// right. The same definitions feed live keys, help and search.
 ///
@@ -284,7 +284,7 @@ const List<AppShortcut> kAppShortcuts = [
       meta: true,
       shift: true,
     ),
-    label: 'New Harness',
+    label: 'New Agent',
     group: ShortcutGroup.actions,
   ),
   AppShortcut(
@@ -296,7 +296,7 @@ const List<AppShortcut> kAppShortcuts = [
   AppShortcut(
     action: ShortcutAction.reload,
     activator: SingleActivator(LogicalKeyboardKey.keyR, meta: true),
-    label: 'Reload machines and harnesses',
+    label: 'Reload machines and agents',
     group: ShortcutGroup.actions,
   ),
   AppShortcut(
@@ -346,7 +346,7 @@ const kSwarmShortcuts = [
   AppShortcut(
     action: ShortcutAction.addAgent,
     activator: SingleActivator(LogicalKeyboardKey.keyN, meta: true),
-    label: 'Add Harness',
+    label: 'Add Agent',
     group: ShortcutGroup.actions,
   ),
   AppShortcut(
@@ -368,7 +368,7 @@ const kSwarmShortcuts = [
       meta: true,
       shift: true,
     ),
-    label: 'Reopen last closed harness',
+    label: 'Reopen last closed agent',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
@@ -394,7 +394,7 @@ const kSwarmShortcuts = [
       meta: true,
       shift: true,
     ),
-    label: 'Next Harness',
+    label: 'Next Tab',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
@@ -404,13 +404,13 @@ const kSwarmShortcuts = [
       meta: true,
       shift: true,
     ),
-    label: 'Previous Harness',
+    label: 'Previous Tab',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
     action: ShortcutAction.nextSwarm,
     activator: SingleActivator(LogicalKeyboardKey.tab, control: true),
-    label: 'Next Harness',
+    label: 'Next Tab',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
@@ -420,7 +420,7 @@ const kSwarmShortcuts = [
       control: true,
       shift: true,
     ),
-    label: 'Previous Harness',
+    label: 'Previous Tab',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
@@ -430,7 +430,7 @@ const kSwarmShortcuts = [
       meta: true,
       shift: true,
     ),
-    label: 'Show harnesses needing input',
+    label: 'Show agents needing input',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(

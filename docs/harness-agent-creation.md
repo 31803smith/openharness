@@ -39,6 +39,29 @@ separate from the proposed Archive/Resume lifecycle; it stops no existing agent.
 
 ## Compatibility and verification
 
+### New / Local / Remote folders
+
+Local keeps the existing absolute `cwd` request. On this computer, New and Remote
+prepare the folder before sending that same protocol: a unique OS-reserved
+`~/Harness Projects/project-*` folder, or the existing staged GitHub clone.
+The selected remote machine receives `projectSource: new|remote`, optional
+`repositoryUrl`, and a required `creationId`, with `cwd` omitted. Its CLI validates
+the source and prepares the folder **inside** the same creation receipt before
+launching. Source/URL participate in the fingerprint. A slow clone does not
+block `agent_create_status`, and retries do not create another folder or agent.
+
+A known launch refusal after folder preparation returns `preparedFolder` beside
+the failure. The form retains it for the next deliberate, corrected launch using
+ordinary `cwd`. Existing destinations are never intentionally reused or removed
+by cloning. Git runs without shell interpolation or interactive credential
+prompts; failed private staging is cleaned up. Credentials/diagnostics are not
+shown in the UI. The accepted repository formats match the existing GitHub flow.
+
+An older remote CLI refuses the missing `cwd`; the desktop explains that its CLI
+needs updating or Local can select an existing folder. No new RPC type or E2EE
+classification is introduced. The user's running daemon has not been replaced
+or restarted as part of this change.
+
 Legacy callers without `creationId` keep the existing create response. An older
 CLI can also handle a new desktop's first create, ignoring the additional field.
 The desktop keeps an uncertain request on **Check status**. On old CLIs where
@@ -60,7 +83,7 @@ to that action. Closing an uncertain request is labeled **Close**, not Cancel.
 A confirmed refusal unlocks the choices for correction; the next deliberate
 submission uses a new intent. Opening New agent also starts a fresh intent.
 
-In a swarm, the uncertain form also offers **Find a harness**. It closes
+In a swarm, the uncertain form also offers **Find an agent**. It closes
 the form and opens the shared Add picker, with its input focused and the query
 retained when creation began from search. This only searches the catalog; it
 does not infer the created agent from a matching name/folder or start another.
@@ -74,7 +97,7 @@ When creation starts from centered Add or a split, clicking outside or pressing
 **Escape** dismisses the entire flow and restores the original terminal's keyboard
 input. **Back to Search** explicitly returns to the picker with its query, text
 selection, highlighted result and split target intact. Direct creation retains
-**Cancel**. **Find a harness** on an uncertain request also restores that search
+**Cancel**. **Find an agent** on an uncertain request also restores that search
 draft. Successful creation keeps the picker closed. Returning to search never
 silently redirects a stale split; a changed target gets an explanation.
 

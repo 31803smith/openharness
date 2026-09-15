@@ -78,14 +78,14 @@ class LoginScreen extends StatelessWidget {
                       const _AppMark(),
                       SizedBox(height: gap),
                       Text(
-                        'All your harnesses, on one screen',
+                        'All your agents, on one screen',
                         textAlign: TextAlign.center,
                         style: Theme.of(context).textTheme.titleLarge,
                       ),
                       const SizedBox(height: 8),
                       Text(
                         'Work with Claude Code, Codex and other agents side by side. '
-                        'Start with one harness and add panes as your work grows.',
+                        'Start with one agent and add panes as your work grows.',
                         textAlign: TextAlign.center,
                         style: Theme.of(context).textTheme.bodySmall,
                       ),

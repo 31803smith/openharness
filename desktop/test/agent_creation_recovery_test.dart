@@ -208,16 +208,16 @@ void main() {
           await tester.sendKeyEvent(LogicalKeyboardKey.enter);
           await tester.pump();
         }
-        expect(find.byType(SwarmSearchResults), findsNothing);
+        expect(find.byType(SwarmSearchResults), findsOneWidget);
         await tester.tap(find.byKey(const ValueKey('harness-picker-new')));
         await tester.pumpAndSettle();
         expect(find.byType(AlertDialog), findsOneWidget);
         expect(find.byType(SwarmSearchResults), findsNothing);
         expect(
           find.text(switch (entry) {
-            'Split right' => 'New Harness to the right',
-            'Split down' => 'New Harness below',
-            _ => 'New Harness',
+            'Split right' => 'New Agent to the right',
+            'Split down' => 'New Agent below',
+            _ => 'New Agent',
           }),
           findsWidgets,
         );
@@ -280,7 +280,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Close'), findsOneWidget);
       expect(find.text('Back to Search'), findsNothing);
-      expect(find.widgetWithText(TextButton, 'Find a harness'), findsNothing);
+      expect(find.widgetWithText(TextButton, 'Find an agent'), findsNothing);
       if (change == 'switch' || change == 'closed') app.newSwarm();
       if (change == 'closed') await app.closeSwarm(original.id);
       if (change == 'stale split') {
@@ -317,7 +317,7 @@ void main() {
       expect(app.activeSwarmId, current);
       if (change == 'closed' || change == 'stale split') {
         expect(app.allPanes.any((p) => p.agentId == 'created'), isFalse);
-        expect(app.lastError, contains('Open Harness'));
+        expect(app.lastError, contains('Open Agent'));
       } else {
         expect(original.panes.first, same(originalPane));
         expect(original.panes.last.agentId, 'created');
@@ -371,7 +371,7 @@ void main() {
     await tester.pump();
     expect(input.single.bytes, [27, 91, 66]);
     await chord(tester, LogicalKeyboardKey.keyN);
-    expect(find.byType(SwarmSearchResults), findsNothing);
+    expect(find.byType(SwarmSearchResults), findsOneWidget);
     expect(find.byKey(const ValueKey('harness-picker-new')), findsOneWidget);
     expect(connection.calls, hasLength(1));
     await tester.pumpWidget(const SizedBox());
@@ -590,7 +590,7 @@ void main() {
       app.stateOf('m')!.agents.any((agent) => agent.id == 'created'),
       isTrue,
     );
-    expect(app.lastError, contains('Open Harness'));
+    expect(app.lastError, contains('Open Agent'));
   });
 
   testWidgets(
@@ -629,7 +629,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('/work'), findsOneWidget);
-      expect(find.widgetWithText(FilledButton, 'New Harness'), findsNothing);
+      expect(find.widgetWithText(FilledButton, 'New Agent'), findsNothing);
       final action = tester.widget<FilledButton>(
         find.widgetWithText(FilledButton, 'Check status'),
       );

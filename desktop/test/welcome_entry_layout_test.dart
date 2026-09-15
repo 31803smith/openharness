@@ -106,7 +106,7 @@ void main() {
         expect(find.text('Harness'), findsNothing);
         expect(
           tester.widget<TextField>(field).decoration!.hintText,
-          'Find a harness',
+          'Find an agent',
         );
         expect(tester.widget<TextField>(field).focusNode!.hasFocus, isTrue);
         expect(find.byType(ListTile), findsNothing);

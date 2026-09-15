@@ -18,6 +18,7 @@ class AppChoicePicker<T> extends StatefulWidget {
     this.moreKey,
     this.preferredValues = const [],
     this.showDetails = false,
+    this.wrap = true,
   });
 
   final T value;
@@ -28,6 +29,7 @@ class AppChoicePicker<T> extends StatefulWidget {
   final Key? moreKey;
   final List<T> preferredValues;
   final bool showDetails;
+  final bool wrap;
 
   @override
   State<AppChoicePicker<T>> createState() => _AppChoicePickerState<T>();
@@ -83,9 +85,8 @@ class _AppChoicePickerState<T> extends State<AppChoicePicker<T>> {
   @override
   Widget build(BuildContext context) {
     AppTheme.watch(context);
-    final visible = _visibleOptions;
-    if (visible.isEmpty) return const SizedBox.shrink();
-    final hasMore = widget.options.length > visible.length;
+    final candidates = _visibleOptions;
+    if (candidates.isEmpty) return const SizedBox.shrink();
     final textStyle = TextStyle(
       fontFamily: AppFont.sans,
       fontFamilyFallback: AppFont.sansFallback,
@@ -106,15 +107,19 @@ class _AppChoicePickerState<T> extends State<AppChoicePicker<T>> {
           textScaler: scaler,
         );
         var minimumWidth = 0.0;
-        for (final option in visible) {
+        var controlHeight = height;
+        for (final option in candidates) {
           painter.text = TextSpan(text: option.label, style: textStyle);
           painter.layout();
           var labelWidth = painter.width;
+          var textHeight = painter.height;
           if (widget.showDetails && option.detail != null) {
             painter.text = TextSpan(text: option.detail, style: detailStyle);
             painter.layout();
             labelWidth = math.max(labelWidth, painter.width);
+            textHeight += painter.height + 2;
           }
+          controlHeight = math.max(controlHeight, textHeight + 20);
           // Long custom names truncate with their full text in the tooltip.
           // Larger system text gets wider choices and additional rows.
           final width =
@@ -126,50 +131,77 @@ class _AppChoicePickerState<T> extends State<AppChoicePicker<T>> {
         painter.dispose();
         const gap = 8.0;
         const moreWidth = 44.0;
+        var visible = candidates;
+        if (!widget.wrap) {
+          var count = candidates.length;
+          while (count > 1) {
+            final needed =
+                minimumWidth * count +
+                gap * (count - 1) +
+                (widget.options.length > count ? moreWidth + gap : 0);
+            if (needed <= constraints.maxWidth) break;
+            count--;
+          }
+          visible = candidates.take(count).toList();
+          final selected = candidates
+              .where((option) => option.value == widget.value)
+              .firstOrNull;
+          if (selected != null &&
+              !visible.any((option) => option.value == widget.value)) {
+            visible[visible.length - 1] = selected;
+          }
+        }
+        final hasMore = widget.options.length > visible.length;
         final rowWidth =
             (constraints.maxWidth -
                 (hasMore ? moreWidth + gap : 0) -
                 gap * (visible.length - 1)) /
             visible.length;
         final pairWidth = (constraints.maxWidth - gap) / 2;
-        final buttonWidth = rowWidth >= minimumWidth
+        final buttonWidth = !widget.wrap || rowWidth >= minimumWidth
             ? rowWidth
             : pairWidth >= minimumWidth
             ? pairWidth
             : constraints.maxWidth;
 
-        return Wrap(
-          spacing: gap,
-          runSpacing: gap,
-          children: [
-            for (final option in visible)
-              SizedBox(
-                width: buttonWidth,
-                child: _choice(option, textStyle, detailStyle, height),
-              ),
-            if (hasMore)
-              Semantics(
-                label: widget.moreLabel,
-                button: true,
-                child: Tooltip(
-                  message: widget.moreLabel,
-                  child: AppSelectField<T>(
-                    key: widget.moreKey,
-                    value: widget.value,
-                    options: widget.options,
-                    onChanged: _choose,
-                    width: moreWidth,
-                    height: height,
-                    trigger: Icon(
-                      Icons.more_horiz,
-                      size: 20,
-                      color: AppPalette.textSecondary,
-                    ),
+        final children = <Widget>[
+          for (final option in visible)
+            SizedBox(
+              width: buttonWidth,
+              child: _choice(option, textStyle, detailStyle, controlHeight),
+            ),
+          if (hasMore)
+            Semantics(
+              label: widget.moreLabel,
+              button: true,
+              child: Tooltip(
+                message: widget.moreLabel,
+                child: AppSelectField<T>(
+                  key: widget.moreKey,
+                  value: widget.value,
+                  options: widget.options,
+                  onChanged: _choose,
+                  width: moreWidth,
+                  height: controlHeight,
+                  trigger: Icon(
+                    Icons.more_horiz,
+                    size: 20,
+                    color: AppPalette.textSecondary,
                   ),
                 ),
               ),
-          ],
-        );
+            ),
+        ];
+        return widget.wrap
+            ? Wrap(spacing: gap, runSpacing: gap, children: children)
+            : Row(
+                children: [
+                  for (var i = 0; i < children.length; i++) ...[
+                    if (i > 0) const SizedBox(width: gap),
+                    children[i],
+                  ],
+                ],
+              );
       },
     );
   }

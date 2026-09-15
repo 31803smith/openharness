@@ -80,11 +80,10 @@ class _SwarmScreenState extends State<SwarmScreen> {
   final _navigation = SwarmNavigationHistory();
   final _searchCatalog = SwarmSearchCatalog();
   final _searchText = TextEditingController();
-  final _searchFocus = FocusNode(debugLabel: 'Find a harness');
+  final _searchFocus = FocusNode(debugLabel: 'Find an agent');
   SwarmSearchController? _search;
   OverlayEntry? _searchOverlay;
-  (String, bool, bool, bool)? _searchHeaderState;
-  bool _searchResultsVisible = false;
+  (String, bool, bool)? _searchHeaderState;
   FocusNode? _searchReturnFocus;
   (String, bool)? _lastWorkspace;
   bool _spokenPaletteOpen = false;
@@ -285,6 +284,10 @@ class _SwarmScreenState extends State<SwarmScreen> {
   }
 
   void _syncNative() {
+    final openAgents = {
+      for (final tab in app.swarms)
+        for (final pane in tab.panes) (pane.machineId, pane.agentId),
+    };
     final payload = {
       'enabled': _routeIsCurrent && !_dialogOpen && !_spokenPaletteOpen,
       'activeId': app.activeSwarmId,
@@ -316,6 +319,26 @@ class _SwarmScreenState extends State<SwarmScreen> {
             'id': machine.machine.machineId,
             'name': machine.machine.displayName,
             'local': machine.isLocalMachine,
+            'agentCount':
+                machine.agents.isNotEmpty ||
+                    machine.agentLoadStatus == AgentLoadStatus.loaded
+                ? machine.agents.length
+                : null,
+            'agents': [
+              for (final agent in machine.agents.take(512))
+                {
+                  'id': agent.id,
+                  'title': agent.name,
+                  'engine': agent.engine,
+                  'iconAsset': engineIdentity(agent.engine).asset,
+                  'canOpen':
+                      agent.terminalAvailable ||
+                      openAgents.contains((
+                        machine.machine.machineId,
+                        agent.id,
+                      )),
+                },
+            ],
             'status': machine.needsLink
                 ? 'Link required'
                 : machine.nodeOnline == false
@@ -516,6 +539,30 @@ class _SwarmScreenState extends State<SwarmScreen> {
         if (machine != null) {
           _openSearch(adding: true, query: machine.machine.displayName);
         }
+      case 'machineAgent':
+        final machineId = args['machineId'], agentId = args['agentId'];
+        if (machineId is String &&
+            agentId is String &&
+            app
+                    .stateOf(machineId)
+                    ?.agents
+                    .any((agent) => agent.id == agentId) ==
+                true) {
+          final entry = swarmDestinations(app)
+              .where(
+                (entry) => entry.id == agentDestinationId(machineId, agentId),
+              )
+              .firstOrNull;
+          if (entry != null) {
+            _closeSearch();
+            _preparePaneFocus();
+            await activateSwarmDestination(
+              app,
+              entry,
+              destinationSwarmId: app.activeSwarmId,
+            );
+          }
+        }
       case 'commands':
         _showSearchCommands();
       case 'historyDestination':
@@ -560,6 +607,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
           'zoomPane',
           'pinPane',
           'machineDestination',
+          'machineAgent',
         }.contains(call.method)) {
       // Native tab controls wait for this reply before releasing keyboard
       // ownership. The destination's actual focus tree must be ready first.
@@ -786,7 +834,6 @@ class _SwarmScreenState extends State<SwarmScreen> {
       catalog: _searchCatalog,
     )..setQuery(query);
     _search!.addListener(_syncSearch);
-    _searchResultsVisible = !adding || query.isNotEmpty;
     _searchOverlay = OverlayEntry(builder: _buildSearchOverlay);
     Overlay.of(context).insert(_searchOverlay!);
     _syncSearch();
@@ -823,25 +870,11 @@ class _SwarmScreenState extends State<SwarmScreen> {
     }
     // Results listen to their controller directly. Rebuilding the entire
     // overlay on every arrow also rebuilt the unchanged text editor/button.
-    if (search.query.isNotEmpty) _searchResultsVisible = true;
-    final header = (
-      search.hint,
-      search.canCreate,
-      _canDismissSearch,
-      _searchResultsVisible,
-    );
+    final header = (search.hint, search.canCreate, _canDismissSearch);
     if (_searchHeaderState != header) {
       _searchHeaderState = header;
       _searchOverlay?.markNeedsBuild();
     }
-  }
-
-  void _revealSearch() {
-    if (_search == null) return;
-    _searchResultsVisible = true;
-    _search!.setQuery(_searchText.text);
-    _syncSearch();
-    _focusSearch();
   }
 
   void _closeSearch({bool restoreFocus = true}) {
@@ -898,15 +931,14 @@ class _SwarmScreenState extends State<SwarmScreen> {
     // Keep the command editor mounted as its query changes so every keystroke
     // retains focus and text editing ownership.
     final commandsOnly = search.commandsOnly;
-    final showResults = _searchResultsVisible || commandsOnly;
     return KeymapProvider(
       keymap: _keymap,
       child: SwarmSearchKeys(
-        search: showResults ? search : null,
+        search: search,
         editing: _searchText,
         onChoose: _chooseSearch,
         onClose: _dismissSearch,
-        onOpen: _revealSearch,
+        onOpen: _focusSearch,
         onNewAgent: () => _runShortcut('agent.new'),
         onRefocus: _focusSearch,
         child: LayoutBuilder(
@@ -932,18 +964,12 @@ class _SwarmScreenState extends State<SwarmScreen> {
                       Flexible(
                         child: Material(
                           key: const ValueKey('swarm-search-results'),
-                          elevation: showResults ? 16 : 0,
+                          elevation: 16,
                           shadowColor: Colors.black54,
-                          color: showResults
-                              ? grid.AppPalette.swarmSearchSurface
-                              : Colors.transparent,
+                          color: grid.AppPalette.swarmSearchSurface,
                           shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(
-                              showResults ? 12 : 999,
-                            ),
-                            side: showResults
-                                ? const BorderSide(color: Colors.white24)
-                                : BorderSide.none,
+                            borderRadius: BorderRadius.circular(12),
+                            side: const BorderSide(color: Colors.white24),
                           ),
                           clipBehavior: Clip.antiAlias,
                           child: Column(
@@ -967,27 +993,25 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                 inputKey: const ValueKey('swarm-search-input'),
                                 controller: _searchText,
                                 focusNode: _searchFocus,
-                                search: showResults ? search : null,
+                                search: search,
                                 onClose: _dismissSearch,
                                 onChanged: search.setQuery,
-                                onOpen: _revealSearch,
-                                showClose: showResults,
+                                onOpen: _focusSearch,
+                                showClose: true,
                                 rounded: true,
                                 prominent: !commandsOnly,
                               ),
-                              if (showResults) ...[
-                                const Divider(height: 1, color: Colors.white12),
-                                Flexible(
-                                  child: SizedBox(
-                                    height: 480,
-                                    child: SwarmSearchResults(
-                                      search: search,
-                                      onChoose: _chooseSearch,
-                                      onRefocus: _focusSearch,
-                                    ),
+                              const Divider(height: 1, color: Colors.white12),
+                              Flexible(
+                                child: SizedBox(
+                                  height: 480,
+                                  child: SwarmSearchResults(
+                                    search: search,
+                                    onChoose: _chooseSearch,
+                                    onRefocus: _focusSearch,
                                   ),
                                 ),
-                              ],
+                              ),
                             ],
                           ),
                         ),
@@ -1001,9 +1025,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
                             builder: (context, _) => HarnessEntryActions(
                               openKey: const ValueKey('harness-picker-open'),
                               newKey: const ValueKey('harness-picker-new'),
-                              onOpen: !showResults
-                                  ? _revealSearch
-                                  : search.canAccept
+                              onOpen: search.canAccept
                                   ? () => _chooseSearch(search.submit()!)
                                   : null,
                               onNew: search.canCreate
@@ -1442,7 +1464,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
               Icons.notifications_none,
               size: 20,
               semanticLabel: _attention > 0
-                  ? '$_attention harnesses need input'
+                  ? '$_attention agents need input'
                   : 'Notifications',
             ),
           ),
@@ -1568,7 +1590,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
         foregroundColor: grid.AppPalette.swarmTabBar,
         shape: const StadiumBorder(),
       ),
-      child: const Text('Add Harness'),
+      child: const Text('Add Agent'),
     );
   }
 }
