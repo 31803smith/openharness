@@ -17,15 +17,17 @@ import 'phone_sheet.dart';
 /// enough on a phone that two rows of chrome are worth their height only while
 /// someone is actually typing.
 ///
-/// ⚠️ **One row that SCROLLS, with the rest behind `»`.** The keys outgrew a
-/// fixed grid the moment `enter` and `⇧tab` joined them: eleven across a narrow
-/// phone leaves each one under 30px, below the 44px Apple and Android both put
-/// as the floor for a touch target, and these are keys people hit repeatedly
-/// while looking at the terminal rather than at their thumb. So the row keeps
-/// full-size keys and runs off the edge instead, ordered by how often a key is
-/// actually reached for, and `»` opens the remainder — digits included — as a
-/// second row rather than shrinking the first.
-class TerminalKeyBar extends StatefulWidget {
+/// ⚠️ **Two FIXED rows, and nothing scrolls.** A horizontal scroller was tried
+/// and reverted: at a comfortable key width only four keys fit a 393pt phone, so
+/// the arrows and `ctrl` — the two most-pressed things here — ended up behind a
+/// swipe, and a `»` key had to exist to reach the digits. Every key being in the
+/// same place every time is worth more than any of them being bigger: this strip
+/// is used while looking at the TERMINAL, not at the strip.
+///
+/// `~ | / -` are deliberately gone from this row. The system keyboard one row
+/// below types all four, which is exactly what the row above it should not spend
+/// space on — unlike `↵` and `⇧tab`, which it cannot produce at all.
+class TerminalKeyBar extends StatelessWidget {
   const TerminalKeyBar({
     super.key,
     required this.terminal,
@@ -51,43 +53,35 @@ class TerminalKeyBar extends StatefulWidget {
   final VoidCallback onDismissKeyboard;
 
   /// Sending a picture. Null on a pane that cannot take one — an older CLI that
-  /// never advertised `terminalImagePasteAvailable` — and the buttons are then
-  /// not drawn at all rather than drawn dead: a key that does nothing is worse
-  /// than one that was never offered.
+  /// never advertised `terminalImagePasteAvailable` — and the key is then not
+  /// drawn at all rather than drawn dead: a key that does nothing is worse than
+  /// one that was never offered.
   final VoidCallback? onPickImage;
   final VoidCallback? onTakePhoto;
 
-  @override
-  State<TerminalKeyBar> createState() => _TerminalKeyBarState();
-}
+  bool get _canSendImage => onPickImage != null || onTakePhoto != null;
 
-class _TerminalKeyBarState extends State<TerminalKeyBar> {
-  /// Whether `»` has opened the second row.
+  /// The width of a key that sits OUTSIDE the grid — see `apart` in [build].
   ///
-  /// Held here rather than by the page: it is a property of this strip, it does
-  /// not survive the keyboard going away, and nothing above needs to know.
-  bool _expanded = false;
+  /// Square, and stated rather than shared with the grid on purpose: the grid
+  /// keys stretch to fill whatever the row leaves them, and these must not move
+  /// when a digit is added or the image key is absent.
+  static const double _apartKeyWidth = 34;
 
   void _send(void Function() action) {
-    if (!widget.enabled) return;
+    if (!enabled) return;
     HapticFeedback.selectionClick();
     action();
   }
 
-  Terminal get _terminal => widget.terminal;
-
-  /// Whether this pane can take a picture at all — see [TerminalKeyBar.onPickImage].
-  bool get _canSendImage =>
-      widget.onPickImage != null || widget.onTakePhoto != null;
-
-  /// The pinned image button: asks WHICH picture, then hands off.
+  /// The image key: asks WHICH picture, then hands off.
   ///
   /// The sheet only appears where there is a choice to make. A build with just
   /// one of the two wired goes straight there instead — a sheet with a single
   /// row is a tap spent on nothing.
-  void _sendImage() {
-    final pick = widget.onPickImage;
-    final photo = widget.onTakePhoto;
+  void _sendImage(BuildContext context) {
+    final pick = onPickImage;
+    final photo = onTakePhoto;
     if (pick == null) {
       photo?.call();
       return;
@@ -117,61 +111,76 @@ class _TerminalKeyBarState extends State<TerminalKeyBar> {
   @override
   Widget build(BuildContext context) {
     AppTheme.watch(context);
-    // Ordered by reach, not by keyboard layout: `esc` and `tab` drive an engine's
-    // modes, `↵` ends a message, `⇧tab` cycles Claude Code's, and the arrows walk
-    // history.
-    //
-    // ⚠️ Sending a picture is NOT in here, and that is the whole point of the
-    // pinned button below. A scrolling row only shows four keys on a 393pt phone,
-    // so anything past `⇧tab` is behind a swipe — measured, not guessed. The
-    // image button was tenth in this list and therefore invisible on arrival,
-    // which for the one action people come to this bar for is the same as absent.
-    final primary = <Widget>[
-      _key(label: 'esc', onTap: () => _terminal.keyInput(TerminalKey.escape)),
-      _key(label: 'tab', onTap: () => _terminal.keyInput(TerminalKey.tab)),
+    // Row one is what drives an engine: leave a mode, complete a path, send,
+    // cycle Claude Code's modes, walk history. The image key ends it because
+    // sending a picture is a deliberate act, not something done mid-sentence —
+    // but it is still HERE, on screen, not behind anything.
+    final top = <Widget>[
+      _key(label: 'esc', onTap: () => terminal.keyInput(TerminalKey.escape)),
+      _key(label: 'tab', onTap: () => terminal.keyInput(TerminalKey.tab)),
       _key(
         icon: LucideIcons.cornerDownLeft300,
         semanticLabel: 'Enter',
-        onTap: () => _terminal.keyInput(TerminalKey.enter),
+        onTap: () => terminal.keyInput(TerminalKey.enter),
       ),
       // Shift+Tab is CSI Z, and xterm builds it from the modifier rather than
       // from a key of its own — which is why this passes `shift` instead of
       // looking for a `TerminalKey.shiftTab` that does not exist.
       _key(
         label: '⇧tab',
-        onTap: () => _terminal.keyInput(TerminalKey.tab, shift: true),
-      ),
-      _key(
-        icon: LucideIcons.arrowUp300,
-        semanticLabel: 'Up',
-        onTap: () => _terminal.keyInput(TerminalKey.arrowUp),
-      ),
-      _key(
-        icon: LucideIcons.arrowDown300,
-        semanticLabel: 'Down',
-        onTap: () => _terminal.keyInput(TerminalKey.arrowDown),
+        onTap: () => terminal.keyInput(TerminalKey.tab, shift: true),
       ),
       _key(
         icon: LucideIcons.arrowLeft300,
         semanticLabel: 'Left',
-        onTap: () => _terminal.keyInput(TerminalKey.arrowLeft),
+        onTap: () => terminal.keyInput(TerminalKey.arrowLeft),
+      ),
+      _key(
+        icon: LucideIcons.arrowUp300,
+        semanticLabel: 'Up',
+        onTap: () => terminal.keyInput(TerminalKey.arrowUp),
+      ),
+      _key(
+        icon: LucideIcons.arrowDown300,
+        semanticLabel: 'Down',
+        onTap: () => terminal.keyInput(TerminalKey.arrowDown),
       ),
       _key(
         icon: LucideIcons.arrowRight300,
         semanticLabel: 'Right',
-        onTap: () => _terminal.keyInput(TerminalKey.arrowRight),
-      ),
-      _key(
-        label: 'ctrl',
-        held: widget.controlArmed,
-        onTap: () => widget.onControlToggle(!widget.controlArmed),
+        onTap: () => terminal.keyInput(TerminalKey.arrowRight),
       ),
     ];
-    final secondary = <Widget>[
-      for (final char in const ['~', '|', '/', '-', '_', ':', '.'])
-        _key(label: char, onTap: () => _terminal.textInput(char)),
+    final bottom = <Widget>[
+      _key(
+        label: 'ctrl',
+        held: controlArmed,
+        onTap: () => onControlToggle(!controlArmed),
+      ),
       for (final digit in const ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'])
-        _key(label: digit, onTap: () => _terminal.textInput(digit)),
+        _key(label: digit, onTap: () => terminal.textInput(digit)),
+    ];
+    // ⚠️ **Neither of these sends a byte anywhere**, and that is why they sit
+    // apart from the grid rather than in it. Every key to the left of the rule
+    // is a keystroke the pty receives; these two act on the PHONE — one opens an
+    // OS picker, the other drops the keyboard. Sharing a row taught the eye they
+    // were the same kind of thing, and an image button that looks like `esc`
+    // reads as something that will be typed at the agent.
+    final apart = <Widget>[
+      if (_canSendImage)
+        _key(
+          icon: LucideIcons.image300,
+          semanticLabel: 'Send image',
+          onTap: () => _sendImage(context),
+        ),
+      // The way back to a full screen of output, which on a phone is the only
+      // way to read one.
+      _key(
+        icon: LucideIcons.chevronDown300,
+        semanticLabel: 'Hide keyboard',
+        alwaysEnabled: true,
+        onTap: onDismissKeyboard,
+      ),
     ];
 
     return ExcludeFocus(
@@ -187,56 +196,38 @@ class _TerminalKeyBarState extends State<TerminalKeyBar> {
         child: Padding(
           padding: const EdgeInsets.all(6),
           // Held out of the app-wide text scale like the composer's own type:
-          // the keys are sized for a thumb, and a large accessibility scale
-          // would grow the labels past the boxes holding them.
+          // at a large scale twelve keys across a phone stop fitting the row.
           child: MediaQuery.withNoTextScaling(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                // The pair sits beside the SHORTER row, and the arithmetic is
+                // the whole reason: row one carries eight keys and row two
+                // eleven, so taking ~85pt out of row two would squeeze the
+                // digits to 23pt — narrower than the system keyboard's own keys
+                // right below them. Beside row one they cost it 44pt → 33pt,
+                // which is where the old bar's keys already were.
                 Row(
                   children: [
-                    Expanded(child: _scrollingRow(primary)),
-                    const SizedBox(width: 4),
-                    // Pinned for the same reason `»` is, and more so: this is
-                    // what somebody opens the bar to reach. One button rather
-                    // than two — the library and the camera are two answers to
-                    // "which picture", which is a question a sheet asks better
-                    // than a second key nobody can fit on the row.
+                    Expanded(child: _row(top)),
+                    const SizedBox(width: 8),
+                    // The rule earns its place only when there are two kinds of
+                    // thing to separate. Against an older CLI the image key is
+                    // absent and `⌄` is all that is left — it lived inside the
+                    // grid before this, so a rule drawn for it alone would be
+                    // marking a distinction that is no longer being made.
                     if (_canSendImage) ...[
-                      _key(
-                        icon: LucideIcons.image300,
-                        semanticLabel: 'Send image',
-                        onTap: _sendImage,
-                      ),
-                      const SizedBox(width: 4),
+                      Container(width: 1, height: 22, color: AppGlass.hair),
+                      const SizedBox(width: 8),
                     ],
-                    // Pinned OUTSIDE the scroller, so the way to the rest of the
-                    // keys cannot itself be scrolled off the edge.
-                    _key(
-                      icon: _expanded
-                          ? LucideIcons.chevronsLeft300
-                          : LucideIcons.chevronsRight300,
-                      semanticLabel: _expanded ? 'Fewer keys' : 'More keys',
-                      held: _expanded,
-                      alwaysEnabled: true,
-                      onTap: () => setState(() => _expanded = !_expanded),
-                    ),
-                    const SizedBox(width: 4),
-                    // Not a key the pty ever hears about: it puts the keyboard
-                    // away, which on a phone is the only way to read a full
-                    // screen of output.
-                    _key(
-                      icon: LucideIcons.chevronDown300,
-                      semanticLabel: 'Hide keyboard',
-                      alwaysEnabled: true,
-                      onTap: widget.onDismissKeyboard,
-                    ),
+                    for (var index = 0; index < apart.length; index++) ...[
+                      if (index > 0) const SizedBox(width: 4),
+                      SizedBox(width: _apartKeyWidth, child: apart[index]),
+                    ],
                   ],
                 ),
-                if (_expanded) ...[
-                  const SizedBox(height: 6),
-                  _scrollingRow(secondary),
-                ],
+                const SizedBox(height: 6),
+                _row(bottom),
               ],
             ),
           ),
@@ -245,30 +236,20 @@ class _TerminalKeyBarState extends State<TerminalKeyBar> {
     );
   }
 
-  /// One row of keys at their natural width, scrolling horizontally past the edge.
+  /// One row, every key sharing the width equally.
   ///
-  /// `ClampingScrollPhysics` rather than the iOS default: a bouncing row above the
-  /// keyboard reads as the whole strip coming loose, and the overscroll glow is
-  /// what says "there is more this way" on a row with no scrollbar.
-  Widget _scrollingRow(List<Widget> keys) => SizedBox(
-    height: _keyHeight,
-    child: ListView.separated(
-      scrollDirection: Axis.horizontal,
-      physics: const ClampingScrollPhysics(),
-      padding: EdgeInsets.zero,
-      itemCount: keys.length,
-      separatorBuilder: (_, _) => const SizedBox(width: 4),
-      itemBuilder: (_, index) => keys[index],
-    ),
+  /// `Expanded` rather than a fixed width: the keys then land on the same grid
+  /// the system keyboard below uses, which is what lets a thumb find one without
+  /// looking. It also means a row of nine and a row of twelve both fill the
+  /// phone rather than ending in a ragged gap.
+  Widget _row(List<Widget> keys) => Row(
+    children: [
+      for (var index = 0; index < keys.length; index++) ...[
+        if (index > 0) const SizedBox(width: 4),
+        Expanded(child: keys[index]),
+      ],
+    ],
   );
-
-  /// Tall enough to hit without looking — the floor both platforms put on a
-  /// touch target, which the old two-row grid was under at 34.
-  static const double _keyHeight = 40;
-
-  /// Wide enough for `⇧tab` at 13px, and the same width for every key so the row
-  /// reads as a keyboard rather than as a sentence of buttons.
-  static const double _keyWidth = 52;
 
   Widget _key({
     String? label,
@@ -279,7 +260,7 @@ class _TerminalKeyBarState extends State<TerminalKeyBar> {
     required VoidCallback onTap,
   }) {
     assert((label == null) != (icon == null), 'a key carries one of the two');
-    final live = widget.enabled || alwaysEnabled;
+    final live = enabled || alwaysEnabled;
     final foreground = held
         ? AppPalette.accentOnSurface
         : live
@@ -296,8 +277,7 @@ class _TerminalKeyBarState extends State<TerminalKeyBar> {
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 120),
           curve: Curves.easeOut,
-          width: _keyWidth,
-          height: _keyHeight,
+          height: 34,
           alignment: Alignment.center,
           decoration: BoxDecoration(
             color: held ? AppSurface.accentWash : AppGlass.surfaceFill,
@@ -307,7 +287,7 @@ class _TerminalKeyBarState extends State<TerminalKeyBar> {
             ),
           ),
           child: icon != null
-              ? Icon(icon, size: 17, color: foreground)
+              ? Icon(icon, size: 16, color: foreground)
               : Text(
                   label!,
                   maxLines: 1,
