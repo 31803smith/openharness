@@ -234,7 +234,7 @@ List<ShortcutRow> effectiveShortcutRows(
           ),
     if (defaultDigits)
       const ShortcutRow(
-        label: 'Select tabs 1–9',
+        label: 'Select harnesses 1–9',
         chords: [
           ['⌘', '1 – 9'],
         ],

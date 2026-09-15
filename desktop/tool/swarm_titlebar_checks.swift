@@ -223,11 +223,11 @@ private extension SwarmTabStrip {
     fullWithStarter["canOpenNewTab"] = true
     update(fullWithStarter)
     try checkTitlebar(newButton.isEnabled,
-      "New Tab can reveal an existing starter at the tab limit")
+      "New Harness can reveal an existing starter at the tab limit")
     fullWithStarter["canOpenNewTab"] = false
     update(fullWithStarter)
     try checkTitlebar(!newButton.isEnabled,
-      "New Tab respects the workspace's availability")
+      "New Harness respects the workspace's availability")
     update(state([["id": "swarm-0", "name": "Renamed tab"]], active: "swarm-0"))
     try checkTitlebar(newButton.toolTip == nil && openButton.toolTip == nil,
       "Titlebar actions add no hover hints")
@@ -511,7 +511,7 @@ private extension SwarmTitlebar {
     try checkTitlebar(!main.performKeyEquivalent(with: open), "Menu equivalents defer before input dispatch")
     setKeymap(defaults)
     try checkTitlebar(strip.newButton.toolTip == nil, "Keymap reload does not restore hover hints")
-    try checkTitlebar(strip.newButton.accessibilityLabel() == "New Tab", "The plus announces New Tab")
+    try checkTitlebar(strip.newButton.accessibilityLabel() == "New Harness", "The plus announces New Harness")
     try checkTitlebar(main.defersToInput(event("n", 45, .command)) && !main.defersToInput(event("o", 31, .command)),
       "Command-N reaches the shared chooser while Command-O stays unbound")
     try checkTitlebar(!main.defersToInput(event("p", 35, .command)), "Command-P no longer opens Navigate")
@@ -579,12 +579,12 @@ private extension SwarmTitlebar {
     try checkTitlebar(agent.items.map { $0.isSeparatorItem ? "separator" : ($0.representedObject as? String ?? "") } == ["new", "addAgent", "renameActive", "closeActive", "separator", "splitRight", "splitDown", "zoomPane", "closePane"], "File groups Harness and Pane actions, without Pin or Add Project clutter")
     try checkTitlebar(agent.items.filter { !$0.isSeparatorItem }.allSatisfy { $0.image != nil && $0.toolTip == nil },
       "Every File action has a native icon and no hover hint")
-    try checkTitlebar(agent.items.contains { $0.title == "Rename Tab…" && $0.representedObject as? String == "renameActive" }, "Rename Tab preserves its command")
-    try checkTitlebar(agent.items.contains { $0.title == "Close Tab" && $0.representedObject as? String == "closeActive" }, "Close Tab preserves its command")
+    try checkTitlebar(agent.items.contains { $0.title == "Rename Harness…" && $0.representedObject as? String == "renameActive" }, "Rename Harness preserves its command")
+    try checkTitlebar(agent.items.contains { $0.title == "Close Harness" && $0.representedObject as? String == "closeActive" }, "Close Harness preserves its command")
     let commands = edit.submenu!.items.first(where: { $0.representedObject as? String == "commands" })!
     try checkTitlebar(commands.keyEquivalent == "p" && commands.keyEquivalentModifierMask == [.command, .shift], "Command search keeps its native menu owner")
     try checkTitlebar(edit.submenu!.items.allSatisfy { $0.representedObject as? String != "jump" }, "Edit has no Navigate action")
-    try checkTitlebar(agent.items.first?.title == "New Tab" && agent.items.first?.keyEquivalent == "t", "New Tab opens the chooser with Command-T")
+    try checkTitlebar(agent.items.first?.title == "New Harness" && agent.items.first?.keyEquivalent == "t", "New Harness opens the chooser with Command-T")
     let reopen = historyMenu.items.first(where: { $0.representedObject as? String == "reopen" })!
     actionsEnabled = true
     canReopen = false
@@ -607,7 +607,7 @@ private extension SwarmTitlebar {
                   ["id": "two", "title": "Unavailable session", "canOpen": false]]],
       ["id": "home", "name": "iMac – Home", "status": "Offline", "local": false, "agentCount": 0],
     ]
-    updateMachines(machineRows)
+    _ = try messenger.receive("machinesState", arguments: ["machines": machineRows])
     let machineMenu = main.item(withTitle: "Machines")!.submenu!
     let manager = machineMenu.items.first!
     try checkTitlebar(manager.title == "Open Machines Manager" && manager.representedObject as? String == "manageMachines" && machineMenu.items[1].isSeparatorItem,
@@ -626,6 +626,13 @@ private extension SwarmTitlebar {
     let agentItems = destinations[0].submenu!.items.filter { $0.action == #selector(machineAgentAction(_:)) }
     try checkTitlebar(agentItems.map(\.title) == ["App work", "Unavailable session"] && agentItems[0].image != nil,
       "Machines expand into named agents with engine icons")
+    _ = try messenger.receive("update", arguments: [
+      "tabs": [["id": "navigation-check", "name": "Another tab"]],
+      "activeId": "navigation-check", "enabled": true,
+    ])
+    try checkTitlebar(machineMenu.items.contains(where: { $0 === destinations[0] }) &&
+      destinations[0].submenu?.items.contains(where: { $0 === agentItems[0] }) == true,
+      "Tab updates retain the existing machine menu and agent controls")
     try checkTitlebar(validateMenuItem(agentItems[0]) && !validateMenuItem(agentItems[1]),
       "Unavailable agents cannot be activated")
     machineAgentAction(agentItems[0])
@@ -652,7 +659,7 @@ private extension SwarmTitlebar {
     updateMachines(machineRows)
     try checkTitlebar(machineMenu.items.contains(where: { $0 === destinations[0] }),
       "Unchanged machine data retains menu controls")
-    updateMachines([])
+    _ = try messenger.receive("machinesState", arguments: ["machines": []])
     try checkTitlebar(!validateMenuItem(destinations[0]) && !validateMenuItem(agentItems[0]) &&
       machineMenu.item(withTitle: "No Machines Linked")?.isEnabled == false,
       "Unlinking computers clears destinations and invalidates stale actions")

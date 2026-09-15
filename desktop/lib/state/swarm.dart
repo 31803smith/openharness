@@ -11,9 +11,9 @@ class Swarm {
   Swarm({required this.id, String name = defaultName})
     : name = normalizeName(name);
 
-  static const defaultName = 'New Tab';
+  static const defaultName = 'New Harness';
   static String normalizeName(String name) =>
-      const {'New swarm', 'New tab', 'New Agent', 'New Harness'}.contains(name)
+      const {'New swarm', 'New tab', 'New Tab', 'New Agent'}.contains(name)
       ? defaultName
       : name;
 

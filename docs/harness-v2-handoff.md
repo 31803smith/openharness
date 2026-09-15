@@ -14,7 +14,7 @@ Old screenshots, test expectations and saved bundles are not the current UI.
 
 Build the best everyday workspace for people directing persistent AI agents:
 a fast, polished, keyboard-first **agentic browser**, with each tab representing
-a swarm. The user describes it as a “super terminal” for the intelligence age.
+a Harness containing agents. The user describes it as a “super terminal” for the intelligence age.
 Developers should feel the speed, predictability and familiar habits of a great
 terminal/editor while working with several agents across real machines and
 projects. They should keep their place and know exactly which agent receives
@@ -38,10 +38,22 @@ user for a benchmark window.
 
 - The user renamed the session concept to **Agent**: Open/New/Add/Stop/Restart
   Agent, Find an agent, counts and recovery copy throughout Flutter and native
-  menus. Harness remains the app/device/CLI brand; saved names and wire IDs stay.
+  menus. **Harness** now names the tab container as well as the app/device/CLI:
+  New Harness, Rename Harness, Close Harness, and navigation/help labels. Custom
+  names and wire IDs stay; the old New Tab default restores as New Harness.
 - Cmd-N now opens results and preview immediately, with Open Agent / New Agent
-  below. This supersedes every earlier compact-first modal instruction. New Tab
-  remains compact until search activation.
+  below. Open Agent has a solid neutral fill in the modal; the start-page button
+  retains its outline. This supersedes the earlier compact-first modal.
+  New Harness remains compact until search activation.
+- The Harness labels and picker fill pass 96 affected Flutter tests plus 12
+  render checks across six palettes and two text sizes. Changed Dart files
+  analyze cleanly. The exported-keymap fixture, 96 native keyboard checks and
+  404 isolated AppKit checks pass. Graphite picker captures at normal and double
+  text size were inspected. Logs: `/private/tmp/harness-label-action-tests.log`,
+  `/private/tmp/harness-label-action-analyze.log`,
+  `/private/tmp/harness-label-action-native.log`,
+  `/private/tmp/harness-label-action-render.log`. Captures:
+  `/private/tmp/harness-label-action-captures`.
 - New Agent is 760 logical pixels wide. Machines stay in one row; narrow/large
   text moves excess machines into the overflow while preserving the selection.
 - Working folder now offers **New / Local / Remote**. New creates a unique
@@ -53,6 +65,18 @@ user for a benchmark window.
 - Machines is a native submenu tree with cached counts, names and engine icons.
   Selection uses both machine and agent IDs. Existing views are revealed, stale
   destinations are refused, and opening menus does no network work.
+- **bef8cd6** removes the full agent inventory from native tab updates. A
+  separate cached `machinesState` message refreshes visible menu data only when
+  it changes. A 512-agent regression reproduced the old resend and now confirms
+  six tab switches send no inventory, while renames and retained-pane
+  availability still update it. 28 affected Flutter checks passed, followed by
+  four focused checks covering availability and menu clearing; changed files
+  analyze cleanly. 387 hidden AppKit checks passed, including retained menu
+  controls across tab updates. No latency measurement was attempted.
+  Logs: `/private/tmp/harness-machine-menu-isolation.log`,
+  `/private/tmp/harness-machine-menu-isolation-final.log`,
+  `/private/tmp/harness-machine-menu-isolation-analyze.log`,
+  `/private/tmp/harness-machine-menu-isolation-native.log`.
 - Verification: 339 affected Flutter tests, 57 CLI tests, TypeScript checking,
   96 native keymap checks and 403 AppKit checks pass. No real agents were launched
   or used for input tests, and no native latency benchmark was run. Captures:
@@ -64,17 +88,19 @@ Saved and pushed to `origin/main`: **9d0150d** (remote project preparation),
 validation cleanup). The 339-test pass was followed by six passing focused
 checks after the analyzer cleanup; changed Dart files now analyze without issues.
 
-The release build of **fb29d7d** succeeded. Its incremental build left a stale
-outer app seal after rebuilding App.framework; the framework verified separately,
-and refreshing the existing ad-hoc outer signature resolved it. Deep/strict
-codesign verification passed for the prepared app and its separate staged copy.
-Prepared app:
+The latest Release preview was built from **bef8cd6** and passes deep/strict
+codesign verification, both before and after staging. Prepared app:
 `/private/tmp/harness-pane-controls-release/Build/Products/Release/Harness.app`.
-This includes the concurrently pushed busy-Codex input and dial navigation work
-(d9bd13c) and firmware version note (5c3a7fa), preserved by rebasing the final
-documentation commit. After that rebase, 17 desktop dial/creation/menu checks and
-40 CLI input checks passed. No real daemon or firmware was updated.
-Build log: `/private/tmp/harness-agent-rebased-release.log`; test logs:
+Build log: `/private/tmp/harness-menu-isolation-release.log`.
+The previous incremental build left a stale outer app seal after rebuilding
+App.framework; verifying the framework separately and refreshing the existing
+ad-hoc outer signature resolved it. The latest build verifies without that repair.
+
+Incoming main work was preserved, including terminal theme synchronization
+(4c7af5e), Codex question detection (12a63a9), and CLI status cleanup (afc9e77).
+No real daemon or firmware was updated. Earlier rebased checks passed 17 desktop
+dial/creation/menu tests and 40 CLI input tests. Earlier build/test logs:
+`/private/tmp/harness-agent-rebased-release.log`,
 `/private/tmp/harness-agent-rebased-checks.log`,
 `/private/tmp/harness-agent-rebased-cli-tests.log`,
 `/private/tmp/harness-agent-ui-regressions.log`,
@@ -82,17 +108,20 @@ Build log: `/private/tmp/harness-agent-rebased-release.log`; test logs:
 `/private/tmp/harness-project-folder-cli-tests.log`,
 `/private/tmp/harness-agent-menus-native.log`.
 
-**Live installation is pending.** The supported running bundle below is still
-**d22b338**. CUA returned `cgWindowNotFound` for its window and Finder actions,
-although its app list and an exact process check show Harness running. No
-process was killed or bundle replaced while running. The user was asked to bring
-the window onto the current screen. They confirmed it was visible, but a fresh
-CUA connection still failed with the same error. They were then asked to choose
-**Quit and Keep Windows** themselves. The signed build is staged separately;
-`/private/tmp/harness-agent-preview-install.json` records its exact location.
-Once the user confirms quitting, verify the exact process stopped, back up the
-live bundle, and swap the verified staged copy before relaunching.
-Do not launch the derived-data copy alongside the supported one.
+**Installation is authorized and the user has quit Harness.** An exact-process
+check confirmed the app is stopped. Finish verifying the latest container labels
+and solid Open Agent action, rebuild/stage, then install at the supported path
+and reopen it. The previous **d22b338** bundle has a verified backup at
+`/private/tmp/harness-before-agent-entry-ldyjh3ru/Harness.app`;
+`/private/tmp/harness-agent-preview-install.json` records the bundle paths.
+
+**Quit Harness (Cmd-Q) is the correct graceful quit command.** The prior request
+for “Quit and Keep Windows” was incorrect; that item does not exist in this app.
+The installed build already flushes pending tab layout on normal quit, and agent
+sessions run separately. Saved layout is in `desktop-app-v2/state.json` under the
+Harness data directory; do not dump its contents. Check the exact app process is
+gone immediately before swapping the verified bundle, and do not launch the
+derived-data copy alongside the supported one.
 
 CUA-sent Command-N remains inconclusive from the earlier live preview, although
 native callback and exported shortcut checks pass. The current CUA window access
@@ -105,14 +134,14 @@ are:
 - **Add Agent unifies search and creation.** A single titlebar button and
   File → Add Agent… open results and preview immediately, with the search
   field focused and Open/New actions below. This supersedes compact-first modal
-  entry; the New Tab page stays compact until activated. New preserves split
+  entry; the New Harness page stays compact until activated. New preserves split
   placement. The bell stays beside the traffic lights.
-- **Cmd-T: New Tab; Cmd-N: Add Agent; Shift-Cmd-N: direct New Agent; Cmd-S: Layout.**
+- **Cmd-T: New Harness; Cmd-N: Add Agent; Shift-Cmd-N: direct New Agent; Cmd-S: Layout.**
   Cmd-O is unbound by default.
   Cmd-H/J/K/L and Cmd-arrows focus panes; Cmd-1…9 select tabs. User bindings take
   precedence. Cmd-R splits right and Cmd-D splits down. Native menus, help and actual
   dispatch must agree; native menu and titlebar hover hints are removed.
-- New Tab uses the **restored lake-at-dusk wallpaper**, a long search field capped
+- New Harness uses the **restored lake-at-dusk wallpaper**, a long search field capped
   at 1120 logical pixels, and no large Harness heading. The hint is **Find an
   agent**. Search starts blank and focused, with results hidden. Open Agent
   and New Agent sit underneath, aligned with the search field's left edge.
@@ -130,8 +159,8 @@ are:
   Search uses the remaining space above the footer, which stays still when results
   open or close. Short windows use a compact horizontal device card.
   The five recent-agent rows are removed. Both pairs of actions are rounded
-  pills, with transparent outlined Open buttons and hand cursors. The official
-  `2.webp` device photo is cropped and centered in its viewport, with a hand cursor.
+  pills with hand cursors. Open Agent is outlined on the start page and solid
+  neutral in the modal picker. The official `2.webp` device photo is cropped and centered in its viewport, with a hand cursor.
 - Search is single-choice. Session names appear above **project · branch ·
   machine**, without repeated workspace titles. Only the highlighted row shows
   **Open Agent / Open N Agents**, or the explicit split action. The modal
@@ -164,10 +193,10 @@ are:
   Working folder offers New / Local / Remote as described above.
 - A single-agent tab/search/history entry uses that agent's engine icon;
   multiple agents use four outlined tiles. An empty tab uses a plain plus, and
-  tab close marks appear only on hover/focus. Only one unused New Tab page
-  is allowed; all New Tab actions reuse and focus it, including at the tab limit.
+  tab close marks appear only on hover/focus. Only one unused New Harness page
+  is allowed; all New Harness actions reuse and focus it, including at the tab limit.
   Restore collapses old duplicate unused pages. Blank pages are excluded
-  from Recently Closed. File uses Rename Tab / Close Tab, then pane actions;
+  from Recently Closed. File uses Rename Harness / Close Harness, then pane actions;
   Rename has a clean unlabeled field and muted pill actions. Double-clicks are
   contained within the native tab, and modal appearance leaves the titlebar
   button colors intact while blocking their actions.
@@ -284,9 +313,9 @@ Only supported current preview location:
 
 /Users/ab/code/autonomous-harness/desktop/build/macos/Build/Products/Release/Harness.app
 
-The prepared and running builds now include **9af924f**. Release succeeded in
+Historical **9af924f** installation receipt (superseded by the checkpoint above): Release succeeded in
 /private/tmp/harness-unified-entry-release.log. Both bundles passed deep, strict
-signature verification. Installation used **Quit and Keep Windows**, an exact
+signature verification. Installation used a graceful quit, an exact
 stopped-process check before and immediately before the swap, and a verified
 staging bundle. The previous live bundle is backed up at
 /private/tmp/harness-before-unified-entry-wyqay10k/Harness.app.
@@ -303,12 +332,12 @@ for review. CUA's synthetic Command-modifier attempts had no observable effect
 for either Cmd-N or the unchanged Cmd-T; shortcut dispatch is covered by the
 Flutter and isolated native checks, not claimed as a live CUA keyboard result.
 
-The console is accessible; older locked-console notes are obsolete. Before replacing
-it with later changes, verify the new Release build
-and signatures, use **Quit and Keep Windows**, then check the exact process is
-stopped. Back up and replace only the current checkout's bundle, verify it, and
-reopen that exact path. Ordinary Quit can terminate agents. Do not call getApp
-between quitting and copying, since that lookup can relaunch the app.
+Before installing later changes, verify the new Release build and signatures,
+use **Quit Harness (Cmd-Q)**, then check the exact process is stopped. Normal
+quit flushes saved layout; it does not stop the independently running agents.
+Back up and replace only the current checkout's bundle, verify it, and reopen
+that exact path. Do not call getApp between quitting and copying, since that
+lookup can relaunch the app. Live CUA access must be checked again after launch.
 
 The older pre-lake preview backup remains at
 /private/tmp/harness-before-lake-entry-fmqz73k5/Harness.app.
@@ -391,7 +420,7 @@ post-inspired implementation:
   session/buffer/controller and leaves source workspaces intact.
 - Each workspace retains arrangement and focus. Closing views or tabs preserves
   runtimes; navigation never sends terminal input or takes over another controller.
-  Stop Harness continues to use its explicit confirmation; files and saved
+  Stop Agent continues to use its explicit confirmation; files and saved
   conversations are preserved, but the live process ends.
 - Reopening one agent and then its original swarm reuses that workspace and adds
   missing views, retaining newer names, layout, focus and retained sessions. If
@@ -410,7 +439,7 @@ post-inspired implementation:
 - [Creation recovery](harness-agent-creation.md) distinguishes refused creation
   from a delayed/lost response. **Check status reads the original receipt; it
   never submits another launch.** A confirmed runtime returns to its validated
-  destination or remains discoverable in Open Harness. Older CLIs can create
+  destination or remains discoverable in Open Agent. Older CLIs can create
   without supporting receipt recovery. Intents last only for the open dialog;
   durable pending-creation and crash-window reconciliation remain future work.
 - Browser sign-in supports reopen/copy/cancel with stale-attempt isolation.
@@ -436,13 +465,13 @@ post-inspired implementation:
 2. **Complete current keyboard and genuine first-use qualification.** Check
    initially focused search with hidden results, expansion/dismissal, command mode, Tab-focused
    rows, composition and the first key after activation through both native
-   menu and keyboard entry. Check New Harness folder focus/cancellation,
+   menu and keyboard entry. Check New Agent folder focus/cancellation,
    Layout repeated chords and confirmation, and Find during output/composition,
    including the immediate next key after closing it. Ready navigation, Find
    and dialog-return transitions are now fixture-checked before their next
    frame; current-preview observation remains the next level of evidence.
    Observe fresh dependencies, provider sign-in/browser return, native folder
-   choice, clone, first task and a second harness. Record actual steps, errors
+   choice, clone, first task and a second agent. Record actual steps, errors
    and time to a usable agent. Public GitHub cloning passed a direct disposable
    service check; private access/native chooser and real provider return remain
    unobserved. Check delayed remote creation on a disposable agent, an older CLI
@@ -481,7 +510,7 @@ post-inspired implementation:
   or failed actions give a clear result and never alter the wrong workspace.
 - Partial History restoration retains a single workspace/shared sessions, even
   at the tab limit. Capacity failure preserves the whole recovery entry.
-- Closing/dismissing New Harness returns directly to the intended page/terminal;
+- Closing/dismissing New Agent returns directly to the intended page/terminal;
   launch-in-progress and uncertain-outcome recovery remain protected.
 
 ### Visual quality and first impression
