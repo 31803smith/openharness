@@ -96,17 +96,16 @@ dial/creation/menu tests and 40 CLI input tests. Earlier build/test logs:
 `/private/tmp/harness-project-folder-cli-tests.log`,
 `/private/tmp/harness-agent-menus-native.log`.
 
-**Live installation is pending.** The supported running bundle below is still
-**d22b338**. CUA returned `cgWindowNotFound` for its window and Finder actions,
-although its app list and an exact process check show Harness running. No
-process was killed or bundle replaced while running. The user was asked to bring
-the window onto the current screen. They confirmed it was visible, but a fresh
-CUA connection still failed with the same error. They were then asked to choose
-**Quit and Keep Windows** themselves. The signed build is staged separately;
-`/private/tmp/harness-agent-preview-install.json` records its exact location.
-Once the user confirms quitting, verify the exact process stopped, back up the
-live bundle, and swap the verified staged copy before relaunching.
-Do not launch the derived-data copy alongside the supported one.
+**Leave the running preview as is — explicit user choice.** The user declined
+the window-preserving quit and update. Do not quit, restart, replace or relaunch
+the running preview, or repeat the quit request. Installation waits for a new
+explicit user request. The last verified running bundle is **d22b338**; the
+signed **bef8cd6** update remains staged separately for later.
+`/private/tmp/harness-agent-preview-install.json` records its exact location and
+the user hold. No process was killed or live bundle replaced. CUA had continued
+to return `cgWindowNotFound` even after the user made the window visible, so live
+verification remains incomplete. Do not launch the derived-data copy alongside
+the supported one.
 
 CUA-sent Command-N remains inconclusive from the earlier live preview, although
 native callback and exported shortcut checks pass. The current CUA window access
