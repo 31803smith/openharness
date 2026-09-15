@@ -105,6 +105,7 @@ class SwarmSearchInput extends StatelessWidget {
             : null,
         filled: true,
         fillColor: fillColor ?? grid.AppPalette.swarmSearchSurface,
+        hoverColor: Colors.transparent,
         contentPadding: EdgeInsets.symmetric(
           horizontal: 18,
           vertical: prominent ? 22 : 18,
