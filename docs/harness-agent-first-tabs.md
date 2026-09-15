@@ -182,8 +182,10 @@ then **Split Right, Split Down, Zoom Pane, Close Pane**. Pin/Unpin and Add Proje
 are removed from this menu. File actions have native system icons, with the same
 four-corner Zoom and plain Close cross as the pane header. Machines starts with **Open Machines Manager**, then
 linked computers with their status and cached agent count, followed by Link
-Machine and Refresh Machines. The menu is at least 500 points wide, with agent
-counts in a right-aligned column before the native submenu chevron. Each computer is a submenu of named agents with
+Machine and Refresh Machines. History and Machines fit their visible labels,
+with metadata in a right-aligned column and no fixed minimum width or empty
+wide span. Long names truncate to keep the menus compact. Machine counts sit
+before the native submenu chevron. Each computer is a submenu of named agents with
 engine icons. Selecting an agent opens its exact machine/agent identity, reusing
 an existing pane when present. The submenu retains Find Agents for the full
 search. Empty/unavailable lists are explicit; unknown counts are not shown as

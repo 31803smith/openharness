@@ -123,6 +123,15 @@ Sixty-five entry, preview, keyboard and split checks pass. Captures:
 `/private/tmp/harness-matching-search-tests.log` and
 `/private/tmp/harness-matching-search-analyze.log`.
 
+### Compact native menus
+
+History and Machines now measure their visible labels and align metadata to a
+content-sized trailing column. The 500-point Machines minimum and fixed
+420/660-point columns are removed. Long names stay bounded; entries without
+metadata do not reserve an empty trailing gap. Menu actions, icons and cached
+state remain intact. 391 AppKit checks pass, including hidden-window native
+layout and menu width checks: `/private/tmp/harness-compact-menus-native-checks.log`.
+
 ### Device studio photograph
 
 A compact product photo replaces the small device cutout. The actual device

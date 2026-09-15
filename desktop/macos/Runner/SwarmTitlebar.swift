@@ -284,23 +284,27 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
 
   private func rebuildMachinesMenu() {
     machinesMenu.removeAllItems()
-    machinesMenu.minimumWidth = 500
+    let labels = machines.map { machine in
+      (name: SwarmMenuText.fitted(machine.name, width: 200), status: machine.status,
+       count: machine.agentCount.map { "\($0) \($0 == 1 ? "agent" : "agents")" } ?? "")
+    }
+    let trailingEdge = SwarmMenuText.trailingEdge(labels.map { ($0.name + "  " + $0.status, $0.count) })
     let manager = NSMenuItem(title: "Open Machines Manager", action: #selector(menuAction(_:)), keyEquivalent: "")
     manager.target = self
     manager.representedObject = "manageMachines"
     manager.identifier = NSUserInterfaceItemIdentifier(HarnessKeymapMenu.actionPrefix + "manageMachines")
     machinesMenu.addItem(manager)
     machinesMenu.addItem(.separator())
-    for machine in machines {
+    for (machine, parts) in zip(machines, labels) {
       let item = NSMenuItem(title: machine.name, action: #selector(machineAction(_:)), keyEquivalent: "")
       item.target = self
       item.representedObject = machine.id
       let paragraph = NSMutableParagraphStyle()
-      paragraph.tabStops = [NSTextTab(textAlignment: .right, location: 420)]
-      let label = NSMutableAttributedString(string: machine.name,
+      paragraph.tabStops = [NSTextTab(textAlignment: .right, location: trailingEdge)]
+      let label = NSMutableAttributedString(string: parts.name,
         attributes: [.font: NSFont.menuFont(ofSize: 0), .paragraphStyle: paragraph])
-      let count = machine.agentCount.map { "\($0) \($0 == 1 ? "agent" : "agents")" }
-      label.append(NSAttributedString(string: "  " + machine.status + "\t" + (count ?? ""),
+      let suffix = "  " + parts.status + (parts.count.isEmpty ? "" : "\t" + parts.count)
+      label.append(NSAttributedString(string: suffix,
         attributes: [.font: NSFont.menuFont(ofSize: 0), .paragraphStyle: paragraph,
           .foregroundColor: NSColor.secondaryLabelColor]))
       item.attributedTitle = label
@@ -408,6 +412,9 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
 
   private func rebuildHistoryMenu() {
     historyMenu.removeAllItems()
+    let visited = Array(history.prefix(15))
+    let closed = Array(closedHistory.prefix(10))
+    let trailingEdge = SwarmMenuText.trailingEdge((closed + visited).map { ($0.menuName, $0.menuMachine) })
     func command(_ title: String, _ key: String, _ action: String) {
       let item = NSMenuItem(title: title, action: #selector(menuAction(_:)), keyEquivalent: key)
       item.target = self
@@ -425,15 +432,15 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     reopen.keyEquivalentModifierMask = [.command, .shift]
     historyMenu.addItem(reopen)
     historyMenu.addItem(.separator())
-    appendHistorySection("Recently Closed", entries: Array(closedHistory.prefix(10)), closed: true)
+    appendHistorySection("Recently Closed", entries: closed, closed: true, trailingEdge: trailingEdge)
     historyMenu.addItem(.separator())
-    appendHistorySection("Recently Visited", entries: Array(history.prefix(15)), closed: false)
+    appendHistorySection("Recently Visited", entries: visited, closed: false, trailingEdge: trailingEdge)
     historyMenu.addItem(.separator())
     command("Show Full History", "y", "showHistory")
     if let keymap { keymap.applyMenuKeys(to: historyMenu, context: flutterKeyContext) }
   }
 
-  private func appendHistorySection(_ title: String, entries: [SwarmHistoryEntry], closed: Bool) {
+  private func appendHistorySection(_ title: String, entries: [SwarmHistoryEntry], closed: Bool, trailingEdge: CGFloat) {
     if #available(macOS 14.0, *) {
       historyMenu.addItem(NSMenuItem.sectionHeader(title: title))
     } else {
@@ -444,7 +451,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     for entry in entries {
       let title = entry.title.count > 76 ? String(entry.title.prefix(48)) + "…" + String(entry.title.suffix(24)) : entry.title
       let item = NSMenuItem(title: title, action: closed ? #selector(closedHistoryAction(_:)) : #selector(historyAction(_:)), keyEquivalent: "")
-      item.attributedTitle = entry.menuTitle
+      item.attributedTitle = entry.menuTitle(trailingEdge: trailingEdge)
       item.target = self
       item.representedObject = entry.id
       item.state = entry.current ? .on : .off
@@ -666,6 +673,28 @@ private final class SwarmSubscriptionView: NSView {
   }
 }
 
+/// Keep native menu columns aligned without reserving a fixed, empty span.
+private enum SwarmMenuText {
+  static func width(_ text: String) -> CGFloat {
+    (text as NSString).size(withAttributes: [.font: NSFont.menuFont(ofSize: 0)]).width
+  }
+
+  static func fitted(_ text: String, width limit: CGFloat) -> String {
+    var value = text.replacingOccurrences(of: "\t", with: " ").replacingOccurrences(of: "\n", with: " ")
+    if width(value) <= limit { return value }
+    while !value.isEmpty && width(value + "…") > limit { value.removeLast() }
+    return value + "…"
+  }
+
+  static func trailingEdge(_ rows: [(String, String)]) -> CGFloat {
+    let leading = rows.map { width($0.0) }.max() ?? 0
+    let paired = rows.filter { !$0.1.isEmpty }
+    let pairedLeading = paired.map { width($0.0) }.max() ?? 0
+    let trailing = paired.map { width($0.1) }.max() ?? 0
+    return ceil(max(leading, pairedLeading + (trailing > 0 ? 18 + trailing : 0)))
+  }
+}
+
 private struct SwarmHistoryEntry: Equatable {
   let id: String
   let title: String
@@ -677,18 +706,16 @@ private struct SwarmHistoryEntry: Equatable {
   let engine: String?
   let iconAsset: String?
   let canReopen: Bool
-  var menuTitle: NSAttributedString {
+  var menuName: String { SwarmMenuText.fitted(title, width: machineName.isEmpty ? 330 : 250) }
+  var menuMachine: String { SwarmMenuText.fitted(machineName, width: 110) }
+
+  func menuTitle(trailingEdge: CGFloat? = nil) -> NSAttributedString {
     let font = NSFont.menuFont(ofSize: 0)
-    func fitted(_ text: String, width: CGFloat) -> String {
-      var value = text.replacingOccurrences(of: "\t", with: " ").replacingOccurrences(of: "\n", with: " ")
-      if (value as NSString).size(withAttributes: [.font: font]).width <= width { return value }
-      while !value.isEmpty && ((value + "…") as NSString).size(withAttributes: [.font: font]).width > width { value.removeLast() }
-      return value + "…"
-    }
+    let name = menuName
+    let machine = menuMachine
     let paragraph = NSMutableParagraphStyle()
-    paragraph.tabStops = [NSTextTab(textAlignment: .right, location: 660)]
-    let name = fitted(title, width: machineName.isEmpty ? 660 : 430)
-    let machine = fitted(machineName, width: 206)
+    paragraph.tabStops = [NSTextTab(textAlignment: .right,
+      location: trailingEdge ?? SwarmMenuText.trailingEdge([(name, machine)]))]
     return NSAttributedString(string: machine.isEmpty ? name : name + "\t" + machine,
       attributes: [.font: font, .paragraphStyle: paragraph])
   }

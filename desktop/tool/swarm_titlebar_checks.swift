@@ -620,9 +620,9 @@ private extension SwarmTitlebar {
     try checkTitlebar(messenger.calls.last?.method == "manageMachines",
       "Machines Manager opens through the Flutter command bridge")
     let destinations = machineMenu.items.filter { $0.action == #selector(machineAction(_:)) }
-    try checkTitlebar(machineMenu.minimumWidth >= 500 &&
+    try checkTitlebar(machineMenu.minimumWidth == 0 && machineMenu.size.width < 360 &&
       destinations.first?.attributedTitle?.string.hasSuffix("\t2 agents") == true,
-      "Machines gives counts a separate trailing column in a roomy native submenu")
+      "Machines fits names and its aligned counts without a wide minimum")
     try checkTitlebar(destinations.map { $0.representedObject as? String } == ["office", "home"],
       "Machines lists each linked computer as a destination")
     try checkTitlebar(destinations[0].attributedTitle?.string.contains("Online") == true &&
@@ -672,7 +672,7 @@ private extension SwarmTitlebar {
       "Unlinking computers clears destinations and invalidates stale actions")
     let recentRows: [[String: Any]] = (0..<20).map { index -> [String: Any] in
       ["id": "agent:\(index)", "title": "Agent \(index) — Machine",
-       "detail": "Project \(index)", "current": index == 0,
+       "detail": "Project \(index)", "machineName": "M2", "current": index == 0,
        "engine": index == 0 ? "claude" : "codex"]
     } + [["id": "swarm:recent", "title": "Recent Swarm", "swarm": true]]
     let closedRows: [[String: Any]] = (0..<14).map {
@@ -687,6 +687,7 @@ private extension SwarmTitlebar {
     try checkTitlebar(historyMenu.items.allSatisfy { $0.submenu == nil }, "Recent work is available without nested menus")
     let recent = recentItems[0]
     let closed = closedItems[0]
+    try checkTitlebar(historyMenu.size.width < 420, "History fits agent and machine labels without an empty fixed-width span")
     try checkTitlebar(recent.image?.size == NSSize(width: 16, height: 16) && recent.image?.isTemplate == false,
       "History uses the colored Claude mark at native menu size")
     try checkTitlebar(recent.state == .on && recent.toolTip == nil, "History adds no hover hints")
@@ -897,17 +898,18 @@ do {
   let historyRow = SwarmHistoryEntry([
     "id": "agent", "title": "Build a toy", "machineName": "MacBook Pro M2", "engine": "codex",
   ])!
-  let label = historyRow.menuTitle
+  let label = historyRow.menuTitle()
   try checkTitlebar(label.string == "Build a toy\tMacBook Pro M2", "Agent and machine occupy separate native menu columns")
   let paragraph = label.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as! NSParagraphStyle
-  try checkTitlebar(paragraph.tabStops.count == 1 && paragraph.tabStops[0].alignment == .right && paragraph.tabStops[0].location == 660,
-    "Machine labels share a right-aligned column")
+  try checkTitlebar(paragraph.tabStops.count == 1 && paragraph.tabStops[0].alignment == .right && paragraph.tabStops[0].location < 300,
+    "Machine labels use a compact right-aligned column sized to the text")
   let longRow = SwarmHistoryEntry(["id": "long", "title": String(repeating: "Long title ", count: 100), "machineName": "Mac"])!
-  try checkTitlebar(longRow.menuTitle.string.contains("…\tMac"), "Long titles truncate before the machine column")
+  try checkTitlebar(longRow.menuTitle().string.contains("…\tMac") && longRow.menuTitle().size().width < 380,
+    "Long titles truncate before the machine column without widening the menu")
   let swarmRow = SwarmHistoryEntry(["id": "swarm", "title": "My swarm", "swarm": true])!
-  try checkTitlebar(swarmRow.menuTitle.string == "My swarm", "Empty swarm rows have no invented machine label")
+  try checkTitlebar(swarmRow.menuTitle().string == "My swarm", "Empty swarm rows have no invented machine label")
   let sharedSwarm = SwarmHistoryEntry(["id": "shared", "title": "Workshop", "swarm": true, "machineName": "2 machines"])!
-  try checkTitlebar(sharedSwarm.menuTitle.string == "Workshop\t2 machines", "Swarm machine counts use the same trailing column as agent machines")
+  try checkTitlebar(sharedSwarm.menuTitle().string == "Workshop\t2 machines", "Swarm machine counts use the same trailing column as agent machines")
   var assetReads = 0
   let icons = SwarmHistoryIcons(assetURL: { asset in
     assetReads += 1
