@@ -6,6 +6,7 @@ import 'package:harness_mobile/shared/widgets/empty_state.dart';
 import 'package:harness_mobile/state/app_state.dart';
 import 'agent_index.dart';
 import 'agent_row.dart';
+import 'agents_page.dart';
 import 'account_button.dart';
 import 'machine_filter_bar.dart';
 import 'phone_card.dart';
@@ -188,6 +189,11 @@ class _Body extends StatelessWidget {
           // The whole visible list goes with the tap, so the page opens as a pager over exactly the
           // agents on screen — the filter chip included. Swiping there walks this order.
           onTap: () => openAgentPager(context, notifier, ordered, entry),
+          // The same sheet a machine's own page opens, from [AgentsPage] rather than written again
+          // here: one agent reached two ways must not offer two different sets of actions, and the
+          // delete wording in particular is the one that has to match.
+          onLongPress: () =>
+              showAgentActions(context, notifier, entry.machineId, entry.agent),
         ),
       );
 }

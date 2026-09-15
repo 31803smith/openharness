@@ -13,10 +13,20 @@ import 'status_pill.dart';
 /// it names the MACHINE, because this list mixes them and a name alone is ambiguous the moment two
 /// machines both have a `main` or a `docs` agent.
 class AgentRow extends StatelessWidget {
-  const AgentRow({super.key, required this.entry, required this.onTap});
+  const AgentRow({
+    super.key,
+    required this.entry,
+    required this.onTap,
+    this.onLongPress,
+  });
 
   final AgentEntry entry;
   final VoidCallback onTap;
+
+  /// The row's `⋯`, held rather than tapped — the same door [AgentTile] opens on a machine's own
+  /// page. Optional for the same reason it is there: a row that cannot be OPENED can still be
+  /// acted on, and an agent whose terminal has gone is exactly the one somebody wants to delete.
+  final VoidCallback? onLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -24,6 +34,7 @@ class AgentRow extends StatelessWidget {
     final agent = entry.agent;
     return PhoneCard(
       onTap: agent.terminalAvailable ? onTap : null,
+      onLongPress: onLongPress,
       // A rim in the attention colour, so a waiting agent is findable in a long list without
       // reading a word of it — the list's whole job on a phone.
       border: entry.isWaiting

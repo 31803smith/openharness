@@ -25,6 +25,9 @@ class LinkPage extends StatefulWidget {
 class _LinkPageState extends State<LinkPage> {
   /// The form's Close marks the prompt dismissed. One already dismissed before this page opened
   /// must not shut the page on its first frame.
+  ///
+  /// Always false in practice now that [initState] clears the mark — kept as the guard it is, so
+  /// the rule below still reads on its own if that ever stops being true.
   late final bool _dismissedBefore = widget.notifier.isLinkPromptDismissed(
     widget.machineId,
   );
@@ -33,6 +36,12 @@ class _LinkPageState extends State<LinkPage> {
   @override
   void initState() {
     super.initState();
+    // Opening this page IS the person asking for the form — the machine tile, the padlock empty
+    // state, the machine sheet's "Re-enter password…". Without clearing the mark, a machine whose
+    // form was Closed once could never be reached again: [_follow] reads the mark on its first
+    // run and pops the page on the frame it opened. The desktop fixes the same bug the same way
+    // (`revisitLinkPrompt`, 051ea5b), where the reactive gates check the mark before calling.
+    widget.notifier.revisitLinkPrompt(widget.machineId);
     widget.notifier.addListener(_follow);
   }
 
