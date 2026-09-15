@@ -188,21 +188,7 @@ class _CodexProfileFieldState extends State<CodexProfileField> {
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        Row(
-          children: [
-            const Expanded(child: FieldLabel('Codex profile')),
-            Tooltip(
-              message:
-                  'A profile is the Codex folder containing your account and settings '
-                  '(CODEX_HOME). Profiles stay on the selected machine.',
-              child: Icon(
-                LucideIcons.info,
-                size: 14,
-                color: grid.AppPalette.textSecondary,
-              ),
-            ),
-          ],
-        ),
+        const FieldLabel('Codex profile'),
         AppSelectField<String>(
           key: const Key('new-agent-codex-profile-field'),
           value: widget.value?.path ?? '',
@@ -244,10 +230,13 @@ class _CodexProfileFieldState extends State<CodexProfileField> {
                 ),
               ),
             ),
-            IconButton(
-              tooltip: 'Refresh profiles',
-              onPressed: _loading || _linking ? null : _load,
-              icon: const Icon(LucideIcons.refreshCw, size: 14),
+            Semantics(
+              label: 'Refresh profiles',
+              button: true,
+              child: IconButton(
+                onPressed: _loading || _linking ? null : _load,
+                icon: const Icon(LucideIcons.refreshCw, size: 14),
+              ),
             ),
           ],
         ),

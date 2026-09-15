@@ -105,70 +105,56 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  Future<void> search(WidgetTester tester) async {
-    final bar = find.byKey(const Key('new-agent-project-bar'));
-    await tester.ensureVisible(bar);
-    await tester.tap(bar);
+  Future<void> recent(WidgetTester tester, String name) async {
+    final button = find.byKey(const Key('new-agent-project-recent'));
+    await tester.ensureVisible(button);
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(name).last);
     await tester.pumpAndSettle();
   }
 
-  Future<void> type(WidgetTester tester, String value) async {
-    await tester.enterText(
-      find.byKey(const Key('new-agent-project-search')),
-      value,
-    );
+  Future<void> git(WidgetTester tester) async {
+    final button = find.byKey(const Key('new-agent-project-git'));
+    await tester.ensureVisible(button);
+    await tester.tap(button);
     await tester.pumpAndSettle();
   }
 
-  Future<void> enter(WidgetTester tester) async {
-    await tester.testTextInput.receiveAction(TextInputAction.done);
+  testWidgets('recent projects support type-select and keyboard selection', (
+    tester,
+  ) async {
+    await mount(tester);
+    await tester.tap(find.byKey(const Key('new-agent-project-recent')));
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyA, character: 'a');
     await tester.pumpAndSettle();
-  }
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    expect(find.text('/local/alpha'), findsOneWidget);
+    expect(app.calls, isEmpty);
+    expect(app.previews, isEmpty);
+    await tester.tap(find.byKey(const Key('new-agent-project-recent')));
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(find.text('/local/alpha'), findsOneWidget);
+  });
 
   testWidgets(
-    'arrows preview, Enter selects, and reopening restores that project',
+    'engine switching keeps the project and each machine restores its choice',
     (tester) async {
       await mount(tester);
-      await search(tester);
-      expect(
-        find.byKey(const Key('new-agent-folder-newProject')),
-        findsOneWidget,
-      );
-      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
-      await tester.pumpAndSettle();
-      expect(find.text('README for /local/beta'), findsOneWidget);
-      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
-      await tester.pumpAndSettle();
-      expect(find.text('README for /local/alpha'), findsOneWidget);
-      await enter(tester);
-      expect(find.byKey(const Key('new-agent-project-search')), findsNothing);
-      expect(find.text('/local/alpha'), findsOneWidget);
-      expect(app.calls, isEmpty);
-      await search(tester);
-      expect(find.text('README for /local/alpha'), findsOneWidget);
-      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-      await tester.pumpAndSettle();
-      expect(find.text('/local/alpha'), findsOneWidget);
-    },
-  );
-
-  testWidgets(
-    'agent switching keeps the project; each machine restores its own choice',
-    (tester) async {
-      await mount(tester);
-      await search(tester);
-      await type(tester, 'alpha');
-      await enter(tester);
+      await recent(tester, 'alpha');
       await tester.tap(find.byKey(const ValueKey('new-agent-quick-opencode')));
       await tester.pumpAndSettle();
       expect(find.text('/local/alpha'), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('new-agent-machine-remote')));
       await tester.pumpAndSettle();
-      expect(find.text('New project'), findsOneWidget);
-      await search(tester);
-      expect(find.byKey(const ValueKey('project-/local/alpha')), findsNothing);
-      await type(tester, 'beta');
-      await enter(tester);
+      await tester.tap(find.byKey(const Key('new-agent-project-recent')));
+      await tester.pumpAndSettle();
+      expect(find.text('/local/alpha'), findsNothing);
+      await tester.tap(find.text('beta'));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('new-agent-machine-local')));
       await tester.pumpAndSettle();
       expect(find.text('/local/alpha'), findsOneWidget);
@@ -184,28 +170,30 @@ void main() {
   );
 
   testWidgets(
-    'Git URL becomes the selected project; unknown searches do not choose New',
+    'Git validates in a separate dialog and preserves the chosen repository',
     (tester) async {
       await mount(tester);
-      await search(tester);
-      await type(tester, 'no such project');
-      await enter(tester);
-      expect(find.text('No matching projects'), findsOneWidget);
-      expect(find.byKey(const Key('new-agent-project-search')), findsOneWidget);
-      await type(tester, 'owner/repo');
-      await enter(tester);
-      expect(find.text('repo'), findsOneWidget);
-      await search(tester);
+      await git(tester);
+      final field = find.byKey(const Key('new-agent-git-url'));
+      await tester.enterText(field, 'not a repository');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
       expect(
-        tester
-            .widget<TextField>(
-              find.byKey(const Key('new-agent-project-search')),
-            )
-            .controller!
-            .text,
+        find.text('Enter a GitHub URL or owner/repository.'),
+        findsOneWidget,
+      );
+      expect(app.calls, isEmpty);
+      await tester.enterText(field, 'owner/repo');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(find.text('repo'), findsOneWidget);
+      await git(tester);
+      expect(
+        tester.widget<TextField>(field).controller!.text,
         'https://github.com/owner/repo.git',
       );
-      await enter(tester);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('create-agent-submit')));
       await tester.pumpAndSettle();
       expect(app.calls.single['project'], {
@@ -216,36 +204,44 @@ void main() {
   );
 
   testWidgets(
-    'Command Enter creates the highlighted project, not the old selection',
+    'dismissing Git keeps the project; New clears it without creating a folder',
     (tester) async {
       await mount(tester);
-      await search(tester);
-      await type(tester, 'alpha');
+      await recent(tester, 'alpha');
+      await git(tester);
+      await tester.enterText(
+        find.byKey(const Key('new-agent-git-url')),
+        'owner/cancelled',
+      );
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.text('/local/alpha'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('new-agent-folder-newProject')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('new-agent-project-path')), findsNothing);
+      expect(app.calls, isEmpty);
       await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
       await tester.pumpAndSettle();
-      expect(app.calls.single['folder'], '/local/alpha');
-      expect(find.byType(AlertDialog), findsNothing);
+      expect(app.calls.single['project'], {'projectSource': 'new'});
     },
   );
 
-  testWidgets('a late preview never replaces the newly highlighted project', (
+  testWidgets('empty Recent is clear and Escape returns to the form', (
     tester,
   ) async {
     await mount(tester);
-    app.pending['/local/alpha'] = Completer();
-    await search(tester);
-    await tester.enterText(
-      find.byKey(const Key('new-agent-project-search')),
-      'alpha',
-    );
-    await tester.pump(const Duration(milliseconds: 200));
-    expect(app.previews, contains('local:/local/alpha'));
-    await type(tester, 'beta');
-    app.pending['/local/alpha']!.complete({'readme': 'STALE README'});
+    app.machineStates['local']!.agents = [];
+    app.notifyListeners();
     await tester.pumpAndSettle();
-    expect(find.text('README for /local/beta'), findsOneWidget);
-    expect(find.text('STALE README'), findsNothing);
+    await tester.tap(find.byKey(const Key('new-agent-project-recent')));
+    await tester.pumpAndSettle();
+    expect(find.text('No recent projects'), findsOneWidget);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(find.text('No recent projects'), findsNothing);
+    expect(find.text('New Agent'), findsOneWidget);
+    expect(app.calls, isEmpty);
   });
 }

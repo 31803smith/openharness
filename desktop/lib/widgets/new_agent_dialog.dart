@@ -492,73 +492,110 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
           ),
         ),
         actions: [
-          if (_confirmationPending)
-            TextButton(
-              onPressed: _submitting ? null : () => Navigator.of(context).pop(),
-              style: TextButton.styleFrom(
-                foregroundColor: grid.AppPalette.textSecondary,
+          Row(
+            children: [
+              Semantics(
+                label: 'Advanced settings',
+                button: true,
+                toggled: _advancedOpen,
+                child: IconButton(
+                  key: const Key('new-agent-advanced'),
+                  onPressed: _choicesLocked ? null : _toggleAdvanced,
+                  icon: const Icon(LucideIcons.settings, size: 16),
+                  color: grid.AppPalette.textFaint,
+                  style: IconButton.styleFrom(
+                    minimumSize: const Size(28, 28),
+                    padding: const EdgeInsets.all(6),
+                  ),
+                ),
               ),
-              child: const Text('Close'),
-            ),
-          if (widget.offerFindExisting &&
-              _confirmationPending &&
-              (!_submitting || _checkingCreation))
-            TextButton.icon(
-              onPressed: _submitting
-                  ? null
-                  : () =>
-                        Navigator.of(context)
-                            .pop(NewAgentDialogResult.findExisting),
-              icon: const Icon(LucideIcons.search, size: 16),
-              label: const Text('Find an agent'),
-            ),
-          FilledButton(
-            key: const ValueKey('create-agent-submit'),
-            focusNode: _actionFocus,
-            onPressed: canCreate ? _submit : null,
-            style: FilledButton.styleFrom(
-              minimumSize: const Size(144, 48),
-              padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 14),
-              backgroundColor: grid.AppPalette.accent,
-              foregroundColor: Colors.white,
-              textStyle: TextStyle(
-                fontFamily: grid.AppFont.sans,
-                fontFamilyFallback: grid.AppFont.sansFallback,
-                fontSize: 15,
-                fontWeight: FontWeight.w600,
-              ),
-              shape: const StadiumBorder(),
-              disabledForegroundColor: _submitting
-                  ? grid.AppPalette.textPrimary
-                  : null,
-            ),
-            child: _submitting
-                ? Semantics(
-                    liveRegion: true,
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const SizedBox(
-                          width: 14,
-                          height: 14,
-                          child: CircularProgressIndicator(
-                            color: Colors.white,
-                            strokeWidth: 2,
-                          ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Wrap(
+                  alignment: WrapAlignment.end,
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    if (_confirmationPending)
+                      TextButton(
+                        onPressed: _submitting
+                            ? null
+                            : () => Navigator.of(context).pop(),
+                        style: TextButton.styleFrom(
+                          foregroundColor: grid.AppPalette.textSecondary,
                         ),
-                        const SizedBox(width: 8),
-                        Text(
-                          _checkingCreation
-                              ? 'Checking status…'
-                              : _folderSource == _FolderSource.remote &&
-                                    _preparedFolder == null
-                              ? 'Cloning and starting…'
-                              : 'Creating agent…',
+                        child: const Text('Close'),
+                      ),
+                    if (widget.offerFindExisting &&
+                        _confirmationPending &&
+                        (!_submitting || _checkingCreation))
+                      TextButton.icon(
+                        onPressed: _submitting
+                            ? null
+                            : () =>
+                                  Navigator.of(context)
+                                      .pop(NewAgentDialogResult.findExisting),
+                        icon: const Icon(LucideIcons.search, size: 16),
+                        label: const Text('Find an agent'),
+                      ),
+                    FilledButton(
+                      key: const ValueKey('create-agent-submit'),
+                      focusNode: _actionFocus,
+                      onPressed: canCreate ? _submit : null,
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size(192, 56),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 32,
+                          vertical: 16,
                         ),
-                      ],
+                        backgroundColor: grid.AppPalette.accent,
+                        foregroundColor: Colors.white,
+                        textStyle: TextStyle(
+                          fontFamily: grid.AppFont.sans,
+                          fontFamilyFallback: grid.AppFont.sansFallback,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        shape: const StadiumBorder(),
+                        disabledForegroundColor: _submitting
+                            ? grid.AppPalette.textPrimary
+                            : null,
+                      ),
+                      child: _submitting
+                          ? Semantics(
+                              liveRegion: true,
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const SizedBox(
+                                    width: 14,
+                                    height: 14,
+                                    child: CircularProgressIndicator(
+                                      color: Colors.white,
+                                      strokeWidth: 2,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    _checkingCreation
+                                        ? 'Checking status…'
+                                        : _folderSource ==
+                                                  _FolderSource.remote &&
+                                              _preparedFolder == null
+                                        ? 'Cloning and starting…'
+                                        : 'Creating agent…',
+                                  ),
+                                ],
+                              ),
+                            )
+                          : Text(
+                              _confirmationPending ? 'Check status' : 'Create',
+                            ),
                     ),
-                  )
-                : Text(_confirmationPending ? 'Check status' : 'Create'),
+                  ],
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -579,8 +616,13 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
 
   Widget _choices(String? bypassFlag) => LayoutBuilder(
     builder: (context, constraints) {
-      final columns = ((constraints.maxWidth + 10) / 190).floor().clamp(1, 5);
       final scaler = MediaQuery.textScalerOf(context);
+      final minimumTileWidth = 180 * math.min(1.3, scaler.scale(14) / 14);
+      final columns = constraints.maxWidth >= minimumTileWidth * 4 + 30
+          ? 4
+          : constraints.maxWidth >= minimumTileWidth * 2 + 10
+          ? 2
+          : 1;
       final tileSize = Size(
         (constraints.maxWidth - 10 * (columns - 1)) / columns,
         math.max(76, scaler.scale(14) * 2.5 + scaler.scale(12) * 1.25 + 24),
@@ -650,10 +692,8 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
             machineId: _machineId,
             initialFolder: _folder,
             focusNode: _folderFocus,
+            tileSize: tileSize,
             locked: _choicesLocked,
-            onCreate: _picking || _waitingForCodexProfile || _choicesLocked
-                ? null
-                : _submit,
             onBrowse: _browse,
             onSelected: (folder, repository) {
               if (_choicesLocked) return;
@@ -669,32 +709,6 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                 _error = null;
               });
             },
-          ),
-          const SizedBox(height: 12),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: TextButton.icon(
-              key: const Key('new-agent-advanced'),
-              onPressed: _choicesLocked ? null : _toggleAdvanced,
-              style: TextButton.styleFrom(
-                foregroundColor: grid.AppPalette.textSecondary,
-                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-                textStyle: TextStyle(
-                  fontFamily: grid.AppFont.sans,
-                  fontFamilyFallback: grid.AppFont.sansFallback,
-                  fontSize: 12,
-                ),
-              ),
-              icon: Icon(
-                _advancedOpen
-                    ? LucideIcons.chevronDown
-                    : LucideIcons.chevronRight,
-                size: 14,
-              ),
-              label: Text(
-                _bypassPermission ? 'Advanced · Approvals off' : 'Advanced',
-              ),
-            ),
           ),
           _Advanced(
             key: _advancedKey,
@@ -755,7 +769,6 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
       if (bypassFlag != null)
         _BypassCheck(
           value: _bypassPermission,
-          flag: bypassFlag,
           hovered: _bypassHovered,
           onHover: (value) => setState(() => _bypassHovered = value),
           onChanged: (value) => setState(() => _bypassPermission = value),
@@ -770,6 +783,32 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     ],
   );
 
+  bool _machineOnline(MachineState machine) =>
+      machine.isLocalMachine ||
+      (machine.nodeOnline == true && !machine.needsLink);
+
+  List<MachineState> get _orderedMachines {
+    final machines = widget.notifier.machineStates.values.toList();
+    int priority(MachineState machine) => machine.isLocalMachine
+        ? 0
+        : _machineOnline(machine)
+        ? 1
+        : 2;
+    final originalOrder = {
+      for (var i = 0; i < machines.length; i++)
+        machines[i].machine.machineId: i,
+    };
+    machines.sort((a, b) {
+      final order = priority(a).compareTo(priority(b));
+      return order != 0
+          ? order
+          : originalOrder[a.machine.machineId]!.compareTo(
+              originalOrder[b.machine.machineId]!,
+            );
+    });
+    return machines;
+  }
+
   Widget _machineOptions(Size tileSize) => AppChoicePicker<String>(
     key: const Key('new-agent-machine-field'),
     value: _machineId,
@@ -780,25 +819,26 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     compact: true,
     wrap: true,
     tileSize: tileSize,
-    allVisible: true,
-    preferredValues: [
-      for (final machine in widget.notifier.machineStates.values)
-        if (machine.isLocalMachine) machine.machine.machineId,
-    ],
+    preferredValues: _orderedMachines
+        .map((machine) => machine.machine.machineId)
+        .toList(),
     options: [
       for (final machine in widget.notifier.machineStates.values)
         SelectOption(
           value: machine.machine.machineId,
           label: machine.machine.displayName,
           detail: machine.isLocalMachine ? 'This machine' : null,
-          note: machine.nodeOnline == false
-              ? 'Offline'
-              : machine.needsLink
-              ? 'Link required'
-              : null,
           leading: () => Icon(
-            machine.isLocalMachine ? LucideIcons.laptop : LucideIcons.monitor,
+            _machineOnline(machine)
+                ? (machine.isLocalMachine
+                      ? LucideIcons.laptop
+                      : LucideIcons.monitor)
+                : LucideIcons.monitorOff,
             size: 18,
+            color: _machineOnline(machine)
+                ? grid.AppPalette.textPrimary
+                : grid.AppPalette.textFaint,
+            semanticLabel: _machineOnline(machine) ? 'Online' : 'Offline',
           ),
         ),
     ],
@@ -875,13 +915,11 @@ class _Advanced extends StatelessWidget {
 class _BypassCheck extends StatelessWidget {
   const _BypassCheck({
     required this.value,
-    required this.flag,
     required this.hovered,
     required this.onHover,
     required this.onChanged,
   });
   final bool value;
-  final String flag;
   final bool hovered;
   final ValueChanged<bool> onHover;
   final ValueChanged<bool> onChanged;
@@ -909,15 +947,6 @@ class _BypassCheck extends StatelessWidget {
                     fontSize: 14,
                     color: grid.AppPalette.textPrimary,
                   ),
-                ),
-              ),
-              Tooltip(
-                message:
-                    'Allow this agent to act without asking for approval.\n$flag',
-                child: Icon(
-                  LucideIcons.info,
-                  size: 14,
-                  color: grid.AppPalette.textSecondary,
                 ),
               ),
             ],

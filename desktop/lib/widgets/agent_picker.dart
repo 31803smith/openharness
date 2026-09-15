@@ -37,7 +37,7 @@ class AgentPicker extends StatelessWidget {
         ),
     ],
     preferredValues: tileSize != null
-        ? const ['claude', 'codex', 'opencode']
+        ? const ['codex', 'claude', 'opencode']
         : quickAgents,
     onChanged: onChanged,
     optionKey: (id) => ValueKey('new-agent-quick-$id'),

@@ -47,44 +47,36 @@ Logs: `/private/tmp/harness-friendly-names-tests.log` and
 
 ### Project picker in New Agent
 
-Agent → Machine → Project now replaces the old New / Local / Remote form.
-Claude Code, Codex and OpenCode stay visible in stable order; all machines are
-visible. Engine and machine tiles share one width and height beneath stacked
-section labels. Small windows and large text wrap and scroll. A quiet Advanced
-disclosure groups Codex profiles and permissions. The normal footer has one
-bright Create action; Escape and outside click dismiss.
+The current form uses three rows of four equal tiles:
+- Engine: Codex, Claude Code, OpenCode, More ⌄. A selected alternative replaces
+  More, retaining the arrow and the same four tiles.
+- Machine: this computer and online machines first, with three direct choices
+  and the same fourth-slot dropdown. Monitor / monitor-off icons carry availability.
+- Project: New project, Local, Git, Recent ⌄. Local opens the selected machine’s
+  folder picker; Git opens a URL dialog; Recent contains machine-scoped projects.
 
-Project combines a pinned New project, machine-scoped recent folders, search,
-existing GitHub HTTPS/SSH/owner-repo cloning, and Browse. Arrows update the
-README/Git/files preview, Enter selects into a compact project bar, and clicking
-it reopens search. Cmd-Return creates from the highlighted project. Unmatched
-searches never implicitly select New. Each machine remembers its last choice;
-first use selects New. Switching engines preserves the project. Prepared-folder
-recovery and uncertain-create status checks remain intact.
+The selected path or URL stays visible beneath the tiles. Each machine remembers
+its choice; switching engines keeps it. The settings gear is small and quiet at
+the bottom left; Create is a larger 192 × 56 primary button. Escape/outside click
+still dismiss, and Cmd-Return creates. Repeated-label tooltips are removed from
+the form and shared choices, sidebar rows, section labels, and picker hints.
+Icon-only controls retain accessible names. Prepared-folder recovery, profile
+readiness and uncertain-create status checks remain intact.
 
-Local previews read bounded existing files and Git metadata. Remote previews use
-the new encrypted `project_preview` RPC, requiring this CLI on the local relay
-and remote machine; older CLIs show an unavailable preview without blocking
-project selection. No live CLI daemon has been upgraded or restarted.
-
-81 desktop tests and 60 CLI tests pass, plus the final affected layout/keyboard
-rerun. Full desktop analysis has only 12 existing vendored xterm info messages;
-CLI typechecking passes. Logs: `/private/tmp/harness-launcher-final-tests.log`,
-`/private/tmp/harness-launcher-row-tests.log`,
-`/private/tmp/harness-launcher-final-cli-tests.log`, and
-`/private/tmp/harness-launcher-full-analyze.log`. Render captures:
-`/private/tmp/harness-project-launcher-captures`.
-
-The uniform-tile refinement passes 108 affected desktop checks across the
-initial suite and focused reruns, with no static-analysis issues. Captures at
-1280, 900, 880, and 600 pixels include project search, selection, and Advanced;
-600 pixels also uses double-size text. Logs:
-`/private/tmp/harness-uniform-choices-tests.log`,
-`/private/tmp/harness-uniform-choices-rerun.log`,
-`/private/tmp/harness-uniform-choices-browse-tests.log`,
-`/private/tmp/harness-uniform-choices-remote-tests.log`, and
-`/private/tmp/harness-uniform-choices-analyze.log`. Final captures:
-`/private/tmp/harness-uniform-choices-captures`.
+Affected Flutter checks pass across `/private/tmp/harness-four-tile-tests.log`,
+`/private/tmp/harness-four-tile-final-tests.log`, and
+`/private/tmp/harness-four-tile-recovery-tests.log`. The first run passed 34;
+the second passed 41 and exposed one stale remote-folder test plus a mistyped
+(nonexistent) test filename; the final recovery run passed 50, including that
+updated folder flow and the correct creation-recovery suite. Layout tap warnings
+in the initial run were fixed and the final captures require valid hit targets.
+All changed Dart/test files analyze cleanly in
+`/private/tmp/harness-four-tile-final-analyze.log`. Captures at 1280, 900, 880,
+and 600 pixels (the last at double text size):
+`/private/tmp/harness-four-tile-captures`.
+The earlier inline searchable project/README preview UI is superseded by these
+four project tiles. Its bounded local/remote read-only preview services remain
+available; no live CLI daemon has been upgraded or restarted.
 
 The user has renewed authorization to push each completed feature separately.
 The latest installed preview is **2b332f2**, at the supported checkout path.
@@ -125,12 +117,25 @@ Sixty-five entry, preview, keyboard and split checks pass. Captures:
 
 ### Compact native menus
 
-History and Machines now measure their visible labels and align metadata to a
-content-sized trailing column. The 500-point Machines minimum and fixed
-420/660-point columns are removed. Long names stay bounded; entries without
-metadata do not reserve an empty trailing gap. Menu actions, icons and cached
-state remain intact. 391 AppKit checks pass, including hidden-window native
-layout and menu width checks: `/private/tmp/harness-compact-menus-native-checks.log`.
+The compact menu pass removed the original oversized fixed columns. The latest
+refinement increases History and Machines by about 20% and reduces Models from
+a 440-point base to 352 points. Link-required labels and agent counts align by
+the Machines submenu arrow. History rows use the full width for right-aligned
+machine names; native titles, validation and target/actions retain navigation.
+Models balances stay aligned and readable. 404 AppKit checks pass, including
+native window layout, menu sizing, History highlight and activation:
+`/private/tmp/harness-menu-refinement-native-checks.log`.
+
+### Shared icon feedback
+
+Native tab close, new-tab and notification buttons share a rounded hover/focus
+background. Flutter’s icon-button theme and compact AppIconButton use the same
+quiet treatment; disabled icons stay quiet. Compact buttons support Enter and
+Space. Twelve focused Flutter checks and 401 native checks passed, plus the
+other 14 affected entry/interaction checks. Static analysis has no issues:
+`/private/tmp/harness-icon-hover-focus-tests.log`,
+`/private/tmp/harness-icon-hover-native-checks.log`, and
+`/private/tmp/harness-icon-hover-analyze.log`.
 
 ### Device studio photograph
 

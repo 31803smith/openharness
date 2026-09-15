@@ -392,10 +392,6 @@ void main() {
         find.byKey(const ValueKey('new-agent-quick-codex')),
       );
       await tester.tap(find.byKey(const ValueKey('new-agent-quick-codex')));
-      final project = find.byKey(const Key('new-agent-project-bar'));
-      await tester.ensureVisible(project);
-      await tester.tap(project);
-      await tester.pumpAndSettle();
       await tester.ensureVisible(
         find.byKey(const Key('new-agent-project-browse')),
       );

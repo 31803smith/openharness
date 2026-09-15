@@ -177,7 +177,11 @@ class _SidebarItemState extends State<SidebarItem> {
     );
 
     final tooltip = widget.tooltip;
-    if (tooltip == null) return row;
+    if (tooltip == null ||
+        tooltip.trim().isEmpty ||
+        tooltip.trim() == widget.label.trim()) {
+      return row;
+    }
     return Tooltip(message: tooltip, child: row);
   }
 }

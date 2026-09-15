@@ -5,8 +5,8 @@ import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import 'app_select_field.dart';
 
-/// Three direct choices, with the complete list behind More. A selection from
-/// that list takes the third slot, so the current value always stays visible.
+/// Three direct choices and an overflow menu. In the tiled layout, the fourth
+/// tile holds a chosen alternative; compact legacy rows reuse their third slot.
 class AppChoicePicker<T> extends StatefulWidget {
   const AppChoicePicker({
     super.key,
@@ -21,7 +21,6 @@ class AppChoicePicker<T> extends StatefulWidget {
     this.wrap = true,
     this.compact = false,
     this.tileSize,
-    this.allVisible = false,
   });
 
   final T value;
@@ -35,7 +34,6 @@ class AppChoicePicker<T> extends StatefulWidget {
   final bool wrap;
   final bool compact;
   final Size? tileSize;
-  final bool allVisible;
 
   @override
   State<AppChoicePicker<T>> createState() => _AppChoicePickerState<T>();
@@ -43,6 +41,7 @@ class AppChoicePicker<T> extends StatefulWidget {
 
 class _AppChoicePickerState<T> extends State<AppChoicePicker<T>> {
   ({T value})? _thirdChoice;
+  ({T value})? _overflowChoice;
 
   List<SelectOption<T>> get _orderedOptions => [
     for (final preferred in widget.preferredValues)
@@ -56,12 +55,14 @@ class _AppChoicePickerState<T> extends State<AppChoicePicker<T>> {
   void initState() {
     super.initState();
     _rememberThirdChoice();
+    _rememberOverflowChoice();
   }
 
   @override
   void didUpdateWidget(covariant AppChoicePicker<T> oldWidget) {
     super.didUpdateWidget(oldWidget);
     _rememberThirdChoice();
+    _rememberOverflowChoice();
   }
 
   void _rememberThirdChoice() {
@@ -76,6 +77,18 @@ class _AppChoicePickerState<T> extends State<AppChoicePicker<T>> {
     // If it disappears from the list, fall back to the ordinary third choice.
     final third = selected ?? previous ?? remaining.firstOrNull;
     _thirdChoice = third == null ? null : (value: third.value);
+  }
+
+  void _rememberOverflowChoice() {
+    final remaining = _orderedOptions.skip(3);
+    final selected = remaining
+        .where((option) => option.value == widget.value)
+        .firstOrNull;
+    final previous = remaining
+        .where((option) => option.value == _overflowChoice?.value)
+        .firstOrNull;
+    final choice = selected ?? previous;
+    _overflowChoice = choice == null ? null : (value: choice.value);
   }
 
   List<SelectOption<T>> get _visibleOptions => [
@@ -219,127 +232,47 @@ class _AppChoicePickerState<T> extends State<AppChoicePicker<T>> {
   }
 
   Widget _tileChoices() {
-    final visible = widget.allVisible
-        ? _orderedOptions
-        : [
-            ..._orderedOptions.take(3),
-            ..._orderedOptions
-                .skip(3)
-                .where((option) => option.value == widget.value),
-          ];
+    final ordered = _orderedOptions;
+    final extra = ordered
+        .skip(3)
+        .where((option) => option.value == _overflowChoice?.value)
+        .firstOrNull;
+    final selectedExtra = extra != null && extra.value == widget.value;
     final size = widget.tileSize!;
     return Wrap(
       spacing: 10,
       runSpacing: 10,
       children: [
-        for (final option in visible)
-          SizedBox(
-            width: size.width,
-            height: size.height,
-            child: Semantics(
-              selected: widget.value == option.value,
-              inMutuallyExclusiveGroup: true,
-              child: Tooltip(
-                message: [
-                  option.label,
-                  option.detail,
-                  option.note,
-                ].nonNulls.join(' · '),
-                child: TextButton(
-                  key: widget.optionKey(option.value),
-                  onPressed: () => _choose(option.value),
-                  style: TextButton.styleFrom(
-                    foregroundColor: AppPalette.textPrimary,
-                    backgroundColor: widget.value == option.value
-                        ? AppPalette.swarmAccent.withValues(alpha: .16)
-                        : AppSurface.recess,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 10,
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(AppControl.radius),
-                    ),
-                    side: BorderSide(
-                      color: widget.value == option.value
-                          ? AppPalette.swarmAccent.withValues(alpha: .7)
-                          : Colors.transparent,
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      if (option.leading != null) ...[
-                        option.leading!(),
-                        const SizedBox(width: 10),
-                      ],
-                      Expanded(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              option.label,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontSize: 14,
-                                height: 1.25,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                            if (option.detail != null ||
-                                option.note != null) ...[
-                              const SizedBox(height: 2),
-                              Text(
-                                [
-                                  option.detail,
-                                  option.note,
-                                ].nonNulls.join(' · '),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  height: 1.25,
-                                  color: AppPalette.textSecondary,
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Visibility(
-                        visible: widget.value == option.value,
-                        maintainSize: true,
-                        maintainState: true,
-                        maintainAnimation: true,
-                        child: const Icon(Icons.check, size: 16),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
+        for (final option in ordered.take(3))
+          AppChoiceTile(
+            key: widget.optionKey(option.value),
+            size: size,
+            label: option.label,
+            detail: option.detail,
+            leading: option.leading?.call(),
+            selected: widget.value == option.value,
+            onPressed: () => _choose(option.value),
           ),
-        if (!widget.allVisible && widget.options.length > visible.length)
-          AppSelectField<T>(
-            key: widget.moreKey,
-            value: widget.value,
-            options: widget.options,
-            onChanged: _choose,
-            width: size.width,
-            height: size.height,
-            fillColor: AppSurface.recess,
-            trigger: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(Icons.more_horiz, size: 20),
-                const SizedBox(width: 8),
-                Text(
-                  'More',
-                  style: TextStyle(fontSize: 14, color: AppPalette.textPrimary),
-                ),
-              ],
+        if (ordered.length > 3)
+          Semantics(
+            selected: selectedExtra,
+            child: AppSelectField<T>(
+              key: widget.moreKey,
+              value: widget.value,
+              options: ordered,
+              onChanged: _choose,
+              width: size.width,
+              height: size.height,
+              selected: selectedExtra,
+              fillColor: selectedExtra
+                  ? AppPalette.swarmAccent.withValues(alpha: .16)
+                  : AppSurface.recess,
+              trigger: AppChoiceTileContent(
+                label: extra?.label ?? 'More',
+                detail: extra?.detail,
+                leading: extra?.leading?.call(),
+                trailing: const Icon(Icons.keyboard_arrow_down, size: 18),
+              ),
             ),
           ),
       ],
@@ -361,87 +294,200 @@ class _AppChoicePickerState<T> extends State<AppChoicePicker<T>> {
     return Semantics(
       selected: selected,
       inMutuallyExclusiveGroup: true,
-      child: Tooltip(
-        message: [option.label, option.detail, option.note].nonNulls.join('\n'),
-        child: TextButton(
-          key: widget.optionKey(option.value),
-          onPressed: () => _choose(option.value),
-          style:
-              TextButton.styleFrom(
-                foregroundColor: foreground,
-                backgroundColor: widget.compact
-                    ? (selected ? AppSurface.recess : Colors.transparent)
-                    : selected
-                    ? AppPalette.accentOnSurface.withValues(alpha: .16)
-                    : AppSurface.recess,
-                minimumSize: Size(0, height),
-                padding: EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: widget.compact ? 8 : 10,
-                ),
-                textStyle: textStyle,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
-                ),
-              ).copyWith(
-                side: WidgetStateProperty.resolveWith(
-                  (states) => BorderSide(
-                    color: states.contains(WidgetState.focused)
-                        ? AppPalette.accentOnSurface
-                        : widget.compact
-                        ? (selected
-                              ? AppPalette.accentOnSurface.withValues(alpha: .6)
-                              : AppGlass.hair)
-                        : Colors.transparent,
-                  ),
+      child: TextButton(
+        key: widget.optionKey(option.value),
+        onPressed: () => _choose(option.value),
+        style:
+            TextButton.styleFrom(
+              foregroundColor: foreground,
+              backgroundColor: widget.compact
+                  ? (selected ? AppSurface.recess : Colors.transparent)
+                  : selected
+                  ? AppPalette.accentOnSurface.withValues(alpha: .16)
+                  : AppSurface.recess,
+              minimumSize: Size(0, height),
+              padding: EdgeInsets.symmetric(
+                horizontal: 10,
+                vertical: widget.compact ? 8 : 10,
+              ),
+              textStyle: textStyle,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ).copyWith(
+              side: WidgetStateProperty.resolveWith(
+                (states) => BorderSide(
+                  color: states.contains(WidgetState.focused)
+                      ? AppPalette.accentOnSurface
+                      : widget.compact
+                      ? (selected
+                            ? AppPalette.accentOnSurface.withValues(alpha: .6)
+                            : AppGlass.hair)
+                      : Colors.transparent,
                 ),
               ),
-          child: Row(
-            children: [
-              if (option.leading != null) ...[
-                IconTheme(
-                  data: IconThemeData(size: 18, color: foreground),
-                  child: option.leading!(),
-                ),
-                const SizedBox(width: 8),
-              ],
-              Expanded(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
+            ),
+        child: Row(
+          children: [
+            if (option.leading != null) ...[
+              IconTheme(
+                data: IconThemeData(size: 18, color: foreground),
+                child: option.leading!(),
+              ),
+              const SizedBox(width: 8),
+            ],
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    option.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  if (widget.showDetails && option.detail != null) ...[
+                    const SizedBox(height: 2),
                     Text(
-                      option.label,
+                      option.detail!,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                    ),
-                    if (widget.showDetails && option.detail != null) ...[
-                      const SizedBox(height: 2),
-                      Text(
-                        option.detail!,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: detailStyle.copyWith(
-                          color: selected
-                              ? foreground
-                              : AppPalette.textSecondary,
-                        ),
+                      style: detailStyle.copyWith(
+                        color: selected ? foreground : AppPalette.textSecondary,
                       ),
-                    ],
+                    ),
                   ],
-                ),
+                ],
               ),
-              const SizedBox(width: 6),
-              SizedBox(
-                width: 16,
-                child: selected
-                    ? const ExcludeSemantics(child: Icon(Icons.check, size: 16))
-                    : null,
-              ),
-            ],
-          ),
+            ),
+            const SizedBox(width: 6),
+            SizedBox(
+              width: 16,
+              child: selected
+                  ? const ExcludeSemantics(child: Icon(Icons.check, size: 16))
+                  : null,
+            ),
+          ],
         ),
       ),
     );
   }
+}
+
+/// A shared tile keeps engine, machine and project rows on the same grid.
+class AppChoiceTile extends StatelessWidget {
+  const AppChoiceTile({
+    super.key,
+    required this.size,
+    required this.label,
+    required this.onPressed,
+    this.detail,
+    this.leading,
+    this.selected = false,
+    this.focusNode,
+  });
+  final Size size;
+  final String label;
+  final String? detail;
+  final Widget? leading;
+  final bool selected;
+  final VoidCallback? onPressed;
+  final FocusNode? focusNode;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    width: size.width,
+    height: size.height,
+    child: Semantics(
+      selected: selected,
+      inMutuallyExclusiveGroup: true,
+      child: TextButton(
+        focusNode: focusNode,
+        onPressed: onPressed,
+        style:
+            TextButton.styleFrom(
+              foregroundColor: AppPalette.textPrimary,
+              backgroundColor: selected
+                  ? AppPalette.swarmAccent.withValues(alpha: .16)
+                  : AppSurface.recess,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(AppControl.radius),
+              ),
+            ).copyWith(
+              side: WidgetStateProperty.resolveWith(
+                (states) => BorderSide(
+                  color: states.contains(WidgetState.focused) || selected
+                      ? AppPalette.swarmAccent.withValues(alpha: .7)
+                      : Colors.transparent,
+                ),
+              ),
+            ),
+        child: AppChoiceTileContent(
+          label: label,
+          detail: detail,
+          leading: leading,
+          trailing: selected ? const Icon(Icons.check, size: 16) : null,
+        ),
+      ),
+    ),
+  );
+}
+
+class AppChoiceTileContent extends StatelessWidget {
+  const AppChoiceTileContent({
+    super.key,
+    required this.label,
+    this.detail,
+    this.leading,
+    this.trailing,
+  });
+  final String label;
+  final String? detail;
+  final Widget? leading, trailing;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    children: [
+      if (leading != null) ...[leading!, const SizedBox(width: 10)],
+      Expanded(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontFamily: AppFont.sans,
+                fontFamilyFallback: AppFont.sansFallback,
+                fontSize: 14,
+                height: 1.25,
+                fontWeight: FontWeight.w500,
+                color: AppPalette.textPrimary,
+              ),
+            ),
+            if (detail != null) ...[
+              const SizedBox(height: 2),
+              Text(
+                detail!,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontFamily: AppFont.sans,
+                  fontFamilyFallback: AppFont.sansFallback,
+                  fontSize: 12,
+                  height: 1.25,
+                  color: AppPalette.textSecondary,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+      const SizedBox(width: 8),
+      SizedBox(width: 18, child: trailing),
+    ],
+  );
 }

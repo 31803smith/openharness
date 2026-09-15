@@ -686,16 +686,13 @@ class SwarmSearchActionLabel extends StatelessWidget {
                 ),
               const Icon(Icons.keyboard_return, size: 14),
             ] else
-              Tooltip(
-                message: hint,
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 96),
-                  child: Text(
-                    hint.replaceAll('↵', 'Return').replaceAll('⇥', 'Tab'),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 11),
-                  ),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 96),
+                child: Text(
+                  hint.replaceAll('↵', 'Return').replaceAll('⇥', 'Tab'),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 11),
                 ),
               ),
           ],

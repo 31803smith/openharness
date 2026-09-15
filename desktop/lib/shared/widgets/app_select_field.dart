@@ -76,6 +76,8 @@ class AppSelectField<T> extends StatefulWidget {
     this.trigger,
     this.focusNode,
     this.fillColor,
+    this.selected = false,
+    this.emptyLabel,
   });
 
   final T value;
@@ -92,6 +94,8 @@ class AppSelectField<T> extends StatefulWidget {
   final Widget? trigger;
   final FocusNode? focusNode;
   final Color? fillColor;
+  final bool selected;
+  final String? emptyLabel;
 
   @override
   State<AppSelectField<T>> createState() => _AppSelectFieldState<T>();
@@ -152,14 +156,19 @@ class _AppSelectFieldState<T> extends State<AppSelectField<T>> {
   }
 
   void _open() {
-    if (widget.options.isEmpty || _controller.isOpen) return;
+    if ((widget.options.isEmpty && widget.emptyLabel == null) ||
+        _controller.isOpen) {
+      return;
+    }
     _prefix = '';
     _lastTyped = null;
     _controller.open();
     // Unopened controls need no per-option focus nodes. Mount them with the
     // menu, including any match typed before its first frame.
     setState(() {});
-    _focusOption(_currentOption!, afterLayout: true);
+    if (_currentOption != null) {
+      _focusOption(_currentOption!, afterLayout: true);
+    }
   }
 
   void _focusOption(SelectOption<T> option, {bool afterLayout = false}) {
@@ -290,7 +299,10 @@ class _AppSelectFieldState<T> extends State<AppSelectField<T>> {
                   ? AppMenuRowMetrics.roomy.extent
                   : AppMenuRowMetrics.roomy.detailExtent),
         ) +
-        AppMenu.panelPadding.vertical,
+        AppMenu.panelPadding.vertical +
+        (widget.options.isEmpty && widget.emptyLabel != null
+            ? AppMenuRowMetrics.roomy.extent
+            : 0),
     _maxPanelHeight,
   );
 
@@ -346,6 +358,21 @@ class _AppSelectFieldState<T> extends State<AppSelectField<T>> {
       // at.
       style: AppMenu.style(maxHeight: _panelHeight),
       menuChildren: [
+        if (widget.options.isEmpty && widget.emptyLabel != null)
+          SizedBox(
+            width: math.max(panelWidth ?? 0, _minPanelWidth),
+            height: AppMenuRowMetrics.roomy.extent,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  widget.emptyLabel!,
+                  style: TextStyle(color: AppPalette.textSecondary),
+                ),
+              ),
+            ),
+          ),
         for (final option in widget.options)
           _typingRegion(
             SizedBox(
@@ -408,7 +435,7 @@ class _AppSelectFieldState<T> extends State<AppSelectField<T>> {
                         : widget.fillColor ?? AppSurface.recess,
                     borderRadius: BorderRadius.circular(AppControl.radius),
                     border: Border.all(
-                      color: _focused
+                      color: _focused || widget.selected
                           ? AppPalette.accentOnSurface
                           : Colors.transparent,
                     ),

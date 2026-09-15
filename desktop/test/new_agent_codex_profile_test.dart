@@ -4,7 +4,6 @@ import 'dart:async';
 
 import 'package:file_selector_platform_interface/file_selector_platform_interface.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/auth/auth_session.dart';
 import 'package:harness/core/config.dart';
@@ -300,7 +299,7 @@ void main() {
       expect(machineField.options.single.label, 'This Mac');
       expect(machineField.options.single.detail, isNull);
       expect(find.widgetWithText(FilledButton, 'Create'), findsOneWidget);
-      expect(find.byKey(const Key('new-agent-project-bar')), findsOneWidget);
+      expect(find.byKey(const Key('new-agent-project-recent')), findsOneWidget);
       expect(
         find.byKey(const Key('new-agent-codex-profile-field')),
         findsOneWidget,
@@ -322,7 +321,7 @@ void main() {
       findsOneWidget,
     );
     notifier.paths.add('/accounts/codex2');
-    await tester.tap(find.byTooltip('Refresh profiles'));
+    await tester.tap(find.bySemanticsLabel('Refresh profiles'));
     await tester.pumpAndSettle();
     expect(
       find.byKey(const Key('new-agent-codex-profile-field')),
@@ -331,7 +330,7 @@ void main() {
     expectProfile(tester, 'codex1');
     await selectSecond(tester);
     notifier.paths.remove('/accounts/codex1');
-    await tester.tap(find.byTooltip('Refresh profiles'));
+    await tester.tap(find.bySemanticsLabel('Refresh profiles'));
     await tester.pumpAndSettle();
     expect(
       find.byKey(const Key('new-agent-codex-profile-field')),
@@ -346,16 +345,13 @@ void main() {
     final notifier = _Notifier(const ['/custom/work-login'])
       ..pending = Completer<void>();
     await open(tester, notifier: notifier);
-    final folderFocus = tester
-        .widget<InkWell>(find.byKey(const Key('new-agent-project-bar')))
-        .focusNode!;
-    folderFocus.requestFocus();
+    final newProject = find.descendant(
+      of: find.byKey(const Key('new-agent-folder-newProject')),
+      matching: find.byType(TextButton),
+    );
+    final searchFocus = tester.widget<TextButton>(newProject).focusNode!;
+    searchFocus.requestFocus();
     await tester.pump();
-    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-    await tester.pumpAndSettle();
-    final searchFocus = tester
-        .widget<TextField>(find.byKey(const Key('new-agent-project-search')))
-        .focusNode!;
     final createButton = find.widgetWithText(FilledButton, 'Create');
     expect(tester.widget<FilledButton>(createButton).onPressed, isNull);
     expect(searchFocus.hasPrimaryFocus, isTrue);
@@ -380,7 +376,7 @@ void main() {
     final notifier = await open(tester);
     await selectSecond(tester);
     notifier.paths.remove('/accounts/codex2');
-    await tester.tap(find.byTooltip('Refresh profiles'));
+    await tester.tap(find.bySemanticsLabel('Refresh profiles'));
     await tester.pumpAndSettle();
     expect(
       find.byKey(const Key('new-agent-codex-profile-field')),
@@ -415,7 +411,7 @@ void main() {
     await tester.tap(find.text('Default profile').last);
     await tester.pumpAndSettle();
     notifier.paths.remove('/accounts/codex2');
-    await tester.tap(find.byTooltip('Refresh profiles'));
+    await tester.tap(find.bySemanticsLabel('Refresh profiles'));
     await tester.pumpAndSettle();
     expect(
       find.byKey(const Key('new-agent-codex-profile-field')),
@@ -494,7 +490,7 @@ void main() {
       final notifier = await open(tester);
       await selectSecond(tester);
       notifier.extraPaths.add('/elsewhere/new-profile');
-      await tester.tap(find.byTooltip('Refresh profiles'));
+      await tester.tap(find.bySemanticsLabel('Refresh profiles'));
       await tester.pumpAndSettle();
       expectProfile(tester, 'codex2');
       await tester.ensureVisible(

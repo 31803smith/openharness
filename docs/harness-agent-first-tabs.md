@@ -18,6 +18,7 @@ controls. Show a choice's name and useful preview; add explanation only when it
 helps someone decide or recover from an error. Prefer whitespace and restrained
 surfaces over extra rules and nested cards. Apply this consistently without
 waiting for the user to request copy removal one control at a time.
+Tooltips must add information, never repeat a visible label.
 Icon buttons share a quiet rounded background on hover and keyboard focus.
 Apply this to native tab close, new-tab and notification icons as well as
 Flutter controls. Disabled icons do not highlight; decorative icons stay inert.
@@ -102,23 +103,32 @@ colors while modal actions are blocked.
 
 New Agent uses the same generous width as Open Agent. Three stacked sections
 lead through **Choose an engine**, **Select a machine**, and **Which project will
-this agent work in?** Engines and machines share one tile width and height;
-Claude Code, Codex, and OpenCode stay visible, with More for other engines.
-All machines stay visible, with **This machine** identifying the local computer.
-Tiles wrap and the body scrolls on smaller windows or with larger text.
+this agent work in?** Each row has four equal tiles. Codex, Claude Code, and
+OpenCode occupy the first three engine slots. The fourth is **More ⌄**; choosing
+another engine replaces its label and icon, never adds a fifth tile.
 
-The project bar opens **Search projects or paste a Git URL**, with pinned
-**New project**, machine-scoped recent folders, Browse, and existing GitHub
-cloning. Arrows preview existing README/Git/files content; Enter selects into
-the bar, and clicking it reopens search. Each machine remembers its last choice;
-first use selects New. New folders use `~/harnesses/agent-1`, `agent-2`, ….
-The sole ordinary footer action is a bright **Create** button. Escape or an
-outside click dismisses. A quiet **Advanced** disclosure groups Codex profiles
-and permissions, side by side when space permits; these stay out of the usual
-creation path. A late saved preference equal to the selected engine preserves
-loaded profile readiness. Failure keeps the choices and prepared folder;
-an uncertain launch retains its receipt and offers **Check status** and **Close**
-without cloning or starting again. Success focuses the new agent.
+Machines follow the same pattern: this computer first, then online machines,
+then unavailable ones in the dropdown. The first three remain direct choices.
+The local computer says **This machine**. A monitor or crossed-out monitor
+indicates availability; there are no repeated Offline labels. An alternative
+machine occupies the fourth dropdown tile. Smaller windows and larger text
+wrap to two columns or one, with the body scrolling above the fixed footer.
+
+Projects offer **New project / Local / Git / Recent ⌄**. New selects an empty
+project without creating anything yet. Local opens the folder picker on the
+chosen machine; Git opens a small URL dialog; Recent lists that machine’s
+previous projects. The selected path or URL appears underneath. Each machine
+remembers its last choice; first use selects New. New folders use
+`~/harnesses/agent-1`, `agent-2`, …. Switching engines keeps the project.
+
+A small settings icon at the bottom left reveals Codex profiles and permissions.
+The sole ordinary footer action is a large bright **Create** button. Escape or
+an outside click dismisses. No hover hints repeat labels already on screen.
+Icon-only controls retain accessible names. A late saved preference equal to
+the selected engine preserves loaded profile readiness. Failure keeps the
+choices and prepared folder; an uncertain launch retains its receipt and offers
+**Check status** and **Close** without cloning or starting again. Success focuses
+the new agent.
 
 Split Right/Down opens the existing-agent picker for that position. Its **+ New Agent**
 input action (with tooltip), or Cmd-N, replaces the picker with creation and preserves the split,

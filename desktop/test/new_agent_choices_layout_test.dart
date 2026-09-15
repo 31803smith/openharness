@@ -12,6 +12,7 @@ import 'package:harness/core/models.dart';
 import 'package:harness/shared/theme/app_theme.dart' as grid;
 import 'package:harness/state/app_state.dart';
 import 'package:harness/widgets/new_agent_dialog.dart';
+import 'package:harness/shared/widgets/app_choice_picker.dart';
 
 import 'support/real_fonts.dart';
 
@@ -79,6 +80,7 @@ class _ChoicesApp extends AppNotifier {
 }
 
 void main() {
+  WidgetController.hitTestWarningShouldBeFatal = true;
   setUpAll(() async {
     await loadRealFonts();
     await (FontLoader(
@@ -169,22 +171,26 @@ void main() {
       }
 
       await capture('initial');
-      for (final id in ['local', 'office', 'home', 'studio', 'laptop']) {
+      for (final id in ['local', 'office', 'studio']) {
         expect(find.byKey(ValueKey('new-agent-machine-$id')), findsOneWidget);
       }
       for (final id in ['codex', 'claude', 'opencode']) {
         expect(find.byKey(ValueKey('new-agent-quick-$id')), findsOneWidget);
       }
-      void expectUniformTiles({bool withKilo = false}) {
+      void expectUniformTiles() {
         final tile = tester.getSize(
           find.byKey(const ValueKey('new-agent-quick-codex')),
         );
         for (final key in [
-          for (final id in ['claude', 'opencode', if (withKilo) 'kilo'])
-            'new-agent-quick-$id',
-          for (final id in ['local', 'office', 'home', 'studio', 'laptop'])
+          for (final id in ['claude', 'opencode']) 'new-agent-quick-$id',
+          for (final id in ['local', 'office', 'studio'])
             'new-agent-machine-$id',
           'new-agent-engine-field',
+          'new-agent-machine-more',
+          'new-agent-folder-newProject',
+          'new-agent-project-browse',
+          'new-agent-project-git',
+          'new-agent-project-recent',
         ]) {
           expect(tester.getSize(find.byKey(ValueKey(key))), tile, reason: key);
         }
@@ -203,30 +209,36 @@ void main() {
       await tester.ensureVisible(advanced);
       await tester.tap(advanced);
       await tester.pumpAndSettle();
-      final bar = find.byKey(const Key('new-agent-project-bar'));
-      await tester.ensureVisible(bar);
-      await tester.tap(bar);
-      await tester.pumpAndSettle();
-      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      final recent = find.byKey(const Key('new-agent-project-recent'));
+      await tester.ensureVisible(recent);
+      await tester.tap(recent);
       await tester.pumpAndSettle();
       await capture('projects');
+      await tester.ensureVisible(find.text('workshop'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('workshop'));
+      await tester.pumpAndSettle();
+      final git = find.byKey(const Key('new-agent-project-git'));
+      await tester.ensureVisible(git);
+      await tester.tap(git);
+      await tester.pumpAndSettle();
       await tester.enterText(
-        find.byKey(const Key('new-agent-project-search')),
+        find.byKey(const Key('new-agent-git-url')),
         'owner/repo',
       );
-      await tester.pumpAndSettle();
       await capture('repository');
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pumpAndSettle();
-      await tester.ensureVisible(
-        find.byKey(const ValueKey('new-agent-machine-studio')),
-      );
-      await tester.tap(find.byKey(const ValueKey('new-agent-machine-studio')));
+      final moreMachines = find.byKey(const Key('new-agent-machine-more'));
+      await tester.ensureVisible(moreMachines);
+      await tester.tap(moreMachines);
       await tester.pumpAndSettle();
-      expect(
-        find.byKey(const ValueKey('new-agent-machine-home')),
-        findsOneWidget,
-      );
+      await tester.ensureVisible(find.text('T480 - Omarchy'));
+      await tester.tap(find.text('T480 - Omarchy'));
+      await tester.pumpAndSettle();
+      expect(find.text('T480 - Omarchy'), findsOneWidget);
+      expect(find.text('Offline'), findsNothing);
+      expect(find.byKey(const Key('new-agent-machine-home')), findsNothing);
       final moreAgents = find.byKey(const Key('new-agent-engine-field'));
       await tester.ensureVisible(moreAgents);
       await tester.tap(moreAgents);
@@ -235,16 +247,15 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Kilo'));
       await tester.pumpAndSettle();
-      expect(
-        find.byKey(const ValueKey('new-agent-quick-kilo')),
-        findsOneWidget,
-      );
+      expect(find.byKey(const ValueKey('new-agent-quick-kilo')), findsNothing);
       expect(
         find.byKey(const ValueKey('new-agent-quick-opencode')),
         findsOneWidget,
       );
       expect(find.text('Kilo'), findsOneWidget);
-      expectUniformTiles(withKilo: true);
+      expectUniformTiles();
+      expect(find.byType(AppChoiceTile), findsNWidgets(9));
+      expect(find.byType(Tooltip), findsNothing);
       expect(
         find.text('Harness will install Kilo before starting.'),
         findsNothing,
