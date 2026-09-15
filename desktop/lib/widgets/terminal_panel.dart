@@ -1554,6 +1554,7 @@ class _TerminalHeader extends StatelessWidget {
                     notifier: notifier,
                     machineId: session.machineId,
                     currentModel: agent?.gridModel,
+                    webSearch: agent?.gridWebSearch,
                     engineLabel: session.engineId,
                     onSelected: (model) => unawaited(
                       notifier.retargetAgentToGridModel(

@@ -114,6 +114,36 @@ class Machine {
   );
 }
 
+/// Whether an agent on a Local model can search the web, as the daemon decided when it built the
+/// launch (`grid.webSearch` on the agent frame).
+///
+/// Three words, each a different fact for the person reading the picker: `on` needs no sentence;
+/// `unavailable` means the daemon could not obtain the web-tools configuration this time (an
+/// outdated CLI, no sign-in) and moving the agent again may fix it; `unsupported` means the engine
+/// cannot take the tools on this machine at all (Pi has no MCP client; Hermes under a
+/// system-managed install), and nothing about the model changes that.
+enum GridWebSearch {
+  on,
+  unavailable,
+  unsupported;
+
+  /// The one sentence shown for a degraded status, or null when there is nothing to say.
+  String? get sentence => switch (this) {
+    GridWebSearch.on => null,
+    GridWebSearch.unavailable => 'Web search unavailable',
+    GridWebSearch.unsupported => 'Web search not supported by this engine',
+  };
+
+  /// The wire word, or null for anything else — an older daemon sends no field, and a newer one
+  /// might send a fourth word this build should neither print verbatim nor guess at.
+  static GridWebSearch? fromWire(Object? raw) => switch (raw) {
+    'on' => GridWebSearch.on,
+    'unavailable' => GridWebSearch.unavailable,
+    'unsupported' => GridWebSearch.unsupported,
+    _ => null,
+  };
+}
+
 /// Data-plane agent (RPC agents_list).
 class Agent {
   final String id;
@@ -129,6 +159,12 @@ class Agent {
   /// Read by the daemon off the live process on every discovery, never bookkept — so it is the
   /// truth even for an agent someone re-pointed by hand. Null is a real answer, not a missing one.
   final String? gridModel;
+
+  /// Whether the agent can search the web on that model, or null when the daemon said nothing —
+  /// an agent on its own login, an older daemon, or a grid agent it merely discovered. Decided by
+  /// the daemon when it built the launch and carried on every frame, so it is right after a
+  /// reconnect or a restart without anything being replayed.
+  final GridWebSearch? gridWebSearch;
   final String? parentAgentId;
   final AgentProject? project;
   final String status;
@@ -147,6 +183,7 @@ class Agent {
     this.engineIconHint,
     this.codexHome,
     this.gridModel,
+    this.gridWebSearch,
     this.parentAgentId,
     this.project,
     this.status = 'active',
@@ -181,6 +218,7 @@ class Agent {
       'failed' => 'failed',
       _ => 'ready',
     };
+    final grid = j['grid'] as Map<String, dynamic>?;
     return Agent(
       id: j['id'] as String,
       sessionId: _safeLabel(j['sessionId']),
@@ -189,7 +227,8 @@ class Agent {
       engineDisplayName: _safeLabel(j['engineDisplayName']),
       engineIconHint: _safeLabel(j['engineIconHint']),
       codexHome: j['engine'] == 'codex' ? _safeCodexHome(j['codexHome']) : null,
-      gridModel: _safeLabel((j['grid'] as Map<String, dynamic>?)?['model']),
+      gridModel: _safeLabel(grid?['model']),
+      gridWebSearch: GridWebSearch.fromWire(grid?['webSearch']),
       parentAgentId: _safeLabel(j['parentAgentId'] ?? j['parentId']),
       project: AgentProject.fromJson(j['project']),
       status: (j['status'] as String?) ?? 'active',
@@ -215,6 +254,7 @@ class Agent {
     engineIconHint: engineIconHint,
     codexHome: codexHome,
     gridModel: gridModel,
+    gridWebSearch: gridWebSearch,
     parentAgentId: parentAgentId,
     project: project,
     status: status,

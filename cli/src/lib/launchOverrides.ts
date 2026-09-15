@@ -19,7 +19,9 @@ import {
   buildGridEngineLaunch,
   gridConflictingEnvToClear,
   type GridEngineLaunch,
+  type GridLaunchMachine,
   type GridLaunchOverride,
+  type GridLaunchRecord,
 } from './gridLaunch.js'
 import { TMUX_SESSION_ENV_MIN } from './tmuxVersion.js'
 
@@ -30,6 +32,13 @@ export interface LaunchOverrides {
   extraArgs: string[]
   /** Vendor credentials the launch must hide from the engine — see `gridConflictingEnvToClear`. */
   clearEnv: string[]
+  /**
+   * The grid launch this was built from and what building it decided about web search — present
+   * only when this IS a grid launch. Exactly what `registry.setGridLaunch` keeps, so the caller
+   * stores it as-is and cannot pair a status with the wrong override. A launch back onto the
+   * engine's own login has no such thing to say.
+   */
+  gridLaunchRecord?: GridLaunchRecord
 }
 
 export type LaunchOverridesResult =
@@ -37,8 +46,8 @@ export type LaunchOverridesResult =
   | { ok: false; error: string; detail: string }
 
 export interface LaunchOverridesDeps {
-  /** The config directory this MACHINE can give the launch, or none — cli.ts prunes Hermes's. */
-  configDirFor: (engine: AgentEngine, launch: GridEngineLaunch) => GridEngineLaunch['configDir']
+  /** The facts about THIS machine a contract needs and cannot read for itself — see `GridLaunchMachine`. */
+  machine: () => GridLaunchMachine
   writeGridConfigDir: (
     key: string,
     files: NonNullable<GridEngineLaunch['configDir']>['files'],
@@ -81,12 +90,12 @@ const noOverrides = (): LaunchOverrides => ({ env: {}, extraArgs: [], clearEnv: 
  * builds — config directory included — once it holds the pane).
  */
 export async function validateLaunchOverrides(
-  deps: Pick<LaunchOverridesDeps, 'tmuxSupportsSessionEnv'>,
+  deps: Pick<LaunchOverridesDeps, 'tmuxSupportsSessionEnv' | 'machine'>,
   engine: AgentEngine,
   source: LaunchSource,
 ): Promise<{ ok: true } | { ok: false; error: string; detail: string }> {
   if (!source.gridLaunch) return { ok: true }
-  const built = buildGridEngineLaunch(engine, source.gridLaunch)
+  const built = buildGridEngineLaunch(engine, source.gridLaunch, deps.machine())
   if (!built.ok) return { ok: false, error: built.error, detail: built.detail }
   // Only a launch that SETS variables needs the tmux that can set them.
   if (!(await deps.tmuxSupportsSessionEnv())) {
@@ -127,12 +136,11 @@ export async function buildLaunchOverrides(
     }
   }
   if (source.gridLaunch) {
-    const built = buildGridEngineLaunch(engine, source.gridLaunch)
+    const built = buildGridEngineLaunch(engine, source.gridLaunch, deps.machine())
     if (!built.ok) return { ok: false, error: built.error, detail: built.detail }
     const env: Record<string, string> = { ...built.launch.env }
-    const configDir = deps.configDirFor(engine, built.launch)
-    if (configDir) {
-      const { envVar, files, pointAt, links } = configDir
+    if (built.launch.configDir) {
+      const { envVar, files, pointAt, links } = built.launch.configDir
       try {
         const dir = await deps.writeGridConfigDir(configKey, files, links ?? [])
         // Pi is handed the directory; OpenCode's OPENCODE_CONFIG wants the file inside it.
@@ -144,7 +152,15 @@ export async function buildLaunchOverrides(
     }
     // Derived from what this launch actually provides (the config-dir variable included), so an
     // inherited vendor key never outranks the grid the engine was handed.
-    return { ok: true, overrides: { env, extraArgs: [...built.launch.args], clearEnv: gridConflictingEnvToClear({ env, args: [] }) } }
+    return {
+      ok: true,
+      overrides: {
+        env,
+        extraArgs: [...built.launch.args],
+        clearEnv: gridConflictingEnvToClear({ env }),
+        gridLaunchRecord: { override: source.gridLaunch, webSearch: built.launch.webSearch },
+      },
+    }
   }
   if (source.codexHome) {
     // A Codex agent on a profile OTHER than this machine's default reads hooks.json from THAT folder,

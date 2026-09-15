@@ -13,7 +13,7 @@ const GRID: GridLaunchOverride = {
 function deps(overrides: Partial<LaunchOverridesDeps> = {}) {
   const calls: string[] = []
   const d: LaunchOverridesDeps = {
-    configDirFor: (_engine, launch) => launch.configDir,
+    machine: () => ({ hermesSystemManaged: false }),
     writeGridConfigDir: async (key) => { calls.push(`writeConfig:${key}`); return `/state/grid-engine-config/${key}` },
     tmuxSupportsSessionEnv: async () => true,
     installCodexHooks: (home) => { calls.push(`hooks:${home}`) },
@@ -115,5 +115,39 @@ describe('buildLaunchOverrides — coming back off a grid', () => {
     if (!result.ok) return
     // The grid's model, not the remembered one.
     expect(result.overrides.env.ANTHROPIC_MODEL).toBe('gpt-5')
+  })
+})
+
+describe('buildLaunchOverrides — what the app is told about web search', () => {
+  const WITH_MCP: GridLaunchOverride = { ...GRID, mcpUrl: 'https://api-grid.example/v1/grid/web-mcp/' }
+
+  it('reports on when the launch wired the server', async () => {
+    const result = await buildLaunchOverrides(deps().d, 'claude', { gridLaunch: WITH_MCP }, 'a')
+    expect(result).toMatchObject({ ok: true, overrides: { gridLaunchRecord: { override: WITH_MCP, webSearch: 'on' } } })
+  })
+
+  it('reports unavailable when the persisted launch carries no url', async () => {
+    const result = await buildLaunchOverrides(deps().d, 'claude', { gridLaunch: GRID }, 'a')
+    expect(result).toMatchObject({ ok: true, overrides: { gridLaunchRecord: { override: GRID, webSearch: 'unavailable' } } })
+  })
+
+  it('reports unsupported for Hermes on a pinned machine, and writes nothing there', async () => {
+    // The machine fact is read through the dependency and handed to the builder; the builder drops
+    // the overlay, so there is no config directory to write — the write is what used to be pruned
+    // beside the builder, and is now simply never asked for.
+    const { d, calls } = deps({ machine: () => ({ hermesSystemManaged: true }) })
+    const result = await buildLaunchOverrides(d, 'hermes', { gridLaunch: WITH_MCP }, 'agent-h')
+    expect(result).toMatchObject({ ok: true, overrides: { gridLaunchRecord: { override: WITH_MCP, webSearch: 'unsupported' } } })
+    if (!result.ok) return
+    expect(calls).toEqual([])
+    expect(result.overrides.env).not.toHaveProperty('HERMES_MANAGED_DIR')
+    expect(result.overrides.clearEnv).toContain('HERMES_MANAGED_DIR')
+  })
+
+  it('says nothing about web search for a launch that is not onto a grid', async () => {
+    const own = await buildLaunchOverrides(deps().d, 'claude', { gridLaunch: null }, 'a')
+    expect(own.ok && own.overrides).not.toHaveProperty('gridLaunchRecord')
+    const profile = await buildLaunchOverrides(deps().d, 'codex', { codexHome: '/Users/x/.codex-work' }, 'a')
+    expect(profile.ok && profile.overrides).not.toHaveProperty('gridLaunchRecord')
   })
 })

@@ -9,6 +9,7 @@ import {
   gridEnvVarNames,
   parseGridLaunchOverride,
   relayBaseUrl,
+  type GridLaunchMachine,
   type GridLaunchOverride,
 } from './gridLaunch.js'
 import { ENGINES, type AgentEngine } from '../engines/types.js'
@@ -29,9 +30,11 @@ const WITH_MODEL: GridLaunchOverride = { ...WIRE, model: 'GLM-4.7-Flash' }
 /** The control plane's web-tools mount, trailing slash and all — see `GridLaunchOverride.mcpUrl`. */
 const MCP_URL = 'https://api-grid.autonomous.ai/v1/grid/web-mcp/'
 const WITH_MCP: GridLaunchOverride = { ...WITH_MODEL, mcpUrl: MCP_URL }
+/** The ordinary machine: nobody has pinned Hermes settings in /etc/hermes. */
+const PLAIN_MACHINE: GridLaunchMachine = { hermesSystemManaged: false }
 
-function launchOf(engine: AgentEngine, override = WITH_MODEL) {
-  const built = buildGridEngineLaunch(engine, override)
+function launchOf(engine: AgentEngine, override = WITH_MODEL, machine = PLAIN_MACHINE) {
+  const built = buildGridEngineLaunch(engine, override, machine)
   if (!built.ok) throw new Error(`${engine} was refused: ${built.detail}`)
   return built.launch
 }
@@ -102,6 +105,8 @@ describe('the launch each engine gets', () => {
       },
       // The built-in web tools no grid can run — see "takes Claude Code's built-in web tools away".
       args: ['--disallowedTools=WebSearch,WebFetch'],
+      // No MCP url in this override, so no web tools — and the app is told so.
+      webSearch: 'unavailable',
     })
     // Setting it too makes Claude Code warn that auth may not work, and it decides nothing.
     expect(launchOf('claude').env).not.toHaveProperty('ANTHROPIC_API_KEY')
@@ -242,7 +247,7 @@ describe('the launch each engine gets', () => {
   })
 
   it('refuses Copilot without a model rather than letting it fail inside the app', () => {
-    const built = buildGridEngineLaunch('copilot', OVERRIDE)
+    const built = buildGridEngineLaunch('copilot', OVERRIDE, PLAIN_MACHINE)
     expect(built).toMatchObject({ ok: false, error: 'GRID_MODEL_REQUIRED' })
   })
 
@@ -266,7 +271,7 @@ describe('the engines that cannot', () => {
     const refused = ENGINES.filter((engine) => !capable.has(engine))
     expect(refused.length).toBeGreaterThan(0)
     for (const engine of refused) {
-      const built = buildGridEngineLaunch(engine, OVERRIDE)
+      const built = buildGridEngineLaunch(engine, OVERRIDE, PLAIN_MACHINE)
       expect(built.ok).toBe(false)
       if (built.ok) continue
       expect(built.error).toBe('GRID_ENGINE_UNSUPPORTED')
@@ -285,11 +290,26 @@ describe('the engines that cannot', () => {
 
 describe('describeGridLaunch', () => {
   it('names the grid and the model, and never the key', () => {
-    const line = describeGridLaunch('claude', WITH_MODEL)
+    const line = describeGridLaunch('claude', WITH_MODEL, 'on')
     expect(line).toContain('autonomous.ai')
     expect(line).toContain('GLM-4.7-Flash')
     expect(line).not.toContain(WIRE.apiKey)
-    expect(describeGridLaunch('claude', OVERRIDE)).not.toContain(WIRE.apiKey)
+    expect(describeGridLaunch('claude', OVERRIDE, 'on')).not.toContain(WIRE.apiKey)
+  })
+
+  it('names the web-search status — the daemon log is where a degraded launch says why', () => {
+    expect(describeGridLaunch('claude', WITH_MCP, 'on')).toContain('web search on')
+    expect(describeGridLaunch('claude', WITH_MODEL, 'unavailable')).toContain('web search unavailable')
+    expect(describeGridLaunch('pi', WITH_MCP, 'unsupported')).toContain('web search unsupported')
+    // The url is the control plane's address, not a secret — but it is also not the log's business.
+    expect(describeGridLaunch('claude', WITH_MCP, 'on')).not.toContain(MCP_URL)
+  })
+
+  it('says why, for the two answers this module decides itself', () => {
+    expect(describeGridLaunch('hermes', WITH_MCP, 'unsupported')).toContain('/etc/hermes pins')
+    expect(describeGridLaunch('pi', WITH_MCP, 'unsupported')).toContain('no MCP client')
+    // `unavailable` was decided — and its reason logged — by the url resolver, not here.
+    expect(describeGridLaunch('claude', WITH_MODEL, 'unavailable')).toMatch(/web search unavailable$/)
   })
 })
 
@@ -343,14 +363,14 @@ describe('gridConflictingEnvToClear', () => {
     apiKey: 'RELAY-KEY',
   }
   const clearedFor = (engine: AgentEngine, model?: string): string[] => {
-    const built = buildGridEngineLaunch(engine, model ? { ...override, model } : override)
+    const built = buildGridEngineLaunch(engine, model ? { ...override, model } : override, PLAIN_MACHINE)
     if (!built.ok) throw new Error(`${engine} refused: ${JSON.stringify(built)}`)
     return gridConflictingEnvToClear(built.launch)
   }
 
   it('never clears a variable the same launch sets', () => {
     for (const engine of ['claude', 'codex', 'opencode', 'hermes', 'grok', 'copilot', 'pi'] as const) {
-      const built = buildGridEngineLaunch(engine, { ...override, model: 'a-model' })
+      const built = buildGridEngineLaunch(engine, { ...override, model: 'a-model' }, PLAIN_MACHINE)
       if (!built.ok) throw new Error(`${engine} refused`)
       const set = new Set(Object.keys(built.launch.env))
       if (built.launch.configDir) set.add(built.launch.configDir.envVar)
@@ -400,7 +420,7 @@ describe('opencode declares the grid as a provider', () => {
     apiKey: 'RELAY-KEY',
   }
   const launch = (model?: string) => {
-    const built = buildGridEngineLaunch('opencode', model ? { ...base, model } : base)
+    const built = buildGridEngineLaunch('opencode', model ? { ...base, model } : base, PLAIN_MACHINE)
     if (!built.ok) throw new Error('opencode refused')
     return built.launch
   }
@@ -663,5 +683,71 @@ describe('web tools (grid ADR 0041)', () => {
     // Hermes had no config directory at all before web tools, so it goes back to having none.
     expect(launchOf('hermes', WITH_MODEL).configDir).toBeUndefined()
     expect(launchOf('hermes', WITH_MODEL).env.GRID_API_KEY).toBeUndefined()
+  })
+})
+
+describe('web search status — what the app is told about the launch it got', () => {
+  // Every engine with MCP wiring, which is every grid-capable one but Pi.
+  const WIRED: AgentEngine[] = ['claude', 'codex', 'opencode', 'hermes', 'grok', 'copilot']
+
+  it('is on when the MCP url is present and the engine wired it', () => {
+    for (const engine of WIRED) expect(launchOf(engine, WITH_MCP).webSearch, engine).toBe('on')
+  })
+
+  it('is unavailable when the url is absent — the grid could not be asked for it', () => {
+    for (const engine of WIRED) expect(launchOf(engine, WITH_MODEL).webSearch, engine).toBe('unavailable')
+  })
+
+  it('is unsupported for Pi, which has no MCP client, url or no url', () => {
+    expect(launchOf('pi', WITH_MCP).webSearch).toBe('unsupported')
+    expect(launchOf('pi', WITH_MODEL).webSearch).toBe('unsupported')
+  })
+
+  it('is unsupported for Hermes on a machine whose settings are pinned in /etc/hermes, and writes no overlay there', () => {
+    // The overlay REPLACES the system scope rather than adding to it, so on such a machine it is
+    // dropped — a decision the builder makes, so every caller (create, retarget, restore) agrees.
+    const launch = launchOf('hermes', WITH_MCP, { hermesSystemManaged: true })
+    expect(launch.webSearch).toBe('unsupported')
+    expect(launch.configDir).toBeUndefined()
+    // The variable exists only to be referenced by the overlay, so it goes with it.
+    expect(launch.env.GRID_API_KEY).toBeUndefined()
+    expect(launch.env.HERMES_MANAGED_DIR).toBeUndefined()
+  })
+
+  it('takes nothing else from Hermes on such a machine — inference is still pointed at the grid', () => {
+    const pinned = launchOf('hermes', WITH_MCP, { hermesSystemManaged: true })
+    const plain = launchOf('hermes', WITH_MCP)
+    expect(pinned.env).toMatchObject({ OPENAI_BASE_URL: plain.env.OPENAI_BASE_URL, OPENAI_API_KEY: plain.env.OPENAI_API_KEY })
+    expect(pinned.args).toEqual(plain.args)
+  })
+
+  it('is unsupported for Hermes on such a machine even with no url — the pin is the fact that lasts', () => {
+    expect(launchOf('hermes', WITH_MODEL, { hermesSystemManaged: true }).webSearch).toBe('unsupported')
+  })
+
+  it('leaves every other engine alone on such a machine', () => {
+    for (const engine of WIRED.filter((e) => e !== 'hermes')) {
+      expect(launchOf(engine, WITH_MCP, { hermesSystemManaged: true }).webSearch, engine).toBe('on')
+    }
+  })
+
+  it('says on exactly when the launch it describes names the server — for every engine, both machines', () => {
+    // "The engine wired it" is not taken on trust from the contract that reports it: the launch
+    // either carries the `harness` server (in argv or in a file it writes) or it does not, and the
+    // status must agree with that. A future contract that took a url and forgot to wire it, or
+    // wired it and reported otherwise, fails here.
+    const names = (launch: ReturnType<typeof launchOf>): string =>
+      [...launch.args, ...(launch.configDir?.files.map((f) => f.content) ?? [])].join('\n')
+    for (const machine of [PLAIN_MACHINE, { hermesSystemManaged: true }]) {
+      for (const engine of gridCapableEngines()) {
+        for (const override of [WITH_MCP, WITH_MODEL]) {
+          const built = buildGridEngineLaunch(engine, override, machine)
+          if (!built.ok) continue // copilot without a model — refused, nothing to describe
+          const wired = names(built.launch).includes('harness')
+          expect(built.launch.webSearch === 'on', `${engine} · mcpUrl ${!!override.mcpUrl} · pinned ${machine.hermesSystemManaged}`)
+            .toBe(wired)
+        }
+      }
+    }
   })
 })

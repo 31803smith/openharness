@@ -52,6 +52,7 @@ void main() {
   Future<void> open(
     WidgetTester tester, {
     String? currentModel,
+    GridWebSearch? webSearch,
     VoidCallback? onOwnLogin,
     ValueChanged<GridModel>? onSelected,
   }) async {
@@ -66,6 +67,7 @@ void main() {
             machineId: 'local',
             engineLabel: 'claude',
             currentModel: currentModel,
+            webSearch: webSearch,
             onUseOwnLogin: onOwnLogin,
             onSelected: onSelected,
           ),
@@ -101,6 +103,10 @@ void main() {
     // model. A single "no models" would send a person looking in the wrong place.
     await open(tester);
     expect(find.textContaining('sign in again'), findsOneWidget);
+    // The user's vocabulary is "Local models", never "grid" — the grid is how a Local model is
+    // served, not a thing the picker asks anyone to know about.
+    expect(find.text('No local models on this account yet — sign in again to set them up.'), findsOneWidget);
+    expect(find.textContaining('grid'), findsNothing);
   });
 
   testWidgets('a served model shows under Local with the machine answering it', (tester) async {
@@ -150,5 +156,60 @@ void main() {
     await tester.tap(find.text('Anthropic'));
     await tester.pumpAndSettle();
     expect(calls, 1);
+  });
+
+  group('web search on the current Local model', () {
+    const served = [
+      {'id': 'Qwen-Test', 'node': 'macbook-m1max'},
+      {'id': 'Other-Model', 'node': 'macbook-m1max'},
+    ];
+
+    testWidgets('says nothing when it is on', (tester) async {
+      build(models: served);
+      await open(tester, currentModel: 'Qwen-Test', webSearch: GridWebSearch.on);
+      expect(find.textContaining('Web search'), findsNothing);
+      expect(tester.widget<Tooltip>(find.byType(Tooltip)).message, 'Where this agent runs');
+    });
+
+    testWidgets('says nothing when the daemon said nothing', (tester) async {
+      build(models: served);
+      await open(tester, currentModel: 'Qwen-Test');
+      expect(find.textContaining('Web search'), findsNothing);
+    });
+
+    testWidgets('a subtitle under the current row, and the tooltip, when it is unavailable', (tester) async {
+      build(models: served);
+      await open(tester, currentModel: 'Qwen-Test', webSearch: GridWebSearch.unavailable);
+      expect(find.text('Web search unavailable'), findsOneWidget);
+      // Under the CURRENT model, not every model: the status is about this agent's launch, and the
+      // other rows are places it could go, about which nothing is yet known.
+      final subtitle = tester.getTopLeft(find.text('Web search unavailable'));
+      final current = tester.getTopLeft(find.text('Qwen-Test'));
+      final other = tester.getTopLeft(find.text('Other-Model'));
+      expect(subtitle.dy, greaterThan(current.dy));
+      expect(subtitle.dy, lessThan(other.dy));
+      expect(
+        tester.widget<Tooltip>(find.byType(Tooltip)).message,
+        'Where this agent runs\nWeb search unavailable',
+      );
+    });
+
+    testWidgets('the other sentence when the engine cannot take it', (tester) async {
+      build(models: served);
+      await open(tester, currentModel: 'Qwen-Test', webSearch: GridWebSearch.unsupported);
+      expect(find.text('Web search not supported by this engine'), findsOneWidget);
+      expect(
+        tester.widget<Tooltip>(find.byType(Tooltip)).message,
+        'Where this agent runs\nWeb search not supported by this engine',
+      );
+    });
+
+    testWidgets('never under the Subscription row, which has its own web tools', (tester) async {
+      // A stale status with no current model (the agent came home, the frame has not caught up):
+      // the subscription row must not inherit a sentence about a launch it was never part of.
+      build(models: served);
+      await open(tester, currentModel: null, webSearch: GridWebSearch.unavailable);
+      expect(find.textContaining('Web search'), findsNothing);
+    });
   });
 }

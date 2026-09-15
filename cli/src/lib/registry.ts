@@ -36,7 +36,7 @@ import { env } from '../config/env.js'
 import { readCodexRolloutMeta, resolveCodexRollout } from '../engines/codex/rollout.js'
 import { ENGINES, type AgentEngine } from '../engines/types.js'
 import type { GridAssignment } from './gridAssignment.js'
-import { parseGridLaunchOverride, type GridLaunchOverride } from './gridLaunch.js'
+import { parseGridLaunchOverride, type GridLaunchOverride, type GridLaunchRecord, type GridWebSearchStatus } from './gridLaunch.js'
 import { commandcodeTranscriptPath } from '../engines/commandcode/transcript.js'
 import { agyTranscriptPath } from '../engines/agy/session.js'
 import { copilotTranscriptPath } from '../engines/copilot/session.js'
@@ -111,6 +111,14 @@ export interface RegisteredSession {
    * treats as "grid agent without a credential".
    */
   gridLaunch?: GridLaunchOverride | null
+  /**
+   * What `gridLaunch` decided about web search — `on`, `unavailable` or `unsupported` — as the app
+   * shows it (`grid.webSearch` on the frame). Written with the launch and cleared with it, never
+   * re-derived: the launch builder decided it from the machine as it was at launch, and that is what
+   * the pane actually got. Null on a vendor-login agent and on a discovered grid agent (no launch was
+   * built, so there is nothing to say); absent on a row written before this field existed.
+   */
+  gridWebSearch?: GridWebSearchStatus | null
   /**
    * The engine's OWN model this agent was on immediately before it moved to a grid.
    *
@@ -759,6 +767,7 @@ class Registry {
           grid: normalizedGridAssignment(raw.grid),
           codexHome: typeof rawCodexHome === 'string' && rawCodexHome ? rawCodexHome : null,
           ...(rawGridLaunch !== undefined ? { gridLaunch: rawGridLaunch } : {}),
+          ...(rawGridLaunch ? { gridWebSearch: normalizedGridWebSearch(raw?.gridWebSearch) } : {}),
           // ⚠️ Rehydrated EXPLICITLY, like every field above it. A row is rebuilt from this list on
           // load, so a field added to the type and the setter but not to this list is written to
           // disk and then silently dropped by the next load — which is exactly what happened, and
@@ -948,6 +957,7 @@ class Registry {
       grid: input.grid ?? null,
       // A discovered grid agent has no credential the daemon ever saw: it can be observed, not relaunched.
       gridLaunch: null,
+      gridWebSearch: null,
       codexHome: input.codexHome ?? null,
       transcriptPath: null,
       projectDir: basename(input.cwd ?? '') || agentId,
@@ -978,7 +988,8 @@ class Registry {
     primaryRuntimeKey?: string
     cwd?: string | null
     grid?: GridAssignment | null
-    gridLaunch?: GridLaunchOverride | null
+    /** The grid launch this pane was opened with and what it decided — the pair `setGridLaunch` keeps. */
+    gridLaunchRecord?: GridLaunchRecord | null
     codexHome?: string | null
     bypassPermission?: boolean
   }): RegisteredSession | null {
@@ -998,7 +1009,8 @@ class Registry {
       engine: input.engine,
       gateway: null,
       grid: input.grid ?? null,
-      gridLaunch: input.gridLaunch ?? null,
+      gridLaunch: input.gridLaunchRecord?.override ?? null,
+      gridWebSearch: input.gridLaunchRecord?.webSearch ?? null,
       codexHome: input.codexHome ?? null,
       ...(input.bypassPermission ? { bypassPermission: true } : {}),
       transcriptPath: null,
@@ -1146,6 +1158,8 @@ class Registry {
       grid: existing?.grid ?? null,
       // The credential-bearing launch. Like codexHome: written once, carried forward, never re-derived.
       gridLaunch: existing?.gridLaunch ?? null,
+      // What that launch decided — it travels with the launch, or it is lost at the first hook.
+      gridWebSearch: existing?.gridWebSearch ?? null,
       // ⚠️ Carried forward for the same reason, and it was missed once: a bind REBUILDS the row from
       // named fields, so a field the rebuild does not name survives on disk and vanishes from
       // memory the moment the engine reports in. The symptom is a move back to the engine's own
@@ -1355,12 +1369,17 @@ class Registry {
     return true
   }
 
-  /** Record the launch an agent was last put onto a grid with (`agent_create` / `agent_retarget`), or
-   *  null once it was moved back to the engine's own login. */
-  setGridLaunch(agentId: string, gridLaunch: GridLaunchOverride | null): boolean {
+  /**
+   * Record the launch an agent was last put onto a grid with (`agent_create` / `agent_retarget`) and
+   * what it decided about web search — or null for both once the agent was moved back to the engine's
+   * own login. One call for the pair on purpose: a status without its launch, or a launch without its
+   * status, is a row the app would read wrongly.
+   */
+  setGridLaunch(agentId: string, launch: GridLaunchRecord | null): boolean {
     const session = this.agents.get(agentId)
     if (!session) return false
-    session.gridLaunch = gridLaunch
+    session.gridLaunch = launch?.override ?? null
+    session.gridWebSearch = launch?.webSearch ?? null
     session.updatedAt = Date.now()
     this.save()
     return true
@@ -1646,6 +1665,12 @@ function normalizedGridLaunch(value: unknown): GridLaunchOverride | null | undef
   if (value === undefined) return undefined
   const parsed = parseGridLaunchOverride(value)
   return parsed.state === 'ok' ? parsed.override : null
+}
+
+/** What a persisted launch said about web search. Anything but the three known words is "nothing to
+ *  say" — a row from a daemon that knew a fourth would otherwise have the app print it verbatim. */
+function normalizedGridWebSearch(value: unknown): GridWebSearchStatus | null {
+  return value === 'on' || value === 'unavailable' || value === 'unsupported' ? value : null
 }
 
 /** A persisted grid assignment. Lenient on `model` on purpose: a row that only knows WHERE it pointed

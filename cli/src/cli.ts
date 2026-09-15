@@ -59,7 +59,7 @@ import { ENGINE_CLI_COMMANDS, ENGINES, engineBin, enginePathOverride } from './l
 import type { AgentEngine } from './engines/types.js'
 import { engineInstallRecipe } from './lib/engineInstall.js'
 import { buildEngineCommandArgv, buildEngineLaunchArgv, commandAvailableInInteractiveShell } from './lib/engineLaunch.js'
-import { buildGridEngineLaunch, describeGridLaunch, gridConflictingEnvToClear, gridEnvVarNames, type GridEngineLaunch } from './lib/gridLaunch.js'
+import { buildGridEngineLaunch, describeGridLaunch, gridConflictingEnvToClear, gridEnvVarNames, type GridLaunchMachine, type GridWebSearchStatus } from './lib/gridLaunch.js'
 import { HERMES_SYSTEM_MANAGED_DIR } from './lib/gridWebMcp.js'
 import { writeGridConfigDir } from './lib/gridConfigDir.js'
 import { tmuxSupportsSessionEnv, TMUX_SESSION_ENV_MIN } from './lib/tmuxVersion.js'
@@ -70,7 +70,7 @@ import { claudeContinuation, findLiveSession } from './lib/sessionRepair.js'
 import { TmuxBackend } from './lib/tmuxBackend.js'
 import { createAndRegisterPane } from './lib/createAgentPane.js'
 import { restoreAgents } from './lib/restoreAgents.js'
-import { buildLaunchOverrides, validateLaunchOverrides, type LaunchOverridesDeps, type LaunchOverridesResult, type LaunchSource } from './lib/launchOverrides.js'
+import { buildLaunchOverrides, validateLaunchOverrides, type LaunchOverrides, type LaunchOverridesDeps, type LaunchOverridesResult, type LaunchSource } from './lib/launchOverrides.js'
 import { buildHarnessSessionLabel } from './lib/harnessSessionLabel.js'
 import { basename } from 'node:path'
 import {
@@ -3343,23 +3343,17 @@ async function runForeground(session: AuthSession): Promise<void> {
     }
   }
   /**
-   * The config directory a grid launch should actually be given on THIS machine, or none.
+   * What the launch builder needs to know about THIS machine, read at launch time.
    *
-   * Only Hermes can lose one. Its web tools ride a managed-scope overlay, and `HERMES_MANAGED_DIR`
-   * REPLACES `/etc/hermes` rather than adding to it — so on a machine where an administrator pinned
-   * Hermes settings there, writing ours would take their policy away for as long as the agent runs.
-   * The agent still launches on the grid; it launches without web tools, which is the smaller loss
-   * and the one that can be said out loud.
-   *
-   * Here rather than in the contract because it is a fact about the machine: a `build()` that
-   * stats the filesystem answers differently on two of them, and its spec would follow.
+   * The one fact is whether an administrator pinned Hermes settings in `/etc/hermes`: Hermes's web
+   * tools ride a managed-scope overlay that REPLACES that directory rather than adding to it, and the
+   * builder drops the overlay on such a machine (the agent launches on the grid without web tools,
+   * and the app says so). Read here rather than in the contract because it is a fact about the
+   * machine: a `build()` that stats the filesystem answers differently on two of them, and its spec
+   * would follow. What is DONE with the fact lives in the builder, so create, retarget and restore
+   * cannot disagree about it.
    */
-  const gridConfigDirFor = (engine: AgentEngine, launch: GridEngineLaunch): GridEngineLaunch['configDir'] => {
-    if (!launch.configDir || engine !== 'hermes' || !existsSync(HERMES_SYSTEM_MANAGED_DIR)) return launch.configDir
-    console.warn(`[grid] ${engine} starts without web tools · ${HERMES_SYSTEM_MANAGED_DIR} pins this `
-      + `machine's Hermes settings, and the overlay carrying the web tools would replace it`)
-    return undefined
-  }
+  const gridLaunchMachine = (): GridLaunchMachine => ({ hermesSystemManaged: existsSync(HERMES_SYSTEM_MANAGED_DIR) })
 
   /**
    * What a relaunch of `session` must be given, beyond the engine's argv, to come back where it was —
@@ -3368,13 +3362,25 @@ async function runForeground(session: AuthSession): Promise<void> {
    * keyed on the agent, so relaunching the same agent rewrites one directory instead of leaving a trail.
    */
   const launchOverridesDeps: LaunchOverridesDeps = {
-    configDirFor: gridConfigDirFor,
+    machine: gridLaunchMachine,
     writeGridConfigDir,
     tmuxSupportsSessionEnv,
     installCodexHooks: (codexHome) => { if (!env.DISABLE_HOOK_INSTALL) installCodexHooks(hookPort, codexHome) },
   }
   const relaunchOverrides = (session: RegisteredSession, source: LaunchSource = session): Promise<LaunchOverridesResult> =>
     buildLaunchOverrides(launchOverridesDeps, session.engine, source, session.agentId)
+
+  /**
+   * A restart or a post-reboot restore rebuilds the ROW's own launch, and the machine may decide
+   * differently about web search this time than it did when the row was written (an administrator
+   * pinned `/etc/hermes` since, or unpinned it). The override is the row's already; what is
+   * refreshed is the decision, so the frame describes the pane that actually came up. Retarget
+   * does not go through here — its override is new, and it records the pair itself once the move
+   * has succeeded.
+   */
+  const refreshGridWebSearch = (agentId: string, overrides: LaunchOverrides): void => {
+    if (overrides.gridLaunchRecord) registry.setGridLaunch(agentId, overrides.gridLaunchRecord)
+  }
 
   watcher.start()
   await cursorDiscovery.start()
@@ -3398,6 +3404,9 @@ async function runForeground(session: AuthSession): Promise<void> {
         // own shell.
         const built = await relaunchOverrides(entry)
         if (!built.ok) return { error: built.error, detail: built.detail }
+        // Before the pane comes up rather than after: restore has no later hook per agent, and a
+        // pane that fails to come up is reported failed by the frame regardless of this field.
+        refreshGridWebSearch(entry.agentId, built.overrides)
         const { env: launchEnv, extraArgs, clearEnv } = built.overrides
         const argv = buildEngineLaunchArgv(entry.engine, {
           ...opts,
@@ -3589,9 +3598,9 @@ async function runForeground(session: AuthSession): Promise<void> {
     // A grid is the user's answer to "where should this run", so every way of not honouring it is a
     // refusal rather than a fallback — an agent silently started on the engine's own login spends the
     // wrong account and looks identical to one that worked.
-    let gridLaunch: { env: Record<string, string>; args: string[] } | undefined
+    let gridLaunch: { env: Record<string, string>; args: string[]; webSearch: GridWebSearchStatus } | undefined
     if (grid) {
-      const built = buildGridEngineLaunch(engine, grid)
+      const built = buildGridEngineLaunch(engine, grid, gridLaunchMachine())
       if (!built.ok) {
         console.warn(`[agent] create ${engine} refused · ${built.detail}`)
         return { ok: false, error: built.error, detail: built.detail }
@@ -3604,12 +3613,11 @@ async function runForeground(session: AuthSession): Promise<void> {
         console.warn(`[agent] create ${engine} refused · ${detail}`)
         return { ok: false, error: 'TMUX_TOO_OLD_FOR_GRID', detail }
       }
-      gridLaunch = { env: { ...built.launch.env }, args: built.launch.args }
+      gridLaunch = { env: { ...built.launch.env }, args: built.launch.args, webSearch: built.launch.webSearch }
       // An engine whose provider lives in a file gets a directory this daemon owns, never the
       // user's own dotfiles. The label is unique per creation, so two agents never share one.
-      const createConfigDir = gridConfigDirFor(engine, built.launch)
-      if (createConfigDir) {
-        const { envVar, files, pointAt, links } = createConfigDir
+      if (built.launch.configDir) {
+        const { envVar, files, pointAt, links } = built.launch.configDir
         try {
           const dir = await writeGridConfigDir(label, files, links)
           // Pi is handed the directory; OpenCode's OPENCODE_CONFIG wants the file inside it.
@@ -3622,7 +3630,7 @@ async function runForeground(session: AuthSession): Promise<void> {
       }
       // Named in the log because the pane itself gives nothing away: the engine looks exactly like a
       // normally launched one. The key is never printed.
-      console.log(describeGridLaunch(engine, grid))
+      console.log(describeGridLaunch(engine, grid, built.launch.webSearch))
     }
     // A Codex agent pointed at a profile OTHER than this machine's default reads hooks.json from
     // THAT folder, not the one `harness login` already installed into — without this, such an agent
@@ -3661,7 +3669,7 @@ async function runForeground(session: AuthSession): Promise<void> {
       argv,
       env: gridLaunch?.env ?? (codexHome ? { CODEX_HOME: codexHome } : undefined),
       grid: grid ? { baseUrl: grid.baseUrl, model: grid.model ?? null } : null,
-      gridLaunch: grid ?? null,
+      gridLaunchRecord: grid && gridLaunch ? { override: grid, webSearch: gridLaunch.webSearch } : null,
       codexHome,
       bypassPermission,
     })
@@ -3926,8 +3934,10 @@ async function runForeground(session: AuthSession): Promise<void> {
         probeGridAssignment(outcome.processIdentity, session.engine, outcome.processIdentity.executable),
       ])
       registry.updateProcessIdentity(session.agentId, outcome.processIdentity, gateway.kind, assignment)
-      // The launch that just worked is the one a restart or a post-reboot restore must repeat.
-      registry.setGridLaunch(session.agentId, grid)
+      // The launch that just worked is the one a restart or a post-reboot restore must repeat — and
+      // what it decided about web search is what the app shows for this agent from now on. Null for
+      // a move home: the block, and the status with it, leave the frame together.
+      registry.setGridLaunch(session.agentId, built.overrides.gridLaunchRecord ?? null)
       // Persisted only on the way OUT, and only once the move actually succeeded — a refused move
       // must not overwrite the model the agent is still sitting on. Survives a daemon restart, so an
       // agent left on a grid for a week still knows where it came from.
@@ -3939,7 +3949,10 @@ async function runForeground(session: AuthSession): Promise<void> {
       // would leave the banner up over an agent that had already been moved.
       if (refreshed) announceSession(refreshed)
       const how = outcome.resumed ? 'resumed' : 'fresh session'
-      const where = grid ? describeGridLaunch(session.engine, grid) : `${session.engine} on its own login`
+      const record = built.overrides.gridLaunchRecord
+      const where = record
+        ? describeGridLaunch(session.engine, record.override, record.webSearch)
+        : `${session.engine} on its own login`
       console.log(`${where} · retargeted ${sid(session.agentId)} · ${how}`)
       return { ok: true }
     } finally {
@@ -4028,6 +4041,7 @@ async function runForeground(session: AuthSession): Promise<void> {
       )
 
       if (!outcome.ok) return { ok: false, error: 'RESTART_FAILED', detail: outcome.detail }
+      refreshGridWebSearch(session.agentId, built.overrides)
 
       // Address the CANONICAL agentId from the resolved session, not the raw RPC input — `resolve()`
       // accepts either an agentId or a bare sessionId, but `setActive`/`byAgent` only ever key on the

@@ -39,6 +39,13 @@ class GridModelPicker extends StatefulWidget {
   /// checkmark, so the menu answers "where am I" as well as "where could I go".
   final String? currentModel;
 
+  /// Whether the agent can search the web on [currentModel], as the daemon decided when it built
+  /// the launch. Shown as a subtitle under the current Local row and in the control's tooltip —
+  /// only for the two degraded values; `on` and null (nothing said) show nothing. Read only when
+  /// [currentModel] is set: it is a fact about a Local-model launch, and the Subscription row has
+  /// its own web tools.
+  final GridWebSearch? webSearch;
+
   /// The agent's engine, for the subscription row's icon and label.
   final String? engineLabel;
 
@@ -49,6 +56,7 @@ class GridModelPicker extends StatefulWidget {
     this.onSelected,
     this.onUseOwnLogin,
     this.currentModel,
+    this.webSearch,
     this.engineLabel,
   });
 
@@ -59,6 +67,17 @@ class GridModelPicker extends StatefulWidget {
 class _GridModelPickerState extends State<GridModelPicker> {
   bool _loading = false;
   ModelsMenuController? _usage;
+
+  /// The sentence about web search on the current Local model, or null when there is none to
+  /// show. Null off a grid whatever the daemon said: a frame can lag a move home by a beat, and
+  /// the Subscription row must never wear a sentence about a launch it was no part of.
+  String? get _webSearchSentence =>
+      widget.currentModel == null ? null : widget.webSearch?.sentence;
+
+  /// The subtitle under one Local row: the sentence for the CURRENT model only. The status is about
+  /// this agent's launch, and the other rows are places it could go, about which nothing is known.
+  String? _subtitleFor(GridModel model) =>
+      widget.currentModel == model.id ? _webSearchSentence : null;
 
   @override
   void dispose() {
@@ -142,8 +161,10 @@ class _GridModelPickerState extends State<GridModelPicker> {
             enabled: false,
             height: 30,
             child: Text(
+              // "Local models", in the user's own vocabulary: the grid is how a Local model is
+              // served, not a thing this menu asks anyone to know about.
               answer.gridName == null
-                  ? 'No grid on this account yet — sign in again to set one up.'
+                  ? 'No local models on this account yet — sign in again to set them up.'
                   : 'Nothing is being served yet.',
               style: TextStyle(fontSize: 11, color: AppColors.textSoft),
             ),
@@ -151,13 +172,16 @@ class _GridModelPickerState extends State<GridModelPicker> {
         for (final model in answer.models)
           PopupMenuItem<_Choice>(
             value: _Choice.model(model),
-            height: 32,
+            // Taller only for the current row carrying a sentence; every other row keeps its height
+            // so the menu does not grow for a fact about one agent.
+            height: _subtitleFor(model) != null ? 46 : 32,
             child: _Row(
               selected: widget.currentModel == model.id,
               title: model.id,
               // Which of the user's machines answers it — the part that makes a private grid
               // legible, and the reason `node` is carried through at all.
               status: model.node.isEmpty ? null : model.node,
+              subtitle: _subtitleFor(model),
             ),
           ),
       ],
@@ -194,8 +218,11 @@ class _GridModelPickerState extends State<GridModelPicker> {
 
   @override
   Widget build(BuildContext context) {
+    final sentence = _webSearchSentence;
     return Tooltip(
-      message: 'Where this agent runs',
+      // The same sentence the menu shows, one line under the control's own — so a person can learn
+      // the agent has no web search without opening the menu at all.
+      message: sentence == null ? 'Where this agent runs' : 'Where this agent runs\n$sentence',
       waitDuration: const Duration(milliseconds: 700),
       child: InkWell(
         onTap: _open,
@@ -230,13 +257,15 @@ class _GridModelPickerState extends State<GridModelPicker> {
 }
 
 /// One menu row: tick, optional engine mark, title, a quiet detail beside it, and a right-aligned
-/// status. The same column order in both sections, so the eye can run straight down the menu.
+/// status. The same column order in both sections, so the eye can run straight down the menu. A
+/// [subtitle], when there is one, sits under the title in the same column.
 class _Row extends StatelessWidget {
   final bool selected;
   final String? engine;
   final String title;
   final String detail;
   final String? status;
+  final String? subtitle;
 
   const _Row({
     required this.selected,
@@ -244,11 +273,12 @@ class _Row extends StatelessWidget {
     this.engine,
     this.detail = '',
     this.status,
+    this.subtitle,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Row(
+    final row = Row(
       children: [
         // A fixed tick column, so every row's label starts at the same x whether or not it is the
         // active one — a menu whose text shifts between rows reads as misaligned. Section headers
@@ -289,6 +319,23 @@ class _Row extends StatelessWidget {
             style: TextStyle(fontSize: 11, color: AppColors.mutedStrong),
           ),
         ],
+      ],
+    );
+    if (subtitle == null) return row;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        row,
+        Padding(
+          // Behind the tick column, so the sentence starts under the title it is about.
+          padding: const EdgeInsets.only(left: _tickColumn, top: 2),
+          child: Text(
+            subtitle!,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 10.5, color: AppColors.textSoft),
+          ),
+        ),
       ],
     );
   }

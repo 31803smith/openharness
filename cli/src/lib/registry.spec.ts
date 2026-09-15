@@ -1275,9 +1275,10 @@ describe('registry across a reboot and pane loss', () => {
       runtimes: [{ backend: 'tmux', paneId: '%9' }],
       cwd: '/tmp/demo',
       grid: { baseUrl: GRID_LAUNCH.baseUrl, model: 'gpt-5' },
-      gridLaunch: GRID_LAUNCH,
+      gridLaunchRecord: { override: GRID_LAUNCH, webSearch: 'on' },
     })!
     expect(pending.gridLaunch).toEqual(GRID_LAUNCH)
+    expect(pending.gridWebSearch).toBe('on')
     expect(pending.launch).toEqual({ state: 'starting' })
 
     const bound = registry.register({ sessionId: 'session-g', transcriptPath, tmuxPane: '%9', cwd: '/tmp/demo' })
@@ -1285,6 +1286,7 @@ describe('registry across a reboot and pane loss', () => {
     expect(bound?.entry).toMatchObject({
       grid: { baseUrl: GRID_LAUNCH.baseUrl, model: 'gpt-5' },
       gridLaunch: GRID_LAUNCH,
+      gridWebSearch: 'on',
       gateway: null,
     })
     // The hook is the engine reporting in: the launch is over and the frame reads ready.
