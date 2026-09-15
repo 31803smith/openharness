@@ -19,6 +19,7 @@ import 'widgets/bootstrapping_screen.dart';
 import 'widgets/layout_palette.dart';
 import 'widgets/environment_preflight_screen.dart';
 import 'widgets/environment_setup_screen.dart';
+import 'widgets/export_logs_dialog.dart';
 import 'widgets/flash_firmware_dialog.dart';
 import 'core/startup.dart';
 import 'logging/app_log.dart';
@@ -236,6 +237,8 @@ class _RootShellState extends ConsumerState<RootShell>
         });
       case 'flashFirmware':
         await _menuDialog(() => showFlashFirmwareDialog(context));
+      case 'exportLogs':
+        await _menuDialog(() => showExportLogsDialog(context));
       case 'showLayout':
         if (advanceLayoutPalette()) return;
         await _menuDialog(

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
+import '../shared/theme/app_theme.dart' as grid;
 import '../shared/widgets/app_dialog.dart';
 import '../shared/widgets/app_select_field.dart';
 import '../state/app_state.dart';
@@ -16,6 +17,8 @@ Future<String?> showSwarmRenameDialog(BuildContext context, String name) =>
     showAppDialog<String>(
       context: context,
       transitionDuration: Duration.zero,
+      veilBlur: 0,
+      veilTint: const Color(0x99000000),
       builder: (_) => _RenameSwarmDialog(name: name),
     );
 
@@ -49,31 +52,96 @@ class _RenameSwarmDialogState extends State<_RenameSwarmDialog> {
     super.dispose();
   }
 
+  void _save() {
+    final name = _text.text.trim();
+    if (name.isNotEmpty) Navigator.pop(context, name);
+  }
+
   @override
-  Widget build(BuildContext context) => AlertDialog(
-    title: const Text('Rename Tab'),
-    content: SizedBox(
-      width: 360,
-      child: TextField(
-        controller: _text,
-        focusNode: _focus,
-        autofocus: true,
-        maxLength: 80,
-        decoration: const InputDecoration(labelText: 'Name'),
-        onSubmitted: (value) => Navigator.pop(context, value),
+  Widget build(BuildContext context) {
+    grid.AppTheme.watch(context);
+    final accent = grid.AppPalette.accentOnSurface;
+    final border = OutlineInputBorder(
+      borderRadius: BorderRadius.circular(10),
+      borderSide: BorderSide.none,
+    );
+    return ListenableBuilder(
+      listenable: _text,
+      builder: (context, _) => AlertDialog(
+        title: const Text('Rename Tab'),
+        titleTextStyle: Theme.of(context).textTheme.titleMedium,
+        content: SizedBox(
+          width: 360,
+          child: Semantics(
+            label: 'Tab name',
+            child: TextSelectionTheme(
+              data: TextSelectionTheme.of(context)
+                  .copyWith(selectionColor: accent.withValues(alpha: .3)),
+              child: TextField(
+                controller: _text,
+                focusNode: _focus,
+                autofocus: true,
+                maxLength: 80,
+                cursorColor: accent,
+                textInputAction: TextInputAction.done,
+                style: TextStyle(
+                  fontSize: 15,
+                  color: grid.AppPalette.textPrimary,
+                ),
+                decoration: InputDecoration(
+                  filled: true,
+                  fillColor: grid.AppSurface.recess,
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 14,
+                  ),
+                  border: border,
+                  enabledBorder: border,
+                  focusedBorder: border.copyWith(
+                    borderSide: BorderSide(color: accent),
+                  ),
+                  counterText: '',
+                  suffixText: _text.text.characters.length >= 70
+                      ? '${_text.text.characters.length}/80'
+                      : null,
+                  suffixStyle: TextStyle(
+                    fontSize: 11,
+                    color: grid.AppPalette.textSecondary,
+                  ),
+                ),
+                onSubmitted: (_) => _save(),
+              ),
+            ),
+          ),
+        ),
+        actions: [
+          OutlinedButton(
+            onPressed: () => Navigator.pop(context),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: grid.AppPalette.textSecondary,
+              minimumSize: const Size(88, 38),
+              padding: const EdgeInsets.symmetric(horizontal: 18),
+              side: const BorderSide(color: Colors.white24),
+              shape: const StadiumBorder(),
+            ),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: _text.text.trim().isEmpty ? null : _save,
+            style: FilledButton.styleFrom(
+              backgroundColor: grid.AppPalette.swarmAccent,
+              foregroundColor: grid.AppPalette.swarmTabBar,
+              minimumSize: const Size(88, 38),
+              padding: const EdgeInsets.symmetric(horizontal: 18),
+              shape: const StadiumBorder(),
+            ),
+            child: const Text('Rename'),
+          ),
+        ],
       ),
-    ),
-    actions: [
-      TextButton(
-        onPressed: () => Navigator.pop(context),
-        child: const Text('Cancel'),
-      ),
-      FilledButton(
-        onPressed: () => Navigator.pop(context, _text.text),
-        child: const Text('Save'),
-      ),
-    ],
-  );
+    );
+  }
 }
 
 Future<SavedSwarmProject?> showSwarmProjectDialog(

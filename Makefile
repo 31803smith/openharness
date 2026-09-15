@@ -27,7 +27,7 @@ release-backend:
 ## and both Linux architectures, publishes to GCS, and cuts the GitHub Release. The version is bumped
 ## from max(last git tag, live harness/desktop/metadata.json). ARGS="--dry-run" to preview,
 ## ARGS="--minor" for a forced-update minor bump, ARGS="X.Y.Z" for an explicit version. The by-hand
-## escape hatches (upload-desktop, upload-desktop-linux, upload-node-runtime) live in desktop/Makefile.
+## escape hatches (upload-desktop, upload-desktop-linux, upload-node-runtime, upload-tmux-runtime) live in desktop/Makefile.
 release-desktop:
 	bash desktop/scripts/release-desktop.sh $(ARGS)
 

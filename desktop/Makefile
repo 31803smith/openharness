@@ -1,4 +1,4 @@
-.PHONY: release upload-desktop upload-desktop-linux upload-node-runtime terminal-local-manual terminal-local-e2e terminal-prod-e2e
+.PHONY: release upload-desktop upload-desktop-linux upload-node-runtime upload-tmux-runtime terminal-local-manual terminal-local-e2e terminal-prod-e2e
 
 ## release: tag this commit vX.Y.Z_desktop and push the tag — CI builds macOS + Linux, publishes to
 ## GCS, and cuts the GitHub Release. The version is bumped from max(last git tag, live metadata.json),
@@ -29,6 +29,11 @@ upload-desktop-linux:
 ## upload-node-runtime: publish checksum-verified managed Node runtimes for desktop bootstrap.
 upload-node-runtime:
 	bash scripts/publish-managed-node-runtime.sh $(ARGS)
+
+## upload-tmux-runtime: publish the macOS tmux archives built by cli/scripts/build-managed-tmux.sh
+## (ARGS="3.5a <dir>"). CI does this from release-tmux-runtime.yml; by hand only for a rebuild.
+upload-tmux-runtime:
+	bash scripts/publish-managed-tmux-runtime.sh $(ARGS)
 
 ## terminal-local-manual: start the local backend/CLI stack and open the desktop fixture.
 terminal-local-manual:

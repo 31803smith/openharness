@@ -58,7 +58,43 @@ Until that managed manifest covers a platform, the desktop build falls back to i
 official Node 22 archive for it. The fallback keeps first-run setup functional but is intentionally
 not a replacement for publishing the managed runtime channel before release.
 
-Homebrew and `apt` are still used for **tmux**, which is a separate step and unrelated to Node — and only when tmux is missing; a computer that already runs it is never asked about either.
+**tmux** is a separate step and unrelated to Node: on macOS it comes from Homebrew when Homebrew is already there, else from the managed runtime below; on Linux from `apt` — and only when tmux is missing; a computer that already runs it is never asked about any of them.
+
+## Managed tmux runtime (macOS)
+
+The same idea as Node, for the one host dependency that still came from a package manager: a
+checksum-verified `tmux` archive under `harness/runtime/tmux/`, built once per tmux version so a Mac
+with no tmux and no Homebrew can obtain it with no compiler, no package manager and no password.
+`cli/scripts/build-managed-tmux.sh` builds tmux against static libevent and ncurses (terminfo is
+read from macOS's own `/usr/share/terminfo`); the result links only `libSystem` and is ad-hoc
+signed. Its three macOS traps — the toolchain `clang` needing `SDKROOT`, tmux's configure silently
+linking the system ncurses 5.4 unless `LIBTINFO_LIBS` is explicit, and libevent's autoconf detecting
+a `pipe2` macOS does not have — are handled in the script and gated by `otool -L` and a real
+`new-session` smoke test (under Rosetta for the x64 build). pkg-config is pointed at our own
+`.pc` files only (`PKG_CONFIG_LIBDIR`) and jemalloc is disabled: with Homebrew on the build host —
+every CI runner — tmux 3.7's configure otherwise picks up a Homebrew jemalloc. Keep the pinned tmux
+level with what Homebrew ships (3.7c today): a tmux client and server must agree on their protocol,
+and a managed client older than a Homebrew server on the same socket only says "server exited
+unexpectedly".
+
+Publish from CI, never by hand unless rebuilding the same version:
+
+```bash
+gh workflow run release-tmux-runtime.yml -f tmux_version=3.7c                  # build both, publish
+gh workflow run release-tmux-runtime.yml -f tmux_version=3.7c -f publish=false # build only, inspect
+make upload-tmux-runtime ARGS="3.7c /path/to/archives"                          # the publisher CI calls
+```
+
+The manifest is `harness/runtime/tmux/metadata.json` — its own file, because `install.sh` slices a
+manifest by the first `"<platform>"` key and Node's already has one — with the same
+`{version,url,sha256,size,archiveRoot}` entries. `install.sh` reads it on a Mac that has no tmux and
+no Homebrew (Homebrew's tmux is used when Homebrew is already there): download into
+`~/.harness/runtime/tmux-<ver>-<platform>`, verify, record the binary in `~/.harness/runtime/current-tmux`
+(which the daemon's `ensureTmuxOnPath` falls back to when neither its PATH nor the user's login shell
+resolves a tmux — the terminal's tmux always wins, so daemon and terminal share one server) and link it as
+`~/.local/bin/tmux`. The desktop runs that same `install.sh --host` in-app, so on macOS first-run setup
+never opens a Terminal window. Publish a new runtime **before** the `install.sh` that pins a newer
+tmux level, and keep it level with what Homebrew ships.
 
 ## Two macOS builds — Intel on Skia, Apple Silicon on Impeller
 

@@ -35,6 +35,7 @@ class SwarmSearchController extends ChangeNotifier {
     _refresh();
     app.addListener(_refresh);
     projects?.addListener(_refresh);
+    app.sessionPreviews.addListener(_previewChanged);
   }
 
   final AppNotifier app;
@@ -52,6 +53,15 @@ class SwarmSearchController extends ChangeNotifier {
   bool get allowsCommands => split == null && history == null;
   bool get isCommandMode =>
       allowsCommands && (commandsOnly || query.trimLeft().startsWith('>'));
+  bool get hasPreview => !isCommandMode && history == null && selected != null;
+
+  // Paging the preview must not rebuild the result list or its text editor.
+  final _previewPage = ValueNotifier<int>(0);
+  ValueListenable<int> get previewPage => _previewPage;
+  void pagePreview(int pages) {
+    if (hasPreview) _previewPage.value += pages;
+  }
+
   final String targetId, targetName;
   // The workspace can retain normalized metadata across picker openings. Each
   // read still validates its snapshot; query, selection and output stay local.
@@ -160,7 +170,20 @@ class SwarmSearchController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _filter() {
+  void _previewChanged() {
+    if (query.trim().isEmpty || isCommandMode || history != null) return;
+    final previous = rows;
+    final previousSelection = selected?.id;
+    _filter(keepOrder: true);
+    // Live text can add/remove a match, but never shuffle matching rows under
+    // the keyboard or repaint the editor when the result set is unchanged.
+    if (!listEquals(previous, rows) || previousSelection != selected?.id) {
+      notifyListeners();
+    }
+  }
+
+  void _filter({bool keepOrder = false}) {
+    final previous = rows;
     final availableCommands = isCommandMode
         ? commands?.call() ?? const <SwarmDestination>[]
         : const <SwarmDestination>[];
@@ -168,7 +191,12 @@ class SwarmSearchController extends ChangeNotifier {
     rows = isCommandMode
         ? rankSwarmDestinations(availableCommands, commandQuery)
         : navigating
-        ? rankSwarmLocations(_catalog, query, recent: recent)
+        ? rankSwarmLocations(
+            _catalog,
+            query,
+            recent: recent,
+            previews: app.sessionPreviews,
+          )
         : rankSwarmDestinations(
             adding
                 ? _catalog
@@ -182,13 +210,26 @@ class SwarmSearchController extends ChangeNotifier {
                 : _catalog,
             query,
             recent: recent,
+            previews: history == null ? app.sessionPreviews : null,
           );
+    if (keepOrder && !navigating) {
+      final remaining = {for (final row in rows) row.id: row};
+      rows = [
+        for (final row in previous) ?remaining.remove(row.id),
+        ...remaining.values,
+      ];
+    }
     // The parent stays above its children visually, but Enter after a query
     // still targets the best match, including an agent nested under that parent.
     final preferred =
         _selectedId ??
         (navigating && !isCommandMode
-            ? rankSwarmDestinations(rows, query, recent: recent).firstOrNull?.id
+            ? rankSwarmDestinations(
+                rows,
+                query,
+                recent: recent,
+                previews: app.sessionPreviews,
+              ).firstOrNull?.id
             : null);
     final index = rows.indexWhere((row) => row.id == preferred);
     cursor = rows.isEmpty
@@ -282,6 +323,8 @@ class SwarmSearchController extends ChangeNotifier {
   void dispose() {
     app.removeListener(_refresh);
     projects?.removeListener(_refresh);
+    app.sessionPreviews.removeListener(_previewChanged);
+    _previewPage.dispose();
     super.dispose();
   }
 }

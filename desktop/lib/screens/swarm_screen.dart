@@ -32,6 +32,7 @@ import '../state/swarm.dart';
 import '../widgets/layout_palette.dart';
 import '../widgets/engine_identity.dart';
 import '../widgets/harness_start_page.dart';
+import '../widgets/harness_entry_actions.dart';
 import '../widgets/link_machine_screen.dart';
 import '../widgets/machines_manager.dart';
 import '../widgets/new_agent_dialog.dart';
@@ -41,6 +42,7 @@ import '../widgets/swarm_dialogs.dart';
 import '../widgets/swarm_search_input.dart';
 import '../widgets/swarm_attention.dart';
 import '../widgets/swarm_switcher.dart';
+import '../widgets/swarm_wallpaper.dart';
 import '../widgets/swarm_icon.dart';
 import '../widgets/task_palette.dart';
 
@@ -81,7 +83,8 @@ class _SwarmScreenState extends State<SwarmScreen> {
   final _searchFocus = FocusNode(debugLabel: 'Find a harness');
   SwarmSearchController? _search;
   OverlayEntry? _searchOverlay;
-  (String, bool, bool)? _searchHeaderState;
+  (String, bool, bool, bool)? _searchHeaderState;
+  bool _searchResultsVisible = false;
   FocusNode? _searchReturnFocus;
   (String, bool)? _lastWorkspace;
   bool _spokenPaletteOpen = false;
@@ -783,6 +786,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
       catalog: _searchCatalog,
     )..setQuery(query);
     _search!.addListener(_syncSearch);
+    _searchResultsVisible = !adding || query.isNotEmpty;
     _searchOverlay = OverlayEntry(builder: _buildSearchOverlay);
     Overlay.of(context).insert(_searchOverlay!);
     _syncSearch();
@@ -819,11 +823,25 @@ class _SwarmScreenState extends State<SwarmScreen> {
     }
     // Results listen to their controller directly. Rebuilding the entire
     // overlay on every arrow also rebuilt the unchanged text editor/button.
-    final header = (search.hint, search.canCreate, _canDismissSearch);
+    if (search.query.isNotEmpty) _searchResultsVisible = true;
+    final header = (
+      search.hint,
+      search.canCreate,
+      _canDismissSearch,
+      _searchResultsVisible,
+    );
     if (_searchHeaderState != header) {
       _searchHeaderState = header;
       _searchOverlay?.markNeedsBuild();
     }
+  }
+
+  void _revealSearch() {
+    if (_search == null) return;
+    _searchResultsVisible = true;
+    _search!.setQuery(_searchText.text);
+    _syncSearch();
+    _focusSearch();
   }
 
   void _closeSearch({bool restoreFocus = true}) {
@@ -880,13 +898,15 @@ class _SwarmScreenState extends State<SwarmScreen> {
     // Keep the command editor mounted as its query changes so every keystroke
     // retains focus and text editing ownership.
     final commandsOnly = search.commandsOnly;
+    final showResults = _searchResultsVisible || commandsOnly;
     return KeymapProvider(
       keymap: _keymap,
       child: SwarmSearchKeys(
-        search: search,
+        search: showResults ? search : null,
         editing: _searchText,
         onChoose: _chooseSearch,
         onClose: _dismissSearch,
+        onOpen: _revealSearch,
         onNewAgent: () => _runShortcut('agent.new'),
         onRefocus: _focusSearch,
         child: LayoutBuilder(
@@ -909,18 +929,25 @@ class _SwarmScreenState extends State<SwarmScreen> {
                   height: (constraints.maxHeight - 96).clamp(220.0, 600.0),
                   child: Column(
                     children: [
-                      Expanded(
+                      Flexible(
                         child: Material(
                           key: const ValueKey('swarm-search-results'),
-                          elevation: 16,
+                          elevation: showResults ? 16 : 0,
                           shadowColor: Colors.black54,
-                          color: grid.AppPalette.swarmSearchSurface,
+                          color: showResults
+                              ? grid.AppPalette.swarmSearchSurface
+                              : Colors.transparent,
                           shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            side: const BorderSide(color: Colors.white24),
+                            borderRadius: BorderRadius.circular(
+                              showResults ? 12 : 999,
+                            ),
+                            side: showResults
+                                ? const BorderSide(color: Colors.white24)
+                                : BorderSide.none,
                           ),
                           clipBehavior: Clip.antiAlias,
                           child: Column(
+                            mainAxisSize: MainAxisSize.min,
                             children: [
                               if (commandsOnly)
                                 const Padding(
@@ -940,23 +967,52 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                 inputKey: const ValueKey('swarm-search-input'),
                                 controller: _searchText,
                                 focusNode: _searchFocus,
-                                search: search,
+                                search: showResults ? search : null,
                                 onClose: _dismissSearch,
                                 onChanged: search.setQuery,
-                                showClose: _canDismissSearch || commandsOnly,
+                                onOpen: _revealSearch,
+                                showClose: showResults,
+                                rounded: true,
+                                prominent: !commandsOnly,
                               ),
-                              const Divider(height: 1, color: Colors.white12),
-                              Expanded(
-                                child: SwarmSearchResults(
-                                  search: search,
-                                  onChoose: _chooseSearch,
-                                  onRefocus: _focusSearch,
+                              if (showResults) ...[
+                                const Divider(height: 1, color: Colors.white12),
+                                Flexible(
+                                  child: SizedBox(
+                                    height: 480,
+                                    child: SwarmSearchResults(
+                                      search: search,
+                                      onChoose: _chooseSearch,
+                                      onRefocus: _focusSearch,
+                                    ),
+                                  ),
                                 ),
-                              ),
+                              ],
                             ],
                           ),
                         ),
                       ),
+                      if (!commandsOnly) ...[
+                        const SizedBox(height: 20),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: ListenableBuilder(
+                            listenable: search,
+                            builder: (context, _) => HarnessEntryActions(
+                              openKey: const ValueKey('harness-picker-open'),
+                              newKey: const ValueKey('harness-picker-new'),
+                              onOpen: !showResults
+                                  ? _revealSearch
+                                  : search.canAccept
+                                  ? () => _chooseSearch(search.submit()!)
+                                  : null,
+                              onNew: search.canCreate
+                                  ? () => _runShortcut('agent.new')
+                                  : null,
+                            ),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -1311,9 +1367,9 @@ class _SwarmScreenState extends State<SwarmScreen> {
                       fit: StackFit.expand,
                       children: [
                         if (app.panes.isEmpty)
-                          ColoredBox(
-                            color: grid.AppPalette.swarmField,
-                            key: const ValueKey('harness-start-background'),
+                          const RepaintBoundary(
+                            key: ValueKey('harness-start-background'),
+                            child: SwarmWallpaper(),
                           ),
                         Padding(
                           padding: app.panes.isEmpty
@@ -1491,40 +1547,28 @@ class _SwarmScreenState extends State<SwarmScreen> {
           onPressed: app.canOpenNewTab ? _newTab : null,
           icon: const Icon(Icons.add, size: 18, semanticLabel: 'New Tab'),
         ),
-        _harnessButton(create: true),
-        const SizedBox(width: 12),
-        _harnessButton(create: false),
+        _harnessButton(),
         const SizedBox(width: 12),
       ],
     ),
   );
 
-  Widget _harnessButton({required bool create}) {
-    final label = create ? 'New Harness' : 'Open Harness';
+  Widget _harnessButton() {
     return TextButton(
-      key: ValueKey(
-        create ? 'swarm-new-harness-button' : 'swarm-open-harness-button',
-      ),
-      onPressed: create ? _newAgent : _addAgent,
+      key: const ValueKey('swarm-add-harness-button'),
+      onPressed: _addAgent,
       style: TextButton.styleFrom(
         enabledMouseCursor: SystemMouseCursors.click,
-        minimumSize: Size(create ? 122 : 128, 34),
+        minimumSize: const Size(122, 34),
         padding: const EdgeInsets.symmetric(horizontal: 20),
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
         textStyle: Theme.of(context).textTheme.labelLarge
             ?.copyWith(fontSize: 12, fontWeight: FontWeight.w500),
-        backgroundColor: create
-            ? grid.AppPalette.swarmAccent
-            : Colors.transparent,
-        foregroundColor: create
-            ? grid.AppPalette.swarmTabBar
-            : grid.AppPalette.swarmAccent,
+        backgroundColor: grid.AppPalette.swarmAccent,
+        foregroundColor: grid.AppPalette.swarmTabBar,
         shape: const StadiumBorder(),
-        side: create
-            ? BorderSide.none
-            : const BorderSide(color: Colors.white24),
       ),
-      child: Text(label),
+      child: const Text('Add Harness'),
     );
   }
 }

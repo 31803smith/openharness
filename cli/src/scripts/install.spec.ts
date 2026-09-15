@@ -1,6 +1,6 @@
 import { spawnSync } from "child_process";
 import { join } from "path";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { describe, expect, it } from "vitest";
 
@@ -19,15 +19,16 @@ const writeLinuxHostCommands = (directory: string) => {
 };
 
 // Step 1 of the script — the host-requirements ladder — as one runnable unit.
+// From the constants (RUNTIME_DIR, BIN_DIR, the manifest URLs) through the whole host step.
 const hostSetupOf = (source: string) =>
-  source.slice(source.indexOf("require_command()"), source.indexOf("# 2. Resolve the Node"));
+  source.slice(source.indexOf('METADATA_URL="${HARNESS_METADATA_URL'), source.indexOf("# 2. Resolve the Node"));
 
 // The download-tools check that guards the Node download, with the helpers it calls.
 const downloadToolsOf = (source: string) =>
-  source.slice(source.indexOf("require_command()"), source.indexOf("tmux_runs()")) +
+  source.slice(source.indexOf('METADATA_URL="${HARNESS_METADATA_URL'), source.indexOf("tmux_runs()")) +
   source.slice(
     source.indexOf("  # Fetching, unpacking and verifying the runtime"),
-    source.indexOf("  # sha256 is the one tool"),
+    source.indexOf('  echo "▸ Installing the Harness Node runtime'),
   );
 
 describe("scripts/install.sh command contract", () => {
@@ -110,41 +111,40 @@ describe("scripts/install.sh command contract", () => {
     expect(tmuxStep).toBeGreaterThan(-1);
     expect(nodeStep).toBeGreaterThan(tmuxStep);
     expect(cliStep).toBeGreaterThan(nodeStep);
-    expect(source).toContain("/usr/bin/xcrun --find clang");
-    expect(source).toContain(
-      "sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer",
-    );
-    expect(source).toContain("xcode-select --install");
-    // An unaccepted Xcode licence makes xcrun fail exactly like an unselected directory; only
-    // one of them is fixed by xcode-select, so the licence is checked and accepted first.
-    expect(source).toContain("/usr/bin/xcodebuild -license check");
-    expect(source).toContain("sudo /usr/bin/xcodebuild -license accept");
-    expect(source.indexOf("-license accept")).toBeLessThan(
-      source.indexOf("sudo xcode-select --switch"),
-    );
-    expect(source).toContain("Homebrew installation failed");
     expect(source).toContain("brew install tmux");
+    expect(source).toContain("install_managed_tmux");
     expect(source).toContain("install_with_apt $missing_host_packages");
     expect(source).toContain('if [ "$(id -u)" -eq 0 ]; then');
     expect(source).toContain('sudo apt-get "$@"');
     expect(source).not.toContain("sudo apt-get update &&");
-    expect(source).toContain("Could not install tmux via Homebrew");
     expect(source).toContain("tmux is required but did not pass verification");
     expect(source).toContain("exit 22");
+    // Obtaining tmux never needs a compiler, Xcode or the Homebrew installer any more.
+    expect(source).not.toContain("xcrun");
+    expect(source).not.toContain("xcode-select");
+    expect(source).not.toContain("Homebrew/install/HEAD/install.sh");
+    expect(source).not.toContain("exit 20");
+    expect(source).not.toContain("exit 21");
   });
 
-  // The ladder, in source order: tmux is asked about first, Homebrew only when tmux is missing, the
-  // Apple developer tools only when Homebrew is missing too.
-  it("asks about Homebrew only without tmux, and about Xcode only without Homebrew", () => {
+  // The ladder, in source order: tmux is asked about first, Homebrew used only when tmux is missing
+  // and Homebrew is already there, the managed build for everything else.
+  it("asks about Homebrew only without tmux, and downloads the managed build without Homebrew", () => {
     const source = readFileSync(installer, "utf8");
-    const darwin = source.slice(source.indexOf("  Darwin)"), source.indexOf("  Linux)"));
+    const hostStep = source.slice(source.indexOf("# 1. Host requirements"));
+    const darwin = hostStep.slice(hostStep.indexOf("  Darwin)"), hostStep.indexOf("  Linux)"));
 
     const tmuxCheck = darwin.indexOf("if tmux_runs; then");
-    const brewCheck = darwin.indexOf('if ! command -v brew >/dev/null 2>&1; then');
-    const xcrunCheck = darwin.indexOf("/usr/bin/xcrun --find clang");
+    const brewCheck = darwin.indexOf("if command -v brew >/dev/null 2>&1; then");
+    const managed = darwin.indexOf("tmux_runs || install_managed_tmux");
     expect(tmuxCheck).toBeGreaterThan(-1);
     expect(brewCheck).toBeGreaterThan(tmuxCheck);
-    expect(xcrunCheck).toBeGreaterThan(brewCheck);
+    expect(managed).toBeGreaterThan(brewCheck);
+    // The managed archive is checksum-pinned by the manifest and recorded for the daemon.
+    expect(source).toContain("harness/runtime/tmux/metadata.json");
+    expect(source).toContain('CURRENT_TMUX_FILE="$RUNTIME_DIR/current-tmux"');
+    expect(source).toContain("tmux download failed checksum verification");
+    expect(source).toContain('ln -sfn "$tmux_target/bin/tmux" "$BIN_DIR/tmux"');
   });
 
   it("does nothing on a Mac that already runs tmux", () => {
@@ -174,12 +174,12 @@ describe("scripts/install.sh command contract", () => {
     }
   });
 
-  it("installs tmux with an existing Homebrew and never looks for Xcode", () => {
+  it("installs tmux with an existing Homebrew and never fetches the managed build", () => {
     const source = readFileSync(installer, "utf8");
     const hostSetup = hostSetupOf(source);
     const scratch = mkdtempSync(join(tmpdir(), "harness-mac-brew-"));
     const invocations = join(scratch, "brew-invocations");
-    const developerTools = join(scratch, "developer-tools-touched");
+    const fetched = join(scratch, "curl-invoked");
     const fakeTmux = join(scratch, "tmux");
 
     try {
@@ -187,21 +187,173 @@ describe("scripts/install.sh command contract", () => {
       writeCommand(scratch, "brew", [
         `printf '%s\\n' "$*" >> '${invocations}'`,
         `if [ "$1" = "shellenv" ]; then exit 0; fi`,
-        `printf '%s\\n' '#!/bin/sh' 'printf "tmux 3.6\\\\n"' > '${fakeTmux}'`,
+        `printf '%s\\n' '#!/bin/sh' 'printf "tmux 3.7c\\\\n"' > '${fakeTmux}'`,
         `/bin/chmod 700 '${fakeTmux}'`,
       ]);
-      writeCommand(scratch, "sudo", [`: > '${developerTools}'`, "exit 99"]);
-      writeCommand(scratch, "xcode-select", [`: > '${developerTools}'`, "exit 99"]);
+      writeCommand(scratch, "curl", [`: > '${fetched}'`, "exit 99"]);
 
       const result = spawnSync("/bin/sh", ["-c", hostSetup], {
         encoding: "utf8",
-        env: { ...process.env, INSTALL_MODE: "standalone", PATH: scratch },
+        env: {
+          ...process.env,
+          INSTALL_MODE: "standalone",
+          PATH: scratch,
+          HARNESS_HOMEBREW_PREFIXES: join(scratch, "no-homebrew"),
+        },
       });
 
       expect(result.status).toBe(0);
       expect(readFileSync(invocations, "utf8")).toContain("install tmux\n");
-      expect(result.stdout).not.toContain("Apple developer tools");
-      expect(() => readFileSync(developerTools, "utf8")).toThrow();
+      expect(result.stdout).not.toContain("managed");
+      expect(() => readFileSync(fetched, "utf8")).toThrow();
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
+  // A fake CDN: `curl -o` writes the archive, plain `curl` prints the manifest. The archive wraps a
+  // fake tmux so the whole managed path — fetch, verify, unpack, record, link — runs for real.
+  const managedFixture = (scratch: string, tamperSha = false) => {
+    const home = join(scratch, "home");
+    const root = "tmux-9.9-darwin-arm64";
+    const stage = join(scratch, "stage", root, "bin");
+    mkdirSync(stage, { recursive: true });
+    writeCommand(stage, "tmux", ["printf 'tmux 9.9\\n'"]);
+    const archive = join(scratch, `${root}.tar.gz`);
+    spawnSync("tar", ["-czf", archive, "-C", join(scratch, "stage"), root]);
+    const sha = spawnSync("shasum", ["-a", "256", archive], { encoding: "utf8" }).stdout.split(" ")[0];
+    const manifest = JSON.stringify({
+      tmux: {
+        "darwin-arm64": {
+          version: "9.9",
+          url: "https://cdn.example/tmux.tar.gz",
+          sha256: tamperSha ? "0".repeat(64) : sha,
+          size: 1,
+          archiveRoot: root,
+        },
+      },
+    }, null, 2);
+    writeFileSync(join(scratch, "manifest.json"), manifest);
+    writeCommand(scratch, "curl", [
+      `printf '%s\\n' "$*" >> '${join(scratch, "curl-invocations")}'`,
+      `case "$*" in *"-o "*) cp '${archive}' "$4" ;; *) cat '${join(scratch, "manifest.json")}' ;; esac`,
+    ]);
+    writeCommand(scratch, "uname", [`if [ "$1" = "-m" ]; then printf 'arm64\\n'; else printf 'Darwin\\n'; fi`]);
+    mkdirSync(home, { recursive: true });
+    return { home, root };
+  };
+
+  it("downloads, verifies and links the managed tmux when there is no Homebrew", () => {
+    const source = readFileSync(installer, "utf8");
+    const hostSetup = hostSetupOf(source);
+    const scratch = mkdtempSync(join(tmpdir(), "harness-mac-managed-"));
+
+    try {
+      const { home, root } = managedFixture(scratch);
+      const result = spawnSync("/bin/sh", ["-c", hostSetup], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          HOME: home,
+          INSTALL_MODE: "standalone",
+          // Only stock tools beyond the fakes: no brew, no tmux — and the fakes win.
+          PATH: `${scratch}:/usr/bin:/bin`,
+          HARNESS_TMUX_METADATA_URL: "https://cdn.example/manifest.json",
+          HARNESS_HOMEBREW_PREFIXES: join(scratch, "no-homebrew"),
+        },
+      });
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("downloading tmux 9.9 (darwin-arm64)");
+      expect(result.stdout).toContain("tmux ready (tmux 9.9)");
+      const binary = join(home, ".harness", "runtime", root, "bin", "tmux");
+      expect(readFileSync(join(home, ".harness", "runtime", "current-tmux"), "utf8").trim()).toBe(binary);
+      expect(readlinkSync(join(home, ".local", "bin", "tmux"))).toBe(binary);
+      expect(readFileSync(join(scratch, "curl-invocations"), "utf8")).toContain("https://cdn.example/manifest.json");
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a managed tmux whose checksum does not match, and links nothing", () => {
+    const source = readFileSync(installer, "utf8");
+    const hostSetup = hostSetupOf(source);
+    const scratch = mkdtempSync(join(tmpdir(), "harness-mac-managed-bad-"));
+
+    try {
+      const { home } = managedFixture(scratch, true);
+      const result = spawnSync("/bin/sh", ["-c", hostSetup], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          HOME: home,
+          INSTALL_MODE: "standalone",
+          PATH: `${scratch}:/usr/bin:/bin`,
+          HARNESS_TMUX_METADATA_URL: "https://cdn.example/manifest.json",
+          HARNESS_HOMEBREW_PREFIXES: join(scratch, "no-homebrew"),
+        },
+      });
+
+      expect(result.status).toBe(22);
+      expect(result.stderr).toContain("checksum verification");
+      expect(() => readlinkSync(join(home, ".local", "bin", "tmux"))).toThrow();
+      expect(() => readFileSync(join(home, ".harness", "runtime", "current-tmux"))).toThrow();
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to the managed build when Homebrew cannot install tmux", () => {
+    const source = readFileSync(installer, "utf8");
+    const hostSetup = hostSetupOf(source);
+    const scratch = mkdtempSync(join(tmpdir(), "harness-mac-brew-broken-"));
+
+    try {
+      const { home, root } = managedFixture(scratch);
+      writeCommand(scratch, "brew", [`if [ "$1" = "shellenv" ]; then exit 0; fi`, "exit 1"]);
+      const result = spawnSync("/bin/sh", ["-c", hostSetup], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          HOME: home,
+          INSTALL_MODE: "standalone",
+          PATH: `${scratch}:/usr/bin:/bin`,
+          HARNESS_TMUX_METADATA_URL: "https://cdn.example/manifest.json",
+          HARNESS_HOMEBREW_PREFIXES: join(scratch, "no-homebrew"),
+        },
+      });
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("Homebrew could not install tmux");
+      expect(readlinkSync(join(home, ".local", "bin", "tmux"))).toContain(root);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
+  it("host mode puts ~/.local/bin on PATH for new shells", () => {
+    const source = readFileSync(installer, "utf8");
+    const hostSetup = hostSetupOf(source);
+    const scratch = mkdtempSync(join(tmpdir(), "harness-host-rc-"));
+
+    try {
+      const { home } = managedFixture(scratch);
+      const result = spawnSync("/bin/sh", ["-c", hostSetup], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          HOME: home,
+          SHELL: "/bin/zsh",
+          INSTALL_MODE: "host",
+          PATH: `${scratch}:/usr/bin:/bin`,
+          HARNESS_TMUX_METADATA_URL: "https://cdn.example/manifest.json",
+          HARNESS_HOMEBREW_PREFIXES: join(scratch, "no-homebrew"),
+        },
+      });
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("Host requirements ready");
+      expect(readFileSync(join(home, ".zshrc"), "utf8")).toContain('export PATH="$HOME/.local/bin:$PATH"');
     } finally {
       rmSync(scratch, { recursive: true, force: true });
     }

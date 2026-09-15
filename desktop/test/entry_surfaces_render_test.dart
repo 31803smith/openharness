@@ -187,11 +187,11 @@ void main() {
           }
         }
         await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-        await chord(tester, LogicalKeyboardKey.keyO);
+        await chord(tester, LogicalKeyboardKey.keyN);
         await tester.pumpAndSettle();
         await capture('open');
         await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-        await chord(tester, LogicalKeyboardKey.keyN);
+        await chord(tester, LogicalKeyboardKey.keyN, shift: true);
         await tester.pumpAndSettle();
         await capture('new');
         expect(tester.takeException(), isNull);

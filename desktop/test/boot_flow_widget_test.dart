@@ -708,7 +708,7 @@ void main() {
       },
       phase: EnvironmentSetupPhase.chooseMethod,
       mode: EnvironmentSetupMode.automatic,
-      plan: [EnvironmentPlanItem.homebrew, EnvironmentPlanItem.tmuxViaHomebrew],
+      plan: [EnvironmentPlanItem.tmuxManaged],
     );
     await tester.pumpWidget(
       ProviderScope(
@@ -718,23 +718,21 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.text('Homebrew'), findsOneWidget);
     expect(find.text('tmux'), findsOneWidget);
     expect(find.text('Managed Node 20+ & Harness CLI'), findsNothing);
-    expect(find.text('Install 2 tools'), findsOneWidget);
-    expect(find.text('Admin prompts stay in Terminal'), findsOneWidget);
+    expect(find.text('Install 1 tool'), findsOneWidget);
+    // Nothing on macOS needs a password any more: no Terminal notice.
+    expect(find.text('Admin prompts stay in Terminal'), findsNothing);
 
     await tester.tap(find.text('Manual setup'));
     await tester.pump();
 
-    expect(find.text('1 · Homebrew'), findsOneWidget);
-    expect(find.text('2 · tmux'), findsOneWidget);
+    expect(find.text('1 · tmux'), findsOneWidget);
     expect(
-      find.textContaining('Homebrew/install/HEAD/install.sh'),
+      find.textContaining('install.sh | /bin/sh -s -- --host'),
       findsOneWidget,
     );
-    expect(find.textContaining('brew install tmux'), findsOneWidget);
-    expect(find.textContaining('cdn.autonomous.ai'), findsNothing);
+    expect(find.textContaining('Homebrew/install/HEAD'), findsNothing);
   });
 
   testWidgets('CLI-only install plan does not warn about admin prompts', (
@@ -767,24 +765,18 @@ void main() {
   });
 
   testWidgets(
-    'review lists the whole ladder when neither tmux nor Homebrew nor Xcode is there',
+    'review shows tmux and the CLI as two in-app steps on a bare Mac',
     (tester) async {
-      // The plan is the provisioner's, in ladder order: the developer tools
-      // appear only because Homebrew was found missing, Homebrew only because
-      // tmux was.
+      // No tmux, no Homebrew, no Harness: still nothing that needs Terminal.
       final app = makeNotifier(AppStatus.preparingEnvironment);
       app.environmentReadiness = const EnvironmentReadiness(
         steps: {
           EnvironmentStep.clipboard: EnvironmentStepStatus.notApplicable,
-          EnvironmentStep.harness: EnvironmentStepStatus.ready,
+          EnvironmentStep.harness: EnvironmentStepStatus.failed,
           EnvironmentStep.tmux: EnvironmentStepStatus.failed,
         },
         phase: EnvironmentSetupPhase.review,
-        plan: [
-          EnvironmentPlanItem.appleDeveloperTools,
-          EnvironmentPlanItem.homebrew,
-          EnvironmentPlanItem.tmuxViaHomebrew,
-        ],
+        plan: [EnvironmentPlanItem.tmuxManaged, EnvironmentPlanItem.harnessCli],
       );
       await tester.pumpWidget(
         ProviderScope(
@@ -794,19 +786,18 @@ void main() {
       );
       await tester.pump();
 
-      expect(find.text('Apple developer tools'), findsOneWidget);
-      expect(find.text('Homebrew'), findsOneWidget);
       expect(find.text('tmux'), findsOneWidget);
-      expect(find.text('Install 3 tools'), findsOneWidget);
+      expect(find.text('Managed Node 20+ & Harness CLI'), findsOneWidget);
+      expect(find.text('Install 2 tools'), findsOneWidget);
+      expect(find.text('Admin prompts stay in Terminal'), findsNothing);
+      expect(find.text('Apple developer tools'), findsNothing);
+      expect(find.text('Homebrew'), findsNothing);
       expect(
-        tester.getTopLeft(find.text('Apple developer tools')).dy,
-        lessThan(tester.getTopLeft(find.text('Homebrew')).dy),
+        tester.getTopLeft(find.text('tmux')).dy,
+        lessThan(
+          tester.getTopLeft(find.text('Managed Node 20+ & Harness CLI')).dy,
+        ),
       );
-      expect(
-        tester.getTopLeft(find.text('Homebrew')).dy,
-        lessThan(tester.getTopLeft(find.text('tmux')).dy),
-      );
-      expect(find.text('Apple developer tools'), findsOneWidget);
     },
   );
 

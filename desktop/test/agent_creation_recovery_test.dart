@@ -103,20 +103,22 @@ void main() {
         switch (entry) {
           case 'header':
             await tester.tap(
-              find.byKey(const ValueKey('swarm-new-harness-button')),
+              find.byKey(const ValueKey('swarm-add-harness-button')),
             );
+            await tester.pump();
+            await tester.tap(find.byKey(const ValueKey('harness-picker-new')));
           case 'start page':
             await chord(tester, LogicalKeyboardKey.keyT);
             await tester.tap(find.byKey(const ValueKey('harness-start-new')));
           case 'search shortcut':
-            await chord(tester, LogicalKeyboardKey.keyO);
+            await chord(tester, LogicalKeyboardKey.keyN);
             await tester.enterText(
               find.byKey(const ValueKey('swarm-search-input')),
               'Agent 12',
             );
-            await chord(tester, LogicalKeyboardKey.keyN);
+            await chord(tester, LogicalKeyboardKey.keyN, shift: true);
           default:
-            await chord(tester, LogicalKeyboardKey.keyN);
+            await chord(tester, LogicalKeyboardKey.keyN, shift: true);
         }
         await tester.pumpAndSettle();
         expect(find.byType(AlertDialog), findsOneWidget);
@@ -162,7 +164,7 @@ void main() {
     final connection = _Connection();
     final app = createApp(connectionForTest: (_) => connection);
     await mount(tester, app);
-    await chord(tester, LogicalKeyboardKey.keyN);
+    await chord(tester, LogicalKeyboardKey.keyN, shift: true);
     await tester.pumpAndSettle();
     expect(find.byType(AlertDialog), findsOneWidget);
     await tester.tapAt(const Offset(12, 72));
@@ -198,7 +200,7 @@ void main() {
         await mount(tester, app);
         final field = find.byKey(const ValueKey('swarm-search-input'));
         if (entry == 'Open') {
-          await chord(tester, LogicalKeyboardKey.keyO);
+          await chord(tester, LogicalKeyboardKey.keyN);
         } else {
           await chord(tester, LogicalKeyboardKey.keyP, shift: true);
           await tester.enterText(field, '> $entry');
@@ -206,8 +208,8 @@ void main() {
           await tester.sendKeyEvent(LogicalKeyboardKey.enter);
           await tester.pump();
         }
-        await tester.enterText(field, 'Agent 12');
-        await chord(tester, LogicalKeyboardKey.keyN);
+        expect(find.byType(SwarmSearchResults), findsNothing);
+        await tester.tap(find.byKey(const ValueKey('harness-picker-new')));
         await tester.pumpAndSettle();
         expect(find.byType(AlertDialog), findsOneWidget);
         expect(find.byType(SwarmSearchResults), findsNothing);
@@ -267,7 +269,7 @@ void main() {
         await tester.sendKeyEvent(LogicalKeyboardKey.enter);
         await tester.pump();
       }
-      await chord(tester, LogicalKeyboardKey.keyN);
+      await chord(tester, LogicalKeyboardKey.keyN, shift: true);
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('new-agent-folder')));
       await tester.pumpAndSettle();
@@ -342,8 +344,8 @@ void main() {
     final input = <TerminalBinaryFrame>[];
     final pane = app.adoptSessionForTest(terminal('a0', input));
     await mount(tester, app);
-    await chord(tester, LogicalKeyboardKey.keyO);
     await chord(tester, LogicalKeyboardKey.keyN);
+    await chord(tester, LogicalKeyboardKey.keyN, shift: true);
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('new-agent-folder')));
     await tester.pumpAndSettle();
@@ -368,8 +370,9 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
     await tester.pump();
     expect(input.single.bytes, [27, 91, 66]);
-    await chord(tester, LogicalKeyboardKey.keyO);
-    expect(find.byType(SwarmSearchResults), findsOneWidget);
+    await chord(tester, LogicalKeyboardKey.keyN);
+    expect(find.byType(SwarmSearchResults), findsNothing);
+    expect(find.byKey(const ValueKey('harness-picker-new')), findsOneWidget);
     expect(connection.calls, hasLength(1));
     await tester.pumpWidget(const SizedBox());
     app.dispose();

@@ -87,7 +87,7 @@ class PaneHeaderActions extends StatelessWidget {
             const SizedBox(width: 2),
             action('Restart Harness', LucideIcons.refreshCw, onRestart),
             const SizedBox(width: 2),
-            action('Stop Harness', LucideIcons.circleStop, onDelete),
+            action('Stop Harness', Icons.stop_rounded, onDelete),
             const SizedBox(width: 2),
             action('Close Pane', LucideIcons.x, onClose),
           ],
