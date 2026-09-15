@@ -74,7 +74,6 @@ class _WebPanePanelState extends State<WebPanePanel> {
   void _mountController() {
     final controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setBackgroundColor(grid.AppPalette.windowBg)
       ..setNavigationDelegate(
         NavigationDelegate(
           onPageStarted: (_) => _set(() {
@@ -112,6 +111,13 @@ class _WebPanePanelState extends State<WebPanePanel> {
     if (uri == null) return;
     _loadedUrl = url;
     _failure = null;
+    // The window colour behind the page, so a dark app never flashes white
+    // while a viewer loads. WKWebView on macOS has no such setting (the plugin
+    // throws UnimplementedError, seen live 2026-09-15 as a red pane), so only
+    // platforms that do get it.
+    if (!Platform.isMacOS) {
+      controller.setBackgroundColor(grid.AppPalette.windowBg);
+    }
     controller.loadRequest(uri);
   }
 

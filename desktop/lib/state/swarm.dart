@@ -48,6 +48,13 @@ class Swarm {
     if (index < 0) return;
     final manual = manualLayout;
     panes.removeAt(index);
+    // Layouts are kept per pane count, so the harness split for a viewer and
+    // its terminal would otherwise wait for the next two tiles of any kind.
+    // Only the split Harness itself made goes; one the user dragged is theirs.
+    if (panes.length == 1 &&
+        identical(manual, PaneArrangement.viewerBesideTerminal)) {
+      paneSizes.remove('2:manual');
+    }
     if (manual != null && panes.length > 1) {
       final next = manual.remove(index);
       if (next == null) {

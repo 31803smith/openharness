@@ -126,6 +126,12 @@ const _harnesses = <String, EngineIdentity>{
     color: Color(0xffe09a3c),
     asset: 'assets/engine-icons/workshop.png',
   ),
+  'autonomous/marp': EngineIdentity(
+    id: 'autonomous/marp',
+    label: 'Marp',
+    color: Color(0xff218cdb),
+    asset: 'assets/engine-icons/marp.png',
+  ),
 };
 
 /// The base engine each first-party harness runs on, so the Create dialog can
@@ -134,6 +140,7 @@ const _harnesses = <String, EngineIdentity>{
 const knownHarnessBase = <String, String>{
   'autonomous/circuit': 'claude',
   'autonomous/workshop': 'codex',
+  'autonomous/marp': 'claude',
 };
 
 /// All known engines, in declaration order — for the New Agent engine picker.

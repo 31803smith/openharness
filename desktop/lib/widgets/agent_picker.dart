@@ -28,6 +28,7 @@ class AgentPicker extends StatelessWidget {
     'opencode',
     'autonomous/circuit',
     'autonomous/workshop',
+    'autonomous/marp',
   ];
 
   @override

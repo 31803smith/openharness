@@ -8,6 +8,14 @@ enum PaneResizeAxis { x, y }
 class PaneArrangement {
   PaneArrangement(Iterable<Rect> tiles) : tiles = List.unmodifiable(tiles);
   final List<Rect> tiles;
+
+  /// The split a harness tab opens with: the viewer on the left at three
+  /// quarters, its terminal on the right. One shared instance, so the code
+  /// that opened the pair can tell its own split from one the user dragged.
+  static final viewerBesideTerminal = PaneArrangement(const [
+    Rect.fromLTRB(0, 0, 0.75, 1),
+    Rect.fromLTRB(0.75, 0, 1, 1),
+  ]);
   static const _epsilon = 0.000001;
 
   late final List<PaneDivider> dividers = _findDividers();

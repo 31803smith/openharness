@@ -1,9 +1,12 @@
-// A harness's viewer tile: opened to the right of its agent's terminal when the
+// A harness's viewer tile: opened to the left of its agent's terminal when the
 // agent's frame names a viewer, navigated when that URL changes, left closed
 // once the person closes it, and taken down with the agent.
+
 import 'package:flutter/material.dart';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/state/app_state.dart';
+import 'package:harness/state/pane_arrangement.dart';
 import 'package:harness/state/terminal_pane.dart';
 import 'package:harness/terminal/terminal_binary.dart';
 import 'package:harness/widgets/web_pane_panel.dart';
@@ -36,46 +39,79 @@ List<TerminalPane> _viewers(AppNotifier app) =>
     app.panes.where((pane) => pane.isWeb).toList();
 
 void main() {
-  test(
-    'a viewer opens to the right of its agent and follows the URL',
-    () async {
-      final app = createApp();
-      addTearDown(app.dispose);
-      final input = <TerminalBinaryFrame>[];
-      final first = app.adoptSessionForTest(terminal('a0', input));
-      final second = app.adoptSessionForTest(terminal('a1', input));
-      app.focusPane(first.id);
+  test('a viewer opens to the left of its agent and follows the URL', () async {
+    final app = createApp();
+    addTearDown(app.dispose);
+    final input = <TerminalBinaryFrame>[];
+    final first = app.adoptSessionForTest(terminal('a0', input));
+    final second = app.adoptSessionForTest(terminal('a1', input));
+    app.focusPane(first.id);
 
-      // A frame with no viewer opens nothing.
-      await _synced(app, 'a0');
-      expect(_viewers(app), isEmpty);
+    // A frame with no viewer opens nothing.
+    await _synced(app, 'a0');
+    expect(_viewers(app), isEmpty);
 
-      await _synced(app, 'a0', viewerUrl: 'http://127.0.0.1:4179/');
-      final viewer = _viewers(app).single;
-      expect(viewer.ownerAgentId, 'a0');
-      expect(
-        viewer.agentId,
-        isNull,
-        reason: 'a viewer is not the agent\'s tile',
-      );
-      expect(viewer.url, 'http://127.0.0.1:4179/');
-      expect(app.panes.map((p) => p.id), [first.id, viewer.id, second.id]);
-      expect(app.focusedPaneId, first.id, reason: 'never steals focus');
+    await _synced(app, 'a0', viewerUrl: 'http://127.0.0.1:4179/');
+    final viewer = _viewers(app).single;
+    expect(viewer.ownerAgentId, 'a0');
+    expect(viewer.agentId, isNull, reason: 'a viewer is not the agent\'s tile');
+    expect(viewer.url, 'http://127.0.0.1:4179/');
+    expect(app.panes.map((p) => p.id), [viewer.id, first.id, second.id]);
+    expect(app.focusedPaneId, first.id, reason: 'never steals focus');
+    expect(
+      app.activeSwarm.paneSizes['2:manual'],
+      isNull,
+      reason: 'three tiles: the grid decides, not the harness split',
+    );
 
-      // The same URL again is nothing new; a different one navigates in place.
-      await _synced(app, 'a0', viewerUrl: 'http://127.0.0.1:4179/');
-      expect(_viewers(app).single.id, viewer.id);
-      await _synced(app, 'a0', viewerUrl: 'http://127.0.0.1:4179/?file=a.step');
-      expect(_viewers(app).single.id, viewer.id);
-      expect(_viewers(app).single.url, 'http://127.0.0.1:4179/?file=a.step');
-      expect(app.panes.length, 3);
+    // The same URL again is nothing new; a different one navigates in place.
+    await _synced(app, 'a0', viewerUrl: 'http://127.0.0.1:4179/');
+    expect(_viewers(app).single.id, viewer.id);
+    await _synced(app, 'a0', viewerUrl: 'http://127.0.0.1:4179/?file=a.step');
+    expect(_viewers(app).single.id, viewer.id);
+    expect(_viewers(app).single.url, 'http://127.0.0.1:4179/?file=a.step');
+    expect(app.panes.length, 3);
 
-      // A frame that drops the viewer takes the tile down.
-      await _synced(app, 'a0');
-      expect(_viewers(app), isEmpty);
-      expect(app.panes.map((p) => p.id), [first.id, second.id]);
-    },
-  );
+    // A frame that drops the viewer takes the tile down.
+    await _synced(app, 'a0');
+    expect(_viewers(app), isEmpty);
+    expect(app.panes.map((p) => p.id), [first.id, second.id]);
+  });
+
+  test('alone with its terminal, the viewer takes three quarters', () async {
+    final app = createApp();
+    addTearDown(app.dispose);
+    final input = <TerminalBinaryFrame>[];
+    final terminalPane = app.adoptSessionForTest(terminal('a0', input));
+    await _synced(app, 'a0', viewerUrl: 'http://127.0.0.1:4179/');
+    final viewer = _viewers(app).single;
+    expect(app.panes.map((p) => p.id), [viewer.id, terminalPane.id]);
+    final split = app.activeSwarm.paneSizes['2:manual'];
+    expect(split, isNotNull);
+    expect(split!.tiles.map((t) => t.left), [0, 0.75]);
+    expect(split.tiles.map((t) => t.right), [0.75, 1]);
+    expect(split.tiles.map((t) => t.height), [1, 1]);
+    // The viewer going away takes the pair's layout with it, the way any
+    // removal does; a new viewer starts the split afresh.
+    await _synced(app, 'a0');
+    expect(app.activeSwarm.paneSizes['2:manual'], isNull);
+    expect(app.panes.map((p) => p.id), [terminalPane.id]);
+  });
+
+  test('a pair the user sized by hand keeps its sizes', () async {
+    final app = createApp();
+    addTearDown(app.dispose);
+    final input = <TerminalBinaryFrame>[];
+    app.adoptSessionForTest(terminal('a0', input));
+    final theirs = PaneArrangement(const [
+      Rect.fromLTRB(0, 0, 0.5, 1),
+      Rect.fromLTRB(0.5, 0, 1, 1),
+    ]);
+    app.activeSwarm.savePaneSizes('2:manual', theirs);
+    await _synced(app, 'a0', viewerUrl: 'http://127.0.0.1:4179/');
+    expect(_viewers(app), hasLength(1));
+    expect(app.activeSwarm.paneSizes['2:manual'], same(theirs));
+  });
 
   test('a viewer closed by hand stays closed until the URL changes', () async {
     final app = createApp();
@@ -117,7 +153,7 @@ void main() {
     await _synced(app, 'a0', viewerUrl: 'http://127.0.0.1:4179/');
     expect(app.panes, isEmpty, reason: 'no terminal on any desk');
     await app.addAgentToSwarm('m', 'a0');
-    expect(app.panes.map((p) => p.isWeb), [false, true]);
+    expect(app.panes.map((p) => p.isWeb), [true, false]);
   });
 
   testWidgets('the tile renders a header and, under test, the URL in words', (

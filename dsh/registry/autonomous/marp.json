@@ -1,0 +1,10 @@
+{
+  "id": "autonomous/marp",
+  "name": "Marp",
+  "description": "Describe a talk; get a Marp slide deck with a live preview, exportable to PDF and PPTX.",
+  "repo": "https://github.com/autonomous-ai/autonomous-marp",
+  "ref": "harness-dsh",
+  "engine": "claude",
+  "tier": 2,
+  "verified": false
+}

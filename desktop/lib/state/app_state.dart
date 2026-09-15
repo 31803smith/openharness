@@ -37,7 +37,7 @@ import '../terminal/terminal_theme_store.dart';
 import '../logging/app_log.dart';
 import '../shared/theme/app_theme.dart' as grid;
 import '../terminal/remote_media_download.dart';
-import '../widgets/engine_identity.dart' show allEngines;
+import '../widgets/engine_identity.dart' show allEngines, engineIdentity;
 import 'dial_status.dart';
 import 'pane_layout_store.dart';
 import 'terminal_pane.dart';
@@ -3918,7 +3918,9 @@ class AppNotifier extends ChangeNotifier {
       );
       if (at < 0) continue;
       if (swarm.panes.length >= maxPanes) return;
-      final insertion = at + 1;
+      // The viewer goes LEFT of the terminal: it is what the user watches, the
+      // terminal is where they type, and reading order puts the product first.
+      final insertion = at;
       final pane = TerminalPane(
         id: _nextPaneId++,
         machineId: machineId,
@@ -3934,6 +3936,12 @@ class AppNotifier extends ChangeNotifier {
       );
       swarm.arranged = null;
       swarm.arrangedKey = null;
+      // Alone with its terminal, the viewer takes three quarters of the tab —
+      // a board or a part wants the width, a chat column does not. Only when
+      // nobody has sized this pair by hand: a manual layout is the user's.
+      if (swarm.panes.length == 2 && swarm.paneSizes['2:manual'] == null) {
+        swarm.savePaneSizes('2:manual', PaneArrangement.viewerBesideTerminal);
+      }
       _persistLayout();
       return;
     }
@@ -4329,9 +4337,27 @@ class AppNotifier extends ChangeNotifier {
     if (creation._finished) return Future.value(creation._outcome);
     if (creation._inFlight case final inFlight?) return inFlight;
     if (creation._choices == null) {
+      var targetId = split?.swarmId ?? swarmId ?? activeSwarmId;
+      // A harness gets a tab of its own, named after it: its viewer is the
+      // product and needs the width, and the two tiles read as one workspace
+      // rather than two more tiles in whatever tab was open. A New Harness
+      // start page the user is already on IS that tab. A split was asked for
+      // by name and wins; so does a tab other than the current one. The
+      // current tab is what the dialog passes when nothing was chosen.
+      if (dsh != null &&
+          split == null &&
+          (swarmId == null || swarmId == activeSwarmId)) {
+        final label = engineIdentity(dsh).label;
+        if (activeSwarm.isEmptyStarter) {
+          renameSwarm(activeSwarmId, label);
+        } else {
+          newSwarm(name: label);
+        }
+        targetId = activeSwarmId;
+      }
       creation._choices = choices;
       creation._machineId = machineId;
-      creation._targetId = split?.swarmId ?? swarmId ?? activeSwarmId;
+      creation._targetId = targetId;
       creation._split = split;
     }
     final work = _createAgentWithReceipt(creation);
