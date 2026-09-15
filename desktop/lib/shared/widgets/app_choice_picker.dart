@@ -260,7 +260,7 @@ class _AppChoicePickerState<T> extends State<AppChoicePicker<T>> {
             child: AppSelectField<T>(
               key: widget.moreKey,
               value: widget.value,
-              options: ordered,
+              options: ordered.skip(3).toList(),
               onChanged: _choose,
               width: size.width,
               height: size.height,

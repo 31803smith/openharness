@@ -49,7 +49,8 @@ Logs: `/private/tmp/harness-friendly-names-tests.log` and
 
 The current form uses three rows of four equal tiles:
 - Engine: Codex, Claude Code, OpenCode, More ⌄. A selected alternative replaces
-  More, retaining the arrow and the same four tiles.
+  More, retaining the arrow and the same four tiles. Both engine and machine
+  More menus omit the first three choices already visible in their row.
 - Machine: this computer and online machines first, with three direct choices
   and the same fourth-slot dropdown. Monitor / monitor-off icons carry availability.
 - Project: New project, Local, Git, Recent ⌄. Local opens the selected machine’s

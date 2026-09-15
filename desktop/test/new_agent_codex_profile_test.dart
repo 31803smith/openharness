@@ -190,10 +190,10 @@ void main() {
     await tester.tap(find.text('open'));
     await tester.pumpAndSettle();
     if (!revealOptions) return n;
-    await tester.ensureVisible(find.byKey(const Key('new-agent-engine-field')));
-    await tester.tap(find.byKey(const Key('new-agent-engine-field')));
+    final codex = find.byKey(const ValueKey('new-agent-quick-codex'));
+    await tester.ensureVisible(codex);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Codex').last);
+    await tester.tap(codex);
     await tester.pumpAndSettle();
     // The profile lives behind the fold now: it and the bypass flag are the two
     // settings most people never touch, so they are off the path of somebody who
@@ -507,12 +507,10 @@ void main() {
   testWidgets('changing engines clears the selected account', (tester) async {
     final notifier = await open(tester);
     await selectSecond(tester);
-    await tester.ensureVisible(find.byKey(const Key('new-agent-engine-field')));
-    await tester.tap(find.byKey(const Key('new-agent-engine-field')));
+    final claude = find.byKey(const ValueKey('new-agent-quick-claude'));
+    await tester.ensureVisible(claude);
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('Claude Code').last);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Claude Code').last);
+    await tester.tap(claude);
     await tester.pumpAndSettle();
     expect(
       find.byKey(const Key('new-agent-codex-profile-field')),

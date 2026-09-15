@@ -5,7 +5,7 @@ import 'package:harness/shared/widgets/app_choice_picker.dart';
 import 'package:harness/shared/widgets/app_select_field.dart';
 
 void main() {
-  testWidgets('tiled dropdown focus does not mark a second choice', (
+  testWidgets('tiled overflow omits direct choices and keeps one selection', (
     tester,
   ) async {
     var selected = 'codex';
@@ -21,6 +21,7 @@ void main() {
                 SelectOption(value: 'claude', label: 'Claude Code'),
                 SelectOption(value: 'opencode', label: 'OpenCode'),
                 SelectOption(value: 'amp', label: 'Amp'),
+                SelectOption(value: 'pi', label: 'Pi'),
               ],
               optionKey: (id) => ValueKey(id),
               moreKey: moreKey,
@@ -40,6 +41,19 @@ void main() {
       await tester.pumpAndSettle();
     }
 
+    await tester.tap(find.byKey(moreKey));
+    await tester.pumpAndSettle();
+    for (final name in ['Codex', 'Claude Code', 'OpenCode']) {
+      expect(
+        find.text(name),
+        findsOneWidget,
+      ); // Only the tile, never a menu row.
+    }
+    expect(find.text('Amp'), findsOneWidget);
+    expect(find.text('Pi'), findsOneWidget);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+
     await chooseFromMenu(LogicalKeyboardKey.keyA, 'a');
     expect(selected, 'amp');
     expect(
@@ -53,8 +67,13 @@ void main() {
       isEmpty,
     );
 
-    // Picking a primary choice from the menu returns focus to the fourth tile.
-    await chooseFromMenu(LogicalKeyboardKey.keyC, 'c');
+    await tester.tap(find.byKey(const ValueKey('codex')));
+    await tester.pumpAndSettle();
+    // Browsing alternatives and cancelling returns focus to the fourth tile.
+    await tester.tap(find.byKey(moreKey));
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
     expect(selected, 'codex');
     expect(find.text('Amp'), findsOneWidget);
     final more = find.byKey(moreKey);
