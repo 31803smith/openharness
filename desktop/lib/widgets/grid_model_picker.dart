@@ -36,7 +36,7 @@ class GridModelPicker extends StatefulWidget {
   final VoidCallback? onUseOwnLogin;
 
   /// The grid model this agent is on right now, or null when it is on its own login. Drives the
-  /// checkmark, so the menu answers "where am I" as well as "where could I go".
+  /// filled row, so the menu answers "where am I" as well as "where could I go".
   final String? currentModel;
 
   /// Whether the agent can search the web on [currentModel], as the daemon decided when it built
@@ -67,6 +67,33 @@ class GridModelPicker extends StatefulWidget {
 class _GridModelPickerState extends State<GridModelPicker> {
   bool _loading = false;
   ModelsMenuController? _usage;
+  GridModels? _last;
+
+  @override
+  void initState() {
+    super.initState();
+    // Warm the answer as soon as the control exists, so a click lands on a memo rather than on two
+    // subprocess spawns and two network round trips — measured at ~1.4s, which is a person watching
+    // a header do nothing. Fire-and-forget: nothing here waits on it, and a failure just means the
+    // first open pays what it used to.
+    unawaited(_prefetch());
+  }
+
+  Future<void> _prefetch() async {
+    // Created here, not only on the cold path: a warm open reads `_usage.rows` for the subscription
+    // row's provider name and percentage, and skipping it left that row falling back to the bare
+    // engine label with no status beside it.
+    _usage ??= ModelsMenuController(remote: widget.notifier.readRemoteUsage);
+    unawaited(_usage!.refresh().catchError((_) {}));
+    final answer = await widget.notifier.gridModels(widget.machineId);
+    if (mounted) _last = answer;
+  }
+
+  @override
+  void dispose() {
+    _usage?.dispose();
+    super.dispose();
+  }
 
   /// The sentence about web search on the current Local model, or null when there is none to
   /// show. Null off a grid whatever the daemon said: a frame can lag a move home by a beat, and
@@ -78,12 +105,6 @@ class _GridModelPickerState extends State<GridModelPicker> {
   /// this agent's launch, and the other rows are places it could go, about which nothing is known.
   String? _subtitleFor(GridModel model) =>
       widget.currentModel == model.id ? _webSearchSentence : null;
-
-  @override
-  void dispose() {
-    _usage?.dispose();
-    super.dispose();
-  }
 
   /// The subscription reading for THIS agent's engine, or null when there is none to show.
   ///
@@ -101,8 +122,16 @@ class _GridModelPickerState extends State<GridModelPicker> {
 
   Future<void> _open() async {
     if (_loading) return;
-    setState(() => _loading = true);
+    // A warm answer opens the menu with no wait at all. It is at most seconds old — the daemon's own
+    // memo is what bounds that — and the refresh below lands in time for the next open.
     final GridModels answer;
+    if (_last != null) {
+      answer = _last!;
+      unawaited(_prefetch());
+      await _show(answer);
+      return;
+    }
+    setState(() => _loading = true);
     try {
       _usage ??= ModelsMenuController(remote: widget.notifier.readRemoteUsage);
       // ⚠️ The usage read is NOT awaited. It is decoration — a percentage beside the subscription
@@ -115,6 +144,14 @@ class _GridModelPickerState extends State<GridModelPicker> {
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+    _last = answer;
+    if (!mounted) return;
+    await _show(answer);
+  }
+
+  /// Draw the menu for an answer already in hand. Split from [_open] so a warm open shares exactly
+  /// the same menu as a cold one rather than a second copy of it.
+  Future<void> _show(GridModels answer) async {
     if (!mounted) return;
 
     final box = context.findRenderObject() as RenderBox?;
@@ -141,6 +178,7 @@ class _GridModelPickerState extends State<GridModelPicker> {
         PopupMenuItem<_Choice>(
           value: const _Choice.ownLogin(),
           height: 32,
+          padding: EdgeInsets.zero,
           child: _Row(
             selected: widget.currentModel == null,
             engine: widget.engineLabel,
@@ -160,6 +198,7 @@ class _GridModelPickerState extends State<GridModelPicker> {
           PopupMenuItem<_Choice>(
             enabled: false,
             height: 30,
+            padding: const EdgeInsets.only(left: _menuInset + _rowPadding),
             child: Text(
               // "Local models", in the user's own vocabulary: the grid is how a Local model is
               // served, not a thing this menu asks anyone to know about.
@@ -175,6 +214,7 @@ class _GridModelPickerState extends State<GridModelPicker> {
             // Taller only for the current row carrying a sentence; every other row keeps its height
             // so the menu does not grow for a fact about one agent.
             height: _subtitleFor(model) != null ? 46 : 32,
+            padding: EdgeInsets.zero,
             child: _Row(
               selected: widget.currentModel == model.id,
               title: model.id,
@@ -200,10 +240,11 @@ class _GridModelPickerState extends State<GridModelPicker> {
   PopupMenuItem<_Choice> _header(String label) => PopupMenuItem<_Choice>(
     enabled: false,
     height: 22,
+    padding: EdgeInsets.zero,
     child: Padding(
-      // The same inset the tick column gives every row, so a header sits directly above the text it
-      // heads rather than a few pixels to its left.
-      padding: const EdgeInsets.only(left: _tickColumn),
+      // The row's margin plus its internal padding, so a header sits directly above the text it
+      // heads rather than a few pixels to either side of it.
+      padding: const EdgeInsets.only(left: _menuInset + _rowPadding),
       child: Text(
         label,
         style: TextStyle(
@@ -256,9 +297,10 @@ class _GridModelPickerState extends State<GridModelPicker> {
   }
 }
 
-/// One menu row: tick, optional engine mark, title, a quiet detail beside it, and a right-aligned
-/// status. The same column order in both sections, so the eye can run straight down the menu. A
-/// [subtitle], when there is one, sits under the title in the same column.
+/// One menu row: optional engine mark, title, a quiet detail beside it, and a right-aligned
+/// status — filled when it is the current one. The same column order in both sections, so the eye
+/// can run straight down the menu. A [subtitle], when there is one, sits under the title inside
+/// the same fill.
 class _Row extends StatelessWidget {
   final bool selected;
   final String? engine;
@@ -280,13 +322,6 @@ class _Row extends StatelessWidget {
   Widget build(BuildContext context) {
     final row = Row(
       children: [
-        // A fixed tick column, so every row's label starts at the same x whether or not it is the
-        // active one — a menu whose text shifts between rows reads as misaligned. Section headers
-        // carry the same inset, which is what lines a header up with the rows under it.
-        SizedBox(
-          width: _tickColumn,
-          child: selected ? Icon(Icons.check, size: 12, color: AppColors.accent) : null,
-        ),
         if (engine != null) ...[
           EngineMark(engine: engine, size: 14),
           const SizedBox(width: 7),
@@ -321,28 +356,46 @@ class _Row extends StatelessWidget {
         ],
       ],
     );
-    if (subtitle == null) return row;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        row,
-        Padding(
-          // Behind the tick column, so the sentence starts under the title it is about.
-          padding: const EdgeInsets.only(left: _tickColumn, top: 2),
-          child: Text(
-            subtitle!,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(fontSize: 10.5, color: AppColors.textSoft),
-          ),
-        ),
-      ],
+    return Container(
+      // The highlight is the row, so it needs the row's own inset rather than the item's padding —
+      // which is why the `PopupMenuItem`s around these set `padding: EdgeInsets.zero`.
+      margin: const EdgeInsets.symmetric(horizontal: _menuInset),
+      padding: const EdgeInsets.symmetric(horizontal: _rowPadding, vertical: 5),
+      decoration: selected
+          // Subtle on purpose: one row in the menu is already the current one, and a mark loud
+          // enough to announce that would compete with the thing a person opened the menu to read.
+          ? BoxDecoration(
+              color: AppColors.selected,
+              borderRadius: BorderRadius.circular(5),
+            )
+          : null,
+      // The subtitle sits INSIDE the fill, under the title: it is about this row, and a sentence
+      // hanging below the highlight would read as belonging to the next one.
+      child: subtitle == null
+          ? row
+          : Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                row,
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Text(
+                    subtitle!,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 10.5, color: AppColors.textSoft),
+                  ),
+                ),
+              ],
+            ),
     );
   }
 }
 
-/// The inset every row's text sits behind, and every section header with it.
-const double _tickColumn = 17;
+/// The row's own inset from the menu edge, and the padding inside its highlight. A section header
+/// carries their SUM as a left inset, so header text sits exactly above the row text it heads.
+const double _menuInset = 6;
+const double _rowPadding = 8;
 
 /// One row's meaning: a grid model, or the engine's own login. A sealed pair rather than a nullable
 /// `GridModel`, because `null` already means "the menu was dismissed" in `showMenu`'s own result.

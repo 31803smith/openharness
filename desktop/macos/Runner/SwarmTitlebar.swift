@@ -62,7 +62,10 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
         result(nil)
       case "modelsState":
         let state = call.arguments as? [String: Any] ?? [:]
-        self.updateModels(state["subscriptions"] as? [[String: Any]] ?? [])
+        self.updateModels(
+          state["subscriptions"] as? [[String: Any]] ?? [],
+          local: state["local"] as? [[String: Any]] ?? []
+        )
         result(nil)
       case "keymapState":
         guard let payload = call.arguments as? [String: Any],
@@ -293,12 +296,31 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     }
   }
 
-  private func updateModels(_ rows: [[String: Any]]) {
+  private func updateModels(_ rows: [[String: Any]], local: [[String: Any]] = []) {
     let entries = rows.prefix(32).compactMap(SwarmSubscriptionEntry.init)
-    guard entries != subscriptions else { return }
+    // What the account's own grid is serving RIGHT NOW, read off the machines that answer for it.
+    // Placeholder names lived here before and read as real ones — a menu naming a model nobody is
+    // serving is worse than a menu admitting it has none.
+    let locals: [(String, String)] = local.prefix(32).compactMap {
+      guard let id = $0["id"] as? String, !id.isEmpty else { return nil }
+      return (id, $0["node"] as? String ?? "")
+    }
+    guard entries != subscriptions || locals.map({ $0.0 }) != localModels.map({ $0.0 })
+      || locals.map({ $0.1 }) != localModels.map({ $0.1 }) else { return }
     subscriptions = entries
+    localModels = locals
     rebuildModelsMenu()
   }
+
+  /// The mark for a locally served model. Built once: `NSImage(systemSymbolName:)` re-renders the
+  /// glyph on every call, and this menu rebuilds on each usage refresh.
+  private static let localModelIcon: NSImage? = {
+    let image = NSImage(systemSymbolName: "cpu", accessibilityDescription: "Served locally")
+    return image?.withSymbolConfiguration(.init(pointSize: 14, weight: .regular))
+  }()
+
+  /// `(model id, node)` for every model the account's private grid is serving.
+  private var localModels: [(String, String)] = []
 
   private func rebuildModelsMenu() {
     modelsMenu.removeAllItems()
@@ -315,7 +337,11 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
       }
     }
     section("Subscription")
-    let rowWidth = subscriptions.map(SwarmSubscriptionView.preferredWidth).max() ?? 440
+    // One width across both sections. Measuring them separately let the menu's two halves size
+    // independently, so the trailing column stepped in or out at the section break.
+    let rowWidth = max(
+      subscriptions.map(SwarmSubscriptionView.preferredWidth).max() ?? 440,
+      localModels.map { SwarmSubscriptionView.preferredWidth(title: $0.0, account: "", status: $0.1) }.max() ?? 440)
     for entry in subscriptions {
       let item = NSMenuItem(title: entry.accessibilityLabel, action: nil, keyEquivalent: "")
       let icon = historyIcons.image(engine: entry.engine, asset: entry.iconAsset)
@@ -327,16 +353,35 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
       label("Anthropic", in: modelsMenu)
       label("OpenAI", in: modelsMenu)
     }
-    modelsMenu.addItem(.separator())
-    section("API")
-    label("OpenRouter", in: modelsMenu)
-    label("fal.ai", in: modelsMenu)
+    // No API section. `OpenRouter` and `fal.ai` were placeholders with nothing behind them, and a
+    // menu naming providers this app cannot reach reads as a list of things you could pick. The
+    // section returns when there is a real source for it, not before.
     modelsMenu.addItem(.separator())
     section("Local")
-    label("DeepSeek V4 Flash", in: modelsMenu)
-    label("Qwen3.8-27B", in: modelsMenu)
-    modelsMenu.addItem(.separator())
-    label("Add Model", in: modelsMenu)
+    if localModels.isEmpty {
+      // Says what is true rather than naming something plausible. An empty grid and an unreachable
+      // one read the same from here, and both mean "nothing to pick".
+      label("No models being served", in: modelsMenu)
+    } else {
+      for (id, node) in localModels {
+        // Same row view as the subscriptions above: the model id reads at full strength where an
+        // account name would, and the node — which of the user's own machines answers, the detail
+        // that makes a private grid legible — takes the trailing column the usage figures use.
+        // The mark is a chip rather than a vendor logo, because what distinguishes these rows is
+        // where they run, not who supplies them. Tinted to match the model id beside it: at a
+        // secondary weight the glyph sat a shade under the vivid brand artwork above and read as
+        // smudge rather than icon.
+        let item = NSMenuItem(title: [id, node].filter { !$0.isEmpty }.joined(separator: ", "),
+          action: nil, keyEquivalent: "")
+        item.view = SwarmSubscriptionView(title: id, account: "", status: node,
+          icon: Self.localModelIcon, width: rowWidth, accessibility: item.title,
+          tint: .labelColor)
+        item.isEnabled = false
+        modelsMenu.addItem(item)
+      }
+    }
+    // No `Add Model` either: it dispatched nothing. An action that looks available and does nothing
+    // is worse than its absence.
   }
 
   private func updateHistory(_ rows: [[String: Any]], closed: [[String: Any]] = []) {
@@ -520,26 +565,43 @@ private final class SwarmSubscriptionView: NSView {
   }
 
   static func preferredWidth(_ entry: SwarmSubscriptionEntry) -> CGFloat {
-    let identityWidth = textWidth(entry.title + "  " + entry.account)
-    let balanceWidth = textWidth(entry.status)
+    preferredWidth(title: entry.title, account: entry.account, status: entry.status)
+  }
+
+  static func preferredWidth(title: String, account: String, status: String) -> CGFloat {
+    let identityWidth = textWidth(title + "  " + account)
+    let balanceWidth = textWidth(status)
     return min(720, max(440, identityWidth + balanceWidth + 88))
   }
 
-  init(entry: SwarmSubscriptionEntry, icon: NSImage, width: CGFloat) {
+  convenience init(entry: SwarmSubscriptionEntry, icon: NSImage, width: CGFloat) {
+    self.init(title: entry.title, account: entry.account, status: entry.status,
+      icon: icon, width: width, accessibility: entry.accessibilityLabel)
+  }
+
+  /// Every row in this menu is built here, subscription or local. Sharing the construction is what
+  /// keeps the two sections reading as one menu: same font, same label/secondary split, same icon
+  /// column, same right-aligned trailing field. Local rows were plain disabled `NSMenuItem`s before,
+  /// which AppKit greys wholesale, so a served model looked unavailable beside the accounts above.
+  init(title primary: String, account: String, status: String, icon: NSImage?, width: CGFloat,
+       accessibility: String, tint: NSColor? = nil) {
     super.init(frame: NSRect(x: 0, y: 0, width: width, height: 26))
     autoresizingMask = [.width]
     self.icon.image = icon
     self.icon.imageScaling = .scaleProportionallyDown
-    let title = NSMutableAttributedString(string: entry.title,
+    // Brand artwork carries its own colour; an SF Symbol arrives as a template and would paint flat
+    // black without this, which reads as a hole in the row on a dark menu.
+    self.icon.contentTintColor = tint
+    let title = NSMutableAttributedString(string: primary,
       attributes: [.font: Self.rowFont, .foregroundColor: NSColor.labelColor])
-    if !entry.account.isEmpty {
-      title.append(NSAttributedString(string: "  " + entry.account,
+    if !account.isEmpty {
+      title.append(NSAttributedString(string: "  " + account,
         attributes: [.font: Self.rowFont, .foregroundColor: NSColor.secondaryLabelColor]))
     }
     identity.attributedStringValue = title
     identity.usesSingleLineMode = true
     identity.lineBreakMode = .byTruncatingMiddle
-    balance.stringValue = entry.status
+    balance.stringValue = status
     balance.font = Self.rowFont
     balance.textColor = .secondaryLabelColor
     balance.alignment = .right
@@ -551,7 +613,7 @@ private final class SwarmSubscriptionView: NSView {
     }
     setAccessibilityElement(true)
     setAccessibilityRole(.staticText)
-    setAccessibilityLabel(entry.accessibilityLabel)
+    setAccessibilityLabel(accessibility)
     layout()
   }
 

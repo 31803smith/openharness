@@ -168,6 +168,12 @@ const envSchema = z.object({
   OPENCODE_PLUGIN_DIR: z
     .string()
     .default(join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'opencode', 'plugin')),
+  // OpenCode skills dir (honors XDG_CONFIG_HOME) — where the adapter drops the Harness Compute
+  // skill, so any opencode session can help start/use a local model without being told what the
+  // underlying CLI it shells out to is called.
+  OPENCODE_SKILL_DIR: z
+    .string()
+    .default(join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'opencode', 'skills')),
   // Kilo state root — the SQLite store lives at <KILO_DATA_DIR>/kilo.db. Kilo is an opencode fork and
   // keeps the same layout, but NOT the same overrides: measured on 7.4.20 via `kilo debug paths`, it
   // honours XDG_DATA_HOME and ignores both `KILO_DATA_DIR` and `OPENCODE_DATA_DIR`. So this variable

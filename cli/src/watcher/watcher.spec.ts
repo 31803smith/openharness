@@ -108,4 +108,41 @@ describe('Watcher.pollAll', () => {
     expect(lines).toEqual(['{"new":3}'])
     await watcher.stop()
   })
+
+  it('does not replay a rollout repaired (shrunk) in place once the tail is re-synced', async () => {
+    // The Codex resume reasoning-id repair rewrites the rollout to a SHORTER file before the engine
+    // relaunches. Without moving the tail, the next read sees size < offset, treats the shrink as a
+    // truncation, resets to 0, and re-emits the whole conversation into the live normalizer. setTail
+    // pins the offset to the repaired length so only the resumed turn is read.
+    const dir = await mkdtemp(join(tmpdir(), 'machine-repair-'))
+    cleanup.push(dir)
+    const transcriptPath = join(dir, 'session.jsonl')
+    await writeFile(transcriptPath, '{"meta":1}\n{"reasoning":"msg_bad_id"}\n{"answer":1}\n')
+    const watcher = new Watcher()
+    const lines: string[] = []
+    watcher.on('line', (event: LineEvent) => lines.push(event.text))
+
+    await watcher.addSession({ sessionId: 'c1', engine: 'codex', transcriptPath })
+    await watcher.pollSession('c1')
+    expect(lines).toEqual([])
+
+    const repaired = '{"meta":1}\n{"reasoning":""}\n{"answer":1}\n' // shorter: the stale id was stripped
+    await writeFile(transcriptPath, repaired)
+    watcher.setTail('c1', Buffer.byteLength(repaired))
+    await watcher.pollSession('c1')
+    expect(lines).toEqual([]) // the repaired history is NOT re-emitted
+
+    await appendFile(transcriptPath, '{"resumed":2}\n')
+    await watcher.pollSession('c1')
+    expect(lines).toEqual(['{"resumed":2}']) // only the resumed engine's new turn
+    await watcher.stop()
+  })
+
+  it('setTail is a harmless no-op for a session that is not registered', async () => {
+    // The post-reboot restore path repairs the rollout before it re-attaches the tail, so there is
+    // nothing to move — this must not throw.
+    const watcher = new Watcher()
+    expect(() => watcher.setTail('never-registered', 123)).not.toThrow()
+    await watcher.stop()
+  })
 })

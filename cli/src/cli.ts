@@ -39,6 +39,7 @@ import { DeviceLink } from './device/deviceLink.js'
 import { DeviceFleet } from './device/deviceFleet.js'
 import { registry, projectDisplayName, type RegisteredSession } from './lib/registry.js'
 import { installAmpPlugin, installCodexHooks, installCommandCodeHooks, installCursorHooks, installDevinHooks, installGrokHooks, installAgyHooks, installCopilotHooks, installHermesHooks, installKiloPlugin, installOpencodePlugin, installPiExtension, installSessionHooks } from './lib/hooks.js'
+import { installOpencodeHarnessComputeSkill } from './lib/harnessComputeSkill.js'
 import { PID_FILE, daemonPort, isAlive, readPid } from './lib/daemonState.js'
 import {
   BIND_WAIT_MS, connectFailure, defaultLaunchDeps, removePidFileIf, waitForBind, waitForReady,
@@ -71,6 +72,7 @@ import { TmuxBackend } from './lib/tmuxBackend.js'
 import { createAndRegisterPane } from './lib/createAgentPane.js'
 import { restoreAgents } from './lib/restoreAgents.js'
 import { buildLaunchOverrides, validateLaunchOverrides, type LaunchOverrides, type LaunchOverridesDeps, type LaunchOverridesResult, type LaunchSource } from './lib/launchOverrides.js'
+import { prepareCodexResume } from './engines/codex/portableHistory.js'
 import { buildHarnessSessionLabel } from './lib/harnessSessionLabel.js'
 import { basename } from 'node:path'
 import {
@@ -3227,6 +3229,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     installCodexHooks(hookPort)
     installCursorHooks(hookPort)
     installOpencodePlugin(hookPort)
+    installOpencodeHarnessComputeSkill()
     installKiloPlugin(hookPort)
     installPiExtension(hookPort)
     // A self-update refreshes plugin files here; running engine processes pick them up according to each
@@ -3382,6 +3385,17 @@ async function runForeground(session: AuthSession): Promise<void> {
     if (overrides.gridLaunchRecord) registry.setGridLaunch(agentId, overrides.gridLaunchRecord)
   }
 
+  const prepareSessionResume = (session: RegisteredSession): void => {
+    const repair = prepareCodexResume(session)
+    if (repair.repairedItems) {
+      // The rollout we tail was just shrunk in place. Move the tail to the repaired length now, before
+      // the resumed engine appends, or the watcher would read the whole repaired history as new lines
+      // and the live normalizer would replay the conversation into web/device. See Watcher.setTail.
+      if (repair.repairedBytes !== undefined) watcher.setTail(session.sessionId, repair.repairedBytes)
+      console.log(`[resume] repaired ${repair.repairedItems} Codex reasoning items · backup: ${repair.backupPath}`)
+    }
+  }
+
   watcher.start()
   await cursorDiscovery.start()
   // Panes that died while the daemon was down (a reboot takes the whole tmux server with it) are
@@ -3404,6 +3418,11 @@ async function runForeground(session: AuthSession): Promise<void> {
         // own shell.
         const built = await relaunchOverrides(entry)
         if (!built.ok) return { error: built.error, detail: built.detail }
+        if (opts.resumeSessionId) {
+          try { prepareSessionResume(entry) } catch (error) {
+            return { error: 'RESUME_PREPARATION_FAILED', detail: error instanceof Error ? error.message : String(error) }
+          }
+        }
         // Before the pane comes up rather than after: restore has no later hook per agent, and a
         // pane that fails to come up is reported failed by the frame regardless of this field.
         refreshGridWebSearch(entry.agentId, built.overrides)
@@ -3746,6 +3765,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     runtime: TmuxRuntimeRef,
     launch: { env?: Record<string, string>; extraArgs?: readonly string[]; clearEnv?: readonly string[] } = {},
   ): RestartAgentDeps => ({
+    prepareResume: () => prepareSessionResume(session),
     holdOpen: async () => {
       const result = await tmuxBackend!.holdOpen(runtime)
       return result.state === 'succeeded'
