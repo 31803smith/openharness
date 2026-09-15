@@ -74,9 +74,21 @@ CLI typechecking passes. Logs: `/private/tmp/harness-launcher-final-tests.log`,
 `/private/tmp/harness-project-launcher-captures`.
 
 The user has renewed authorization to push each completed feature separately.
-The latest installed preview is still **0c764cf** (receipt
-`/private/tmp/harness-minimal-preview-install.json`); the new launcher and later
-search/device/chooser refinements are awaiting the next verified install.
+The latest installed preview is **2b332f2**, at the supported checkout path.
+Release build: `/private/tmp/harness-project-picker-release-build.log`.
+App.framework, FlutterMacOS.framework and the outer app passed signature checks.
+Normal Cmd-Q saved the layout; the old bundle was retained in
+`desktop/build/macos/Build/Products/Release/.harness-before-project-picker-0cd492es/`.
+The new app reopened as PID 93391, with the exact saved layout, three tab IDs and
+active tab preserved before review. Receipts:
+`/private/tmp/harness-project-picker-preview-install.json` and
+`/private/tmp/harness-agent-preview-install.json`.
+
+Live accessibility inspection showed the new Agent/Machine/Project form, local
+project results and real README/branch/commit/contributor content. The user was
+already interacting with it; a subsequent screenshot showed the selected project
+collapsed into the bar. No real agent was created for verification. The preview
+also includes the previously pushed search, device, chooser and naming UI work.
 
 ### Quiet agent choices
 
@@ -208,14 +220,14 @@ Captures: `/private/tmp/harness-separate-entry-picker`.
 The rollback was pushed first as **aa327c0**, then customization as **60a95d5**,
 then edge actions as **9fcaf27**. Preserve the user's one-feature-per-push order.
 
-The preview was refreshed to **9fcaf27** at the supported path. Release and
+Historical checkpoint: the preview was refreshed to **9fcaf27** at the supported path. Release and
 deep/strict signature verification passed before and after the atomic swap.
 The exact old preview PID 66331 exited after SIGTERM when native Quit repeatedly
 failed; its bundle and saved layout were retained. CUA reopened the new build
 as PID 88857. A fresh app-control connection showed all four restored Harnesses,
 the original active Harness, and separate New/Open titlebar buttons. Subsequent
 actions were rejected as user-changed; the user is reviewing customization.
-The current local receipt is `/private/tmp/harness-agent-preview-install.json`,
+The local receipt at that checkpoint was `/private/tmp/harness-agent-preview-install.json` (now superseded by the current install above),
 with this checkpoint retained in `/private/tmp/harness-entry-customize-install.json`.
 
 ### Earlier September 15 checkpoint (combined form superseded)
