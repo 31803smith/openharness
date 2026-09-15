@@ -11,6 +11,12 @@ private func checkTitlebar(_ condition: @autoclosure () -> Bool, _ message: Stri
   titlebarCheckCount += 1
 }
 
+private extension SwarmSubscriptionView {
+  // `icon` is private to the row view; a same-file extension reads it without widening the app API.
+  var iconImage: NSImage? { icon.image }
+  var iconTint: NSColor? { icon.contentTintColor }
+}
+
 private extension SwarmTabButton {
   func checkAccessibility(expectedName: String, active: Bool) throws {
     try checkTitlebar(accessibilityLabel() == expectedName, "Tab group name is available before paint")
@@ -661,11 +667,48 @@ private extension SwarmTitlebar {
     let models = main.item(withTitle: "Models")!.submenu!
     try checkTitlebar(models.items.filter { !$0.isSeparatorItem }.map(\.title) == [
       "Subscription", "Anthropic, aabbcc, 12% remaining", "OpenAI, Not signed in",
-      "API", "OpenRouter", "fal.ai", "Local", "DeepSeek V4 Flash", "Qwen3.8-27B", "Add Model"
-    ], "Models has the three requested sections and Add Model last")
-    try checkTitlebar(models.items.filter(\.isSeparatorItem).count == 3,
-      "Native separators distinguish the sections and future Add Model action")
-    for title in ["OpenRouter", "fal.ai", "DeepSeek V4 Flash", "Qwen3.8-27B", "Add Model"] {
+      "Local", "No models being served"
+    ], "Models carries only the two sections with something behind them")
+    try checkTitlebar(models.items.filter(\.isSeparatorItem).count == 1,
+      "One native separator, between the two sections")
+    for gone in ["API", "OpenRouter", "fal.ai", "Add Model"] {
+      try checkTitlebar(models.item(withTitle: gone) == nil,
+        "\(gone) is gone — it named nothing this app can reach or do")
+    }
+
+    // The Local section is DATA, not two hardcoded names. A menu naming a model nobody serves is
+    // worse than one admitting it has none, which is what the empty case above asserts.
+    updateModels(modelRows, local: [
+      ["id": "Qwen3.6-35B-A3B-UD-Q5_K_XL", "node": "macbook-m1max"],
+      ["id": "DeepSeek-V4-Flash", "node": ""],
+    ])
+    let served = main.item(withTitle: "Models")!.submenu!
+    try checkTitlebar(served.item(withTitle: "Qwen3.6-35B-A3B-UD-Q5_K_XL, macbook-m1max") != nil,
+      "a served model names the machine answering it")
+    try checkTitlebar(served.item(withTitle: "DeepSeek-V4-Flash") != nil,
+      "a model with no node named is listed on its own")
+    try checkTitlebar(served.item(withTitle: "No models being served") == nil,
+      "the empty-state line is gone once something is served")
+
+    // A local row is built by the same view as a subscription row, which is what makes the two
+    // sections read as one menu. A plain disabled NSMenuItem greys its whole title, so a served
+    // model looked unavailable beside the accounts above it.
+    let localRows = served.items.compactMap { $0.view as? SwarmSubscriptionView }.suffix(2)
+    try checkTitlebar(localRows.count == 2, "Local models render as rows, not as greyed labels")
+    try checkTitlebar(localRows.first?.identity.stringValue == "Qwen3.6-35B-A3B-UD-Q5_K_XL"
+      && localRows.first?.balance.stringValue == "macbook-m1max",
+      "the model id takes the left column and its node the trailing one, as usage does above")
+    try checkTitlebar(localRows.last?.balance.stringValue.isEmpty == true,
+      "a model with no node leaves the trailing column empty rather than inventing one")
+    try checkTitlebar(localRows.allSatisfy { $0.iconImage != nil && $0.iconTint == .labelColor },
+      "a local model carries a tinted mark, so its row is not a gap where the brand icons sit")
+    let subscriptionWidth = served.items.compactMap { $0.view as? SwarmSubscriptionView }.first!.bounds.width
+    try checkTitlebar(localRows.allSatisfy { $0.bounds.width == subscriptionWidth },
+      "both sections share one width, so the trailing column does not step at the section break")
+    try checkTitlebar(localRows.allSatisfy { $0.identity.frame.minX == served.items.compactMap({ $0.view as? SwarmSubscriptionView }).first!.identity.frame.minX },
+      "local and subscription titles start in the same column")
+    updateModels(modelRows)
+    for title in ["No models being served"] {
       let item = models.item(withTitle: title)!
       try checkTitlebar(!item.isEnabled && item.action == nil && item.target == nil && item.submenu == nil,
         "\(title) is greyed out and cannot dispatch or open anything")
