@@ -195,7 +195,7 @@ void main() {
       await app.addAgentToSwarm('m', 'a1');
       final existing = restored.panes.toList();
       while (app.swarms.length < AppNotifier.maxSwarms) {
-        app.newSwarm();
+        app.newSwarm(name: 'Occupied ${app.swarms.length}');
       }
       expect(app.canReopenClosedSwarm, isTrue);
       expect(app.canReopenClosed(swarmClosure), isTrue);
@@ -264,7 +264,7 @@ void main() {
       app.newSwarm(name: 'Closed group');
       await app.closeSwarm(app.activeSwarmId);
       while (app.swarms.length < AppNotifier.maxSwarms) {
-        app.newSwarm();
+        app.newSwarm(name: 'Occupied ${app.swarms.length}');
       }
       expect(app.canReopenLastClosed, isFalse);
       expect(app.canReopenClosed(agentId), isTrue);

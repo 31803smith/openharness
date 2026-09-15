@@ -166,6 +166,16 @@ private extension SwarmTabStrip {
     try checkTitlebar(tabs.count == 1 && tabs[0] === original, "Closing tabs retains the surviving control")
     try original.checkAccessibility(expectedName: "Renamed tab", active: true)
     try checkTitlebar(newButton.isEnabled, "New Harness returns below capacity")
+    var fullWithStarter = state(rows, active: "swarm-0")
+    fullWithStarter["canOpenNewTab"] = true
+    update(fullWithStarter)
+    try checkTitlebar(newButton.isEnabled,
+      "New Tab can reveal an existing starter at the tab limit")
+    fullWithStarter["canOpenNewTab"] = false
+    update(fullWithStarter)
+    try checkTitlebar(!newButton.isEnabled,
+      "New Tab respects the workspace's availability")
+    update(state([["id": "swarm-0", "name": "Renamed tab"]], active: "swarm-0"))
     try checkTitlebar(newButton.toolTip == nil && createButton.toolTip == nil && openButton.toolTip == nil,
       "Titlebar actions add no hover hints")
     try checkTitlebar(notificationButton.frame.maxX <= scroll.frame.minX,

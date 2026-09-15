@@ -81,6 +81,10 @@ handing keyboard ownership back to Flutter and preserve in-progress search compo
 
 One harness shows its engine mark; multiple harnesses use four separate outlined
 tiles, matching the native square.grid.2x2 symbol. An empty tab uses a plain plus.
+Only one unused New Harness tab is kept. New Tab from the plus, File menu,
+Cmd-T or command search selects that existing page, even at the tab limit.
+Restoration collapses duplicate unused pages from older builds, preferring the
+selected one; named tabs and saved layouts are retained.
 Tab close marks appear only on hover or keyboard focus, retaining their space
 and accessible actions while idle. Returning
 to one restores the engine mark. The same rule applies in search and History,

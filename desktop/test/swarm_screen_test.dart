@@ -404,7 +404,7 @@ void main() {
       final replacement = terminal('a0', [])
         ..terminal.write('replacement stream');
       pane.session = replacement;
-      app.newSwarm();
+      app.notifyListeners();
       await tester.pump();
       final parked = tester.widget<TerminalPanel>(
         find.byType(TerminalPanel, skipOffstage: false),

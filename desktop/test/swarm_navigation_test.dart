@@ -247,7 +247,7 @@ void main() {
     addTearDown(app.dispose);
     final target = app.activeSwarm;
     final row = swarmDestinations(app).firstWhere((r) => r.agentId == 'a0');
-    app.newSwarm();
+    app.newSwarm(name: 'Elsewhere');
     final elsewhere = app.activeSwarm;
     await activateSwarmDestination(app, row, destinationSwarmId: target.id);
     expect(target.panes.single.agentId, 'a0');

@@ -223,7 +223,7 @@ void main() {
         final destination = app.activeSwarm;
         final launch = app.createAgent('m', engine: 'claude', folder: '/work');
         expect(connection.calls, ['agent_create']);
-        app.newSwarm();
+        app.newSwarm(name: 'Elsewhere');
         if (change == 'close') await app.closeSwarm(destination.id);
         if (change == 'dispose') app.dispose();
         connection.complete();

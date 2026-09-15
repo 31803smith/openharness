@@ -466,6 +466,8 @@ class AppNotifier extends ChangeNotifier {
   List<TerminalPane> get panes => activeSwarm.panes;
   Iterable<TerminalPane> get allPanes => swarms.expand((s) => s.panes).toSet();
   String get activeSwarmId => activeSwarm.id;
+  bool get canOpenNewTab =>
+      swarms.length < maxSwarms || swarms.any((swarm) => swarm.isEmptyStarter);
 
   // A New Harness remains temporary until it has content or a custom name.
   // The return destination is session-local; abandoned drafts are never saved.
@@ -481,6 +483,17 @@ class AppNotifier extends ChangeNotifier {
   }
 
   void newSwarm({String name = 'New Harness', bool draft = false}) {
+    // Every New Tab entry point reuses the existing start page, including
+    // when another tab is selected or the tab limit has been reached.
+    if (name == 'New Harness') {
+      final starter = activeSwarm.isEmptyStarter
+          ? activeSwarm
+          : swarms.where((swarm) => swarm.isEmptyStarter).firstOrNull;
+      if (starter != null) {
+        if (starter.id != activeSwarmId) selectSwarm(starter.id);
+        return;
+      }
+    }
     if (swarms.length >= maxSwarms) return;
     while (swarms.any((s) => s.id == 'swarm-$_nextSwarmId')) {
       _nextSwarmId++;
@@ -5032,6 +5045,20 @@ class AppNotifier extends ChangeNotifier {
         restored.add(swarm);
       }
       if (restored.isNotEmpty) {
+        // Older builds saved multiple unused start pages. Retain the selected
+        // one when possible; custom names, presets and real work stay intact.
+        final starters = restored.where((swarm) => swarm.isEmptyStarter);
+        final starter =
+            starters
+                .where((swarm) => swarm.id == saved['activeId'])
+                .firstOrNull ??
+            starters.firstOrNull;
+        final hadDuplicateStarters = starters.length > 1;
+        if (hadDuplicateStarters) {
+          restored.removeWhere(
+            (swarm) => swarm.isEmptyStarter && swarm != starter,
+          );
+        }
         swarms
           ..clear()
           ..addAll(restored);
@@ -5042,6 +5069,7 @@ class AppNotifier extends ChangeNotifier {
           _nextSwarmId++;
         }
         _autoPickedAgent = true;
+        if (hadDuplicateStarters) _persistLayout();
         notifyListeners();
         return;
       }

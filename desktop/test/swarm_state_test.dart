@@ -7,6 +7,8 @@ import 'package:harness/state/app_state.dart';
 import 'package:harness/state/pane_layout_store.dart';
 import 'package:harness/state/pane_preset.dart';
 import 'package:harness/state/swarm_catalog.dart';
+import 'package:harness/state/swarm.dart';
+import 'package:harness/state/terminal_pane.dart';
 import 'package:harness/terminal/terminal_session.dart';
 import 'package:harness/ws/ws_conn.dart';
 
@@ -58,6 +60,76 @@ AppNotifier createApp({
 }
 
 void main() {
+  test(
+    'New Tab reuses the unused page from every tab, even at capacity',
+    () async {
+      final app = createApp();
+      addTearDown(app.dispose);
+      final starter = app.activeSwarm;
+      for (var i = 0; i < 10; i++) {
+        app.newSwarm();
+      }
+      expect(app.swarms, [starter]);
+
+      for (var i = 1; i < AppNotifier.maxSwarms; i++) {
+        app.newSwarm(name: 'Project $i');
+      }
+      final project = app.activeSwarm;
+      expect(app.canOpenNewTab, isTrue);
+      for (var i = 0; i < 10; i++) {
+        app.selectSwarm(project.id);
+        app.newSwarm();
+        expect(app.activeSwarm, same(starter));
+        expect(app.swarms, hasLength(AppNotifier.maxSwarms));
+      }
+
+      await app.addAgentToSwarm('m', 'a0');
+      expect(app.canOpenNewTab, isFalse);
+      app.newSwarm();
+      expect(app.activeSwarm, same(starter));
+      expect(app.panes.single.agentId, 'a0');
+      expect(app.swarms, hasLength(AppNotifier.maxSwarms));
+    },
+  );
+
+  for (final activeId in ['empty-2', 'work']) {
+    test(
+      'restore consolidates unused tabs while retaining $activeId',
+      () async {
+        final storage = MemoryStore();
+        final store = PaneLayoutStore(storage: storage);
+        await store.saveSwarms([
+          Swarm(id: 'empty-1'),
+          Swarm(id: 'work', name: 'Work')
+            ..panes.add(TerminalPane(id: 1, machineId: 'm', agentId: 'a0')),
+          Swarm(id: 'empty-2'),
+          Swarm(id: 'named', name: 'Plan'),
+          Swarm(id: 'layout')..presets[2] = PanePreset.rows,
+          Swarm(id: 'empty-3', name: 'New tab'),
+        ], activeId);
+        final app = createApp(store: storage);
+        addTearDown(app.dispose);
+        await app.restorePaneLayoutForTest();
+        expect(app.activeSwarmId, activeId);
+        expect(app.swarms.where((swarm) => swarm.isEmptyStarter), hasLength(1));
+        expect(app.swarms.map((swarm) => swarm.id), [
+          if (activeId == 'work') 'empty-1',
+          'work',
+          if (activeId == 'empty-2') 'empty-2',
+          'named',
+          'layout',
+        ]);
+        expect(app.allPanes.single.agentId, 'a0');
+        expect(app.allPanes.single.session, isNull);
+        expect(app.closedHistory, isEmpty);
+        await app.flushPaneLayout();
+        final saved = await store.loadSwarms();
+        expect((saved!['swarms'] as List), hasLength(4));
+        expect(saved['activeId'], activeId);
+      },
+    );
+  }
+
   for (final legacy in ['New swarm', 'New tab', 'New Agent']) {
     test(
       '$legacy empty tabs restore as New Harness and still name the first agent',
@@ -244,13 +316,13 @@ void main() {
     'new tab ids cannot collide after reorder and gaps in saved ids',
     () async {
       final app = createApp();
-      app.newSwarm();
-      app.newSwarm();
-      app.newSwarm();
+      app.newSwarm(name: 'Second');
+      app.newSwarm(name: 'Third');
+      app.newSwarm(name: 'Fourth');
       await app.closeSwarm('swarm-2');
       app.reorderSwarm('swarm-4', 0);
-      app.newSwarm();
-      app.newSwarm();
+      app.newSwarm(name: 'Fifth');
+      app.newSwarm(name: 'Sixth');
       expect(app.swarms.map((s) => s.id).toSet().length, app.swarms.length);
       while (app.swarms.length > 1) {
         await app.closeSwarm(app.swarms.first.id);

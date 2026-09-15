@@ -22,7 +22,7 @@ import 'package:harness/widgets/swarm_dialogs.dart';
 import 'package:harness/widgets/terminal_find_bar.dart';
 
 import 'swarm_screen_test.dart' show mount, terminal;
-import 'swarm_state_test.dart' show createApp;
+import 'swarm_state_test.dart' show createApp, MemoryStore;
 
 class _ProfilesNotifier extends AppNotifier {
   _ProfilesNotifier()
@@ -65,6 +65,83 @@ Future<void> chord(
 }
 
 void main() {
+  for (final native in [false, true]) {
+    testWidgets('New Tab actions reuse the existing page (native: $native)', (
+      tester,
+    ) async {
+      const channel = MethodChannel('harness/swarm_tabs');
+      const codec = StandardMethodCodec();
+      final messenger = tester.binding.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(channel, (_) async => true);
+      addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+      final app = createApp();
+      app.machineStates['m']!.nodeOnline = true;
+      app.adoptSessionForTest(terminal('a0', []));
+      final work = app.activeSwarmId;
+      app.newSwarm();
+      final starter = app.activeSwarmId;
+      final projects = SwarmProjectStore(storage: MemoryStore());
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SwarmScreen(
+            notifier: app,
+            nativeTabs: native,
+            projectStore: projects,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      Future<void> newFromChrome() async {
+        if (!native) {
+          await tester.tap(find.byKey(const ValueKey('swarm-new-tab-button')));
+          return;
+        }
+        var replied = false;
+        messenger.handlePlatformMessage(
+          channel.name,
+          codec.encodeMethodCall(const MethodCall('new')),
+          (_) => replied = true,
+        );
+        for (var i = 0; i < 5 && !replied; i++) {
+          await tester.pump();
+        }
+        expect(replied, isTrue);
+      }
+
+      for (final action in <Future<void> Function()>[
+        () => chord(tester, LogicalKeyboardKey.keyT),
+        newFromChrome,
+        () async {
+          await chord(tester, LogicalKeyboardKey.keyP, shift: true);
+          await tester.enterText(
+            find.byKey(const ValueKey('swarm-search-input')),
+            'New Tab',
+          );
+          await tester.pump();
+          await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+        },
+      ]) {
+        app.selectSwarm(work);
+        await tester.pumpAndSettle();
+        await action();
+        await tester.pumpAndSettle();
+        expect(app.activeSwarmId, starter);
+        expect(app.swarms, hasLength(2));
+        await chord(tester, LogicalKeyboardKey.keyT);
+        expect(app.activeSwarmId, starter);
+        expect(app.swarms, hasLength(2));
+        final input = tester.widget<TextField>(
+          find.byKey(const ValueKey('harness-start-search')),
+        );
+        expect(input.focusNode!.hasFocus, isFalse);
+      }
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+      projects.dispose();
+    });
+  }
+
   testWidgets(
     'welcome opens the shared search and supports readline selection',
     (tester) async {
@@ -282,7 +359,10 @@ void main() {
       expect(app.swarms, hasLength(1));
       expect(app.panes, isEmpty);
       expect(app.activeSwarmId, isNot(anyOf(first, second)));
-      expect(find.byKey(const ValueKey('harness-start-search')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('harness-start-search')),
+        findsOneWidget,
+      );
       final starter = app.activeSwarmId;
       await activate('new');
       expect(app.swarms, hasLength(1));

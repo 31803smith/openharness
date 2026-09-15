@@ -27,6 +27,9 @@ class Swarm {
   int? gridColumns;
   final Map<int, int> pinnedSlots = {};
 
+  bool get isEmptyStarter =>
+      name == 'New Harness' && panes.isEmpty && presets.isEmpty;
+
   PaneArrangement? get manualLayout => paneSizes['${panes.length}:manual'];
 
   void savePaneSizes(String key, PaneArrangement arrangement) {

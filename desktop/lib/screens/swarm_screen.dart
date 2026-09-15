@@ -283,6 +283,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
     final payload = {
       'enabled': _routeIsCurrent && !_dialogOpen && !_spokenPaletteOpen,
       'activeId': app.activeSwarmId,
+      'canOpenNewTab': app.canOpenNewTab,
       'palette': grid.AppTheme.palette.value.nativeColors,
       'canReopen': app.canReopenLastClosed,
       'canFind': _canFindTerminal,
@@ -985,7 +986,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
   }
 
   void _newTab() {
-    if (app.panes.isNotEmpty) app.newSwarm();
+    app.newSwarm();
   }
 
   Future<void> _addProject() => _dialog(() async {
@@ -1148,7 +1149,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
       final number = int.tryParse(id.substring('swarm.select_'.length));
       return number != null && number >= 1 && number <= app.swarms.length;
     }
-    if (id == 'swarm.new') return app.swarms.length < AppNotifier.maxSwarms;
+    if (id == 'swarm.new') return app.canOpenNewTab;
     if (id == 'swarm.reopen') return app.canReopenLastClosed;
     if (id == 'swarm.next' || id == 'swarm.previous') {
       return app.swarms.length > 1;
@@ -1480,7 +1481,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
         ),
         IconButton(
           key: const ValueKey('swarm-new-tab-button'),
-          onPressed: app.swarms.length < AppNotifier.maxSwarms ? _newTab : null,
+          onPressed: app.canOpenNewTab ? _newTab : null,
           icon: const Icon(Icons.add, size: 18, semanticLabel: 'New Tab'),
         ),
         _harnessButton(create: true),
@@ -1512,7 +1513,9 @@ class _SwarmScreenState extends State<SwarmScreen> {
             ? grid.AppPalette.swarmTabBar
             : grid.AppPalette.swarmAccent,
         shape: const StadiumBorder(),
-        side: create ? BorderSide.none : const BorderSide(color: Colors.white24),
+        side: create
+            ? BorderSide.none
+            : const BorderSide(color: Colors.white24),
       ),
       child: Text(label),
     );

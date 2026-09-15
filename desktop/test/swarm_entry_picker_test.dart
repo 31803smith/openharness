@@ -313,6 +313,7 @@ void main() {
     final app = createApp();
     addTearDown(app.dispose);
     final original = app.activeSwarmId;
+    app.renameSwarm(original, 'Original work');
     app.newSwarm(draft: true);
     app.selectSwarm(original);
     expect(app.swarms, hasLength(1));

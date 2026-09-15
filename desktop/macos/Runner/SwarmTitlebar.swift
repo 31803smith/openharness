@@ -53,7 +53,8 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
         self.canClosePane = state["canClosePane"] as? Bool == true
         self.canGoBack = state["canGoBack"] as? Bool == true
         self.canGoForward = state["canGoForward"] as? Bool == true
-        self.canCreateSwarm = (state["tabs"] as? [Any] ?? []).count < 24
+        self.canCreateSwarm = state["canOpenNewTab"] as? Bool
+          ?? ((state["tabs"] as? [Any] ?? []).count < 24)
         self.updateHistory(state["history"] as? [[String: Any]] ?? [], closed: state["closedHistory"] as? [[String: Any]] ?? [])
         self.updateMachines(state["machines"] as? [[String: Any]] ?? [])
         self.strip.update(state)
@@ -898,7 +899,7 @@ private final class SwarmTabStrip: NSView {
     updateDividers()
     // Moving frames alone leaves AppKit's child traversal in insertion order.
     document.setAccessibilityChildren(tabs)
-    newButton.isEnabled = actionsEnabled && tabs.count < 24
+    newButton.isEnabled = actionsEnabled && (state["canOpenNewTab"] as? Bool ?? (tabs.count < 24))
     notificationButton.isEnabled = actionsEnabled
     createButton.isEnabled = actionsEnabled
     openButton.isEnabled = actionsEnabled

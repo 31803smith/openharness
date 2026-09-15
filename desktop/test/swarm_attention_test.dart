@@ -221,7 +221,7 @@ void main() {
     await announceQuestion(app, 'a0');
     final unopened = swarmAttentionEntries(app).single;
     expect(unopened.destination.hasView, isFalse);
-    app.newSwarm();
+    app.newSwarm(name: 'Elsewhere');
     final second = app.activeSwarm;
     expect(
       await activateSwarmAttention(app, unopened, destinationSwarmId: first.id),
