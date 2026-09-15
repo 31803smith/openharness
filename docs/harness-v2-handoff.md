@@ -73,9 +73,8 @@ user for a benchmark window.
   `/private/tmp/harness-entry-polish-native.log`,
   `/private/tmp/harness-entry-polish-build.log`.
   Inspected captures: `/private/tmp/harness-entry-polish-picker` and
-  `/private/tmp/harness-entry-polish-captures`. The staged update has not yet
-  replaced the running c0fd824 preview; the receipt is
-  `/private/tmp/harness-entry-polish-install.json`.
+  `/private/tmp/harness-entry-polish-captures`. The update is installed as **8873f27** and running; live window inspection
+  remains unavailable. The receipt is `/private/tmp/harness-entry-polish-install.json`.
 - Verification: the 56 navigation/picker checks, 27 creation/engine checks and
   54 combined recovery/render checks pass (overlapping suites). Captures at
   1280×900, 760×760 and 600×680 with double text were inspected; six palettes and
@@ -132,6 +131,28 @@ Saved and pushed to `origin/main`: **9d0150d** (remote project preparation),
 validation cleanup). The 339-test pass was followed by six passing focused
 checks after the analyzer cleanup; changed Dart files now analyze without issues.
 
+**8873f27 is installed and running at the supported preview path.** The user
+confirmed Quit Harness, but exact process lookup still found the old PID 68117.
+CUA could not reach that window or its Quit action. The saved four-Harness layout
+was backed up before sending SIGTERM to that exact remaining preview process.
+The process exited; only then was the verified staged bundle swapped into place.
+The installed bundle passes deep/strict codesign verification. CUA launched it
+at the supported path and a new exact process, PID 71516, remains running.
+
+The saved layout, Harness identities and active Harness remain unchanged from
+the backup. The old c0fd824 bundle and layout are retained under
+`desktop/build/macos/Build/Products/Release/.harness-before-entry-polish-irjhhr23/`.
+The receipt is `/private/tmp/harness-entry-polish-install.json` (also copied to
+`/private/tmp/harness-agent-preview-install.json`). Status is
+**installed-running-ui-unverified**: `cgWindowNotFound` persists after relaunch
+and resetting the app-control connection. Do not claim visual restoration or
+current live interaction checks passed. No real agents were created, stopped or
+sent input. No daemon or firmware was restarted or upgraded.
+
+The bundle was built from df75157; rebase to 8873f27 preserved the entire desktop
+tree byte for byte. Incoming CLI question/recap and dial firmware 0.0.69 changes
+were preserved on main. The UI commit is pushed.
+
 The combined panel is saved and pushed as **c0fd824**. Its Release build succeeds
 and passes deep/strict codesign verification before and after staging. Prepared:
 `/private/tmp/harness-pane-controls-release/Build/Products/Release/Harness.app`.
@@ -139,7 +160,7 @@ Build log: `/private/tmp/harness-composer-release.log`. The incremental build
 left a stale outer seal; App.framework verified independently, and refreshing
 the ad-hoc outer signature restored full verification.
 
-**c0fd824 is installed and verified live.** The user quit normally; exact process
+**Previous live verification: c0fd824.** The user quit normally; exact process
 lookup confirmed the supported preview was stopped before the swap. CUA reopened
 that path and showed all four saved Harnesses, the original active Harness and
 its panes. Add Agent opened the combined **Find an agent** / results / preview
@@ -186,9 +207,8 @@ gone immediately before swapping the verified bundle, and do not launch the
 derived-data copy alongside the supported one.
 
 CUA-sent Command-N remains inconclusive, although native callback, exported
-shortcut and Flutter interaction checks pass. Window access returned after the
-normal quit and installation, and the combined panel was inspected live via
-the titlebar action. The automation result alone does not justify changing
+shortcut and Flutter interaction checks pass. Window access returned for c0fd824 and its panel was inspected via the titlebar
+action, but window access is unavailable again for the 8873f27 update. The automation result alone does not justify changing
 keyboard dispatch.
 
 Use [the detailed entry/pane contract](harness-agent-first-tabs.md) when editing
