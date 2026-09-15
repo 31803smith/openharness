@@ -6,7 +6,7 @@ import '../shared/theme/app_theme.dart' as grid;
 import '../shortcuts/app_keymap.dart';
 import '../shortcuts/keymap.dart';
 
-/// The same search-or-create choice on New Tab and in the Add Agent picker.
+/// The same search-or-create choice on New Harness and in the Add Agent picker.
 class HarnessEntryActions extends StatelessWidget {
   const HarnessEntryActions({
     super.key,
@@ -14,9 +14,11 @@ class HarnessEntryActions extends StatelessWidget {
     required this.onNew,
     required this.openKey,
     required this.newKey,
+    this.filledOpen = false,
   });
   final VoidCallback? onOpen, onNew;
   final Key openKey, newKey;
+  final bool filledOpen;
 
   Widget _keyboardAction(
     BuildContext context,
@@ -65,9 +67,13 @@ class HarnessEntryActions extends StatelessWidget {
               enabledMouseCursor: SystemMouseCursors.click,
               minimumSize: size,
               padding: padding,
-              backgroundColor: Colors.transparent,
+              backgroundColor: filledOpen
+                  ? grid.AppPalette.swarmSearchSurface
+                  : Colors.transparent,
               foregroundColor: Colors.white,
-              side: const BorderSide(color: Colors.white24),
+              side: filledOpen
+                  ? BorderSide.none
+                  : const BorderSide(color: Colors.white24),
               shape: const StadiumBorder(),
             ),
             child: const Text('Open Agent'),

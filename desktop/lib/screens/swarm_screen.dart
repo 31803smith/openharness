@@ -1063,6 +1063,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
                           child: ListenableBuilder(
                             listenable: search,
                             builder: (context, _) => HarnessEntryActions(
+                              filledOpen: true,
                               openKey: const ValueKey('harness-picker-open'),
                               newKey: const ValueKey('harness-picker-new'),
                               onOpen: search.canAccept
@@ -1607,7 +1608,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
         IconButton(
           key: const ValueKey('swarm-new-tab-button'),
           onPressed: app.canOpenNewTab ? _newTab : null,
-          icon: const Icon(Icons.add, size: 18, semanticLabel: 'New Tab'),
+          icon: const Icon(Icons.add, size: 18, semanticLabel: 'New Harness'),
         ),
         _harnessButton(),
         const SizedBox(width: 12),

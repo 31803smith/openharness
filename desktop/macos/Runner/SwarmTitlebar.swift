@@ -234,10 +234,10 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     }
     if let file = main.item(withTitle: "File") { main.removeItem(file) }
     let file = NSMenu(title: "File")
-    add(file, "New Tab", "t", "new")
+    add(file, "New Harness", "t", "new")
     add(file, "Add Agent…", "n", "addAgent")
-    add(file, "Rename Tab…", "r", "renameActive", [.command, .shift])
-    add(file, "Close Tab", "w", "closeActive")
+    add(file, "Rename Harness…", "r", "renameActive", [.command, .shift])
+    add(file, "Close Harness", "w", "closeActive")
     file.addItem(.separator())
     add(file, "Split Right…", "r", "splitRight")
     add(file, "Split Down…", "d", "splitDown")
@@ -890,8 +890,8 @@ private final class SwarmTabStrip: NSView {
       button.setAccessibilityLabel(label)
       addSubview(button)
     }
-    button(newButton, "plus", "New Tab", #selector(newSwarm))
-    newButton.setAccessibilityLabel("New Tab")
+    button(newButton, "plus", "New Harness", #selector(newSwarm))
+    newButton.setAccessibilityLabel("New Harness")
     newButton.isEnabled = false
     button(notificationButton, "bell", "Notifications", #selector(openNotifications))
     notificationButton.isEnabled = false
@@ -946,13 +946,13 @@ private final class SwarmTabStrip: NSView {
       guard let id = row["id"] as? String else { return nil }
       let tab = previous[id] ?? SwarmTabButton(id: id)
       tab.palette = palette
-      tab.name = row["name"] as? String ?? "New Tab"
+      tab.name = row["name"] as? String ?? "New Harness"
       let count = row["agentCount"] as? Int ?? 0
       tab.icon = count == 1
         ? icons.image(engine: row["engine"] as? String, asset: row["iconAsset"] as? String)
         : count > 1
         ? SwarmIdentity.menuIcon
-        : NSImage(systemSymbolName: "plus", accessibilityDescription: "New Tab")
+        : NSImage(systemSymbolName: "plus", accessibilityDescription: "New Harness")
       tab.selected = id == activeId
       tab.actionsEnabled = actionsEnabled
       tab.attention = (row["attention"] as? Int ?? 0) > 0
@@ -1083,7 +1083,7 @@ private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidati
     didSet { if palette != oldValue { needsDisplay = true } }
   }
   let swarmId: String
-  var name = "New Tab" { didSet { if name != oldValue { invalidateLabel(); updateAccessibility() } } }
+  var name = "New Harness" { didSet { if name != oldValue { invalidateLabel(); updateAccessibility() } } }
   var selected = false { didSet { if selected != oldValue { invalidateLabel(); updateAccessibility() } } }
   var attention = false { didSet { if attention != oldValue { needsDisplay = true; updateAccessibility() } } }
   var showsDivider = false { didSet { if showsDivider != oldValue { needsDisplay = true } } }
@@ -1127,7 +1127,7 @@ private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidati
     selectButton.target = self
     selectButton.action = #selector(selectSwarm)
     addSubview(selectButton)
-    closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close Tab")
+    closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close Harness")
     closeButton.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 10, weight: .semibold)
     closeButton.contentTintColor = NSColor(white: 0.78, alpha: 1)
     closeButton.isBordered = false
@@ -1135,7 +1135,7 @@ private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidati
     closeButton.action = #selector(closeSwarm)
     addSubview(closeButton)
     let menu = NSMenu()
-    for (title, action) in [("Rename Tab…", #selector(renameSwarm)), ("Close Tab", #selector(closeSwarm))] {
+    for (title, action) in [("Rename Harness…", #selector(renameSwarm)), ("Close Harness", #selector(closeSwarm))] {
       let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
       item.target = self
       menu.addItem(item)

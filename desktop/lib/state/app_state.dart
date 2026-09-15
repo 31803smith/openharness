@@ -514,7 +514,7 @@ class AppNotifier extends ChangeNotifier {
   bool get canOpenNewTab =>
       swarms.length < maxSwarms || swarms.any((swarm) => swarm.isEmptyStarter);
 
-  // A New Tab remains temporary until it has content or a custom name.
+  // A New Harness remains temporary until it has content or a custom name.
   // The return destination is session-local; abandoned drafts are never saved.
   final _draftSwarmReturns = <String, String>{};
 
@@ -529,7 +529,7 @@ class AppNotifier extends ChangeNotifier {
 
   void newSwarm({String name = Swarm.defaultName, bool draft = false}) {
     name = Swarm.normalizeName(name);
-    // Every New Tab entry point reuses the existing start page, including
+    // Every New Harness entry point reuses the existing start page, including
     // when another tab is selected or the tab limit has been reached.
     if (name == Swarm.defaultName) {
       final starter = activeSwarm.isEmptyStarter
@@ -574,7 +574,7 @@ class AppNotifier extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Cancel an untouched New Tab without closing a session or recording
+  /// Cancel an untouched New Harness without closing a session or recording
   /// Recently Closed. A sole workspace remains the app's starting screen.
   bool cancelSwarmDraft(String id) {
     final returnId = _draftSwarmReturns[id];

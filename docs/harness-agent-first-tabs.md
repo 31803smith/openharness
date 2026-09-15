@@ -1,18 +1,18 @@
 # Harness entry and pane controls
 
-Users start with one agent immediately and add panes when useful. A tab holds
-one or several agents without a selection basket or a separate group-creation step.
+Users start with one agent immediately and add panes when useful. A **Harness**
+is the tab container and holds one or several agents without a selection basket or a separate group-creation step.
 This is the latest product direction; it supersedes earlier swarm and multi-select
 proposals in the progress log.
 
 **Agent** is the user-facing name for a session and its actions: Open Agent,
 New Agent, Add Agent, Stop Agent, Restart Agent, and Find an agent. Harness
-remains the application, CLI and device brand. Existing saved names and protocol
-identifiers are unchanged.
+also names the tab container, application, CLI and device. Custom saved names
+and protocol identifiers are unchanged.
 
 ## Open and New Agent
 
-**Cmd-T / New Tab** and the tab-bar plus open the Harness start page over its
+**Cmd-T / New Harness** and the tab-bar plus open the Harness start page over its
 restored lake-at-dusk wallpaper. A long search field, capped at 1120 logical pixels,
 has a prominent 64-pixel minimum height and shows **Find an agent** in place of
 a large heading. **Open Agent** and accented
@@ -30,7 +30,7 @@ Escape restores both actions and retains the query.
 The field starts empty and focused so typing works immediately. Typing, clicking
 it or Open Agent, or pressing an arrow reveals the same input, results,
 highlight, action arrow and keyboard navigation as the Cmd-N picker. Focus alone does not
-build a search catalog or reveal results. New Tab refocuses an existing unused
+build a search catalog or reveal results. New Harness refocuses an existing unused
 page too. Typing filters immediately; arrows select and Enter opens. Escape or clicking
 outside closes the dropdown and hides the caret. The recent-agent list is removed.
 The closed page retains only search text and selection: it does not keep a live
@@ -52,9 +52,9 @@ Unused default-name empty pages are excluded from Recently Closed.
 The titlebar places the bell beside the traffic lights, then the tabs and tab
 plus. A single accented **Add Agent** button sits on the right. It and
 **Cmd-N** open the results and preview immediately beneath a focused
-**Find an agent** field, with outlined **Open Agent** and accented
+**Find an agent** field, with solid neutral **Open Agent** and accented
 **+ New Agent** below the panel. Enter immediately opens the highlighted result.
-This supersedes the compact-first modal; the New Tab page remains compact until
+This supersedes the compact-first modal; the New Harness page remains compact until
 search is activated. Both buttons remain available; Open activates
 the selected result and New replaces search with creation. There is no stacked
 picker behind creation. Escape dismisses the chooser and restores terminal focus.
@@ -138,18 +138,18 @@ actions too. Command search stays in its field, and creation closes its dropdown
 before opening the form. Native actions wait for the destination focus tree before
 handing keyboard ownership back to Flutter and preserve in-progress search composition.
 
-Rename Tab has one title and an unlabeled, accessible name field, with the
+Rename Harness has one title and an unlabeled, accessible name field, with the
 current name selected for immediate typing. Muted focus colors and pill-shaped
 Cancel/Rename actions match the entry UI. Blank names stay in the dialog; the
 80-character count appears only near the limit. Its 60% veil covers the canvas.
-Native tabs consume the whole double-click sequence so opening Rename Tab does
+Native tabs consume the whole double-click sequence so opening Rename Harness does
 not also trigger the window's titlebar zoom behavior.
 
 ## Tabs and menus
 
 One agent shows its engine mark; multiple agents use four separate outlined
 tiles, matching the native square.grid.2x2 symbol. An empty tab uses a plain plus.
-Only one unused **New Tab** is kept. New Tab from the plus, File menu,
+Only one unused **New Harness** is kept. New Harness from the plus, File menu,
 Cmd-T or command search selects that existing page, even at the tab limit.
 Restoration collapses duplicate unused pages from older builds, preferring the
 selected one; named tabs and saved layouts are retained.
@@ -158,11 +158,11 @@ and accessible actions while idle. Returning
 to one restores the engine mark. The same rule applies in search and History,
 including Recently Closed; a closure retains its engine identity even if the
 agent disappears from discovery. Tab names remain editable. Former default names
-`New swarm`, `New tab`, `New Agent`, and `New Harness` restore as `New Tab` and still take
+`New swarm`, `New tab`, `New Tab`, and `New Agent` restore as `New Harness` and still take
 the first agent's name when opened.
 
 The macOS menus are **Harness, File, Edit, View, History, Models, Machines,
-Window, Help**. File groups **New Tab, Add Agent…, Rename Tab, Close Tab**;
+Window, Help**. File groups **New Harness, Add Agent…, Rename Harness, Close Harness**;
 then **Split Right, Split Down, Zoom Pane, Close Pane**. Pin/Unpin and Add Project
 are removed from this menu. File actions have native system icons, with the same
 four-corner Zoom and plain Close cross as the pane header. Machines starts with **Open Machines Manager**, then
