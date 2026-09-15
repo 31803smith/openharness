@@ -68,6 +68,7 @@ import { TmuxBackend } from './lib/tmuxBackend.js'
 import { createAndRegisterPane } from './lib/createAgentPane.js'
 import { restoreAgents } from './lib/restoreAgents.js'
 import { buildLaunchOverrides, validateLaunchOverrides, type LaunchOverridesDeps, type LaunchOverridesResult, type LaunchSource } from './lib/launchOverrides.js'
+import { prepareCodexResume } from './engines/codex/portableHistory.js'
 import { buildHarnessSessionLabel } from './lib/harnessSessionLabel.js'
 import { basename } from 'node:path'
 import {
@@ -3372,6 +3373,17 @@ async function runForeground(session: AuthSession): Promise<void> {
   const relaunchOverrides = (session: RegisteredSession, source: LaunchSource = session): Promise<LaunchOverridesResult> =>
     buildLaunchOverrides(launchOverridesDeps, session.engine, source, session.agentId)
 
+  const prepareSessionResume = (session: RegisteredSession): void => {
+    const repair = prepareCodexResume(session)
+    if (repair.repairedItems) {
+      // The rollout we tail was just shrunk in place. Move the tail to the repaired length now, before
+      // the resumed engine appends, or the watcher would read the whole repaired history as new lines
+      // and the live normalizer would replay the conversation into web/device. See Watcher.setTail.
+      if (repair.repairedBytes !== undefined) watcher.setTail(session.sessionId, repair.repairedBytes)
+      console.log(`[resume] repaired ${repair.repairedItems} Codex reasoning items · backup: ${repair.backupPath}`)
+    }
+  }
+
   watcher.start()
   await cursorDiscovery.start()
   // Panes that died while the daemon was down (a reboot takes the whole tmux server with it) are
@@ -3394,6 +3406,11 @@ async function runForeground(session: AuthSession): Promise<void> {
         // own shell.
         const built = await relaunchOverrides(entry)
         if (!built.ok) return { error: built.error, detail: built.detail }
+        if (opts.resumeSessionId) {
+          try { prepareSessionResume(entry) } catch (error) {
+            return { error: 'RESUME_PREPARATION_FAILED', detail: error instanceof Error ? error.message : String(error) }
+          }
+        }
         const { env: launchEnv, extraArgs, clearEnv } = built.overrides
         const argv = buildEngineLaunchArgv(entry.engine, {
           ...opts,
@@ -3734,6 +3751,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     runtime: TmuxRuntimeRef,
     launch: { env?: Record<string, string>; extraArgs?: readonly string[]; clearEnv?: readonly string[] } = {},
   ): RestartAgentDeps => ({
+    prepareResume: () => prepareSessionResume(session),
     holdOpen: async () => {
       const result = await tmuxBackend!.holdOpen(runtime)
       return result.state === 'succeeded'

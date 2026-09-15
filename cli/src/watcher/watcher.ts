@@ -91,6 +91,23 @@ export class Watcher extends EventEmitter {
     if (opts.fromStart) this.schedule(session.transcriptPath)
   }
 
+  /** Move a byte-tailed session's read cursor to a known length after the file was rewritten in place
+   *  by a trusted producer (e.g. the Codex resume reasoning-id repair). The repair shrinks the rollout
+   *  mid-history; left alone, the next read would see `size < offset`, treat it as a truncation, reset
+   *  to 0 and re-emit the whole conversation into the live normalizer. Pinning the offset to the new
+   *  length keeps the invariant that every line is emitted exactly once. No-op when the session is not
+   *  registered (the post-reboot restore path repairs before it re-attaches, so there is nothing to
+   *  move). Call synchronously in the same tick as the rewrite, before the producer appends again. */
+  setTail(sessionId: string, offset: number): void {
+    const filePath = this.bySession.get(sessionId)
+    if (!filePath) return
+    const state = this.files.get(filePath)
+    if (!state) return
+    if (state.debounce) { clearTimeout(state.debounce); state.debounce = null }
+    state.offset = offset
+    state.partial = ''
+  }
+
   async removeSession(sessionId: string): Promise<void> {
     const filePath = this.bySession.get(sessionId)
     if (!filePath) return
