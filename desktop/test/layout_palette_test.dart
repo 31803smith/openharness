@@ -92,7 +92,7 @@ void main() {
     await tester.tap(find.text('3 columns'));
     await tester.pump(const Duration(milliseconds: 300));
 
-    expect(notifier.presetFor(6), PanePreset.cols3);
+    expect(notifier.presetFor(6), PanePreset.balanced3);
     expect(columnsOnScreen(), 3, reason: 'the grid followed the pick');
   });
 
@@ -107,6 +107,28 @@ void main() {
 
     expect(notifier.presetFor(3), before, reason: 'moving is not choosing');
     expect(find.byType(Dialog), findsOneWidget, reason: 'still open');
+  });
+
+  testWidgets('moving the layout highlight keeps the diagrams in place', (
+    tester,
+  ) async {
+    final notifier = await _open(tester);
+    final choices = PanePreset.forCount(3);
+    List<Rect> rectangles() => [
+      for (final choice in choices)
+        tester.getRect(
+          find.ancestor(
+            of: find.text(choice.label),
+            matching: find.byType(Container),
+          ),
+        ),
+    ];
+    final before = rectangles();
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.pump();
+    expect(rectangles(), before);
+    await tester.pumpWidget(const SizedBox());
+    notifier.dispose();
   });
 
   testWidgets('Enter takes the shape the arrows landed on', (tester) async {
@@ -133,7 +155,7 @@ void main() {
     expect(notifier.presetFor(3), choices[1]);
   });
 
-  testWidgets('the cursor stops at the ends rather than wrapping round', (
+  testWidgets('repeated arrows wrap through the available choices', (
     tester,
   ) async {
     final notifier = await _open(tester);
@@ -145,7 +167,7 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pumpAndSettle();
 
-    expect(notifier.presetFor(3), choices.last);
+    expect(notifier.presetFor(3), choices[3 % choices.length]);
   });
 
   testWidgets('a digit picks straight away, without the arrows', (
@@ -162,12 +184,12 @@ void main() {
   });
 
   testWidgets('a digit with no shape behind it does nothing', (tester) async {
-    // Three tiles offer four shapes, so 5 names none of them. Closing on it
+    // There are at most six choices, so 9 names none of them. Closing on it
     // would throw away the choice someone was in the middle of making.
     final notifier = await _open(tester);
     final before = notifier.presetFor(3);
 
-    await tester.sendKeyEvent(LogicalKeyboardKey.digit5);
+    await tester.sendKeyEvent(LogicalKeyboardKey.digit9);
     await tester.pumpAndSettle();
 
     expect(notifier.presetFor(3), before);
@@ -177,9 +199,13 @@ void main() {
   testWidgets('a big grid offers the column counts, and they are pickable', (
     tester,
   ) async {
-    final notifier = await _open(tester, panes: 6);
+    final notifier = await _open(
+      tester,
+      panes: 6,
+      preset: PanePreset.balanced2,
+    );
     final choices = PanePreset.forCount(6);
-    expect(choices.first, PanePreset.auto);
+    expect(choices.first, PanePreset.balanced2);
 
     // RIGHT, not down. Down used to be a second spelling of "one along"; it
     // moves a ROW now, which is what the arrow on the cap says.
@@ -188,23 +214,62 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(notifier.presetFor(6), choices[1]);
-    expect(notifier.presetFor(6)!.statedColumns, isNotNull);
+    expect(notifier.presetFor(6), PanePreset.balanced3);
+  });
+
+  for (final (size, selected) in [
+    (const Size(1200, 800), PanePreset.columns),
+    (const Size(800, 1200), PanePreset.rows),
+  ]) {
+    testWidgets('saved automatic split selects ${selected.label} at $size', (
+      tester,
+    ) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = size;
+      addTearDown(tester.view.reset);
+      final notifier = await _open(
+        tester,
+        panes: 2,
+        preset: PanePreset.splitLong,
+      );
+      expect(find.text('Split'), findsNothing);
+      expect(find.text('Columns'), findsOneWidget);
+      expect(find.text('Rows'), findsOneWidget);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(notifier.presetFor(2), selected);
+      await tester.pumpWidget(const SizedBox());
+      notifier.dispose();
+    });
+  }
+
+  testWidgets('saved regular grid highlights the matching balanced choice', (
+    tester,
+  ) async {
+    final notifier = await _open(tester, panes: 6, preset: PanePreset.cols3);
+    expect(find.text('Auto'), findsNothing);
+    expect(find.text('3 columns'), findsOneWidget);
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    expect(notifier.presetFor(6), PanePreset.balanced3);
+    await tester.pumpWidget(const SizedBox());
+    notifier.dispose();
   });
 
   testWidgets('down moves a ROW of the strip, not one along it', (
     tester,
   ) async {
-    // Six shapes wrap to four over two, so down from the first lands on the
-    // fifth — the one drawn underneath it. Reported from the desk: it used to
+    // Six shapes form two rows of three, so down from the first lands on the
+    // fourth — the one drawn underneath it. Reported from the desk: it used to
     // walk sideways, which is worse than a key that waits.
-    final notifier = await _open(tester, panes: 6);
-    final choices = PanePreset.forCount(6);
+    final notifier = await _open(tester, panes: 3);
+    final choices = PanePreset.forCount(3);
 
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pumpAndSettle();
 
-    expect(notifier.presetFor(6), choices[4]);
+    expect(notifier.presetFor(3), choices[3]);
   });
 
   testWidgets('the strip comes round at both ends', (tester) async {

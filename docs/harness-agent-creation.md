@@ -60,7 +60,7 @@ to that action. Closing an uncertain request is labeled **Close**, not Cancel.
 A confirmed refusal unlocks the choices for correction; the next deliberate
 submission uses a new intent. Opening New agent also starts a fresh intent.
 
-In a swarm, the uncertain form also offers **Find existing agent…**. It closes
+In a swarm, the uncertain form also offers **Find a harness**. It closes
 the form and opens the shared Add picker, with its input focused and the query
 retained when creation began from search. This only searches the catalog; it
 does not infer the created agent from a matching name/folder or start another.
@@ -69,6 +69,26 @@ the active tab changed. A closed swarm or stale split shows an explanation
 and asks the user to choose a destination again. The modal handoff waits for
 the route to return keyboard ownership. An empty tab appearing behind the
 dialog cannot take that focus for its welcome search.
+
+When creation starts from centered Add or a split, clicking outside or pressing
+**Escape** dismisses the entire flow and restores the original terminal's keyboard
+input. **Back to Search** explicitly returns to the picker with its query, text
+selection, highlighted result and split target intact. Direct creation retains
+**Cancel**. **Find a harness** on an uncertain request also restores that search
+draft. Successful creation keeps the picker closed. Returning to search never
+silently redirects a stale split; a changed target gets an explanation.
+
+New Tab (Cmd-T) creates a temporary workspace with the shared picker. Cancelling
+creation also discards that unused workspace and returns to the previous harness;
+success commits it. With no other populated workspace, cancellation restores the
+starting picker. Cmd-N opens creation directly; Cmd-O opens harness search. A
+changed or closed destination never redirects a successful creation into another
+workspace, and returning to an empty replacement always restores its picker.
+
+The restored draft reads the current catalog and validates its target and
+capacity again. There is no multi-select or checked-agent draft. The draft exists
+only for this temporary detour; it does not persist a pending creation receipt or
+survive an app restart.
 
 Recovery opens the returned agent in the original swarm/position and counts the
 creation once. If that destination changed or closed, the runtime remains in
@@ -107,3 +127,17 @@ The normal arm64 Release build also passes with the production entry point at
 `/private/tmp/harness-find-created-release/Build/Products/Release/Harness.app`;
 log: `/private/tmp/harness-find-created-release.log`. The app was not launched
 and the user's running app and agents were not restarted.
+
+The subsequent Add-return continuation passes 76 affected workflow checks and
+one real-font render check at minimum window size and normal/2× text. Nine new
+checks cover cancellation, successful/uncertain creation, stale destinations
+and selection revalidation. Three reproduced the original loss of the picker;
+the split input check also confirms the next key reaches the original terminal
+after Add is dismissed. Analysis has no errors/warnings and 14 existing infos.
+Logs: `/private/tmp/harness-add-return-final-{tests,analyze}.log`. These use
+synthetic agents/replies, including the production Dart keyboard dispatcher;
+native Shift-Enter still needs direct verification. Inline New swarm retains
+its text but still drops optional checked selections on focus loss.
+The normal arm64 Release build succeeds at
+`/private/tmp/harness-add-return-release/Build/Products/Release/Harness.app`;
+log: `/private/tmp/harness-add-return-release.log`. It was not launched.

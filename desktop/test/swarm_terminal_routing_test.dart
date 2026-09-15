@@ -43,6 +43,68 @@ TerminalBinaryFrame _frame(
 
 void main() {
   test(
+    'JSON replies reach a hidden matching terminal after other sessions',
+    () async {
+      final app = createApp();
+      addTearDown(app.dispose);
+      final first = _session('a0', _streamA);
+      app.adoptSessionForTest(first);
+      app.newSwarm();
+      Map<String, dynamic>? request;
+      final second = TerminalSession(
+        machineId: 'm',
+        agentId: 'a1',
+        agentName: 'Second',
+        engineId: 'codex',
+        send: (type, payload) async {
+          if (type == 'terminal_open') request = payload;
+          return true;
+        },
+        sendBinary: (_) async => true,
+      );
+      app.adoptSessionForTest(second);
+      await second.open();
+      app.newSwarm();
+      final peer = _session('a1', _streamB, machineId: 'peer');
+      app.adoptSessionForTest(peer);
+
+      await app.handleEventForTest('m', {
+        'type': 'terminal_ready',
+        'payload': {
+          'agentId': 'a1',
+          'requestId': request!['requestId'],
+          'protocolVersion': 3,
+          'streamId': _streamB,
+        },
+      });
+      await app.handleTerminalBinaryForTest(
+        'm',
+        encodeTerminalLocal(_frame(_streamB, 0, 'Ready', keyframe: true))!,
+      );
+      expect(second.status, TerminalSessionStatus.controlling);
+      expect(second.terminal.buffer.getText(), contains('Ready'));
+      expect(first.terminal.buffer.getText(), isNot(contains('Ready')));
+      expect(peer.terminal.buffer.getText(), isNot(contains('Ready')));
+
+      await app.handleEventForTest('m', {
+        'type': 'terminal_link_mode',
+        'payload': {'streamId': _streamB, 'mode': 'p2p'},
+      });
+      expect(second.linkMode, 'p2p');
+      expect(first.linkMode, isNull);
+      expect(peer.linkMode, isNull);
+
+      await app.handleEventForTest('m', {
+        'type': 'terminal_transport_error',
+        'payload': {'code': 'TEST_CONNECTION_LOST'},
+      });
+      expect(first.status, TerminalSessionStatus.error);
+      expect(second.status, TerminalSessionStatus.error);
+      expect(peer.status, TerminalSessionStatus.controlling);
+    },
+  );
+
+  test(
     'reordering swarms between incoming frames preserves stream order',
     () async {
       final app = createApp();

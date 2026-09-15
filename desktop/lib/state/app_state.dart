@@ -462,6 +462,14 @@ class AppNotifier extends ChangeNotifier {
   }
 
   void _rememberClosed(ClosedWork entry) {
+    // An unused starter has no work to recover. This also covers empty pages
+    // restored from builds that did not mark them as drafts.
+    if (entry is ClosedSwarm &&
+        entry.name == 'New Harness' &&
+        entry.panes.isEmpty &&
+        entry.presets.isEmpty) {
+      return;
+    }
     _closedHistory.add(entry);
     if (_closedHistory.length > maxClosedSwarms) _closedHistory.removeAt(0);
   }
@@ -473,19 +481,54 @@ class AppNotifier extends ChangeNotifier {
   List<TerminalPane> get panes => activeSwarm.panes;
   Iterable<TerminalPane> get allPanes => swarms.expand((s) => s.panes).toSet();
   String get activeSwarmId => activeSwarm.id;
+  bool get canOpenNewTab =>
+      swarms.length < maxSwarms || swarms.any((swarm) => swarm.isEmptyStarter);
 
-  void newSwarm({String name = 'New swarm'}) {
+  // A New Harness remains temporary until it has content or a custom name.
+  // The return destination is session-local; abandoned drafts are never saved.
+  final _draftSwarmReturns = <String, String>{};
+
+  bool isDraftSwarm(String id) {
+    if (!_draftSwarmReturns.containsKey(id)) return false;
+    final swarm = swarms.where((swarm) => swarm.id == id).firstOrNull;
+    return swarm != null &&
+        swarm.panes.isEmpty &&
+        swarm.name == 'New Harness' &&
+        swarm.presets.isEmpty;
+  }
+
+  void newSwarm({String name = 'New Harness', bool draft = false}) {
+    // Every New Tab entry point reuses the existing start page, including
+    // when another tab is selected or the tab limit has been reached.
+    if (name == 'New Harness') {
+      final starter = activeSwarm.isEmptyStarter
+          ? activeSwarm
+          : swarms.where((swarm) => swarm.isEmptyStarter).firstOrNull;
+      if (starter != null) {
+        if (starter.id != activeSwarmId) selectSwarm(starter.id);
+        return;
+      }
+    }
     if (swarms.length >= maxSwarms) return;
     while (swarms.any((s) => s.id == 'swarm-$_nextSwarmId')) {
       _nextSwarmId++;
     }
     final swarm = Swarm(id: 'swarm-${_nextSwarmId++}', name: name);
+    if (draft) {
+      _draftSwarmReturns[swarm.id] =
+          _draftSwarmReturns[activeSwarmId] ?? activeSwarmId;
+    }
     swarms.add(swarm);
     selectSwarm(swarm.id);
   }
 
   void selectSwarm(String id, {bool attachPending = true}) {
     if (!swarms.any((s) => s.id == id)) return;
+    if (id != activeSwarmId && isDraftSwarm(activeSwarmId)) {
+      final abandoned = activeSwarmId;
+      swarms.removeWhere((swarm) => swarm.id == abandoned);
+      _draftSwarmReturns.remove(abandoned);
+    }
     _activeSwarmId = id;
     railFocused = false;
     final pane = focusedPane;
@@ -498,6 +541,33 @@ class AppNotifier extends ChangeNotifier {
       }
     }
     notifyListeners();
+  }
+
+  /// Cancel an untouched New Harness without closing a session or recording
+  /// Recently Closed. A sole workspace remains the app's starting screen.
+  bool cancelSwarmDraft(String id) {
+    final returnId = _draftSwarmReturns[id];
+    final target = swarms.where((swarm) => swarm.id == id).firstOrNull;
+    if (returnId == null ||
+        target == null ||
+        target.panes.isNotEmpty ||
+        target.name != 'New Harness' ||
+        target.presets.isNotEmpty ||
+        swarms.length == 1) {
+      return false;
+    }
+    final wasActive = activeSwarmId == id;
+    swarms.remove(target);
+    _draftSwarmReturns.remove(id);
+    if (wasActive) {
+      selectSwarm(
+        swarms.any((swarm) => swarm.id == returnId) ? returnId : swarms.last.id,
+      );
+    } else {
+      _persistLayout();
+      notifyListeners();
+    }
+    return true;
   }
 
   /// Navigate to an existing view without opening, retrying or taking control
@@ -541,6 +611,13 @@ class AppNotifier extends ChangeNotifier {
     return true;
   }
 
+  /// Command-number follows the current visual tab order, retaining each tab's
+  /// focused pane. A missing position is a no-op, never a pane selection.
+  void selectSwarmByIndex(int index) {
+    if (index < 0 || index >= swarms.length) return;
+    selectSwarm(swarms[index].id);
+  }
+
   void stepSwarm(int delta) {
     final index = swarms.indexOf(activeSwarm);
     selectSwarm(swarms[(index + delta) % swarms.length].id);
@@ -566,13 +643,14 @@ class AppNotifier extends ChangeNotifier {
   }
 
   Future<void> closeSwarm(String id) async {
+    if (cancelSwarmDraft(id)) return;
     final index = swarms.indexWhere((s) => s.id == id);
     if (index < 0) return;
     // Held ⌘W must not manufacture and close an endless sequence of blank
     // welcome tabs, evicting the real work from recently closed history.
     if (swarms.length == 1 &&
         swarms.single.panes.isEmpty &&
-        swarms.single.name == 'New swarm' &&
+        swarms.single.name == 'New Harness' &&
         swarms.single.presets.isEmpty) {
       return;
     }
@@ -588,6 +666,15 @@ class AppNotifier extends ChangeNotifier {
         historyId: 'closed-${_nextClosedHistoryId++}',
         index: index,
         replacement: replacement,
+        engine: removed.panes.length == 1
+            ? stateOf(removed.panes.single.machineId)?.agents
+                      .where(
+                        (agent) => agent.id == removed.panes.single.agentId,
+                      )
+                      .firstOrNull
+                      ?.engine ??
+                  removed.panes.single.session?.engineId
+            : null,
       ),
     );
     if (_activeSwarmId == id) {
@@ -800,6 +887,11 @@ class AppNotifier extends ChangeNotifier {
   /// Explicit navigation must reveal and refocus even an already-selected pane.
   int get paneFocusRequest => _paneFocusRequest;
 
+  /// An explicit relayout reveals live output even in tiles whose rectangle
+  /// does not change. This is view intent, so it is never persisted.
+  int _paneLayoutRequest = 0;
+  int get paneLayoutRequest => _paneLayoutRequest;
+
   /// The chosen shape for a grid of this size, or the shipped one.
   Map<int, PanePreset> get panePresets => activeSwarm.presets;
 
@@ -809,11 +901,15 @@ class AppNotifier extends ChangeNotifier {
   /// Choosing a preset also resets custom sizes for that pane count. Selecting
   /// the current preset in Command-S is the quick way back to its proportions.
   void setPreset(int paneCount, PanePreset preset) {
-    if (!PanePreset.forCount(paneCount).contains(preset)) return;
+    if (!preset.supportsCount(paneCount)) return;
     final resized = activeSwarm.paneSizes.keys.any(
       (key) => key.startsWith('$paneCount:'),
     );
-    if (presetFor(paneCount) == preset && !resized) return;
+    _paneLayoutRequest++;
+    if (presetFor(paneCount) == preset && !resized) {
+      notifyListeners();
+      return;
+    }
     panePresets[paneCount] = preset;
     activeSwarm.paneSizes.removeWhere(
       (key, _) => key.startsWith('$paneCount:'),
@@ -832,12 +928,13 @@ class AppNotifier extends ChangeNotifier {
     notifyListeners();
   }
 
-  PaneSplitRequest? preparePaneSplit(PaneResizeAxis axis) {
+  PaneSplitRequest? preparePaneSplit(PaneResizeAxis axis, {int? paneId}) {
     if (zoomedPaneId != null || panes.length >= maxPanes) return null;
+    final targetId = paneId ?? focusedPaneId;
     final before = activeSwarm.arranged;
     final minimum = activeSwarm.arrangedMinimum;
     final index = panes.indexWhere(
-      (p) => p.id == focusedPaneId && p.agentId != null,
+      (p) => p.id == targetId && p.agentId != null,
     );
     if (before == null ||
         minimum == null ||
@@ -845,10 +942,10 @@ class AppNotifier extends ChangeNotifier {
       return null;
     }
     final after = before.split(index, axis, minimum: minimum);
-    if (after == null || focusedPaneId == null) return null;
+    if (after == null || targetId == null) return null;
     return PaneSplitRequest(
       swarmId: activeSwarmId,
-      paneId: focusedPaneId!,
+      paneId: targetId,
       axis: axis,
       paneIds: panes.map((p) => p.id),
       before: before,
@@ -893,6 +990,7 @@ class AppNotifier extends ChangeNotifier {
     }
     activeSwarm.savePaneSizes(layoutKey, arrangement);
     activeSwarm.arranged = arrangement;
+    _paneLayoutRequest++;
     notifyListeners();
     if (persist) _persistLayout();
     return true;
@@ -1328,6 +1426,15 @@ class AppNotifier extends ChangeNotifier {
 
   void dismissLinkPrompt(String machineId) {
     if (_dismissedLinkPrompts.add(machineId)) notifyListeners();
+  }
+
+  /// The person asked to see the prompt again — a deliberate open, not the
+  /// reactive gate. Without this, every way in that does not go through
+  /// [showMachinePane] (the welcome's Machines row) opened a dialog that its
+  /// own "still needed?" check closed on the first frame: one popup, then
+  /// nothing, for as long as the app ran.
+  void revisitLinkPrompt(String machineId) {
+    if (_dismissedLinkPrompts.remove(machineId)) notifyListeners();
   }
 
   // ── ⌘B: a typed task, and which agent it belongs to ────────────────────────────────────────────
@@ -2226,8 +2333,9 @@ class AppNotifier extends ChangeNotifier {
       _resetLoginBrowser();
       notifyListeners();
       await _finishBootstrapSignedIn();
-      if (!_authWorkCurrent(revision) || status != AppStatus.authenticated)
+      if (!_authWorkCurrent(revision) || status != AppStatus.authenticated) {
         return;
+      }
       analytics.signedIn();
       // Restarts the clock even if `_trackAppOpened` already started one: this
       // person met the login screen, so their wait begins where the launch's
@@ -2917,8 +3025,9 @@ class AppNotifier extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    if (!_authWorkCurrent(revision) || status == AppStatus.unauthenticated)
+    if (!_authWorkCurrent(revision) || status == AppStatus.unauthenticated) {
       return;
+    }
     if (currentUser == null) unawaited(_loadProfile());
     try {
       await refreshMachines();
@@ -3161,7 +3270,7 @@ class AppNotifier extends ChangeNotifier {
           unawaited(connection.forceReconnect());
         }
       } else {
-        machine.agentsLoadError = 'Could not load agents: $error';
+        machine.agentsLoadError = 'Could not load harnesses: $error';
       }
       // A NO_PEER_LINK close already set needsLink (via onLocalFailure) perhaps a microtask before
       // this catch runs — don't downgrade that specific, actionable state back to a generic error.
@@ -3485,8 +3594,8 @@ class AppNotifier extends ChangeNotifier {
   String _turnActivityKey(String machineId, String agentId) =>
       '$machineId\u0000$agentId';
 
-  void _markAgentProcessing(MachineState machine, String agentId) {
-    machine.processingAgentIds.add(agentId);
+  bool _markAgentProcessing(MachineState machine, String agentId) {
+    final changed = machine.processingAgentIds.add(agentId);
     final key = _turnActivityKey(machine.machine.machineId, agentId);
     _turnActivityWatchdogs.remove(key)?.cancel();
     _turnActivityWatchdogs[key] = Timer(turnActivityTimeout, () {
@@ -3499,6 +3608,7 @@ class AppNotifier extends ChangeNotifier {
       if (!identical(current, machine)) return;
       if (machine.processingAgentIds.remove(agentId)) notifyListeners();
     });
+    return changed;
   }
 
   /// Whether this agent is mid-turn, by the app's own reckoning.
@@ -3677,8 +3787,9 @@ class AppNotifier extends ChangeNotifier {
         'MEDIA_CHANGED' => 'The file changed while downloading. Wait for it to finish generating and try again.',
         'MEDIA_UNSUPPORTED' => 'This file is not a supported image or video.',
         'MEDIA_INVALID_REQUEST' =>
-          'Use a full path or a path inside this agent’s working folder.',
-        'AGENT_NOT_FOUND' => 'This agent is no longer available. Reconnect to the agent and try again.',
+          'Use a full path or a path inside this harness’s working folder.',
+        'AGENT_NOT_FOUND' =>
+          'This harness is no longer available. Reconnect and try again.',
         'NOT_TEXT' || 'FILE_TOO_LARGE' => 'Update the Harness CLI on this remote machine to open media previews.',
         _ => 'The remote machine could not read this file. Check that it is accessible and try again.',
       });
@@ -3789,12 +3900,12 @@ class AppNotifier extends ChangeNotifier {
 
   String? _creationPlacementError(String targetId, PaneSplitRequest? split) {
     if (split != null && !isPaneSplitCurrent(split)) {
-      return 'The layout changed. Close this dialog and split the agent again.';
+      return 'The layout changed. Close this dialog and split the pane again.';
     }
     final target = swarms.where((s) => s.id == targetId).firstOrNull;
-    if (target == null) return 'This swarm was closed';
+    if (target == null) return 'This tab was closed';
     if (target.panes.length >= maxPanes) {
-      return 'This swarm is full. Open a new swarm to create an agent.';
+      return 'This tab is full. Open a new tab to create a harness.';
     }
     return null;
   }
@@ -3805,11 +3916,11 @@ class AppNotifier extends ChangeNotifier {
           'The project folder is unavailable on $machine. '
               'Choose another folder and try again.',
         'TMUX_UNAVAILABLE' =>
-          'Harness needs tmux to start agents on $machine. '
+          'Harness needs tmux to start harnesses on $machine. '
               'Install tmux there, then try again.',
         'UNSUPPORTED_ON_REMOTE' || 'UNSUPPORTED' =>
-          'Update the harness CLI on this machine to use New Agent',
-        _ => 'Create agent failed: ${detail ?? code}',
+          'Update the harness CLI on this machine to create a harness',
+        _ => 'Create harness failed: ${detail ?? code}',
       };
 
   Future<String?> _createAgentWithReceipt(AgentCreationAttempt creation) async {
@@ -3839,7 +3950,7 @@ class AppNotifier extends ChangeNotifier {
         ? 'agent_create_status'
         : 'agent_create';
     final unconfirmed =
-        '$machineName has not confirmed the new agent yet. '
+        '$machineName has not confirmed the new harness yet. '
         'Check status before creating another.';
     Map<String, dynamic> result;
     creation._awaitingConfirmation = true;
@@ -3864,7 +3975,7 @@ class AppNotifier extends ChangeNotifier {
             failure.code == 'UNSUPPORTED_ON_REMOTE' ||
             failure.code == 'E2EE_REQUIRED') {
           return '$machineName cannot check this creation. '
-              'Use Add agent to look for it before creating another.';
+              'Use Find a harness to look for it before creating another.';
         }
         return unconfirmed;
       }
@@ -3903,15 +4014,15 @@ class AppNotifier extends ChangeNotifier {
         // receipt-aware version. Missing is not proof that nothing started.
         // Check status stays read-only, even across upgrades and reconnects.
         return '$machineName has no record of this request. '
-            'Use Add agent to look for it before creating another.';
+            'Use Find a harness to look for it before creating another.';
       case 'pending':
-        return '$machineName is still starting your agent. Check again in a moment.';
+        return '$machineName is still starting your harness. Check again in a moment.';
       case 'unconfirmed':
-        return '$machineName could not confirm whether this agent started. '
-            'Use Add agent to look for it before creating another.';
+        return '$machineName could not confirm whether this harness started. '
+            'Use Open Harness to look for it before creating another.';
       case 'unavailable':
         return creation._complete(
-          'This agent was created but is no longer available. '
+          'This harness was created but is no longer available. '
           'You can create a new one.',
         );
       case 'failed':
@@ -3948,8 +4059,8 @@ class AppNotifier extends ChangeNotifier {
     notifyListeners();
     if (_creationPlacementError(targetId, split) != null) {
       _lastError =
-          'The agent was created, but its original swarm or layout changed. '
-          'Find it with Add agent.';
+          'The harness was created, but its original tab or layout changed. '
+          'Use Open Harness to find it.';
       _lastErrorRetryable = false;
       notifyListeners();
       return null;
@@ -4386,7 +4497,7 @@ class AppNotifier extends ChangeNotifier {
         existing == null &&
         targetPanes.length >= maxPanes) {
       _lastError =
-          'This swarm holds $maxPanes agents. Open another swarm to add more.';
+          'This tab holds $maxPanes harnesses. Open another tab to add more.';
       _lastErrorRetryable = false;
       notifyListeners();
       return;
@@ -4412,7 +4523,7 @@ class AppNotifier extends ChangeNotifier {
       target.arranged = split.after;
       target.arrangedKey = key;
     }
-    if (firstAgent && target.name == 'New swarm') {
+    if (firstAgent && target.name == 'New Harness') {
       final name = agent.name.trim();
       if (name.isNotEmpty) {
         target.name = name.length > 80 ? name.substring(0, 80) : name;
@@ -4901,9 +5012,28 @@ class AppNotifier extends ChangeNotifier {
       _paneLayout?.flushSwarms() ?? Future<void>.value();
 
   void _persistLayout() {
+    _draftSwarmReturns.removeWhere((id, _) {
+      final swarm = swarms.where((swarm) => swarm.id == id).firstOrNull;
+      return swarm == null ||
+          swarm.panes.isNotEmpty ||
+          swarm.name != 'New Harness' ||
+          swarm.presets.isNotEmpty;
+    });
     _layoutRevision++;
     _announceOpenPanesToDial();
-    unawaited(_paneLayout?.saveSwarms(swarms, activeSwarmId));
+    final saved = swarms.where((swarm) => !isDraftSwarm(swarm.id)).toList();
+    if (saved.isEmpty) return;
+    final savedActive = isDraftSwarm(activeSwarmId)
+        ? _draftSwarmReturns[activeSwarmId]
+        : activeSwarmId;
+    unawaited(
+      _paneLayout?.saveSwarms(
+        saved,
+        saved.any((swarm) => swarm.id == savedActive)
+            ? savedActive!
+            : saved.last.id,
+      ),
+    );
   }
 
   /// Rebuild the grid from disk as INTENT only — the tiles appear immediately,
@@ -4940,7 +5070,7 @@ class AppNotifier extends ChangeNotifier {
                   0,
                   (raw['name'] as String).length.clamp(0, 80),
                 )
-              : 'New swarm',
+              : 'New Harness',
         );
         for (final item in (raw['panes'] as List).take(maxPanes)) {
           final entry = PaneLayoutEntry.fromJson(item);
@@ -4980,7 +5110,7 @@ class AppNotifier extends ChangeNotifier {
                 count >= 2 &&
                 count <= maxPanes &&
                 preset != null &&
-                PanePreset.forCount(count).contains(preset)) {
+                preset.supportsCount(count)) {
               swarm.presets[count] = preset;
             }
           }
@@ -4989,6 +5119,20 @@ class AppNotifier extends ChangeNotifier {
         restored.add(swarm);
       }
       if (restored.isNotEmpty) {
+        // Older builds saved multiple unused start pages. Retain the selected
+        // one when possible; custom names, presets and real work stay intact.
+        final starters = restored.where((swarm) => swarm.isEmptyStarter);
+        final starter =
+            starters
+                .where((swarm) => swarm.id == saved['activeId'])
+                .firstOrNull ??
+            starters.firstOrNull;
+        final hadDuplicateStarters = starters.length > 1;
+        if (hadDuplicateStarters) {
+          restored.removeWhere(
+            (swarm) => swarm.isEmptyStarter && swarm != starter,
+          );
+        }
         swarms
           ..clear()
           ..addAll(restored);
@@ -4999,6 +5143,7 @@ class AppNotifier extends ChangeNotifier {
           _nextSwarmId++;
         }
         _autoPickedAgent = true;
+        if (hadDuplicateStarters) _persistLayout();
         notifyListeners();
         return;
       }
@@ -5143,29 +5288,16 @@ class AppNotifier extends ChangeNotifier {
     if (machine == null) return;
     final type = event['type'] as String? ?? '';
     final payload = (event['payload'] as Map<String, dynamic>?) ?? {};
-    // EVERY tile on this machine sees the frame, and each decides for itself.
-    //
-    // Not a routing choice — a correctness one. `handleFrame` answers "this was
-    // a terminal frame", NOT "this was mine": a session that is not the one
-    // being addressed still returns true so the app-level switch skips it. With
-    // one terminal those two meanings were the same sentence. With four they
-    // are not, and stopping at the first `true` would have let whichever tile
-    // happened to be first swallow another tile's `terminal_ready` — the reply
-    // is matched by requestId AND agentId inside the session, so only the right
-    // one acts on it, but only if it is allowed to see it.
-    //
-    // It also fixes a fault that was invisible at one tile: a
-    // `terminal_transport_error` describes the whole connection, and every
-    // session must learn the transport died. Stopping early would have told one
-    // tile and left the rest showing a terminal that can no longer receive
-    // anything.
-    var consumedByTerminal = false;
-    for (final pane in panesFor(machineId).toList()) {
-      final session = pane.session;
-      if (session == null) continue;
-      if (await session.handleFrame(type, payload)) consumedByTerminal = true;
+    // Only terminal protocol frames visit the session pool. Heartbeats, dial
+    // scroll and discovery events must not await every retained terminal.
+    // Each session still sees terminal frames: ready replies match their own
+    // request/agent, while transport errors must reach the whole machine.
+    if (type.startsWith('terminal_')) {
+      for (final pane in panesFor(machineId).toList()) {
+        await pane.session?.handleFrame(type, payload);
+      }
+      return;
     }
-    if (consumedByTerminal) return;
     switch (type) {
       // ── the dial, over the cable, forwarded by the local daemon ──────────────────────────────────
       // Local-only frames (backend.sendLocal in the harness CLI): they describe a hand at THIS desk, so
@@ -5174,7 +5306,7 @@ class AppNotifier extends ChangeNotifier {
         // The dial came, went, or started taking an update. Its own notifier —
         // see [dial] — so nothing else in the window rebuilds for it.
         dial.apply(DialStatus.fromJson(payload));
-        break;
+        return;
       case 'dial_scroll':
         // Straight through, including the reports carrying no travel — the ends of a stroke are the point
         // of the message. The window does no arithmetic here; the terminal that owns the scrollback does.
@@ -5188,7 +5320,7 @@ class AppNotifier extends ChangeNotifier {
           (payload['dy'] as num?)?.round() ?? 0,
           (payload['velocity'] as num?)?.round() ?? 0,
         );
-        break;
+        return;
       case 'device_focus':
         unawaited(ensureDeviceFocus(payload));
         break;
@@ -5366,9 +5498,10 @@ class AppNotifier extends ChangeNotifier {
         // turn already under way, which for an agent this app merely reconnected
         // to is work nobody here just asked for.
         if (type == 'turn_started') _reportFirstMessage();
+        var changed = false;
         final agentId = _eventAgentId(machine, event, payload);
         if (agentId != null) {
-          _markAgentProcessing(machine, agentId);
+          changed = _markAgentProcessing(machine, agentId);
           // Only a START opens a stats turn, for the reason above: a heartbeat
           // is a turn already under way, and counting one would report an agent
           // this app merely reconnected to as work somebody just asked for.
@@ -5380,9 +5513,12 @@ class AppNotifier extends ChangeNotifier {
         } else {
           final sessionId = _eventSessionId(event, payload);
           if (sessionId != null) {
-            machine.pendingProcessingSessions.add(sessionId);
+            changed = machine.pendingProcessingSessions.add(sessionId);
           }
         }
+        // Renew the watchdog on every heartbeat, but redraw only when the
+        // agent first becomes busy. Expiry and turn end publish separately.
+        if (!changed) return;
         break;
       case 'turn_ended':
         final agentId = _eventAgentId(machine, event, payload);

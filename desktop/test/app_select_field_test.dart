@@ -49,6 +49,49 @@ Future<void> _open(WidgetTester tester) async {
 void main() {
   tearDown(() => grid.AppTheme.brightness.value = Brightness.light);
 
+  testWidgets('typing a name focuses a choice without applying it', (
+    tester,
+  ) async {
+    var picked = 'initial';
+    await tester.pumpWidget(
+      _host(
+        AppSelectField<String>(
+          value: 'local',
+          options: const [
+            SelectOption(value: 'local', label: 'This computer'),
+            SelectOption(value: 'mac', label: 'MacBook Pro'),
+            SelectOption(value: 'mini', label: 'Mac mini'),
+            SelectOption(value: 'office', label: 'Office workstation'),
+            SelectOption(value: 'workshop', label: 'Workshop machine'),
+          ],
+          onChanged: (value) => picked = value,
+          width: 260,
+        ),
+      ),
+    );
+    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyW, character: 'w');
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyO, character: 'o');
+    await tester.pump();
+    final row = find.widgetWithText(AppMenuItem, 'Workshop machine');
+    expect(
+      Focus.of(
+        tester.element(
+          find.descendant(of: row, matching: find.text('Workshop machine')),
+        ),
+      ).hasPrimaryFocus,
+      isTrue,
+    );
+    expect(picked, 'initial');
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    expect(picked, 'workshop');
+    expect(find.byType(AppMenuItem), findsNothing);
+  });
+
   testWidgets(
     'Tab, Enter, arrows and Escape operate the picker',
     (tester) async {

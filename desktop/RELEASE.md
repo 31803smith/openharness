@@ -6,7 +6,7 @@ Apple Silicon on Impeller — see "Two macOS builds" below) and both Linux archi
 to that bucket, and cuts the GitHub Release. **The tag IS the version — CI never bumps.**
 
 Tags are `vX.Y.Z_desktop`, not plain `vX.Y.Z`: the CLI (`cli/`, tags `vX.Y.Z_cli`) and the backend
-(`backend/`, tags `vX.Y.Z_api`) release from this same repo, so the suffix is what tells each
+(`backend/`, tags `vX.Y.Z_backend`) release from this same repo, so the suffix is what tells each
 tag-push trigger which workflow to run. It is stripped before anything treats it as a version — the
 manifest, `--build-name`, the release title and the updater's comparison all see a bare `X.Y.Z`.
 

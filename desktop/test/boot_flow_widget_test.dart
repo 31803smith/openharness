@@ -497,7 +497,7 @@ void main() {
 
     // The card leads with what the app does for you, not with its own name —
     // the wordmark left when the screen stopped being a logo over a button.
-    expect(find.text('All your agents, on one screen'), findsOneWidget);
+    expect(find.text('All your harnesses, on one screen'), findsOneWidget);
     expect(find.text('Sign in'), findsOneWidget);
     expect(find.byIcon(Icons.login), findsOneWidget);
   });
@@ -643,7 +643,7 @@ void main() {
     await tester.pump();
 
     expect(find.textContaining('/bin/sh -s -- --desktop'), findsOneWidget);
-    expect(find.text('I ran these · Recheck'), findsOneWidget);
+    expect(find.text('Check again'), findsOneWidget);
   });
 
   testWidgets(
@@ -820,7 +820,7 @@ void main() {
   });
 
   testWidgets(
-    'authenticated with no machines opens Swarm welcome and linking',
+    'authenticated with no machines starts idle and New opens linking',
     (tester) async {
       final app = makeNotifier(AppStatus.authenticated);
       await tester.pumpWidget(
@@ -830,10 +830,18 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.text('Start with one agent'), findsOneWidget);
-      expect(find.text('New agent'), findsNothing);
-      expect(find.text('Add project'), findsOneWidget);
-      await tester.tap(find.text('Link a machine'));
+      expect(find.text('New Harness'), findsWidgets);
+      expect(
+        tester
+            .widget<TextField>(
+              find.byKey(const ValueKey('harness-start-search')),
+            )
+            .focusNode!
+            .hasFocus,
+        isFalse,
+      );
+      expect(find.byKey(const ValueKey('harness-start-open')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('harness-start-new')));
       await tester.pumpAndSettle();
       expect(find.text('harness login\nharness start'), findsOneWidget);
       await tester.tap(find.text('Done'));
@@ -930,7 +938,7 @@ void main() {
   });
 
   testWidgets(
-    'offline selected agent retains its Swarm view with an offline message',
+    'offline selected harness retains its Swarm view with an offline message',
     (tester) async {
       final app = makeNotifier(AppStatus.authenticated);
       const machine = Machine(
@@ -1081,6 +1089,14 @@ void main() {
     await tester.pump();
     expect(find.text('Link this machine'), findsNothing);
 
+    await chord(tester, LogicalKeyboardKey.keyP, shift: true);
+    await tester.enterText(
+      find.byKey(const ValueKey('swarm-search-input')),
+      '> link machine',
+    );
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('link-mac'));
     await tester.tap(find.text('link-mac'));
     // Same popup-transition reasoning as above.
@@ -1159,6 +1175,14 @@ void main() {
     await tester.pump();
     expect(find.text('Link this machine'), findsNothing);
 
+    await chord(tester, LogicalKeyboardKey.keyP, shift: true);
+    await tester.enterText(
+      find.byKey(const ValueKey('swarm-search-input')),
+      '> link machine',
+    );
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('link-mac'));
     await tester.tap(find.text('link-mac'));
     await tester.pumpAndSettle();

@@ -6,10 +6,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/terminal/terminal_binary.dart';
 import 'package:harness/terminal/terminal_session.dart';
 import 'package:harness/terminal/terminal_search.dart';
+import 'package:harness/widgets/terminal_composer.dart';
 import 'package:harness/widgets/terminal_find_bar.dart';
 import 'package:xterm/xterm.dart';
 
 import 'swarm_interactions_test.dart' show chord;
+import 'keymap_runtime_test.dart' show native;
 import 'swarm_screen_test.dart' show mount, terminal;
 import 'swarm_state_test.dart' show createApp;
 
@@ -23,7 +25,7 @@ Future<void> finishFind(WidgetTester tester) async {
     await tester.pump(const Duration(milliseconds: 1));
     if (!tester
         .widget<TerminalFindBar>(find.byType(TerminalFindBar))
-        .search
+        .search!
         .searching) {
       return;
     }
@@ -57,6 +59,389 @@ Future<void> output(
 );
 
 void main() {
+  for (final nativeEntry in [false, true]) {
+    testWidgets(
+      'opening Find owns input before its first frame (native=$nativeEntry)',
+      (tester) async {
+        final app = createApp();
+        app.machineStates['m']!.nodeOnline = true;
+        final input = <TerminalBinaryFrame>[];
+        final session = terminal('a0', input);
+        await output(session, 0, 'first marker\r\n', keyframe: true);
+        app.adoptSessionForTest(session);
+        try {
+          await mount(tester, app, nativeTabs: nativeEntry);
+          if (nativeEntry) {
+            await native(tester, 'findTerminal');
+          } else {
+            await tester.sendKeyDownEvent(LogicalKeyboardKey.meta);
+            await tester.sendKeyEvent(LogicalKeyboardKey.keyF);
+            await tester.sendKeyUpEvent(LogicalKeyboardKey.meta);
+          }
+          await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+          tester.testTextInput.enterText('marker');
+          await tester.pump();
+          await finishFind(tester);
+          expect(input, isEmpty);
+          expect(
+            tester.widget<TextField>(findField).controller!.text,
+            'marker',
+          );
+          expect(
+            tester.widget<TextField>(findField).focusNode!.hasFocus,
+            isTrue,
+          );
+          expect(
+            tester
+                .widget<TerminalFindBar>(find.byType(TerminalFindBar))
+                .search!
+                .count,
+            1,
+          );
+        } finally {
+          await tester.pumpWidget(const SizedBox());
+          app.dispose();
+        }
+      },
+    );
+  }
+
+  testWidgets('Find can close before its first frame without sending Escape', (
+    tester,
+  ) async {
+    final app = createApp();
+    app.machineStates['m']!.nodeOnline = true;
+    final input = <TerminalBinaryFrame>[];
+    final session = terminal('a0', input);
+    await output(session, 0, 'first marker\r\n', keyframe: true);
+    app.adoptSessionForTest(session);
+    try {
+      await mount(tester, app);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.meta);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyF);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.meta);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
+      expect(input, isEmpty);
+      expect(findField, findsNothing);
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+      await tester.pump(const Duration(milliseconds: 10));
+      expect(input.single.bytes, [27, 91, 68]);
+    } finally {
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+    }
+  });
+
+  testWidgets('Find preserves composition started before its first frame', (
+    tester,
+  ) async {
+    final app = createApp();
+    app.machineStates['m']!.nodeOnline = true;
+    final input = <TerminalBinaryFrame>[];
+    final session = terminal('a0', input);
+    await output(session, 0, '日本語\r\n', keyframe: true);
+    app.adoptSessionForTest(session);
+    try {
+      await mount(tester, app);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.meta);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyF);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.meta);
+      const editing = TextEditingValue(
+        text: '日本',
+        selection: TextSelection.collapsed(offset: 2),
+        composing: TextRange(start: 0, end: 2),
+      );
+      tester.testTextInput.updateEditingValue(editing);
+      expect(await tester.sendKeyEvent(LogicalKeyboardKey.escape), isFalse);
+      await tester.pump();
+      await finishFind(tester);
+      expect(input, isEmpty);
+      expect(tester.widget<TextField>(findField).controller!.value, editing);
+      expect(tester.widget<TextField>(findField).focusNode!.hasFocus, isTrue);
+    } finally {
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+    }
+  });
+
+  testWidgets('only the focused pane prepares an idle Find editor', (
+    tester,
+  ) async {
+    final app = createApp();
+    app.machineStates['m']!.nodeOnline = true;
+    final sessions = <TerminalSession>[];
+    final input = <TerminalBinaryFrame>[];
+    for (var workspace = 0; workspace < 4; workspace++) {
+      if (workspace > 0) app.newSwarm();
+      for (var pane = 0; pane < 4; pane++) {
+        final session = terminal('a${workspace * 4 + pane}', input);
+        await output(session, 0, 'first marker\r\n', keyframe: true);
+        sessions.add(session);
+        app.adoptSessionForTest(session);
+      }
+    }
+    final previousObserver = debugOnRebuildDirtyWidget;
+    try {
+      await mount(tester, app);
+      for (final workspace in app.swarms) {
+        app.selectSwarm(workspace.id);
+        await tester.pump();
+      }
+      await tester.pump();
+      expect(find.byType(TerminalView, skipOffstage: false), findsNWidgets(16));
+      final bars = find.byType(TerminalFindBar, skipOffstage: false);
+      expect(bars, findsOneWidget);
+      expect(tester.widget<TerminalFindBar>(bars).search, isNull);
+      final editor = find.descendant(
+        of: bars,
+        matching: find.byType(TextField, skipOffstage: false),
+        skipOffstage: false,
+      );
+      expect(
+        tester.widget<TextField>(editor).focusNode!.canRequestFocus,
+        isFalse,
+      );
+      final focus = FocusManager.instance.primaryFocus;
+      var builds = 0;
+      debugOnRebuildDirtyWidget = (element, _) {
+        if (element.widget is TextField || element.widget is TerminalFindBar) {
+          builds++;
+        }
+      };
+      for (final session in sessions) {
+        await output(session, 1, 'later marker\r\n');
+        await tester.pump();
+      }
+      debugOnRebuildDirtyWidget = previousObserver;
+      expect(builds, 0);
+      expect(FocusManager.instance.primaryFocus, same(focus));
+      expect(input, isEmpty);
+      expect(tester.widget<TerminalFindBar>(bars).search, isNull);
+      app.focusPane(app.panes.first.id);
+      await tester.pump();
+      await tester.pump();
+      expect(bars, findsOneWidget);
+      expect(tester.widget<TerminalFindBar>(bars).search, isNull);
+    } finally {
+      debugOnRebuildDirtyWidget = previousObserver;
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+    }
+  });
+
+  for (final closeWithEscape in [true, false]) {
+    testWidgets(
+      'closing Find returns the next key before a frame (Escape=$closeWithEscape)',
+      (tester) async {
+        final app = createApp();
+        app.machineStates['m']!.nodeOnline = true;
+        final input = <TerminalBinaryFrame>[];
+        final session = terminal('a0', input);
+        await output(session, 0, 'first marker\r\n', keyframe: true);
+        app.adoptSessionForTest(session);
+        try {
+          await mount(tester, app);
+          await chord(tester, LogicalKeyboardKey.keyF);
+          await tester.enterText(findField, 'marker');
+          await finishFind(tester);
+          final view = terminalView(tester, session);
+          final renderer = view.renderTerminal;
+          if (closeWithEscape) {
+            await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+          } else {
+            await tester.tap(find.byTooltip('Close find (Esc)'));
+          }
+          // Two input events can arrive before the next frame. Search should
+          // have relinquished both hardware keys and the native text client.
+          await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+          tester.testTextInput.enterText('resume');
+          await tester.pump(const Duration(milliseconds: 10));
+          expect(findField, findsNothing);
+          expect(view.renderTerminal, same(renderer));
+          expect(input.expand((frame) => frame.bytes).toList(), [
+            27,
+            91,
+            68,
+            ...utf8.encode('resume'),
+          ]);
+          await chord(tester, LogicalKeyboardKey.keyF);
+          expect(
+            tester.widget<TextField>(findField).controller!.text,
+            'marker',
+          );
+        } finally {
+          await tester.pumpWidget(const SizedBox());
+          app.dispose();
+        }
+      },
+    );
+  }
+
+  testWidgets('closing Find returns rapid typing to the visible composer', (
+    tester,
+  ) async {
+    final app = createApp();
+    app.machineStates['m']!.nodeOnline = true;
+    final input = <TerminalBinaryFrame>[];
+    final session = terminal('a0', input);
+    await output(session, 0, 'first marker\r\n', keyframe: true);
+    app.adoptSessionForTest(session);
+    app.toggleComposer(app.focusedPaneId!);
+    final composer = find.descendant(
+      of: find.byType(TerminalComposer),
+      matching: find.byType(TextField),
+    );
+    try {
+      await mount(tester, app);
+      await tester.enterText(composer, 'draft');
+      final controller = tester.widget<TextField>(composer).controller!;
+      await chord(tester, LogicalKeyboardKey.keyF);
+      await tester.enterText(findField, 'marker');
+      await finishFind(tester);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+      expect(controller.selection, const TextSelection.collapsed(offset: 4));
+      tester.testTextInput.enterText('draft continued');
+      await tester.pump(const Duration(milliseconds: 10));
+      expect(findField, findsNothing);
+      expect(controller.text, 'draft continued');
+      expect(tester.widget<TextField>(composer).focusNode!.hasFocus, isTrue);
+      expect(input, isEmpty, reason: 'the composer sends only on submission');
+      await chord(tester, LogicalKeyboardKey.keyF);
+      expect(tester.widget<TextField>(findField).controller!.text, 'marker');
+    } finally {
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+    }
+  });
+
+  testWidgets(
+    'live output refreshes matches without rebuilding the Find editor',
+    (tester) async {
+      final app = createApp();
+      app.machineStates['m']!.nodeOnline = true;
+      final input = <TerminalBinaryFrame>[];
+      final session = terminal('a0', input);
+      await output(
+        session,
+        0,
+        'first marker\r\nsecond marker\r\n',
+        keyframe: true,
+      );
+      app.adoptSessionForTest(session);
+      final previousObserver = debugOnRebuildDirtyWidget;
+      try {
+        await mount(tester, app);
+        await chord(tester, LogicalKeyboardKey.keyF);
+        await tester.enterText(findField, 'marker');
+        await finishFind(tester);
+        final field = tester.widget<TextField>(findField);
+        final search = tester
+            .widget<TerminalFindBar>(find.byType(TerminalFindBar))
+            .search!;
+        final selected = search.match;
+        final view = terminalView(tester, session);
+        final renderer = view.renderTerminal;
+        field.controller!.value = field.controller!.value.copyWith(
+          selection: const TextSelection.collapsed(offset: 3),
+          composing: const TextRange(start: 0, end: 6),
+        );
+        await tester.pump();
+        final editing = field.controller!.value;
+        var editorBuilds = 0;
+        debugOnRebuildDirtyWidget = (element, _) {
+          if (element.widget is TextField &&
+              (element.widget as TextField).controller == field.controller) {
+            editorBuilds++;
+          }
+        };
+        for (var sequence = 1; sequence <= 10; sequence++) {
+          await output(session, sequence, 'next marker $sequence\r\n');
+          await finishFind(tester);
+        }
+        debugOnRebuildDirtyWidget = previousObserver;
+        debugPrint('FIND_OUTPUT: editorBuilds=$editorBuilds');
+        expect(search.count, 12);
+        expect(search.match, selected);
+        expect(view.renderTerminal, same(renderer));
+        expect(field.controller!.value, editing);
+        expect(field.focusNode!.hasFocus, isTrue);
+        expect(input, isEmpty);
+        expect(editorBuilds, 0);
+      } finally {
+        debugOnRebuildDirtyWidget = previousObserver;
+        await tester.pumpWidget(const SizedBox());
+        app.dispose();
+      }
+    },
+  );
+
+  for (final key in [
+    LogicalKeyboardKey.enter,
+    LogicalKeyboardKey.numpadEnter,
+    LogicalKeyboardKey.escape,
+  ]) {
+    testWidgets('Find leaves ${key.keyLabel} to active text composition', (
+      tester,
+    ) async {
+      final app = createApp();
+      app.machineStates['m']!.nodeOnline = true;
+      final input = <TerminalBinaryFrame>[];
+      final session = terminal('a0', input);
+      await output(session, 0, '日本語 one\r\n日本語 two\r\n', keyframe: true);
+      app.adoptSessionForTest(session);
+      try {
+        await mount(tester, app);
+        await chord(tester, LogicalKeyboardKey.keyF);
+        await tester.enterText(findField, '日本語');
+        await finishFind(tester);
+        final search = tester
+            .widget<TerminalFindBar>(find.byType(TerminalFindBar))
+            .search!;
+        final controller = tester.widget<TextField>(findField).controller!;
+        final selected = search.selected;
+        controller.value = controller.value.copyWith(
+          composing: const TextRange(start: 0, end: 3),
+        );
+        await tester.pump();
+        final handled = await tester.sendKeyEvent(key);
+        await tester.pump();
+        expect(findField, findsOneWidget);
+        expect(search.selected, selected);
+        expect(
+          handled,
+          isFalse,
+          reason: 'the input method still owns this key',
+        );
+        expect(controller.text, '日本語');
+        expect(tester.widget<TextField>(findField).focusNode!.hasFocus, isTrue);
+        expect(input, isEmpty);
+
+        controller.clearComposing();
+        await tester.sendKeyEvent(key);
+        await tester.pump();
+        if (key == LogicalKeyboardKey.escape) {
+          expect(findField, findsNothing);
+          await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+          await tester.pump(const Duration(milliseconds: 5));
+          expect(input.single.bytes, [27, 91, 68]);
+        } else {
+          expect(search.selected, (selected + 1) % search.count);
+          await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+          await tester.sendKeyEvent(key);
+          await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+          await tester.pump();
+          expect(search.selected, selected);
+          expect(input, isEmpty);
+        }
+      } finally {
+        await tester.pumpWidget(const SizedBox());
+        app.dispose();
+      }
+    });
+  }
+
   testWidgets(
     'a narrow find bar supports large text and a large result count',
     (tester) async {
@@ -161,7 +546,7 @@ void main() {
       await finishFind(tester);
       final search = tester
           .widget<TerminalFindBar>(find.byType(TerminalFindBar))
-          .search;
+          .search!;
       expect(search.count, 4);
       expect(search.selected, 1);
       expect(controller.highlights, hasLength(1));
@@ -190,7 +575,7 @@ void main() {
       expect(
         tester
             .widget<TerminalFindBar>(find.byType(TerminalFindBar))
-            .search
+            .search!
             .selected,
         3,
       );
@@ -228,7 +613,7 @@ void main() {
       await finishFind(tester);
       final search = tester
           .widget<TerminalFindBar>(find.byType(TerminalFindBar))
-          .search;
+          .search!;
       expect(search.count, 1);
       app.newSwarm();
       app.adoptSessionForTest(b);
@@ -264,7 +649,12 @@ void main() {
       await finishFind(tester);
       final old = session.terminal;
       final text = tester.widget<TextField>(findField).controller!;
-      text.selection = const TextSelection.collapsed(offset: 3);
+      text.value = text.value.copyWith(
+        selection: const TextSelection.collapsed(offset: 3),
+        composing: const TextRange(start: 0, end: 6),
+      );
+      await tester.pump();
+      final editing = text.value;
       await output(
         session,
         10,
@@ -275,12 +665,12 @@ void main() {
       await finishFind(tester);
       expect(session.terminal, isNot(same(old)));
       expect(tester.widget<TextField>(findField).controller, same(text));
-      expect(text.selection, const TextSelection.collapsed(offset: 3));
+      expect(text.value, editing);
       expect(tester.widget<TextField>(findField).focusNode!.hasFocus, isTrue);
       expect(
         tester
             .widget<TerminalFindBar>(find.byType(TerminalFindBar))
-            .search
+            .search!
             .count,
         2,
       );
@@ -289,7 +679,7 @@ void main() {
       expect(
         tester
             .widget<TerminalFindBar>(find.byType(TerminalFindBar))
-            .search
+            .search!
             .count,
         1,
       );
@@ -318,7 +708,7 @@ void main() {
     await finishFind(tester);
     final search = tester
         .widget<TerminalFindBar>(find.byType(TerminalFindBar))
-        .search;
+        .search!;
     expect(search.count, 1);
     await tester.tap(find.byTooltip('Match case'));
     await finishFind(tester);

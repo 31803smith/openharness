@@ -30,6 +30,7 @@ idf_component_register(
         "ui/geist_reg_24.c"
         "ui/geist_reg_32.c"
         "ui/geist_med_48.c"
+        "ui/geist_med_64.c"
         "ui/geist_sem_24.c"
         "ui/geist_med_38.c"
         "ui/icons_settings.c"

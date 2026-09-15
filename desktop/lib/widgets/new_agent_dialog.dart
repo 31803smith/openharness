@@ -31,9 +31,9 @@ const Map<String, String> kEngineBypassPermissionFlag = {
   'opencode': '--auto',
 };
 
-enum NewAgentDialogResult { created, findExisting }
+enum NewAgentDialogResult { created, findExisting, backToSearch }
 
-/// Opens the New agent dialog for [machineId].
+/// Opens the Create Harness dialog for [machineId].
 ///
 /// [source] names the door it was opened by — `machine_row`, `rail_empty`,
 /// `pane_empty` or `shortcut` — and is required rather than defaulted, so a
@@ -52,6 +52,7 @@ Future<NewAgentDialogResult?> showNewAgentDialog(
   PaneSplitRequest? split,
   Future<void>? initialEngineProbe,
   bool offerFindExisting = false,
+  bool offerBackToSearch = false,
 }) {
   // Reported here rather than at each call site: the doors are four and
   // growing, and one that forgets to track is a hole in the funnel that only
@@ -69,6 +70,7 @@ Future<NewAgentDialogResult?> showNewAgentDialog(
       split: split,
       initialEngineProbe: initialEngineProbe,
       offerFindExisting: offerFindExisting,
+      offerBackToSearch: offerBackToSearch,
     ),
   );
 }
@@ -81,6 +83,7 @@ class _NewAgentDialog extends StatefulWidget {
   final PaneSplitRequest? split;
   final Future<void>? initialEngineProbe;
   final bool offerFindExisting;
+  final bool offerBackToSearch;
 
   const _NewAgentDialog({
     required this.notifier,
@@ -90,6 +93,7 @@ class _NewAgentDialog extends StatefulWidget {
     this.split,
     this.initialEngineProbe,
     required this.offerFindExisting,
+    required this.offerBackToSearch,
   });
 
   @override
@@ -149,6 +153,9 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     // answer lands, so nothing blanks.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
+        // The modal's fallback focus can win autofocus. Claim the first
+        // actionable control once the route and its focus tree are mounted.
+        _folderFocus.requestFocus();
         unawaited(_probeEngines(initialProbe: widget.initialEngineProbe));
         unawaited(_loadAgentPreference());
       }
@@ -320,7 +327,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
       _codexProfilesBusy;
 
   /// [Machine.displayName], not `name` — the latter is nullable and a machine
-  /// that never got one would title the dialog "New agent on null".
+  /// that never got one would title the dialog "Create Harness on null".
   String get _machineName =>
       widget.notifier.stateOf(_machineId)?.machine.displayName ??
       'this machine';
@@ -353,6 +360,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     // over there, so the agent would fail to start in a folder the user watched
     // themselves select. That case keeps the in-app browser, which walks the
     // remote filesystem over the `fs_list_dir` RPC.
+    var acceptedFolder = false;
     setState(() => _picking = true);
     final pickingRevision = _machineRevision;
     try {
@@ -372,6 +380,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
             pickingRevision == _machineRevision) {
           _folder = picked;
           _error = null;
+          acceptedFolder = true;
         }
       });
     } catch (error) {
@@ -387,8 +396,16 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted &&
               !_choicesLocked &&
+              !_picking &&
               pickingRevision == _machineRevision) {
-            _folderFocus.requestFocus();
+            // A confirmed folder makes the primary action the next step.
+            // Cancellation/failure keeps Enter on browsing, and a pending
+            // account choice must not focus a disabled submit button.
+            if (acceptedFolder && !_waitingForCodexProfile) {
+              _actionFocus.requestFocus();
+            } else {
+              _folderFocus.requestFocus();
+            }
           }
         });
       }
@@ -484,9 +501,9 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
 
     return AlertDialog(
       title: Text(switch (widget.split?.axis) {
-        PaneResizeAxis.x => 'New agent to the right',
-        PaneResizeAxis.y => 'New agent below',
-        null => 'New agent',
+        PaneResizeAxis.x => 'New Harness to the right',
+        PaneResizeAxis.y => 'New Harness below',
+        null => 'New Harness',
       }),
       titleTextStyle: Theme.of(context).textTheme.titleMedium,
       content: SizedBox(
@@ -536,13 +553,20 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
         ),
       ),
       actions: [
-        TextButton(
-          onPressed: _submitting ? null : () => Navigator.of(context).pop(),
-          style: TextButton.styleFrom(
-            foregroundColor: grid.AppPalette.textSecondary,
+        if (_confirmationPending || widget.offerBackToSearch)
+          TextButton(
+            onPressed: _submitting
+                ? null
+                : () => Navigator.of(context).pop(
+                    widget.offerBackToSearch && !_confirmationPending
+                        ? NewAgentDialogResult.backToSearch
+                        : null,
+                  ),
+            style: TextButton.styleFrom(
+              foregroundColor: grid.AppPalette.textSecondary,
+            ),
+            child: Text(_confirmationPending ? 'Close' : 'Back to Search'),
           ),
-          child: Text(_confirmationPending ? 'Close' : 'Cancel'),
-        ),
         if (widget.offerFindExisting &&
             _confirmationPending &&
             (!_submitting || _checkingCreation))
@@ -553,9 +577,10 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                       Navigator.of(context)
                           .pop(NewAgentDialogResult.findExisting),
             icon: const Icon(LucideIcons.search, size: 16),
-            label: const Text('Find existing agent…'),
+            label: const Text('Find a harness'),
           ),
         FilledButton(
+          key: const ValueKey('create-agent-submit'),
           focusNode: _actionFocus,
           onPressed: canCreate ? _submit : null,
           style: FilledButton.styleFrom(
@@ -578,18 +603,12 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                       Text(
                         _checkingCreation
                             ? 'Checking status…'
-                            : 'Creating agent…',
+                            : 'Creating harness…',
                       ),
                     ],
                   ),
                 )
-              : Text(
-                  _confirmationPending
-                      ? 'Check status'
-                      : _machineIsThisComputer
-                      ? 'Create agent'
-                      : 'Create on $_machineName',
-                ),
+              : Text(_confirmationPending ? 'Check status' : 'New Harness'),
         ),
       ],
     );
@@ -642,7 +661,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                   minimumSize: Size.zero,
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
-                child: const Text('Clone repository…'),
+                child: const Text('Clone repository'),
               ),
           ],
         ),
@@ -718,7 +737,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                   _willInstall
                       ? 'Harness will install ${engineIdentity(_engine).label} before starting.'
                       : 'Couldn’t check whether ${engineIdentity(_engine).label} is installed. '
-                            'You can still try creating an agent.',
+                            'You can still try creating a harness.',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: _willInstall
                         ? grid.AppPalette.accentOnSurface
@@ -1170,7 +1189,7 @@ class _FolderControl extends StatelessWidget {
         if (!machineIsThisComputer) ...[
           const SizedBox(height: _gapTight),
           Text(
-            'This agent will run on $machineName. Its folders are browsed '
+            'This harness will run on $machineName. Its folders are browsed '
             'through the remote CLI.',
             style: theme.textTheme.bodySmall,
           ),

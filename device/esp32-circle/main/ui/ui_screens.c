@@ -52,6 +52,7 @@ extern const lv_font_t geist_reg_34;
 extern const lv_font_t geist_reg_38;  // large body: reader detail, "No activity" placeholder, the "+" glyph
 extern const lv_font_t geist_med_38;
 extern const lv_font_t geist_med_48;
+extern const lv_font_t geist_med_64;  // DIGITS ONLY (0-9 and space) — the Overview's agent count, nothing else
 // The only SemiBold on the device: the reset confirm's primary, which the design sets one weight
 // above its neighbours to mark it as the safe, committing action.
 extern const lv_font_t geist_sem_24;  // largest display: tile agent name + overview agent count
@@ -63,32 +64,31 @@ extern const lv_font_t geist_sem_24;  // largest display: tile agent name + over
 #define SCREEN_PAD   18
 #define SAFE_CONTENT_W 384       // centred column for readable content — wide, since content sits in the
                                  // circle's mid band where the usable width is much larger than the inscribed square
-// Overview action row, +10% over the first pass. The mockup budgeted 320px because it drew the row at
-// y=330, where the chord is only ~333px. It does not sit there: the tile is a CENTRED flex column, which
-// lands the row at y≈220-292 (238-312 with the "N working" line shown), and the chord is ~451px there.
-// So the width was never the binding constraint — 352 clears the arc by ~99px.
-// Re-check this if the column above ever grows a line: at y=410 the chord drops to 303px.
-#define OV_ACT_W     352
-#define OV_ACT_H     73
-#define OV_ACT_GAP   13
-// TWO rows: Goal + Loop share the top one, Voice sits alone beneath them — nearest the thumb, which
-// rests low.
+// The Overview's seats (mockup/overview-v3.html, "H · Halo, no ring"). FIXED, not a growing column: nothing
+// moves when the status changes, the words change. Every number is a device pixel on the 466 face; the far
+// corner of every control is inside the 233px rim, above the home-swipe band (y ≥ 400) and below the
+// notification pull-down band (y < 90).
 //
-// The bottom row is deliberately NARROWER, and that is the arc talking, not taste. A second row does not
-// drop into free space, it drops into a NARROWING one: the panel is 451px wide at the top row's baseline
-// but only 366px at the bottom row's. So the block tapers wide → narrow going down, the same direction
-// the panel tapers, and the shape agrees with the glass instead of fighting it.
-//
-// 329px for Voice clears the arc by 37px in the worst case. Its full 352px would leave 14px — 7px a side,
-// which is not an overflow but is inside the margin where one more line in the column above turns it into
-// one. That worst case is a BUSY machine: the green "N working" line pushes the whole column down 40px,
-// so a too-wide bottom row looks perfect on an idle device and breaks on a working one. Re-run the
-// numbers if anything above ever grows a line.
-#define OV_MOD_W     ((OV_ACT_W - OV_ACT_GAP) / 2)                  // 169 — top row fills the full width
-#define OV_VOICE_W   329                                            // bottom row, inset to clear the arc
-#define OV_VOICE_X   ((OV_ACT_W - OV_VOICE_W) / 2)                  // 11 — centred under the pair above
-#define OV_ROW2_Y    (OV_ACT_H + OV_ACT_GAP)                        // 86
-#define OV_ACT_BLK_H (2 * OV_ACT_H + OV_ACT_GAP)                    // 159 — the whole two-row block
+// The shape follows what round devices agree on — the centre is one number, the lower arc is for the
+// hand: Inbox · Voice · Settings on one arc, Voice larger and on the axis, wearing the same 44px mic the
+// agent tile wears. Goal and Loop are gone from this face: they are ways of speaking, not things to see.
+#define OV_ROW_Y      118   // "8 agents" on one baseline: the count in the 64px digits face, the word at 38
+#define OV_NUM_H      72    // the row's height — the digit's line box
+#define OV_ROW_GAP    14    // between the digit and the word
+#define OV_STATUS_Y   204   // "N working" / "All idle", Geist 38
+#define OV_SIDE_D     64    // Inbox and Settings: 64px rounds, 30px glyphs, centred on y=340
+#define OV_BELL_X     78
+#define OV_GEAR_X     324
+#define OV_SIDE_Y     308
+// Voice: an 88px round on the axis, no caption (owner: "bỏ chữ Voice luôn, icon là đủ") — the caption's
+// height went to the button — and dropped 50px below the sides (centre y=390; owner, twice: 10 then 30
+// more) so the three follow the bezel the way the old arc did, the middle one nearest the resting thumb.
+// Its lowest point is 434, 201px from the centre, 32px inside the rim. Its lower third is in the home
+// band: a tap there is a tap, and a swipe up that starts on it is the button's, so the home gesture is
+// made from beside it, as it always was with a button on the axis.
+#define OV_VOICE_D    88
+#define OV_VOICE_X    189
+#define OV_VOICE_Y    346
 #define SAFE_W       lv_pct(72)  // ~335px — wrapped text on the side screens stays inside the curve
 // MAX_PROJECTS comes from commander_client.h (shared with app_main's fetch buffers) so the UI tile
 // array and the WS fetch never disagree; the UI keeps only a shell per project + a materialized window.
@@ -252,6 +252,14 @@ static lv_obj_t *s_overview_cmd2_lbl;  // "$ harness join" command shown while t
 static lv_obj_t *s_overview_spin;      // loading spinner shown in place of "N agents" while the list loads
 static lv_obj_t *s_overview_actions;   // the 2:1:1 action row (Voice / Goal / Loop) below the agent count
 static lv_obj_t *s_overview_voice_btn;
+// The ⚙ on the Overview — the way into Settings now that swiping stays on the swarm (owner, 2026-09-14:
+// "setting sẽ có 1 icon trên màn hình overview để đi vào"). A round button low on the right of the face,
+// under the action block and above the home-swipe band (y≥400), clear of the notification pull-down
+// band (y<90) that swallows any press starting inside it.
+static lv_obj_t *s_overview_settings_btn;
+static lv_obj_t *s_overview_bell_btn, *s_overview_bell_glyph, *s_overview_bell_badge, *s_overview_bell_badge_lbl;   // Inbox, and its unread badge
+static lv_obj_t *s_overview_agents_lbl;   // the word under the count
+static void overview_settings_tap(lv_event_t *e);
 static lv_obj_t *s_overview_goal_btn;
 static lv_obj_t *s_overview_loop_btn;
 // Kept so the disabled state can be painted with COLOUR. Never reach for lv_obj_set_style_opa() here:
@@ -413,11 +421,13 @@ static void overview_goal_tap(lv_event_t *e);    // start recording a GOAL turn
 static void overview_loop_tap(lv_event_t *e);    // start recording a LOOP turn
 static void overview_mod_apply(void);            // dim/undim the Goal + Loop pills with the rest of the row
 static void update_content_window(void); // (re)materialize the active-tile±window; position Settings/No-agents (defined below)
+static void carousel_scroll_apply(void);   // let the strip scroll, or not on a ring of one (defined below)
 static void rebuild_settings_tile(void); // (re)build the trailing settings tile at the last column
 static void rebuild_machines_tile(void);   // (re)build the Machines carousel tile (ring 1)
 static void no_agents_apply(void);       // switch the empty-state hint between local create and remote tmux
 static void clear_removed_project_transients_locked(const char *project_id, bool voice_aborted);
 static void settings_vlang_tap(lv_event_t *e);   // toggle voice language (defined below)
+static void settings_close_tap(lv_event_t *e);   // the Settings tile's X → back to the Overview (defined below)
 static void settings_scroll_tap(lv_event_t *e);  // flip which way a drag moves the scrollback (defined below)
 static void settings_swipe_tap(lv_event_t *e);   // flip which way a swipe walks the carousel (defined below)
 static void model_chip_tap(lv_event_t *e);       // tap the per-agent Model chip → open the model picker (defined below)
@@ -598,18 +608,34 @@ static lv_obj_t *s_carousel_spacer;
 // the middle means you never reach an edge, so EVERY swipe (including Settings ↔ last agent) is a native
 // adjacent slide — no wrap jump, no recenter. M*W must stay under int32 max: 100000*466 ≈ 46.6M ✓.
 #define CAROUSEL_M 100000
-// One LEADING fixed tile (overview) precedes the agents; the other FIXED tiles TRAIL them. Cyclic order is
-// overview → agent0 → agent1 → … → Settings → Machine, so overview is ring 0, agent i lives at ring i+RING_LEAD,
-// Settings at ring len-2, Machine at ring len-1 (N = agent count). An EMPTY machine (N==0) keeps 4 positions
-// [overview, No agents, Settings, Machine] so the carousel stays swipeable.
-#define RING_LEAD  1                    // number of leading fixed tiles (overview) before the agents
+// THREE RINGS, ONE STRIP (owner, 2026-09-14: "swipe chỉ round qua lại giữa các pane trong swarm"; then
+// "từ overview swipe qua là tới pane liền, overview không có swipe, chỉ có nút X tắt thì quay về overview").
+// The strip walks ONE of them at a time:
+//
+//   agents   — the window's swarm, tile per pane, wrapping on itself. An empty swarm is one "No agents"
+//              page. With ONE tile the ring is one long and the strip does not scroll at all.
+//   overview — one page. It does not scroll either: a horizontal swipe on it is "take me to the panes"
+//              (ui_swipe_end), not a step to a neighbour it does not have.
+//   settings — one page, reached from the Overview's "⚙ Settings" row, left by its X. No swipe.
+//
+// `s_ring` says which. Naming a ring position through ring_of_agent / ring_overview / ring_settings
+// SWITCHES the ring as a side effect — every jump in this file is `carousel_goto(col_for_ring_near(cc,
+// ring_X()))`, and col_for_ring_near needs the new ring's length, so the switch has to happen inside the
+// name. Asking "which page is at ring r" goes through agent_of_ring / is_settings_ring / is_overview_ring,
+// which read the CURRENT ring and switch nothing.
+//
+// Between them: a swipe on the Overview goes to the agents; the home gesture (bottom-edge swipe up) goes
+// to the Overview from an agent and back to the agent from the Overview or Settings; ⚙ and X go between
+// the Overview and Settings.
+enum { RING_AGENTS = 0, RING_OVERVIEW, RING_SETTINGS, RING_MACHINES };
+static int s_ring;                      // which ring the strip is on
+#define RING_LEAD  0                    // agents start at ring 0 of the agents ring
 // THE MACHINES TILE IS OFF THE RING (owner, 2026-09-14: "bỏ luôn màn hình machines trên device"). The
 // carousel walks the window's swarm and the swarm line picks between tabs; which machine an agent lives
 // on is a fact the app decides and the tile only ever reported. The wheel, its rows, the select
 // round-trip and the link guide are all still built and still wired — set MACHINES_TILE to 1 and the
-// ring grows a trailing position again and every jump that used to land there lands there.
+// tile is a one-page ring of its own again, reached wherever ring_machines() is named.
 #define MACHINES_TILE 0
-#define RING_FIXED (1 + MACHINES_TILE)      // number of trailing fixed tiles (Settings, + Machines when on)
 static void resize_spacer(void) { if (s_carousel_spacer) lv_obj_set_width(s_carousel_spacer, CAROUSEL_M * carousel_w()); }
 
 // How many agents the CAROUSEL walks, which is not how many the dial knows.
@@ -629,16 +655,19 @@ static int ring_agents(void)
     return s_ring_agents;
 }
 static bool agent_on_ring(int i) { return i >= 0 && i < ring_agents(); }
-static int ring_len(void)      { return RING_LEAD + (ring_agents() > 0 ? ring_agents() : 1) + RING_FIXED; }
-static int ring_agents_end(void) { return ring_len() - RING_FIXED; }   // first ring AFTER the agents (= first trailing tile)
-static int ring_settings(void) { return ring_agents_end(); }   // Settings tile — the first trailing tile, right after the agents
-// Machines tile — trailing / last (wraps back to overview). -1 while the tile is off: no column holds it,
-// so every "is this column the Machines page" reads false. A JUMP to it goes through ring_machines_home.
-static int ring_machines(void)   { return MACHINES_TILE ? ring_len() - 1 : -1; }
-// Where "go to Machines" lands: the tile when it exists, the Overview when it does not.
-static int ring_machines_home(void) { return MACHINES_TILE ? ring_len() - 1 : 0; }
-static int agent_of_ring(int r) { return r - RING_LEAD; }   // ring → agent index (valid RING_LEAD..ring_agents_end()-1)
-static int ring_of_agent(int i) { return i + RING_LEAD; }   // agent index → ring
+static int ring_len(void)      { return s_ring == RING_AGENTS ? (ring_agents() > 0 ? ring_agents() : 1) : 1; }
+static int ring_agents_end(void) { return s_ring == RING_AGENTS ? ring_len() : 0; }   // first ring AFTER the agents (0 elsewhere: none)
+// The one-page rings. Naming one switches the strip to it — see the note above.
+static int ring_overview(void)   { s_ring = RING_OVERVIEW; return 0; }
+static int ring_settings(void)   { s_ring = RING_SETTINGS; return 0; }
+static int ring_machines(void)   { if (!MACHINES_TILE) return -1; s_ring = RING_MACHINES; return 0; }
+static int ring_machines_home(void) { return MACHINES_TILE ? ring_machines() : ring_overview(); }
+// …and the questions, which switch nothing.
+static bool is_overview_ring(int r) { return s_ring == RING_OVERVIEW && r == 0; }
+static bool is_settings_ring(int r) { return s_ring == RING_SETTINGS && r == 0; }
+static bool is_machines_ring(int r) { return MACHINES_TILE && s_ring == RING_MACHINES && r == 0; }
+static int agent_of_ring(int r) { return (s_ring == RING_AGENTS && r >= 0 && r < ring_len()) ? r : -1; }   // ring → agent index, or -1
+static int ring_of_agent(int i) { s_ring = RING_AGENTS; return i; }   // agent index → ring, and the strip to the agents ring
 // WHICH WAY A SWIPE WALKS THE RING — the whole of the reversal, in one number.
 //
 // The carousel is native LVGL scroll: a finger drags the strip and columns go past. Nothing in this file
@@ -668,13 +697,13 @@ static int col_for_ring_near(int cc, int r) { return carousel_col_for_ring_near(
 // and every mistake in this feature has been that confusion wearing a different hat.
 static void log_landing(int col, int r)
 {
-    static int last_col = INT32_MIN;
-    if (col == last_col) return;   // this runs on every scroll settle; only real moves are news
-    last_col = col;
-    const int ai = (r >= RING_LEAD && r < ring_agents_end()) ? agent_of_ring(r) : -1;
-    const char *what = r == 0 ? "overview"
-                     : r == ring_settings() ? "settings"
-                     : r == ring_machines() ? "machines"
+    static int last_col = INT32_MIN, last_ring_kind = -1;
+    if (col == last_col && s_ring == last_ring_kind) return;   // every scroll settle lands here; only real moves are news
+    last_col = col; last_ring_kind = s_ring;
+    const int ai = agent_of_ring(r);
+    const char *what = is_overview_ring(r) ? "overview"
+                     : is_settings_ring(r) ? "settings"
+                     : is_machines_ring(r) ? "machines"
                      : (ai >= 0 && ai < s_proj_count && s_proj[ai].name[0]) ? s_proj[ai].name : "agent";
     ESP_LOGI(TAG, "landed: col=%d ring=%d %s (swipe %s)", col, r, what,
              s_swipe_reversed ? "reversed" : "natural");
@@ -684,11 +713,11 @@ static void apply_active_from_col(void)
 {
     int r = ring_of_col(carousel_col());
     log_landing(carousel_col(), r);
-    s_overview_active = (r == 0);
-    s_settings_active = (r == ring_settings());
-    s_machines_active   = (r == ring_machines());
+    s_overview_active = is_overview_ring(r);
+    s_settings_active = is_settings_ring(r);
+    s_machines_active = is_machines_ring(r);
     int prev_idx = s_active_idx;
-    if (r >= RING_LEAD && r < ring_agents_end()) s_active_idx = agent_of_ring(r);   // agent ring → agent index
+    if (agent_of_ring(r) >= 0) s_active_idx = agent_of_ring(r);   // agent ring → agent index
     agent_actions_apply();   // the cluster belongs to agent tiles only — follow the swipe, not the next tick
     // The carousel IS the selector: landing on an agent tells the daemon where the user is looking, and
     // the window in front of them follows. Sent for any selected machine — what "following" means for one
@@ -1734,186 +1763,156 @@ void ui_init(void)
     lv_obj_set_style_border_width(s_overview_tile, 0, 0);
     lv_obj_set_style_radius(s_overview_tile, 0, 0);
     lv_obj_set_style_bg_color(s_overview_tile, COL_BG, 0);
-    lv_obj_set_flex_flow(s_overview_tile, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(s_overview_tile, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_row(s_overview_tile, 8, 0);
+    lv_obj_set_style_pad_all(s_overview_tile, 0, 0);
     lv_obj_clear_flag(s_overview_tile, LV_OBJ_FLAG_SCROLLABLE);
-    s_overview_machine_lbl = lv_label_create(s_overview_tile);    // eyebrow = selected machine NAME (dim grey)
-    lv_obj_set_style_text_font(s_overview_machine_lbl, &geist_reg_20, 0);
-    lv_obj_set_style_text_color(s_overview_machine_lbl, COL_DOT_OFF, 0);
-    lv_obj_set_style_text_letter_space(s_overview_machine_lbl, 2, 0);
-    lv_obj_set_width(s_overview_machine_lbl, SAFE_CONTENT_W);
-    lv_label_set_long_mode(s_overview_machine_lbl, LV_LABEL_LONG_DOT);
-    lv_obj_set_style_text_align(s_overview_machine_lbl, LV_TEXT_ALIGN_CENTER, 0);
+
+    // A small helper for the three text seats: one centred line at a fixed y.
+    #define OV_LINE(var, font, col, y) do { \
+        var = lv_label_create(s_overview_tile); \
+        lv_obj_set_style_text_font(var, font, 0); \
+        lv_obj_set_style_text_color(var, col, 0); \
+        lv_obj_set_width(var, SAFE_CONTENT_W); \
+        lv_label_set_long_mode(var, LV_LABEL_LONG_DOT); \
+        lv_obj_set_style_text_align(var, LV_TEXT_ALIGN_CENTER, 0); \
+        lv_obj_align(var, LV_ALIGN_TOP_MID, 0, y); \
+    } while (0)
+
+    // The machine line is OFF this face (owner, 2026-09-14: "bỏ luôn line All machines"): the swarm line on
+    // the agent tiles already says where things live. The label stays built — rebuild_overview_tile still
+    // writes it — and hidden.
+    OV_LINE(s_overview_machine_lbl, &geist_reg_20, COL_DOT_OFF, 0);
     lv_label_set_text(s_overview_machine_lbl, "Machine");
-    s_overview_count_lbl = lv_label_create(s_overview_tile);    // "N agents" (largest font available)
-    lv_obj_set_style_text_font(s_overview_count_lbl, &geist_med_38, 0);
+    lv_obj_add_flag(s_overview_machine_lbl, LV_OBJ_FLAG_HIDDEN);
+    // "8 agents" on ONE baseline: the count in the digits-only 64px face, the word beside it at 38. A
+    // flex row centred on the face; the word hangs on the digit's baseline by taking the row's bottom.
+    lv_obj_t *row = lv_obj_create(s_overview_tile);
+    lv_obj_remove_style_all(row);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(row, SAFE_CONTENT_W, OV_NUM_H);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(row, OV_ROW_GAP, 0);
+    lv_obj_align(row, LV_ALIGN_TOP_MID, 0, OV_ROW_Y);
+    s_overview_count_lbl = lv_label_create(row);
+    lv_obj_set_style_text_font(s_overview_count_lbl, &geist_med_64, 0);
     lv_obj_set_style_text_color(s_overview_count_lbl, COL_FG, 0);
-    lv_label_set_text(s_overview_count_lbl, "0 agents");
-
-    s_overview_offline_hint_lbl = lv_label_create(s_overview_tile);
-    lv_obj_set_style_text_font(s_overview_offline_hint_lbl, &geist_reg_20, 0);
-    lv_obj_set_style_text_color(s_overview_offline_hint_lbl, COL_MUTED, 0);
-    lv_label_set_text(s_overview_offline_hint_lbl, "Run on your machine");
-    lv_obj_add_flag(s_overview_offline_hint_lbl, LV_OBJ_FLAG_HIDDEN);
-    s_overview_offline_cmd_lbl = lv_label_create(s_overview_tile);
-    lv_obj_set_style_text_font(s_overview_offline_cmd_lbl, &geist_reg_25, 0);
-    lv_obj_set_style_text_color(s_overview_offline_cmd_lbl, COL_VOICE, 0);
-    lv_label_set_text(s_overview_offline_cmd_lbl, "$ harness join");
-    lv_obj_add_flag(s_overview_offline_cmd_lbl, LV_OBJ_FLAG_HIDDEN);
-    // A SECOND hint/command pair, because linking is a two-computer ceremony: one command runs over
-    // there, the other runs here, and showing only half of it is showing none of it.
-    s_overview_hint2_lbl = lv_label_create(s_overview_tile);
-    lv_obj_set_style_text_font(s_overview_hint2_lbl, &geist_reg_20, 0);
-    lv_obj_set_style_text_color(s_overview_hint2_lbl, COL_MUTED, 0);
-    lv_label_set_text(s_overview_hint2_lbl, "");
-    lv_obj_add_flag(s_overview_hint2_lbl, LV_OBJ_FLAG_HIDDEN);
-    s_overview_cmd2_lbl = lv_label_create(s_overview_tile);
-    lv_obj_set_style_text_font(s_overview_cmd2_lbl, &geist_reg_25, 0);
-    lv_obj_set_style_text_color(s_overview_cmd2_lbl, COL_VOICE, 0);
-    lv_label_set_text(s_overview_cmd2_lbl, "");
-    lv_obj_add_flag(s_overview_cmd2_lbl, LV_OBJ_FLAG_HIDDEN);
-
-    // "<N> <gerund>…" sub-line (e.g. "3 Cooking…"): count of busy agents + a rotating Claude-Code verb, like the
-    // agent tile's working row. Green, hidden when nobody is working. The verb rotates via overview_working_tick.
-    s_overview_working_lbl = lv_label_create(s_overview_tile);
-    lv_obj_set_style_text_font(s_overview_working_lbl, &geist_reg_25, 0);
-    lv_obj_set_style_text_color(s_overview_working_lbl, COL_VOICE, 0);
+    lv_obj_set_style_text_letter_space(s_overview_count_lbl, -2, 0);
+    lv_label_set_text(s_overview_count_lbl, "0");
+    s_overview_agents_lbl = lv_label_create(row);
+    lv_obj_set_style_text_font(s_overview_agents_lbl, &geist_reg_38, 0);
+    lv_obj_set_style_text_color(s_overview_agents_lbl, COL_MUTED, 0);
+    // Geist's 38 line box is taller under the baseline than the 64's is proportionally; a small lift
+    // puts the two baselines on one line. Measured on the panel, not derived.
+    lv_obj_set_style_pad_bottom(s_overview_agents_lbl, 6, 0);
+    lv_label_set_text(s_overview_agents_lbl, "agents");
+    // The status line: how many are working, or that none are. overview_working_apply writes it.
+    OV_LINE(s_overview_working_lbl, &geist_reg_38, COL_VOICE, OV_STATUS_Y);
     lv_label_set_text(s_overview_working_lbl, "");
     lv_obj_add_flag(s_overview_working_lbl, LV_OBJ_FLAG_HIDDEN);
-    lv_timer_create(overview_working_tick, 1000, NULL);         // rotate the gerund (every ~6s) while the row is shown
+    lv_timer_create(overview_working_tick, 1000, NULL);
 
-    // THREE buttons — Voice, Goal, Loop — each starting a recording in its own mode, matching the square.
-    // This replaced a Voice pill beside a mode SELECT: a select shows a value, so setting Goal cost a tap,
-    // a whole picker screen, a pick and a trip back before the Voice press that actually started anything.
-    // Three actions is one tap, and nothing is left holding state between turns.
-    //
-    // GEOMETRY IS THE CONSTRAINT HERE. The panel is round, so usable width shrinks as the block descends:
-    // 437px at row 1's baseline, 366px at row 2's, 303px by y=410. The block is sized EXACTLY to its two
-    // rows (OV_ACT_BLK_H) and carries no translate — the 10px nudge the one-row version used would push
-    // row 2 down to where the arc eats its corners. Controls must also stay above y≈400 (BOTTOM_EDGE_PX,
-    // the home swipe) and below y=90 (the notification pull-zone).
+    // The offline / not-linked guide: two hint+command pairs, stacked where the status and the controls
+    // would be (the controls are hidden in those states). A column of its own so the four lines keep
+    // their rhythm without the tile being one.
+    lv_obj_t *guide = lv_obj_create(s_overview_tile);
+    lv_obj_remove_style_all(guide);
+    lv_obj_clear_flag(guide, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(guide, SAFE_CONTENT_W, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(guide, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(guide, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(guide, 8, 0);
+    lv_obj_align(guide, LV_ALIGN_TOP_MID, 0, OV_STATUS_Y);
+    #define OV_GUIDE(var, font, col, txt) do { \
+        var = lv_label_create(guide); \
+        lv_obj_set_style_text_font(var, font, 0); \
+        lv_obj_set_style_text_color(var, col, 0); \
+        lv_label_set_text(var, txt); \
+        lv_obj_add_flag(var, LV_OBJ_FLAG_HIDDEN); \
+    } while (0)
+    OV_GUIDE(s_overview_offline_hint_lbl, &geist_reg_20, COL_MUTED, "Run on your machine");
+    OV_GUIDE(s_overview_offline_cmd_lbl,  &geist_reg_25, COL_VOICE, "$ harness join");
+    // A SECOND hint/command pair, because linking is a two-computer ceremony: one command runs over
+    // there, the other runs here, and showing only half of it is showing none of it.
+    OV_GUIDE(s_overview_hint2_lbl, &geist_reg_20, COL_MUTED, "");
+    OV_GUIDE(s_overview_cmd2_lbl,  &geist_reg_25, COL_VOICE, "");
+    #undef OV_GUIDE
+    #undef OV_LINE
+
+    // The controls, in one block so they hide together: Inbox · Voice · Settings on the lower arc.
     s_overview_actions = lv_obj_create(s_overview_tile);
     lv_obj_remove_style_all(s_overview_actions);
     lv_obj_clear_flag(s_overview_actions, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_size(s_overview_actions, OV_ACT_W, OV_ACT_BLK_H);
+    lv_obj_set_size(s_overview_actions, 466, 466);
+    lv_obj_set_pos(s_overview_actions, 0, 0);
 
-    s_overview_voice_btn = lv_button_create(s_overview_actions);
-    lv_obj_set_size(s_overview_voice_btn, OV_VOICE_W, OV_ACT_H);   // bottom row, alone, inset
-    lv_obj_align(s_overview_voice_btn, LV_ALIGN_TOP_LEFT, OV_VOICE_X, OV_ROW2_Y);
-    lv_obj_set_style_radius(s_overview_voice_btn, LV_RADIUS_CIRCLE, 0);
+    // A round control: transparent-ish ghost for the two sides, Voice's own green pair for the middle.
+    #define OV_ROUND(var, x, y, d, cb) do { \
+        var = lv_button_create(s_overview_actions); \
+        lv_obj_remove_style_all(var); \
+        lv_obj_set_size(var, d, d); \
+        lv_obj_set_pos(var, x, y); \
+        lv_obj_set_style_radius(var, LV_RADIUS_CIRCLE, 0); \
+        lv_obj_set_style_bg_color(var, COL_FG, 0); \
+        lv_obj_set_style_bg_opa(var, LV_OPA_10, 0); \
+        lv_obj_set_style_bg_opa(var, LV_OPA_20, LV_STATE_PRESSED); \
+        lv_obj_set_style_border_width(var, 1, 0); \
+        lv_obj_set_style_border_color(var, COL_FG, 0); \
+        lv_obj_set_style_border_opa(var, LV_OPA_10, 0); \
+        lv_obj_set_ext_click_area(var, 16); \
+        lv_obj_clear_flag(var, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_GESTURE_BUBBLE); \
+        lv_obj_add_event_cb(var, cb, LV_EVENT_CLICKED, NULL); \
+    } while (0)
+
+    // Inbox — the bell, with the unread count as a badge on its shoulder. The top-edge pill stays for the
+    // agent tiles; on this face the bell lives down here with its siblings (notif_badge_apply).
+    OV_ROUND(s_overview_bell_btn, OV_BELL_X, OV_SIDE_Y, OV_SIDE_D, notif_pill_tap);
+    { lv_obj_t *g = lv_label_create(s_overview_bell_btn);
+      lv_obj_set_style_text_font(g, &lv_font_montserrat_30, 0);   // LV_SYMBOL_* live in Montserrat only; ×1.5 (owner)
+      lv_obj_set_style_text_color(g, COL_MUTED, 0);
+      lv_label_set_text(g, LV_SYMBOL_BELL);
+      lv_obj_center(g);
+      s_overview_bell_glyph = g;
+      s_overview_bell_badge = lv_obj_create(s_overview_actions);
+      lv_obj_remove_style_all(s_overview_bell_badge);
+      lv_obj_clear_flag(s_overview_bell_badge, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+      lv_obj_set_size(s_overview_bell_badge, LV_SIZE_CONTENT, 24);
+      lv_obj_set_style_min_width(s_overview_bell_badge, 24, 0);
+      lv_obj_set_style_pad_hor(s_overview_bell_badge, 6, 0);
+      lv_obj_set_style_radius(s_overview_bell_badge, LV_RADIUS_CIRCLE, 0);
+      lv_obj_set_style_bg_color(s_overview_bell_badge, lv_color_hex(0x006fff), 0);
+      lv_obj_set_style_bg_opa(s_overview_bell_badge, LV_OPA_COVER, 0);
+      lv_obj_set_pos(s_overview_bell_badge, OV_BELL_X + 48, OV_SIDE_Y - 8);
+      s_overview_bell_badge_lbl = lv_label_create(s_overview_bell_badge);
+      lv_obj_set_style_text_font(s_overview_bell_badge_lbl, &lv_font_montserrat_18, 0);
+      lv_obj_set_style_text_color(s_overview_bell_badge_lbl, lv_color_white(), 0);
+      lv_label_set_text(s_overview_bell_badge_lbl, "0");
+      lv_obj_center(s_overview_bell_badge_lbl);
+      lv_obj_add_flag(s_overview_bell_badge, LV_OBJ_FLAG_HIDDEN); }
+
+    // Voice — the one filled surface, on the axis, wearing the agent tile's own mic.
+    OV_ROUND(s_overview_voice_btn, OV_VOICE_X, OV_VOICE_Y, OV_VOICE_D, overview_voice_tap);
     lv_obj_set_style_bg_color(s_overview_voice_btn, lv_color_hex(0x10281a), 0);
     lv_obj_set_style_bg_opa(s_overview_voice_btn, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(s_overview_voice_btn, 1, 0);
-    lv_obj_set_style_border_color(s_overview_voice_btn, lv_color_hex(0x24512f), 0);
     lv_obj_set_style_bg_color(s_overview_voice_btn, lv_color_hex(0x17371d), LV_STATE_PRESSED);
-    lv_obj_set_style_shadow_width(s_overview_voice_btn, 0, 0);   // no snapshot/layer cost on the tight UI
-    lv_obj_set_style_pad_all(s_overview_voice_btn, 0, 0);
-    lv_obj_clear_flag(s_overview_voice_btn, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_GESTURE_BUBBLE);
-    lv_obj_add_event_cb(s_overview_voice_btn, overview_voice_tap, LV_EVENT_CLICKED, NULL);
-    {   // mic + word as one centred lockup
-        lv_obj_t *lock = lv_obj_create(s_overview_voice_btn);
-        lv_obj_remove_style_all(lock);
-        lv_obj_clear_flag(lock, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_set_size(lock, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-        lv_obj_set_flex_flow(lock, LV_FLEX_FLOW_ROW);
-        lv_obj_set_flex_align(lock, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-        lv_obj_set_style_pad_column(lock, 10, 0);
-        lv_obj_center(lock);
-        // Same 40px pre-coloured mark the agent tile uses. It used to be the 32px asset scaled to 40 and
-        // recoloured to #00ff2f — which is exactly the pair that makes LVGL snapshot the image to a temp
-        // layer and run transform_and_recolor on it. The baked asset is a plain blit and is byte-identical
-        // in appearance.
-        lv_obj_t *mic = lv_image_create(lock);
-        lv_image_set_src(mic, &icon_act_voice);
-        lv_obj_t *t = lv_label_create(lock);
-        lv_obj_set_style_text_font(t, &geist_med_32, 0);   // nothing exists between reg_25 and this
-        lv_obj_set_style_text_color(t, COL_VOICE, 0);
-        lv_label_set_text(t, "Voice");
-    }
+    lv_obj_set_style_bg_opa(s_overview_voice_btn, LV_OPA_COVER, LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(s_overview_voice_btn, lv_color_hex(0x24512f), 0);
+    lv_obj_set_style_border_opa(s_overview_voice_btn, LV_OPA_COVER, 0);
+    { lv_obj_t *mic = lv_image_create(s_overview_voice_btn);
+      lv_image_set_src(mic, &icon_act_voice);   // 44px native, colour baked — a plain blit
+      lv_obj_center(mic); }
 
-    // The two MODIFIERS. Quiet pills — surface fill, hairline border, a coloured glyph over a plain white
-    // word. The row keeps exactly ONE filled shape (Voice) or the eye has to choose where to land, and the
-    // whole argument for this row is that it lands on Voice.
-    //
-    // Goal wears the three-ring target it already wears elsewhere on this device, so the mark is not new
-    // vocabulary. Loop wears the Figma repeat arrows (icon_loop), deliberately NOT a clock or a calendar:
-    // `/loop` runs no scheduler (the repo's cron stack is not involved) and a time-shaped icon would
-    // promise something the command does not do. It replaced LV_SYMBOL_LOOP — same idea, but the font
-    // glyph was not the drawn mark, and it could not be sized to sit level with Goal's 28px target.
-    for (int m = 0; m < 2; m++) {
-        lv_obj_t *btn = lv_button_create(s_overview_actions);
-        lv_obj_set_size(btn, OV_MOD_W, OV_ACT_H);
-        lv_obj_align(btn, LV_ALIGN_TOP_LEFT, m * (OV_MOD_W + OV_ACT_GAP), 0);   // top row
-        lv_obj_set_style_radius(btn, LV_RADIUS_CIRCLE, 0);
-        // Both modifiers are deliberately OFF-DESIGN. Figma gives each of them the same neutral surface
-        // (white at 10%, hairline #3a3f4b); here each pill is instead tinted into the colour of the mark
-        // it carries, so surface and glyph agree — Goal into COL_YELLOW, Loop into COL_ACCENT.
-        //
-        // Derived the way Voice's green pair already was: Voice's fill and border sit at a fixed share of
-        // its #00ff2f accent, so the same two shares are taken of each modifier's accent — but matched on
-        // LUMINANCE, not on raw channel value. That correction is the whole trick. Blue at the same numbers
-        // reads far darker than green and would have come out plain grey; yellow reads far brighter and
-        // would have come out a glaring band. Equal luminance is also why the pair sits level with each
-        // other: 0x2d2108 and 0x16223f look nothing alike as numbers and weigh the same on the panel.
-        //
-        // The cost: the row's old "exactly one filled shape" rule is gone. Voice still leads on size and on
-        // a 32px green word, but there are now three coloured surfaces instead of one.
-        lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
-        lv_obj_set_style_bg_color(btn, lv_color_hex(m == 0 ? 0x2d2108 : 0x16223f), 0);
-        lv_obj_set_style_bg_color(btn, lv_color_hex(m == 0 ? 0x41300c : 0x203159), LV_STATE_PRESSED);
-        lv_obj_set_style_border_color(btn, lv_color_hex(m == 0 ? 0x5b440f : 0x2e4680), 0);
-        lv_obj_set_style_border_width(btn, 1, 0);
-        lv_obj_set_style_shadow_width(btn, 0, 0);   // no snapshot/layer cost on the tight UI
-        lv_obj_set_style_pad_all(btn, 0, 0);
-        lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_GESTURE_BUBBLE);
-        lv_obj_add_event_cb(btn, m == 0 ? overview_goal_tap : overview_loop_tap, LV_EVENT_CLICKED, NULL);
-
-        // Icon BESIDE the word, the square's own lockup. This is what the second row bought: at 169px the
-        // pill is wider than the square's 159px one, so the icon-over-a-20px-word stack the single row
-        // forced (81px fits nothing else) is gone, and the word gets to be 25px.
-        lv_obj_t *lock = lv_obj_create(btn);
-        lv_obj_remove_style_all(lock);
-        lv_obj_clear_flag(lock, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_set_size(lock, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-        lv_obj_set_flex_flow(lock, LV_FLEX_FLOW_ROW);
-        lv_obj_set_flex_align(lock, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-        lv_obj_set_style_pad_column(lock, 11, 0);
-        lv_obj_center(lock);
-
-        if (m == 0) {   // target: three concentric rings, innermost filled
-            lv_obj_t *ring = lv_obj_create(lock);
-            lv_obj_remove_style_all(ring);
-            lv_obj_clear_flag(ring, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
-            lv_obj_set_size(ring, 28, 28);
-            const int sz[] = { 28, 16, 6 };
-            for (int k = 0; k < 3; k++) {
-                lv_obj_t *c = lv_obj_create(ring);
-                lv_obj_remove_style_all(c);
-                lv_obj_clear_flag(c, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
-                lv_obj_set_size(c, sz[k], sz[k]);
-                lv_obj_center(c);
-                lv_obj_set_style_radius(c, LV_RADIUS_CIRCLE, 0);
-                lv_obj_set_style_bg_color(c, COL_YELLOW, 0);
-                lv_obj_set_style_bg_opa(c, k == 2 ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
-                lv_obj_set_style_border_width(c, k == 2 ? 0 : 3, 0);
-                lv_obj_set_style_border_color(c, COL_YELLOW, 0);
-                s_ov_goal_ico[k] = c;
-            }
-        } else {
-            s_ov_loop_ico = lv_image_create(lock);
-            lv_image_set_src(s_ov_loop_ico, &icon_loop);
-            lv_obj_set_style_image_recolor(s_ov_loop_ico, COL_ACCENT, 0);
-            lv_obj_set_style_image_recolor_opa(s_ov_loop_ico, LV_OPA_COVER, 0);
-        }
-
-        lv_obj_t *lbl = lv_label_create(lock);
-        lv_obj_set_style_text_font(lbl, &geist_reg_25, 0);
-        lv_obj_set_style_text_color(lbl, COL_FG, 0);
-        lv_label_set_text(lbl, m == 0 ? "Goal" : "Loop");
-        if (m == 0) { s_overview_goal_btn = btn; s_ov_goal_lbl = lbl; }
-        else        { s_overview_loop_btn = btn; s_ov_loop_lbl = lbl; }
-    }
+    // Settings — the gear. Its own seat at last: same round as the bell, the other side of Voice.
+    OV_ROUND(s_overview_settings_btn, OV_GEAR_X, OV_SIDE_Y, OV_SIDE_D, overview_settings_tap);
+    { lv_obj_t *g = lv_label_create(s_overview_settings_btn);
+      lv_obj_set_style_text_font(g, &lv_font_montserrat_30, 0);   // ×1.5 (owner)
+      lv_obj_set_style_text_color(g, COL_MUTED, 0);
+      lv_label_set_text(g, LV_SYMBOL_SETTINGS);
+      lv_obj_center(g); }
+    #undef OV_ROUND
+    // The modifiers left this face with their pills; their handlers and marks stay for the day they return.
+    s_overview_goal_btn = s_overview_loop_btn = NULL;
+    s_ov_goal_lbl = s_ov_loop_lbl = NULL; s_ov_loop_ico = NULL;
+    for (int k = 0; k < 3; k++) s_ov_goal_ico[k] = NULL;
 
     overview_actions_apply();
     lv_obj_add_flag(s_overview_tile, LV_OBJ_FLAG_HIDDEN);
@@ -2656,7 +2655,7 @@ void ui_land_after_reload(void)
     // slides (staying centered) to the Overview tile (ring 0) — the machine's home (name + agent count + Voice/Goal).
     // Exception: a notification tap that switched machines is asking for ONE agent — land on that tile instead
     // (falling back to the Overview if it's gone from the new list).
-    int target = 0 /* overview */;
+    int target = ring_overview();
     char detail[48] = "";
     if (s_notif_focus[0]) {
         int ni = find_proj(s_notif_focus);
@@ -2695,7 +2694,7 @@ void ui_enter_boot_loading(void)
     // (commander_client_start is called first) — in which case arming the spinner here would put the
     // device straight back into the state it just left. Honour what is already known.
     bool empty_account = s_machines_known && s_machine_count == 0;
-    int land_ring = empty_account ? ring_machines_home() : 0 /* overview */;
+    int land_ring = empty_account ? ring_machines_home() : ring_overview();
     s_machine_landing_pending = !empty_account;
     s_overview_loading = !empty_account;   // spinner (not "0 agents") only while a list is actually coming
     rebuild_settings_tile();
@@ -2732,7 +2731,7 @@ static void ui_enter_machine_block(machine_block_t block)
     ui_project_clear_all();
     rebuild_overview_tile();
     if (lv_screen_active() != scr_projects) lv_screen_load(scr_projects);
-    carousel_goto(col_for_ring_near(carousel_col(), 0 /* overview */), LV_ANIM_OFF);
+    carousel_goto(col_for_ring_near(carousel_col(), ring_overview()), LV_ANIM_OFF);
     apply_active_from_col();
     update_content_window();
     rebuild_page_dots();
@@ -2774,8 +2773,9 @@ static void rebuild_overview_tile(void)
     if (s_remote_offline_view) {
         if (s_overview_spin) { lv_obj_del(s_overview_spin); s_overview_spin = NULL; }
         const bool needs_link = s_machine_block == MACHINE_BLOCK_NEEDS_LINK;
-        lv_label_set_text(s_overview_count_lbl, needs_link ? "Not linked" : "Machine offline");
-        lv_obj_clear_flag(s_overview_count_lbl, LV_OBJ_FLAG_HIDDEN);
+        // The 64px face is digits only, so the words go on the line under it and the number hides.
+        lv_obj_add_flag(s_overview_count_lbl, LV_OBJ_FLAG_HIDDEN);
+        if (s_overview_agents_lbl) { lv_label_set_text(s_overview_agents_lbl, needs_link ? "Not linked" : "Machine offline"); lv_obj_clear_flag(s_overview_agents_lbl, LV_OBJ_FLAG_HIDDEN); }
         if (needs_link) {
             // Two commands on two computers. Naming the machine in the first line is what makes it
             // actionable: "run this over there" is useless without saying which box "there" is.
@@ -2799,14 +2799,16 @@ static void rebuild_overview_tile(void)
     } else if (s_overview_loading) {
         // Agents not loaded yet → show a spinner in place of the (unknown) count; never flash "0 agents".
         lv_obj_add_flag(s_overview_count_lbl, LV_OBJ_FLAG_HIDDEN);
-        if (!s_overview_spin) s_overview_spin = make_spinner(s_overview_tile, 56);
+        if (s_overview_agents_lbl) lv_obj_add_flag(s_overview_agents_lbl, LV_OBJ_FLAG_HIDDEN);
+        if (!s_overview_spin) { s_overview_spin = make_spinner(s_overview_tile, 56); lv_obj_align(s_overview_spin, LV_ALIGN_TOP_MID, 0, OV_ROW_Y + 8); }
         lv_obj_clear_flag(s_overview_spin, LV_OBJ_FLAG_HIDDEN);
     } else {
         if (s_overview_spin) { lv_obj_del(s_overview_spin); s_overview_spin = NULL; }   // stop its timer
         char t[24];
-        snprintf(t, sizeof t, "%d agents", s_proj_count);
+        snprintf(t, sizeof t, "%d", s_proj_count);
         lv_label_set_text(s_overview_count_lbl, t);
         lv_obj_clear_flag(s_overview_count_lbl, LV_OBJ_FLAG_HIDDEN);
+        if (s_overview_agents_lbl) { lv_label_set_text(s_overview_agents_lbl, s_proj_count == 1 ? "agent" : "agents"); lv_obj_clear_flag(s_overview_agents_lbl, LV_OBJ_FLAG_HIDDEN); }
     }
     if (!s_remote_offline_view) {
         if (s_overview_offline_hint_lbl) lv_obj_add_flag(s_overview_offline_hint_lbl, LV_OBJ_FLAG_HIDDEN);
@@ -2840,12 +2842,19 @@ static void overview_working_apply(void)
     int working = 0;
     if (!s_overview_loading && !s_remote_offline_view)
         for (int i = 0; i < s_proj_count; i++) if (s_proj[i].busy_model) working++;
-    if (working > 0) {
-        int64_t sec = esp_timer_get_time() / 1000000LL;   // shared clock → verb rotates every 6s (like agent tiles)
-        lv_label_set_text_fmt(s_overview_working_lbl, "%d %s\xE2\x80\xA6", working, GERUNDS[(sec / 6) % N_GERUNDS]);
+    // One seat, always filled while there is a list: "N working" in green, or "All idle" in grey. The
+    // rotating gerund went with the growing column — the fact is the number, and a verb that changes
+    // every six seconds under a count that does not is motion with nothing to say.
+    if (s_overview_loading || s_remote_offline_view || s_proj_count == 0) {
+        lv_obj_add_flag(s_overview_working_lbl, LV_OBJ_FLAG_HIDDEN);
+    } else if (working > 0) {
+        lv_label_set_text_fmt(s_overview_working_lbl, "%d working", working);
+        lv_obj_set_style_text_color(s_overview_working_lbl, COL_VOICE, 0);
         lv_obj_clear_flag(s_overview_working_lbl, LV_OBJ_FLAG_HIDDEN);
     } else {
-        lv_obj_add_flag(s_overview_working_lbl, LV_OBJ_FLAG_HIDDEN);
+        lv_label_set_text(s_overview_working_lbl, "All idle");
+        lv_obj_set_style_text_color(s_overview_working_lbl, COL_MUTED, 0);
+        lv_obj_clear_flag(s_overview_working_lbl, LV_OBJ_FLAG_HIDDEN);
     }
 }
 
@@ -2943,12 +2952,13 @@ static __attribute__((unused)) void agent_loop_tap (lv_event_t *e) { (void)e; if
 static void agent_actions_apply(void)
 {
     if (!s_agent_acts) return;
+    // Shown while the agent is WORKING too (owner, 2026-09-14: "tao vẫn chưa thấy icon Voice khi agent
+    // đang working"). It used to hide then, on the reading that a new capture on a running agent was a
+    // mistake — but voice_start_impl already interrupts the running turn first and the spoken words take
+    // over, which is exactly what a person reaching for the button mid-turn wants.
     bool on = lv_screen_active() == scr_projects && !s_overview_active && !s_settings_active
               && !s_machines_active && !s_notif_open && !display_is_asleep()
-              && s_active_idx >= 0 && s_active_idx < s_proj_count
-              // ...and not while this agent is WORKING: the tile then belongs to the live status row, and
-              // all three actions would start a NEW turn on an agent already running one.
-              && !s_proj[s_active_idx].busy_model;
+              && s_active_idx >= 0 && s_active_idx < s_proj_count;
     set_hidden(s_agent_acts, !on);
 }
 
@@ -3105,7 +3115,9 @@ bool ui_action_hit(uint16_t x, uint16_t y)
     // looks right and still lights on press; it just does the wrong thing when the thumb is slow.
     return (s_overview_voice_btn && lv_obj_hit_test(s_overview_voice_btn, &pt)) ||
            (s_overview_goal_btn  && lv_obj_hit_test(s_overview_goal_btn,  &pt)) ||
-           (s_overview_loop_btn  && lv_obj_hit_test(s_overview_loop_btn,  &pt));
+           (s_overview_loop_btn  && lv_obj_hit_test(s_overview_loop_btn,  &pt)) ||
+           (s_overview_settings_btn && lv_obj_hit_test(s_overview_settings_btn, &pt)) ||
+           (s_overview_bell_btn && lv_obj_hit_test(s_overview_bell_btn, &pt));
 }
 
 // (Re)build the bottom page-indicator dots (Figma "overview"): one per ring tile (overview + agents + Machine +
@@ -3329,8 +3341,8 @@ static void bright_box_release(lv_event_t *e)        // let go (or press lost) �
     if (!s_bright_dragging) return;
     s_bright_dragging = false;
     if (tileview) {
-        lv_obj_set_scroll_dir(tileview, LV_DIR_HOR);
         lv_obj_add_flag(tileview, LV_OBJ_FLAG_SCROLLABLE);
+        carousel_scroll_apply();   // HOR, or NONE on a ring of one
     }
     apply_dim(s_brightness);                 // dim the screen to the chosen level (a single redraw — safe)
     config_save_brightness(s_brightness);    // persist once on release (avoid NVS wear)
@@ -3461,6 +3473,11 @@ static void rebuild_settings_tile(void)
     // Vertical scroll only — the tileview owns the horizontal swipe.
     lv_obj_set_scroll_dir(t, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(t, LV_SCROLLBAR_MODE_OFF);
+    // The X every other full-face screen wears (owner, 2026-09-14). Settings is reached from the
+    // Overview's "⚙ Settings" row now, and the way back should be the pill that closes every other
+    // screen, not a swipe you have to know about. FLOATING and measured from the content box, so the
+    // y undoes the list's top padding — see picker_add_close.
+    make_close_pill(t, settings_close_tap, 16 - SET_LIST_PAD);
 
     // Wifi · Voice · Passcode · Brightness · Reset device, in the design's order.
     //
@@ -4701,7 +4718,7 @@ static void update_content_window(void)
     for (int i = 0; i < s_proj_count; i++) {
         if (s_proj[i].content_live) {
             int d = s_proj[i].tile_col - cc; if (d < 0) d = -d;
-            if (d > CONTENT_WINDOW || ring_of_col(s_proj[i].tile_col) != ring_of_agent(i)) free_content(i);
+            if (d > CONTENT_WINDOW || agent_of_ring(ring_of_col(s_proj[i].tile_col)) != i) free_content(i);
         }
     }
 
@@ -4717,13 +4734,13 @@ static void update_content_window(void)
         int col = cc + dc;
         int r = ring_of_col(col);
         int ad = dc < 0 ? -dc : dc;
-        if (r == 0) {                                   // overview page (leading, ring 0)
+        if (is_overview_ring(r)) {                      // overview page (home ring 0)
             if (ad < overview_best) { overview_best = ad; overview_col = col; }
             overview_shown = true;
-        } else if (r == ring_settings()) {              // Settings page (first trailing, right after agents)
+        } else if (is_settings_ring(r)) {               // Settings page (home ring 1)
             if (ad < settings_best) { settings_best = ad; settings_col = col; }
             settings_shown = true;
-        } else if (r == ring_machines()) {                // Machines page (last, right after Settings)
+        } else if (is_machines_ring(r)) {                 // Machines page (home ring 2, when on)
             if (ad < machines_best) { machines_best = ad; machines_col = col; }
             machines_shown = true;
         } else if (s_proj_count == 0) {                 // empty machine → ring RING_LEAD is the "No agents" page
@@ -4767,6 +4784,8 @@ static void update_content_window(void)
         lv_obj_add_flag(s_overview_tile, LV_OBJ_FLAG_HIDDEN);
     }
 
+    carousel_scroll_apply();
+
 #if LAZY_MEM_DEBUG
     int live = 0;
     for (int i = 0; i < s_proj_count; i++) if (s_proj[i].content_live) live++;
@@ -4777,44 +4796,46 @@ static void update_content_window(void)
 #endif
 }
 
-// Small-ring smoothing — ONLY the 1-agent ring (ring_len == 2). With a single agent the ring has just two
-// positions (0 = Settings, 1 = agent), so BOTH window neighbours of any tile map to the SAME entity, but
-// each entity owns one physical tile → one side stays blank until SCROLL_END rebuilds it. That blank-then-
-// pop is the stutter when swiping off Settings. Fix WITHOUT breaking the infinite ring and WITHOUT
-// duplicating tiles: on every scroll frame, pin each of the (at most) two columns overlapping the viewport
-// to its ring entity's single tile. The two visible columns are ADJACENT → opposite parity → always
-// DIFFERENT entities (one Settings, one agent), so the two single tiles never contend, and the tile a drag
-// moves away from is 2 columns off (off-screen) at the moment it's relocated → the move is invisible.
-// Also covers N==0 (ring_len 2 now: Settings + the "No agents" page). N>=2 (ring_len>=3 already fills the
-// ±CONTENT_WINDOW window with distinct tiles) is untouched.
+// Small-ring smoothing — rings of TWO (the home ring, or a swarm with two panes). Each entity owns one
+// physical tile, and with two ring positions BOTH window neighbours of any tile map to the SAME entity,
+// so one side stays blank until SCROLL_END rebuilds it. That blank-then-pop is the stutter when swiping
+// between two pages. Fix WITHOUT duplicating tiles: on every scroll frame, pin each of the (at most) two
+// columns overlapping the viewport to its ring entity's single tile. The two visible columns are ADJACENT
+// → opposite parity → always DIFFERENT entities, so the two single tiles never contend, and the tile a
+// drag moves away from is 2 columns off (off-screen) at the moment it's relocated → the move is invisible.
+// A ring of ONE does not scroll at all (carousel_scroll_apply); rings of 3+ already fill the window.
+static void place_page_at(int col, int r)
+{
+    int32_t w = carousel_w();
+    lv_obj_t *fixed = is_overview_ring(r) ? s_overview_tile
+                    : is_settings_ring(r) ? s_settings_tile
+                    : is_machines_ring(r) ? s_machines_tile
+                    : (s_proj_count == 0 && s_ring == RING_AGENTS) ? s_no_agents_tile : NULL;
+    if (fixed) { lv_obj_set_x(fixed, col * w); lv_obj_clear_flag(fixed, LV_OBJ_FLAG_HIDDEN); return; }
+    int ai = agent_of_ring(r);
+    if (ai >= 0 && ai < s_proj_count) {
+        proj_t *p = &s_proj[ai];
+        if (!p->content_live) materialize_content(ai);
+        if (p->tile) { lv_obj_set_x(p->tile, col * w); p->tile_col = col; }
+    }
+}
 static void carousel_cover_leading(void)
 {
-    if (ring_len() != 2) return;                     // the 1-agent AND empty rings collide in the window
+    if (ring_len() != 2) return;
     int32_t w = carousel_w();
     if (w <= 0) return;
     int32_t sx = lv_obj_get_scroll_x(tileview);
     int c0 = (int)(sx / w);                           // left visible column (sx is deep-positive mid-ring)
-    for (int col = c0; col <= c0 + 1; col++) {        // the up-to-two columns overlapping the viewport
-        int r = ring_of_col(col);
-        if (r == 0) {                                 // Settings page
-            if (s_settings_tile) {
-                lv_obj_set_x(s_settings_tile, col * w);
-                lv_obj_clear_flag(s_settings_tile, LV_OBJ_FLAG_HIDDEN);
-            }
-        } else if (s_proj_count == 0) {               // empty machine → ring 1 is the "No agents" page
-            if (s_no_agents_tile) {
-                lv_obj_set_x(s_no_agents_tile, col * w);
-                lv_obj_clear_flag(s_no_agents_tile, LV_OBJ_FLAG_HIDDEN);
-            }
-        } else {                                      // agent r-1 (kept materialized as a neighbour when N==1)
-            int ai = r - 1;
-            if (ai >= 0 && ai < s_proj_count) {
-                proj_t *p = &s_proj[ai];
-                if (!p->content_live) materialize_content(ai);
-                if (p->tile) { lv_obj_set_x(p->tile, col * w); p->tile_col = col; }
-            }
-        }
-    }
+    for (int col = c0; col <= c0 + 1; col++) place_page_at(col, ring_of_col(col));
+}
+
+// Whether the strip may scroll at all: a ring of ONE has nowhere to go, and a native scroll would drag the
+// single tile off centre and snap it back — a wobble that reads as a broken swipe. Called after every
+// window rebuild and after the brightness drag gives the strip back.
+static void carousel_scroll_apply(void)
+{
+    if (!tileview || s_bright_dragging) return;
+    lv_obj_set_scroll_dir(tileview, ring_len() > 1 ? LV_DIR_HOR : LV_DIR_NONE);
 }
 
 static void carousel_scroll(lv_event_t *e) { (void)e; carousel_cover_leading(); }
@@ -4873,9 +4894,9 @@ void ui_project_set_ring_count(int n)
         bool keep_settings = false, keep_machines = false;
         if (s_proj_count > 0) {
             int cc_ring = ring_of_col(carousel_col());
-            keep_settings = (cc_ring == ring_settings());
-            keep_machines = (cc_ring == ring_machines());
-            if (!keep_settings && !keep_machines && cc_ring >= RING_LEAD && cc_ring < ring_agents_end())
+            keep_settings = is_settings_ring(cc_ring);
+            keep_machines = is_machines_ring(cc_ring);
+            if (!keep_settings && !keep_machines && agent_of_ring(cc_ring) >= 0)
                 snprintf(keep_id, sizeof keep_id, "%s", s_proj[agent_of_ring(cc_ring)].id);
         }
 
@@ -4924,10 +4945,10 @@ void ui_project_apply_order(const char *const *ids, int n)
     if (same) { display_unlock(); return; }
 
     int cc_ring = ring_of_col(carousel_col());
-    bool keep_settings = (cc_ring == ring_settings());
-    bool keep_machines = (cc_ring == ring_machines());
+    bool keep_settings = is_settings_ring(cc_ring);
+    bool keep_machines = is_machines_ring(cc_ring);
     char keep_id[ID_MAX] = "";
-    if (!keep_settings && !keep_machines && cc_ring >= RING_LEAD && cc_ring < ring_agents_end())
+    if (!keep_settings && !keep_machines && agent_of_ring(cc_ring) >= 0)
         snprintf(keep_id, sizeof keep_id, "%s", s_proj[agent_of_ring(cc_ring)].id);
 
     // Free every materialised tile before the model moves: a tile left behind would sit at the column its
@@ -4965,10 +4986,10 @@ void ui_project_remove(const char *project_id)
     // Capture the page centered NOW (old modulo) so we keep viewing the SAME agent after the shift + remodulo.
     // By id, because delete shifts indices; if the removed agent itself was centered, we land on a neighbour.
     int cc_ring = ring_of_col(carousel_col());
-    bool keep_settings = (cc_ring == ring_settings());   // trailing fixed tiles — capture under the OLD modulo
-    bool keep_machines   = (cc_ring == ring_machines());
+    bool keep_settings = is_settings_ring(cc_ring);   // home pages — capture under the OLD ring
+    bool keep_machines = is_machines_ring(cc_ring);
     char keep_id[48] = "";
-    if (!keep_settings && !keep_machines && cc_ring >= RING_LEAD && cc_ring < ring_agents_end())   // on an agent
+    if (!keep_settings && !keep_machines && agent_of_ring(cc_ring) >= 0)   // on an agent
         snprintf(keep_id, sizeof keep_id, "%s", s_proj[agent_of_ring(cc_ring)].id);
 
     // Windowed model: free EVERY materialized agent tile first so the model shift below can't strand a tile
@@ -5050,9 +5071,9 @@ static int add_proj(const char *id)
     // Trailing fixed tiles MOVE when N grows, so capture which ENTITY is centered (agent index / Machine /
     // Settings) and re-anchor to its NEW ring below. Agents don't shift on append → agent ring == index.
     int cc_ring = (s_proj_count > 0) ? ring_of_col(carousel_col()) : -1;
-    bool on_settings = (cc_ring >= 0 && cc_ring == ring_settings());
-    bool on_machines   = (cc_ring >= 0 && cc_ring == ring_machines());
-    int  on_agent    = (cc_ring >= RING_LEAD && cc_ring < ring_agents_end()) ? agent_of_ring(cc_ring) : -1;
+    bool on_settings = is_settings_ring(cc_ring);
+    bool on_machines = is_machines_ring(cc_ring);
+    int  on_agent    = agent_of_ring(cc_ring);
     bool keep_remote_reload_page = s_remote_online_reload &&
         (lv_screen_active() != scr_projects || !s_overview_active);
     bool reload_on_settings = s_settings_active;
@@ -5076,7 +5097,7 @@ static int add_proj(const char *id)
     // the list arrived; ui_land_after_reload owns the final conditional focus.
     if (i == 0) {
         int tr = keep_remote_reload_page
-            ? (reload_on_settings ? ring_settings() : reload_on_machines ? ring_machines_home() : 0 /* overview */)
+            ? (reload_on_settings ? ring_settings() : reload_on_machines ? ring_machines_home() : ring_overview())
             : ring_of_agent(0);
         carousel_goto(col_for_ring_near(CAROUSEL_M / 2, tr), LV_ANIM_OFF);
     } else {
@@ -5304,6 +5325,10 @@ bool ui_picker_is_open(void)
 
 int ui_notif_pull_zone_px(void)
 {
+    // NONE on Settings: the drawer never opens from there (ui_notif_open refuses), so the band was only
+    // ever swallowing presses — including the X at y=16..48 that closes the tile (owner, 2026-09-14:
+    // "nút X tắt ở màn hình setting chưa work").
+    if (lv_screen_active() == scr_projects && s_settings_active) return 0;
     bool agent_tile = lv_screen_active() == scr_projects && !s_overview_active && !s_settings_active && !s_machines_active;
     return (AGENT_CTL_CHIPS && agent_tile) ? 44 : 90;
 }
@@ -5366,18 +5391,51 @@ void ui_focus_project(const char *project_id)
 // "Home" gesture (bottom-edge swipe-up, from touch.c): jump to the Overview tile (ring 0) from ANY screen.
 // Closes the notif drawer, leaves any secondary screen (reader / wifi / model picker / e2ee pair) back to
 // the projects carousel, and centers ring 0. No-op before the carousel exists (early boot / unpaired).
+// Land the strip on ring position `r` (already named through ring_X, so the ring is switched) and rebuild
+// what is around it. Caller holds the lock.
+static void carousel_land(int r)
+{
+    if (!tileview) return;
+    if (lv_screen_active() != scr_projects) lv_screen_load(scr_projects);
+    carousel_goto(col_for_ring_near(carousel_col(), r), LV_ANIM_OFF);
+    apply_active_from_col();     // recompute s_overview_active / settings / machines from the centred ring
+    update_content_window();
+    rebuild_page_dots();
+}
+
+// The Settings tile's X: back to the Overview, the page it was opened from.
+static void settings_close_tap(lv_event_t *e)
+{
+    (void)e;
+    s_suppress_tap = true;
+    display_lock();
+    carousel_land(ring_overview());
+    display_unlock();
+}
+
+static void overview_settings_tap(lv_event_t *e)
+{
+    (void)e;
+    ESP_LOGI(TAG, "overview: settings");   // the tap reached the row — the one line that separates "did not land" from "did not open"
+    s_suppress_tap = true;
+    display_lock();
+    carousel_land(ring_settings());
+    display_unlock();
+}
+
+// The home gesture is a TOGGLE between the two rings: from an agent it goes to the Overview; from the
+// Overview or Settings it goes back to the agent the strip was on. Nothing else crosses between them.
 void ui_home_overview(void)
 {
     if (s_bright_dragging) return;   // a brightness-slider drag on Settings is not a home swipe (mirror ui_swipe_*)
     ui_notif_close();   // no-op if closed; takes/releases the lock itself (must not nest inside our lock)
     display_lock();
     swarm_picker_close();
-    if (tileview) {
-        if (lv_screen_active() != scr_projects) lv_screen_load(scr_projects);
-        carousel_goto(col_for_ring_near(carousel_col(), 0 /* overview ring */), LV_ANIM_OFF);
-        apply_active_from_col();     // recompute s_overview_active / settings / machines from the centered ring
-        update_content_window();
-        rebuild_page_dots();
+    if (s_ring != RING_AGENTS && lv_screen_active() == scr_projects) {
+        int ai = (s_active_idx >= 0 && s_active_idx < s_proj_count) ? s_active_idx : 0;
+        carousel_land(ring_of_agent(ai));   // 0 on an empty swarm is the "No agents" page
+    } else {
+        carousel_land(ring_overview());
     }
     display_unlock();
 }
@@ -5455,10 +5513,17 @@ static void notif_badge_apply(void)
 {
     if (!s_notif_pill) return;
     int n = notif_count();
+    // The Overview has its own bell on the lower arc, with the count as a badge; the top-edge pill is
+    // for the agent tiles, which have no seat for one.
     bool show = n > 0 && !display_is_asleep() && lv_screen_active() == scr_projects
-                && !s_settings_active && !s_machines_active && !s_notif_open;   // shown on the Overview home too
+                && !s_settings_active && !s_machines_active && !s_notif_open && !s_overview_active;
     set_hidden(s_notif_pill, !show);
     if (show && s_notif_pill_lbl) { char b[8]; snprintf(b, sizeof b, "%d", n); lv_label_set_text(s_notif_pill_lbl, b); }
+    if (s_overview_bell_badge) {
+        set_hidden(s_overview_bell_badge, n <= 0);
+        if (n > 0 && s_overview_bell_badge_lbl) { char b[8]; snprintf(b, sizeof b, "%d", n); lv_label_set_text(s_overview_bell_badge_lbl, b); }
+        if (s_overview_bell_glyph) lv_obj_set_style_text_color(s_overview_bell_glyph, n > 0 ? lv_color_hex(0x006fff) : COL_MUTED, 0);
+    }
 }
 static void notif_ud_free(lv_event_t *e) { free(lv_obj_get_user_data(lv_event_get_target(e))); }
 // What a drawer row needs on tap: which agent, and which machine it belongs to (may not be the selected one).
@@ -7807,6 +7872,16 @@ void ui_swipe_end(int dir)
     if (s_bright_dragging) return;   // the gesture was dragging the brightness slider, not a page swipe
     if (lv_screen_active() == scr_reader) { reader_close(NULL); return; }   // horizontal swipe on the detail reader → back to the main projects screen
     if (lv_screen_active() == scr_picker) { display_lock(); lv_screen_load(scr_projects); display_unlock(); return; } // swipe on the model/effort picker → back
+    // The Overview is a one-page ring and does not scroll; a horizontal swipe on it means "the panes",
+    // whichever way the thumb went, and lands on the agent the strip was on. Settings has no swipe — its
+    // X is the way out — and the agents ring is native scroll, which never reaches this line for a page.
+    if (lv_screen_active() == scr_projects && s_overview_active) {
+        display_lock();
+        int ai = (s_active_idx >= 0 && s_active_idx < s_proj_count) ? s_active_idx : 0;
+        carousel_land(ring_of_agent(ai));
+        display_unlock();
+        ui_report_active_agent();   // a person moved the dial here; the window follows
+    }
 }
 
 // Voice-state queries for the gesture layer (touch.c). recording = actively capturing (a tap stops it);

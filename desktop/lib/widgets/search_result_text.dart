@@ -120,15 +120,23 @@ class SearchResultText extends StatelessWidget {
     super.key,
     required this.matches,
     required this.style,
+    this.inlineIcon,
+    this.iconOffset = 0,
   });
   final String text;
   final Iterable<SearchFieldMatch> matches;
   final TextStyle style;
 
+  /// Insert a decorative mark without changing searchable text or match offsets.
+  final Widget? inlineIcon;
+  final int iconOffset;
+
   @override
   Widget build(BuildContext context) {
     final runs = searchTextRuns(text, matches);
-    if (!runs.any((run) => run.matched)) {
+    final insertIcon =
+        inlineIcon != null && iconOffset >= 0 && iconOffset < text.length;
+    if (!insertIcon && !runs.any((run) => run.matched)) {
       return Text(
         text,
         maxLines: 1,
@@ -136,18 +144,41 @@ class SearchResultText extends StatelessWidget {
         style: style,
       );
     }
-    return Text.rich(
-      TextSpan(
-        children: [
-          for (final run in runs)
-            TextSpan(
-              text: run.text,
-              style: run.matched
-                  ? const TextStyle(fontWeight: FontWeight.w700)
-                  : null,
+    final spans = <InlineSpan>[];
+    var offset = 0;
+    for (final run in runs) {
+      final emphasis = run.matched
+          ? const TextStyle(fontWeight: FontWeight.w700)
+          : null;
+      if (insertIcon &&
+          iconOffset >= offset &&
+          iconOffset < offset + run.text.length) {
+        final split = iconOffset - offset;
+        if (split > 0) {
+          spans.add(
+            TextSpan(text: run.text.substring(0, split), style: emphasis),
+          );
+        }
+        spans.add(
+          WidgetSpan(
+            alignment: PlaceholderAlignment.middle,
+            child: ExcludeSemantics(
+              child: Padding(
+                padding: const EdgeInsets.only(right: 4),
+                child: inlineIcon!,
+              ),
             ),
-        ],
-      ),
+          ),
+        );
+        spans.add(TextSpan(text: run.text.substring(split), style: emphasis));
+      } else {
+        spans.add(TextSpan(text: run.text, style: emphasis));
+      }
+      offset += run.text.length;
+    }
+    return Text.rich(
+      TextSpan(children: spans),
+      semanticsLabel: insertIcon ? text : null,
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
       style: style,

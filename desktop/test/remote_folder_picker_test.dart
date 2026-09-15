@@ -359,7 +359,7 @@ void main() {
   );
 
   testWidgets(
-    'remote selection returns to New agent without launching or losing choices',
+    'remote selection returns to New Harness without launching or losing choices',
     (tester) async {
       final app = _Folders();
       addTearDown(app.dispose);
@@ -414,7 +414,7 @@ void main() {
       expect(find.byType(AlertDialog), findsOneWidget);
       expect(find.text('/home/dev/target'), findsOneWidget);
       expect(app.launches, isEmpty);
-      await tester.tap(find.text('Create on Studio Mac'));
+      await tester.tap(find.widgetWithText(FilledButton, 'New Harness'));
       await tester.pumpAndSettle();
       expect(app.launches, [
         (machine: 'remote', engine: 'codex', folder: '/home/dev/target'),

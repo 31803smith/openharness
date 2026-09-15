@@ -141,7 +141,7 @@ void main() {
       await app.openAgentFromDial('m1', 'a${AppNotifier.maxPanes}');
       expect(app.panes, before);
       expect(app.focusedPaneId, focus);
-      expect(app.lastError, contains('Open another swarm'));
+      expect(app.lastError, contains('Open another tab'));
       app.dispose();
     },
   );

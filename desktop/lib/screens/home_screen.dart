@@ -16,7 +16,6 @@ import '../widgets/machine_rail_mini.dart';
 import '../settings/settings_screen.dart';
 import '../settings/settings_section.dart';
 import '../shortcuts/app_shortcuts.dart';
-import '../widgets/agent_switcher.dart';
 import '../widgets/new_agent_dialog.dart';
 import '../widgets/task_palette.dart';
 import '../widgets/pane_grid.dart';
@@ -148,8 +147,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   /// Every agent the rail is currently showing, in the order it shows them.
   ///
-  /// Built from the same two lists the rail walks, so ⌘3 lands on the third row
-  /// the user can see rather than the third row of some internal order.
+  /// Agent traversal follows the rail's visible ordering.
   List<({String machineId, String agentId})> _visibleAgents() {
     final notifier = widget.notifier;
     final result = <({String machineId, String agentId})>[];
@@ -256,9 +254,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   ?.find(TerminalFindAction.previous),
               ShortcutAction.lastPane: notifier.focusLastPane,
               ShortcutAction.zoomPane: notifier.toggleZoomPane,
-              ShortcutAction.switchAgent: () =>
-                  unawaited(showAgentSwitcher(context, notifier)),
-
               ShortcutAction.closePane: _closeFocusedPane,
               ShortcutAction.newAgent: _newAgent,
               ShortcutAction.routeTask: () =>
@@ -286,7 +281,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
             },
-            onSelectPaneIndex: notifier.focusPaneByIndex,
+            onSelectTabIndex: notifier.selectSwarmByIndex,
           ),
           child: Focus(
             // This is only a shortcuts scope. If it owns keyboard focus after

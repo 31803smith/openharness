@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:file_selector_platform_interface/file_selector_platform_interface.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/auth/auth_session.dart';
@@ -16,12 +17,12 @@ import 'package:harness/state/swarm_catalog.dart';
 import 'package:harness/terminal/terminal_binary.dart';
 import 'package:harness/widgets/codex_profile_field.dart';
 import 'package:harness/widgets/new_agent_dialog.dart';
+import 'package:harness/widgets/pane_header_actions.dart';
 import 'package:harness/widgets/swarm_dialogs.dart';
-import 'package:harness/widgets/terminal_composer.dart';
 import 'package:harness/widgets/terminal_find_bar.dart';
 
 import 'swarm_screen_test.dart' show mount, terminal;
-import 'swarm_state_test.dart' show createApp;
+import 'swarm_state_test.dart' show createApp, MemoryStore;
 
 class _ProfilesNotifier extends AppNotifier {
   _ProfilesNotifier()
@@ -64,18 +65,93 @@ Future<void> chord(
 }
 
 void main() {
+  for (final native in [false, true]) {
+    testWidgets('New Tab actions reuse the existing page (native: $native)', (
+      tester,
+    ) async {
+      const channel = MethodChannel('harness/swarm_tabs');
+      const codec = StandardMethodCodec();
+      final messenger = tester.binding.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(channel, (_) async => true);
+      addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+      final app = createApp();
+      app.machineStates['m']!.nodeOnline = true;
+      app.adoptSessionForTest(terminal('a0', []));
+      final work = app.activeSwarmId;
+      app.newSwarm();
+      final starter = app.activeSwarmId;
+      final projects = SwarmProjectStore(storage: MemoryStore());
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SwarmScreen(
+            notifier: app,
+            nativeTabs: native,
+            projectStore: projects,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      Future<void> newFromChrome() async {
+        if (!native) {
+          await tester.tap(find.byKey(const ValueKey('swarm-new-tab-button')));
+          return;
+        }
+        var replied = false;
+        messenger.handlePlatformMessage(
+          channel.name,
+          codec.encodeMethodCall(const MethodCall('new')),
+          (_) => replied = true,
+        );
+        for (var i = 0; i < 5 && !replied; i++) {
+          await tester.pump();
+        }
+        expect(replied, isTrue);
+      }
+
+      for (final action in <Future<void> Function()>[
+        () => chord(tester, LogicalKeyboardKey.keyT),
+        newFromChrome,
+        () async {
+          await chord(tester, LogicalKeyboardKey.keyP, shift: true);
+          await tester.enterText(
+            find.byKey(const ValueKey('swarm-search-input')),
+            'New Tab',
+          );
+          await tester.pump();
+          await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+        },
+      ]) {
+        app.selectSwarm(work);
+        await tester.pumpAndSettle();
+        await action();
+        await tester.pumpAndSettle();
+        expect(app.activeSwarmId, starter);
+        expect(app.swarms, hasLength(2));
+        await chord(tester, LogicalKeyboardKey.keyT);
+        expect(app.activeSwarmId, starter);
+        expect(app.swarms, hasLength(2));
+        final input = tester.widget<TextField>(
+          find.byKey(const ValueKey('harness-start-search')),
+        );
+        expect(input.focusNode!.hasFocus, isFalse);
+      }
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+      projects.dispose();
+    });
+  }
+
   testWidgets(
     'welcome opens the shared search and supports readline selection',
     (tester) async {
       final app = createApp();
       await mount(tester, app);
-      await tester.tap(
-        find.byKey(const ValueKey('swarm-welcome-search-input')),
-      );
+      await chord(tester, LogicalKeyboardKey.keyO);
       await tester.pump();
       expect(app.panes, isEmpty);
       await tester.enterText(
-        find.byKey(const ValueKey('swarm-welcome-search-input')),
+        find.byKey(const ValueKey('swarm-search-input')),
         'Agent 1',
       );
       await tester.pump();
@@ -121,24 +197,81 @@ void main() {
     },
   );
 
-  testWidgets('a remote compact pane exposes its message composer', (
+  testWidgets('pane controls zoom, confirm deletion and close only this view', (
     tester,
   ) async {
     final app = createApp();
     app.machineStates['m']!.nodeOnline = true;
-    app.adoptSessionForTest(terminal('a0', []));
+    final input = <TerminalBinaryFrame>[];
+    final session = terminal('a0', input);
+    app.adoptSessionForTest(session);
+    final original = app.activeSwarm;
+    app.newSwarm();
+    await app.addAgentToSwarm('m', 'a0');
+    final pane = app.panes.single;
+    app.adoptSessionForTest(terminal('a1', []));
     await mount(tester, app);
-    expect(find.byType(TerminalComposer), findsNothing);
-    await tester.tap(find.byTooltip('Actions for Session a0'));
+
+    final controls = find.byType(PaneHeaderActions).first;
+    expect(
+      find.descendant(of: controls, matching: find.byType(IconButton)),
+      findsNWidgets(4),
+    );
+    expect(find.byTooltip('Delete Harness').first.hitTestable(), findsNothing);
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await mouse.addPointer(location: const Offset(1, 1));
+    Future<void> hover() async {
+      await mouse.moveTo(tester.getCenter(controls));
+      await tester.pump(const Duration(milliseconds: 120));
+    }
+
+    await hover();
+    await tester.tap(find.byTooltip('Show message composer').first);
     await tester.pump();
-    await tester.tap(find.text('Show message composer'));
+    expect(pane.composerVisible, isTrue);
+    await hover();
+    await tester.tap(find.byTooltip('Hide message composer').first);
     await tester.pump();
-    expect(find.byType(TerminalComposer), findsOneWidget);
-    await tester.tap(find.byTooltip('Actions for Session a0'));
+    expect(pane.composerVisible, isFalse);
+    await hover();
+    await tester.tap(find.byTooltip('Zoom Session a0'));
     await tester.pump();
-    await tester.tap(find.text('Hide message composer'));
+    expect(app.zoomedPaneId, pane.id);
+    await hover();
+    await tester.tap(find.byTooltip('Restore panes'));
     await tester.pump();
-    expect(find.byType(TerminalComposer), findsNothing);
+    expect(app.zoomedPaneId, isNull);
+    await hover();
+
+    await tester.tap(
+      find.descendant(of: controls, matching: find.byTooltip('Delete Harness')),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Delete Harness'), findsOneWidget);
+    expect(app.panes, contains(pane));
+    expect(original.panes.single.session, same(session));
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(app.panes, contains(pane));
+    await hover();
+
+    await tester.tap(
+      find.descendant(of: controls, matching: find.byTooltip('Close pane')),
+    );
+    await tester.pump();
+    await mouse.removePointer();
+    expect(app.panes.single.agentId, 'a1');
+    expect(original.panes.single.session, same(session));
+    app.selectSwarm(original.id);
+    await tester.pump();
+    tester.testTextInput.enterText('x');
+    await tester.pump(const Duration(milliseconds: 20));
+    expect(
+      String.fromCharCodes(
+        input.where((f) => f.kind == TerminalBinaryKind.input).single.bytes,
+      ),
+      'x',
+    );
     await tester.pumpWidget(const SizedBox());
     app.dispose();
   });
@@ -206,7 +339,7 @@ void main() {
       expect(input.single.streamId, 'stream-a1');
       expect(String.fromCharCodes(input.single.bytes), 'x');
       await activate('rename', {'id': second});
-      expect(find.text('Rename swarm'), findsOneWidget);
+      expect(find.text('Rename Tab'), findsOneWidget);
       final name = tester.widget<TextField>(find.byType(TextField));
       expect(name.focusNode!.hasPrimaryFocus, isTrue);
       tester.testTextInput.enterText('Keyboard work');
@@ -226,9 +359,14 @@ void main() {
       expect(app.swarms, hasLength(1));
       expect(app.panes, isEmpty);
       expect(app.activeSwarmId, isNot(anyOf(first, second)));
-      expect(find.text('Start a swarm'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('harness-start-search')),
+        findsOneWidget,
+      );
+      final starter = app.activeSwarmId;
       await activate('new');
-      expect(app.swarms, hasLength(2));
+      expect(app.swarms, hasLength(1));
+      expect(app.activeSwarmId, starter);
       expect(input, hasLength(2));
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());
@@ -348,7 +486,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 10));
     final search = tester
         .widget<TerminalFindBar>(find.byType(TerminalFindBar))
-        .search;
+        .search!;
     expect(search.count, 2);
     await native('findNext');
     await tester.pump();

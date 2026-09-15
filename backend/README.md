@@ -63,7 +63,7 @@ When direct ICE fails, the terminal opens on WebSocket relay automatically.
 ## Deploy
 
 `../.github/workflows/production-be-build.yaml` builds and pushes the production Docker image on
-tag push. Backend releases are tagged **`vX.Y.Z_api`** — the `_api` suffix is what routes the push
+tag push. Backend releases are tagged **`vX.Y.Z_backend`** — the `_backend` suffix is what routes the push
 to this workflow instead of the CLI's `../.github/workflows/release.yml` (which only reacts to
 `vX.Y.Z_cli`), now that both live in this one repo. Cut one with:
 

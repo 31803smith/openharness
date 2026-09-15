@@ -31,6 +31,56 @@ class _UnopenedAgent extends Agent {
 }
 
 void main() {
+  test(
+    'closing unused starter pages never crowds work out of history',
+    () async {
+      final app = createApp();
+      addTearDown(app.dispose);
+      app.adoptSessionForTest(terminal('a0', []));
+      await app.closeSwarm(app.activeSwarmId);
+      final savedWork = app.closedHistory.single.historyId;
+      for (var i = 0; i < 30; i++) {
+        app.newSwarm();
+        await app.closeSwarm(app.activeSwarmId);
+      }
+      expect(app.closedHistory.map((entry) => entry.historyId), [savedWork]);
+      expect(closedWorkDestinations(app), hasLength(1));
+      expect(app.reopenClosed(), isTrue);
+      expect(app.panes.single.agentId, 'a0');
+    },
+  );
+
+  for (final count in [1, 2]) {
+    test(
+      'History keeps the engine identity of $count-agent harnesses',
+      () async {
+        final app = createApp();
+        addTearDown(app.dispose);
+        app.machineStates['m']!.agents[0] = const Agent(
+          id: 'a0',
+          name: 'Architecture',
+          engine: 'claude',
+          terminalAvailable: true,
+        );
+        for (var i = 0; i < count; i++) {
+          app.adoptSessionForTest(terminal('a$i', []));
+        }
+        final history = SwarmNavigationHistory()..record(app);
+        final open = history
+            .menuDestinations(app)
+            .singleWhere((row) => row.isSwarm);
+        expect(open.members, hasLength(count));
+        expect(open.engine, count == 1 ? 'claude' : isNull);
+        await app.closeSwarm(app.activeSwarmId);
+        app.machineStates['m']!.agents = [];
+        final closed = closedWorkDestinations(app).single;
+        expect(closed.isSwarm, isTrue);
+        expect(closed.members, hasLength(count));
+        expect(closed.engine, count == 1 ? 'claude' : isNull);
+      },
+    );
+  }
+
   test('History does not format unopened agents during focus changes', () {
     final app = createApp();
     addTearDown(app.dispose);
@@ -356,32 +406,8 @@ void main() {
       await tester.pump();
       await settings;
 
-      // Native navigation opens the centered editor and exact locations.
-      final jumping = native('jump');
+      await native('historyDestination', {'id': agentDestinationId('m', 'a1')});
       await tester.pump();
-      expect(
-        find.byKey(const ValueKey('swarm-search-results')),
-        findsOneWidget,
-      );
-      final field = find.byKey(const ValueKey('swarm-search-input'));
-      expect(field, findsOneWidget);
-      await tester.enterText(field, 'Agent 1');
-      await tester.pump();
-      expect(tester.widget<TextField>(field).focusNode!.hasFocus, isTrue);
-      expect(fieldUpdates, isEmpty, reason: 'Queries stay in Flutter');
-      final picker = tester.getRect(
-        find.byKey(const ValueKey('swarm-search-results')),
-      );
-      expect(picker.width, greaterThan(600));
-      expect(
-        picker.center.dx,
-        tester.view.physicalSize.width / tester.view.devicePixelRatio / 2,
-      );
-      expect(find.byKey(const ValueKey('swarm-search-preview')), findsNothing);
-      expect(otherInput, isEmpty);
-      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-      await tester.pump();
-      await jumping;
       expect(app.focusedPaneId, second.id);
       await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
       await tester.pump(const Duration(milliseconds: 10));

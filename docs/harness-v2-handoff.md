@@ -1,670 +1,361 @@
 # Harness v2: goal, plan, and continuation handoff
 
-Updated September 14, 2026. **Read this first when resuming on another computer.**
-This is the current product contract and next-work order. It supersedes conflicting
-historical checkpoints in [the progress log](harness-v2-progress.md). The user
-requested a portable checkpoint, then asked this session to resume building;
-the overall goal is still active and unfinished.
+Updated September 14, 2026. Resume on current **main**, preserve local work, and
+commit/push completed changes frequently as the user requests.
 
-**Latest priority:** the user explicitly deferred native benchmarking and further
-performance optimization. Focus on completing the agreed features and usability
-work. Do not interrupt them for a benchmark window or resume calibration merely
-because the desktop becomes available.
+This is the current continuation guide. The detailed UI contract is
+[Harness entry and pane controls](harness-agent-first-tabs.md). Together they
+supersede conflicting historical picker, toolbar, menu, shortcut and onboarding
+directions. Historical receipts remain in [the progress archive](harness-v2-progress.md)
+and Git; the preceding complete handoff is available at **d5785d6**.
+Old screenshots, test expectations and saved bundles are not the current UI.
 
-**Current product discussion:** the user reports accumulating live agents after
-closing their views. [The lifecycle proposal](harness-agent-lifecycle.md) recommends
-explicit Archive/Resume plus bulk cleanup, preserving ordinary view closure.
-This is a proposal for discussion, not implemented behavior or authorization to
-archive/delete existing user sessions.
-
-The existing close-view action is now consistently labeled **Remove from swarm**.
-History recovery also reuses a partially restored swarm: reopening an agent and
-then its original swarm adds the missing views to the same tab, retaining newer
-choices and live sessions. No runtime cleanup was introduced.
-
-The remote folder chooser now accepts a full path and supports keyboard browsing,
-with in-place retry and latest-request ownership. A pending or failed hop cannot
-select the previous folder. These changes apply wherever the shared remote
-chooser is used: agent working folders, saved projects and profile folders.
-
-[Creation recovery](harness-agent-creation.md) now distinguishes a delayed reply
-from a refused launch. The form retains its choices and offers **Check status**
-after a timeout/disconnect. That action only reads the original creation receipt;
-it never creates another agent. A confirmed agent returns to the original swarm
-or stays discoverable in Add if that destination changed. Older CLIs can still
-create normally, but cannot recover a lost result through this new status RPC.
-Form intents currently last for that open dialog; do not claim app-restart recovery.
-An uncertain form also offers **Find existing agent…**, which opens shared Add
-after the modal releases keyboard focus. Creation opened from search carries its
-query back to Add and retains its original swarm/split. A closed swarm or changed
-split gets an explanation instead of redirecting the addition. A background
-empty tab cannot take focus from the open creation dialog.
-
-Browser sign-in now offers **Open browser**, **Copy link** and immediate **Cancel**
-while waiting for authorization. Reopening uses the current link without starting
-another CLI login. Cancel works even before the CLI finishes starting; late URLs,
-results and browser replies cannot affect a replacement attempt. After browser
-authorization succeeds, those controls disappear while the workspace restores.
-Enter starts sign-in and can start again after cancellation. Live first-install
-and provider sign-in still need direct observation.
-
-## Goal
+## Goal and status
 
 Build the best everyday workspace for people directing persistent AI agents:
 a fast, polished, keyboard-first **agentic browser**, with each tab representing
 a swarm. The user describes it as a “super terminal” for the intelligence age.
-Developers should feel the speed, predictability, and familiar habits of a great
+Developers should feel the speed, predictability and familiar habits of a great
 terminal/editor while working with several agents across real machines and
 projects. They should keep their place and know exactly which agent receives
 their next instruction.
 
-The product is called **Harness**. “V2” is the internal UI/UX project name.
-This is a working desktop preview, not a completed release. Improving first use,
-navigation, input correctness, and latency matters more than adding many surfaces.
-The user wants autonomous progress, frequent commits/pushes, and decisions made
-in users' interests. Continue research into strong developer tools after the
-concrete issues are handled, adapting their useful habits to directing agents.
-Research must lead to justified improvements, not feature accumulation.
+The product is **Harness**; V2 is the internal UI/UX project name. This is a
+working desktop preview, not a completed release. Study useful native Safari,
+Chrome and developer-tool behavior, and turn findings into justified improvements
+rather than more surfaces. First use, navigation, input correctness and latency
+matter more than feature count.
 
-## Repository and checkpoint
+The broader goal is **unfinished**. Real first-use completion, current native
+interaction, real remote reconnect and Linux-host qualification still need
+evidence. **Native latency benchmarking is explicitly deferred by the user.**
+Do not run it, resume calibration when the console unlocks, or interrupt the
+user for a benchmark window.
 
-- Repository: <https://github.com/autonomous-ai/autonomous-harness>.
-- Continue on **`main`**, tracking `origin/main`. The user's latest instruction
-  is to work, commit, and push directly on main from now on. This supersedes
-  the earlier preference for creating a fresh feature branch after each merge.
-- The browser-sign-in recovery continuation passes 64 affected workflow checks
-  plus one real-font render check (65 total), including late process startup,
-  cancelled/replaced sign-ins, browser launch failure, clipboard recovery,
-  keyboard retry and the authorization-to-workspace boundary. Analysis has zero
-  errors/warnings and 14 existing infos. Minimum-size and 2× text renders were
-  reviewed. Logs: `/private/tmp/harness-signin-final-{tests,analyze}.log`.
-  The normal arm64 Release build succeeds at
-  `/private/tmp/harness-signin-release/Build/Products/Release/Harness.app`;
-  log: `/private/tmp/harness-signin-release.log`. It was not launched. The team's
-  `b45c156` CLI recap change was fast-forwarded from main and does not overlap
-  this desktop work. No real sign-in, agent restart or benchmark ran.
-- The creation-to-Add continuation passes 87 affected workflow tests, including
-  six new keyboard/destination regressions, plus a real-font render check at
-  880×560 with normal and 2× text. Analysis has zero errors/warnings and the same
-  14 existing infos. The team's already-merged recap change (`fd02a15`, PR #38)
-  was fast-forwarded without touching teammate branches; its CLI files do not
-  overlap this desktop work. Logs: `/private/tmp/harness-find-created-{workflows,final-recovery,analyze}.log`.
-  The normal arm64 Release build succeeds at
-  `/private/tmp/harness-find-created-release/Build/Products/Release/Harness.app`;
-  log: `/private/tmp/harness-find-created-release.log`. It was not launched or
-  used for a benchmark.
-- **`3585051`** records CLI creation receipts and encrypted status recovery.
-  **`7ae2cba`** preserves the team's main through PR #37 (`012c171`, Option-Enter
-  inserts a line break). **`c3db329`** keeps unknown
-  outcomes on Check status, preserves the original destination and counts a
-  recovered creation once. The affected desktop checks include that incoming
-  terminal change: 127 checks pass, plus one real-font render check. Analysis
-  has zero errors/warnings and 14 existing infos. The normal arm64 Release
-  build succeeds at `/private/tmp/harness-creation-release/Build/Products/Release/Harness.app`;
-  it was not launched. CLI typechecking, bundling and 150 related checks pass.
-- **`e73eb6e`** adds keyboard remote-folder selection and reliable asynchronous
-  browsing. The affected workflow/render checks (58 total), analysis and normal
-  Release build pass. **`8800c35`** preserves the team's concurrent main through
-  `e094271`; those incoming CLI/device changes leave the tested desktop tree
-  unchanged. No teammate branch was merged separately.
-- **`d727360`** clarifies view removal and restores closed work into its existing
-  swarm. **`332546f`** keeps terminal relayout from taking keyboard focus from
-  resize controls. **`eef17f6`** preserves the team's `e68c893` local-machine
-  default for general New agent actions; explicit split context stays intact.
-  The combined desktop suite passes 1,317 tests, one skip.
-- **`339f008`** saves the opening continuation: it keeps the retained canvas
-  built while a picker opens/closes and shares validated catalogs across openings. Warm Add
-  opening measured 22.006 ms median versus 26.273 ms in the same headless
-  fixture; cold starts and native display latency are not established by it.
-  Main includes the team's independent device change `5f8baac`. The complete
-  desktop suite passes 1,309 tests with one existing skip.
-- **`3a7fe57`** preserves the team's `51c0d27` titlebar Settings-button removal.
-  The combined desktop passes the same 1,309 tests, 51 native decoder checks,
-  347 AppKit assertions, analysis and a Release build. Settings remains in the
-  app menu/keyboard flow. **`51f62e7`** then preserves the team's independent
-  device-only changes through `22653fe`; desktop sources are unchanged.
-- **`e71e0ca`** saves Add's frame continuation: it reuses unchanged result rows
-  and keeps background pane additions from taking the picker's Flutter focus.
-  The full suite passes 1,302 tests. Native fixture identity repair is saved in
-  `fe42f2e`; `56f9d2a`
-  preserves the team's subsequent `9e2e4be` branding/update work.
-  **`56143bd`** integrates the team's later `cdb876e` removal of the obsolete
-  internal-V2 update flag. The combined suite still passes all 1,302 tests with
-  one skip; analysis remains at zero errors/warnings and 14 existing infos.
-- **`5f3ecae`** saves Cmd-N Add, the prominent New agent button, optional
-  multi-select, visible machine/project starters and the larger floating-button
-  inset. **`f514140`** preserves the team's concurrent main through `76a469b`,
-  including its Settings toolbar button, terminal color schemes, dial work,
-  error messages and public bundle-name cleanup. No teammate branch was merged
-  separately or retired.
-- Only consolidate this user's own branches and PRs. The authenticated account
-  is `deehw`, matching this session's commits and PRs #31/#34. The user explicitly
-  excluded other team members' branches from merging or retirement. The audit
-  found no remaining remote commit by this session's author outside main and
-  no other open PR by this account. Teammates' branches and PR #28 remain untouched.
-- [PR #34 — Separate navigation from adding agents and simplify first use](https://github.com/autonomous-ai/autonomous-harness/pull/34)
-  is **merged**, with all six continuation commits preserved by `ccd1f35`.
-  `fd3ced0` also preserves the team's concurrent main update `4b2f783` and was
-  pushed successfully. `swarm-onboarding` was then deleted remotely with an
-  exact-tip lease and locally with the merged-branch check. Do not recreate it.
-- This repository consolidation does not qualify the desktop for release.
-  Native responsiveness, first-install behavior, and remote/platform checks
-  below remain unfinished.
-- [PR #31 — Harness: swarm workspaces for AI agents](https://github.com/autonomous-ai/autonomous-harness/pull/31)
-  merged at `cb24361` on September 14, 2026 (02:56 UTC), with `744c1fe` as its
-  app-v2 head. Its merge did **not** include the later Navigate/Add commits.
-  This was verified from GitHub's merge metadata and the fetched main history.
-- Previous UI checkpoint: `ac443eb`, following `2e8d69d` (search/menu controls),
-  `4154cf6` (Harness branding/account labels), and `06ba77c` (agent creation).
-- Previous code checkpoint: **`26a372e`**, terminal viewport preservation and naming
-  an empty default swarm after its first agent.
-- `744c1fe` saved the portable handoff, pending UI drafts, native benchmark
-  tooling, and collaboration design notes.
-- **`2d3c024`** implements distinct Navigate/Add experiences,
-  consistent empty-swarm starters, command-mode focus preservation, and the
-  navigation catalog performance improvement described below.
-- **`e122b63`** saves the common empty-swarm start page, folder/clone entry points,
-  loading/focus recovery and simplified single-local-machine form.
-- **`a2888ef`** carries `2d3c024`, `ed9151a` and `e122b63` onto the fresh branch
-  without rewriting them, preserving newer main changes including device focus.
-- The user explicitly authorized frequent public repository checkpoints.
-  The earlier continuation preserved every app-v2 commit before app-v2 was
-  deleted remotely with an exact-tip lease and then locally. Do not recreate it.
+## Current product contract
 
-Start with a clean checkout of main and inspect its latest commit.
-On an existing checkout, preserve local work before updating; use a fast-forward
-pull, not a reset. The prior computer's `/private/tmp` files, installed apps,
-saved account state, and localhost prototype server will not transfer with Git.
-The [handoff archive](handoff/app-v2-2026-09-13/README.md) preserves older drafts;
-both patches are now superseded by production source. Do not reapply them.
+Use [the detailed entry/pane contract](harness-agent-first-tabs.md) when editing
+or validating UI. The decisions that previously conflicted with older handoffs
+are:
 
-## Core product rules
+- **New Harness creates; Open Harness finds existing work.** They are explicit
+  titlebar buttons with separate popups. The bell is beside the traffic lights.
+  The floating bottom-right plus is removed.
+- **Cmd-T: New Tab; Cmd-N: New Harness; Cmd-O: Open Harness; Cmd-S: Layout.**
+  Cmd-H/J/K/L and Cmd-arrows focus panes; Cmd-1…9 select tabs. User bindings take
+  precedence. Native menus, help, hover hints and actual dispatch must agree.
+- New Tab uses the Google-like page with a **solid selected-tab background**,
+  lower centered controls and generous whitespace. Search is at most 640 logical
+  pixels wide, blank and unfocused initially. Clicking it reveals the same
+  results, selection, arrows and Enter behavior as Cmd-O. Open Harness and
+  accented **+ New Harness** sit below it; a small official device image and
+  introduction sit well below, linking to autonomous.ai/harness-device.
+  The five recent-agent rows are removed.
+- Search is single-choice. Session names appear above **project · branch ·
+  machine**, without repeated workspace titles. Only the highlighted row shows
+  **Open Harness / Open N Harnesses**, or the explicit split action. The modal
+  has a 90% black backdrop and no Commands footer, creation CTA or “or” divider.
+  Commands remain available through Shift-Cmd-P or typing **>**.
+- Creation uses **New Harness** for its title and CTA, with no ordinary Cancel.
+  Escape or one outside click dismisses it directly. A pending launch cannot be
+  dismissed accidentally; an uncertain outcome retains Close and Check status.
+  The form does not restore search underneath it.
+- A single-agent tab/search/history entry uses that agent's engine icon;
+  multiple agents use the group icon. Unused default-name blank pages are excluded
+  from Recently Closed. File groups harness/tab actions, then pane actions;
+  Pin/Unpin and Add Project are absent. Machines follows Models and starts with
+  **Open Machines Manager**, with visible Rename actions.
+- Pane headers show agent icon/session on the left and folder/branch/machine
+  on the right. Header hover or keyboard focus reveals muted **Zoom, Delete,
+  Close**, with Keyboard first for remote sessions. Divider grips appear on
+  hover/focus/drag. Right/bottom edge plus controls retain explicit split
+  placement and remain hidden while zoomed or dragging.
+- New, restored, reopened, reconnected, revisited, resized, relaid-out and
+  zoomed panes show the latest output. Manual scrollback in an unchanged pane
+  and the selected result in an active Find remain usable.
 
-- A **swarm** is a named collection of agent views. Its membership is deliberate;
-  opening a machine/project can seed it once, but later discovery must not
-  silently add or remove members.
-- An **agent** is a persistent runtime, not necessarily a coding agent. Codex,
-  Claude Code, Cursor, Hermes, OpenClaw, and others must fit the terminology.
-  Use the label **Agent**, not “Coding agent.”
-- One agent can appear in multiple personal swarms. Reuse its session, terminal
-  buffer, and retained renderer. Preserve each swarm's arrangement and focus.
-- Closing an agent view or swarm tab removes views; it must not stop or delete
-  the underlying agent. Focus/navigation must not send terminal input or seize
-  control of a runtime controlled elsewhere.
-- Reopening a swarm that was already partially restored returns to that same
-  identity and adds its missing views. Preserve its newer name, focus, pins and
-  presets. If all missing views cannot fit, retain the closure for later without
-  duplicating a tab, adding a subset, or evicting existing agents.
-- Keep native macOS tabs and traffic lights, compact pane headers, and a quiet
-  canvas. Wallpaper belongs on the empty New swarm page. Existing palettes
-  coordinate native chrome, Flutter UI, and terminal colors.
-- Preserve text drafts, selection, deliberate scroll position, clipboard/IME
-  behavior, and the destination of the first keystroke after every transition.
-- Notifications reflect real pending questions. No sample statuses or mock
-  agents in the normal application.
-- Ordinary shells, a full IDE, permanent management sidebars, and unrelated
-  dashboards are outside the current desktop task. Models/account usage remains
-  part of the native menu; older notes saying “No Models” are obsolete.
+## Current source and verification
 
-## Latest approved design: two different experiences
+**f25e5a2** keeps entry choices readable and visible at larger text sizes and is
+pushed to main. The inline search reveals its whole viewport; search selection
+remains visible after resizing. New Harness agent buttons wrap when their labels
+need more room. This includes the preceding immediate navigation/input fixes.
+Analysis and full desktop regressions pass. The prepared, verified Release
+includes this change; the running preview remains unchanged while the console
+is locked.
 
-This design is now implemented in source. The user explicitly rejected using
-one global picker with only different labels/icons for navigation versus adding.
-Share data/search utilities where useful, but build **distinct UI and interaction
-flows** for these two jobs.
+| Checkpoint | Verified change |
+| --- | --- |
+| **f25e5a2** — entry visibility | The start-page search stays inside the window, resized search results reveal the same selection, and large-text agent choices wrap without truncating Claude Code. Current production surfaces are rendered in all six palettes at 880×560 and text scales 1 and 2. |
+| **c35e298** — navigation input | Pane/tab switches, closes and zoom navigation transfer input to the existing view before painting. Find/composer drafts, caret and composition survive. Connecting composers release the old agent and take focus once ready. Dialogs exclude background input and restore the current destination immediately on dismissal. |
+| **dff8dfb** — Find opening | Shortcut/native entry immediately activates the focused pane's prepared editor. Early text, composition and Escape belong to Find before its first paint. Sixteen retained terminals keep only one dormant editor, without a search index or output-driven editor rebuilds. |
+| **8d754db** — Find dismissal | Escape or the close button previously lost an arrow key and text arriving before the next frame. Dismissal now immediately restores the retained terminal's input connection, or the visible composer's field and draft. The renderer and remembered Find query stay intact. |
+| **8b73106** — terminal Find | Ten output updates now rebuild the editor zero times instead of ten. Results update around it while match, caret, composition and focus remain stable. Enter/keypad Enter and Escape return to the platform input method during composition; normal navigation/dismissal resumes afterward. |
+| **99d1ac9** — workspace events | Routine heartbeats and dial scrolling no longer rebuild the workspace or visit unrelated retained terminal JSON handlers. Busy-state transitions, watchdog expiry, dial status, hidden ready replies and machine transport failures retain their routing. |
+| **d5756ab** — Layout | Repeating the configured Layout chord cycles choices; modified digits/arrows cannot accidentally apply a shape. Highlighting preserves geometry. Large text gets readable, scrollable choices and navigation follows actual wrapped rows. Confirmation retains the agent and latest output. |
+| **0c240dd**, **a64ab4e** — picker focus | Input and Tab-focused result rows share shortcut ownership. Native New Harness and command actions use the focused picker, close it before creation, and wait for destination focus. Remapped/unbound keys and composition remain respected. |
+| **67c20f4**, **581d0a4**, **b26424e**, **98fc760** — current entry/creation | Current New/Open fixtures replace retired UI expectations. Native/Flutter button styling agrees. Initial folder focus, chooser retry, account lookup, one-step dismissal and original creation destination are covered. |
+| **87706a3**, **2aaa48a** — inline search | Command entry synchronizes the field and results; dismissed pages retain no search subscription/catalog work. Reopening refreshes against current state without rebuilding the editor on every arrow selection. |
+| **b4baf68**, **e8960fc**, **9288ea4** — live preview baseline | Separate New/Open, the current start page/device image/dialog copy, readable titlebar controls and the incremental Codex resize scrolling fix were built and checked in the correct preview. |
 
-| Entry point | Job | Required behavior |
-| --- | --- | --- |
-| Top-right navigation icon, replacing Search; Cmd-P | Navigate globally | Find agents/swarms and choose an exact existing destination. |
-| New swarm page | Add to this swarm | Find an existing agent or create a new one in this tab. |
-| Bottom-right floating + or Cmd-N | Add to this swarm | The same Add agent experience as New swarm. |
-| Pane menu: Split right / Split down | Add at this position | The same Add agent experience, preserving the selected neighbor and direction. |
-| New agent action, including Shift-Cmd-N | Create | Always create a fresh runtime in the intended swarm/position. |
-| Tab-strip + | New swarm | Create a new swarm tab. |
+Current checks:
 
-### Navigate
+- **1,473 desktop unit/widget checks pass**, with one optional CLI-media
+  placeholder skipped. Log: /private/tmp/harness-entry-full.log.
+- All **four changed Dart files analyze cleanly** in
+  /private/tmp/harness-entry-analyze.log. The **12 entry render cases** pass in
+  /private/tmp/harness-entry-render-final.log. Before-fix failures are in
+  /private/tmp/harness-entry-before.log and /private/tmp/harness-entry-resize-before.log.
+  Captures are in /private/tmp/harness-entry-after. They use production widgets,
+  synthetic machines, bundled icons, and Arial/Liberation under the app's font
+  families; they do not establish native SF font metrics or native window behavior.
+  The original cases reproduced clipped agent labels and off-window selections;
+  resizing also removed the selected row from the visible list at normal text size.
+- The preceding **18 input transition cases** cover keyboard/native command
+  entry, ready/connecting views, zoom,
+  editor drafts/composition, background changes and immediate dialog dismissal.
+  The original ten failures are in /private/tmp/harness-navigation-input-before.log;
+  connecting-composer and late-readiness failures are in
+  /private/tmp/harness-navigation-pending-before.log and
+  /private/tmp/harness-navigation-composer-before.log. Existing retained-view,
+  latest-output and idle-work checks still pass.
+- The unchanged exported Dart bindings last passed **84 native keyboard checks** and
+  **363 AppKit titlebar checks**, including hidden native window layout.
+  Log: /private/tmp/harness-current-native-contract.log. The script completed;
+  it displayed no windows and opened no agents.
+- The normal arm64 **Release build succeeds** through f25e5a2. Both rebuilt
+  frameworks verified before refreshing the outer ad-hoc signature; the full
+  bundle passed deep, strict signature verification.
+  Build log: /private/tmp/harness-entry-release.log.
+- Four optional CLI-media checks previously passed at 67c20f4 in
+  /private/tmp/harness-current-media-smoke.log. They use isolated identities,
+  synthetic media, loopback transport and a stubbed OS launch boundary.
 
-- Put a navigation icon at the top right, alongside the notification bell.
-  Remove the separate top-right New agent +. The implemented glyph is a compass,
-  with a Navigate tooltip and accessibility label.
-- Make the surface visibly about **places to go**, distinct from Add agent's
-  existing-agent search and creation surface. The implemented compact directory
-  groups exact agent locations under their swarm names; it has no output preview.
-- **If one matching agent appears in three swarms, show all three swarm
-  destinations and let the user choose.** Do not silently choose its latest
-  swarm or hide the alternatives by deduplicating only on agent identity.
-- Selecting an agent location focuses that exact agent in the chosen swarm;
-  selecting a swarm goes to that swarm. Navigation does not mutate membership.
-- Each swarm is one selectable top-level row, with its agents indented below.
-  Do not repeat the swarm as a heading plus a child result. Empty swarms appear
-  once. Agent-only searches retain the parent while selecting the best matching
-  agent for Enter.
-- Cmd-P remains the navigation shortcut. Cmd-Shift-P remains command mode.
-  Native menu, tooltip, help, custom bindings, and actual dispatch must agree.
-- Agents with no open swarm belong to Add. Navigate's explicit “Add an agent…”
-  action opens that separate surface while preserving the query. Closed work
-  remains in History. A missing/stale navigation location never redirects to
-  another swarm or changes membership.
-- Entering/leaving `>` command mode keeps the same text editor mounted, so the
-  immediately following select-all/delete or typing event keeps its focus.
+These are functional checks, isolated renders and deterministic work counts.
+They do not establish live native IME behavior, real remote reconnect, first-use
+conversion or native event-to-display latency. The
+[performance record](harness-v2-performance.md) keeps measurement scopes and
+earlier counts separate.
 
-### Add agent
+### Prepared build versus running preview
 
-- Latest user decision: **start immediately with the first agent**. Search +
-  Enter or a welcome suggestion opens it directly. Keep “Add your first agent”
-  above the choices; no draft-list or Create swarm step. Machines and projects
-  stay visible as one-click swarm starters. This supersedes the briefly proposed
-  mandatory assembly step.
-- Multi-select is optional in Add: check rows or use Shift+Enter, retain the
-  selection across queries, remove selections in the visible strip, then use
-  Add N agents. Default click/Enter still adds one immediately. A split chooses
-  one agent for its specific position. New agent remains the fresh-runtime path.
-- Cmd-N opens Add; Shift-Cmd-N opens the fresh New agent form. This latest
-  user choice supersedes the old Cmd-N creation default. New agent must be a
-  large filled button beside the search field, not a small footer action. Only
-  the highlighted result shows the action label and Enter hint at its right
-  edge; do not repeat it on every row.
-- The bottom-right + floats over the terminal canvas, inset 28px from the right
-  and bottom edges. Do not reserve a footer or shorten every pane to make room
-  for it.
-- Build one shared Add interface for **New swarm, the floating +, and both
-  split directions**. It must support existing agents and a clearly visible
-  **New agent** action. A split must not immediately force the creation form.
-- Existing-agent results on the left, attractive always-on preview on the
-  right, inspired by fzf and the user's Swarms v4 prototype. New swarm may embed
-  the component; + and Split can present it centrally as a modal.
-- Remove the eye/preview toggle. Show a bounded, readable excerpt with agent
-  identity and useful context; avoid raw terminal dumps, long separator rules,
-  clipped ANSI/TUI debris, and competing selected/hovered rows. Preview must
-  follow the actual keyboard/mouse selection and show an honest empty state.
-- Use one unambiguous primary action: add here, or add at the requested split.
-  “Go to agent” is wrong on the New swarm page. Keep the user in that tab.
-- Adding an existing agent reuses it and leaves its source swarms intact.
-  Avoid duplicate memberships. Decide a clear already-here/capacity state;
-  never pretend an unavailable action succeeded.
-- New agent from this surface preserves the original swarm/split destination,
-  even if the active tab changes while a dialog or request is pending.
-  Canceling preserves arrangement, zoom, focus, and the user's input.
-- Darken the modal backdrop so the active dialog has clear visual focus.
-  Apply the shared treatment consistently to app popups.
+**Prepared, verified Release through f25e5a2:**
 
-### Other agreed visual and interaction decisions
+/private/tmp/harness-pane-controls-release/Build/Products/Release/Harness.app
 
-- Use one four-pane **SwarmIcon** everywhere a swarm is represented: search,
-  History, native menus, and starters that open swarms. A real folder/project
-  chooser can still use a folder symbol; keep the represented entity clear.
-- Swarm location metadata: show the machine name for one machine, or
-  **N machines** for multiple distinct machines.
-- Models/account rows consistently use short account IDs without the literal
-  word “Account”; do not mix email and ID presentation.
-- Native menu order requested: **Harness · Swarm · Agent · Models · History ·
-  Edit · View · Window · Help**. Keep standard supporting menus for native
-  editing/window/help behavior. The reorder is implemented and checked in AppKit.
-- New agent has one-click Codex / Claude Code / Cursor choices plus More for
-  the full list, remembered choice, neat Advanced options, and a separate
-  GitHub clone flow alongside choosing a local working folder.
-- Keep existing effective shortcuts. In particular preserve Cmd-H/J/K/L and
-  Cmd-arrows for focus, Cmd-S for layout, Cmd-R for refresh, and Cmd-B for Boss
-  mode. Do not revive the previously rejected default-remapping proposal.
-- Resizing uses restrained centered grips. Pane headers expose zoom and a
-  menu with split right/down. Verify their actual geometry and discoverability,
-  not just that callbacks exist.
+**Running preview, still the b4baf68 baseline:**
 
-## Current implementation and remaining work
+/Users/ab/code/autonomous-harness/desktop/build/macos/Build/Products/Release/Harness.app
 
-**Implemented on main:** swarm/session retention, native tabs, layouts,
-closed-work History, palettes, editable centered search and command mode,
-keyboard customization, pane split/zoom controls, the simplified New agent
-dialog, Harness branding, consistent short account labels, saved project-name
-precedence, and independent machine loading while account metadata loads.
-See [the progress log](harness-v2-progress.md) for individual checkpoints and
-[the developer-tool audit](harness-v2-developer-tools-research.md) for research.
+The newer bundle has **not** replaced the running preview. The exact preview
+process was confirmed as PID 92821 (elapsed 04:55:45) during this checkpoint;
+recheck before acting.
+The console still reports **CGSSessionScreenIsLocked = Yes**. Earlier exact-path
+app-control lookups returned cgWindowNotFound despite the process running.
+A lookup failure is not evidence that an app stopped.
 
-**Latest source changes:** Navigate is a separate compact directory with exact
-swarm/agent destinations. The floating bottom-right +, New swarm search, and
-both split actions share Add results, an always-on preview, and a New agent
-action. Typed matches already in the target swarm say “In this swarm” and cannot
-be added twice. Group additions skip existing members. Split requests preserve
-the neighbor/direction and refuse stale layouts. Previews join wrapped prose,
-remove terminal rules/recap headers, and show a bounded excerpt in a reading card.
-The shared modal veil is darker and the eye toggle is removed. Old custom
-bindings for that retired toggle no longer invalidate the rest of the keymap.
+Only update the current checkout's preview. The user paused the other checkout;
+do not open its retired UI, another fixture, or /Applications/Harness.app.
+Do not overwrite a running app bundle while the console is locked. When the
+console is accessible, use **Quit and Keep Windows**, verify the exact process
+has stopped, back up the preview, copy the verified bundle, verify it, and reopen
+that exact path. Ordinary Quit can terminate agents. After quitting, a fresh
+app-control lookup can relaunch the app; use the process check before replacing
+the bundle. A prior backup exists at
+/private/tmp/harness-before-final-entry-0bmbrwl5/Harness.app.
 
-**Current first-use continuation:** every empty tab uses one inventory-driven
-start page. With no existing work, it leads with **Start with one agent**, a
-static workspace example, **Choose folder…** and separate **Clone repository…**.
-Available existing work gets Add search, three direct agent choices and New
-agent. Machines and projects are visible as one-click swarm starters; the
-first agent opens immediately and optional multi-select lives in shared Add.
-A single usable local computer no longer needs a Machine dropdown
-in the creation form. Failed agent checks now offer **Retry** in place, preserving
-the folder, chosen agent and permission setting; recovered Codex profile support
-loads into the same form. A late check for a different machine cannot change the
-current choice. Delayed discovery enables Enter on the primary action
-without stealing an explicit focus choice. Offline/linking cases expose their
-next action. Large text stacks the layout, and New agent now uses the shared
-darker modal veil. See [first-use details](harness-v2-appearance-onboarding.md).
-Observed first-install/provider flows and onboarding conversion/time remain
-unverified; do not infer them from these UI changes.
+Live checks apply only to the baseline preview: both idle workshop Codex panes
+held their latest message/prompt across repeated rows/columns changes and delayed
+repaint. The app v2 Codex/Claude workspace also held its bottom after restoring
+columns. Both workspaces were returned to their original columns. The current
+start-page colors/spacing/device image, absent initial caret, click-to-search,
+filtering, arrow selection, New Harness title/CTA, absent Cancel and single
+outside-click dismissal were verified there. No real agent received test input.
 
-**Remote folder selection:** the chosen machine is named above an editable path.
-Enter opens that path; Down enters the folder list, arrows move, Enter opens a
-folder, Alt-Up goes to its parent, and Cmd-Enter (Ctrl-Enter on other platforms)
-selects the loaded folder. Home and Retry recover from inaccessible paths.
-Delayed replies cannot replace a newer request, path draft or composition.
-Failures retain the last usable listing and identify which directory it shows.
-Folder selection returns to the same New agent choices and starts no agent.
+Temporary logs, SDKs, builds, account state and preview processes do not transfer
+to another computer with Git.
 
-**Archived drafts:** both are superseded. The onboarding ideas were adapted into
-the common page, without adding another first-tab-only component.
+## Runtime and recovery invariants
 
-**Latest verification:** the remote-folder continuation passes 57 affected
-workflow checks, including nine new folder regressions, plus a real-font render
-check at 880×560 with normal and 2× text (58 total). Analysis reports no errors
-or warnings and the same 14 existing informational diagnostics. Logs:
-`/private/tmp/harness-remote-folder-{final-tests,final-analyze}.log`.
-The normal macOS Release build also succeeds with `FLUTTER_TARGET=lib/main.dart`:
-`/private/tmp/harness-remote-folder-release/Build/Products/Release/Harness.app`;
-log: `/private/tmp/harness-remote-folder-release.log`. The running app was not
-replaced or restarted.
-The tested folder replies and creation calls are isolated fixtures; no real
-agent was started or given input. Live remote and first-install qualification
-remain outstanding, and benchmarking remains deferred.
+- A swarm is a named collection of views with deliberate membership. Discovery
+  never silently adds/removes members. Opening an existing agent reuses its
+  session/buffer/controller and leaves source workspaces intact.
+- Each workspace retains arrangement and focus. Closing views or tabs preserves
+  runtimes; navigation never sends terminal input or takes over another controller.
+  Delete continues to use its explicit confirmation.
+- Reopening one agent and then its original swarm reuses that workspace and adds
+  missing views, retaining newer names, layout, focus and retained sessions. If
+  all missing views cannot fit, preserve the closure; do not partially restore,
+  evict other views or duplicate the workspace.
+- Search, navigation and History honor the chosen/captured destination.
+  Asynchronous folder/creation/split results revalidate it. A closed workspace,
+  changed neighbor, capacity limit or stale membership cannot redirect a result
+  silently or lose the user's choices.
+- Preserve drafts, selection, paste, composition and the next keystroke's target
+  across transitions. Output and background discovery cannot steal input focus.
+  Hidden terminals keep their renderer without unnecessary layout/paint.
+- Remote folder browsing has editable paths, keyboard navigation, retry and
+  latest-request ownership. A failed or pending hop cannot select the previous
+  folder. Late replies cannot replace a newer draft or composition.
+- [Creation recovery](harness-agent-creation.md) distinguishes refused creation
+  from a delayed/lost response. **Check status reads the original receipt; it
+  never submits another launch.** A confirmed runtime returns to its validated
+  destination or remains discoverable in Open Harness. Older CLIs can create
+  without supporting receipt recovery. Intents last only for the open dialog;
+  durable pending-creation and crash-window reconciliation remain future work.
+- Browser sign-in supports reopen/copy/cancel with stale-attempt isolation.
+  Cloning preserves URL/destination and visibly cleans up cancellation. Bootstrap
+  installation keeps actions visible, exposes optional details, and supports
+  keyboard retry/read-only rechecks. These recovery paths are implemented and
+  fixture-checked; real first use remains unobserved.
+- The [Archive/Resume lifecycle document](harness-agent-lifecycle.md) is a
+  proposal, not implemented behavior or permission to archive/delete user agents.
+  [Shared-swarm collaboration](harness-collaboration-design.md) is also a
+  separate proposal/prototype, not implemented multiplayer.
+- Models/accounts remain available. Ordinary shells, a full IDE, permanent
+  management sidebars and unrelated dashboards remain outside this desktop pass.
+  Notifications reflect real pending questions; no sample agents/statuses belong
+  in the normal application.
 
-**Previous verification:** the History recovery and viewport-focus continuation,
-including the team's default-machine update in `eef17f6`, passes **1,317 desktop
-tests**, one existing skip. The analyzer reports
-zero errors/warnings and the same 14 informational diagnostics. The isolated
-AppKit titlebar/menu fixture passes 335 checks, including hidden window layout.
-Logs: `/private/tmp/harness-reopen-existing-final-full-tests.log`,
-`/private/tmp/harness-reopen-existing-final-analyze.log` and
-`/private/tmp/harness-reopen-existing-native.log`. The 54 focused History checks
-and 23 focused terminal/recovery checks also pass. A subsequent normal macOS
-Release build from `3a4ae22` succeeds with `FLUTTER_TARGET=lib/main.dart` at
-`/private/tmp/harness-recovery-release/Build/Products/Release/Harness.app`;
-log: `/private/tmp/harness-recovery-release.log`. The bundle is named Harness
-with identifier `ai.autonomous.harness`. No real agent received test input;
-the running preview was not replaced or restarted. Live native workflow
-verification remains outstanding and benchmarking remains deferred.
+## Next-work order
 
-The full suite caught viewport refresh taking focus from a resize handle. The
-fix keeps geometry updates from claiming keyboard ownership; pointer Escape,
-repeated resize arrow keys, and latest-output positioning across a real layout
-change are verified together.
-
-**Previous verification:** the first-agent Retry continuation, including the team's
-`5f279e1` pane-menu Delete action, passes 1,311 desktop tests with one existing skip.
-Main subsequently fast-forwarded through the team's independent socket, terminal,
-titlebar and device changes at `87f8fcd`; the results below describe the tested
-`5f279e1` base plus this Retry change, not a rerun of that later integration.
-Analyzer reports zero errors/warnings and 14 existing informational diagnostics
-(12 vendored, two inherited from main). Logs:
-`/private/tmp/harness-agent-check-retry-{full-tests,integrated-analyze}.log`.
-The macOS arm64 Release build succeeds with `FLUTTER_TARGET=lib/main.dart`
-in a separate output directory, `/private/tmp/harness-agent-check-retry-release`;
-log: `/private/tmp/harness-agent-check-retry-release.log`. The running app was not
-restarted, so do not claim its process has loaded these source changes.
-The preceding combined titlebar/picker source passed 51 native keymap decoder
-and 347 AppKit assertions, including the exported Dart keymap and hidden window
-layout. Native log: `/private/tmp/harness-add-open-titlebar-native.log`.
-The preceding Add/shortcut integrated
-macOS arm64 Release build succeeded with
-`FLUTTER_TARGET=lib/main.dart`. Synthetic real-font captures of the visible
-starters, Add, multi-select and Navigate were reviewed at 1280×800 and 880×560
-with 2× text. These do not measure native display latency or real reconnect.
-Integrated test/native/analysis/build logs:
-`/private/tmp/harness-revised-add-integrated-{tests,analyze,native,build}.log`.
-The integrated Release build uses the new `ai.autonomous.harness` bundle ID.
-Add's new full-frame fixture observes an arrow-selection median of 4.714 ms
-versus 8.592 ms before the change, with 2,000 agents and five retained terminals.
-Opening did not improve. This is headless debug CPU time, not displayed latency.
-The next paired opening pass reuses unchanged catalogs and removes redundant
-canvas builds: warm opening median is 22.006 ms versus 26.273 ms. Query timing
-was worse in that run. Reopening refreshes output and revalidates metadata and
-membership without retaining canceled queries/selections. See the current
-performance table before making a broader speed claim.
-Navigate/Add timings and their exact scope are in
-[the performance record](harness-v2-performance.md). The new navigation catalog
-build measured 0.188 ms median / 0.259 ms p95 in the earlier integrated run for
-50 locations across 12 swarms. Add's 2,000-agent query measured 0.959 ms median /
-1.005 ms p95. The five benchmark cases passed; native event-to-display remains
-unmeasured. Log: `/private/tmp/harness-onboarding-main-benchmark.log`.
-
-**Also saved:** [native benchmark tooling](../desktop/tool/native_benchmark/README.md)
-and [shared-swarm collaboration research](harness-collaboration-design.md), which
-were existing uncommitted work. Collaboration is a separate proposal/prototype,
-not implemented multiplayer or a prerequisite for finishing this desktop pass.
-The benchmark accepts the team's current public bundle ID while still producing
-a distinct Harness Benchmark app. Nine isolated Python checks pass. Preflight
-distinguishes installed copies from workspace builds by exact location as well
-as identity. Preserve its isolation and foreground/key-window guards. The
-performance notes explain the earlier failed calibration; these tooling fixes
-provide no new latency measurements. The most recent disposable Release build
-is `/private/tmp/harness-native-benchmark-v99tt1m2`, pinned to production source
-`a6fe4a4`, including the later titlebar change. Its bundle identity is
-`ai.autonomous.harness.benchmark`; receipt:
-`/private/tmp/harness-native-approved-prepare.log`. It was not launched: the
-desktop was locked, and the user then deferred benchmarking to focus on
-features. Both Harness processes remained running. Rebuild from current source
-when measurement returns to scope. The [performance record](harness-v2-performance.md)
-retains the earlier fixtures and artifacts.
-
-## Previous terminal fix and verification
-
-The user reported opening a project swarm with five terminals showing older
-content instead of the latest output. Ordinary fresh/delayed five-pane fixtures
-already reached the bottom. A targeted regression reproduced a separate concrete
-cause: shrinking a captured 100-row TUI while its hidden cursor is parked near
-the top deletes the newest rows from the local emulator.
-
-`26a372e` adds `TerminalView.resizeBuffer` (default true); Harness sets it false.
-The renderer reports the desired viewport without destructively resizing captured
-remote cells. The daemon's resized keyframe replaces the grid. Repeated output
-does not repeat the same resize request. New views show the latest output, while
-returning to a deliberately scrolled view preserves the reading position.
-The exact five-pane real-session screenshot still needs a direct recheck; do not
-claim this reproducer proves every cause of that symptom.
-
-The same checkpoint saves the existing first-agent naming change: an empty
-default “New swarm” adopts its first agent's name; custom names and other tabs
-are preserved. Tests cover subsequent additions and close/reopen behavior.
-
-Historical checks for that terminal checkpoint:
-
-- **1,244 desktop tests passed, one existing skip**, including the new four-case
-  terminal regression file and the two swarm naming tests.
-- Analyzer: **zero errors/warnings**, 12 existing vendored xterm informational
-  diagnostics, using `--no-fatal-infos`.
-- Native benchmark Python files pass syntax parsing; no new native benchmark
-  run or accepted timing result is claimed.
-- Both archived patches individually pass `git apply --check` against this
-  source checkpoint. That does not validate applying them together or their
-  compatibility with the new product decision.
-- The archived picker previously passed 57 focused Flutter tests and
-  51 keymap decoder + 343 AppKit checks before it was parked. Those results
-  apply to the old draft only. Its final visual treatment still needs review.
-
-The `swarm-onboarding` continuation's macOS arm64 **Release build succeeded**
-after integration with updated main,
-with `FLUTTER_TARGET=lib/main.dart`. Log:
-`/private/tmp/harness-onboarding-main-release-build.log`. Computer Use still returns
-`cgWindowNotFound` for the exact workspace bundle path. The new binary is built;
-it has not been confirmed loaded in the running preview or visually verified
-through native capture. Preserve this distinction when resuming.
-
-The previous workspace Release build at **`2d3c024` succeeded**. The old preview (PID 29025)
-was closed normally, then the exact workspace bundle was launched and verified
-running as PID 15377 with identity `ai.autonomous.harness.v2`. Those PIDs are only
-historical observations; recheck before any later process action. Build log:
-`/private/tmp/harness-two-pickers-release-build.log`.
-
-Live visual inspection remains unverified: Computer Use now lists the running
-app, but getting its exact bundle path returned `cgWindowNotFound`. A bundle-ID
-lookup is ambiguous with the old Debug copy in `/Users/ab/code/harness-app-v2`;
-always use the exact workspace path. The successful build/process check is not
-proof of native visual/input latency. Calibration previously failed with an
-inactive/non-key benchmark window. Retry it only when new evidence establishes
-that its isolated window can become active/key.
-
-## Plan for the next session
-
-1. **Continue from updated main and this handoff.** The user confirmed the
-   current menus and Navigate are visible and explicitly said no further check
-   was needed. The later Add/shortcut/padding changes have a successful Release
-   build; this session did not restart the running app. Do not repeat a relaunch
-   just to reconfirm menus. Preserve real running agents and input during any
-   targeted native workflow verification.
-2. **Observe genuine first use of the common start page.** Start with no
-   account/runtime/agents/projects knowledge and record actual steps/errors to
-   a usable agent. The folder-first path, workspace example and visible
-   machine/project starters are implemented. Check fresh dependencies, provider sign-in, cloning,
-   first task and adding a second agent; improve what the observation exposes.
-   Preserve choices on failure and the distinction between Navigate and Add.
-   Browser reopen/copy/cancel recovery is implemented with isolated subprocess
-   and platform fixtures. Check the real browser handoff and provider return;
-   do not infer live sign-in success from fixture results.
-   Creation recovery is implemented and tested with isolated replies. Verify a
-   deliberately delayed remote create on a disposable agent, including an older
-   CLI and a changed original swarm. A status check must remain read-only. A
-   durable desktop pending-creations list and crash-window registry reconciliation
-   are still future work; the current dialog cannot resume its intent after closure.
-3. **Recheck fresh terminal positioning and real workflows** on disposable
-   local/remote agents: startup, delayed snapshots, resizing, returning to a
-   scrolled view, reconnect, paste, selection, and IME.
-4. **Deferred: measure native responsiveness** under representative retained/output load,
-   using the repaired benchmark identity checks for the team's new
-   `ai.autonomous.harness` macOS bundle identifier (Linux now uses
-   `com.autonomous.harness` and executable `harness`). Nine isolation tests pass;
-   a fresh disposable Release fixture is available at
-   `/private/tmp/harness-native-benchmark-v99tt1m2` from source `a6fe4a4`,
-   including the team's later titlebar change. The user explicitly answered
-   **“Run it now”** and authorized briefly quitting/reopening the workspace
-   preview while leaving installed Harness and underlying agents running.
-   Do not ask for that approval again. The attempted UI access returned
-   `cgWindowNotFound`; a read-only console check confirmed the Mac is locked
-   (`CGSSessionScreenIsLocked = Yes`). Neither Harness process was stopped and
-   the benchmark was not launched. The user then said to do the benchmark later
-   and focus on building features. Keep it deferred. When measurement is back
-   in scope, use an unlocked desktop, normally close the exact workspace
-   preview, accept calibration only with the active/key-window guards passing,
-   and reopen the preview even if calibration fails. No native samples have been
-   accepted. See the current performance record for exact artifacts.
-   Then close remaining visual/platform/release qualification gaps. Maintain
-   the main-branch handoff and keep it honest about what's still unverified.
+1. **Continue current main and preserve the current product direction.** Inspect
+   local changes before a fast-forward update. Save verified work frequently.
+   When native access returns, update only the correct preview using the process
+   above. Do not reopen old UI or repeat unchanged menu checks merely to fill a
+   verification gap.
+2. **Complete current keyboard and genuine first-use qualification.** Check
+   initially unfocused search, expansion/dismissal, command mode, Tab-focused
+   rows, composition and the first key after activation through both native
+   menu and keyboard entry. Check New Harness folder focus/cancellation,
+   Layout repeated chords and confirmation, and Find during output/composition,
+   including the immediate next key after closing it. Ready navigation, Find
+   and dialog-return transitions are now fixture-checked before their next
+   frame; current-preview observation remains the next level of evidence.
+   Observe fresh dependencies, provider sign-in/browser return, native folder
+   choice, clone, first task and a second harness. Record actual steps, errors
+   and time to a usable agent. Public GitHub cloning passed a direct disposable
+   service check; private access/native chooser and real provider return remain
+   unobserved. Check delayed remote creation on a disposable agent, an older CLI
+   and a changed original destination without submitting duplicate launches.
+3. **Recheck terminal positioning and real workflows on disposable local/remote
+   sessions.** Cover startup, delayed snapshots, incremental resize, added panes,
+   retained views, zoom, relayout, return, reconnect, paste, selection and IME.
+   Preserve deliberate unchanged scrollback/Find and verify the next input target.
+   Do not type test commands into the user's working agents or upgrade/restart
+   their daemon for qualification.
+4. **Keep native latency measurement deferred.** If the user restores it to
+   scope, rebuild a disposable fixture from current source and require the
+   active/key-window guards to pass. Measure cold/warm p50/p95/p99 for typing,
+   pane focus and tab changes with 16/48 retained terminals, idle and under
+   output load. Record machine, build, raw samples and limits. Do not substitute
+   headless search CPU, raster-only time or network RTT for native latency.
+   Separately finish native visual/accessibility and Linux-host qualification;
+   macOS checks do not establish Windows support.
 
 ## Acceptance criteria
 
-### Navigation and adding
+### Entry, navigation and input
 
-- One agent in three swarms yields three explicit usable destinations. Enter
-  focuses the chosen pane in the chosen swarm without altering membership.
-- The first character typed after navigation reaches only the selected agent.
-  Hidden/offscreen/zoomed destinations are revealed while retained sessions and
-  reading positions survive switching away and back.
-- Reopening one agent followed by its original swarm restores a single workspace
-  with shared sessions, including at the tab limit. A full destination preserves
-  its recovery entry until the entire missing membership can fit.
-- All three Add entry points can add an existing agent and create a new agent.
-  Both split directions preserve their exact original placement. Source swarms
-  remain intact, and existing-agent addition starts no duplicate runtime.
-- Already-present, offline, removed, changed-membership, full-capacity, canceled,
-  and failed asynchronous actions produce a clear result without modifying the
-  wrong swarm or losing a draft. Late completion revalidates its destination.
-- Arrow keys, Enter, Escape, Cmd-A/Delete, paste, and IME work in each input.
-  One selected result drives the preview; repeated output cannot steal focus.
-- The toolbar has Navigate and Notifications; only the tab-strip + creates a
-  swarm. The floating Add + is bottom right and does not cover the terminal prompt.
-- The Add preview is always present when meaningful, readable at small/large
-  window sizes, bounded, and useful for choosing an agent. No eye toggle, raw
-  overflow, or ambiguous “Go to agent” action in the local Add workflow.
+- A first-time developer can identify the next action without learning the
+  machine/project/swarm/account model first. New and Open stay distinct, the
+  happy path requires few meaningful choices, and failure offers a useful next
+  step without losing selections.
+- Current keyboard defaults, user overrides, native actions and shortcut help
+  agree. Search input/results keep one selection and action, including arrows,
+  Enter, Escape, select-all/delete, paste and composition.
+- The first character after navigation reaches only the selected agent. Hidden,
+  offscreen or zoomed destinations are revealed with retained sessions intact.
+  Discovery/output cannot steal focus or reconstruct dismissed search catalogs.
+- Opening existing work starts no duplicate runtime. Splits preserve their
+  exact destination. Already-present, offline, removed, full, changed, canceled
+  or failed actions give a clear result and never alter the wrong workspace.
+- Partial History restoration retains a single workspace/shared sessions, even
+  at the tab limit. Capacity failure preserves the whole recovery entry.
+- Closing/dismissing New Harness returns directly to the intended page/terminal;
+  launch-in-progress and uncertain-outcome recovery remain protected.
 
-### First impression and visual quality
+### Visual quality and first impression
 
-- A first-time developer can identify the primary next step without first
-  learning machines, projects, swarms, and agent-account configuration.
-- The happy path reaches a real usable agent with the fewest meaningful choices;
-  joining existing work and starting fresh are both discoverable. Missing tools,
-  authentication, connectivity, and failed creation give an actionable next step.
-- Observe first-use completion and confusion directly. “Hook everyone instantly”
-  is the user's aspiration, not a measured 100% conversion claim. Record actual
-  steps/time/errors before making onboarding performance claims.
-- One icon per concept and consistent labels/contrast across native and Flutter
-  controls. Six coordinated palettes remain legible; system text scaling,
-  keyboard focus indicators, accessibility labels, and narrow windows work.
-- Modals clearly separate foreground from background. Grips, splits, zoom,
-  menus, and account rows look intentional with real fonts and content.
+- The start page, titlebar, modal result rows and pane controls follow the current
+  entry/pane contract. Flat backgrounds, whitespace, title/metadata hierarchy,
+  single/group icons, labels and native/Flutter button contrast are consistent.
+- All six coordinated palettes, real fonts/content, larger text, narrow windows,
+  keyboard focus indicators and accessibility labels remain legible and usable.
+  Modal hierarchy, grips, splits, zoom, menus and account rows look intentional.
+- Observe real first-use completion/confusion. The user's aspiration to hook
+  everyone instantly is not measured 100% conversion. Fixture success is not
+  evidence of fresh-install completion.
 
-### Correctness and performance
+### Correctness, performance and release
 
-- Fresh views land at the latest output, including tall/delayed snapshots and
-  five-agent project swarms. Revisited scrolled-up views retain their position.
-- Shared agents retain one session/buffer/controller; hidden output does not
-  repeatedly lay out/paint hidden terminals or reconstruct unchanged catalogs.
-- Report cold/warm p50/p95/p99 for native event-to-raster typing/focus/tab changes
-  with 16 and 48 retained terminals, idle and under output load, when valid
-  foreground measurement is available. Report machine/build/load and raw sample
-  limits. Synthetic search CPU, Flutter raster, network RTT, and physical
-  key-to-display latency are different measurements and must stay distinct.
-- Reconnect preserves readable output/drafts and does not blindly replay input
-  or take over another controller. Real remote reconnect still needs evidence.
-- Run meaningful affected tests, analyzer, native decoder/titlebar checks for
-  native changes, and a Release build before claiming a new preview is loaded.
-  Full desktop regressions must pass before declaring the desktop release ready.
-- Verify macOS native behavior directly and qualify Linux on a Linux host.
-  Windows support is unexercised; do not claim it from macOS test success.
+- Fresh/revisited views show the latest output, including tall/delayed snapshots,
+  incremental resize redraws and multi-agent transitions. Deliberate unchanged
+  scrollback and active Find retain their position.
+- Shared agents retain one session/buffer/controller. Hidden output does not
+  repeatedly lay out/paint hidden terminals, and routine events do not rebuild
+  unrelated workspace UI.
+- Reconnect retains readable output/drafts without blindly replaying input or
+  taking control from another controller. Real remote evidence is still required.
+- Native latency claims require valid foreground measurements with source,
+  environment and raw-sample scope stated; benchmarking is currently deferred.
+- Run meaningful affected checks and analysis; run native decoder/titlebar
+  checks when native behavior changes. Build Release before updating the preview
+  and verify the running artifact before claiming it loaded the change.
+  Passing a full desktop suite is required before declaring release readiness,
+  but it does not replace native/macOS, Linux-host or first-use qualification.
 
-## Implementation and verification map
+## Implementation map and references
 
 | Area | Start here |
 | --- | --- |
-| Workspace orchestration, picker routes, split/new-agent context | `desktop/lib/screens/swarm_screen.dart` |
-| Shared remote folder browsing and request ownership | `desktop/lib/widgets/remote_folder_picker.dart`, `desktop/test/remote_folder_picker_test.dart` |
-| Search data, actions, destinations | `desktop/lib/state/swarm_search.dart`, `swarm_navigation.dart`, `swarm_catalog.dart` |
-| Distinct Navigate and shared Add/welcome UI | `desktop/lib/widgets/swarm_navigator.dart`, `swarm_switcher.dart`, `swarm_inline_search.dart`, `swarm_search_input.dart`, `swarm_welcome.dart` |
-| Preview extraction | `desktop/lib/terminal/search_output_preview.dart` |
-| Native tabs, toolbar, menus | `desktop/macos/Runner/SwarmTitlebar.swift` |
-| Key ownership and customization | `desktop/lib/shortcuts/`, `desktop/tool/check_keymap_native.sh` |
-| Membership, retained panes and runtime | `desktop/lib/state/app_state.dart`, `swarm.dart`, `terminal_pane.dart` |
-| Terminal viewport fix | `desktop/lib/widgets/terminal_panel.dart`, `desktop/third_party/xterm/lib/src/ui/render.dart`, `desktop/test/terminal_initial_output_test.dart` |
-| Remote resized snapshot | `cli/src/lib/terminalStreamManager.ts`, `desktop/lib/terminal/terminal_session.dart` |
-| Design/research history | `docs/harness-v2-{progress,keyboard-system,appearance-onboarding,developer-tools-research,prototype-review,performance}.md` |
+| Workspace routes, native callbacks, split/creation context | desktop/lib/screens/swarm_screen.dart |
+| Start page and shared Open results | desktop/lib/widgets/harness_start_page.dart, swarm_switcher.dart, swarm_search_input.dart |
+| Creation and remote folders | desktop/lib/widgets/new_agent_dialog.dart, remote_folder_picker.dart |
+| Search/actions/destinations | desktop/lib/state/swarm_search.dart, swarm_navigation.dart, swarm_catalog.dart |
+| Native tabs, toolbar, menus and key ownership | desktop/macos/Runner/SwarmTitlebar.swift, HarnessKeymap.swift; desktop/lib/shortcuts/ |
+| Membership, retained panes and event routing | desktop/lib/state/app_state.dart, swarm.dart, terminal_pane.dart |
+| Terminal viewport, Find and remote snapshots | desktop/lib/widgets/terminal_panel.dart, terminal_find_bar.dart; desktop/lib/terminal/; desktop/third_party/xterm/lib/src/ui/render.dart; cli/src/lib/terminalStreamManager.ts |
+| Focused regression coverage | desktop/test/terminal_initial_output_test.dart, terminal_find_test.dart, workspace_event_isolation_test.dart, swarm_terminal_routing_test.dart, keymap_runtime_test.dart |
+| Native functional checks | desktop/tool/check_keymap_native.sh, check_swarm_titlebar.sh |
+
+[Keyboard design](harness-v2-keyboard-system.md),
+[developer-tool research](harness-v2-developer-tools-research.md),
+[performance evidence](harness-v2-performance.md) and
+[onboarding history](harness-v2-appearance-onboarding.md) provide background.
+Read their proposals/historical measurements in the context of the current
+entry contract. Archived handoff patches are superseded; do not reapply them.
 
 ## Toolchain and operating boundaries
 
-Read `desktop/CLAUDE.md`, but treat its old integration-test/sidebar/architecture
-descriptions as historical where current source differs. No applicable AGENTS.md
-was found in this checkout or its ancestors during the work.
+Read desktop/CLAUDE.md, using current source where its old integration-test,
+sidebar or architecture notes differ. No applicable AGENTS.md was found in this
+checkout or its ancestors.
 
-This checkpoint used **Flutter 3.47.2 / Dart 3.13.2**, Swift Package Manager,
-and Xcode on Apple Silicon. On the other computer install/select that compatible
-SDK; the old `/private/tmp/harness-v2-flutter` path is not a portable dependency.
-From `desktop/`:
+This checkpoint used **Flutter 3.47.2 / Dart 3.13.2**, Swift Package Manager and
+Xcode on Apple Silicon. The local SDK is /private/tmp/harness-v2-flutter and tool
+config is /private/tmp/harness-v2-tool-config. Select a compatible SDK on another
+computer; those temporary paths are not portable dependencies. From desktop/:
 
-```sh
+~~~sh
 flutter config --enable-swift-package-manager
 flutter pub get
 flutter analyze --no-pub --no-fatal-infos
 flutter test --no-pub
 bash tool/check_keymap_native.sh /absolute/path/to/flutter-sdk
-```
+~~~
 
-Enable SPM before pub get. Do not commit a CocoaPods fallback rewrite, generated
-build files, caches, credentials, or real account/terminal state. The vendored
-xterm contains required patches; do not replace it with the pub.dev package.
-Build instructions and prior measurements are in the progress/performance notes.
+Serialize Flutter tooling, including the native script's Dart export and Xcode
+build phases. Enable SPM before pub get; do not commit a CocoaPods fallback,
+generated output, caches, credentials or real account/terminal state. Vendored
+xterm patches are required; do not replace them with the pub.dev package.
+The normal entry point is desktop/lib/main.dart. macOS uses
+ai.autonomous.harness; Linux uses com.autonomous.harness/executable harness.
+Older process identity does not prove which on-disk source it loaded.
 
-The normal entry point is `desktop/lib/main.dart`. The public app/binary name
-is **Harness**. Main now uses `ai.autonomous.harness`; older running previews may
-still report `ai.autonomous.harness.v2`. Do not infer the exact running process
-or its state from the current on-disk bundle. Workspace Release path here is
-`desktop/build/macos/Build/Products/Release/Harness.app`; the installed Harness
-was a separate process. Recheck exact bundle paths/PIDs before normally quitting
-or relaunching a preview. Do not launch a competing duplicate or use a real
-agent's prompt as a test input.
-
-Keep tests/benchmarks isolated with temporary stores and synthetic/disposable
-transports. Do not upgrade or restart the user's production CLI/daemon for
-qualification. Commit and push directly to main using ordinary fast-forward
-pushes. If the team advances main, fetch and integrate their commits without
-rewriting published history. Publishing a release and production end-to-end
-operations are separate tasks. Keep handoff notes current as work progresses.
+Keep tests isolated with temporary stores and synthetic/disposable transports.
+Preserve the user's sessions, agent input and production daemon. Commit/push
+directly to main with ordinary fast-forward pushes; integrate incoming main
+without rewriting published history. Do not merge or retire teammates' branches.
+Publishing a release or production end-to-end operations are separate tasks.
+Keep this handoff current without appending superseded designs as new instructions.

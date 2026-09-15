@@ -17,6 +17,12 @@ Future<void> showLinkMachineScreenDialog(
   AppNotifier notifier,
   String machineId,
 ) async {
+  // Opening IS the answer to "was it dismissed?": a Cancel earlier marked the
+  // machine so the reactive gates stop insisting, and the gates check that mark
+  // before calling here — so anything that reaches this line is a person asking
+  // to see it. Clear the mark, or the check inside pops the dialog on its first
+  // frame and the row reads as dead.
+  notifier.revisitLinkPrompt(machineId);
   await showAppDialog<void>(
     context: context,
     builder: (context) => Dialog(
@@ -210,7 +216,7 @@ class _LinkMachineScreenState extends State<LinkMachineScreen> {
           ),
           const SizedBox(height: 8),
           Text(
-            'Your previous agent will reconnect automatically after linking.',
+            'Your previous harness will reconnect automatically after linking.',
             style: TextStyle(
               fontFamily: AppFonts.sans,
               fontSize: 11.2,

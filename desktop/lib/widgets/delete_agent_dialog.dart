@@ -4,8 +4,8 @@ import '../shared/theme/app_theme.dart' as grid;
 import '../shared/widgets/app_dialog.dart';
 import '../state/app_state.dart';
 
-/// The one "Delete agent" confirmation, opened from every place an agent can
-/// be deleted: the rail's row menu and the pane's ⋯ menu.
+/// The one "Delete Harness" confirmation, opened from every place an agent can
+/// be deleted: the rail's row menu and the pane's delete button.
 ///
 /// Pulled out of the rail for the reason the rename dialog was: two copies
 /// would have been two wordings of one irreversible act, and two ways of
@@ -21,7 +21,7 @@ Future<void> confirmDeleteAgent(
   final confirmed = await showAppDialog<bool>(
     context: context,
     builder: (dialogContext) => AlertDialog(
-      title: const Text('Delete agent'),
+      title: const Text('Delete Harness'),
       content: SizedBox(
         width: 360,
         child: Text(

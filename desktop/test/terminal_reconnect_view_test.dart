@@ -9,11 +9,13 @@ import 'package:harness/terminal/terminal_session.dart';
 import 'package:harness/widgets/terminal_composer.dart';
 import 'package:harness/widgets/terminal_find_bar.dart';
 import 'package:harness/ws/ws_conn.dart';
+import 'package:harness/ws/local_cli_discovery.dart';
 
 import 'swarm_interactions_test.dart' show chord;
 import 'swarm_screen_test.dart' show mount;
-import 'swarm_state_test.dart' show createApp;
+import 'swarm_state_test.dart' show createApp, MemoryStore;
 import 'terminal_find_test.dart' show findField, finishFind, terminalView;
+import 'terminal_tail_lifecycle_test.dart' show atBottom;
 
 class _Connection extends WsConn {
   _Connection()
@@ -83,6 +85,77 @@ Future<void> _screen(
 );
 
 void main() {
+  for (final local in [true, false]) {
+    testWidgets(
+      'restore, reconnect and reopen show the latest (local=$local)',
+      (tester) async {
+        final store = MemoryStore();
+        final saved = createApp(store: store);
+        await saved.addAgentToSwarm('m', 'a0');
+        await saved.flushPaneLayout();
+        saved.dispose();
+        final connection = _Connection();
+        final app = createApp(
+          store: store,
+          connectionForTest: (_) => connection,
+        );
+        app.stateOf('m')!
+          ..nodeOnline = true
+          ..terminalCapabilityAvailable = true
+          ..localOnly = local
+          ..localEndpoint = local
+              ? LocalCliEndpoint(
+                  computerId: 'm',
+                  wsUri: Uri.parse('ws://fixture.invalid'),
+                  protocolVersion: 1,
+                  terminalProtocolVersion: 3,
+                )
+              : null;
+        await app.restorePaneLayoutForTest();
+        final attaching = app.selectAgent('m', 'a0');
+        await mount(tester, app);
+        await attaching;
+        final original = app.activeSwarmId;
+        var session = app.panes.single.session!;
+        const firstStream = '00000000-0000-0000-0000-000000000001';
+        const nextStream = '00000000-0000-0000-0000-000000000002';
+        const reopenedStream = '00000000-0000-0000-0000-000000000003';
+        await _ready(app, connection, firstStream);
+        await tester.pump(const Duration(milliseconds: 250));
+        await _screen(app, connection, firstStream, 0);
+        await tester.pump();
+        atBottom(tester, session);
+
+        session.transportLost();
+        final retry = app.selectAgent('m', 'a0');
+        await tester.pump();
+        await retry;
+        await _ready(app, connection, nextStream);
+        await tester.pump(const Duration(milliseconds: 250));
+        await _screen(app, connection, nextStream, 20);
+        await tester.pump();
+        atBottom(tester, session);
+
+        terminalView(tester, session).widget.scrollController!.jumpTo(100);
+        await tester.pump();
+        await app.closeSwarm(original);
+        await tester.pump();
+        app.reopenClosedSwarm();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 250));
+        session = app.panes.single.session!;
+        await _ready(app, connection, reopenedStream);
+        await _screen(app, connection, reopenedStream, 40);
+        await tester.pump();
+        atBottom(tester, session);
+        expect(connection.input, isEmpty);
+        await tester.pumpWidget(const SizedBox());
+        app.dispose();
+        await connection.close();
+      },
+    );
+  }
+
   testWidgets(
     'reconnect keeps output, Find location and draft until the replacement screen',
     (tester) async {
@@ -121,7 +194,7 @@ void main() {
       field.selection = const TextSelection.collapsed(offset: 3);
       final search = tester
           .widget<TerminalFindBar>(find.byType(TerminalFindBar))
-          .search;
+          .search!;
       final matchedRow = search.match!.begin.y;
       final matchedText = session.terminal.buffer.lines[matchedRow].getText();
       final before = session.terminal;
@@ -161,7 +234,7 @@ void main() {
       expect(terminalView(tester, session), same(renderer));
       final restored = tester
           .widget<TerminalFindBar>(find.byType(TerminalFindBar))
-          .search;
+          .search!;
       expect(
         session.terminal.buffer.lines[restored.match!.begin.y].getText(),
         matchedText,

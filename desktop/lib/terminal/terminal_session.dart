@@ -1112,6 +1112,8 @@ class TerminalSession extends ChangeNotifier {
 
   void find(TerminalFindAction action) => _viewport?.find(action);
 
+  bool focusInput() => _viewport?.focusInput() ?? false;
+
   /// Coalescing windows for the two things the user drives directly.
   ///
   /// Both are leading + trailing: act on the first event, batch the rest. A flat trailing debounce
@@ -1357,7 +1359,7 @@ class TerminalSession extends ChangeNotifier {
   }
 
   void transportLost([
-    String message = 'Connection lost. Select the agent to reconnect.',
+    String message = 'Connection lost. Select the harness to reconnect.',
   ]) {
     // `takenOver` is a deliberate dead end (see `_paneNeedsAttach`): only the user's own retry
     // may reopen a stream someone else claimed. A WS hiccup must not quietly overwrite that into

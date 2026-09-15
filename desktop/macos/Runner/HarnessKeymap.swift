@@ -185,9 +185,9 @@ final class HarnessNativeKeymap {
         let key = binding?.keys.count == 1 ? binding?.keys.first : nil
         item.keyEquivalent = key?.menuEquivalent ?? ""
         item.keyEquivalentModifierMask = key?.modifiers ?? []
-        // AppKit has no multi-stroke key-equivalent column. Show its complete
-        // binding in the tooltip; never advertise just a sequence's first key.
-        item.toolTip = binding.map { "\(item.title) — \($0.hint)" }
+        // Menu equivalents show single chords. Longer sequences remain in
+        // Keyboard Shortcuts; hovering a menu row adds no duplicate hint.
+        item.toolTip = nil
       }
       if let submenu = item.submenu { applyMenuKeys(to: submenu, context: context) }
     }

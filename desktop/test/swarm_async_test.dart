@@ -93,17 +93,17 @@ void main() {
     (
       'TMUX_UNAVAILABLE',
       null,
-      'Harness needs tmux to start agents on Test host. Install tmux there, then try again.',
+      'Harness needs tmux to start harnesses on Test host. Install tmux there, then try again.',
     ),
     (
       'UNSUPPORTED',
       null,
-      'Update the harness CLI on this machine to use New Agent',
+      'Update the harness CLI on this machine to create a harness',
     ),
     (
       'SPAWN_FAILED',
       'The machine could not allocate an agent process.',
-      'Test host has not confirmed the new agent yet. Check status before creating another.',
+      'Test host has not confirmed the new harness yet. Check status before creating another.',
     ),
   ]) {
     test(
@@ -141,7 +141,7 @@ void main() {
       connection.reply.completeError(const WsRequestTimeout('agent_create'));
       expect(
         await creation,
-        'Test host has not confirmed the new agent yet. Check status before creating another.',
+        'Test host has not confirmed the new harness yet. Check status before creating another.',
       );
       expect(connection.calls, ['agent_create']);
       expect(app.panes, isEmpty);
@@ -224,7 +224,7 @@ void main() {
         final destination = app.activeSwarm;
         final launch = app.createAgent('m', engine: 'claude', folder: '/work');
         expect(connection.calls, ['agent_create']);
-        app.newSwarm();
+        app.newSwarm(name: 'Elsewhere');
         if (change == 'close') await app.closeSwarm(destination.id);
         if (change == 'dispose') app.dispose();
         connection.complete();

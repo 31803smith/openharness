@@ -4,6 +4,8 @@ import 'package:flutter/services.dart';
 import '../shared/theme/app_theme.dart' as grid;
 import '../shared/widgets/app_dialog.dart';
 import '../state/app_state.dart';
+import '../shortcuts/app_keymap.dart';
+import '../shortcuts/keymap.dart';
 import '../state/pane_preset.dart';
 import '../theme/app_theme.dart';
 
@@ -13,10 +15,8 @@ import '../theme/app_theme.dart';
 /// four words in a different order, and nobody reads a layout name twice; the
 /// little diagram is the whole interface and the label only confirms it.
 ///
-/// Every size has a choice except one tile. Up to four they are named shapes;
-/// above that the choice is the column count, with "Auto" — as many columns as
-/// the width carries at the forty-column floor — sitting among them as the
-/// measured answer rather than as the only one.
+/// Every card describes a distinct concrete arrangement. Automatic defaults
+/// resolve to the matching card, instead of adding a duplicate picture.
 /// Set while the palette is up, so a second ⌘S can be answered rather than
 /// stacking a route.
 ///
@@ -74,15 +74,19 @@ int layoutPaletteMove(int at, int n, int dx, int dy, int perRow) {
 class _Strip {
   /// Wide enough that a diagram stays readable — see the note on the Wrap.
   static const shape = 108.0;
+  static const diagram = 86.0;
   static const gap = 10.0;
   static const sidePadding = 14.0;
 
   /// The dialog's own width, which changes with how many shapes there are.
-  static double width(int choices) => choices > 3 ? 500 : 420;
+  static double width(int choices) {
+    final columns = choices > 4 ? 3 : choices.clamp(1, 4);
+    return sidePadding * 2 + shape * columns + gap * (columns - 1);
+  }
 
   /// How many shapes sit on one line. The same arithmetic Wrap does.
-  static int perRow(int choices) {
-    final room = width(choices) - sidePadding * 2;
+  static int perRow(int choices, double width, double shape) {
+    final room = width - sidePadding * 2;
     final fits = ((room + gap) / (shape + gap)).floor();
     return fits.clamp(1, choices < 1 ? 1 : choices);
   }
@@ -107,6 +111,9 @@ class _LayoutPaletteState extends State<_LayoutPalette> {
   /// global binding, while the arrow keys did nothing at all, because those are
   /// read HERE and nothing here was listening.
   final FocusNode _keys = FocusNode(debugLabel: 'layout-palette');
+  final _shapeKeys = List.generate(6, (_) => GlobalKey());
+  int _perRow = 1;
+  bool _revealPending = false;
 
   @override
   void initState() {
@@ -128,12 +135,7 @@ class _LayoutPaletteState extends State<_LayoutPalette> {
     super.dispose();
   }
 
-  /// One step along the strip — what a SECOND ⌘S does.
-  ///
-  /// Wraps, unlike the arrow keys, and the difference is deliberate. An arrow is
-  /// a direction: running off the end of a strip you can see the ends of reads
-  /// as a mis-key. A repeated chord is a CYCLE — nobody holding ⌘S means "stop
-  /// at the last one", they mean "show me the next".
+  /// Advance one choice with the configured Layout key, without applying it.
   bool _advance() {
     if (!mounted || ModalRoute.isCurrentOf(context) == false) return false;
     final count = widget.notifier.panes.length;
@@ -141,8 +143,8 @@ class _LayoutPaletteState extends State<_LayoutPalette> {
     if (choices.isEmpty) return true;
     // presetFor is keyed on the PANE COUNT, not on how many shapes that count
     // offers — the two are different numbers and only one of them is a key.
-    final at = _cursorIn(choices, widget.notifier.presetFor(count));
-    setState(() => _cursor = (at + 1) % choices.length);
+    final at = _cursorIn(choices, _currentChoice(count));
+    _select((at + 1) % choices.length);
     return true;
   }
 
@@ -150,6 +152,24 @@ class _LayoutPaletteState extends State<_LayoutPalette> {
   /// one in use: moving the cursor must not rearrange the grid under someone
   /// still looking at the choices. Applying is Enter, a digit, or a click.
   int? _cursor;
+
+  void _select(int index) {
+    if (_cursor == index) return;
+    setState(() => _cursor = index);
+    if (_revealPending) return;
+    _revealPending = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _revealPending = false;
+      if (!mounted || ModalRoute.isCurrentOf(context) == false) return;
+      final target = _shapeKeys[_cursor!].currentContext;
+      if (target != null) {
+        Scrollable.ensureVisible(
+          target,
+          alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+        );
+      }
+    });
+  }
 
   /// Where the cursor is, read from state rather than from a captured local.
   ///
@@ -166,143 +186,198 @@ class _LayoutPaletteState extends State<_LayoutPalette> {
     return start.clamp(0, choices.length - 1);
   }
 
+  PanePreset? _currentChoice(int count) {
+    final notifier = widget.notifier;
+    final preset = notifier.presetFor(count);
+    if (preset == null || PanePreset.forCount(count).contains(preset)) {
+      return preset;
+    }
+    final actual = notifier.activeSwarm.arranged?.tiles;
+    if (actual != null && actual.length == count) {
+      return PanePreset.matchingChoice(count, actual);
+    }
+    final viewport = MediaQuery.sizeOf(context);
+    final resolved =
+        preset == PanePreset.splitLong && viewport.height > viewport.width
+        ? PanePreset.rows
+        : preset;
+    return PanePreset.matchingChoice(
+      count,
+      resolved.tilesFor(count, columns: notifier.gridColumns),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final notifier = widget.notifier;
     grid.AppTheme.watch(context);
     final count = notifier.panes.length;
     final choices = PanePreset.forCount(count);
-    final current = notifier.presetFor(count);
+    final current = _currentChoice(count);
     final cursor = _cursorIn(choices, current);
+    final textScale = MediaQuery.textScalerOf(context).scale(11.5) / 11.5;
+    final shapeWidth = (_Strip.shape * textScale).clamp(_Strip.shape, 216.0);
+    final paletteWidth =
+        _Strip.width(choices.length) * textScale.clamp(1.0, 2.0);
 
-    return Dialog(
-      backgroundColor: grid.AppGlass.surfaceFill,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(13),
-        side: BorderSide(color: grid.AppGlass.hair),
-      ),
-      child: Focus(
-        focusNode: _keys,
-        autofocus: true,
-        onKeyEvent: (node, event) {
-          // Repeats count: holding an arrow should walk the list, the way it
-          // does in every other list on this OS.
-          if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
-            return KeyEventResult.ignored;
-          }
-          if (choices.isEmpty) return KeyEventResult.ignored;
-
-          void apply(PanePreset preset) {
-            notifier.setPreset(count, preset);
-            Navigator.of(context).pop();
-          }
-
-          final at = _cursorIn(choices, current);
-          final direction = _direction(event.logicalKey);
-          if (direction != null) {
-            setState(
-              () => _cursor = layoutPaletteMove(
-                at,
-                choices.length,
-                direction.$1,
-                direction.$2,
-                _Strip.perRow(choices.length),
-              ),
-            );
-            return KeyEventResult.handled;
-          }
-          if (_isCommit(event.logicalKey)) {
-            apply(choices[at]);
-            return KeyEventResult.handled;
-          }
-          final index = _digit(event.logicalKey);
-          if (index == null || index > choices.length) {
-            return KeyEventResult.ignored;
-          }
-          apply(choices[index - 1]);
-          return KeyEventResult.handled;
+    return KeymapRegion(
+      contextKind: KeymapContext.workspace,
+      actions: {
+        'pane.layout': () {
+          _advance();
         },
-        child: ConstrainedBox(
-          // Wide enough that four shapes still get a diagram big enough to read
-          // and a label that is not ellipsised into a guess.
-          constraints: BoxConstraints(maxWidth: choices.length > 3 ? 500 : 420),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(18, 16, 18, 12),
-                child: Text(
-                  choices.isEmpty ? 'Layout' : 'Layout · $count tiles',
-                  style: TextStyle(
-                    color: grid.AppPalette.textSecondary,
-                    fontSize: 11.5,
-                    letterSpacing: 0.9,
-                    fontWeight: grid.AppFont.medium,
-                  ),
+      },
+      child: Dialog(
+        backgroundColor: grid.AppGlass.surfaceFill,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(13),
+          side: BorderSide(color: grid.AppGlass.hair),
+        ),
+        child: Focus(
+          focusNode: _keys,
+          autofocus: true,
+          onKeyEvent: (node, event) {
+            // Repeats count: holding an arrow should walk the list, the way it
+            // does in every other list on this OS.
+            if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+              return KeyEventResult.ignored;
+            }
+            // The keymap handles configured chords before this local handler.
+            // Modified digits/arrows must not fall through as a plain selection.
+            final keyboard = HardwareKeyboard.instance;
+            if (keyboard.isMetaPressed ||
+                keyboard.isControlPressed ||
+                keyboard.isAltPressed ||
+                keyboard.isShiftPressed) {
+              return KeyEventResult.ignored;
+            }
+            if (choices.isEmpty) return KeyEventResult.ignored;
+
+            void apply(PanePreset preset) {
+              notifier.setPreset(count, preset);
+              Navigator.of(context).pop();
+            }
+
+            final at = _cursorIn(choices, current);
+            final direction = _direction(event.logicalKey);
+            if (direction != null) {
+              _select(
+                layoutPaletteMove(
+                  at,
+                  choices.length,
+                  direction.$1,
+                  direction.$2,
+                  _perRow,
                 ),
-              ),
-              if (choices.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(18, 0, 18, 20),
-                  child: Text(
-                    'One tile has no layout to choose. Open another and the '
-                    'shapes appear here.',
-                    style: TextStyle(
-                      color: grid.AppPalette.textFaint,
-                      fontSize: 12.5,
-                      height: 1.45,
-                    ),
-                  ),
-                )
-              else ...[
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(
-                    _Strip.sidePadding,
-                    0,
-                    _Strip.sidePadding,
-                    6,
-                  ),
-                  // Wrapped, not a Row: a big grid offers five column counts,
-                  // and five diagrams squeezed across one line are five things
-                  // nobody can tell apart. 108px keeps a shape readable.
-                  child: Wrap(
-                    spacing: _Strip.gap,
-                    runSpacing: _Strip.gap,
+              );
+              return KeyEventResult.handled;
+            }
+            if (_isCommit(event.logicalKey)) {
+              apply(choices[at]);
+              return KeyEventResult.handled;
+            }
+            final index = _digit(event.logicalKey);
+            if (index == null || index > choices.length) {
+              return KeyEventResult.ignored;
+            }
+            apply(choices[index - 1]);
+            return KeyEventResult.handled;
+          },
+          child: ConstrainedBox(
+            // Wide enough that four shapes still get a diagram big enough to read
+            // and a label that is not ellipsised into a guess.
+            constraints: BoxConstraints(maxWidth: paletteWidth),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                // Read the same available width the Wrap uses, including text
+                // scaling and a window narrower than the preferred palette.
+                _perRow = _Strip.perRow(
+                  choices.length,
+                  constraints.maxWidth,
+                  shapeWidth,
+                );
+                return SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      for (var i = 0; i < choices.length; i++)
-                        SizedBox(
-                          width: _Strip.shape,
-                          child: _ShapeButton(
-                            preset: choices[i],
-                            count: count,
-                            index: i + 1,
-                            selected: choices[i] == current,
-                            cursor: i == cursor,
-                            onTap: () {
-                              notifier.setPreset(count, choices[i]);
-                              Navigator.of(context).pop();
-                            },
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(18, 16, 18, 12),
+                        child: Text(
+                          choices.isEmpty ? 'Layout' : 'Layout · $count panes',
+                          style: TextStyle(
+                            color: grid.AppPalette.textSecondary,
+                            fontSize: 11.5,
+                            letterSpacing: 0.9,
+                            fontWeight: grid.AppFont.medium,
                           ),
                         ),
+                      ),
+                      if (choices.isEmpty)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(18, 0, 18, 20),
+                          child: Text(
+                            'One tile has no layout to choose. Open another and the '
+                            'shapes appear here.',
+                            style: TextStyle(
+                              color: grid.AppPalette.textFaint,
+                              fontSize: 12.5,
+                              height: 1.45,
+                            ),
+                          ),
+                        )
+                      else ...[
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(
+                            _Strip.sidePadding,
+                            0,
+                            _Strip.sidePadding,
+                            6,
+                          ),
+                          // Wrapped, not a Row: a big grid offers five column counts,
+                          // and five diagrams squeezed across one line are five things
+                          // nobody can tell apart. 108px keeps a shape readable.
+                          child: Wrap(
+                            spacing: _Strip.gap,
+                            runSpacing: _Strip.gap,
+                            children: [
+                              for (var i = 0; i < choices.length; i++)
+                                SizedBox(
+                                  key: _shapeKeys[i],
+                                  width: shapeWidth,
+                                  child: _ShapeButton(
+                                    preset: choices[i],
+                                    count: count,
+                                    index: i + 1,
+                                    selected: choices[i] == current,
+                                    cursor: i == cursor,
+                                    onTap: () {
+                                      notifier.setPreset(count, choices[i]);
+                                      Navigator.of(context).pop();
+                                    },
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(18, 6, 18, 14),
+                          child: Text(
+                            'Arrows to move · Enter or 1–${choices.length} to apply.\n'
+                            'Changing layout resets pane sizes.',
+                            style: TextStyle(
+                              color: grid.AppPalette.textSecondary,
+                              fontSize: 11,
+                              height: 1.4,
+                            ),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(18, 6, 18, 14),
-                  child: Text(
-                    'Arrows to move, Enter or a number to pick. Changing the '
-                    'shape resets the dividers — they described boundaries the '
-                    'old one had.',
-                    style: TextStyle(
-                      color: grid.AppPalette.textFaint,
-                      fontSize: 11,
-                      height: 1.4,
-                    ),
-                  ),
-                ),
-              ],
-            ],
+                );
+              },
+            ),
           ),
         ),
       ),
@@ -310,12 +385,6 @@ class _LayoutPaletteState extends State<_LayoutPalette> {
   }
 
   /// Which way an arrow moves the cursor.
-  ///
-  /// Up and left both mean "back" and down and right both mean "forward",
-  /// because the shapes WRAP onto more than one line when there are five of
-  /// them: a vertical key that only moved between rows would do nothing on a
-  /// single-row palette, and stepping by one is the only motion that means the
-  /// same thing however the wrap happens to fall.
   /// Which way a key points, as (dx, dy).
   ///
   /// hjkl beside the arrows, unmodified, for the reason the window binds both: a
@@ -390,23 +459,29 @@ class _ShapeButton extends StatelessWidget {
               : grid.AppSurface.hoverFill,
           borderRadius: BorderRadius.circular(10),
           border: Border.all(
-            color: cursor
-                ? AppColors.accent
-                : (selected ? AppColors.accent : grid.AppGlass.hair),
-            width: cursor ? 2 : 1,
+            color: selected ? AppColors.accent : grid.AppGlass.hair,
           ),
         ),
+        // Paint focus over the fixed border so moving the highlight does not
+        // change the diagram's bounds or the height of the wrapped row.
+        foregroundDecoration: cursor
+            ? BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppColors.accent, width: 2),
+              )
+            : null,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            AspectRatio(
-              aspectRatio: 4 / 3,
+            SizedBox(
+              width: _Strip.diagram,
+              height: _Strip.diagram * 3 / 4,
               child: CustomPaint(painter: _ShapePainter(preset, count)),
             ),
             const SizedBox(height: 8),
             Text(
               preset.label,
-              maxLines: 1,
+              maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 color: selected
@@ -417,11 +492,11 @@ class _ShapeButton extends StatelessWidget {
             ),
             const SizedBox(height: 2),
             Text(
-              '⌘S then $index',
+              '$index',
               style: TextStyle(
                 fontFamily: grid.AppFont.mono,
                 fontSize: 9.5,
-                color: grid.AppPalette.textFaint,
+                color: grid.AppPalette.textSecondary,
               ),
             ),
           ],
@@ -445,14 +520,17 @@ class _ShapePainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    const gap = 1.5;
     final fill = Paint()..color = AppColors.accent.withValues(alpha: 0.55);
     for (final unit in preset.tilesFor(count)) {
+      // Dense layouts must still draw every pane. A fixed 3px inset erased
+      // short rows entirely once the diagram contained more than 21 rows.
+      final gapX = (unit.width * size.width * .12).clamp(0.0, 1.5);
+      final gapY = (unit.height * size.height * .12).clamp(0.0, 1.5);
       final rect = Rect.fromLTRB(
-        unit.left * size.width + gap,
-        unit.top * size.height + gap,
-        unit.right * size.width - gap,
-        unit.bottom * size.height - gap,
+        unit.left * size.width + gapX,
+        unit.top * size.height + gapY,
+        unit.right * size.width - gapX,
+        unit.bottom * size.height - gapY,
       );
       canvas.drawRRect(
         RRect.fromRectAndRadius(rect, const Radius.circular(2)),

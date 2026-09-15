@@ -8,7 +8,10 @@ import 'terminal_pane.dart';
 /// Shared agents reuse the same pane/session across swarms, so the daemon has
 /// exactly one controller and switching tabs cannot take over our own stream.
 class Swarm {
-  Swarm({required this.id, this.name = 'New swarm'});
+  Swarm({required this.id, String name = 'New Harness'})
+    : name = const {'New swarm', 'New tab', 'New Agent'}.contains(name)
+          ? 'New Harness'
+          : name;
 
   final String id;
   String name;
@@ -23,6 +26,9 @@ class Swarm {
   int? previousPaneId;
   int? gridColumns;
   final Map<int, int> pinnedSlots = {};
+
+  bool get isEmptyStarter =>
+      name == 'New Harness' && panes.isEmpty && presets.isEmpty;
 
   PaneArrangement? get manualLayout => paneSizes['${panes.length}:manual'];
 
@@ -134,6 +140,7 @@ class ClosedSwarm extends ClosedWork {
     required super.historyId,
     required this.index,
     Swarm? replacement,
+    this.engine,
   }) : id = swarm.id,
        name = swarm.name,
        gridColumns = swarm.gridColumns,
@@ -157,6 +164,7 @@ class ClosedSwarm extends ClosedWork {
 
   final String id;
   final String name;
+  final String? engine;
   final int index;
   final int? gridColumns;
   final int focus;
@@ -172,7 +180,7 @@ class ClosedSwarm extends ClosedWork {
 
   bool replacesUntouchedWelcome(Swarm swarm) =>
       swarm.id == replacementId &&
-      swarm.name == 'New swarm' &&
+      swarm.name == 'New Harness' &&
       swarm.panes.isEmpty &&
       swarm.presets.isEmpty;
 }

@@ -12,6 +12,135 @@ It prints `SWARM_BENCH` JSON records. Its filename deliberately does not end in 
 
 ## Current continuation benchmark (2026-09-14)
 
+### Immediate keyboard ownership during navigation
+
+Ten current-main regressions reproduced physical keys reaching the previous
+agent after pane/tab navigation, or being dropped after closing a pane/tab.
+Committed text followed the stale input connection too. Creating a blank tab
+also left the previous agent able to receive input before the next frame.
+The before-fix run uses online synthetic machines and both the keyboard and
+actual incoming native command handler:
+`/private/tmp/harness-navigation-input-before.log`.
+
+The canvas now enables the destination's retained focus tree and requests its
+existing input view immediately when the model changes. Blank, unmounted or
+not-yet-ready input views release the previous terminal to the workspace scope.
+No event replay, forced frame, new session or renderer reconstruction is introduced.
+Zoomed panes, retained Find/composer drafts, selection and composition follow
+the same ownership transition. Existing heartbeats and dial scrolling still
+cause zero workspace builds or irrelevant terminal JSON dispatches. Two additional
+cases caught a still-connecting composer leaving the old input owner active;
+it now releases that owner and takes focus only once ready. Reproduction:
+`/private/tmp/harness-navigation-pending-before.log`.
+
+Dialog coverage also reproduced delayed terminal/composer focus taking over
+Rename while a destination changed or an agent became ready. The canvas is now
+excluded from focus while a dialog owns input and explicitly returns it to the
+current destination on dismissal. Deferred viewport/composer callbacks respect
+that boundary. The composer-readiness reproduction is in
+`/private/tmp/harness-navigation-composer-before.log`.
+
+The 18 transition cases cover keyboard/native entry, zoom, waiting input,
+editor drafts/composition, background changes and immediate dialog return.
+All **1,461 desktop checks** pass, with one optional CLI-media placeholder
+skipped, in `/private/tmp/harness-navigation-input-full.log`.
+Six changed source/test files analyze cleanly in
+`/private/tmp/harness-navigation-input-analyze.log`.
+These are input-routing, retention and deterministic-work checks; they do not
+measure native event-to-display latency or qualify live native IME behavior.
+
+### Find takes input before its first frame
+
+The first-frame opening checks reproduced text and Escape reaching the agent
+after Find had been requested but before its editor mounted. The focused visible
+pane now prepares its input field without a search index. Opening activates its
+focus scope and text-input client immediately; the first paint uses that same
+editor, preserving already-entered text and composition. Closing before that
+paint consumes Escape and returns the next key to the terminal.
+
+In the current 16-terminal/four-workspace fixture, exactly one dormant editor is
+mounted. It cannot take focus while inactive, has no search model, and output
+updates across all 16 sessions cause zero Find/editor rebuilds. Existing active
+Find output checks still show zero editor rebuilds. Snapshot replacement retains
+the editor's full editing value, including composition. These are input-ownership
+and deterministic-work checks, not native latency or live IME measurements.
+
+The before-fix cases are in `/private/tmp/harness-find-opening-before.log`.
+All **1,443 desktop checks** pass, with one optional CLI-media placeholder
+skipped, in `/private/tmp/harness-find-opening-full.log`. Analysis of all six
+changed source/test files is clean in
+`/private/tmp/harness-find-opening-analyze.log`. The native-entry case uses the
+actual incoming Dart method handler with an isolated platform channel.
+
+### Immediate input after closing terminal Find
+
+Find previously waited for the next frame to return focus to the retained
+terminal. In the current SwarmScreen fixture, Escape or the close button followed
+immediately by an arrow key and committed text lost both inputs. The closing
+field could also receive text intended for the terminal and change the saved
+search query.
+
+Dismissal now returns input to the already-mounted terminal immediately. If a
+remote message composer is visible, its existing field gets focus instead, keeps
+its draft, and accepts the next edit without submitting it. The renderer and
+remembered Find query remain intact. The three regression checks exercise the
+hardware-key and text-input paths without an intervening frame; they do not
+measure native latency or qualify a live input-method session.
+
+All **70 affected Find/focus/composer/viewport/keymap checks** pass in
+`/private/tmp/harness-find-focus-checks.log`. Both changed files analyze cleanly
+in `/private/tmp/harness-find-focus-analyze.log`. The two failing-before terminal
+cases are recorded in `/private/tmp/harness-find-focus-before.log`.
+
+### Terminal Find editor work and composition keys
+
+Ten matching output updates caused ten rebuilds of the Find text field even
+though its editor value was unchanged. The result controls now refresh around
+a retained editor widget. Replaying the same output causes **zero editor
+rebuilds**, while the count advances from two to twelve matches and the selected
+match, caret, composing range, focus and terminal renderer remain unchanged.
+This is a deterministic widget work count, not a native latency measurement.
+
+The same audit reproduced Enter/keypad Enter navigating matches during active
+text composition, and Escape closing Find. These keys now return unhandled to
+the platform input method without reaching later Flutter shortcuts. After
+composition ends, Enter/Shift-Enter navigate normally; Escape closes Find and
+the next terminal key still reaches the agent. The tests assert the unhandled
+platform boundary, not a live native input-method session.
+
+All **39 affected Find/search/reconnect/keyboard checks** pass in
+`/private/tmp/harness-find-editor-after.log`; the failing-before cases are in
+`/private/tmp/harness-find-editor-before.log`. Both changed files analyze cleanly
+in `/private/tmp/harness-find-editor-analyze.log`.
+
+### Routine events leave the surrounding workspace idle
+
+The current New/Open UI was exercised with 16 retained terminals across four
+workspaces. A normal heartbeat from an already-busy agent rebuilt the workspace;
+dial scroll did the same. Both also visited every retained terminal's JSON
+dispatcher before reaching their destination. The dispatcher now sends only
+`terminal_` protocol events through that pool. Dial scroll goes directly to the
+focused viewport, device status updates its own listeners, and heartbeats renew
+the watchdog without publishing an unchanged busy state.
+
+| Isolated event sequence | Workspace builds, before → after | Irrelevant terminal dispatches, before → after |
+| --- | ---: | ---: |
+| 16 routine heartbeats, a frame after each | 16 → 0 | 256 → 0 |
+| Dial down, 16 moves, up, a frame after each | 18 → 0 | 288 → 0 |
+
+These are deterministic work counts from the headless widget runner, not elapsed
+time or native latency measurements. The same checks preserve the other panes'
+scroll positions, focus and next-key routing. First activity and watchdog expiry
+still notify; ready replies and transport failures reach hidden terminals on the
+correct machine. All **83 affected checks** pass in
+`/private/tmp/harness-workspace-events-final-checks.log`; the failing-before
+reproduction is `/private/tmp/harness-workspace-events-before.log`.
+Analysis has no errors or warnings and two existing brace-style infos in unchanged
+lines of `app_state.dart`, recorded in `/private/tmp/harness-workspace-events-analyze.log`.
+Native latency benchmarking remains deferred. The older timing measurements below
+describe their recorded UI revisions; the current entry contract is in
+[the handoff](harness-v2-handoff.md).
+
 ### Warm picker reopening
 
 Add and Navigate no longer rebuild the unchanged Swarm screen when their

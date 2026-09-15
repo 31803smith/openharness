@@ -90,7 +90,7 @@ void main() {
     // be attempted and troubleshooting stays in the optional details.
     expect(find.textContaining('Couldn’t check whether'), findsOneWidget);
     expect(
-      find.textContaining('You can still try creating an agent.'),
+      find.textContaining('You can still try creating a harness.'),
       findsOneWidget,
     );
     expect(find.textContaining('uses an older Harness CLI'), findsNothing);
@@ -184,7 +184,7 @@ void main() {
       findsOneWidget,
     );
     expect(app.launches, isEmpty);
-    await tester.tap(find.text('Create agent'));
+    await tester.tap(find.widgetWithText(FilledButton, 'New Harness'));
     await tester.pump();
     expect(app.launches.single, {
       'machine': 'machine-1',

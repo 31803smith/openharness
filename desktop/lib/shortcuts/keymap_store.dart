@@ -282,7 +282,7 @@ class KeymapStore extends ChangeNotifier {
   "bindings": [
     // Example: move search from Command-P to Command-O.
     // { "keys": "cmd+p", "command": null },
-    // { "keys": "cmd+o", "command": "navigation.quick_open" },
+    // { "keys": "cmd+o", "command": "swarm.new" },
   ],
 }
 

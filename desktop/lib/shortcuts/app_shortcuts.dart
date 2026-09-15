@@ -4,13 +4,14 @@ import 'package:flutter/widgets.dart';
 import '../logging/debug_surface.dart';
 
 /// Harness uses Command as a direct prefix for frequent workspace actions.
-/// H/J/K/L and arrows focus panes, B routes a task, S changes layout and R
-/// refreshes discovery. The same definitions feed live keys, help and search.
+/// T opens a tab, N creates a harness, O finds one, S changes layout,
+/// H/J/K/L and arrows focus panes, B routes a task, D splits down and R splits
+/// right. The same definitions feed live keys, help and search.
 ///
 /// Unclaimed input stays with the focused agent or text field. Composition,
 /// copy/paste and the coding agent's own prompt editing must keep working.
 /// AppKit's Edit menu has no competing equivalents for C/V/X/A, and Hide has
-/// no H equivalent: Flutter owns editing and Harness owns Command-H movement.
+/// no H equivalent: Flutter owns editing and Harness owns Command-H navigation.
 /// Menu clicks still use their usual responder-chain actions.
 
 enum ShortcutAction {
@@ -40,9 +41,6 @@ enum ShortcutAction {
   /// One pane filling the grid, and back. tmux's `prefix z`.
   zoomPane,
 
-  /// Jump to any agent by name, on any machine.
-  switchAgent,
-
   /// Find a live question and jump to the agent waiting for input.
   showAttention,
 
@@ -67,7 +65,7 @@ enum ShortcutGroup { navigate, panes, actions }
 
 extension ShortcutGroupLabel on ShortcutGroup {
   String get label => switch (this) {
-    ShortcutGroup.navigate => 'Navigate',
+    ShortcutGroup.navigate => 'Workspace',
     ShortcutGroup.panes => 'Panes',
     ShortcutGroup.actions => 'Actions',
   };
@@ -112,8 +110,7 @@ const List<AppShortcut> kAppShortcuts = [
   ),
   // --- navigate -------------------------------------------------------------
   //
-  // Both letter and arrow directions are available without a mode switch.
-  // The macOS Hide menu keeps its click action but releases Command-H.
+  // Command-arrows and H/J/K/L focus panes; bare keys stay with the terminal.
   AppShortcut(
     action: ShortcutAction.focusPaneLeft,
     activator: SingleActivator(LogicalKeyboardKey.keyH, meta: true),
@@ -138,11 +135,6 @@ const List<AppShortcut> kAppShortcuts = [
     label: 'Focus the pane to the right',
     group: ShortcutGroup.navigate,
   ),
-  // The same four, for the hand that never left the arrow cluster. Safe despite
-  // the bare-arrow rule this file's tests enforce: that rule is about UNMODIFIED
-  // arrows, which the terminal owns for the cursor and for shell history. A ⌘
-  // chord is the app's — terminal_panel._onTerminalKey passes everything but ⌘V
-  // straight through.
   AppShortcut(
     action: ShortcutAction.focusPaneLeft,
     activator: SingleActivator(LogicalKeyboardKey.arrowLeft, meta: true),
@@ -170,50 +162,7 @@ const List<AppShortcut> kAppShortcuts = [
 
   // --- panes ----------------------------------------------------------------
   //
-  // SHIFT MOVES WHAT THE PLAIN KEY WALKS TO, and that is not a convention
-  // invented here: vim has used `Ctrl-w H/J/K/L` — the capitals — to move a
-  // window to an edge for as long as it has had splits. A vim user does not
-  // have to be taught this row; they have to be told it is not missing.
-  AppShortcut(
-    action: ShortcutAction.movePaneLeft,
-    activator: SingleActivator(
-      LogicalKeyboardKey.keyH,
-      meta: true,
-      shift: true,
-    ),
-    label: 'Move this pane left',
-    group: ShortcutGroup.panes,
-  ),
-  AppShortcut(
-    action: ShortcutAction.movePaneDown,
-    activator: SingleActivator(
-      LogicalKeyboardKey.keyJ,
-      meta: true,
-      shift: true,
-    ),
-    label: 'Move this pane down',
-    group: ShortcutGroup.panes,
-  ),
-  AppShortcut(
-    action: ShortcutAction.movePaneUp,
-    activator: SingleActivator(
-      LogicalKeyboardKey.keyK,
-      meta: true,
-      shift: true,
-    ),
-    label: 'Move this pane up',
-    group: ShortcutGroup.panes,
-  ),
-  AppShortcut(
-    action: ShortcutAction.movePaneRight,
-    activator: SingleActivator(
-      LogicalKeyboardKey.keyL,
-      meta: true,
-      shift: true,
-    ),
-    label: 'Move this pane right',
-    group: ShortcutGroup.panes,
-  ),
+  // Shift-Command-arrows move the pane itself in the same direction.
   AppShortcut(
     action: ShortcutAction.movePaneLeft,
     activator: SingleActivator(
@@ -276,7 +225,7 @@ const List<AppShortcut> kAppShortcuts = [
   AppShortcut(
     action: ShortcutAction.closePane,
     activator: SingleActivator(LogicalKeyboardKey.keyW, meta: true),
-    label: 'Remove the focused agent from this swarm',
+    label: 'Close the focused pane',
     group: ShortcutGroup.panes,
   ),
   AppShortcut(
@@ -302,34 +251,12 @@ const List<AppShortcut> kAppShortcuts = [
     label: 'Forward',
     group: ShortcutGroup.navigate,
   ),
-  // ⌘P — "go to", the way VS Code's quick-open spells it, because that is what
-  // this is: type part of a name, land on the agent.
-  //
-  // It answers the one thing a keyboard-only session could not do at all. ⌘1…⌘9
-  // address TILES, so they only reach agents already on the grid; ⌘B sends a
-  // task and lets a model choose. Neither opens the eleventh agent by name, and
-  // until this key existed the only way was the mouse.
-  //
-  // ⌘K stays unbound and is now spoken for by the navigation row above — see
-  // the header's note about what the file used to hold it in reserve for.
-  AppShortcut(
-    action: ShortcutAction.switchAgent,
-    activator: SingleActivator(LogicalKeyboardKey.keyP, meta: true),
-    label: 'Go to an agent by name',
-    group: ShortcutGroup.navigate,
-  ),
-  // ⌃⇥ / ⌃⇧⇥ — the one Ctrl pair this app is allowed, and the terminal is made
-  // to let it past on purpose (terminal_view.dart) because no shell or tmux
-  // binding wants it.
-  //
-  // It walks AGENTS now, not panes. It used to be a third spelling of "next
-  // pane", which put it in list order beside hjkl's geometry — the same split
-  // brain the brackets had. Tab between agents is what every tabbed app has
-  // trained the hand to expect anyway.
+  // Control-Tab and Shift-brackets move through tabs. Pane directions and
+  // agent history have their own shortcuts above.
   AppShortcut(
     action: ShortcutAction.nextAgent,
     activator: SingleActivator(LogicalKeyboardKey.tab, control: true),
-    label: 'Next agent',
+    label: 'Next pane',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
@@ -339,7 +266,7 @@ const List<AppShortcut> kAppShortcuts = [
       control: true,
       shift: true,
     ),
-    label: 'Previous agent',
+    label: 'Previous pane',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
@@ -352,12 +279,8 @@ const List<AppShortcut> kAppShortcuts = [
   // --- actions --------------------------------------------------------------
   AppShortcut(
     action: ShortcutAction.newAgent,
-    activator: SingleActivator(
-      LogicalKeyboardKey.keyN,
-      meta: true,
-      shift: true,
-    ),
-    label: 'New agent',
+    activator: SingleActivator(LogicalKeyboardKey.keyN, meta: true),
+    label: 'New Harness',
     group: ShortcutGroup.actions,
   ),
   AppShortcut(
@@ -369,7 +292,7 @@ const List<AppShortcut> kAppShortcuts = [
   AppShortcut(
     action: ShortcutAction.reload,
     activator: SingleActivator(LogicalKeyboardKey.keyR, meta: true),
-    label: 'Reload machines and agents',
+    label: 'Reload machines and harnesses',
     group: ShortcutGroup.actions,
   ),
   AppShortcut(
@@ -384,12 +307,11 @@ const List<AppShortcut> kAppShortcuts = [
 ///
 /// Kept out of [kAppShortcuts] because it is not always there: a release build
 /// has no Debug screen (see [kDebugSurfaceEnabled]), and a key that opens
-/// nothing is worse than a key that was never taken. `⌘D` is free on this list
-/// and on this OS's own menus, and — like every other shortcut here — never
-/// reaches the pty.
+/// nothing is worse than a key that was never taken. Shift keeps it separate
+/// from the everyday Command-D split action.
 const AppShortcut kDebugShortcut = AppShortcut(
   action: ShortcutAction.showDebug,
-  activator: SingleActivator(LogicalKeyboardKey.keyD, meta: true),
+  activator: SingleActivator(LogicalKeyboardKey.keyD, meta: true, shift: true),
   label: 'Open the debug log',
   group: ShortcutGroup.actions,
 );
@@ -406,7 +328,7 @@ List<AppShortcut> appShortcuts({bool swarmMode = true}) => [
         (!const {
               ShortcutAction.toggleRail,
               ShortcutAction.closePane,
-              ShortcutAction.switchAgent,
+              ShortcutAction.reload,
             }.contains(shortcut.action) &&
             !shortcut.activator.control))
       shortcut,
@@ -419,8 +341,8 @@ List<AppShortcut> appShortcuts({bool swarmMode = true}) => [
 const kSwarmShortcuts = [
   AppShortcut(
     action: ShortcutAction.addAgent,
-    activator: SingleActivator(LogicalKeyboardKey.keyN, meta: true),
-    label: 'Add agent to this swarm',
+    activator: SingleActivator(LogicalKeyboardKey.keyO, meta: true),
+    label: 'Find Harness',
     group: ShortcutGroup.actions,
   ),
   AppShortcut(
@@ -432,7 +354,7 @@ const kSwarmShortcuts = [
   AppShortcut(
     action: ShortcutAction.newSwarm,
     activator: SingleActivator(LogicalKeyboardKey.keyT, meta: true),
-    label: 'New swarm',
+    label: 'New Tab',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
@@ -442,13 +364,13 @@ const kSwarmShortcuts = [
       meta: true,
       shift: true,
     ),
-    label: 'Reopen last closed agent or swarm',
+    label: 'Reopen last closed harness',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
     action: ShortcutAction.closeSwarm,
     activator: SingleActivator(LogicalKeyboardKey.keyW, meta: true),
-    label: 'Close this swarm',
+    label: 'Close Tab',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
@@ -458,7 +380,7 @@ const kSwarmShortcuts = [
       meta: true,
       shift: true,
     ),
-    label: 'Rename this swarm',
+    label: 'Rename Tab',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
@@ -468,7 +390,7 @@ const kSwarmShortcuts = [
       meta: true,
       shift: true,
     ),
-    label: 'Next swarm',
+    label: 'Next Harness',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
@@ -478,13 +400,13 @@ const kSwarmShortcuts = [
       meta: true,
       shift: true,
     ),
-    label: 'Previous swarm',
+    label: 'Previous Harness',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
     action: ShortcutAction.nextSwarm,
     activator: SingleActivator(LogicalKeyboardKey.tab, control: true),
-    label: 'Next swarm',
+    label: 'Next Harness',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
@@ -494,13 +416,7 @@ const kSwarmShortcuts = [
       control: true,
       shift: true,
     ),
-    label: 'Previous swarm',
-    group: ShortcutGroup.navigate,
-  ),
-  AppShortcut(
-    action: ShortcutAction.switchAgent,
-    activator: SingleActivator(LogicalKeyboardKey.keyP, meta: true),
-    label: 'Search agents, swarms, machines and projects',
+    label: 'Previous Harness',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
@@ -510,7 +426,7 @@ const kSwarmShortcuts = [
       meta: true,
       shift: true,
     ),
-    label: 'Show agents needing input',
+    label: 'Show harnesses needing input',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
@@ -520,7 +436,7 @@ const kSwarmShortcuts = [
       meta: true,
       shift: true,
     ),
-    label: 'Remove the focused agent from this swarm',
+    label: 'Close the focused pane',
     group: ShortcutGroup.panes,
   ),
   AppShortcut(
@@ -531,18 +447,11 @@ const kSwarmShortcuts = [
   ),
 ];
 
-/// `⌘1`…`⌘9` jump to the nth TILE on the grid.
-///
-/// Tiles, not sidebar rows: the number is the one printed on the tile and the
-/// one the dial walks, so "the third one" means the same thing wherever it is
-/// said. Addressing the sidebar instead made ⌘3 open something that was not on
-/// screen and replace a tile to do it.
-///
-/// Not in [kAppShortcuts] because nine near-identical rows would bury the sheet;
-/// the sheet prints them as one line instead.
-const int kAgentDigitCount = 9;
+/// Command-number selects the first nine tabs in their visible order. The
+/// shortcut sheet prints one row; pane movement uses Command-arrows.
+const int kTabDigitCount = 9;
 
-List<SingleActivator> agentDigitActivators() => const [
+List<SingleActivator> tabDigitActivators() => const [
   SingleActivator(LogicalKeyboardKey.digit1, meta: true),
   SingleActivator(LogicalKeyboardKey.digit2, meta: true),
   SingleActivator(LogicalKeyboardKey.digit3, meta: true),
@@ -608,18 +517,16 @@ List<ShortcutRow> shortcutRows() {
   // The digits are not in [kAppShortcuts] — nine near-identical rows would bury
   // everything around them — so they join here, at the end of their group.
   final digits = ShortcutRow(
-    label: 'Focus the 1st–9th pane',
+    label: 'Select tabs 1–9',
     chords: const [
-      ['⌘', '1 – $kAgentDigitCount'],
+      ['⌘', '1 – $kTabDigitCount'],
     ],
-    // Panes, not Navigate: the digits address tiles on the grid now, and a row
-    // reads under the heading that matches what it does.
-    group: ShortcutGroup.panes,
+    group: ShortcutGroup.navigate,
   );
-  final lastPane = rows.lastIndexWhere(
-    (row) => row.group == ShortcutGroup.panes,
+  final lastTab = rows.lastIndexWhere(
+    (row) => row.group == ShortcutGroup.navigate,
   );
-  rows.insert(lastPane + 1, digits);
+  rows.insert(lastTab + 1, digits);
   return rows;
 }
 
@@ -653,7 +560,7 @@ const List<TerminalKey> kTerminalOwnedKeys = [
 /// terminal underneath could have had it.
 Map<ShortcutActivator, VoidCallback> buildShortcutBindings({
   required Map<ShortcutAction, VoidCallback> handlers,
-  void Function(int index)? onSelectPaneIndex,
+  void Function(int index)? onSelectTabIndex,
   bool swarmMode = true,
 }) {
   final bindings = <ShortcutActivator, VoidCallback>{};
@@ -661,10 +568,10 @@ Map<ShortcutActivator, VoidCallback> buildShortcutBindings({
     final handler = handlers[shortcut.action];
     if (handler != null) bindings[shortcut.activator] = handler;
   }
-  if (onSelectPaneIndex != null) {
-    final digits = agentDigitActivators();
+  if (onSelectTabIndex != null) {
+    final digits = tabDigitActivators();
     for (var i = 0; i < digits.length; i++) {
-      bindings[digits[i]] = () => onSelectPaneIndex(i);
+      bindings[digits[i]] = () => onSelectTabIndex(i);
     }
   }
   return bindings;

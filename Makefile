@@ -17,7 +17,7 @@ cli-test:
 release-cli:
 	bash cli/scripts/release-cli.sh $(ARGS)
 
-## release-backend: tag this commit vX.Y.Z_api and push the tag — CI builds the backend's Docker
+## release-backend: tag this commit vX.Y.Z_backend and push the tag — CI builds the backend's Docker
 ## image and rolls it out. ARGS=minor|major|X.Y.Z to bump differently, ARGS=--dry-run to preview.
 ## See backend/scripts/release-be.sh.
 release-backend:
