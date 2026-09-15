@@ -298,6 +298,7 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
   final _scroll = ScrollController();
   double _rowHeight = 56;
   bool _revealScheduled = false;
+  (Size, double)? _geometry;
   SwarmSearchController get search => widget.search;
   @override
   void initState() {
@@ -308,6 +309,10 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
   void _changed() {
     setState(() {});
     _scrollToSelection();
+    _revealSelection();
+  }
+
+  void _revealSelection() {
     if (_revealScheduled) return;
     _revealScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -368,6 +373,11 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
     );
     return LayoutBuilder(
       builder: (context, constraints) {
+        final geometry = (constraints.biggest, _rowHeight);
+        if (_geometry != geometry) {
+          _geometry = geometry;
+          _revealSelection();
+        }
         final results = Semantics(
           container: true,
           label: 'Search results',

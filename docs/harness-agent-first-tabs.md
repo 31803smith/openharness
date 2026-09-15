@@ -20,6 +20,8 @@ The closed page retains only search text and selection: it does not keep a live
 search subscription or build a catalog when an unused page closes. Reopening
 refreshes results against current app state. Command-mode shortcuts synchronize
 the field and results without adding editor rebuilds to arrow navigation.
+Opening the dropdown keeps its whole list viewport inside the window. Resizing
+or changing text size reveals the highlighted row without changing the selection.
 A small product image and introduction sit well below the controls and link to
 https://www.autonomous.ai/harness-device. The bundled image is the official
 product photo from https://cdn.autonomous.ai/production/ecm/260731/2.webp.
@@ -35,6 +37,8 @@ AppKit, inherits the app's font, and exposes current shortcut hints on hover.
 The creation dialog title and CTA are **New Harness**. Cancel is removed; Escape
 and clicking outside dismiss it. Launch-in-progress and uncertain-outcome states
 retain their existing safeguards and recovery actions.
+Quick agent choices retain their compact row when labels fit, and wrap into
+additional rows at larger text sizes so their names remain readable.
 The folder control receives initial keyboard focus, so Enter opens its chooser.
 A successful keyboard folder choice focuses the enabled New Harness action;
 cancellation or failure returns focus to the folder control. If a required Codex
