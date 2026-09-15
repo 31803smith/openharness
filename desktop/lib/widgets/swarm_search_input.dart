@@ -98,7 +98,7 @@ class SwarmSearchInput extends StatelessWidget {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    if (trailing != null) trailing!,
+                    ?trailing,
                     if (showClose)
                       TextButton(
                         onPressed: onClose,
