@@ -121,6 +121,25 @@ describe('Codex rollout normalizer', () => {
     ])
   })
 
+  it('keeps only the final answer of a turn that also carried commentary', () => {
+    // Codex 0.149: each AgentMessage item carries `phase` — `commentary` on the way, `final_answer` at
+    // the end. The recap read both and opened on "I'm about to ask you to choose a shape."
+    const line = (obj: unknown): string => JSON.stringify(obj)
+    const turn = [
+      line({ type: 'event_msg', payload: { type: 'item_completed', item: { type: 'UserMessage', content: [{ type: 'Text', text: 'Pick for me' }] } } }),
+      line({ type: 'event_msg', payload: { type: 'item_completed', item: { type: 'AgentMessage', phase: 'commentary', content: [{ type: 'Text', text: 'I’m about to ask you to choose a shape.' }] } } }),
+      line({ type: 'event_msg', payload: { type: 'item_completed', item: { type: 'AgentMessage', phase: 'final_answer', content: [{ type: 'Text', text: 'Square selected.' }] } } }),
+    ]
+    expect(lastCodexTurnText(turn)).toEqual({ userMessage: 'Pick for me', assistantText: 'Square selected.' })
+    // No phases at all (an older rollout): every message is the answer, as before.
+    const old = [
+      line({ type: 'event_msg', payload: { type: 'item_completed', item: { type: 'UserMessage', content: [{ type: 'Text', text: 'Pick for me' }] } } }),
+      line({ type: 'event_msg', payload: { type: 'item_completed', item: { type: 'AgentMessage', content: [{ type: 'Text', text: 'On it.' }] } } }),
+      line({ type: 'event_msg', payload: { type: 'item_completed', item: { type: 'AgentMessage', content: [{ type: 'Text', text: 'Square selected.' }] } } }),
+    ]
+    expect(lastCodexTurnText(old)).toEqual({ userMessage: 'Pick for me', assistantText: 'On it.\n\nSquare selected.' })
+  })
+
   it('extracts the final user/assistant turn and uses stable line cursors', () => {
     expect(lastCodexTurnText(fixture)).toEqual({ userMessage: 'Change the API', assistantText: 'The API is updated.' })
     const window = windowCodexLines([...fixture, ...fixture], { limit: 4 })

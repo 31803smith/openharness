@@ -576,6 +576,20 @@ export function codexMessagesToEvents(
 export function lastCodexTurnText(rawLines: string[]): LastTurnText | null {
   let userMessage = ''
   let assistantText = ''
+  // Codex marks each of its messages with a `phase`: `commentary` is what it says on the way — "I'll
+  // check the official page", "I'm about to ask you to choose" — and `final_answer` is the answer. A
+  // recap built from both opened on the announcement rather than the outcome (measured 2026-09-15: a
+  // turn that asked a question recapped as "I'll ask for the colour choice."). Only the final answer is
+  // the turn's text; commentary counts only when a rollout carries no phases at all (an older Codex).
+  let finalText = ''
+  let sawPhase = false
+  const take = (item: JsonObject, message: string): void => {
+    const phase = string(item.phase)
+    if (phase) sawPhase = true
+    if (phase === 'commentary') return
+    if (phase === 'final_answer') finalText += `${finalText ? '\n\n' : ''}${message}`
+    assistantText += `${assistantText ? '\n\n' : ''}${message}`
+  }
   for (const line of rawLines) {
     const raw = parse(line)
     if (!raw) continue
@@ -591,13 +605,14 @@ export function lastCodexTurnText(rawLines: string[]): LastTurnText | null {
     const itemType = string(item.type)
     if (USER_TURN_TYPES.has(itemType)) {
       const message = messageText(item)
-      if (message) { userMessage = message; assistantText = '' }
+      if (message) { userMessage = message; assistantText = ''; finalText = ''; sawPhase = false }
     } else if (AGENT_TEXT_TYPES.has(itemType)) {
       const message = messageText(item)
-      if (message) assistantText += `${assistantText ? '\n\n' : ''}${message}`
+      if (message) take(item, message)
     }
   }
-  return assistantText ? { userMessage, assistantText } : null
+  const text = sawPhase && finalText ? finalText : assistantText
+  return text ? { userMessage, assistantText: text } : null
 }
 
 export function windowCodexLines(

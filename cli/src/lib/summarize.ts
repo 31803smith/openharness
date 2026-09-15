@@ -224,19 +224,11 @@ export function deriveTurnSummary(text: string): string | null {
   const stripped = stripMarkdown(text)
   const body = stripped.replace(/\s+/g, ' ').trim()
   if (!body) return null
-  // The LAST part of the answer, not the first. A turn's assistant text is every message the engine
-  // wrote in it, oldest first (normalize.ts joins them with a blank line) — and an engine that asks a
-  // question opens with "I'll ask for the colour choice." and closes, a minute later, with "Blue
-  // selected." The headline is the conclusion, which is what the terminal is showing when the recap
-  // lands; the body below still carries the whole answer.
-  const recap = clip(firstProseLine(lastParagraph(stripped)) || body, RECAP_MAX_CHARS)
+  // The answer's OPENING is the headline. The engine-specific turn readers hand this the answer alone —
+  // Codex's `commentary` messages ("I'll check the page", "I'm about to ask") are dropped there, since
+  // a headline taken from those announced the work instead of stating the result.
+  const recap = clip(firstProseLine(stripped) || body, RECAP_MAX_CHARS)
   return `${recap}\n\n${deriveTurnBody(text)}`
-}
-
-/** The final blank-line-separated block of an answer that has any prose in it. */
-function lastParagraph(stripped: string): string {
-  const paragraphs = stripped.split(/\n\s*\n/).map((p) => p.trim()).filter((p) => /[\p{L}\p{N}]/u.test(p))
-  return paragraphs.at(-1) ?? stripped
 }
 
 /** The `text` under a recap: the answer flattened to one line and clipped — a glance, never a
