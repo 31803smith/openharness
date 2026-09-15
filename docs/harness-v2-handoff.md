@@ -34,7 +34,18 @@ user for a benchmark window.
 
 ## Current product contract
 
-### Latest: clearer device companion link
+### Latest: matching Open Agent and New Harness search
+
+Open Agent now uses the same full-width input and continuous surface as the
+New Harness page. **Find an agent** sits inside the input; the separate title
+and inset field outline are removed. Results still appear immediately. Split
+search retains a **+ New Agent** action beside Escape and its Cmd-N transition.
+Sixty-five entry, preview, keyboard and split checks pass. Captures:
+`/private/tmp/harness-matching-search-captures`; validation:
+`/private/tmp/harness-matching-search-tests.log` and
+`/private/tmp/harness-matching-search-analyze.log`.
+
+### Clearer device companion link — pushed eaeb718
 
 The user refined the device treatment: remove the box and make the product
 clearer. The cutout is now 64 pixels tall beside the quiet **Meet the Harness

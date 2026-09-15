@@ -78,7 +78,10 @@ void main() {
           findsOneWidget,
         );
         expect(find.byKey(const ValueKey('harness-picker-open')), findsNothing);
-        expect(tester.widget<TextField>(field).decoration!.hintText, '');
+        expect(
+          tester.widget<TextField>(field).decoration!.hintText,
+          'Find an agent',
+        );
         expect(find.text('Find an agent'), findsOneWidget);
         expect(find.byKey(const ValueKey('create-agent-submit')), findsNothing);
         final before = tester.getRect(field);

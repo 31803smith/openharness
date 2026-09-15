@@ -124,6 +124,16 @@ void main() {
         (tester) async {
           final app = createApp();
           await seedPreviews(app);
+          // Both session and group previews must outgrow the reading area.
+          app.machineStates['m']!.agents.addAll([
+            for (var i = 3; i < 8; i++)
+              Agent(
+                id: 'paging-$i',
+                name: 'Additional agent $i',
+                engine: 'codex',
+                terminalAvailable: true,
+              ),
+          ]);
           await app.handleEventForTest('m', {
             'type': 'text_delta',
             'payload': {

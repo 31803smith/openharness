@@ -86,8 +86,9 @@ beside **Meet the Harness device**, with no box, description or separate Learn
 more action. The image and label open the device page together.
 New without a linked machine opens machine linking.
 
-Open Agent has a large **Find an agent** heading, a blank rounded input and the
-same palette surface over a 90% black canvas veil. Results appear immediately;
+Open Agent uses the same continuous search surface as New Harness, with
+**Find an agent** inside the input and no separate heading or inset outline.
+It sits over a 90% black canvas veil. Results appear immediately;
 arrows select and Enter or a row click opens the agent. There is no footer
 button or New Agent form. Results and preview sit side by side from 700 logical
 pixels; narrower windows stack them. Both scroll independently. Hover updates
@@ -111,8 +112,8 @@ preserves loaded profile readiness. Failure keeps the choices and prepared folde
 an uncertain launch retains its receipt and offers **Check status** and **Close**
 without cloning or starting again. Success focuses the new agent.
 
-Split Right/Down opens the existing-agent picker for that position. Its **New Agent**
-header action, or Cmd-N, replaces the picker with creation and preserves the split,
+Split Right/Down opens the existing-agent picker for that position. Its **+ New Agent**
+input action (with tooltip), or Cmd-N, replaces the picker with creation and preserves the split,
 machine and project. Dismissing creation returns directly to the original pane.
 Ordinary New Agent prefers this computer. Search and creation never stack.
 The restored flows pass 203 affected Flutter tests, 96 native keyboard checks,

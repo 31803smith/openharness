@@ -24,6 +24,7 @@ class SwarmSearchInput extends StatelessWidget {
     this.prominent = false,
     this.outlined = false,
     this.fillColor,
+    this.trailing,
   });
 
   final Key inputKey;
@@ -41,6 +42,7 @@ class SwarmSearchInput extends StatelessWidget {
   final bool prominent;
   final bool outlined;
   final Color? fillColor;
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
@@ -90,16 +92,26 @@ class SwarmSearchInput extends StatelessWidget {
           minWidth: 52,
           minHeight: prominent ? 64 : 56,
         ),
-        suffixIcon: showClose
+        suffixIcon: showClose || trailing != null
             ? Padding(
                 padding: const EdgeInsets.only(right: 12),
-                child: TextButton(
-                  onPressed: onClose,
-                  style: TextButton.styleFrom(
-                    foregroundColor: Colors.white60,
-                    minimumSize: const Size(36, 28),
-                  ),
-                  child: const Text('esc', style: TextStyle(fontSize: 11)),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (trailing != null) trailing!,
+                    if (showClose)
+                      TextButton(
+                        onPressed: onClose,
+                        style: TextButton.styleFrom(
+                          foregroundColor: Colors.white60,
+                          minimumSize: const Size(36, 28),
+                        ),
+                        child: const Text(
+                          'esc',
+                          style: TextStyle(fontSize: 11),
+                        ),
+                      ),
+                  ],
                 ),
               )
             : null,

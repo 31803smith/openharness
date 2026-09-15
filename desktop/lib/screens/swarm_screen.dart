@@ -944,68 +944,47 @@ class _SwarmScreenState extends State<SwarmScreen> {
       clipBehavior: Clip.antiAlias,
       child: Column(
         children: [
-          Padding(
-            padding: EdgeInsets.fromLTRB(commandsOnly ? 20 : 28, 24, 20, 16),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Semantics(
-                    header: true,
-                    child: Text(
-                      commandsOnly ? 'Commands' : 'Find an agent',
-                      style: TextStyle(
-                        fontSize: commandsOnly ? 16 : 26,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
+          if (commandsOnly)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 24, 20, 16),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Semantics(
+                  header: true,
+                  child: const Text(
+                    'Commands',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                   ),
                 ),
-                if (!commandsOnly && search.split != null)
-                  KeymapRegion(
-                    contextKind: KeymapContext.workspace,
-                    child: TextButton.icon(
-                      key: const ValueKey('harness-picker-new'),
-                      onPressed: search.canCreate
-                          ? () => _runShortcut('agent.new')
-                          : null,
-                      icon: const Icon(AgentActionIcons.create, size: 18),
-                      label: const Text('New Agent'),
-                    ),
-                  ),
-                if (!commandsOnly)
-                  TextButton(
-                    onPressed: _dismissSearch,
-                    style: TextButton.styleFrom(
-                      foregroundColor: Colors.white54,
-                    ),
-                    child: const Text('esc', style: TextStyle(fontSize: 12)),
-                  ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: EdgeInsets.fromLTRB(
-              commandsOnly ? 0 : 28,
-              0,
-              commandsOnly ? 0 : 28,
-              commandsOnly ? 0 : 20,
-            ),
-            child: Semantics(
-              label: commandsOnly ? 'Search commands' : 'Find an agent',
-              child: SwarmSearchInput(
-                inputKey: const ValueKey('swarm-search-input'),
-                controller: _searchText,
-                focusNode: _searchFocus,
-                search: search,
-                onClose: _dismissSearch,
-                onChanged: search.setQuery,
-                onOpen: _focusSearch,
-                showClose: commandsOnly,
-                rounded: true,
-                prominent: !commandsOnly,
-                hintText: commandsOnly ? null : '',
-                outlined: !commandsOnly,
               ),
+            ),
+          Semantics(
+            label: commandsOnly ? 'Search commands' : 'Find an agent',
+            child: SwarmSearchInput(
+              inputKey: const ValueKey('swarm-search-input'),
+              controller: _searchText,
+              focusNode: _searchFocus,
+              search: search,
+              onClose: _dismissSearch,
+              onChanged: search.setQuery,
+              onOpen: _focusSearch,
+              showClose: true,
+              rounded: true,
+              prominent: !commandsOnly,
+              hintText: commandsOnly ? null : 'Find an agent',
+              trailing: !commandsOnly && search.split != null
+                  ? KeymapRegion(
+                      contextKind: KeymapContext.workspace,
+                      child: IconButton(
+                        key: const ValueKey('harness-picker-new'),
+                        tooltip: 'New Agent',
+                        onPressed: search.canCreate
+                            ? () => _runShortcut('agent.new')
+                            : null,
+                        icon: const Icon(AgentActionIcons.create, size: 18),
+                      ),
+                    )
+                  : null,
             ),
           ),
           Expanded(
