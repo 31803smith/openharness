@@ -116,15 +116,19 @@ Build log: `/private/tmp/harness-composer-release.log`. The incremental build
 left a stale outer seal; App.framework verified independently, and refreshing
 the ad-hoc outer signature restored full verification.
 
-**c0fd824 is staged, not yet installed.** The verified staging bundle is
-`desktop/build/macos/Build/Products/Release/.harness-composer-stage-tk5_7p2i/Harness.app`.
-The live process still uses **454544a**. CUA again reports `cgWindowNotFound`,
-including the attempt to send normal Cmd-Q, so the user has been asked to choose
-**Harness → Quit Harness**. Do not force quit or replace the running bundle.
-After the user confirms, verify the exact process is gone, keep the live bundle
-as a unique backup, install the staged copy and reopen the supported path.
-The receipt `/private/tmp/harness-agent-preview-install.json` records this state;
-the previous installed receipt is `/private/tmp/harness-agent-preview-before-composer.json`.
+**c0fd824 is installed and verified live.** The user quit normally; exact process
+lookup confirmed the supported preview was stopped before the swap. CUA reopened
+that path and showed all four saved Harnesses, the original active Harness and
+its panes. Add Agent opened the combined **Find an agent** / results / preview
+panel above **New agent**, with **Agent / Project / Machine / Create** and Options.
+No agents were created, stopped or sent input. Keyboard/dropdown automation
+remained inconclusive; widget interaction and recovery checks cover those paths.
+
+The previous **454544a** bundle is retained at
+`desktop/build/macos/Build/Products/Release/.harness-before-composer-_5b2o2zm/Harness.app`.
+Its sibling `swarm-layout.json` backs up the flushed four-Harness layout.
+`/private/tmp/harness-agent-preview-install.json` records the completed install;
+the previous receipt is `/private/tmp/harness-agent-preview-before-composer.json`.
 
 Incoming main work was preserved, including terminal theme synchronization
 (4c7af5e), Codex question detection (12a63a9), and CLI status cleanup (afc9e77).
@@ -158,10 +162,11 @@ Harness data directory; do not dump its contents. Check the exact app process is
 gone immediately before swapping the verified bundle, and do not launch the
 derived-data copy alongside the supported one.
 
-CUA-sent Command-N remains inconclusive from the earlier live preview, although
-native callback and exported shortcut checks pass. Window access was restored
-for 454544a but is currently unavailable again; this does not justify changing
-keyboard dispatch. The combined panel still needs a live inspection after installation.
+CUA-sent Command-N remains inconclusive, although native callback, exported
+shortcut and Flutter interaction checks pass. Window access returned after the
+normal quit and installation, and the combined panel was inspected live via
+the titlebar action. The automation result alone does not justify changing
+keyboard dispatch.
 
 Use [the detailed entry/pane contract](harness-agent-first-tabs.md) when editing
 or validating UI. The decisions that previously conflicted with older handoffs
