@@ -3,6 +3,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:harness/api/api_client.dart';
+import 'package:harness/auth/auth_session.dart';
+import 'package:harness/core/config.dart';
 import 'package:harness/core/models.dart';
 import 'package:harness/screens/swarm_screen.dart';
 import 'package:harness/state/swarm_catalog.dart';
@@ -10,6 +13,17 @@ import 'package:harness/terminal/terminal_binary.dart';
 
 import 'swarm_state_test.dart' show createApp;
 import 'swarm_screen_test.dart' show terminal;
+
+/// Records `deleteMachine` calls without touching the network. The real client
+/// only builds its `Dio` lazily, so overriding the method keeps it offline.
+class _RecordingApi extends ApiClient {
+  _RecordingApi() : super(config: AppConfig.dev, session: AuthSession());
+  final List<String> deleted = [];
+  @override
+  Future<void> deleteMachine({required String machineId}) async {
+    deleted.add(machineId);
+  }
+}
 
 void main() {
   testWidgets('tab navigation does not resend the agent inventory', (
@@ -168,4 +182,138 @@ void main() {
       projects.dispose();
     },
   );
+  testWidgets('deleteMachine confirms before dropping a remote machine', (
+    tester,
+  ) async {
+    const channel = MethodChannel('harness/swarm_tabs');
+    final messenger = tester.binding.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(channel, (call) async => true);
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+    final app = createApp();
+    final projects = SwarmProjectStore();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SwarmScreen(
+          notifier: app,
+          nativeTabs: true,
+          projectStore: projects,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    // The remote machine's row is deletable; the native menu drives this call.
+    final reply = Completer<void>();
+    messenger.handlePlatformMessage(
+      channel.name,
+      const StandardMethodCodec().encodeMethodCall(
+        const MethodCall('deleteMachine', {'id': 'm'}),
+      ),
+      (_) => reply.complete(),
+    );
+    // The native reply is withheld until endOfFrame (focus handoff), so pump
+    // first, then the dialog opens on the following frames.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    await reply.future;
+    expect(find.text('Delete machine'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, 'Delete'), findsOneWidget);
+
+    // Cancelling leaves the machine in place.
+    await tester.tap(find.text('Cancel'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Delete machine'), findsNothing);
+    expect(app.machineStates.containsKey('m'), isTrue);
+
+    await tester.pumpWidget(const SizedBox());
+    app.dispose();
+    projects.dispose();
+  });
+
+  testWidgets('deleteMachine removes the machine once confirmed', (
+    tester,
+  ) async {
+    const channel = MethodChannel('harness/swarm_tabs');
+    final messenger = tester.binding.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(channel, (call) async => true);
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+    final app = createApp();
+    final api = _RecordingApi();
+    app.api = api; // keep the delete off the network
+    final projects = SwarmProjectStore();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SwarmScreen(
+          notifier: app,
+          nativeTabs: true,
+          projectStore: projects,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final reply = Completer<void>();
+    messenger.handlePlatformMessage(
+      channel.name,
+      const StandardMethodCodec().encodeMethodCall(
+        const MethodCall('deleteMachine', {'id': 'm'}),
+      ),
+      (_) => reply.complete(),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    await reply.future;
+    expect(find.text('Delete machine'), findsOneWidget);
+
+    // Confirming drops the machine from the client and the API.
+    await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(api.deleted, ['m']);
+    expect(app.machineStates.containsKey('m'), isFalse);
+    expect(app.machines.any((m) => m.machineId == 'm'), isFalse);
+
+    await tester.pumpWidget(const SizedBox());
+    app.dispose();
+    projects.dispose();
+  });
+
+  testWidgets('deleteMachine ignores this computer', (tester) async {
+    const channel = MethodChannel('harness/swarm_tabs');
+    final messenger = tester.binding.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(channel, (call) async => true);
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+    final app = createApp();
+    app.machineStates['m']!.localOnly = true; // this computer, not deletable
+    final projects = SwarmProjectStore();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SwarmScreen(
+          notifier: app,
+          nativeTabs: true,
+          projectStore: projects,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final reply = Completer<void>();
+    messenger.handlePlatformMessage(
+      channel.name,
+      const StandardMethodCodec().encodeMethodCall(
+        const MethodCall('deleteMachine', {'id': 'm'}),
+      ),
+      (_) => reply.complete(),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    await reply.future;
+    expect(find.text('Delete machine'), findsNothing);
+    expect(app.machineStates.containsKey('m'), isTrue);
+
+    await tester.pumpWidget(const SizedBox());
+    app.dispose();
+    projects.dispose();
+  });
 }

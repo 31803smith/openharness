@@ -33,6 +33,7 @@ import '../widgets/layout_palette.dart';
 import '../widgets/engine_identity.dart';
 import '../widgets/harness_start_page.dart';
 import '../widgets/link_machine_screen.dart';
+import '../widgets/machine_actions.dart';
 import '../widgets/machines_manager.dart';
 import '../widgets/new_agent_dialog.dart';
 import '../widgets/pane_grid.dart';
@@ -580,6 +581,20 @@ class _SwarmScreenState extends State<SwarmScreen> {
         if (machine != null) {
           _openSearch(adding: true, query: machine.machine.displayName);
         }
+      case 'deleteMachine':
+        final machine = args['id'] is String ? app.stateOf(args['id']) : null;
+        if (machine != null && !machine.isLocalMachine) {
+          unawaited(
+            _dialog(
+              () => confirmDeleteMachine(
+                context,
+                app,
+                machineId: machine.machine.machineId,
+                displayName: machine.machine.displayName,
+              ),
+            ),
+          );
+        }
       case 'machineAgent':
         final machineId = args['machineId'], agentId = args['agentId'];
         if (machineId is String &&
@@ -643,6 +658,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
           'addAgent',
           'newAgent',
           'manageMachines',
+          'deleteMachine',
           'splitRight',
           'splitDown',
           'zoomPane',

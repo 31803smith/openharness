@@ -10,13 +10,13 @@ import '../core/models.dart';
 import '../shared/layouts/widgets/sidebar_item.dart';
 import '../shared/layouts/widgets/sidebar_timeline.dart';
 import '../shared/theme/app_theme.dart' as grid;
-import '../shared/widgets/app_dialog.dart';
 import '../shared/widgets/app_icon_button.dart';
 import '../shared/widgets/app_menu.dart';
 import '../shared/widgets/skeleton.dart';
 import '../shortcuts/app_shortcuts.dart';
 import '../state/app_state.dart';
 import 'agent_drag.dart';
+import 'machine_actions.dart';
 import 'delete_agent_dialog.dart';
 import 'restart_agent_action.dart';
 import 'rename_agent_dialog.dart';
@@ -442,41 +442,12 @@ class _MachineNodeState extends State<_MachineNode> {
     machine.displayName,
   );
 
-  Future<void> _confirmDeleteMachine() async {
-    final confirmed = await showAppDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Delete machine'),
-        content: SizedBox(
-          width: 360,
-          child: Text(
-            'Delete "${machine.displayName}"? All its agents will be disconnected and '
-            "it'll need to be linked again. This can't be undone.",
-            style: TextStyle(fontFamily: grid.AppFont.sans, fontSize: 13.5),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(
-              backgroundColor: grid.AppPalette.dangerFill,
-            ),
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-    final error = await notifier.deleteMachine(machine.machineId);
-    if (error != null && mounted) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(error)));
-    }
-  }
+  Future<void> _confirmDeleteMachine() => confirmDeleteMachine(
+    context,
+    notifier,
+    machineId: machine.machineId,
+    displayName: machine.displayName,
+  );
 
   @override
   Widget build(BuildContext context) {

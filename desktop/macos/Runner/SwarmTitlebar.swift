@@ -325,6 +325,14 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
       find.target = self
       find.representedObject = machine.id
       submenu.addItem(find)
+      if !machine.local {
+        submenu.addItem(.separator())
+        let del = NSMenuItem(title: "Delete Machine…", action: #selector(machineDeleteAction(_:)), keyEquivalent: "")
+        del.target = self
+        del.representedObject = machine.id
+        del.image = NSImage(systemSymbolName: "trash", accessibilityDescription: nil)
+        submenu.addItem(del)
+      }
       item.submenu = submenu
       machinesMenu.addItem(item)
     }
@@ -483,6 +491,9 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     if menuItem.action == #selector(machineAction(_:)) {
       return actionsEnabled && machines.contains(where: { $0.id == action })
     }
+    if menuItem.action == #selector(machineDeleteAction(_:)) {
+      return actionsEnabled && machines.contains(where: { $0.id == action && !$0.local })
+    }
     if menuItem.action == #selector(historyAction(_:)) {
       return actionsEnabled && history.contains(where: { $0.id == action })
     }
@@ -503,6 +514,11 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
   @objc private func machineAction(_ sender: NSMenuItem) {
     guard validateMenuItem(sender), let id = sender.representedObject as? String else { return }
     sendTabAction("machineDestination", arguments: ["id": id])
+  }
+
+  @objc private func machineDeleteAction(_ sender: NSMenuItem) {
+    guard validateMenuItem(sender), let id = sender.representedObject as? String else { return }
+    sendTabAction("deleteMachine", arguments: ["id": id])
   }
 
   @objc private func machineAgentAction(_ sender: NSMenuItem) {
