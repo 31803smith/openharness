@@ -59,6 +59,27 @@ class GridModelPicker extends StatefulWidget {
 class _GridModelPickerState extends State<GridModelPicker> {
   bool _loading = false;
   ModelsMenuController? _usage;
+  GridModels? _last;
+
+  @override
+  void initState() {
+    super.initState();
+    // Warm the answer as soon as the control exists, so a click lands on a memo rather than on two
+    // subprocess spawns and two network round trips — measured at ~1.4s, which is a person watching
+    // a header do nothing. Fire-and-forget: nothing here waits on it, and a failure just means the
+    // first open pays what it used to.
+    unawaited(_prefetch());
+  }
+
+  Future<void> _prefetch() async {
+    // Created here, not only on the cold path: a warm open reads `_usage.rows` for the subscription
+    // row's provider name and percentage, and skipping it left that row falling back to the bare
+    // engine label with no status beside it.
+    _usage ??= ModelsMenuController(remote: widget.notifier.readRemoteUsage);
+    unawaited(_usage!.refresh().catchError((_) {}));
+    final answer = await widget.notifier.gridModels(widget.machineId);
+    if (mounted) _last = answer;
+  }
 
   @override
   void dispose() {
@@ -82,8 +103,16 @@ class _GridModelPickerState extends State<GridModelPicker> {
 
   Future<void> _open() async {
     if (_loading) return;
-    setState(() => _loading = true);
+    // A warm answer opens the menu with no wait at all. It is at most seconds old — the daemon's own
+    // memo is what bounds that — and the refresh below lands in time for the next open.
     final GridModels answer;
+    if (_last != null) {
+      answer = _last!;
+      unawaited(_prefetch());
+      await _show(answer);
+      return;
+    }
+    setState(() => _loading = true);
     try {
       _usage ??= ModelsMenuController(remote: widget.notifier.readRemoteUsage);
       // ⚠️ The usage read is NOT awaited. It is decoration — a percentage beside the subscription
@@ -96,6 +125,14 @@ class _GridModelPickerState extends State<GridModelPicker> {
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+    _last = answer;
+    if (!mounted) return;
+    await _show(answer);
+  }
+
+  /// Draw the menu for an answer already in hand. Split from [_open] so a warm open shares exactly
+  /// the same menu as a cold one rather than a second copy of it.
+  Future<void> _show(GridModels answer) async {
     if (!mounted) return;
 
     final box = context.findRenderObject() as RenderBox?;
@@ -122,6 +159,7 @@ class _GridModelPickerState extends State<GridModelPicker> {
         PopupMenuItem<_Choice>(
           value: const _Choice.ownLogin(),
           height: 32,
+          padding: EdgeInsets.zero,
           child: _Row(
             selected: widget.currentModel == null,
             engine: widget.engineLabel,
@@ -141,6 +179,7 @@ class _GridModelPickerState extends State<GridModelPicker> {
           PopupMenuItem<_Choice>(
             enabled: false,
             height: 30,
+            padding: const EdgeInsets.only(left: _menuInset + _rowPadding),
             child: Text(
               answer.gridName == null
                   ? 'No grid on this account yet — sign in again to set one up.'
@@ -152,6 +191,7 @@ class _GridModelPickerState extends State<GridModelPicker> {
           PopupMenuItem<_Choice>(
             value: _Choice.model(model),
             height: 32,
+            padding: EdgeInsets.zero,
             child: _Row(
               selected: widget.currentModel == model.id,
               title: model.id,
@@ -176,10 +216,11 @@ class _GridModelPickerState extends State<GridModelPicker> {
   PopupMenuItem<_Choice> _header(String label) => PopupMenuItem<_Choice>(
     enabled: false,
     height: 22,
+    padding: EdgeInsets.zero,
     child: Padding(
-      // The same inset the tick column gives every row, so a header sits directly above the text it
-      // heads rather than a few pixels to its left.
-      padding: const EdgeInsets.only(left: _tickColumn),
+      // The row's margin plus its internal padding, so a header sits directly above the text it
+      // heads rather than a few pixels to either side of it.
+      padding: const EdgeInsets.only(left: _menuInset + _rowPadding),
       child: Text(
         label,
         style: TextStyle(
@@ -248,54 +289,63 @@ class _Row extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        // A fixed tick column, so every row's label starts at the same x whether or not it is the
-        // active one — a menu whose text shifts between rows reads as misaligned. Section headers
-        // carry the same inset, which is what lines a header up with the rows under it.
-        SizedBox(
-          width: _tickColumn,
-          child: selected ? Icon(Icons.check, size: 12, color: AppColors.accent) : null,
-        ),
-        if (engine != null) ...[
-          EngineMark(engine: engine, size: 14),
-          const SizedBox(width: 7),
-        ],
-        // ⚠️ Expanded on the TITLE, not on the status. The status is a handful of characters and
-        // wants only what it needs; giving it the flexible half truncated
-        // `Qwen3.6-35B-A3B-UD-Q5_K_XL` to `Qwen3.6-35B-A3B-UD-Q5_K…` while empty space sat beside
-        // it. The long string here is the model id, so the model id is what gets the room.
-        Expanded(
-          child: Text(
-            title,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: 12.5,
-              // Stated rather than inherited: a PopupMenuItem's default text style is heavier than
-              // this menu wants, which read as every row being emphasised.
-              fontWeight: FontWeight.w400,
-              color: AppColors.text,
+    return Container(
+      // The highlight is the row, so it needs the row's own inset rather than the item's padding —
+      // which is why the `PopupMenuItem`s around these set `padding: EdgeInsets.zero`.
+      margin: const EdgeInsets.symmetric(horizontal: _menuInset),
+      padding: const EdgeInsets.symmetric(horizontal: _rowPadding, vertical: 5),
+      decoration: selected
+          // Subtle on purpose: one row in the menu is already the current one, and a mark loud
+          // enough to announce that would compete with the thing a person opened the menu to read.
+          ? BoxDecoration(
+              color: AppColors.selected,
+              borderRadius: BorderRadius.circular(5),
+            )
+          : null,
+      child: Row(
+        children: [
+          if (engine != null) ...[
+            EngineMark(engine: engine, size: 14),
+            const SizedBox(width: 7),
+          ],
+          // ⚠️ Expanded on the TITLE, not on the status. The status is a handful of characters and
+          // wants only what it needs; giving it the flexible half truncated
+          // `Qwen3.6-35B-A3B-UD-Q5_K_XL` to `Qwen3.6-35B-A3B-UD-Q5_K…` while empty space sat beside
+          // it. The long string here is the model id, so the model id is what gets the room.
+          Expanded(
+            child: Text(
+              title,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 12.5,
+                // Stated rather than inherited: a PopupMenuItem's default text style is heavier than
+                // this menu wants, which read as every row being emphasised.
+                fontWeight: FontWeight.w400,
+                color: AppColors.text,
+              ),
             ),
           ),
-        ),
-        if (detail.isNotEmpty) ...[
-          const SizedBox(width: 6),
-          Text(detail, style: TextStyle(fontSize: 11, color: AppColors.mutedStrong)),
+          if (detail.isNotEmpty) ...[
+            const SizedBox(width: 6),
+            Text(detail, style: TextStyle(fontSize: 11, color: AppColors.mutedStrong)),
+          ],
+          if (status != null) ...[
+            const SizedBox(width: 14),
+            Text(
+              status!,
+              style: TextStyle(fontSize: 11, color: AppColors.mutedStrong),
+            ),
+          ],
         ],
-        if (status != null) ...[
-          const SizedBox(width: 14),
-          Text(
-            status!,
-            style: TextStyle(fontSize: 11, color: AppColors.mutedStrong),
-          ),
-        ],
-      ],
+      ),
     );
   }
 }
 
-/// The inset every row's text sits behind, and every section header with it.
-const double _tickColumn = 17;
+/// The row's own inset from the menu edge, and the padding inside its highlight. A section header
+/// carries their SUM as a left inset, so header text sits exactly above the row text it heads.
+const double _menuInset = 6;
+const double _rowPadding = 8;
 
 /// One row's meaning: a grid model, or the engine's own login. A sealed pair rather than a nullable
 /// `GridModel`, because `null` already means "the menu was dismissed" in `showMenu`'s own result.

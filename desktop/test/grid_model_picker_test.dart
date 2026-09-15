@@ -137,6 +137,25 @@ void main() {
     expect(rendered.size.width, greaterThan(160));
   });
 
+  testWidgets('the current row is marked by a highlight, not by a tick column', (tester) async {
+    // The tick reserved a fixed column at the start of EVERY row to keep labels aligned, which cost
+    // every row that indent for one row's sake. Filling the current row instead says the same thing
+    // and gives the space back.
+    build(models: [
+      {'id': 'Qwen3.6-35B-A3B-UD-Q5_K_XL', 'node': 'macbook-m1max'},
+    ]);
+    await open(tester, currentModel: 'Qwen3.6-35B-A3B-UD-Q5_K_XL');
+
+    expect(find.byIcon(Icons.check), findsNothing);
+
+    Container rowFor(String text) => tester.widget<Container>(
+      find.ancestor(of: find.text(text), matching: find.byType(Container)).first,
+    );
+    // The selected row is filled; the other is not.
+    expect((rowFor('Qwen3.6-35B-A3B-UD-Q5_K_XL').decoration as BoxDecoration?)?.color, isNotNull);
+    expect(rowFor('Anthropic').decoration, isNull);
+  });
+
   testWidgets('choosing the engine login only fires when the agent is NOT already on it', (tester) async {
     var calls = 0;
     // Already on its own login: re-selecting it would respawn the pane for nothing.

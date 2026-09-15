@@ -39,7 +39,18 @@ const ROUTER_ENGINE = 'grid-router'
  */
 export async function listGridModels(gridName: string | null): Promise<GridModel[]> {
   if (!gridName?.trim()) return []
-  const { value } = await gridJson<GridModelRow[]>(['--remote', 'models', gridName])
+  const fresh = cached(gridName)
+  if (fresh) return fresh
+
+  // ⚠️ Concurrently, and the ordering used to cost a full second of the click. `grid models` is
+  // ~830ms and the relay catalogue another ~430ms, both of them a Python CLI spawn plus a network
+  // round trip; run one after the other they are the whole of what a person waits through before
+  // the menu appears. Neither needs the other's answer.
+  const [listed, served] = await Promise.all([
+    gridJson<GridModelRow[]>(['--remote', 'models', gridName]),
+    relayModelIds(gridName),
+  ])
+  const value = listed.value
   if (!Array.isArray(value)) return []
 
   // ⚠️ `grid models` LOWERCASES the model id; the relay does not. Measured on a real engine:
@@ -49,7 +60,6 @@ export async function listGridModels(gridName: string | null): Promise<GridModel
   // the one the RELAY knows, so the relay's own catalogue is the authority here and `grid models`
   // is kept only for the node label. Case is unrecoverable from the lowercased string, so this
   // cannot be fixed by mapping.
-  const served = await relayModelIds(gridName)
   const nodeFor = new Map<string, string>()
   for (const row of value) {
     const id = typeof row.model === 'string' ? row.model.trim() : ''
@@ -68,7 +78,37 @@ export async function listGridModels(gridName: string | null): Promise<GridModel
     seen.add(key)
     models.push({ id, node: nodeFor.get(key) ?? '' })
   }
+  remember(gridName, models)
   return models
+}
+
+/**
+ * The last answer for a grid, for a few seconds.
+ *
+ * The picker asks on every open, and the answer costs two subprocess spawns and two network round
+ * trips — measured at ~1.4s, which is a person watching a header do nothing after a click. Reopening
+ * a menu twice in a row should not pay that twice.
+ *
+ * Short on purpose. The list is genuinely live — an engine can join or leave between two opens — so
+ * this is only the window in which a click is free, not a cache in the sense of holding state. Longer
+ * would start offering models nobody is serving, which is the failure the no-caching rule existed to
+ * avoid.
+ */
+const TTL_MS = 15_000
+const memo = new Map<string, { at: number; models: GridModel[] }>()
+
+function cached(gridName: string): GridModel[] | null {
+  const hit = memo.get(gridName)
+  return hit && Date.now() - hit.at < TTL_MS ? hit.models : null
+}
+
+function remember(gridName: string, models: GridModel[]): void {
+  memo.set(gridName, { at: Date.now(), models })
+}
+
+/** Drop the memo — for a caller that has just changed what the grid serves. */
+export function forgetGridModels(): void {
+  memo.clear()
 }
 
 /** Model ids exactly as the grid's relay serves them — the names an engine must send. Empty when the
