@@ -4,11 +4,11 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:harness_mobile/shared/theme/app_theme.dart';
 import 'package:harness_mobile/shared/widgets/empty_state.dart';
 import 'package:harness_mobile/state/app_state.dart';
+import 'machine_index.dart';
 import 'machine_tile.dart';
 import 'phone_card.dart';
 import 'phone_header.dart';
 import 'phone_navigation.dart';
-import 'phone_status.dart';
 
 /// The machines on the account, grouped by what they need.
 ///
@@ -51,14 +51,14 @@ class _Body extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final states = [
-      for (final machine in notifier.machines)
-        ?notifier.stateOf(machine.machineId),
-    ];
-    if (states.isEmpty && notifier.machinesLoading) {
+    // The order a swipe on the machine page walks, split back into the two sections this list draws.
+    // Taken from [visibleMachines] rather than partitioned here so the page and the list cannot
+    // drift apart — the split below is presentation, the order is not.
+    final ordered = visibleMachines(notifier);
+    if (ordered.isEmpty && notifier.machinesLoading) {
       return const PhoneListSkeleton();
     }
-    if (states.isEmpty) {
+    if (ordered.isEmpty) {
       return const EmptyState(
         icon: LucideIcons.laptopMinimal300,
         title: 'No machines yet',
@@ -68,21 +68,8 @@ class _Body extends StatelessWidget {
       );
     }
 
-    // Two runs, by whether the machine is usable as it stands. A machine that is merely connecting
-    // belongs with the working ones: it needs nothing from anybody, it is just not ready yet.
-    // The runs are built in this order and rendered working-first; see the class comment.
-    final needsAttention = <MachineState>[];
-    final working = <MachineState>[];
-    for (final state in states) {
-      switch (phoneMachineStatusOf(state)) {
-        case PhoneMachineStatus.needsPassword:
-        case PhoneMachineStatus.offline:
-          needsAttention.add(state);
-        case PhoneMachineStatus.connecting:
-        case PhoneMachineStatus.ready:
-          working.add(state);
-      }
-    }
+    final working = workingMachines(ordered);
+    final needsAttention = machinesNeedingAttention(ordered);
 
     return RefreshIndicator(
       onRefresh: notifier.retryMachines,
@@ -92,24 +79,35 @@ class _Body extends StatelessWidget {
         children: [
           if (working.isNotEmpty) ...[
             const _SectionLabel('Linked'),
-            for (final state in working) _tile(context, state),
+            for (final state in working) _tile(context, ordered, state),
             const SizedBox(height: 6),
           ],
           if (needsAttention.isNotEmpty) ...[
             if (working.isNotEmpty)
               const _SectionLabel('Needs your attention'),
-            for (final state in needsAttention) _tile(context, state),
+            for (final state in needsAttention) _tile(context, ordered, state),
           ],
         ],
       ),
     );
   }
 
-  Widget _tile(BuildContext context, MachineState state) => Padding(
+  Widget _tile(
+    BuildContext context,
+    List<MachineState> ordered,
+    MachineState state,
+  ) => Padding(
     padding: const EdgeInsets.only(bottom: kPhoneCardGap),
     child: MachineTile(
       machine: state,
-      onTap: () => openMachine(context, notifier, state.machine.machineId),
+      // The whole visible list goes with the tap, so the page opens as a pager over exactly the
+      // machines on screen. Swiping there walks this order.
+      onTap: () => openMachinePager(
+        context,
+        notifier,
+        ordered,
+        state.machine.machineId,
+      ),
     ),
   );
 }
