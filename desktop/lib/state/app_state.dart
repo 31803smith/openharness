@@ -4291,24 +4291,29 @@ class AppNotifier extends ChangeNotifier {
     }
   }
 
-  /// Opens a dial notification in this swarm without changing other memberships.
+  /// A dial notification was tapped: bring that agent to the front.
   ///
-  /// Already on screen means FOCUS it, never open it twice: the daemon keeps a
-  /// single controller per agent, so a second open is a takeover — the window
-  /// would fight itself and the first tile would go dark with
-  /// `TERMINAL_TAKEN_OVER`.
+  /// The window is tabs now (owner, 2026-09-15): the tab that already holds
+  /// the agent wins — the current one first, then any other — and the tab
+  /// switches with the pane focused. No tab holds it: it gets a tab of its own
+  /// rather than a tile squeezed into whatever happened to be open, which is
+  /// also what keeps a full tab from turning a tap into a capacity error.
   ///
-  /// At capacity, the usual visible capacity error asks for another swarm.
+  /// Never opened twice: the daemon keeps a single controller per agent, so a
+  /// second open is a takeover — the window would fight itself and the first
+  /// tile would go dark with `TERMINAL_TAKEN_OVER`. [revealAgentView] is what
+  /// Open Harness uses for the same reason.
   Future<void> openAgentFromDial(String machineId, String agentId) async {
-    // Already on the desk: it has its tile, so this is only "look at it".
-    final existing = paneOfAgent(machineId, agentId);
-    if (existing != null) {
-      focusPane(existing.id);
+    if (revealAgentView(machineId, agentId)) {
       selectedMachineId = machineId;
       notifyListeners();
       return;
     }
-    await addAgentToSwarm(machineId, agentId);
+    // Its own tab. newSwarm reuses an unused start page when there is one, and
+    // at the tab limit leaves the current tab selected — the agent then lands
+    // there, with the usual capacity message if that tab is full.
+    newSwarm();
+    await addAgentToSwarm(machineId, agentId, swarmId: activeSwarmId);
   }
 
   /// Enable-time fallback: preserve the user's current choice and acknowledge it.
