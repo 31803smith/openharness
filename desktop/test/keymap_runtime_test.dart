@@ -396,7 +396,7 @@ void main() {
         await tester.pump();
         expect(
           find.byKey(const ValueKey('swarm-search-preview')),
-          findsNothing,
+          findsOneWidget,
         );
         expect(
           find.byKey(const ValueKey('swarm-search-preview-toggle')),

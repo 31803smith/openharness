@@ -1,8 +1,8 @@
 # A useful Harness search preview
 
-The user has approved building this preview. First establish useful real content,
-then implement the shared UI and cache; the earlier content-quality requirement
-still applies. This document records the proposed design and its acceptance bar.
+Both Open Harness and inline start-page search now display existing session
+content in a shared preview. This document records the content rules, data path,
+and remaining coverage limits.
 
 **Content rule:** never generate a summary or start a model for previews. Display
 only text and metadata already available from the session.
@@ -52,7 +52,7 @@ Missing the original request made even a meaningful final line hard to interpret
 This was a content-selection and coverage problem, as well as a presentation one.
 Making that same tail larger would not reliably fix it.
 
-## The content I recommend
+## Content selection
 
 For an individual harness, show the latest substantive request and its latest
 meaningful response or result. Put a pending question prominently when the agent
@@ -96,8 +96,9 @@ Relevant code: [desktop search](../desktop/lib/state/swarm_search.dart),
 [session/recent APIs](../cli/src/backendSocket.ts), and
 [commander history](../cli/src/lib/commander.ts).
 
-We have enough foundation to investigate this seriously. We have not established
-that every selectable harness already has a complete, useful preview record.
+The read-only audit established useful content for several existing sessions,
+but not every selectable harness has a complete preview record. An empty session
+or older daemon can still supply no readable excerpt.
 
 ## How it can feel immediate
 
@@ -120,7 +121,7 @@ An uncached remote session still needs time to supply fresh content. Show availa
 context immediately and fill the missing content in asynchronously. Literal zero
 latency for a cold remote fetch is not achievable; fast local selection is.
 
-## Before implementing the UI
+## Content audit and validation
 
 Review actual candidate records for active, idle, waiting, tool-heavy, newly
 created, unopened, and offline/remote harnesses across the major engines. Include
@@ -132,6 +133,8 @@ do, use those real examples to decide how much preview space is needed. Then
 implement the cached-content path and verify correct identity, freshness, and
 responsive selection. A good-looking empty panel is not an acceptance criterion.
 
-Implementation is now authorized and in progress; these notes alone are not
-evidence of completed UI or measured latency. See the
+The shared responsive UI and cache have been implemented. Focused checks cover
+working and idle content, waiting groups, keyboard focus, session identity,
+bounded fetching, offline retention and widths from 400 to 1280 logical pixels.
+These are correctness checks, not native latency measurements. See the
 [Rex study](mitchellh-rex-study.md) for the related workspace and continuity lessons.

@@ -33,7 +33,7 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
     canRequestFocus: false,
   );
   final _searchGroup = Object();
-  final _searchArea = GlobalKey();
+  final _entryActions = GlobalKey();
   bool _revealScheduled = false;
   SwarmSearchController? _search;
   SwarmSearchDraft? _draft;
@@ -45,10 +45,10 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _revealScheduled = false;
       if (!mounted || !_showResults || !_pickerFocus.hasFocus) return;
-      // The list also scrolls internally. Keep its whole viewport visible so
-      // arrow navigation cannot highlight a row below the window edge.
+      // Keep the actions below the expanded picker reachable. Its bounded
+      // viewport and internal list scrolling keep the highlighted row visible.
       Scrollable.ensureVisible(
-        _searchArea.currentContext!,
+        _entryActions.currentContext!,
         alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
       );
     });
@@ -112,7 +112,9 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
             ),
             child: Center(
               child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 640),
+                constraints: BoxConstraints(
+                  maxWidth: _showResults ? 1120 : 640,
+                ),
                 child: Column(
                   children: [
                     const Text(
@@ -129,7 +131,6 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
                       child: Focus(
                         focusNode: _pickerFocus,
                         child: Material(
-                          key: _searchArea,
                           color: _showResults
                               ? grid.AppPalette.swarmSearchSurface
                               : Colors.transparent,
@@ -180,10 +181,8 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
                                     color: Colors.white12,
                                   ),
                                   SizedBox(
-                                    height: (constraints.maxHeight * 0.4).clamp(
-                                      168,
-                                      336,
-                                    ),
+                                    height: (constraints.maxHeight * 0.54)
+                                        .clamp(260, 480),
                                     child: SwarmSearchResults(
                                       key: const ValueKey(
                                         'harness-start-results',
@@ -202,6 +201,7 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
                     ),
                     const SizedBox(height: 20),
                     Wrap(
+                      key: _entryActions,
                       alignment: WrapAlignment.center,
                       spacing: 12,
                       runSpacing: 12,

@@ -126,7 +126,7 @@ void main() {
   }
 
   testWidgets(
-    'reopening Add reuses catalog work and resets choices without showing output',
+    'reopening Add reuses the catalog and previews without reading terminal output',
     (tester) async {
       final app = createApp();
       final machine = _CatalogMachine(app.machineStates['m']!.machine)
@@ -150,7 +150,10 @@ void main() {
       final first = inputWidget().search!;
       final oldRow = first.selected!;
       expect(oldRow.agentId, 'a0');
-      expect(find.byKey(const ValueKey('swarm-search-preview')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('swarm-search-preview')),
+        findsOneWidget,
+      );
       await tester.pump();
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
       await tester.pump();
@@ -163,7 +166,11 @@ void main() {
       final next = inputWidget().search!;
       expect(find.textContaining('Newest useful output.'), findsNothing);
       expect(next.selected, same(oldRow));
-      expect(machine.projectReads, 0, reason: 'Agent metadata did not change');
+      expect(
+        machine.projectReads,
+        lessThan(12),
+        reason: 'Only visible preview members read metadata; the catalog remains cached.',
+      );
       expect(input, isEmpty);
       await tester.pumpWidget(const SizedBox());
       app.dispose();

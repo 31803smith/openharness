@@ -902,8 +902,11 @@ class _SwarmScreenState extends State<SwarmScreen> {
               Align(
                 alignment: const Alignment(0, -0.12),
                 child: SizedBox(
-                  width: (constraints.maxWidth - 64).clamp(280.0, 720.0),
-                  height: (constraints.maxHeight - 96).clamp(220.0, 540.0),
+                  width: (constraints.maxWidth - 64).clamp(
+                    280.0,
+                    commandsOnly ? 720.0 : 1120.0,
+                  ),
+                  height: (constraints.maxHeight - 96).clamp(220.0, 600.0),
                   child: Column(
                     children: [
                       Expanded(

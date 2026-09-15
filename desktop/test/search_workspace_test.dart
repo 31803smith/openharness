@@ -13,7 +13,7 @@ import 'swarm_state_test.dart' show createApp;
 void main() {
   for (final native in [false, true]) {
     testWidgets(
-      'command and Add pickers own editing without previews (native=$native)',
+      'command and Add pickers keep editing ownership with session previews (native=$native)',
       (tester) async {
         debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
         addTearDown(() => debugDefaultTargetPlatformOverride = null);
@@ -62,6 +62,10 @@ void main() {
           isTrue,
         );
         expect(focus.hasFocus, isTrue);
+        expect(
+          find.byKey(const ValueKey('swarm-search-preview')),
+          findsNothing,
+        );
         await key(tester, LogicalKeyboardKey.escape);
         expect(field, findsNothing);
         await key(tester, LogicalKeyboardKey.keyO, cmd: true);
@@ -69,7 +73,7 @@ void main() {
         await tester.pump();
         expect(
           find.byKey(const ValueKey('swarm-search-preview')),
-          findsNothing,
+          findsOneWidget,
         );
         expect(find.textContaining('Private terminal output'), findsNothing);
         final results = tester.getRect(
@@ -78,7 +82,7 @@ void main() {
         final picker = tester.getRect(
           find.byKey(const ValueKey('swarm-search-results')),
         );
-        expect(results.width, closeTo(picker.width, 2));
+        expect(results.width, lessThan(picker.width));
         expect(tester.widget<TextField>(field).focusNode!.hasFocus, isTrue);
         expect(input, isEmpty);
         await key(tester, LogicalKeyboardKey.escape);

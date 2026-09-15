@@ -9,7 +9,7 @@ proposals in the progress log.
 
 **Cmd-T / New Tab** and the tab-bar plus open the Harness start page. Its solid
 background matches the selected tab. The centered title and search controls sit
-lower with generous empty space. The field is no wider than 640 logical pixels,
+lower with generous empty space. The resting field is no wider than 640 logical pixels,
 with **Open Harness** and accented **+ New Harness** buttons underneath.
 
 The field starts empty and focused so typing works immediately. Typing, clicking
@@ -63,6 +63,25 @@ also work immediately after opening the menu, before its first frame.
 The Open popup keeps its full-width **Find a harness** field, single-choice
 results and 90% black backdrop. Only the highlighted row shows **Open Harness**,
 **Open N Harnesses**, or **Split right/down**, depending on context.
+Both Open and inline start-page search show the same session preview. The open
+surface can grow to 1120 logical pixels, placing the list and preview side by
+side. Narrow windows stack them with a compact preview heading. Both sections
+scroll independently; the start-page actions stay reachable. Hover selects a
+preview without taking typing focus. Enter opens the highlighted result.
+
+Working sessions lead with the current observed request and latest activity.
+Idle sessions lead with an existing saved response or the latest response seen
+in the live stream. Pending questions appear prominently. Recent requests and
+saved responses without a shared turn identity are labeled separately; old
+responses never masquerade as the current turn's answer. Groups show readable
+member excerpts, waiting first, and build only visible members. Offline content
+is labeled as saved; missing content stays explicit.
+
+No previews generate summaries or start models. The bounded shared cache uses
+only existing `agent_recent` content and ordinary session events. It does not
+read full histories or attach terminals. Arrow selection reads cached records;
+background refresh fills cold records without blocking editing. Details and
+limits are recorded in [the preview design](harness-search-preview.md).
 Secondary text is **project · branch · machine**, with one small muted Git branch
 mark immediately before the branch in search and pane headers. Missing metadata is omitted
 and the containing workspace name is not repeated.
