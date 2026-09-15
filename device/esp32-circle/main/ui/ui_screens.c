@@ -5728,13 +5728,16 @@ static void switch_row_tap(lv_event_t *e)
     snprintf(id, sizeof id, "%s", s_switch_ids[idx]);   // copy: closing rebuilds nothing, but a pick might
     switch_close();
     if (!id[0]) return;
+    // A PERSON picked this row, so the window is told — as an OPEN, the same as a notification tap (owner,
+    // 2026-09-15: "chọn agent từ list … cùng rule với noti"): the window lands on the tab that holds the
+    // agent, the current one first, or opens a tab for it. The id goes up as-is, before the local
+    // centring below: an agent in another tab is known but not on the ring, so that centring is held
+    // for the list the window pushes back — and reporting the tile afterwards would name the wrong one.
+    cable_client_send_open(id);
     ui_focus_project(id);
     display_lock();
     apply_active_from_col();
     display_unlock();
-    // A PERSON picked this row, so the window is told — the centring above went through code and is muted
-    // like every other programmatic move.
-    ui_report_active_agent();
 }
 
 // Fill the picker from the FIRST tiles in the list.
