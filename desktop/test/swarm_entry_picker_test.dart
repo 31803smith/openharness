@@ -102,10 +102,15 @@ void main() {
       expect(_results, findsNothing);
       expect(_startInput, findsOneWidget);
       expect(find.byType(FloatingActionButton), findsNothing);
-      expect(tester.getSize(_startInput).width, lessThanOrEqualTo(640));
+      expect(
+        tester.getRect(_startInput).bottom,
+        lessThan(
+          tester.getRect(find.byKey(const ValueKey('harness-start-open'))).top,
+        ),
+      );
       expect(
         tester.widget<TextField>(_startInput).decoration!.hintText,
-        isEmpty,
+        'Find a harness',
       );
       expect(tester.widget<TextField>(_startInput).focusNode!.hasFocus, isTrue);
       expect(find.byKey(const ValueKey('harness-device-link')), findsOneWidget);
@@ -182,7 +187,7 @@ void main() {
           expect(page, isNot(original));
           expect(_results, findsNothing);
           expect(_startInput, findsOneWidget);
-          await chord(tester, LogicalKeyboardKey.keyO);
+          await chord(tester, LogicalKeyboardKey.keyN);
           expect(_results, findsOneWidget);
           if (dismissal == 'outside') {
             await tester.tapAt(const Offset(20, 200));
@@ -213,7 +218,7 @@ void main() {
     (tester) async {
       final app = createApp();
       await mount(tester, app);
-      await chord(tester, LogicalKeyboardKey.keyO);
+      await chord(tester, LogicalKeyboardKey.keyN);
       await tester.enterText(_input, 'Agent 12');
       await tester.pump();
       final text = tester.widget<TextField>(_input).controller!;
@@ -256,7 +261,7 @@ void main() {
     app.newSwarm();
     final destination = app.activeSwarmId;
     await mount(tester, app);
-    await chord(tester, LogicalKeyboardKey.keyO);
+    await chord(tester, LogicalKeyboardKey.keyN);
     await tester.enterText(_input, 'Agent 0');
     await tester.pump();
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);

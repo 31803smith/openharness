@@ -348,3 +348,7 @@ void ui_lock_init_gate(void);
 void ui_lock_setup(void);
 // True while the unlock overlay is blocking the UI.
 bool ui_lock_active(void);
+
+// One line on the log whenever what covers the face changes (screen, overlay, drawer, lock, sleep).
+// Called from the LVGL task every loop; cheap when nothing changed.
+void ui_log_state_if_changed(void);

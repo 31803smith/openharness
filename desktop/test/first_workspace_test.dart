@@ -8,6 +8,7 @@ import 'package:harness/auth/auth_session.dart';
 import 'package:harness/core/config.dart';
 import 'package:harness/core/engine_availability.dart';
 import 'package:harness/core/models.dart';
+import 'package:harness/shared/widgets/app_choice_picker.dart';
 import 'package:harness/shared/widgets/app_select_field.dart';
 import 'package:harness/state/app_state.dart';
 import 'package:harness/state/pane_arrangement.dart';
@@ -135,7 +136,7 @@ void main() {
         EngineAvailability(engine: 'hermes', installed: true),
       ]);
       await mount(tester, app);
-      await chord(tester, LogicalKeyboardKey.keyN);
+      await chord(tester, LogicalKeyboardKey.keyN, shift: true);
       await tester.pumpAndSettle();
       FocusNode fieldFocus(String key) => tester
           .widget<InkWell>(
@@ -157,15 +158,15 @@ void main() {
         expect(node.hasPrimaryFocus, isTrue);
       }
 
-      await tabTo(fieldFocus('new-agent-machine-field'), back: true);
-      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-      await tester.sendKeyEvent(LogicalKeyboardKey.keyW, character: 'w');
-      await tester.pumpAndSettle();
+      await tabTo(
+        Focus.of(tester.element(find.text('Workshop machine'))),
+        back: true,
+      );
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pumpAndSettle();
       expect(
         tester
-            .widget<AppSelectField<String>>(
+            .widget<AppChoicePicker<String>>(
               find.byKey(const Key('new-agent-machine-field')),
             )
             .value,
@@ -274,6 +275,8 @@ void main() {
     app.dismissError();
     await tester.pump();
     expect(tester.widget<TextField>(_startInput).focusNode!.hasFocus, isTrue);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pump();
     await tester.tap(_newHarness);
     await tester.pump();
     expect(picker.opened, 0);
@@ -338,9 +341,12 @@ void main() {
       await tester.pump();
       expect(picker.opened, 1);
       expect(find.text('/work/my-project'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('new-agent-machine-m')));
+      await tester.pump();
+      expect(find.text('/work/my-project'), findsOneWidget);
       expect(
         tester
-            .widget<AppSelectField<String>>(
+            .widget<AppChoicePicker<String>>(
               find.byKey(const Key('new-agent-machine-field')),
             )
             .value,
@@ -348,13 +354,13 @@ void main() {
       );
       expect(
         tester
-            .widget<AppSelectField<String>>(
+            .widget<AppChoicePicker<String>>(
               find.byKey(const Key('new-agent-machine-field')),
             )
             .options
             .last
-            .label,
-        'Remote computer — Remote — Offline',
+            .detail,
+        'Remote · Offline',
       );
       expect(app.launches, isEmpty);
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
@@ -375,7 +381,7 @@ void main() {
       FileSelectorPlatform.instance = _FolderPicker();
       addTearDown(() => FileSelectorPlatform.instance = oldPicker);
       await mount(tester, app);
-      await chord(tester, LogicalKeyboardKey.keyN);
+      await chord(tester, LogicalKeyboardKey.keyN, shift: true);
       await tester.pump();
       await tester.tap(find.text('Browse…'));
       await tester.pump();
@@ -484,39 +490,42 @@ void main() {
         );
         await runtime.mount(tester, app, map, native: native);
         if (native) {
-          final opening = runtime.native(tester, 'newAgent');
+          final opening = runtime.native(tester, 'addAgent');
           await tester.pump();
           await opening;
         } else {
-          final newButton = find.byKey(
-            const ValueKey('swarm-new-harness-button'),
-          );
-          final openButton = find.byKey(
-            const ValueKey('swarm-open-harness-button'),
+          final addButton = find.byKey(
+            const ValueKey('swarm-add-harness-button'),
           );
           final bell = find.byKey(const ValueKey('swarm-notifications-button'));
           expect(
             tester.getRect(bell).right,
-            lessThan(tester.getRect(newButton).left),
+            lessThan(tester.getRect(addButton).left),
           );
           expect(
-            tester.getRect(newButton).right,
-            lessThanOrEqualTo(tester.getRect(openButton).left),
+            find.byKey(const ValueKey('swarm-new-harness-button')),
+            findsNothing,
           );
           expect(find.byType(FloatingActionButton), findsNothing);
-          await tester.tap(newButton);
+          await tester.tap(addButton);
           await tester.pump();
         }
+        await tester.tap(find.byKey(const ValueKey('harness-picker-new')));
+        await tester.pump();
         expect(find.byType(AlertDialog), findsOneWidget);
         expect(find.text('/work/existing'), findsNothing);
         expect(find.text('Choose a folder…'), findsOneWidget);
-        final machineField = tester.widget<AppSelectField<String>>(
+        final machineField = tester.widget<AppChoicePicker<String>>(
           find.byKey(const Key('new-agent-machine-field')),
         );
         expect(machineField.value, 'm');
+        expect(machineField.options.map((option) => option.detail), [
+          'This computer',
+          'Remote',
+        ]);
         expect(machineField.options.map((option) => option.label), [
-          'My computer — This computer',
-          'Remote computer — Remote',
+          'My computer',
+          'Remote computer',
         ]);
         expect(
           tester
@@ -562,7 +571,7 @@ void main() {
       FileSelectorPlatform.instance = picker;
       addTearDown(() => FileSelectorPlatform.instance = oldPicker);
       await mount(tester, app);
-      await chord(tester, LogicalKeyboardKey.keyN);
+      await chord(tester, LogicalKeyboardKey.keyN, shift: true);
       await tester.pump();
 
       final folder = tester.widget<InkWell>(
@@ -616,7 +625,7 @@ void main() {
       FileSelectorPlatform.instance = picker;
       addTearDown(() => FileSelectorPlatform.instance = oldPicker);
       await mount(tester, app);
-      await chord(tester, LogicalKeyboardKey.keyN);
+      await chord(tester, LogicalKeyboardKey.keyN, shift: true);
       final field = find.byKey(const Key('new-agent-folder'));
       await tester.tap(field);
       await tester.pump();
@@ -775,7 +784,7 @@ void main() {
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pump();
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-      await chord(tester, LogicalKeyboardKey.keyN);
+      await chord(tester, LogicalKeyboardKey.keyN, shift: true);
       expect(picker.opened, 1);
       expect(app.probes, 1);
       expect(find.byType(AlertDialog), findsOneWidget);
@@ -841,7 +850,7 @@ void main() {
       for (final chooseExplicitly in [false, true]) {
         final app = _FirstUseApp()..probe = Completer<void>();
         await mount(tester, app);
-        await chord(tester, LogicalKeyboardKey.keyN);
+        await chord(tester, LogicalKeyboardKey.keyN, shift: true);
         await tester.pump();
         if (chooseExplicitly) {
           await tester.tap(

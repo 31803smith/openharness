@@ -11,7 +11,59 @@ private func checkTitlebar(_ condition: @autoclosure () -> Bool, _ message: Stri
   titlebarCheckCount += 1
 }
 
+private final class TitlebarMouseUpProbe: NSResponder {
+  var mouseUps = 0
+  override func mouseUp(with event: NSEvent) { mouseUps += 1 }
+}
+
+private extension SwarmActionButton {
+  func renderedPixels() -> Data {
+    let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil,
+      pixelsWide: Int(bounds.width), pixelsHigh: Int(bounds.height),
+      bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+      colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+    let count = bitmap.bytesPerRow * bitmap.pixelsHigh
+    bitmap.bitmapData!.initialize(repeating: 0, count: count)
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+    draw(bounds)
+    NSGraphicsContext.restoreGraphicsState()
+    return Data(bytes: bitmap.bitmapData!, count: count)
+  }
+}
+
 private extension SwarmTabButton {
+  func checkDoubleClickIsolation() throws {
+    let parent = nextResponder
+    let originalEmit = emit
+    let probe = TitlebarMouseUpProbe()
+    nextResponder = probe
+    var actions: [String] = []
+    emit = { method, _ in actions.append(method) }
+    defer {
+      nextResponder = parent
+      emit = originalEmit
+      actionsEnabled = true
+    }
+    func event(_ type: NSEvent.EventType, _ count: Int) -> NSEvent {
+      NSEvent.mouseEvent(with: type, location: NSPoint(x: 60, y: 20),
+        modifierFlags: [], timestamp: Double(count) / 10, windowNumber: 0,
+        context: nil, eventNumber: count, clickCount: count, pressure: 1)!
+    }
+    selectButton.mouseDown(with: event(.leftMouseDown, 1))
+    selectButton.mouseUp(with: event(.leftMouseUp, 1))
+    selectButton.mouseDown(with: event(.leftMouseDown, 2))
+    // Rename can open a modal before the second mouse-up arrives.
+    actionsEnabled = false
+    selectButton.mouseUp(with: event(.leftMouseUp, 2))
+    mouseUp(with: event(.leftMouseUp, 2))
+    try checkTitlebar(actions == ["select", "rename"], "A tab double-click selects and renames exactly once")
+    try checkTitlebar(probe.mouseUps == 0,
+      "Tab mouse-up events cannot reach the window's titlebar double-click handler")
+    try checkTitlebar(!selectButton.mouseDownCanMoveWindow && !closeButton.mouseDownCanMoveWindow,
+      "Tab action buttons opt out of automatic window movement")
+  }
+
   func checkAccessibility(expectedName: String, active: Bool) throws {
     try checkTitlebar(accessibilityLabel() == expectedName, "Tab group name is available before paint")
     let children = accessibilityChildren()?.compactMap { $0 as? NSButton } ?? []
@@ -75,7 +127,7 @@ private extension SwarmTabStrip {
     let zoomFrame = zoom.convert(zoom.bounds, to: nil)
     let newFrame = newButton.convert(newButton.bounds, to: nil)
     try checkTitlebar(bounds.height >= 48, "Native title bar leaves room around the pill actions")
-    for button in [createButton, openButton] {
+    for button in [openButton] {
       let labelWidth = (button.title as NSString).size(withAttributes: [.font: button.font!]).width
       try checkTitlebar(button.frame.minY >= 6 && bounds.height - button.frame.maxY >= 6 && button.frame.width - labelWidth >= 32,
         "\(button.title) has vertical breathing room and readable horizontal padding")
@@ -103,6 +155,7 @@ private extension SwarmTabStrip {
       ["tabs": rows, "activeId": active, "enabled": enabled, "attention": 2]
     }
     update(state(rows, active: "swarm-11"))
+    try tabs[0].checkDoubleClickIsolation()
     let hover = NSEvent.mouseEvent(with: .mouseMoved, location: .zero, modifierFlags: [],
       timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, clickCount: 0, pressure: 0)!
     func click(_ count: Int, at point: NSPoint, time: TimeInterval) -> NSEvent {
@@ -176,22 +229,21 @@ private extension SwarmTabStrip {
     try checkTitlebar(!newButton.isEnabled,
       "New Tab respects the workspace's availability")
     update(state([["id": "swarm-0", "name": "Renamed tab"]], active: "swarm-0"))
-    try checkTitlebar(newButton.toolTip == nil && createButton.toolTip == nil && openButton.toolTip == nil,
+    try checkTitlebar(newButton.toolTip == nil && openButton.toolTip == nil,
       "Titlebar actions add no hover hints")
     try checkTitlebar(notificationButton.frame.maxX <= scroll.frame.minX,
       "The bell is before the tabs beside the traffic lights")
-    try checkTitlebar((newButton.isHidden || newButton.frame.maxX <= createButton.frame.minX) && scroll.frame.maxX <= createButton.frame.minX && createButton.frame.maxX < openButton.frame.minX,
-      "New and Open Harness have separate targets on the right")
-    try checkTitlebar(createButton.title == "New Harness" && openButton.title == "Open Harness",
-      "Creation and opening are explicit in the titlebar")
+    try checkTitlebar((newButton.isHidden || newButton.frame.maxX <= openButton.frame.minX) && scroll.frame.maxX <= openButton.frame.minX,
+      "Add Harness has its own target on the right")
+    try checkTitlebar(openButton.title == "Add Harness",
+      "The titlebar has one Add Harness entry point")
     try checkTitlebar(!subviews.contains(where: { $0 is NSTextField }), "The titlebar has no competing text editor")
     events.removeAll()
     newButton.performClick(nil)
     notificationButton.performClick(nil)
-    createButton.performClick(nil)
     openButton.performClick(nil)
-    try checkTitlebar(events == ["new", "notifications", "newAgent", "addAgent"],
-      "The new tab, notification, create and open buttons dispatch separate actions once")
+    try checkTitlebar(events == ["new", "notifications", "addAgent"],
+      "The new tab, notification and Add Harness buttons dispatch once")
     try checkTitlebar(notificationButton.hasAttention, "The bell represents pending agent attention")
     let oldButton = newButton
     var themedState = state([["id": "swarm-0", "name": "Renamed tab"]], active: "swarm-0")
@@ -206,14 +258,16 @@ private extension SwarmTabStrip {
     original.clickBothActions()
     try checkTitlebar(events == ["select", "close"], "Native selection and close dispatch once each")
 
+    let actionPixels = [openButton.renderedPixels()]
     events.removeAll()
     update(state([["id": "swarm-0", "name": "Renamed tab"]], active: "swarm-0", enabled: false))
     try original.checkEnabled(false)
-    try checkTitlebar(!newButton.isEnabled && !notificationButton.isEnabled && !createButton.isEnabled && !openButton.isEnabled, "Titlebar actions disable with a modal")
+    try checkTitlebar(!newButton.isEnabled && !notificationButton.isEnabled && !openButton.isEnabled, "Titlebar actions disable with a modal")
+    try checkTitlebar(actionPixels == [openButton.renderedPixels()],
+      "Add Harness keeps its rendered colors when a workspace modal opens")
     original.clickBothActions()
     newButton.performClick(nil)
     notificationButton.performClick(nil)
-    createButton.performClick(nil)
     openButton.performClick(nil)
     try checkTitlebar(events.isEmpty, "Disabled controls emit no actions")
     try checkDragOperations()
@@ -511,8 +565,11 @@ private extension SwarmTitlebar {
     let settings = appItem.submenu!.items[0]
     try checkTitlebar(settings.title == "Settings…" && settings.representedObject as? String == "settings", "Settings stays in the application menu")
     let agent = main.item(withTitle: "File")!.submenu!
+    let addHarness = agent.items.first(where: { $0.representedObject as? String == "addAgent" })!
+    try checkTitlebar(addHarness.title == "Add Harness…" && addHarness.keyEquivalent == "n" && addHarness.keyEquivalentModifierMask == [.command],
+      "The single Add Harness menu entry advertises Command-N")
     let historyMenu = main.item(withTitle: "History")!.submenu!
-    try checkTitlebar(agent.items.map { $0.isSeparatorItem ? "separator" : ($0.representedObject as? String ?? "") } == ["new", "newAgent", "addAgent", "renameActive", "closeActive", "separator", "splitRight", "splitDown", "zoomPane", "closePane"], "File groups Harness and Pane actions, without Pin or Add Project clutter")
+    try checkTitlebar(agent.items.map { $0.isSeparatorItem ? "separator" : ($0.representedObject as? String ?? "") } == ["new", "addAgent", "renameActive", "closeActive", "separator", "splitRight", "splitDown", "zoomPane", "closePane"], "File groups Harness and Pane actions, without Pin or Add Project clutter")
     try checkTitlebar(agent.items.filter { !$0.isSeparatorItem }.allSatisfy { $0.image != nil && $0.toolTip == nil },
       "Every File action has a native icon and no hover hint")
     try checkTitlebar(agent.items.contains { $0.title == "Rename Tab…" && $0.representedObject as? String == "renameActive" }, "Rename Tab preserves its command")

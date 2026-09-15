@@ -20,6 +20,12 @@ void main() {
     await (FontLoader(
       'MaterialIcons',
     )..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'))).load();
+    await (FontLoader('packages/lucide_icons_flutter/Lucide300')..addFont(
+          rootBundle.load(
+            'packages/lucide_icons_flutter/assets/build_font/LucideVariable-w300.ttf',
+          ),
+        ))
+        .load();
   });
   for (final (width, height, scale) in [
     (1280.0, 800.0, 1.0),
@@ -76,37 +82,51 @@ void main() {
         );
         await tester.pumpAndSettle();
         if (Platform.environment['HARNESS_ENTRY_CAPTURE_DIR'] != null) {
-          await tester.runAsync(
-            () => precacheImage(
-              const AssetImage('assets/harness_device.webp'),
-              tester.element(find.byType(SwarmScreen)),
-            ),
-          );
+          await tester.runAsync(() async {
+            final context = tester.element(find.byType(SwarmScreen));
+            await Future.wait([
+              precacheImage(
+                const AssetImage('assets/harness_device.webp'),
+                context,
+              ),
+              precacheImage(
+                const AssetImage(
+                  'assets/swarm-wallpapers/swarm-welcome-dusk.jpg',
+                ),
+                context,
+              ),
+            ]);
+          });
           await tester.pump();
         }
         final field = find.byKey(const ValueKey('harness-start-search'));
         final create = find.byKey(const ValueKey('harness-start-new'));
         final open = find.byKey(const ValueKey('harness-start-open'));
         final device = find.byKey(const ValueKey('harness-device-link'));
-        expect(find.text('Harness'), findsOneWidget);
-        expect(tester.widget<TextField>(field).decoration!.hintText, isEmpty);
+        expect(find.text('Harness'), findsNothing);
+        expect(
+          tester.widget<TextField>(field).decoration!.hintText,
+          'Find a harness',
+        );
         expect(tester.widget<TextField>(field).focusNode!.hasFocus, isTrue);
         expect(find.byType(ListTile), findsNothing);
         final fieldRect = tester.getRect(field);
         final createRect = tester.getRect(create);
         final openRect = tester.getRect(open);
-        expect(createRect.top, greaterThanOrEqualTo(fieldRect.bottom + 16));
-        expect(openRect.top, greaterThanOrEqualTo(fieldRect.bottom + 16));
+        final deviceRect = tester.getRect(device);
+        expect(createRect.center.dy, closeTo(openRect.center.dy, 1));
+        expect(openRect.top, greaterThan(fieldRect.bottom));
+        expect(openRect.left, closeTo(fieldRect.left, 1));
+        expect(createRect.left, greaterThan(openRect.right));
         expect(fieldRect.center.dx, closeTo(width / 2, 1));
-        expect(fieldRect.width, closeTo((width - 48).clamp(0, 640), 1));
+        expect(deviceRect.left, closeTo(fieldRect.left, 1));
+        expect(deviceRect.bottom, closeTo(height - 32, 1));
+        expect(find.text('Meet the Harness device'), findsOneWidget);
         expect(create.hitTestable(), findsOneWidget);
         expect(open.hitTestable(), findsOneWidget);
         expect(createRect.bottom, lessThanOrEqualTo(height));
         expect(openRect.bottom, lessThanOrEqualTo(height));
-        expect(
-          tester.getRect(device).top,
-          greaterThan(createRect.bottom + 150),
-        );
+        expect(deviceRect.top, greaterThanOrEqualTo(createRect.bottom + 24));
         final output = Platform.environment['HARNESS_ENTRY_CAPTURE_DIR'];
         if (output != null) {
           final boundary =
@@ -132,6 +152,20 @@ void main() {
         expect(results, findsOneWidget);
         expect(tester.getRect(results).height, greaterThan(140));
         expect(tester.getRect(results).width, tester.getRect(field).width);
+        expect(tester.getRect(field).left, closeTo(fieldRect.left, 1));
+        expect(tester.getRect(field).right, closeTo(fieldRect.right, 1));
+        expect(tester.getRect(field).top, closeTo(fieldRect.top, 1));
+        expect(tester.getRect(device), deviceRect);
+        expect(
+          tester.getRect(results).bottom,
+          lessThanOrEqualTo(deviceRect.top - 24),
+        );
+        expect(create, findsNothing);
+        expect(open, findsNothing);
+        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+        await tester.pump();
+        expect(tester.getRect(field).width, closeTo(fieldRect.width, 1));
+        expect(tester.getRect(device), deviceRect);
         await tester.ensureVisible(create);
         expect(create.hitTestable(), findsOneWidget);
         await tester.tap(create);

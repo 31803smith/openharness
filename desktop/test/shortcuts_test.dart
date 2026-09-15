@@ -267,8 +267,8 @@ void main() {
         appShortcuts().where((s) => describeShortcut(s.activator) == '⌘P'),
         isEmpty,
       );
-      expect(chordsFor(ShortcutAction.addAgent), ['⌘O']);
-      expect(chordsFor(ShortcutAction.newAgent), ['⌘N']);
+      expect(chordsFor(ShortcutAction.addAgent), ['⌘N']);
+      expect(chordsFor(ShortcutAction.newAgent), ['⇧⌘N']);
       expect(chordsFor(ShortcutAction.showAttention), ['⇧⌘I']);
       expect(chordsFor(ShortcutAction.findTerminal), ['⌘F']);
       expect(chordsFor(ShortcutAction.findNext), ['⌘G']);

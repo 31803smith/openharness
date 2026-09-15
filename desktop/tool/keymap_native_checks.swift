@@ -49,6 +49,14 @@ try checkKeymap(changed.match([stroke("ctrl+j")], context: "picker").binding?.co
   "Picker remapping wins")
 try checkKeymap(defaults.match([stroke("cmd+i")], context: "picker").binding == nil,
   "Always-on preview does not consume a hide-preview shortcut")
+for (key, command) in [("pageup", "picker.preview_page_up"), ("pagedown", "picker.preview_page_down")] {
+  try checkKeymap(defaults.match([stroke(key)], context: "picker").binding?.command == command,
+    "Preview paging follows the exported Search binding")
+  for context in ["workspace", "terminal"] {
+    try checkKeymap(defaults.match([stroke(key)], context: context).binding == nil,
+      "Preview paging leaves \(context) input alone")
+  }
+}
 
 let dispatcher = HarnessNativeKeyDispatch(changed)
 let field = NSObject(), otherField = NSObject()
@@ -82,6 +90,8 @@ try checkKeymap(send("cmd+o", executable: false).handled && send("cmd+o", execut
   "An unavailable mapped action cannot fall through as input")
 try checkKeymap(send("cmd+o", repeated: true).command == nil, "Search does not repeat")
 try checkKeymap(send("ctrl+j", repeated: true).command == "picker.previous", "Result movement repeats")
+try checkKeymap(send("pagedown", repeated: true).command == "picker.preview_page_down",
+  "Holding a preview paging key continues scrolling")
 _ = send("cmd+k")
 dispatcher.suspend()
 try checkKeymap(dispatcher.pending.isEmpty && !dispatcher.release(1), "Window blur clears pending and held keys")
@@ -94,6 +104,8 @@ try checkKeymap(HarnessKeyStroke.fromCharacters("1", modifiers: [.command, .shif
   "Shift stays in modifiers after layout translation")
 try checkKeymap(HarnessKeyStroke.fromCharacters("\u{f702}", modifiers: .command) == stroke("cmd+left"),
   "AppKit arrow characters map to the same logical keys")
+try checkKeymap(HarnessKeyStroke.fromCharacters("\u{f72d}", modifiers: [.function, .numericPad]) == stroke("pagedown"),
+  "Mac Fn navigation maps to preview paging without an extra modifier")
 try checkKeymap(HarnessKeyStroke.fromCharacters("木", modifiers: []) == nil,
   "Unsupported composed text is not guessed as a QWERTY key")
 try checkKeymap(stroke("cmd+shift+left").menuEquivalent == "\u{f702}" && stroke("f24").menuEquivalent == "\u{f71b}",

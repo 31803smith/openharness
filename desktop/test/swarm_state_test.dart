@@ -130,9 +130,9 @@ void main() {
     );
   }
 
-  for (final legacy in ['New swarm', 'New tab', 'New Agent']) {
+  for (final legacy in ['New swarm', 'New tab', 'New Agent', 'New Harness']) {
     test(
-      '$legacy empty tabs restore as New Harness and still name the first agent',
+      '$legacy empty tabs restore as New Tab and still name the first agent',
       () async {
         final store = MemoryStore();
         final original = createApp(store: store);
@@ -147,7 +147,7 @@ void main() {
         final restored = createApp(store: store);
         addTearDown(restored.dispose);
         await restored.restorePaneLayoutForTest();
-        expect(restored.activeSwarm.name, 'New Harness');
+        expect(restored.activeSwarm.name, 'New Tab');
         await restored.addAgentToSwarm('m', 'a0');
         expect(restored.activeSwarm.name, 'Agent 0');
       },

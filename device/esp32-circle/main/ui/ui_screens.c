@@ -8176,3 +8176,45 @@ void ui_voice_stop(void)
     display_unlock();
     if (audio_client_active()) audio_client_stop();
 }
+
+// ── what covers the face, as one line whenever it changes ───────────────────────────────────────────
+// A press eaten by an invisible clickable layer is indistinguishable from dead touch, and the dial has
+// half a dozen things that can be over a tile: the voice overlay, the dim, the notification drawer, the
+// agent switcher, the picker screen, the lock. Rather than a line at every show and hide site (there are
+// dozens, on several tasks), this is ONE snapshot, taken on the LVGL task every loop and printed only
+// when it differs from the last one. Read beside touch.c's press/release lines, it says what the press
+// landed on.
+void ui_log_state_if_changed(void)
+{
+    static uint32_t last;
+    lv_obj_t *scr = lv_screen_active();
+    int page = scr == scr_projects ? (s_overview_active ? 1 : s_settings_active ? 2 : s_machines_active ? 3 : 4)
+             : scr == scr_reader ? 5 : scr == scr_question ? 6 : scr == scr_picker ? 7
+             : scr == scr_connecting ? 8 : scr == scr_error ? 9 : 0;
+    bool voice_ov = s_voice_overlay && !lv_obj_has_flag(s_voice_overlay, LV_OBJ_FLAG_HIDDEN);
+    bool dimmed   = s_dim && lv_obj_get_style_bg_opa(s_dim, 0) > LV_OPA_50;
+    uint32_t now = (uint32_t)page
+                 | (uint32_t)(page == 4 ? (s_active_idx & 0xFF) : 0) << 4
+                 | (uint32_t)voice_ov << 12
+                 | (uint32_t)ui_voice_is_active() << 13
+                 | (uint32_t)s_notif_open << 14
+                 | (uint32_t)ui_switch_is_open() << 15
+                 | (uint32_t)ui_lock_active() << 16
+                 | (uint32_t)display_is_asleep() << 17
+                 | (uint32_t)dimmed << 18
+                 | (uint32_t)s_connected << 19;
+    if (now == last) return;
+    last = now;
+    static const char *const names[] = { "other", "overview", "settings", "machines", "agent", "reader",
+                                         "question", "picker", "connecting", "error" };
+    ESP_LOGI(TAG, "face: %s%s%s%s%s%s%s%s",
+             names[page],
+             voice_ov ? " +voice-overlay" : "",
+             ui_voice_is_active() ? " +voice-active" : "",
+             s_notif_open ? " +drawer" : "",
+             ui_switch_is_open() ? " +switcher" : "",
+             ui_lock_active() ? " +lock" : "",
+             display_is_asleep() ? " asleep" : "",
+             dimmed ? " dimmed" : "");
+    if (page == 4) ESP_LOGI(TAG, "face: agent %d of %d%s", s_active_idx, s_proj_count, s_connected ? "" : " (not connected)");
+}

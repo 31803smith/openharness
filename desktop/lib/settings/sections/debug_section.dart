@@ -86,9 +86,11 @@ class _DebugSectionState extends State<DebugSection> {
     return SectionScaffold(
       title: 'Debug',
       subtitle:
-          'Everything this app logged this session — the same lines '
-          '${DailyLogFile.defaultDirectory.path} keeps for a fortnight. '
-          'Credentials are stripped before anything is written.',
+          'Everything this app logged this session, and the dial\'s own log '
+          'as the daemon writes it — the same lines '
+          '${DailyLogFile.defaultDirectory.path} keeps for a fortnight (the '
+          'dial\'s for a week). Credentials are stripped before anything is '
+          'written. Export logs zips the last seven days to the Desktop.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -185,15 +187,17 @@ class _DebugSectionState extends State<DebugSection> {
   }
 
   /// The order the categories read in: the socket the app lives on, then the
-  /// two CLIs, then its own narrative. Anything new lands after them, in
+  /// two CLIs, then the dial (read from the daemon's `dial-*.log`), then its
+  /// own narrative. Anything new lands after them, in
   /// alphabetical order, rather than jumping the queue.
   static int _categoryRank(String category) => switch (category) {
     'ws' => 0,
     'cli' => 1,
-    'api' => 2,
-    'app' => 3,
-    'flutter' => 4,
-    _ => 5,
+    'dial' => 2,
+    'api' => 3,
+    'app' => 4,
+    'flutter' => 5,
+    _ => 6,
   };
 
   Widget _list(bool nothingLogged, List<LogEntry> visible) {

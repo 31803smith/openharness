@@ -1,6 +1,7 @@
 #include "display.h"
 #include <stdlib.h>
 #include "touch.h"
+#include "ui_screens.h"
 #include "board_pins.h"
 #include "ram_telemetry.h"
 #include "freertos/FreeRTOS.h"
@@ -13,6 +14,7 @@
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "esp_log.h"
+#include "esp_task_wdt.h"
 #include "lvgl.h"
 
 // CO5300 power-on / init register sequence, taken verbatim from Waveshare's
@@ -78,11 +80,46 @@ static void lvgl_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px)
 // LVGL needs a millisecond tick.
 static void tick_cb(void *arg) { lv_tick_inc(2); }
 
+// ── liveness ────────────────────────────────────────────────────────────────────────────────────────
+// One line a minute from THIS task. Its presence says the UI task is turning; its absence, while the
+// cable's own lines carry on, is the one signature of a wedged LVGL task there is — the daemon marks the
+// gap in the dial's log on its side. The figures beside it are the ones a stuck report asks for first:
+// heap, LVGL's pool, and whether touch is alive.
+#define HEARTBEAT_MS 60000
+
+static void heartbeat(void)
+{
+    static uint32_t last;
+    if (last && lv_tick_elaps(last) < HEARTBEAT_MS) return;
+    last = lv_tick_get();
+    touch_stats_t t;
+    touch_stats(&t);
+    lv_mem_monitor_t m;
+    lv_mem_monitor(&m);
+    ESP_LOGI(TAG, "alive up=%lus heap=%u/%u psram=%u lv=%u%%used frag=%u%% touches=%lu last_press=%lus%s%s%s%s",
+             (unsigned long)(lv_tick_get() / 1000),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+             (unsigned)m.used_pct, (unsigned)m.frag_pct,
+             (unsigned long)t.presses, (unsigned long)(t.last_press_ms_ago / 1000),
+             t.controller_ok ? "" : " TOUCH-DEAD",
+             t.read_failures ? " read-fails" : "",
+             t.inferred_releases ? " inferred-releases" : "",
+             t.held_now ? " PRESS-HELD" : "");
+}
+
 static void lvgl_task(void *arg)
 {
+    // Under the task watchdog: a UI task that stops turning used to be a frozen glass with nothing to
+    // read; now it is a reboot whose reason and last log lines come back over the cable (last_words.c).
+    esp_task_wdt_add(NULL);
     while (1) {
+        esp_task_wdt_reset();
         display_lock();
         uint32_t next = lv_timer_handler();
+        heartbeat();
+        ui_log_state_if_changed();
         // Idle → turn the panel off to save battery. LVGL resets the inactivity timer on every real
         // touch (indev read), so this fires only after IDLE_MS with no touch. Fires REGARDLESS of charging
         // (user wants it to off even while plugged in); plugging in still wakes once (ui_screens tick) and
@@ -234,7 +271,31 @@ void display_init(void) { display_init_impl(DRAW_LINES, true); }
 // WiFi RX buffers) and no touch — just enough to render the OTA progress screen.
 void display_init_ota(void) { display_init_impl(DRAW_LINES / 4 > 0 ? DRAW_LINES / 4 : 1, false); }
 
-void display_lock(void)   { xSemaphoreTakeRecursive(s_lvgl_mutex, portMAX_DELAY); }
+// The LVGL lock, with a voice. Every task that draws takes it; the LVGL task takes it every 20ms. A wait
+// past LOCK_WARN_MS is not a busy frame — it is a task that took the lock and blocked inside it (a cable
+// write that never drains, an I2C reset with its delays), and the line below is the last thing written
+// before the screen stops. It names the waiter AND the holder, which is what turns "the dial froze" into
+// a pair of function names.
+#define LOCK_WARN_MS 2000
+#define LOCK_WARN_EVERY_MS 10000
+static const char *volatile s_lock_holder = "-";
+static const char *volatile s_lock_holder_task = "-";
+
+void display_lock_at(const char *who)
+{
+    if (xSemaphoreTakeRecursive(s_lvgl_mutex, pdMS_TO_TICKS(LOCK_WARN_MS)) == pdTRUE) goto held;
+    uint32_t waited = LOCK_WARN_MS;
+    for (;;) {
+        ESP_LOGW(TAG, "display_lock: %s (task %s) waiting %lus — held by %s (task %s)", who,
+                 pcTaskGetName(NULL), (unsigned long)(waited / 1000), s_lock_holder, s_lock_holder_task);
+        if (xSemaphoreTakeRecursive(s_lvgl_mutex, pdMS_TO_TICKS(LOCK_WARN_EVERY_MS)) == pdTRUE) break;
+        waited += LOCK_WARN_EVERY_MS;
+    }
+    ESP_LOGW(TAG, "display_lock: %s got it after %lus", who, (unsigned long)(waited / 1000));
+held:
+    s_lock_holder = who;
+    s_lock_holder_task = pcTaskGetName(NULL);
+}
 void display_unlock(void) { xSemaphoreGiveRecursive(s_lvgl_mutex); }
 
 bool display_is_asleep(void) { return s_asleep; }

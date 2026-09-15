@@ -15,6 +15,7 @@ class SessionPreview {
   final List<String> earlierResponses = [];
   String? currentRequest, liveText, completedText, savedText, activity;
   String _streamText = '';
+  String? _searchText;
   bool turnOpen = false,
       interrupted = false,
       fetched = false,
@@ -35,8 +36,9 @@ class SessionPreview {
   String? get response => completedText ?? savedText;
   String? get responseExcerpt {
     final text = response;
-    if (text == null || completedText != null || contextResponse == text)
+    if (text == null || completedText != null || contextResponse == text) {
       return text;
+    }
     // Cached fullText may include the "I'll commit" preamble before the final
     // receipt. Keep the existing outcome paragraphs, not just the preamble.
     final paragraphs = text.split(RegExp(r'\n\s*\n'));
@@ -59,6 +61,18 @@ class SessionPreview {
       : response;
   bool get hasContent =>
       latestRequest != null || liveText != null || response != null;
+
+  /// A lazy, normalized field over the same bounded excerpts as the preview.
+  /// Keystrokes reuse it; it owns no history or separate search index.
+  String get searchText => _searchText ??= {
+    currentRequest,
+    latestRequest,
+    earlierRequest,
+    liveText,
+    responseExcerpt,
+    ...earlierResponses,
+    activity,
+  }.whereType<String>().join('\n').toLowerCase();
 
   void _rememberRequest(Object? value) {
     final text = previewText(value, limit: 1600);
@@ -96,6 +110,7 @@ class SessionPreviewStore extends ChangeNotifier {
 
   SessionPreview _entry(SessionPreviewKey key) {
     final entry = _records.remove(key) ?? SessionPreview();
+    entry._searchText = null;
     _records[key] = entry;
     while (_records.length > capacity) {
       _records.remove(_records.keys.first);
@@ -186,6 +201,7 @@ class SessionPreviewStore extends ChangeNotifier {
         entry.receivedAt = _now();
       }
       entry.fetched = true;
+      entry._searchText = null;
       _changed();
     } catch (_) {
       if (current()) {

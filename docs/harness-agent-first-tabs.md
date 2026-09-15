@@ -7,10 +7,20 @@ proposals in the progress log.
 
 ## Open and New Harness
 
-**Cmd-T / New Tab** and the tab-bar plus open the Harness start page. Its solid
-background matches the selected tab. The centered title and search controls sit
-lower with generous empty space. The resting field is no wider than 640 logical pixels,
-with **Open Harness** and accented **+ New Harness** buttons underneath.
+**Cmd-T / New Tab** and the tab-bar plus open the Harness start page over its
+restored lake-at-dusk wallpaper. A long search field, capped at 1120 logical pixels,
+has a prominent 64-pixel minimum height and shows **Find a harness** in place of
+a large heading. **Open Harness** and accented
+**+ New Harness** sit underneath, aligned with the field's left edge. The pill
+buttons retain their smaller 48-pixel height and wrap at narrow widths or large
+text sizes. The device image and its caption share that same left edge in a footer
+32 pixels above the window bottom. The footer stays put when search opens or
+closes. Short windows use a small image beside the caption to preserve search space.
+
+Activating search keeps the field's position and width fixed and reveals results and preview
+side by side at widths of 700 logical pixels and above. The actions hide while
+searching. Results fit the available space above the footer and scroll independently.
+Escape restores both actions and retains the query.
 
 The field starts empty and focused so typing works immediately. Typing, clicking
 it or Open Harness, or pressing an arrow reveals the same input, results,
@@ -24,11 +34,11 @@ refreshes results against current app state. Command-mode shortcuts synchronize
 the field and results without adding editor rebuilds to arrow navigation.
 Opening the dropdown keeps its whole list viewport inside the window. Resizing
 or changing text size reveals the highlighted row without changing the selection.
-A small product image and introduction sit well below the controls and link to
+A small product image and caption stay in the footer and link to
 https://www.autonomous.ai/harness-device. The bundled image is the official
 device image from https://cdn.autonomous.ai/production/ecm/260731/2.webp,
-cropped in the viewport so the device is larger and centered. The short introduction is
-“The ultimate Harness setup” / “Scroll, switch panes, and give voice commands.”
+cropped in the viewport so the device is larger and centered. The caption is
+“Meet the Harness device”
 The start-page actions use the same pill shape as the titlebar. The device link
 and both pairs of New/Open buttons show a hand cursor. Open Harness on the start
 page is transparent with a subtle border; New
@@ -48,26 +58,36 @@ removed. Accessible names remain, and menus and Keyboard Shortcuts show bindings
 The creation dialog title and CTA are **New Harness**. Cancel is removed; Escape
 and clicking outside dismiss it. Launch-in-progress and uncertain-outcome states
 retain their existing safeguards and recovery actions.
-Quick agent choices retain their compact row when labels fit, and wrap into
-additional rows at larger text sizes so their names remain readable.
+Machine and Agent use the same direct-choice layout: up to three buttons, with
+**…** only when more options exist. This computer comes first; machines show
+local/remote and offline/link status below their names. The first two agent slots
+are Codex and Claude Code; the third begins as Cursor. Choosing from **…** replaces
+the third slot, and that option stays available while switching between the first
+two. All options remain in **…**. Selection uses an accent-tinted fill and check;
+a separate outline shows keyboard focus. Names wrap into additional button rows
+at larger text sizes; long custom names have their full text in a tooltip.
+Selecting the current machine again preserves the chosen folder. One healthy
+local machine still needs no machine selector.
 The folder control receives initial keyboard focus, so Enter opens its chooser.
 A successful keyboard folder choice focuses the enabled New Harness action;
 cancellation or failure returns focus to the folder control. If a required Codex
 account lookup is still pending, focus stays on the folder instead of a disabled
 submit action. Completing that lookup does not steal focus.
 
-Machine and agent menus support typing a name to highlight a choice. Enter
+The **…** menus support typing a name to highlight a choice. Enter
 selects it; Escape returns to the field without changing the value. These keys
 also work immediately after opening the menu, before its first frame.
 
 The Open popup keeps its full-width **Find a harness** field, single-choice
 results and 90% black backdrop. Only the highlighted row shows **Open Harness**,
 **Open N Harnesses**, or **Split right/down**, depending on context.
-Both Open and inline start-page search show the same session preview. The open
+Both Open and inline start-page search show the same session preview. The Cmd-O
 surface can grow to 1120 logical pixels, placing the list and preview side by
 side. Narrow windows stack them with a compact preview heading. Both sections
-scroll independently; the start-page actions stay reachable. Hover selects a
+scroll independently; the expanded panel stays within view. Hover selects a
 preview without taking typing focus. Enter opens the highlighted result.
+Page Up/Down scrolls the preview while retaining the query, focus and selection.
+The bindings are configurable in the same Search keymap as result navigation.
 
 Working sessions lead with the current observed request and latest activity.
 Idle sessions lead with an existing saved response or the latest response seen

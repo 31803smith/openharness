@@ -16,14 +16,14 @@ void main() {
     final input = <TerminalBinaryFrame>[];
     final pane = app.adoptSessionForTest(terminal('a0', input));
     await mount(tester, app);
-    await chord(tester, LogicalKeyboardKey.keyO);
+    await chord(tester, LogicalKeyboardKey.keyN);
     final field = find.byKey(const ValueKey('swarm-search-input'));
     final results = find.byKey(const ValueKey('swarm-search-results'));
     expect(field, findsOneWidget);
     expect(find.byType(AlertDialog), findsNothing);
     expect(find.byKey(const ValueKey('swarm-search-new-agent')), findsNothing);
     expect(tester.getRect(field).width, tester.getRect(results).width);
-    await chord(tester, LogicalKeyboardKey.keyN);
+    await chord(tester, LogicalKeyboardKey.keyN, shift: true);
     expect(find.byType(AlertDialog), findsOneWidget);
     expect(find.widgetWithText(FilledButton, 'New Harness'), findsOneWidget);
     expect(results, findsNothing);
@@ -53,7 +53,7 @@ void main() {
       app.newSwarm();
       final target = app.activeSwarm;
       await mount(tester, app);
-      await chord(tester, LogicalKeyboardKey.keyO);
+      await chord(tester, LogicalKeyboardKey.keyN);
       final field = find.byKey(const ValueKey('swarm-search-input'));
       await tester.enterText(field, 'Agent 0');
       await tester.pump();

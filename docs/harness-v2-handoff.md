@@ -1,6 +1,6 @@
 # Harness v2: goal, plan, and continuation handoff
 
-Updated September 14, 2026. Resume on current **main**, preserve local work, and
+Updated September 15, 2026. Resume on current **main**, preserve local work, and
 commit/push completed changes frequently as the user requests.
 
 This is the current continuation guide. The detailed UI contract is
@@ -45,14 +45,23 @@ are:
   Cmd-H/J/K/L and Cmd-arrows focus panes; Cmd-1…9 select tabs. User bindings take
   precedence. Cmd-R splits right and Cmd-D splits down. Native menus, help and actual
   dispatch must agree; native menu and titlebar hover hints are removed.
-- New Tab uses the Google-like page with a **solid selected-tab background**,
-  lower centered controls and generous whitespace. Resting search is at most 640 logical
-  pixels wide, blank and focused initially. Its expanded preview can grow to 1120 pixels.
+- New Tab uses the **restored lake-at-dusk wallpaper**, a long search field capped
+  at 1120 logical pixels, and no large Harness heading. The hint is **Find a
+  harness**. Search starts blank and focused, with results hidden. Open Harness
+  and New Harness sit underneath, aligned with the search field's left edge.
+  Search has a **64-pixel minimum height** with more vertical padding; the
+  action buttons remain 48 pixels high. Cmd-O retains its existing input size.
+  Activating search preserves the field position and width; results and preview
+  appear side by side from 700 pixels wide, and the actions hide. The buttons
+  wrap when needed. Escape restores the actions and query.
   Typing, clicking, or pressing an arrow
   reveals the same results, selection, arrows and Enter behavior as Cmd-O.
   Focus alone leaves results hidden and builds no catalog. Open Harness and
-  accented **+ New Harness** sit below it; a small official device image and
-  introduction sit well below, linking to autonomous.ai/harness-device.
+  accented **+ New Harness** share a row below search; a small official device
+  image and **Meet the Harness device** caption stay in a footer 32 pixels above
+  the bottom, aligned to the same left edge and linking to autonomous.ai/harness-device.
+  Search uses the remaining space above the footer, which stays still when results
+  open or close. Short windows use a compact horizontal device card.
   The five recent-agent rows are removed. Both pairs of actions are rounded
   pills, with transparent outlined Open buttons and hand cursors. The official
   `2.webp` device photo is cropped and centered in its viewport, with a hand cursor.
@@ -68,10 +77,19 @@ are:
   events. No `session_get`, full-history read, or terminal attachment. Cached
   selection is immediate; cold data fills asynchronously. Disconnected records
   retain saved text without claiming a live working/waiting state.
+  Page Up/Down scrolls preview content without changing selection or typing focus;
+  both actions participate in the configurable Search keymap.
+- The Harness application menu includes **Check for Updates…**, using the
+  existing manual update-check dialog, directly above Flash Firmware.
 - Creation uses **New Harness** for its title and CTA, with no ordinary Cancel.
   Escape or one outside click dismisses it directly. A pending launch cannot be
   dismissed accidentally; an uncertain outcome retains Close and Check status.
-  The form does not restore search underneath it.
+  The form does not restore search underneath it. Machine and Agent show up to
+  three direct choices and **…** for the rest. An overflow choice replaces the
+  third slot and remains available while switching between the first two.
+  Selected choices use an accent tint and check, distinct from the focus outline.
+  Machine names retain local/remote and offline/link details. Clicking the current
+  machine preserves the working folder; large text wraps the buttons.
 - A single-agent tab/search/history entry uses that agent's engine icon;
   multiple agents use four outlined tiles. An empty tab uses a plain plus, and
   tab close marks appear only on hover/focus. Only one unused New Harness page
@@ -98,6 +116,14 @@ Recent pushed checkpoints:
 
 | Checkpoint | Change |
 | --- | --- |
+| **021ef72** | Makes the New Tab search field taller (64-pixel minimum), keeping the fixed field geometry and footer through preview expansion. |
+| **620a868** | Visible machine and agent choices, selected overflow option in the third slot, clearer selection and preserved folder on repeated selection. |
+| **526b832** | Restores the original lake wallpaper and pins the device near the fold with the single Meet the Harness device caption. Search uses the remaining space without moving the footer. |
+| **1dd7c4b** | Long fixed-width search with the Find a harness hint; restores the mesh wallpaper and aligns smaller actions and the device card left, removing the large heading. |
+| **f5d293c** | Restores Check for Updates in the Harness menu. |
+| **90b6f68** | Page Up/Down reads preview content without moving search selection or focus; bindings support remapping, repeats and composition guards. |
+| **2292fe8** | Cached commit receipts show their existing outcome paragraphs, keeping useful earlier context visible. |
+| **08f4c98** | Retain earlier existing responses so an acknowledgement or commit receipt does not hide the session's purpose. |
 | **76bdf6e** | Disconnected previews retain text with honest state; all preview and existing desktop checks verified together. |
 | **91cfb6a** | Shared responsive previews in Cmd-O and inline search, waiting-first groups, retained keyboard ownership and visible actions after expansion. |
 | **7da0c12** | Bounded existing-content cache, two background reads at a time, independent request/response records, stale-session guards and live event isolation. |
@@ -111,19 +137,47 @@ found useful requests and full saved answers in several Codex sessions, and no
 meaningful text in one Claude session. It does not invent missing content or
 promise complete coverage for every engine. The protocol is unchanged.
 
-The final full run passed **1,562 desktop tests**, with one optional media
-placeholder skipped: /private/tmp/harness-preview-context-verified.log. All **13 changed
-Dart files analyze cleanly**: /private/tmp/harness-preview-context-analyze.log.
-The focused regression pass also covers large-text resize, remapped keyboard
-actions, retained focus, first-use actions, caching and session identity.
-The last unchanged native contract run passes
-**373 AppKit checks**, including hidden window layout,
-in /private/tmp/harness-one-start-tab-native.log; the prior keyboard export
-passes **85 native keymap checks**. Native latency benchmarking remains deferred.
+The visible-choice refinement has **91 passing desktop tests** in
+/private/tmp/harness-visible-choices-tests.log. Coverage includes overflow
+selection and replacement, quick switching, immediate menu typeahead, keyboard
+focus, selected-machine idempotence, machine/folder races, remote folders, Codex
+profiles, large-text layouts and creation recovery. Changed Dart files analyze
+cleanly in /private/tmp/harness-visible-choices-analyze.log.
 
-The updated start page was rendered and inspected at
-/private/tmp/harness-focus-stop-captures/entry-1280-1.0.png. These widget renders
-use synthetic data; they do not establish native font metrics or live latency.
+The taller search field passes **42 existing entry/search checks** in
+/private/tmp/harness-taller-search-tests.log, with clean analysis in
+/private/tmp/harness-taller-search-analyze.log. Real-font renders are in
+/private/tmp/harness-taller-search-captures. Field alignment, keyboard behavior
+and the pinned device remain covered at normal, narrow and large-text sizes.
+
+The preceding lake/footer pass has **32 passing entry/search tests** in
+/private/tmp/harness-lake-entry-tests.log and a clean analysis in
+/private/tmp/harness-lake-entry-analyze.log. They verify fixed field geometry and
+the device's identical bounds before and after search, including short windows.
+The earlier **131-test** entry/search run in
+/private/tmp/harness-wallpaper-entry-tests.log also covered preview paging,
+composition, retained focus, bootstrap and first use; it predates the latest
+lake and choice refinements.
+
+The exported keyboard bindings pass **93 native keymap checks** and **388 AppKit
+checks**, including hidden window layout, in
+/private/tmp/harness-preview-keyboard-native.log. Native latency benchmarking
+remains deferred. The earlier complete suite passed **1,562 desktop tests**, with
+one optional media placeholder skipped, in
+/private/tmp/harness-preview-context-verified.log; that full run predates the latest
+entry and installer changes.
+
+The creation form was rendered with real fonts at 900×720, 880×560 and
+600×700 with 200% text in /private/tmp/harness-visible-choices-captures. The
+normal-size rows keep all three choices and **…** together; larger text wraps
+without clipping names. Captures include a selected fourth machine and Kilo in
+the third agent slot. These renders use synthetic data and do not launch agents.
+
+The lake start page was rendered at normal, narrow and larger-text sizes in
+/private/tmp/harness-lake-entry-captures. The installed **526b832** build was
+inspected directly and the user approved its background, preview and footer
+placement. The restored native Check for Updates command was verified earlier:
+it opened the existing update offer; no update was installed.
 
 ### Prepared build versus running preview
 
@@ -135,29 +189,53 @@ Only supported current preview location:
 
 /Users/ab/code/autonomous-harness/desktop/build/macos/Build/Products/Release/Harness.app
 
-The preview was updated through **518977c** using Quit and Keep Windows and
-verified visually. The console is accessible; older locked-console notes are
-obsolete. Before replacing it with later changes, verify the new Release build
+The prepared build includes **021ef72** and passed in
+/private/tmp/harness-taller-search-release.log with deep, strict signature
+verification. Its window-preserving installation is pending while the user
+finishes an active folder chooser.
+
+The running preview was updated through **526b832** using Quit and Keep Windows. The
+Release build passed in /private/tmp/harness-lake-entry-release.log; the
+prepared and installed bundles passed deep, strict signature verification. The
+existing app v2, workshop and personal tabs restored successfully, along with
+the unused New Harness tab. The resting New Tab layout was inspected in this
+exact build; shared search interactions are covered by the widget checks above.
+The console is accessible; older locked-console notes are obsolete. Before replacing
+it with later changes, verify the new Release build
 and signatures, use **Quit and Keep Windows**, then check the exact process is
 stopped. Back up and replace only the current checkout's bundle, verify it, and
 reopen that exact path. Ordinary Quit can terminate agents. Do not call getApp
 between quitting and copying, since that lookup can relaunch the app.
 
-A verified previous preview backup is
-/private/tmp/harness-before-518977c-o88b2e1p/Harness.app.
+The immediately previous preview backup is
+/private/tmp/harness-before-lake-entry-fmqz73k5/Harness.app.
 Do not open the other checkout's retired UI or /Applications/Harness.app. Do not
 restart/upgrade the user's CLI daemon or type test commands into working agents.
 Temporary logs, SDKs, builds, account state and preview processes do not transfer
 with Git.
 
-## Creation discussion and approved preview work
+## Creation and preview work
 
-The **larger New Harness creation form is not implemented**. The discussed
+The approved visible-choice refinement is implemented in **620a868**. This removes
+the primary machine dropdown and the detached selected-agent line. It preserves
+engine discovery, profile checks, folder targeting and uncertain-launch recovery.
+
+The **larger project-creation workflow is not implemented**. The discussed
 shape is New Project / Existing Folder / Clone Repository, remembered agent,
 and compact This Machine / linked-machine choices in a spacious form. A new
 project would create its own folder, requiring no picker or typing. Do not infer
-the project from the current pane in a multiproject workspace. The user has been
-told candidly that entry/chrome polish is separate from this form redesign.
+the project from the current pane in a multiproject workspace. The visible-choice
+refinement is separate from that larger workflow.
+
+Command-held tab number hints were discussed as a discoverability improvement:
+brief hold, subtle hints in each tab's right edge, no label movement. They have
+not been implemented.
+
+Continuing the lake wallpaper into the native selected New Tab was inspected
+and deliberately left out under the user's “only if simple” constraint. The
+AppKit accessory is outside the Flutter content view; a seamless image would
+need coordinated cropping and positioning across resize/fullscreen. No native
+tab background or window content layout was changed for this idea.
 
 The user approved **building a useful, beautiful, fast search preview** in Cmd-O
 and New Tab. The shared UI and cache are now implemented. The user explicitly
@@ -308,7 +386,7 @@ post-inspired implementation:
 ### Visual quality and first impression
 
 - The start page, titlebar, modal result rows and pane controls follow the current
-  entry/pane contract. Flat backgrounds, whitespace, title/metadata hierarchy,
+  entry/pane contract. The start-page lake, whitespace, title/metadata hierarchy,
   single/group icons, labels and native/Flutter button contrast are consistent.
 - All six coordinated palettes, real fonts/content, larger text, narrow windows,
   keyboard focus indicators and accessibility labels remain legible and usable.

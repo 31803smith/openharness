@@ -29,6 +29,8 @@ import { VERSION } from './version.js'
 import { sqlitePreflightMessage } from './lib/sqliteAvailability.js'
 import { warmLoginShellEnvironment } from './lib/loginShellEnv.js'
 import { ensureUtf8Locale } from './lib/childLocale.js'
+import { DialLog } from './cable/dialLog.js'
+import { buildLogBundle, bundleFileName, redactSecretsInText } from './lib/logBundle.js'
 import { CableSession } from './cable/cableSession.js'
 import { DaemonCableHost, cableEventFor, cableQuestionFor, cableQuestionCloseFor } from './cable/cableHost.js'
 
@@ -285,6 +287,7 @@ Machine:
   harness stop                 stop the background adapter (keeps the SSO session)
   harness reset                stop the adapter and clear local CLI state
   harness status               show whether it's running (+ version)
+  harness logs export          zip the last 7 days of logs (app, CLI, dial, daemon) to the Desktop
   harness machines             list the machines on this account (this computer's is marked)
   harness machines delete <id> remove ANOTHER machine (refuses this one; use \`harness logout\`)
   harness version              print the installed version (v${VERSION})
@@ -4388,7 +4391,13 @@ async function runForeground(session: AuthSession): Promise<void> {
   cableHostRef = cableHost
   // Anything the window said while this was still being built.
   cableHost.setDesk(appPaneAgents)
-  const cable = new CableSession(cableHost, join(env.ADAPTER_DATA_DIR, 'dial.log'))
+  // The dial's log now lives with the app's, one file a day — see dialLog.ts. The old unbounded
+  // `cli/data/dial.log` is cut down to a pointer, for anyone with a bookmark.
+  const legacyDialLog = join(env.ADAPTER_DATA_DIR, 'dial.log')
+  if (existsSync(legacyDialLog)) {
+    try { writeFileSync(legacyDialLog, `moved to ${join(env.HARNESS_LOGS_DIR, 'dial-YYYYMMDD.log')}\n`) } catch { /* best effort */ }
+  }
+  const cable = new CableSession(cableHost, new DialLog(env.HARNESS_LOGS_DIR))
   cableRef = cable
 
   autonomousDeviceService = new AutonomousDeviceService({
@@ -4536,6 +4545,7 @@ function printInfoBlock(opts: {
   console.log(row('agents', `${opts.sessions} available`))
   console.log(row('pid', String(opts.pid)))
   console.log(row('logs', tildify(LOG_FILE)))
+  console.log(row('dial log', tildify(join(env.HARNESS_LOGS_DIR, 'dial-YYYYMMDD.log'))))
   console.log(row('dashboard', `http://127.0.0.1:${daemonPort()}`))
   console.log(rule)
   console.log('   ▸ Open in your browser to chat with this computer:')
@@ -5322,6 +5332,37 @@ async function status(): Promise<void> {
   process.exit(0)
 }
 
+/**
+ * `harness logs export [--to <dir>] [--days N] [--json]` — the last week of every log this product
+ * writes, zipped to the Desktop (or `--to`), secrets blanked. The file a bug report is made of; the
+ * desktop app's Settings ▸ Debug ▸ Export logs runs this same command.
+ */
+async function logsExportCommand(json: boolean): Promise<void> {
+  const flagValue = (name: string): string | undefined => {
+    const at = process.argv.indexOf(name)
+    return at >= 0 ? process.argv[at + 1] : undefined
+  }
+  const days = Math.max(1, Number(flagValue('--days') ?? 7) || 7)
+  const desktop = join(homedir(), 'Desktop')
+  const to = flagValue('--to') ?? (existsSync(desktop) ? desktop : process.cwd())
+  const now = new Date()
+  const notes = [`machine: ${readAuthSession()?.machineId ?? 'not signed in'}`]
+  const { zip, included } = buildLogBundle({
+    logsDir: env.HARNESS_LOGS_DIR, dataDir: env.ADAPTER_DATA_DIR, days, now, version: VERSION, notes,
+    redact: redactSecretsInText,
+  })
+  mkdirSync(to, { recursive: true })
+  const path = join(to, bundleFileName(now))
+  writeFileSync(path, zip)
+  if (json) console.log(JSON.stringify({ path, included, bytes: zip.length }))
+  else {
+    console.log(`wrote ${tildify(path)} (${Math.round(zip.length / 1024)} KB)`)
+    for (const name of included) console.log(`  ${name}`)
+    if (!included.length) console.log('  (no logs found)')
+  }
+  process.exit(0)
+}
+
 // ── arg parse ──────────────────────────────────────────────────────────────────────────────────
 const [, , cmd, ...rest] = process.argv
 const flags = rest.filter((a) => a.startsWith('-'))
@@ -5445,6 +5486,10 @@ switch (cmd) {
     break
   case 'status':
     status().catch(onError)
+    break
+  case 'logs':
+    if (args[0] === 'export') logsExportCommand(flags.includes('--json')).catch(onError)
+    else { console.error(`Unknown command: logs ${args[0] ?? ''}`); usage(1) }
     break
   case 'update':
     updateCommand(flags.includes('--force')).catch(onError)

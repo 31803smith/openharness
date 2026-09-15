@@ -19,6 +19,7 @@ import 'package:harness/core/engine_availability.dart';
 import 'package:harness/core/models.dart';
 import 'package:harness/state/app_state.dart';
 import 'package:harness/state/pane_arrangement.dart';
+import 'package:harness/shared/widgets/app_choice_picker.dart';
 import 'package:harness/shared/widgets/app_select_field.dart';
 import 'package:harness/widgets/new_agent_dialog.dart';
 
@@ -214,9 +215,7 @@ void main() {
     final pending = app.pending['machine-1'] = Completer<void>();
     await tester.tap(find.byKey(const Key('new-agent-retry-check')));
     await tester.pump();
-    await tester.tap(find.byKey(const Key('new-agent-machine-field')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Other computer — Remote'));
+    await tester.tap(find.byKey(const ValueKey('new-agent-machine-machine-2')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('new-agent-quick-codex')));
     await tester.tap(find.byKey(const Key('new-agent-advanced')));
@@ -232,7 +231,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(
       tester
-          .widget<AppSelectField<String>>(
+          .widget<AppChoicePicker<String>>(
             find.byKey(const Key('new-agent-machine-field')),
           )
           .value,

@@ -109,6 +109,11 @@ class _DebugPathsCardState extends State<DebugPathsCard> {
                         '(${environment.harnessSource.name})',
                   ),
                   _PathRow(label: 'logs', value: environment.logsDirectory),
+                  // The daemon's file, not this app's — see logging/dial_log_tail.dart.
+                  _PathRow(
+                    label: 'dial',
+                    value: '${environment.logsDirectory}/dial-YYYYMMDD.log',
+                  ),
                 ],
               );
             },

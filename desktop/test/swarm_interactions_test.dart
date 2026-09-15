@@ -11,6 +11,7 @@ import 'package:harness/core/config.dart';
 import 'package:harness/core/models.dart';
 import 'package:harness/screens/swarm_screen.dart';
 import 'package:harness/settings/settings_screen.dart';
+import 'package:harness/shared/widgets/app_choice_picker.dart';
 import 'package:harness/shared/widgets/app_select_field.dart';
 import 'package:harness/state/app_state.dart';
 import 'package:harness/state/swarm_catalog.dart';
@@ -169,7 +170,7 @@ void main() {
     (tester) async {
       final app = createApp();
       await mount(tester, app);
-      await chord(tester, LogicalKeyboardKey.keyO);
+      await chord(tester, LogicalKeyboardKey.keyN);
       await tester.pump();
       expect(app.panes, isEmpty);
       await tester.enterText(
@@ -592,9 +593,9 @@ void main() {
       await tester.tap(find.text('Browse…'));
       await tester.pump();
       final field = find.byKey(const Key('new-agent-machine-field'));
-      tester.widget<AppSelectField<String>>(field).onChanged('b');
+      tester.widget<AppChoicePicker<String>>(field).onChanged('b');
       await tester.pump();
-      tester.widget<AppSelectField<String>>(field).onChanged('a');
+      tester.widget<AppChoicePicker<String>>(field).onChanged('a');
       await tester.pump();
       folder.answer.complete('/old-machine-folder');
       await tester.pump();

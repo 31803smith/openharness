@@ -80,7 +80,9 @@ gets a `version.txt` written into the built bundle at package time (see `lib/cor
 since `flutter build linux` has no Info.plist-style stamping). Test the updater against a scratch
 manifest with `--dart-define=DESKTOP_UPDATE_METADATA_URL=...`; `HARNESS_RUNTIME_METADATA_URL` does
 the same for the desktop updater only. The managed Node runtime is still published from this repo with
-`make upload-node-runtime ARGS=22.23.2` (`darwin-arm64`, `darwin-x64`, `linux-x64`, `linux-arm64`), but
+`make upload-node-runtime ARGS=22.23.2` (`darwin-arm64`, `darwin-x64`, `linux-x64`, `linux-arm64`) — and,
+since 2026-09-15, a managed **tmux** for macOS the same way (`release-tmux-runtime.yml` /
+`make upload-tmux-runtime`, RELEASE.md "Managed tmux runtime") — but
 its consumer is now the `harness` installer rather than this app.
 
 ## Architecture
@@ -115,21 +117,22 @@ on its own or on the app's behalf, and records it in `current-node`; the launche
 binary absolutely, so a Finder launch (PATH is launchd's bare `/usr/bin:/bin:/usr/sbin:/sbin`) and a
 Terminal launch behave identically. One implementation, shared with everyone who installs the CLI from
 a terminal, instead of a second copy here that had to keep its own pinned checksums in step.
-**tmux** is the one dependency still taken from the OS package manager, and the only reason the setup
-screen ever opens a terminal: a fresh Homebrew or any `apt-get install` needs a password prompt on a
-real tty.
+**tmux** on Linux is the one dependency still taken from the OS package manager, and the only reason
+the setup screen ever opens a terminal: `apt-get install` needs a password prompt on a real tty. On
+macOS it is a managed runtime (or the Homebrew one, if Homebrew is already there) and needs neither.
 
 **Readiness is the list of commands the app runs, nothing more** (`EnvironmentStep`: tmux — plus `ps`
 on Linux — the Harness CLI, and on a Linux desktop the clipboard helper). Homebrew, the Apple developer
 tools, apt and the curl/tar/sed/awk/sha256sum the CLI installer downloads Node with are *recipes* for a
 missing command, kept in `EnvironmentReadiness.plan` and probed top-down only while the command is
-missing: a Mac with tmux is never asked about Homebrew, a Mac with Homebrew never about `xcrun`, and a
-Linux box with a managed runtime never about curl. The ladder itself is implemented once, in
-`cli/scripts/install.sh` (`--host` runs just that half); the macOS Terminal window the app opens is a
-log/exit-code frame around it, while the Linux one keeps the app's own apt transaction so its
-clock-skew repair stays. Gating readiness on the recipes was what sent a computer whose tmux ran fine
-into Terminal to reinstall developer tools after a macOS upgrade — the screen renders `plan`, it does
-not infer one.
+missing: a Mac with tmux is never asked about Homebrew, and a Linux box with a managed runtime never
+about curl. The ladder itself is implemented once, in `cli/scripts/install.sh` (`--host` runs just
+that half): on macOS tmux comes from the Homebrew already present or, failing that, the managed
+build downloaded into `~/.harness/runtime` — no compiler, no package manager, no password, so the
+app runs `--host` in-app and never opens a Terminal window there. Linux keeps the app's own apt
+transaction (its clock-skew repair) and the one Terminal handoff. Gating readiness on the recipes
+was what sent a computer whose tmux ran fine into Terminal to reinstall developer tools after a macOS
+upgrade — the screen renders `plan`, it does not infer one.
 
 ### Boot and state
 

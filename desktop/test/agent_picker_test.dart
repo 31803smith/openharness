@@ -77,10 +77,34 @@ void main() {
     await tester.pumpAndSettle();
     expect(selected, 'hermes');
     expect(
+      find.byKey(const ValueKey('new-agent-quick-hermes')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('new-agent-quick-cursor')), findsNothing);
+    expect(find.byType(TextButton), findsNWidgets(3));
+    expect(
       find.text('Hermes'),
       findsOneWidget,
       reason: 'The less common selection stays visible after closing the menu.',
     );
+    await tester.tap(find.byKey(const ValueKey('new-agent-quick-codex')));
+    await tester.pumpAndSettle();
+    expect(selected, 'codex');
+    expect(
+      find.byKey(const ValueKey('new-agent-quick-hermes')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('new-agent-quick-cursor')), findsNothing);
+    await tester.tap(find.byTooltip('More agents'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cursor'));
+    await tester.pumpAndSettle();
+    expect(selected, 'cursor');
+    expect(
+      find.byKey(const ValueKey('new-agent-quick-cursor')),
+      findsOneWidget,
+    );
+    expect(find.text('Hermes'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 }

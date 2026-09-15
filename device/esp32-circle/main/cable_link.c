@@ -6,6 +6,7 @@
 
 #include "driver/usb_serial_jtag.h"
 #include "esp_log.h"
+#include "last_words.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -127,6 +128,8 @@ static int log_vprintf(const char *fmt, va_list args)
         size_t len = (size_t)n < sizeof(line) - 1 ? (size_t)n : sizeof(line) - 1;
         // Trailing newline is the console's business, not the protocol's: the frame IS the line.
         while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) len--;
+        // Into the RTC ring first — that copy survives the reboot the next line may be the last before.
+        if (len > 0) last_words_add(line, len);
         if (len > 0) send_locked(CABLE_TYPE_LOG, (const uint8_t *)line, len, pdMS_TO_TICKS(LOG_WRITE_WAIT_MS));
     }
     s_in_log_sink = false;

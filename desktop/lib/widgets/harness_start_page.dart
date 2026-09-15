@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../shared/theme/app_theme.dart' as grid;
 import '../state/swarm_navigation.dart';
 import '../state/swarm_search.dart';
+import 'harness_entry_actions.dart';
 import 'swarm_search_input.dart';
 import 'swarm_switcher.dart';
 
@@ -33,26 +34,9 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
     canRequestFocus: false,
   );
   final _searchGroup = Object();
-  final _entryActions = GlobalKey();
-  bool _revealScheduled = false;
   SwarmSearchController? _search;
   SwarmSearchDraft? _draft;
   bool get _showResults => _search != null;
-
-  void _revealResults() {
-    if (_revealScheduled) return;
-    _revealScheduled = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _revealScheduled = false;
-      if (!mounted || !_showResults || !_pickerFocus.hasFocus) return;
-      // Keep the actions below the expanded picker reachable. Its bounded
-      // viewport and internal list scrolling keep the highlighted row visible.
-      Scrollable.ensureVisible(
-        _entryActions.currentContext!,
-        alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
-      );
-    });
-  }
 
   void _open() {
     // Commands can replace the editor value without a TextField onChanged.
@@ -88,6 +72,134 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
     widget.onNew();
   }
 
+  Widget _searchPanel() => TextFieldTapRegion(
+    groupId: _searchGroup,
+    child: Focus(
+      focusNode: _pickerFocus,
+      child: Material(
+        color: _showResults
+            ? grid.AppPalette.swarmSearchSurface
+            : Colors.transparent,
+        elevation: _showResults ? 12 : 0,
+        shadowColor: Colors.black54,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(_showResults ? 12 : 999),
+          side: _showResults
+              ? const BorderSide(color: Colors.white24)
+              : BorderSide.none,
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: SwarmSearchKeys(
+          search: _search,
+          editing: _query,
+          onChoose: _choose,
+          onClose: _close,
+          onOpen: _open,
+          onNewAgent: _new,
+          onRefocus: _focus.requestFocus,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Semantics(
+                label: 'Find a harness',
+                child: SwarmSearchInput(
+                  inputKey: const ValueKey('harness-start-search'),
+                  controller: _query,
+                  focusNode: _focus,
+                  search: _search,
+                  onClose: _close,
+                  onChanged: (_) => _open(),
+                  onOpen: _open,
+                  onTapOutside: _close,
+                  groupId: _searchGroup,
+                  autofocus: true,
+                  showClose: _showResults,
+                  hintText: 'Find a harness',
+                  rounded: true,
+                  prominent: true,
+                ),
+              ),
+              if (_showResults) ...[
+                const Divider(height: 1, color: Colors.white12),
+                Flexible(
+                  child: SizedBox(
+                    height: 480,
+                    child: SwarmSearchResults(
+                      key: const ValueKey('harness-start-results'),
+                      search: _search!,
+                      sideBySideMinWidth: 700,
+                      onChoose: _choose,
+                      onRefocus: _focus.requestFocus,
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+
+  Widget _device({required bool compact}) {
+    final photo = ClipRRect(
+      borderRadius: BorderRadius.circular(10),
+      child: Transform.scale(
+        // Frame the device, which sits left of center in the original photo.
+        scale: 1.7,
+        alignment: const Alignment(-0.5, 0.08),
+        child: Image.asset(
+          'assets/harness_device.webp',
+          width: compact ? 96 : 256,
+          height: compact ? 54 : 144,
+          fit: BoxFit.cover,
+          semanticLabel: 'Harness Device',
+        ),
+      ),
+    );
+    const caption = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Flexible(
+          child: Text(
+            'Meet the Harness device',
+            style: TextStyle(fontSize: 13, color: Colors.white70),
+          ),
+        ),
+        SizedBox(width: 4),
+        Icon(Icons.arrow_outward, size: 12, color: Colors.white70),
+      ],
+    );
+    return Semantics(
+      link: true,
+      child: InkWell(
+        key: const ValueKey('harness-device-link'),
+        mouseCursor: SystemMouseCursors.click,
+        onTap: () => launchUrl(
+          Uri.parse('https://www.autonomous.ai/harness-device'),
+          mode: LaunchMode.externalApplication,
+        ),
+        borderRadius: BorderRadius.circular(12),
+        child: SizedBox(
+          width: compact ? 320 : 256,
+          child: compact
+              ? Row(
+                  children: [
+                    photo,
+                    const SizedBox(width: 12),
+                    const Expanded(child: caption),
+                  ],
+                )
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [photo, const SizedBox(height: 12), caption],
+                ),
+        ),
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _search?.dispose();
@@ -101,207 +213,52 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
     grid.AppTheme.watch(context);
     return LayoutBuilder(
       builder: (context, constraints) {
-        if (_showResults) _revealResults();
-        return SingleChildScrollView(
-          child: Padding(
-            padding: EdgeInsets.fromLTRB(
-              24,
-              (constraints.maxHeight * 0.21).clamp(72, 220),
-              24,
-              64,
-            ),
-            child: Center(
-              child: ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxWidth: _showResults ? 1120 : 640,
-                ),
-                child: Column(
-                  children: [
-                    const Text(
-                      'Harness',
-                      style: TextStyle(
-                        fontSize: 48,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: -1.5,
-                      ),
-                    ),
-                    const SizedBox(height: 32),
-                    TextFieldTapRegion(
-                      groupId: _searchGroup,
-                      child: Focus(
-                        focusNode: _pickerFocus,
-                        child: Material(
-                          color: _showResults
-                              ? grid.AppPalette.swarmSearchSurface
-                              : Colors.transparent,
-                          elevation: _showResults ? 12 : 0,
-                          shadowColor: Colors.black54,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(
-                              _showResults ? 12 : 30,
-                            ),
-                            side: _showResults
-                                ? const BorderSide(color: Colors.white24)
-                                : BorderSide.none,
-                          ),
-                          clipBehavior: Clip.antiAlias,
-                          child: SwarmSearchKeys(
-                            search: _search,
-                            editing: _query,
-                            onChoose: _choose,
-                            onClose: _close,
-                            onOpen: _open,
-                            onNewAgent: _new,
-                            onRefocus: _focus.requestFocus,
-                            child: Column(
-                              children: [
-                                Semantics(
-                                  label: 'Find a harness',
-                                  child: SwarmSearchInput(
-                                    inputKey: const ValueKey(
-                                      'harness-start-search',
-                                    ),
-                                    controller: _query,
-                                    focusNode: _focus,
-                                    search: _search,
-                                    onClose: _close,
-                                    onChanged: (_) => _open(),
-                                    onOpen: _open,
-                                    onTapOutside: _close,
-                                    groupId: _searchGroup,
-                                    autofocus: true,
-                                    showClose: _showResults,
-                                    hintText: '',
-                                    rounded: true,
-                                  ),
-                                ),
-                                if (_showResults) ...[
-                                  const Divider(
-                                    height: 1,
-                                    color: Colors.white12,
-                                  ),
-                                  SizedBox(
-                                    height: (constraints.maxHeight * 0.54)
-                                        .clamp(260, 480),
-                                    child: SwarmSearchResults(
-                                      key: const ValueKey(
-                                        'harness-start-results',
-                                      ),
-                                      search: _search!,
-                                      onChoose: _choose,
-                                      onRefocus: _focus.requestFocus,
-                                    ),
-                                  ),
-                                ],
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    Wrap(
-                      key: _entryActions,
-                      alignment: WrapAlignment.center,
-                      spacing: 12,
-                      runSpacing: 12,
-                      children: [
-                        OutlinedButton(
-                          key: const ValueKey('harness-start-open'),
-                          onPressed: _open,
-                          style: OutlinedButton.styleFrom(
-                            enabledMouseCursor: SystemMouseCursors.click,
-                            minimumSize: const Size(160, 44),
-                            padding: const EdgeInsets.symmetric(horizontal: 24),
-                            backgroundColor: Colors.transparent,
-                            foregroundColor: Colors.white,
-                            side: const BorderSide(color: Colors.white24),
-                            shape: const StadiumBorder(),
-                          ),
-                          child: const Text('Open Harness'),
-                        ),
-                        FilledButton.icon(
-                          key: const ValueKey('harness-start-new'),
-                          onPressed: _new,
-                          icon: const Icon(Icons.add, size: 18),
-                          label: const Text('New Harness'),
-                          style: FilledButton.styleFrom(
-                            enabledMouseCursor: SystemMouseCursors.click,
-                            minimumSize: const Size(160, 44),
-                            padding: const EdgeInsets.symmetric(horizontal: 24),
-                            backgroundColor: grid.AppPalette.swarmAccent,
-                            foregroundColor: grid.AppPalette.swarmTabBar,
-                            shape: const StadiumBorder(),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 160),
-                    Semantics(
-                      link: true,
-                      child: InkWell(
-                        key: const ValueKey('harness-device-link'),
-                        mouseCursor: SystemMouseCursors.click,
-                        onTap: () => launchUrl(
-                          Uri.parse('https://www.autonomous.ai/harness-device'),
-                          mode: LaunchMode.externalApplication,
-                        ),
-                        borderRadius: BorderRadius.circular(12),
-                        child: Padding(
-                          padding: const EdgeInsets.all(12),
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 32),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 1120),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: LayoutBuilder(
+                      builder: (context, entryConstraints) {
+                        // Reserve the footer before laying out search, keeping
+                        // both its top edge and the device still as results open.
+                        final top = (constraints.maxHeight * 0.21)
+                            .clamp(72.0, 220.0)
+                            .clamp(
+                              0.0,
+                              (entryConstraints.maxHeight - 320).clamp(
+                                24.0,
+                                220.0,
+                              ),
+                            );
+                        return Padding(
+                          padding: EdgeInsets.only(top: top),
                           child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              ClipRRect(
-                                borderRadius: BorderRadius.circular(10),
-                                child: Transform.scale(
-                                  // Frame the device, which sits left of center
-                                  // in the original photo, without altering it.
-                                  scale: 1.7,
-                                  alignment: const Alignment(-0.5, 0.08),
-                                  child: Image.asset(
-                                    'assets/harness_device.webp',
-                                    width: 256,
-                                    height: 144,
-                                    fit: BoxFit.cover,
-                                    semanticLabel: 'Harness Device',
-                                  ),
+                              Flexible(child: _searchPanel()),
+                              if (!_showResults) ...[
+                                const SizedBox(height: 20),
+                                HarnessEntryActions(
+                                  onOpen: _open,
+                                  onNew: _new,
+                                  openKey: const ValueKey('harness-start-open'),
+                                  newKey: const ValueKey('harness-start-new'),
                                 ),
-                              ),
-                              const SizedBox(height: 16),
-                              const Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(
-                                    'The ultimate Harness setup',
-                                    style: TextStyle(
-                                      fontSize: 13,
-                                      color: Colors.white70,
-                                    ),
-                                  ),
-                                  SizedBox(width: 4),
-                                  Icon(
-                                    Icons.arrow_outward,
-                                    size: 12,
-                                    color: Colors.white70,
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 6),
-                              const Text(
-                                'Scroll, switch panes, and give voice commands.',
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.white54,
-                                ),
-                              ),
+                              ],
                             ],
                           ),
-                        ),
-                      ),
+                        );
+                      },
                     ),
-                  ],
-                ),
+                  ),
+                  const SizedBox(height: 24),
+                  _device(compact: constraints.maxHeight < 600),
+                ],
               ),
             ),
           ),

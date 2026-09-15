@@ -4,7 +4,7 @@ import 'package:flutter/widgets.dart';
 import '../logging/debug_surface.dart';
 
 /// Harness uses Command as a direct prefix for frequent workspace actions.
-/// T opens a tab, N creates a harness, O finds one, S changes layout,
+/// T opens a tab, N adds an existing or new harness, S changes layout,
 /// H/J/K/L and arrows focus panes, B routes a task, D splits down and R splits
 /// right. The same definitions feed live keys, help and search.
 ///
@@ -279,7 +279,11 @@ const List<AppShortcut> kAppShortcuts = [
   // --- actions --------------------------------------------------------------
   AppShortcut(
     action: ShortcutAction.newAgent,
-    activator: SingleActivator(LogicalKeyboardKey.keyN, meta: true),
+    activator: SingleActivator(
+      LogicalKeyboardKey.keyN,
+      meta: true,
+      shift: true,
+    ),
     label: 'New Harness',
     group: ShortcutGroup.actions,
   ),
@@ -341,8 +345,8 @@ List<AppShortcut> appShortcuts({bool swarmMode = true}) => [
 const kSwarmShortcuts = [
   AppShortcut(
     action: ShortcutAction.addAgent,
-    activator: SingleActivator(LogicalKeyboardKey.keyO, meta: true),
-    label: 'Find Harness',
+    activator: SingleActivator(LogicalKeyboardKey.keyN, meta: true),
+    label: 'Add Harness',
     group: ShortcutGroup.actions,
   ),
   AppShortcut(

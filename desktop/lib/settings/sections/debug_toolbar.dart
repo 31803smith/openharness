@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../core/reveal_folder.dart';
+import '../../widgets/export_logs_dialog.dart';
 import '../../logging/log_file.dart';
 import '../../shared/theme/app_theme.dart';
 import '../../shared/widgets/toolbar_pill.dart';
@@ -30,6 +31,8 @@ class DebugToolbar extends StatelessWidget {
             style: TextStyle(fontSize: 12.5, color: AppPalette.textSecondary),
           ),
         ),
+        const _ExportLogsPill(),
+        const SizedBox(width: 6),
         const _OpenLogsPill(),
         const SizedBox(width: 6),
         ToolbarPill(
@@ -44,6 +47,31 @@ class DebugToolbar extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Zips the last seven days of every log — this app's, the CLI transcript, the
+/// dial's, the daemon's — to the Desktop, secrets blanked, and reveals the file.
+///
+/// The one thing a bug report needs and the thing nobody could produce before
+/// without being walked through a hidden directory. It runs `harness logs
+/// export` rather than zipping here, so the bundle is the same whether it was
+/// made from this button, from Help ▸ Export Logs… or from a terminal — see
+/// `widgets/export_logs_dialog.dart` and `logging/log_export.dart`.
+class _ExportLogsPill extends StatelessWidget {
+  const _ExportLogsPill();
+
+  @override
+  Widget build(BuildContext context) {
+    return ToolbarPill(
+      onTap: () => unawaited(showExportLogsDialog(context)),
+      rimmed: true,
+      child: const DebugPillLabel(
+        icon: LucideIcons.packageOpen,
+        label: 'Export logs',
+        enabled: true,
+      ),
     );
   }
 }
