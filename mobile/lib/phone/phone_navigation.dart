@@ -25,11 +25,14 @@ Route<void> phoneRoute(WidgetBuilder builder, {bool swipeToGoBack = true}) =>
 /// button and predictive-back (which go through `popDisposition`), and a page popping itself — the
 /// terminal page does exactly that when its pane disappears.
 ///
-/// Used by the agent pager, where the horizontal drag belongs to the pager. The edge swipe and the
-/// PageView were competing for the same axis: the route's detector sits ABOVE the pager in the tree
-/// and wins at the left margin, so a swipe started near the edge to reach the previous AGENT left
-/// the screen instead. Only the header now goes back, which is what the whole band across the top is
-/// widened for.
+/// Used by both pagers — agents and machines — where the horizontal drag belongs to the pager. The
+/// edge swipe and the PageView were competing for the same axis: the route's detector sits ABOVE the
+/// pager in the tree and wins at the left margin, so a swipe started near the edge to reach the
+/// PREVIOUS entry left the screen instead. Only the header now goes back, which is what the whole
+/// band across the top is widened for.
+///
+/// A machine opened on its own keeps the gesture: there is no pager under it competing for the axis,
+/// and it is a plain pushed page like any other.
 class _NoSwipeBackRoute<T> extends CupertinoPageRoute<T> {
   _NoSwipeBackRoute({required super.builder});
 
@@ -62,6 +65,9 @@ void openMachine(
           machineId: machineId,
           neighbours: swipeNeighbours,
         ),
+        // The horizontal axis belongs to the pager here — see [_NoSwipeBackRoute]. The way out is
+        // the header's back band, and on Android the back button as well.
+        swipeToGoBack: false,
       ),
     );
     return;
