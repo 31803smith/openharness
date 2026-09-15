@@ -8,7 +8,6 @@ import 'package:harness_mobile/state/app_state.dart';
 import 'agent_index.dart';
 import 'agent_row.dart';
 import 'agents_page.dart';
-import 'account_button.dart';
 import 'machine_filter_bar.dart';
 import 'phone_card.dart';
 import 'phone_fab.dart';
@@ -81,11 +80,10 @@ class _AgentsTabState extends State<AgentsTab> {
           bottom: false,
           child: Column(
             children: [
-              PhoneHeader(
-                large: true,
-                title: 'Agents',
-                trailing: [AccountButton(notifier: widget.notifier)],
-              ),
+              // No account avatar here. Settings ▸ Account carries the address
+              // and the sign-out, and a second copy in the corner of the home
+              // screen bought nothing but a place for them to disagree.
+              const PhoneHeader(large: true, title: 'Agents'),
               if (error != null)
                 _ErrorStrip(message: error, notifier: widget.notifier),
               if (machines.isNotEmpty)
