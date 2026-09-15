@@ -59,10 +59,32 @@ user for a benchmark window.
   `/private/tmp/harness-agent-folder-captures` and
   `/private/tmp/harness-agent-picker-captures`.
 
-The preview below is still the earlier installed source until a later build
-checkpoint records the new bundle. The d22b338 native focus correction is installed;
-CUA-sent Command-N remains inconclusive, although native callback and exported
-shortcut checks pass.
+Saved and pushed to `origin/main`: **9d0150d** (remote project preparation),
+**e049348** (Agent terminology, creation and machine menus), **10811c3** (final
+validation cleanup). The 339-test pass was followed by six passing focused
+checks after the analyzer cleanup; changed Dart files now analyze without issues.
+
+The release build of **10811c3** succeeded and passed deep/strict codesign
+verification at
+`/private/tmp/harness-pane-controls-release/Build/Products/Release/Harness.app`.
+Build log: `/private/tmp/harness-agent-experience-release.log`; test logs:
+`/private/tmp/harness-agent-ui-regressions.log`,
+`/private/tmp/harness-agent-final-checks.log`,
+`/private/tmp/harness-project-folder-cli-tests.log`,
+`/private/tmp/harness-agent-menus-native.log`.
+
+**Live installation is pending.** The supported running bundle below is still
+**d22b338**. CUA returned `cgWindowNotFound` for its window and Finder actions,
+although its app list and an exact process check show Harness running. No
+process was killed or bundle replaced while running. The user was asked to bring
+the window onto the current screen, or leave the running preview as is. Once
+visible, use **Quit and Keep Windows**, verify the exact process stopped, back
+up the live bundle, stage/codesign the new one, and swap it before relaunching.
+Do not launch the derived-data copy alongside the supported one.
+
+CUA-sent Command-N remains inconclusive from the earlier live preview, although
+native callback and exported shortcut checks pass. The current CUA window access
+failure does not justify changing keyboard dispatch.
 
 Use [the detailed entry/pane contract](harness-agent-first-tabs.md) when editing
 or validating UI. The decisions that previously conflicted with older handoffs
