@@ -90,7 +90,8 @@ manifest by the first `"<platform>"` key and Node's already has one — with the
 `{version,url,sha256,size,archiveRoot}` entries. `install.sh` reads it on a Mac that has no tmux and
 no Homebrew (Homebrew's tmux is used when Homebrew is already there): download into
 `~/.harness/runtime/tmux-<ver>-<platform>`, verify, record the binary in `~/.harness/runtime/current-tmux`
-(which the daemon's `ensureTmuxOnPath` puts on its PATH, exactly like `current-node`) and link it as
+(which the daemon's `ensureTmuxOnPath` falls back to when neither its PATH nor the user's login shell
+resolves a tmux — the terminal's tmux always wins, so daemon and terminal share one server) and link it as
 `~/.local/bin/tmux`. The desktop runs that same `install.sh --host` in-app, so on macOS first-run setup
 never opens a Terminal window. Publish a new runtime **before** the `install.sh` that pins a newer
 tmux level, and keep it level with what Homebrew ships.

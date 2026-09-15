@@ -106,7 +106,7 @@ PATH="${binDir}" exec /bin/sh -c "$@"
     expect(env.PATH?.split(delimiter)[0]).toBe(binDir)
   })
 
-  it('adopts the managed tmux before asking any shell', async () => {
+  it('falls back to the managed tmux when no shell can resolve one', async () => {
     const runtimeDir = scratch('tmux-onpath-runtime-')
     const binDir = join(runtimeDir, 'tmux-9.9-darwin-arm64', 'bin')
     mkdirSync(binDir, { recursive: true })
@@ -115,11 +115,27 @@ PATH="${binDir}" exec /bin/sh -c "$@"
     writeFileSync(join(runtimeDir, 'current-tmux'), `${managed}\n`)
     const env: NodeJS.ProcessEnv = { PATH: '/nonexistent' }
 
-    // A shell that would answer is deliberately NOT given: the managed build needs none.
     const outcome = await ensureTmuxOnPath(env, '/nonexistent/shell', runtimeDir)
 
     expect(outcome).toEqual({ state: 'adopted', path: managed, from: 'managed runtime' })
     expect(env.PATH!.split(delimiter)[0]).toBe(binDir)
+  })
+
+  it("prefers the tmux the user's shell resolves over the managed one", async () => {
+    // Both exist: the daemon must run what the terminal runs, or they talk to two servers.
+    const runtimeDir = scratch('tmux-onpath-runtime-both-')
+    const managedBin = join(runtimeDir, 'tmux-9.9-darwin-arm64', 'bin')
+    mkdirSync(managedBin, { recursive: true })
+    writeFileSync(join(managedBin, 'tmux'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+    writeFileSync(join(runtimeDir, 'current-tmux'), `${join(managedBin, 'tmux')}\n`)
+    const usersBin = scratch('tmux-onpath-users-')
+    writeFileSync(join(usersBin, 'tmux'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+    const env: NodeJS.ProcessEnv = { PATH: '/nonexistent' }
+
+    const outcome = await ensureTmuxOnPath(env, fakeShell(usersBin), runtimeDir)
+
+    expect(outcome).toEqual({ state: 'adopted', path: join(usersBin, 'tmux'), from: usersBin })
+    expect(env.PATH!.split(delimiter)[0]).toBe(usersBin)
   })
 
   it('ignores a current-tmux that points outside the runtime dir or cannot run', () => {

@@ -50,7 +50,7 @@ export function requireTmuxAvailable(outcome: TmuxPathOutcome): AvailableTmuxPat
  * installer downloads our checksum-verified build there and links it as ~/.local/bin/tmux. Null on
  * every other machine, and for a record that names something outside the runtime dir or not
  * executable: only a path inside the directory we own is ever trusted, the same containment check
- * `managedNodePath` applies.
+ * `managedNodePath` applies. A fallback, not a preference — see `ensureTmuxOnPath` for the order.
  */
 export function managedTmuxPath(runtimeDir: string = appEnv.ADAPTER_RUNTIME_DIR): string | null {
   try {
@@ -126,25 +126,28 @@ export async function ensureTmuxOnPath(
   runtimeDir: string = appEnv.ADAPTER_RUNTIME_DIR,
 ): Promise<TmuxPathOutcome> {
   if (binaryOnPath('tmux', env)) return { state: 'present' }
-  // The managed build comes before asking the shell: it is what the user's own shells resolve too
-  // (~/.local/bin is put first on PATH by the installer), so the daemon and the terminal keep
-  // talking to one server — and it needs no shell at all, which a launch-agent context may lack.
+  // The user's own shell is asked first and the managed build is the fallback, in that order on
+  // purpose: the point is that the daemon runs the SAME tmux the user's terminal runs, so they
+  // share one server. Whatever their shell resolves — Homebrew's, the managed symlink in
+  // ~/.local/bin, something they put on PATH themselves — is that truth. The managed build is
+  // consulted only when no shell can answer: a launch-agent context with no usable shell, or a
+  // Mac where the installer's rc edit has not reached the shell yet.
+  const resolved = await resolveViaLoginShell('tmux', shell)
+  if (resolved) {
+    const dir = dirname(resolved)
+    env.PATH = env.PATH ? `${dir}${delimiter}${env.PATH}` : dir
+    return { state: 'adopted', path: resolved, from: dir }
+  }
   const managed = managedTmuxPath(runtimeDir)
   if (managed) {
     const dir = dirname(managed)
     env.PATH = env.PATH ? `${dir}${delimiter}${env.PATH}` : dir
     return { state: 'adopted', path: managed, from: 'managed runtime' }
   }
-  const resolved = await resolveViaLoginShell('tmux', shell)
-  if (!resolved) {
-    return {
-      state: 'absent',
-      reason: interactiveEngineShell(shell)
-        ? 'the user\'s login shell does not resolve tmux either'
-        : 'no usable login shell to ask, and tmux is not on the daemon PATH',
-    }
+  return {
+    state: 'absent',
+    reason: interactiveEngineShell(shell)
+      ? 'the user\'s login shell does not resolve tmux either, and there is no managed tmux'
+      : 'no usable login shell to ask, tmux is not on the daemon PATH, and there is no managed tmux',
   }
-  const dir = dirname(resolved)
-  env.PATH = env.PATH ? `${dir}${delimiter}${env.PATH}` : dir
-  return { state: 'adopted', path: resolved, from: dir }
 }
