@@ -11,6 +11,7 @@ import 'package:harness/core/models.dart';
 import 'package:harness/shared/widgets/app_choice_picker.dart';
 import 'package:harness/shared/widgets/app_select_field.dart';
 import 'package:harness/state/app_state.dart';
+import 'package:harness/core/project_folder.dart';
 import 'package:harness/state/pane_arrangement.dart';
 import 'package:harness/state/swarm_catalog.dart';
 import 'package:harness/terminal/terminal_binary.dart';
@@ -63,6 +64,7 @@ class _FirstUseApp extends AppNotifier {
     String machineId, {
     required String engine,
     required String folder,
+    ProjectFolderRequest? projectFolder,
     bool bypassPermission = false,
     String? codexHome,
     String? swarmId,
@@ -392,7 +394,7 @@ void main() {
       await tester.tapAt(const Offset(8, 100));
       await tester.pump();
       expect(find.byType(AlertDialog), findsOneWidget);
-      expect(find.text('Creating harness…'), findsOneWidget);
+      expect(find.text('Creating agent…'), findsOneWidget);
       expect(app.launches, hasLength(1));
       expect(app.panes, isEmpty);
       final folder = find.byKey(const Key('new-agent-folder'));
@@ -436,7 +438,7 @@ void main() {
 
   for (final native in [false, true]) {
     testWidgets(
-      'New Harness ${native ? 'native menu' : 'header'} defaults to this computer',
+      'New Agent ${native ? 'native menu' : 'header'} defaults to this computer',
       (tester) async {
         tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
           const MethodChannel('harness/swarm_tabs'),
@@ -560,7 +562,7 @@ void main() {
   }
 
   testWidgets(
-    'new harness supports immediate keyboard creation',
+    'new agent supports immediate keyboard creation',
     (tester) async {
       final app = _FirstUseApp();
       app.machineStates['m']!.engines.replace(const [
@@ -674,7 +676,7 @@ void main() {
     addTearDown(() => FileSelectorPlatform.instance = oldPicker);
     await mount(tester, app);
 
-    expect(find.text('New Harness'), findsWidgets);
+    expect(find.text('New Agent'), findsWidgets);
     expect(find.text('Machines'), findsNothing);
     expect(find.text('Projects'), findsNothing);
     expect(app.launches, isEmpty);

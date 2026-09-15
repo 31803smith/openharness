@@ -25,7 +25,7 @@ void main() {
     expect(tester.getRect(field).width, tester.getRect(results).width);
     await chord(tester, LogicalKeyboardKey.keyN, shift: true);
     expect(find.byType(AlertDialog), findsOneWidget);
-    expect(find.widgetWithText(FilledButton, 'New Harness'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, 'New Agent'), findsOneWidget);
     expect(results, findsNothing);
     expect(find.text('Back to Search'), findsNothing);
     expect(app.panes, [pane]);
@@ -55,7 +55,9 @@ void main() {
       await mount(tester, app);
       await chord(tester, LogicalKeyboardKey.keyN);
       final field = find.byKey(const ValueKey('swarm-search-input'));
-      await tester.enterText(field, 'Agent 0');
+      if (activate == 'click') {
+        await tester.enterText(field, 'Agent 0');
+      }
       await tester.pump();
       expect(find.byType(Checkbox), findsNothing);
       expect(app.panes, isEmpty);
@@ -63,7 +65,7 @@ void main() {
       expect(
         find.descendant(
           of: find.byKey(const ValueKey('swarm-row-action')),
-          matching: find.text('Open Harness'),
+          matching: find.text('Open Agent'),
         ),
         findsOneWidget,
       );

@@ -137,7 +137,7 @@ class _TrackingSectionState extends State<TrackingSection> {
         icon: LucideIcons.activity300,
         title: 'No events yet',
         message:
-            'Move around the app — opening a screen or creating a harness '
+            'Move around the app — opening a screen or creating an agent '
             'reports an event, and each one shows up here with what it sent.',
       );
     }

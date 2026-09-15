@@ -34,14 +34,44 @@ user for a benchmark window.
 
 ## Current product contract
 
+### September 15 continuation checkpoint
+
+- The user renamed the session concept to **Agent**: Open/New/Add/Stop/Restart
+  Agent, Find an agent, counts and recovery copy throughout Flutter and native
+  menus. Harness remains the app/device/CLI brand; saved names and wire IDs stay.
+- Cmd-N now opens results and preview immediately, with Open Agent / New Agent
+  below. This supersedes every earlier compact-first modal instruction. New Tab
+  remains compact until search activation.
+- New Agent is 760 logical pixels wide. Machines stay in one row; narrow/large
+  text moves excess machines into the overflow while preserving the selection.
+- Working folder now offers **New / Local / Remote**. New creates a unique
+  project under `~/Harness Projects`; Local browses the selected machine;
+  Remote clones a GitHub repository onto that machine. Folder preparation begins
+  only on submit. A known refused launch retains its prepared folder for retry.
+  Local works with the existing daemon protocol. Remote preparation needs this
+  checkout's accompanying CLI change; no real daemon was updated or restarted.
+- Machines is a native submenu tree with cached counts, names and engine icons.
+  Selection uses both machine and agent IDs. Existing views are revealed, stale
+  destinations are refused, and opening menus does no network work.
+- Verification: 339 affected Flutter tests, 57 CLI tests, TypeScript checking,
+  96 native keymap checks and 403 AppKit checks pass. No real agents were launched
+  or used for input tests, and no native latency benchmark was run. Captures:
+  `/private/tmp/harness-agent-folder-captures` and
+  `/private/tmp/harness-agent-picker-captures`.
+
+The preview below is still the earlier installed source until a later build
+checkpoint records the new bundle. The d22b338 native focus correction is installed;
+CUA-sent Command-N remains inconclusive, although native callback and exported
+shortcut checks pass.
+
 Use [the detailed entry/pane contract](harness-agent-first-tabs.md) when editing
 or validating UI. The decisions that previously conflicted with older handoffs
 are:
 
 - **Add Harness unifies search and creation.** A single titlebar button and
-  File → Add Harness… open the compact chooser: search plus Open/New actions.
-  Typing or explicit search activation reveals results and preview without
-  moving the field. New remains visible after searching and preserves split
+  File → Add Harness… open results and preview immediately, with the search
+  field focused and Open/New actions below. This supersedes compact-first modal
+  entry; the New Tab page stays compact until activated. New preserves split
   placement. The bell stays beside the traffic lights.
 - **Cmd-T: New Tab; Cmd-N: Add Harness; Shift-Cmd-N: direct New Harness; Cmd-S: Layout.**
   Cmd-O is unbound by default.
@@ -257,12 +287,10 @@ The approved visible-choice refinement is implemented in **620a868**. This remov
 the primary machine dropdown and the detached selected-agent line. It preserves
 engine discovery, profile checks, folder targeting and uncertain-launch recovery.
 
-The **larger project-creation workflow is not implemented**. The discussed
-shape is New Project / Existing Folder / Clone Repository, remembered agent,
-and compact This Machine / linked-machine choices in a spacious form. A new
-project would create its own folder, requiring no picker or typing. Do not infer
-the project from the current pane in a multiproject workspace. The visible-choice
-refinement is separate from that larger workflow.
+The **New / Local / Remote project-folder workflow is now implemented**; see the
+continuation checkpoint above and [creation recovery](harness-agent-creation.md).
+It preserves remembered agents, selected-machine targeting and the original split.
+Do not infer a project from the current pane in a multiproject workspace.
 
 Command-held tab number hints were discussed as a discoverability improvement:
 brief hold, subtle hints in each tab's right edge, no label movement. They have

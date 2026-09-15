@@ -165,7 +165,7 @@ class _SwarmSearchPreviewState extends State<SwarmSearchPreview> {
       final agents = _agents(app, row);
       return Semantics(
         container: true,
-        label: 'Harness preview',
+        label: 'Agent preview',
         child: ColoredBox(
           color: Colors.black.withValues(alpha: .10),
           child: Scrollbar(

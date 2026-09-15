@@ -18,9 +18,9 @@ import 'support/real_fonts.dart';
 class _ChoicesApp extends AppNotifier {
   _ChoicesApp() : super(config: AppConfig.dev, authSession: AuthSession()) {
     for (final (id, name) in [
-      ('local', 'M2'),
-      ('office', 'iMac - Office'),
-      ('home', 'iMac - Home'),
+      ('local', 'iMac - Office'),
+      ('office', 'M2'),
+      ('home', 'T480 - Omarchy'),
       ('studio', 'Studio'),
     ]) {
       final machine = Machine(
@@ -30,7 +30,7 @@ class _ChoicesApp extends AppNotifier {
       );
       machineStates[id] = MachineState(machine)
         ..localOnly = id == 'local'
-        ..nodeOnline = true
+        ..nodeOnline = id != 'home'
         ..engines.replace(const [
           EngineAvailability(
             engine: 'codex',
@@ -143,9 +143,8 @@ void main() {
 
       await capture('initial');
       for (final label in [
-        'M2',
         'iMac - Office',
-        'iMac - Home',
+        if (scale == 1) ...['M2', 'T480 - Omarchy'],
         'Codex',
         'Claude Code',
         'Cursor',
@@ -178,6 +177,17 @@ void main() {
           agentTop,
         );
       }
+      final visibleMachines = ['local', 'office', 'home']
+          .map((id) => find.byKey(ValueKey('new-agent-machine-$id')))
+          .where((finder) => finder.evaluate().isNotEmpty);
+      final top = tester.getTopLeft(visibleMachines.first).dy;
+      for (final choice in visibleMachines) {
+        expect(tester.getTopLeft(choice).dy, top);
+      }
+      expect(
+        tester.getTopLeft(find.byKey(const Key('new-agent-machine-more'))).dy,
+        top,
+      );
       await tester.tap(find.byKey(const Key('new-agent-machine-more')));
       await tester.pumpAndSettle();
       await tester.ensureVisible(find.text('Studio'));

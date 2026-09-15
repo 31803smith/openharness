@@ -59,7 +59,7 @@ class TerminalPanel extends StatefulWidget {
   final bool visible;
   final Size? viewportSize;
 
-  /// A shared terminal can move to another harness without being remounted.
+  /// A shared terminal can move to another agent without being remounted.
   final (String, int)? paneLocation;
   final (int, int, int?)? layoutRequest;
   final bool compactHeader;

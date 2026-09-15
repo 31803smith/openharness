@@ -8,7 +8,7 @@ import 'harness_entry_actions.dart';
 import 'swarm_search_input.dart';
 import 'swarm_switcher.dart';
 
-/// The Open Harness input, results and navigation, revealed on the start page
+/// The Open Agent input, results and navigation, revealed on the start page
 /// only when the user chooses to search.
 class HarnessStartPage extends StatefulWidget {
   const HarnessStartPage({
@@ -101,7 +101,7 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
             mainAxisSize: MainAxisSize.min,
             children: [
               Semantics(
-                label: 'Find a harness',
+                label: 'Find an agent',
                 child: SwarmSearchInput(
                   inputKey: const ValueKey('harness-start-search'),
                   controller: _query,
@@ -114,7 +114,7 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
                   groupId: _searchGroup,
                   autofocus: true,
                   showClose: _showResults,
-                  hintText: 'Find a harness',
+                  hintText: 'Find an agent',
                   rounded: true,
                   prominent: true,
                 ),

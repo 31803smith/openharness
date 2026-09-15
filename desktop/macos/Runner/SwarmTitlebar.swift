@@ -96,7 +96,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
   }
 
   private func sendTabAction(_ method: String, arguments: Any?) {
-    guard ["select", "close", "new", "rename", "commands", "notifications", "addAgent", "newAgent", "splitRight", "splitDown", "zoomPane", "pinPane", "machineDestination", "manageMachines"].contains(method) else {
+    guard ["select", "close", "new", "rename", "commands", "notifications", "addAgent", "newAgent", "splitRight", "splitDown", "zoomPane", "pinPane", "machineDestination", "machineAgent", "manageMachines"].contains(method) else {
       channel.invokeMethod(method, arguments: arguments)
       return
     }
@@ -232,7 +232,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     if let file = main.item(withTitle: "File") { main.removeItem(file) }
     let file = NSMenu(title: "File")
     add(file, "New Tab", "t", "new")
-    add(file, "Add Harness…", "n", "addAgent")
+    add(file, "Add Agent…", "n", "addAgent")
     add(file, "Rename Tab…", "r", "renameActive", [.command, .shift])
     add(file, "Close Tab", "w", "closeActive")
     file.addItem(.separator())
@@ -252,7 +252,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     }
     if let view = main.item(withTitle: "View")?.submenu {
       view.addItem(.separator())
-      add(view, "Harnesses Needing Input…", "i", "notifications", [.command, .shift])
+      add(view, "Agents Needing Input…", "i", "notifications", [.command, .shift])
     }
     modelsMenu.autoenablesItems = false
     modelsMenu.delegate = self
@@ -291,9 +291,32 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
       item.target = self
       item.representedObject = machine.id
       let label = NSMutableAttributedString(string: machine.name)
-      label.append(NSAttributedString(string: "  " + machine.status, attributes: [.foregroundColor: NSColor.secondaryLabelColor]))
+      let count = machine.agentCount.map { "\($0) \($0 == 1 ? "agent" : "agents")" }
+      let detail = [machine.status, count].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
+      label.append(NSAttributedString(string: "  " + detail, attributes: [.foregroundColor: NSColor.secondaryLabelColor]))
       item.attributedTitle = label
       item.image = NSImage(systemSymbolName: machine.local ? "laptopcomputer" : "desktopcomputer", accessibilityDescription: nil)
+      let submenu = NSMenu(title: machine.name)
+      for agent in machine.agents {
+        let child = NSMenuItem(title: agent.title, action: #selector(machineAgentAction(_:)), keyEquivalent: "")
+        child.target = self
+        child.representedObject = ["machineId": machine.id, "agentId": agent.id]
+        child.image = historyIcons.image(engine: agent.engine, asset: agent.iconAsset)
+        submenu.addItem(child)
+      }
+      if machine.agents.isEmpty {
+        let title = machine.agentCount == 0 ? "No agents yet" :
+          machine.status == "Online" || machine.status == "Connecting…" ? "Loading agents…" : machine.status
+        let empty = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        empty.isEnabled = false
+        submenu.addItem(empty)
+      }
+      submenu.addItem(.separator())
+      let find = NSMenuItem(title: "Find Agents…", action: #selector(machineAction(_:)), keyEquivalent: "")
+      find.target = self
+      find.representedObject = machine.id
+      submenu.addItem(find)
+      item.submenu = submenu
       machinesMenu.addItem(item)
     }
     if machines.isEmpty {
@@ -414,7 +437,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
       historyMenu.addItem(item)
     }
     if entries.isEmpty {
-      let item = NSMenuItem(title: closed ? "No Recently Closed Harnesses" : "No Recent Visits", action: nil, keyEquivalent: "")
+      let item = NSMenuItem(title: closed ? "No Recently Closed Agents" : "No Recent Visits", action: nil, keyEquivalent: "")
       item.isEnabled = false
       historyMenu.addItem(item)
     }
@@ -442,6 +465,11 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
   }
 
   func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+    if menuItem.action == #selector(machineAgentAction(_:)) {
+      guard actionsEnabled, let target = menuItem.representedObject as? [String: String],
+            let machine = machines.first(where: { $0.id == target["machineId"] }) else { return false }
+      return machine.agents.contains(where: { $0.id == target["agentId"] && $0.canOpen })
+    }
     let action = menuItem.representedObject as? String ?? ""
     if menuItem.action == #selector(machineAction(_:)) {
       return actionsEnabled && machines.contains(where: { $0.id == action })
@@ -468,6 +496,11 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     sendTabAction("machineDestination", arguments: ["id": id])
   }
 
+  @objc private func machineAgentAction(_ sender: NSMenuItem) {
+    guard validateMenuItem(sender), let target = sender.representedObject as? [String: String] else { return }
+    sendTabAction("machineAgent", arguments: target)
+  }
+
   @objc private func historyAction(_ sender: NSMenuItem) {
     guard validateMenuItem(sender), let id = sender.representedObject as? String else { return }
     channel.invokeMethod("historyDestination", arguments: ["id": id])
@@ -489,6 +522,8 @@ private struct SwarmMachineEntry: Equatable {
   let name: String
   let status: String
   let local: Bool
+  let agentCount: Int?
+  let agents: [SwarmMachineAgent]
   init?(_ row: [String: Any]) {
     guard let id = row["id"] as? String, !id.isEmpty,
           let name = row["name"] as? String, !name.isEmpty else { return nil }
@@ -496,6 +531,25 @@ private struct SwarmMachineEntry: Equatable {
     self.name = String(name.prefix(128))
     status = String((row["status"] as? String ?? "").prefix(80))
     local = row["local"] as? Bool == true
+    agentCount = (row["agentCount"] as? Int).map { max(0, $0) }
+    agents = (row["agents"] as? [[String: Any]] ?? []).prefix(512).compactMap(SwarmMachineAgent.init)
+  }
+}
+
+private struct SwarmMachineAgent: Equatable {
+  let id: String
+  let title: String
+  let engine: String?
+  let iconAsset: String?
+  let canOpen: Bool
+  init?(_ row: [String: Any]) {
+    guard let id = row["id"] as? String, !id.isEmpty,
+          let title = row["title"] as? String, !title.isEmpty else { return nil }
+    self.id = id
+    self.title = String(title.prefix(160)).replacingOccurrences(of: "\n", with: " ")
+    engine = row["engine"] as? String
+    iconAsset = row["iconAsset"] as? String
+    canOpen = row["canOpen"] as? Bool == true
   }
 }
 
@@ -849,7 +903,7 @@ private final class SwarmTabStrip: NSView {
       button.isEnabled = false
       addSubview(button)
     }
-    textButton(openButton, "Add Harness", #selector(openHarness))
+    textButton(openButton, "Add Agent", #selector(openHarness))
     updateActionColors()
     setAccessibilityChildren([notificationButton, scroll, newButton, openButton])
     registerForDraggedTypes([swarmPasteboardType])
@@ -917,7 +971,7 @@ private final class SwarmTabStrip: NSView {
     openButton.isEnabled = actionsEnabled
     let attention = state["attention"] as? Int ?? 0
     notificationButton.hasAttention = attention > 0
-    notificationButton.setAccessibilityLabel(attention > 0 ? "\(attention) harnesses need input" : "Notifications")
+    notificationButton.setAccessibilityLabel(attention > 0 ? "\(attention) agents need input" : "Notifications")
     needsLayout = true
     layoutSubtreeIfNeeded()
     if ids != previousOrder {
@@ -1167,7 +1221,7 @@ private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidati
     setAccessibilityLabel(name)
     selectButton.setAccessibilityLabel("Select \(name)")
     selectButton.setAccessibilityValue(selected ? "Selected" : "")
-    selectButton.setAccessibilityHelp(attention ? "Contains harnesses needing input" : nil)
+    selectButton.setAccessibilityHelp(attention ? "Contains agents needing input" : nil)
     closeButton.setAccessibilityLabel("Close \(name)")
   }
   func validateMenuItem(_ menuItem: NSMenuItem) -> Bool { actionsEnabled }

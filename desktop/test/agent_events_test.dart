@@ -15,6 +15,7 @@ import 'package:harness/auth/auth_session.dart';
 import 'package:harness/core/config.dart';
 import 'package:harness/core/models.dart';
 import 'package:harness/state/app_state.dart';
+import 'package:harness/core/project_folder.dart';
 import 'package:harness/state/pane_arrangement.dart';
 import 'package:harness/widgets/new_agent_dialog.dart';
 
@@ -59,6 +60,7 @@ class FakeCreateAgentNotifier extends AppNotifier {
     String machineId, {
     required String engine,
     required String folder,
+    ProjectFolderRequest? projectFolder,
     bool bypassPermission = false,
     String? codexHome,
     String? swarmId,
@@ -165,12 +167,12 @@ void main() {
       await tester.pumpAndSettle();
       // Create stays dead until a folder is chosen. This machine is not
       // `thisComputer`, so Browse… opens the in-app remote picker rather than
-      // a native panel this harness has no plugin for.
+      // a native panel this agent has no plugin for.
       await tester.tap(find.text('Browse…'));
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, 'Select this folder'));
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(FilledButton, 'New Harness'));
+      await tester.tap(find.widgetWithText(FilledButton, 'New Agent'));
       await tester.pumpAndSettle();
     }
 

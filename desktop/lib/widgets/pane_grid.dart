@@ -1298,7 +1298,7 @@ class _PaneContent extends StatelessWidget {
           icon: Icons.terminal,
           detail:
               agent?.terminalUnavailableReason ??
-              'This harness is unavailable on ${machine.machine.displayName}. Retained output is read only.',
+              'This agent is unavailable on ${machine.machine.displayName}. Retained output is read only.',
         );
       } else if (agent.launchState == 'failed') {
         notice = (
@@ -1399,7 +1399,7 @@ class _PaneContent extends StatelessWidget {
         full: HarnessJoinGuideScreen(
           notifier: notifier,
           machineState: machine,
-          agentName: agentName ?? 'selected harness',
+          agentName: agentName ?? 'selected agent',
         ),
       );
     }
@@ -1407,7 +1407,7 @@ class _PaneContent extends StatelessWidget {
       return _PaneStatus(
         title: machine.machine.displayName,
         icon: Icons.check_circle_outline,
-        message: 'This machine is ready. Drag a harness here to open it.',
+        message: 'This machine is ready. Drag an agent here to open it.',
         onClose: close,
       );
     }
@@ -1415,7 +1415,7 @@ class _PaneContent extends StatelessWidget {
       return _PaneStatus(
         title: wantedAgentId,
         icon: Icons.help_outline,
-        message: 'This harness is no longer on ${machine.machine.displayName}.',
+        message: 'This agent is no longer on ${machine.machine.displayName}.',
         onClose: close,
       );
     }
@@ -1425,7 +1425,7 @@ class _PaneContent extends StatelessWidget {
         icon: Icons.terminal,
         message:
             agent.terminalUnavailableReason ??
-            'This harness has no available terminal.',
+            'This agent has no available terminal.',
         onClose: close,
       );
     }
@@ -1953,8 +1953,8 @@ class _DropZone extends StatelessWidget {
                           ),
                           child: Text(
                             paneId == null
-                                ? 'Open ${candidate.first?.name ?? 'harness'} here'
-                                : 'Show ${candidate.first?.name ?? 'harness'} in this pane',
+                                ? 'Open ${candidate.first?.name ?? 'agent'} here'
+                                : 'Show ${candidate.first?.name ?? 'agent'} in this pane',
                             style: TextStyle(
                               color: AppColors.text,
                               fontFamily: AppFonts.sans,
@@ -2054,7 +2054,7 @@ class _EmptyGrid extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                'Select a harness, or drag one in from the left.',
+                'Select an agent, or drag one in from the left.',
                 style: TextStyle(
                   color: AppColors.mutedStrong,
                   fontFamily: AppFonts.sans,
@@ -2069,7 +2069,7 @@ class _EmptyGrid extends StatelessWidget {
                 FilledButton.icon(
                   key: const ValueKey('empty-grid-new-agent'),
                   icon: const Icon(Icons.add, size: 16),
-                  label: const Text('Create Harness'),
+                  label: const Text('Create Agent'),
                   onPressed: () => showNewAgentDialog(
                     context,
                     notifier,

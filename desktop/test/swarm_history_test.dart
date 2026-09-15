@@ -52,7 +52,7 @@ void main() {
 
   for (final count in [1, 2]) {
     test(
-      'History keeps the engine identity of $count-agent harnesses',
+      'History keeps the engine identity of $count-agent agents',
       () async {
         final app = createApp();
         addTearDown(app.dispose);

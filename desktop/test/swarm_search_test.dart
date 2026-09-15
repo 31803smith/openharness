@@ -174,7 +174,7 @@ void main() {
       search.setQuery('Test host');
       final choice = search.submit();
       expect(choice?.destination.isMachine, isTrue);
-      expect(SwarmSearchController.action(choice!.destination), 'Open Harness');
+      expect(SwarmSearchController.action(choice!.destination), 'Open Agent');
       expect(
         await activateSwarmSearchSelection(
           app,
@@ -312,7 +312,7 @@ void main() {
     expect(
       find.descendant(
         of: find.byKey(const ValueKey('swarm-row-action')),
-        matching: find.text('Open Harness'),
+        matching: find.text('Open Agent'),
       ),
       findsOneWidget,
     );
@@ -338,7 +338,7 @@ void main() {
 
   for (final adding in [false, true]) {
     testWidgets(
-      'Return waits for composing text in ${adding ? 'Add' : 'New Harness'}',
+      'Return waits for composing text in ${adding ? 'Add' : 'New Agent'}',
       (tester) async {
         final app = createApp();
         app.adoptSessionForTest(terminal('a0', []));

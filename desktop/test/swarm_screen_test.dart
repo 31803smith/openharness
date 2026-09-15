@@ -458,7 +458,7 @@ void main() {
       });
       await chord(tester, LogicalKeyboardKey.keyI, shift: true);
       await tester.pump(const Duration(milliseconds: 300));
-      expect(find.text('No harnesses need your input'), findsOneWidget);
+      expect(find.text('No agents need your input'), findsOneWidget);
       await tester.pumpWidget(const SizedBox());
       app.dispose();
     },

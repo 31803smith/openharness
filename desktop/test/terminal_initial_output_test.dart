@@ -135,7 +135,7 @@ void main() {
           expect(scroll.position.maxScrollExtent, greaterThan(0));
           expect(scroll.offset, scroll.position.maxScrollExtent);
         }
-        // Reopening a harness reveals current output in each retained view.
+        // Reopening an agent reveals current output in each retained view.
         final first = terminalView(tester, sessions.first);
         final scroll = first.widget.scrollController!;
         scroll.jumpTo(100);
