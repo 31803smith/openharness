@@ -46,8 +46,9 @@ are:
   precedence. Cmd-R splits right and Cmd-D splits down. Native menus, help and actual
   dispatch must agree; native menu and titlebar hover hints are removed.
 - New Tab uses the Google-like page with a **solid selected-tab background**,
-  lower centered controls and generous whitespace. Resting search is at most 640 logical
-  pixels wide, blank and focused initially. Its expanded preview can grow to 1120 pixels.
+  lower centered controls and generous whitespace. Search is blank and focused
+  initially, retaining one responsive width (at most 1120 logical pixels) as
+  results and preview open beneath it.
   Typing, clicking, or pressing an arrow
   reveals the same results, selection, arrows and Enter behavior as Cmd-O.
   Focus alone leaves results hidden and builds no catalog. Open Harness and
@@ -68,6 +69,8 @@ are:
   events. No `session_get`, full-history read, or terminal attachment. Cached
   selection is immediate; cold data fills asynchronously. Disconnected records
   retain saved text without claiming a live working/waiting state.
+  Page Up/Down scrolls preview content without changing selection or typing focus;
+  both actions participate in the configurable Search keymap.
 - Creation uses **New Harness** for its title and CTA, with no ordinary Cancel.
   Escape or one outside click dismisses it directly. A pending launch cannot be
   dismissed accidentally; an uncertain outcome retains Close and Check status.

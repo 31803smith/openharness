@@ -112,9 +112,7 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
             ),
             child: Center(
               child: ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxWidth: _showResults ? 1120 : 640,
-                ),
+                constraints: const BoxConstraints(maxWidth: 1120),
                 child: Column(
                   children: [
                     const Text(

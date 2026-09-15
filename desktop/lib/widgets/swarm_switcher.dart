@@ -168,6 +168,12 @@ class SwarmSearchKeys extends StatelessWidget {
             'picker.add_here': () => choose(true),
             'picker.next': () => move(1),
             'picker.previous': () => move(-1),
+            if (search != null) ...{
+              'picker.preview_page_up': () =>
+                  run(() => search.pagePreview(-1)),
+              'picker.preview_page_down': () =>
+                  run(() => search.pagePreview(1)),
+            },
             'picker.cancel': onClose,
             if (search == null || search.allowsCommands)
               'navigation.commands': () {
@@ -232,6 +238,12 @@ class SwarmSearchKeys extends StatelessWidget {
               const SingleActivator(LogicalKeyboardKey.arrowDown): () =>
                   move(1),
               const SingleActivator(LogicalKeyboardKey.arrowUp): () => move(-1),
+              if (search != null) ...{
+                const SingleActivator(LogicalKeyboardKey.pageUp): () =>
+                    run(() => search.pagePreview(-1)),
+                const SingleActivator(LogicalKeyboardKey.pageDown): () =>
+                    run(() => search.pagePreview(1)),
+              },
               const SingleActivator(
                 LogicalKeyboardKey.keyN,
                 control: true,
@@ -590,8 +602,7 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
             ],
           ),
         );
-        final preview =
-            !search.isCommandMode && search.history == null && selected != null
+        final preview = search.hasPreview
             ? SwarmSearchPreview(
                 key: const ValueKey('swarm-search-preview'),
                 search: search,
