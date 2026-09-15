@@ -20,3 +20,6 @@ provider/example-provider/sessions.json
 !.env.example
 
 .secrets
+.omc/
+CLAUDE.local.md
+.scratch/
