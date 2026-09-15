@@ -155,47 +155,54 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
     ),
   );
 
-  /// A quiet companion link below the agent controls.
-  Widget _device() {
+  /// A compact product photograph below the agent controls.
+  Widget _device({required bool compact}) {
     return Semantics(
       link: true,
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 320),
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            key: const ValueKey('harness-device-link'),
-            mouseCursor: SystemMouseCursors.click,
-            onTap: _openDevicePage,
-            borderRadius: BorderRadius.circular(12),
-            hoverColor: Colors.transparent,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Image.asset(
-                    'assets/harness_device.png',
-                    height: 64,
-                    width: 56,
-                    fit: BoxFit.contain,
-                    excludeFromSemantics: true,
-                  ),
-                  const SizedBox(width: 12),
-                  Flexible(
-                    child: Text(
-                      'Meet the Harness device',
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 12,
-                        height: 1.3,
-                        color: grid.AppPalette.textSecondary,
+        constraints: BoxConstraints(maxWidth: compact ? 300 : 360),
+        child: AspectRatio(
+          aspectRatio: 2,
+          child: Material(
+            color: const Color(0xFF101112),
+            borderRadius: BorderRadius.circular(16),
+            clipBehavior: Clip.antiAlias,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                Image.asset(
+                  'assets/harness_device_studio.png',
+                  fit: BoxFit.cover,
+                  excludeFromSemantics: true,
+                ),
+                Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    key: const ValueKey('harness-device-link'),
+                    mouseCursor: SystemMouseCursors.click,
+                    onTap: _openDevicePage,
+                    hoverColor: Colors.white.withValues(alpha: .04),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: FractionallySizedBox(
+                        widthFactor: .48,
+                        child: Padding(
+                          padding: const EdgeInsets.only(left: 18, right: 8),
+                          child: Text(
+                            'Meet the\nHarness device',
+                            style: TextStyle(
+                              fontSize: 16,
+                              height: 1.3,
+                              fontWeight: FontWeight.w500,
+                              color: Colors.white.withValues(alpha: .94),
+                            ),
+                          ),
+                        ),
                       ),
                     ),
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
         ),
@@ -340,7 +347,7 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
                     ),
                   ),
                   const SizedBox(height: 24),
-                  _device(),
+                  _device(compact: constraints.maxHeight < 600),
                 ],
               ),
             ),

@@ -123,16 +123,24 @@ Sixty-five entry, preview, keyboard and split checks pass. Captures:
 `/private/tmp/harness-matching-search-tests.log` and
 `/private/tmp/harness-matching-search-analyze.log`.
 
-### Clearer device companion link — pushed eaeb718
+### Device studio photograph
 
-The user refined the device treatment: remove the box and make the product
-clearer. The cutout is now 64 pixels tall beside the quiet **Meet the Harness
-device** label. There is no background, border, description or secondary action.
-Search and agent actions remain the page's focus.
-Six existing entry/layout checks pass. Captures:
-`/private/tmp/harness-device-link-captures`; validation:
-`/private/tmp/harness-device-link-tests.log` and
-`/private/tmp/harness-device-link-analyze.log`.
+A compact product photo replaces the small device cutout. The actual device
+was restaged with the built-in imagegen tool, and the app typesets only
+**Meet the Harness device** beside it. The whole photo remains one link.
+At 360 × 180 pixels (300 × 150 in short windows), it stays below the main
+controls and leaves search room to expand. Asset and prompt provenance:
+[harness-device-studio-artwork.md](harness-device-studio-artwork.md).
+
+17 current entry and layout checks pass, with captures at normal, narrow,
+short, and enlarged-text sizes. Analysis has no issues. Logs:
+`/private/tmp/harness-device-studio-final-tests.log` and
+`/private/tmp/harness-device-studio-analyze.log`; captures:
+`/private/tmp/harness-device-studio-captures`.
+An additional run of the older `first_workspace_test.dart` exposed 14 stale
+expectations for the retired machine disclosure, direct folder field and Cursor
+quick choice. That file is unchanged in this feature; current creation,
+keyboard, project selection and recovery checks are recorded above.
 
 ### Minimal Customize Harness — pushed 0c764cf
 

@@ -97,6 +97,7 @@ flutter:
     # the mark the Dock shows, not a stand-in drawn in Dart.
     - assets/app_icon.png
     - assets/harness_device.png
+    - assets/harness_device_studio.png
     - assets/swarm-wallpapers/
 
   # To add assets to your application, add an assets section, like this:

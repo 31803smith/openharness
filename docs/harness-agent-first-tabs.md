@@ -81,9 +81,10 @@ content without internal dividing lines or a darker preview column.
 Results and preview share the space above the fixed device footer. Typing,
 clicking or pressing an arrow opens search; focus alone does not build its catalog.
 Escape closes results and retains the query. The default background matches the selected tab, and the device
-link stays above the customization button. A clear 64-pixel device cutout sits
-beside **Meet the Harness device**, with no box, description or separate Learn
-more action. The image and label open the device page together.
+link stays above the customization button. A compact studio photograph shows
+the device at a larger size, with **Meet the Harness device** typeset beside it.
+The tile is 360 × 180 pixels (300 × 150 in shorter windows), has no outline,
+description or separate Learn more action, and opens the device page as one link.
 New without a linked machine opens machine linking.
 
 Open Agent uses the same continuous search surface as New Harness, with
