@@ -47,10 +47,17 @@ dependencies:
 
   # The phone's second wire to a machine: the `terminal-v1` data channel the
   # harness CLI opens with werift on the desktop's behalf (lib/p2p/). Data
-  # channels only — no camera or microphone, so no usage strings are needed.
+  # channels only — no microphone, and the camera it never opens is opened by
+  # `image_picker` below instead, which is what the usage strings are for.
   # Pinned exactly: a native plugin, and libwebrtc's SCTP/SDP behaviour is
   # what the responder's werift has to agree with.
   flutter_webrtc: 1.6.2+hotfix.1
+
+  # Sending a picture to an agent: the library sheet and the camera behind the
+  # key bar's image button (`phone/terminal_key_bar.dart`). The bytes it returns
+  # are re-encoded to PNG before they leave — see `terminal/image_transcode.dart`
+  # for why the whole pipe past this point accepts nothing else.
+  image_picker: ^1.2.3
 
 dev_dependencies:
   flutter_test:

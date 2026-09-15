@@ -28,6 +28,12 @@
 	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<!-- Taking a picture to send to an agent. Only the camera needs a string on
+	     iOS 15: picking from the library goes through PHPicker, which runs out of
+	     process and grants nothing, so NSPhotoLibraryUsageDescription would never
+	     be shown and is deliberately absent. -->
+	<key>NSCameraUsageDescription</key>
+	<string>Take a photo to send to an agent in a terminal.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
