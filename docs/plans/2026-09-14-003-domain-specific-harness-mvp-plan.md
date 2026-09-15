@@ -205,3 +205,31 @@ Done on 2026-09-14, on this Mac:
 Still to see with eyes: the desktop's Create Harness → Circuit → prompt → board-in-pane loop, and
 the WKWebView pane on both the Skia and Impeller builds. The app was built and launched from the
 worktree, but the screen was locked for the session that would have clicked through it.
+
+## What the first full run found (2026-09-15, overnight)
+
+All three harnesses ran end to end in the app on this Mac, driven by computer use: Circuit to a
+fab-ready board, Marp to a ten-slide deck, Workshop to a printable phone stand, each in a tab of its
+own with the viewer left, the terminal right, the chip and the phase strip moving in the viewer's
+header. Fixed on the way: WKWebView's missing background-colour call on macOS (a red pane), the
+harness tab's target when the dialog passes the current tab, the strip gated on a non-compact
+header, the search preview drawing the base engine. Left for a decision:
+
+- **Remote machines.** The viewer is a loopback server where the agent runs; the webview loads
+  `127.0.0.1`. A remote harness needs the daemon to forward that port through the relay — an HTTP
+  (plus SSE/WebSocket) tunnel over the machine WS, terminated by a local proxy in the app. Not
+  started; the MVP is local-only by construction.
+- **Daemon restart with the app open.** Once, the previous app instance dropped the three harness
+  agents' panes when the daemon restarted (the user's own agents survived); a second restart kept
+  them but added the last-selected harness agent to the active tab as a second pane. Both look like
+  main's offline auto-reattach (`pendingOfflineAgentId`) meeting multi-tab; not touched here.
+- **Circuit's vendored runtime.** `skills/circuitcode/scripts/packages/circuitpy` is an untracked
+  copy refreshed by `scripts/build/build-skill-runtimes.sh`; a linked checkout goes stale after a
+  rebase until it is rerun (the agent hit missing `repair.checkpoint`). `setup.sh` runs it, so a
+  git-URL install is fine; `harness dsh install --link` could run setup on every daemon start.
+- **Clickable phases.** A done phase with an artifact could swap the viewer to it; the URL
+  template lives in the daemon, so it is a `dsh_view { agentId, artifact }` request, not a desktop
+  change alone.
+- **Marp's repo** is local only (`/Users/ab/code/autonomous-marp`, branch `harness-dsh`); the
+  registry entry names `github.com/autonomous-ai/autonomous-marp`, which must exist before a
+  git-URL install can work.
