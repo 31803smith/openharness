@@ -76,16 +76,17 @@ are:
 
 ## Current source and verification
 
-**c35e298** transfers keyboard/text ownership immediately during pane/tab
-navigation and is pushed to main. Ready retained views receive input before
-the next frame; blank or connecting destinations release the previous agent.
-Dialogs preserve their input and return it to the current destination on
-dismissal. Analysis and full desktop regressions pass. The prepared, verified
-Release includes this change; the running preview remains unchanged while the
-console is locked.
+**f25e5a2** keeps entry choices readable and visible at larger text sizes and is
+pushed to main. The inline search reveals its whole viewport; search selection
+remains visible after resizing. New Harness agent buttons wrap when their labels
+need more room. This includes the preceding immediate navigation/input fixes.
+Analysis and full desktop regressions pass. The prepared, verified Release
+includes this change; the running preview remains unchanged while the console
+is locked.
 
 | Checkpoint | Verified change |
 | --- | --- |
+| **f25e5a2** — entry visibility | The start-page search stays inside the window, resized search results reveal the same selection, and large-text agent choices wrap without truncating Claude Code. Current production surfaces are rendered in all six palettes at 880×560 and text scales 1 and 2. |
 | **c35e298** — navigation input | Pane/tab switches, closes and zoom navigation transfer input to the existing view before painting. Find/composer drafts, caret and composition survive. Connecting composers release the old agent and take focus once ready. Dialogs exclude background input and restore the current destination immediately on dismissal. |
 | **dff8dfb** — Find opening | Shortcut/native entry immediately activates the focused pane's prepared editor. Early text, composition and Escape belong to Find before its first paint. Sixteen retained terminals keep only one dormant editor, without a search index or output-driven editor rebuilds. |
 | **8d754db** — Find dismissal | Escape or the close button previously lost an arrow key and text arriving before the next frame. Dismissal now immediately restores the retained terminal's input connection, or the visible composer's field and draft. The renderer and remembered Find query stay intact. |
@@ -99,11 +100,19 @@ console is locked.
 
 Current checks:
 
-- **1,461 desktop unit/widget checks pass**, with one optional CLI-media
-  placeholder skipped. Log: /private/tmp/harness-navigation-input-full.log.
-- All **six changed source/test files analyze cleanly** in
-  /private/tmp/harness-navigation-input-analyze.log. The **18 new transition
-  cases** cover keyboard/native command entry, ready/connecting views, zoom,
+- **1,473 desktop unit/widget checks pass**, with one optional CLI-media
+  placeholder skipped. Log: /private/tmp/harness-entry-full.log.
+- All **four changed Dart files analyze cleanly** in
+  /private/tmp/harness-entry-analyze.log. The **12 entry render cases** pass in
+  /private/tmp/harness-entry-render-final.log. Before-fix failures are in
+  /private/tmp/harness-entry-before.log and /private/tmp/harness-entry-resize-before.log.
+  Captures are in /private/tmp/harness-entry-after. They use production widgets,
+  synthetic machines, bundled icons, and Arial/Liberation under the app's font
+  families; they do not establish native SF font metrics or native window behavior.
+  The original cases reproduced clipped agent labels and off-window selections;
+  resizing also removed the selected row from the visible list at normal text size.
+- The preceding **18 input transition cases** cover keyboard/native command
+  entry, ready/connecting views, zoom,
   editor drafts/composition, background changes and immediate dialog dismissal.
   The original ten failures are in /private/tmp/harness-navigation-input-before.log;
   connecting-composer and late-readiness failures are in
@@ -114,10 +123,10 @@ Current checks:
   **363 AppKit titlebar checks**, including hidden native window layout.
   Log: /private/tmp/harness-current-native-contract.log. The script completed;
   it displayed no windows and opened no agents.
-- The normal arm64 **Release build succeeds** through c35e298. Both rebuilt
+- The normal arm64 **Release build succeeds** through f25e5a2. Both rebuilt
   frameworks verified before refreshing the outer ad-hoc signature; the full
   bundle passed deep, strict signature verification.
-  Build log: /private/tmp/harness-navigation-input-release.log.
+  Build log: /private/tmp/harness-entry-release.log.
 - Four optional CLI-media checks previously passed at 67c20f4 in
   /private/tmp/harness-current-media-smoke.log. They use isolated identities,
   synthetic media, loopback transport and a stubbed OS launch boundary.
@@ -130,7 +139,7 @@ earlier counts separate.
 
 ### Prepared build versus running preview
 
-**Prepared, verified Release through c35e298:**
+**Prepared, verified Release through f25e5a2:**
 
 /private/tmp/harness-pane-controls-release/Build/Products/Release/Harness.app
 
@@ -139,7 +148,8 @@ earlier counts separate.
 /Users/ab/code/autonomous-harness/desktop/build/macos/Build/Products/Release/Harness.app
 
 The newer bundle has **not** replaced the running preview. The exact preview
-process was confirmed as PID 92821 during this checkpoint; recheck before acting.
+process was confirmed as PID 92821 (elapsed 04:55:45) during this checkpoint;
+recheck before acting.
 The console still reports **CGSSessionScreenIsLocked = Yes**. Earlier exact-path
 app-control lookups returned cgWindowNotFound despite the process running.
 A lookup failure is not evidence that an app stopped.
