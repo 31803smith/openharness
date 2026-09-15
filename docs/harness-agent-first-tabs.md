@@ -23,6 +23,8 @@ Each choice row has exactly one selected option. Only selection gets an outline;
 keyboard focus uses a quiet fill so it cannot look like a second selection.
 Choice tiles use the border as their selection marker, without a checkmark.
 More menus show only the remaining choices, without repeating the visible tiles.
+The More tile uses a grid icon for engines and a monitor for machines; selected
+alternatives use their own icon.
 Icon buttons share a quiet rounded background on hover and keyboard focus.
 Apply this to native tab close, new-tab and notification icons as well as
 Flutter controls. Disabled icons do not highlight; decorative icons stay inert.
@@ -106,7 +108,7 @@ retaining the query and selection. Native menus and the titlebar retain normal
 colors while modal actions are blocked.
 
 New Agent uses the same generous width as Open Agent. Three stacked sections
-lead through **Choose an engine**, **Select a machine**, and **Which project will
+lead through **Choose an engine**, **Where will this agent run?**, and **Which project will
 this agent work in?** Each row has four equal tiles. Codex, Claude Code, and
 OpenCode occupy the first three engine slots. The fourth is **More ⌄**; choosing
 another engine replaces its label and icon, never adds a fifth tile.
@@ -121,7 +123,8 @@ wrap to two columns or one, with the body scrolling above the fixed footer.
 Projects offer **New project / Local / Git / Recent ⌄**. New selects an empty
 project without creating anything yet. Local opens the folder picker on the
 chosen machine; Git opens a small URL dialog; Recent lists that machine’s
-previous projects. The selected path or URL appears underneath. Each machine
+previous projects. The selected folder or repository name appears only inside
+its tile, without a repeated full path or URL below. Each machine
 remembers its last choice; first use selects New. New folders use
 `~/harnesses/agent-1`, `agent-2`, …. Switching engines keeps the project.
 

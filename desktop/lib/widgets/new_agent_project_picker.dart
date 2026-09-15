@@ -231,20 +231,6 @@ class _NewAgentProjectPickerState extends State<NewAgentProjectPicker> {
             ),
           ],
         ),
-        if (_folder != null || _repository != null)
-          Padding(
-            padding: const EdgeInsets.only(top: 12, left: 2),
-            child: Text(
-              _folder ?? _repository!.url,
-              key: const Key('new-agent-project-path'),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 12,
-                color: grid.AppPalette.textSecondary,
-              ),
-            ),
-          ),
       ],
     );
   }

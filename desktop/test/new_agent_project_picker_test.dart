@@ -132,14 +132,16 @@ void main() {
     await tester.pumpAndSettle();
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pumpAndSettle();
-    expect(find.text('/local/alpha'), findsOneWidget);
+    expect(find.text('alpha'), findsOneWidget);
+    expect(find.text('/local/alpha'), findsNothing);
     expect(app.calls, isEmpty);
     expect(app.previews, isEmpty);
     await tester.tap(find.byKey(const Key('new-agent-project-recent')));
     await tester.pumpAndSettle();
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pumpAndSettle();
-    expect(find.text('/local/alpha'), findsOneWidget);
+    expect(find.text('alpha'), findsOneWidget);
+    expect(find.text('/local/alpha'), findsNothing);
   });
 
   testWidgets(
@@ -149,7 +151,8 @@ void main() {
       await recent(tester, 'alpha');
       await tester.tap(find.byKey(const ValueKey('new-agent-quick-opencode')));
       await tester.pumpAndSettle();
-      expect(find.text('/local/alpha'), findsOneWidget);
+      expect(find.text('alpha'), findsOneWidget);
+      expect(find.text('/local/alpha'), findsNothing);
       await tester.tap(find.byKey(const ValueKey('new-agent-machine-remote')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('new-agent-project-recent')));
@@ -159,10 +162,11 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('new-agent-machine-local')));
       await tester.pumpAndSettle();
-      expect(find.text('/local/alpha'), findsOneWidget);
+      expect(find.text('alpha'), findsOneWidget);
+      expect(find.text('/local/alpha'), findsNothing);
       await tester.tap(find.byKey(const ValueKey('new-agent-machine-remote')));
       await tester.pumpAndSettle();
-      expect(find.text('/remote/beta'), findsOneWidget);
+      expect(find.text('beta'), findsOneWidget);
       await tester.tap(find.byKey(const Key('create-agent-submit')));
       await tester.pumpAndSettle();
       expect(app.calls.single, containsPair('folder', '/remote/beta'));
@@ -217,10 +221,11 @@ void main() {
       );
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
       await tester.pumpAndSettle();
-      expect(find.text('/local/alpha'), findsOneWidget);
+      expect(find.text('alpha'), findsOneWidget);
+      expect(find.text('/local/alpha'), findsNothing);
       await tester.tap(find.byKey(const Key('new-agent-folder-newProject')));
       await tester.pumpAndSettle();
-      expect(find.byKey(const Key('new-agent-project-path')), findsNothing);
+      expect(find.text('alpha'), findsNothing);
       expect(app.calls, isEmpty);
       await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);

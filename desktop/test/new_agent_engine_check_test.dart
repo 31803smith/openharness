@@ -178,7 +178,8 @@ void main() {
 
     expect(find.byType(AlertDialog), findsOneWidget);
     expect(retry, findsNothing);
-    expect(find.text(pickedFolder), findsOneWidget);
+    expect(find.text('20260907'), findsOneWidget);
+    expect(find.text(pickedFolder), findsNothing);
     expect(
       tester
           .widget<AppSelectField<String>>(
@@ -258,7 +259,7 @@ void main() {
           .value,
       'codex',
     );
-    expect(find.text(pickedFolder), findsNothing);
+    expect(find.text('20260907'), findsNothing);
     expect(app.launches, isEmpty);
     expect(tester.takeException(), isNull);
   });

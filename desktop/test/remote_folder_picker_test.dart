@@ -401,7 +401,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
       await tester.pumpAndSettle();
-      expect(find.text('/home/dev/old'), findsWidgets);
+      expect(find.text('old'), findsOneWidget);
       expect(app.launches, isEmpty);
       await tester.ensureVisible(
         find.byKey(const Key('new-agent-project-browse')),
@@ -423,7 +423,8 @@ void main() {
       await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
       await tester.pumpAndSettle();
       expect(find.byType(AlertDialog), findsOneWidget);
-      expect(find.text('/home/dev/target'), findsOneWidget);
+      expect(find.text('target'), findsOneWidget);
+      expect(find.text('/home/dev/target'), findsNothing);
       expect(app.launches, isEmpty);
       await tester.tap(find.widgetWithText(FilledButton, 'Create'));
       await tester.pumpAndSettle();

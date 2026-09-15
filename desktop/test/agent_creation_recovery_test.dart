@@ -628,7 +628,7 @@ void main() {
         const WsRequestTimeout('agent_create'),
       );
       await tester.pumpAndSettle();
-      expect(find.text('/work'), findsOneWidget);
+      expect(find.text('work'), findsOneWidget);
       expect(find.widgetWithText(FilledButton, 'Create'), findsNothing);
       final action = tester.widget<FilledButton>(
         find.widgetWithText(FilledButton, 'Check status'),

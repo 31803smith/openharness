@@ -260,7 +260,13 @@ void main() {
         ),
         findsOneWidget,
       );
-      expect(find.text('/work/first'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('new-agent-project-browse')),
+          matching: find.text('first'),
+        ),
+        findsOneWidget,
+      );
       expect(find.text('/work/neighbor'), findsNothing);
       expect(find.byKey(const ValueKey('swarm-search-input')), findsNothing);
       expect(app.focusedPaneId, first.id);
@@ -469,7 +475,13 @@ void main() {
     await chord(tester, LogicalKeyboardKey.keyN);
     await tester.pump();
     expect(find.text('New Agent to the right'), findsOneWidget);
-    expect(find.text('/work/checkout'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('new-agent-project-browse')),
+        matching: find.text('checkout'),
+      ),
+      findsOneWidget,
+    );
     expect(app.panes, [pane]);
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pump();

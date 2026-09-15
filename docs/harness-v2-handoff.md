@@ -56,7 +56,10 @@ The current form uses three rows of four equal tiles:
 - Project: New project, Local, Git, Recent ⌄. Local opens the selected machine’s
   folder picker; Git opens a URL dialog; Recent contains machine-scoped projects.
 
-The selected path or URL stays visible beneath the tiles. Each machine remembers
+Only the folder or repository name appears inside the selected project tile;
+the full path/URL line below is removed. More tiles have a grid icon for engines
+and a monitor for machines, replaced by the chosen option’s own icon.
+Each machine remembers
 its choice; switching engines keeps it. The settings gear is small and quiet at
 the bottom left; Create is a larger 192 × 56 primary button. Escape/outside click
 still dismiss, and Cmd-Return creates. Repeated-label tooltips are removed from

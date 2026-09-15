@@ -16,6 +16,7 @@ class AppChoicePicker<T> extends StatefulWidget {
     required this.optionKey,
     required this.moreLabel,
     this.moreKey,
+    this.moreLeading,
     this.preferredValues = const [],
     this.showDetails = false,
     this.wrap = true,
@@ -29,6 +30,7 @@ class AppChoicePicker<T> extends StatefulWidget {
   final Key Function(T) optionKey;
   final String moreLabel;
   final Key? moreKey;
+  final Widget? moreLeading;
   final List<T> preferredValues;
   final bool showDetails;
   final bool wrap;
@@ -271,7 +273,9 @@ class _AppChoicePickerState<T> extends State<AppChoicePicker<T>> {
               trigger: AppChoiceTileContent(
                 label: extra?.label ?? 'More',
                 detail: extra?.detail,
-                leading: extra?.leading?.call(),
+                leading: extra == null
+                    ? widget.moreLeading
+                    : extra.leading?.call(),
                 trailing: const Icon(Icons.keyboard_arrow_down, size: 18),
               ),
             ),
