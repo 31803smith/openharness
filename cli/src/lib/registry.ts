@@ -759,6 +759,13 @@ class Registry {
           grid: normalizedGridAssignment(raw.grid),
           codexHome: typeof rawCodexHome === 'string' && rawCodexHome ? rawCodexHome : null,
           ...(rawGridLaunch !== undefined ? { gridLaunch: rawGridLaunch } : {}),
+          // ⚠️ Rehydrated EXPLICITLY, like every field above it. A row is rebuilt from this list on
+          // load, so a field added to the type and the setter but not to this list is written to
+          // disk and then silently dropped by the next load — which is exactly what happened, and
+          // it looks like "the setter never ran" rather than like a missing line here.
+          ...(typeof raw?.subscriptionModel === 'string' && raw.subscriptionModel
+            ? { subscriptionModel: raw.subscriptionModel }
+            : {}),
           ...(raw.bypassPermission === true ? { bypassPermission: true } : {}),
           transcriptPath,
           title: titleDisplayName(typeof raw.title === 'string' ? raw.title : null),
@@ -1139,6 +1146,11 @@ class Registry {
       grid: existing?.grid ?? null,
       // The credential-bearing launch. Like codexHome: written once, carried forward, never re-derived.
       gridLaunch: existing?.gridLaunch ?? null,
+      // ⚠️ Carried forward for the same reason, and it was missed once: a bind REBUILDS the row from
+      // named fields, so a field the rebuild does not name survives on disk and vanishes from
+      // memory the moment the engine reports in. The symptom is a move back to the engine's own
+      // login landing on a house default — the remembered model was there, then a hook bind ate it.
+      ...(existing?.subscriptionModel ? { subscriptionModel: existing.subscriptionModel } : {}),
       transcriptPath: effectiveTranscriptPath,
       projectDir: engine === 'grok' || engine === 'agy' || engine === 'copilot'
         ? basename(input.cwd ?? existing?.cwd ?? '') || sessionId

@@ -1296,6 +1296,36 @@ describe('registry across a reboot and pane loss', () => {
     expect(registry.setGridLaunch('nobody', null)).toBe(false)
   })
 
+  it('keeps the remembered subscription model across a reload', async () => {
+    // ⚠️ REGRESSION. A row is rebuilt from an explicit field list on load, so a field added to the
+    // type and the setter but NOT to that list is written to disk and silently dropped by the next
+    // load. It reads as "the setter never ran", which is where a day went — so what is pinned here
+    // is survival across a RELOAD, not merely that the setter returned true.
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    const pending = registry.openPendingAgent({
+      engine: 'claude',
+      runtimes: [{ backend: 'tmux', paneId: '%21' }],
+      cwd: '/tmp/demo',
+    })!
+    expect(registry.setSubscriptionModel(pending.agentId, 'opus')).toBe(true)
+    expect(registry.setSubscriptionModel('nobody', 'opus')).toBe(false)
+
+    // The reload is the whole test: a field missing from the rehydration list survives the write and
+    // dies here.
+    const { registry: reloaded } = await loadRegistryModule()
+    reloaded.load()
+    expect(reloaded.byAgent(pending.agentId)?.subscriptionModel).toBe('opus')
+
+    // ...and the SECOND way it was lost: a hook bind rebuilds the row from named fields, so a field
+    // the rebuild does not name is still on disk while memory has already forgotten it.
+    const transcriptPath = join(dataDir, 'session-sub.jsonl')
+    writeFileSync(transcriptPath, '{}\n')
+    const bound = reloaded.register({ sessionId: 'session-sub', transcriptPath, tmuxPane: '%21', cwd: '/tmp/demo' })
+    expect(bound?.entry.agentId).toBe(pending.agentId)
+    expect(bound?.entry.subscriptionModel).toBe('opus')
+  })
+
   it('drops any launch state on the hook that proves the engine is up', async () => {
     const transcriptPath = join(dataDir, 'session-f.jsonl')
     writeFileSync(transcriptPath, '{}\n')

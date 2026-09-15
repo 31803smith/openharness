@@ -168,7 +168,7 @@ import { probeGridAssignment, sameGridAssignment } from './lib/gridAssignment.js
 import { agentFrame, type AgentFrame } from './lib/agentFrame.js'
 import { SessionInputController } from './lib/sessionInput.js'
 import { adaptSlashCommand } from './lib/goalCommand.js'
-import { RuntimeProfileManager } from './lib/runtimeProfile.js'
+import { RuntimeProfileManager, parseRuntimeProfile } from './lib/runtimeProfile.js'
 import { RuntimeProfileController, inspectRuntimePane } from './lib/runtimeProfileController.js'
 import { deviceErrorText } from './lib/deviceErrors.js'
 import { correlateAgentEvent, turnHeartbeatFrame } from './lib/agentEvent.js'
@@ -3811,8 +3811,24 @@ async function runForeground(session: AuthSession): Promise<void> {
     //
     // Coming back reads what was kept. Not cleared on the way home: an agent bounced between a grid
     // and its own login should land on the same model every time, not only the first.
+    // ⚠️ `selectedModel` answers an ENCODED runtime-profile id (`runtime-v1:…`), not a model name —
+    // handing that to an engine would point it at a model that does not exist. Decode it and take
+    // the model. For claude the decoded value is already the vendor's alias (`opus`), which is what
+    // ANTHROPIC_MODEL wants. Null when the daemon has not observed this pane's model yet, which is a
+    // real answer: there is then nothing to come back to and the engine decides, as it did before.
+    const observed = parseRuntimeProfile(runtimeProfiles.selectedModel(session))?.model ?? null
     const remembered = grid
-      ? (runtimeProfiles.selectedModel(session) ?? null)
+      // Two guards, and both come from watching this go wrong:
+      //
+      //  * Capture only when the agent is on its OWN LOGIN. Moving grid→grid must not overwrite the
+      //    memory with the first grid's model — the subscription choice has not changed, and the
+      //    whole point is to still have it on the way home.
+      //
+      //  * Never remember the model being moved TO. An engine can keep REPORTING a grid model after
+      //    it has come back (Claude Code restores it from its own session file and says so), so a
+      //    later move to that same grid would otherwise capture the grid's model as the
+      //    "subscription" one and hand it straight back — teaching the bug to itself.
+      ? (!session.grid && observed !== grid.model ? observed : (session.subscriptionModel ?? null))
       : (session.subscriptionModel ?? null)
     // What this machine cannot do at all is said first, before the pane is even looked at.
     const target: LaunchSource = {

@@ -39,6 +39,16 @@ describe('subscriptionModelLaunch', () => {
     expect(subscriptionModelLaunch('claude', undefined)).toBeNull()
   })
 
+  it('round-trips the model name a runtime profile decodes to', () => {
+    // ⚠️ The daemon reads this from `selectedModel`, which answers an ENCODED profile
+    // (`runtime-v1:<agent>:claude:opus@xhigh`) and NOT a model name. The first version of this
+    // feature passed the encoded string straight through, which would have pointed the engine at a
+    // model that does not exist — so what is pinned is that the decoded half is usable as-is.
+    expect(subscriptionModelLaunch('claude', 'opus')?.env.ANTHROPIC_MODEL).toBe('opus')
+    expect(subscriptionModelLaunch('claude', 'runtime-v1:a:claude:opus@xhigh')?.env.ANTHROPIC_MODEL)
+      .not.toBe('opus') // a reminder: the caller must decode, this module cannot
+  })
+
   it('only claims engines it can actually steer', () => {
     expect(subscriptionModelEngines().sort()).toEqual(['claude', 'codex', 'hermes', 'opencode'])
   })
