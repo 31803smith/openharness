@@ -1,11 +1,17 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+// `PlatformException` — a refused camera permission arrives as one, and it is
+// the one picker failure with something the person can do about it.
+import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import 'package:harness_mobile/shared/theme/app_theme.dart';
 import 'package:harness_mobile/shared/widgets/app_icon_button.dart';
 import 'package:harness_mobile/state/app_state.dart';
+import 'package:harness_mobile/terminal/image_transcode.dart';
+import 'package:harness_mobile/terminal/terminal_session.dart';
 import 'package:harness_mobile/widgets/engine_identity.dart';
 import 'package:harness_mobile/widgets/rename_agent_dialog.dart';
 import 'package:harness_mobile/widgets/terminal_panel.dart';
@@ -143,6 +149,68 @@ class _TerminalPageState extends State<TerminalPage>
   /// [TerminalKeyBar]. Dropping focus is what closes the input connection;
   /// xterm reopens it on the next tap in the pane.
   void _dismissKeyboard() => FocusManager.instance.primaryFocus?.unfocus();
+
+  /// Guards against a second picker while one is already up.
+  ///
+  /// The key bar stays on screen under the sheet the OS puts over it, so its
+  /// button remains tappable — and `pickImage` answers a second call on iOS by
+  /// throwing rather than by queueing.
+  bool _picking = false;
+
+  /// Picks a picture and sends it to the agent, re-encoded on the way.
+  ///
+  /// ⚠️ **The transcode is not an optimisation, it is what makes the picture
+  /// arrive at all** — see `transcodeToPng`. Everything past this point names
+  /// PNG: the binary kind, the file the CLI writes, and the three OS clipboard
+  /// writers it hands the bytes to. A phone produces JPEG and HEIC.
+  Future<void> _sendImage(TerminalSession session, ImageSource source) async {
+    if (_picking || !session.acceptsInput) return;
+    _picking = true;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    void report(String message) {
+      if (mounted) messenger?.showSnackBar(SnackBar(content: Text(message)));
+    }
+
+    try {
+      final XFile? picked;
+      try {
+        picked = await ImagePicker().pickImage(source: source);
+      } on PlatformException catch (error) {
+        // A refused camera permission lands here rather than as a null, and it
+        // is the one failure somebody can do something about.
+        report(
+          error.code == 'camera_access_denied'
+              ? 'Allow camera access in Settings to send a photo.'
+              : 'Could not open the picker.',
+        );
+        return;
+      }
+      // Null is a CANCEL, not a failure: the person backed out of the sheet, and
+      // a snackbar saying so would be noise over a deliberate act.
+      if (picked == null) return;
+
+      final result = await transcodeToPng(await picked.readAsBytes());
+      switch (result) {
+        case ImageTranscodeUnreadable():
+          report("That file isn't an image this phone can read.");
+        case ImageTranscodeTooLarge():
+          report('That image is too large to send, even scaled down.');
+        case ImageTranscodeOk(:final pngBytes):
+          // Re-checked AFTER the picker, which the person may have had open for
+          // a while: the stream can have been taken over or dropped since, and
+          // `pasteImage` on a dead stream goes nowhere silently.
+          if (!session.acceptsInput) {
+            report('The terminal is no longer accepting input.');
+            return;
+          }
+          if (!await session.pasteImage(pngBytes)) {
+            report('The image could not be sent.');
+          }
+      }
+    } finally {
+      _picking = false;
+    }
+  }
 
   /// The composer starts OPEN here, and the phone owns that answer rather than the pane.
   ///
@@ -293,6 +361,22 @@ class _TerminalPageState extends State<TerminalPage>
                             controlArmed: session.controlArmed,
                             onControlToggle: session.armControl,
                             onDismissKeyboard: _dismissKeyboard,
+                            // Only where the far side can actually take one: an
+                            // older CLI never advertises the binary kind, so the
+                            // upload would go nowhere silently. Null leaves the
+                            // buttons undrawn rather than drawn dead.
+                            onPickImage:
+                                machine?.terminalImagePasteAvailable == true
+                                ? () => unawaited(
+                                    _sendImage(session, ImageSource.gallery),
+                                  )
+                                : null,
+                            onTakePhoto:
+                                machine?.terminalImagePasteAvailable == true
+                                ? () => unawaited(
+                                    _sendImage(session, ImageSource.camera),
+                                  )
+                                : null,
                           ),
                         ),
                     ],
