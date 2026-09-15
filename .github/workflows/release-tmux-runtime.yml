@@ -7,8 +7,8 @@ name: Release tmux runtime
 # traps live in cli/scripts/build-managed-tmux.sh; publishing is desktop/scripts/publish-managed-
 # tmux-runtime.sh, a sibling of the Node publisher, writing harness/runtime/tmux/metadata.json.
 #
-#   gh workflow run release-tmux-runtime.yml -f tmux_version=3.5a                # build + publish
-#   gh workflow run release-tmux-runtime.yml -f tmux_version=3.5a -f publish=false   # build only, inspect the artifacts
+#   gh workflow run release-tmux-runtime.yml -f tmux_version=3.7c                # build + publish
+#   gh workflow run release-tmux-runtime.yml -f tmux_version=3.7c -f publish=false   # build only, inspect the artifacts
 #
 # A macos-15 runner is Apple Silicon; the x64 archive is cross-built there and smoke-tested under
 # Rosetta by the build script itself. Nothing consumes the manifest until install.sh is taught to.
@@ -19,7 +19,7 @@ on:
       tmux_version:
         description: 'tmux release to build (its sha256 is pinned in the build script)'
         required: true
-        default: '3.5a'
+        default: '3.7c'
       publish:
         description: 'Upload the archives and rewrite harness/runtime/tmux/metadata.json'
         type: boolean

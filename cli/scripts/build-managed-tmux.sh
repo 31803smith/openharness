@@ -29,7 +29,7 @@ case "$PLATFORM" in
 esac
 [ "$(uname -s)" = Darwin ] || { echo "error: the managed tmux is built on macOS" >&2; exit 1; }
 
-TMUX_VERSION="${TMUX_VERSION:-3.5a}"
+TMUX_VERSION="${TMUX_VERSION:-3.7c}"
 LIBEVENT_VERSION="${LIBEVENT_VERSION:-2.1.12-stable}"
 NCURSES_VERSION="${NCURSES_VERSION:-6.5}"
 
@@ -39,7 +39,7 @@ LIBEVENT_SHA256="${LIBEVENT_SHA256:-92e6de1be9ec176428fd2367677e61ceffc2ee1cb119
 NCURSES_URL="https://invisible-mirror.net/archives/ncurses/ncurses-${NCURSES_VERSION}.tar.gz"
 NCURSES_SHA256="${NCURSES_SHA256:-136d91bc269a9a5785e5f9e980bc76ab57428f604ce3e5a5a90cebc767971cc6}"
 TMUX_URL="https://github.com/tmux/tmux/releases/download/${TMUX_VERSION}/tmux-${TMUX_VERSION}.tar.gz"
-TMUX_SHA256="${TMUX_SHA256:-16216bd0877170dfcc64157085ba9013610b12b082548c7c9542cc0103198951}"
+TMUX_SHA256="${TMUX_SHA256:-7c60cae9a0e25288e2e24750aafc9e8800fc7fd4555e447e1b29ee4201cfb3bf}"
 
 for command in curl tar shasum make cc codesign otool; do
   command -v "$command" >/dev/null 2>&1 || { echo "error: $command is required" >&2; exit 1; }
@@ -88,7 +88,10 @@ export CC=/usr/bin/clang
 export CFLAGS="-arch $ARCH -O2 -isysroot $SDKROOT"
 export LDFLAGS="-arch $ARCH -isysroot $SDKROOT -L$DEPS/lib"
 export CPPFLAGS="-I$DEPS/include -I$DEPS/include/ncursesw"
-export PKG_CONFIG_PATH="$DEPS/lib/pkgconfig"
+# LIBDIR, not PATH: PATH is prepended to pkg-config's default search list, which on any Mac with
+# Homebrew (every CI runner included) still finds /usr/local and /opt/homebrew — tmux 3.7 then
+# linked an Intel Homebrew jemalloc. LIBDIR replaces the list, so only our own .pc files exist.
+export PKG_CONFIG_LIBDIR="$DEPS/lib/pkgconfig"
 
 echo ">> libevent $LIBEVENT_VERSION"
 (
@@ -136,7 +139,7 @@ echo ">> tmux $TMUX_VERSION"
   # without any macOS-unfriendly -static flag.
   LIBEVENT_CORE_CFLAGS="-I$DEPS/include" LIBEVENT_CORE_LIBS="-L$DEPS/lib -levent_core" \
   LIBTINFO_CFLAGS="-I$DEPS/include -I$DEPS/include/ncursesw" LIBTINFO_LIBS="-L$DEPS/lib -ltinfow" \
-  ./configure $HOST_FLAG --prefix="$STAGE" --disable-utf8proc >/dev/null
+  ./configure $HOST_FLAG --prefix="$STAGE" --disable-utf8proc --disable-jemalloc >/dev/null
   make -j"$NPROC" >/dev/null 2>&1
   cp tmux "$STAGE/bin/tmux"
   cp COPYING "$STAGE/LICENSE.tmux"
@@ -148,8 +151,8 @@ cp "$WORK/src/ncurses/COPYING" "$STAGE/LICENSE.ncurses"
 # here is notarized: curl sets no quarantine flag, so Gatekeeper never sees the binary.
 codesign -s - --force "$STAGE/bin/tmux" 2>/dev/null
 
-# The whole point: nothing but the OS may be needed at run time — no package-manager library, and
-# not the system's ncurses 5.4 either (see the tmux configure note above).
+# The whole point: nothing but the OS may be needed at run time — no package-manager library (a
+# Homebrew jemalloc, say), and not the system's ncurses 5.4 either (see the tmux configure note).
 if otool -L "$STAGE/bin/tmux" | tail -n +2 | grep -Ev '^\s+/usr/lib/lib(System\.B|resolv\.9|util)\.dylib '; then
   echo "error: tmux links a library outside libSystem:" >&2
   otool -L "$STAGE/bin/tmux" >&2

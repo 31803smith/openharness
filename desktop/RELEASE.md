@@ -70,14 +70,19 @@ read from macOS's own `/usr/share/terminfo`); the result links only `libSystem` 
 signed. Its three macOS traps — the toolchain `clang` needing `SDKROOT`, tmux's configure silently
 linking the system ncurses 5.4 unless `LIBTINFO_LIBS` is explicit, and libevent's autoconf detecting
 a `pipe2` macOS does not have — are handled in the script and gated by `otool -L` and a real
-`new-session` smoke test (under Rosetta for the x64 build).
+`new-session` smoke test (under Rosetta for the x64 build). pkg-config is pointed at our own
+`.pc` files only (`PKG_CONFIG_LIBDIR`) and jemalloc is disabled: with Homebrew on the build host —
+every CI runner — tmux 3.7's configure otherwise picks up a Homebrew jemalloc. Keep the pinned tmux
+level with what Homebrew ships (3.7c today): a tmux client and server must agree on their protocol,
+and a managed client older than a Homebrew server on the same socket only says "server exited
+unexpectedly".
 
 Publish from CI, never by hand unless rebuilding the same version:
 
 ```bash
-gh workflow run release-tmux-runtime.yml -f tmux_version=3.5a                  # build both, publish
-gh workflow run release-tmux-runtime.yml -f tmux_version=3.5a -f publish=false # build only, inspect
-make upload-tmux-runtime ARGS="3.5a /path/to/archives"                          # the publisher CI calls
+gh workflow run release-tmux-runtime.yml -f tmux_version=3.7c                  # build both, publish
+gh workflow run release-tmux-runtime.yml -f tmux_version=3.7c -f publish=false # build only, inspect
+make upload-tmux-runtime ARGS="3.7c /path/to/archives"                          # the publisher CI calls
 ```
 
 The manifest is `harness/runtime/tmux/metadata.json` — its own file, because `install.sh` slices a
