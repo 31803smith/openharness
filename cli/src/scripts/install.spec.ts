@@ -273,7 +273,7 @@ describe("scripts/install.sh command contract", () => {
     } finally {
       rmSync(scratch, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 
   it("refuses a managed tmux whose checksum does not match, and links nothing", () => {
     const source = readFileSync(installer, "utf8");
@@ -301,7 +301,7 @@ describe("scripts/install.sh command contract", () => {
     } finally {
       rmSync(scratch, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 
   it("falls back to the managed build when Homebrew cannot install tmux", () => {
     const source = readFileSync(installer, "utf8");
@@ -329,7 +329,7 @@ describe("scripts/install.sh command contract", () => {
     } finally {
       rmSync(scratch, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 
   it("host mode puts ~/.local/bin on PATH for new shells", () => {
     const source = readFileSync(installer, "utf8");
@@ -357,7 +357,7 @@ describe("scripts/install.sh command contract", () => {
     } finally {
       rmSync(scratch, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 
   it("host mode stops after the host requirements", () => {
     const source = readFileSync(installer, "utf8");

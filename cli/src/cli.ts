@@ -66,6 +66,7 @@ import { terminateDeletedAgent, checkPidRuntime } from './lib/deleteAgentFallbac
 import { restartAgent, type RestartAgentDeps } from './lib/restartAgent.js'
 import { claudeContinuation, findLiveSession } from './lib/sessionRepair.js'
 import { TmuxBackend } from './lib/tmuxBackend.js'
+import { DEFAULT_HOST_THEME, loadHostTheme, saveHostTheme, type HostTheme } from './lib/hostTheme.js'
 import { createAndRegisterPane } from './lib/createAgentPane.js'
 import { restoreAgents } from './lib/restoreAgents.js'
 import { buildLaunchOverrides, validateLaunchOverrides, type LaunchOverridesDeps, type LaunchOverridesResult, type LaunchSource } from './lib/launchOverrides.js'
@@ -1030,7 +1031,11 @@ async function runForeground(session: AuthSession): Promise<void> {
       console.log(`[tmux] not on the daemon PATH · adopted ${tmuxPath.from} from the user's login shell`)
     }
   }
-  const tmuxBackend = terminalConfig.backends.includes('tmux') ? new TmuxBackend() : null
+  // The desktop's pane colours, for tmux's `window-style` (lib/hostTheme.ts): the last ones the app
+  // sent, or its stock dark palette until it says otherwise. Read through a closure so a change
+  // reaches sessions created after it without rebuilding the backend.
+  let hostTheme: HostTheme = loadHostTheme() ?? DEFAULT_HOST_THEME
+  const tmuxBackend = terminalConfig.backends.includes('tmux') ? new TmuxBackend(() => hostTheme) : null
   const herdrTargets = await resolveHerdrTargets()
   activeHerdrSessions = herdrTargets.map((target) => target.sessionName)
   const resolvedHerdrPaths = herdrTargets.flatMap((target) => target.state === 'available' ? [target.endpoint.socketPath] : [])
@@ -1370,6 +1375,17 @@ async function runForeground(session: AuthSession): Promise<void> {
     diagnostic: (event, fields) => console.log(`[terminal-stream] ${event}`, fields),
   })
   backend.setTerminalStreamManager(terminalStreams)
+  // `agentReconciler` is declared further down; this closure only ever runs for a frame, and no
+  // socket is connected until well after that declaration (backend.connect() is the last thing
+  // this function does).
+  backend.hostThemeSink = (theme) => {
+    if (theme.background === hostTheme.background && theme.foreground === hostTheme.foreground) return
+    hostTheme = theme
+    saveHostTheme(theme)
+    console.log(`[theme] panes now bg=${theme.background} fg=${theme.foreground}`)
+    // Existing sessions pick it up on the next scan (TmuxBackend.inventory restyles); nudge one now.
+    void agentReconciler.trigger()
+  }
 
   // Per-session web turn-lifecycle state; the device mirror keeps its own state + recap.
   const turnStates = new Map<string, TurnState>()

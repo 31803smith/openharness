@@ -4,8 +4,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/auth/auth_session.dart';
 import 'package:harness/core/config.dart';
 import 'package:harness/core/models.dart';
+import 'package:harness/shared/theme/app_theme.dart' as grid;
+import 'package:harness/shared/theme/color_palette.dart';
 import 'package:harness/state/app_state.dart';
 import 'package:harness/state/terminal_pane.dart';
+import 'package:harness/terminal/terminal_theme_store.dart';
 import 'package:harness/ws/ws_conn.dart';
 
 const _machine = Machine(
@@ -50,6 +53,8 @@ class _Connection extends WsConn {
   final calls = <String>[];
   final agents = <Completer<Map<String, dynamic>>>[];
   final capabilities = <Completer<Map<String, dynamic>>>[];
+  final themes = <Map<String, dynamic>>[];
+  bool refuseTheme = false;
   final timeouts = <String, Duration>{};
   final sent = <String>[];
   Completer<void>? readiness;
@@ -73,6 +78,13 @@ class _Connection extends WsConn {
         agents.add(response);
       case 'terminal_capabilities':
         capabilities.add(response);
+      case 'theme_set':
+        themes.add(payload);
+        if (refuseTheme) {
+          response.completeError(StateError('daemon predates theme_set'));
+        } else {
+          response.complete({'applied': true});
+        }
       default:
         throw StateError('Unexpected request: $type');
     }
@@ -257,5 +269,52 @@ void main() {
     await load;
     expect(connection.calls, isEmpty);
     expect(app.panes, isEmpty);
+  });
+
+  group('pane colours reach the daemon', () {
+    tearDown(() {
+      grid.AppTheme.palette.value = HarnessPalette.graphite;
+      terminalThemeStore.value = TerminalThemeChoice.matchApp;
+    });
+
+    test('are announced when a machine connects, as the colours the panes are painted with', () async {
+      grid.AppTheme.palette.value = HarnessPalette.midnight;
+      app.onMachineConnectedForTest('m');
+      await _tick();
+      connection.agents.single.complete(_agents);
+      await _tick();
+      connection.capabilities.single.complete(_capabilities);
+      await _tick();
+
+      expect(connection.themes, [
+        {'background': '#171b29', 'foreground': '#f5f5f5'},
+      ]);
+      expect(connection.timeouts['theme_set'], const Duration(seconds: 5));
+    });
+
+    test('are re-announced to connected machines when the palette or terminal theme changes', () async {
+      machine.connectionStatus = ConnectionStatus.connected;
+      grid.AppTheme.palette.value = HarnessPalette.forest;
+      await _tick();
+      // Tango is its own scheme: what goes out is what the pane draws, not the app palette.
+      terminalThemeStore.value = TerminalThemeChoice.tango;
+      await _tick();
+
+      expect(connection.themes, [
+        {'background': '#18231e', 'foreground': '#f5f5f5'},
+        {'background': '#300a24', 'foreground': '#ffffff'},
+      ]);
+    });
+
+    test('a daemon that cannot take the colours is not an error', () async {
+      connection.refuseTheme = true;
+      machine.connectionStatus = ConnectionStatus.connected;
+      grid.AppTheme.palette.value = HarnessPalette.slate;
+      await _tick();
+      await _tick();
+
+      expect(connection.themes, hasLength(1));
+      expect(app.lastError, isNull);
+    });
   });
 }
