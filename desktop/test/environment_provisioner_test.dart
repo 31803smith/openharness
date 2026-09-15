@@ -161,7 +161,11 @@ void main() {
     },
   );
 
-  test('an unusable selected developer directory is shown as missing during pre-flight', () async {
+  test('an installed tmux is ready whatever the developer tools say', () async {
+    // The developer tools exist to BUILD tmux. With tmux already there, an
+    // unusable toolchain — an unselected directory, an unaccepted licence —
+    // must not stand between the person and the app; it did, for a whole
+    // morning, on a desk with tmux 3.6 and an Xcode licence never clicked.
     var terminalLaunches = 0;
     final calls = <String>[];
     final provisioner = EnvironmentProvisioner(
@@ -172,6 +176,33 @@ void main() {
       run: runner(
         developerToolsPresent: false,
         tmuxPresent: () => true,
+        calls: calls,
+      ),
+    );
+
+    final readiness = await provisioner.ensureReady(
+      onProgress: (_) {},
+      install: false,
+    );
+
+    expect(readiness.systemReady, isTrue);
+    expect(readiness.tmuxBinaryReady, isTrue);
+    expect(readiness.steps[EnvironmentStep.tmux], EnvironmentStepStatus.ready);
+    expect(readiness.output.join('\n'), contains('tmux already installed'));
+    expect(terminalLaunches, 0);
+  });
+
+  test('an unusable selected developer directory is shown as missing when tmux is absent', () async {
+    var terminalLaunches = 0;
+    final calls = <String>[];
+    final provisioner = EnvironmentProvisioner(
+      harnessHome: scratch,
+      isMacOS: true,
+      isLinux: false,
+      openTerminal: (_) async => terminalLaunches++,
+      run: runner(
+        developerToolsPresent: false,
+        tmuxPresent: () => false,
         calls: calls,
       ),
     );
@@ -227,6 +258,8 @@ void main() {
       ),
     );
     expect(script, contains('xcode-select --install'));
+    expect(script, contains('xcodebuild -license accept'));
+    expect(script, contains("tmux is already installed"));
     expect(script, contains('did not become ready within 10 minutes'));
     expect(script, contains('if ! command -v tmux'));
     if (File('/bin/zsh').existsSync()) {

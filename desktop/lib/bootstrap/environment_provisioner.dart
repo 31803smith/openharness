@@ -496,8 +496,16 @@ class EnvironmentProvisioner {
         );
         return state;
       }
+      // On macOS the developer tools exist for ONE reason here: Homebrew needs
+      // them to build tmux. A machine that already has a working tmux has
+      // nothing to build, and must not be sent to a Terminal to fix a
+      // toolchain it will never use — that is how a desk with tmux 3.6 sat on
+      // "Xcode is installed but is not the active developer directory" while
+      // the app waited (2026-09-15: the real cause was an unaccepted Xcode
+      // licence, which xcrun reports as "not ready" too).
+      final tmuxAlready = _isMacOS && await _hasTmux();
       var systemReady = _isMacOS
-          ? await _hasAppleDeveloperTools()
+          ? (tmuxAlready || await _hasAppleDeveloperTools())
           : linuxMissingBasePackages.isEmpty;
       emit(
         systemReady: systemReady,
@@ -508,7 +516,9 @@ class EnvironmentProvisioner {
               ]
             : const [],
         output: systemReady
-            ? '✓ required system tools · writable home'
+            ? (tmuxAlready && !await _hasAppleDeveloperTools()
+                  ? '✓ tmux already installed · Apple developer tools not needed'
+                  : '✓ required system tools · writable home')
             : _isMacOS
             ? '✗ Apple developer tools · xcrun --find clang'
             : '✗ missing Linux base packages · ${linuxMissingBasePackages.join(', ')}',
@@ -542,8 +552,9 @@ class EnvironmentProvisioner {
 
       final homebrewReady = !_isMacOS || await _hasHomebrew();
       var tmuxBinaryReady = await _hasTmux();
-      var tmuxReady =
-          tmuxBinaryReady && (!_isMacOS || (homebrewReady && systemReady));
+      // A tmux that runs is a tmux that is ready. Homebrew and the developer
+      // tools are what INSTALL it; they gate nothing once it is there.
+      var tmuxReady = tmuxBinaryReady;
       emit(
         step: EnvironmentStep.tmux,
         status: tmuxReady
@@ -1350,9 +1361,10 @@ fi''';
   }
 
   Future<bool> _isTmuxEnvironmentReady() async {
+    if (await _hasTmux()) return true; // installed is ready, whatever built it
     if (_isMacOS && !await _hasAppleDeveloperTools()) return false;
     if (_isMacOS && !await _hasHomebrew()) return false;
-    return _hasTmux();
+    return false;
   }
 
   /// `xcode-select -p` only proves that a path was selected. It also succeeds
@@ -1398,11 +1410,24 @@ trap finish EXIT
 apple_developer_tools_ready() {
   /usr/bin/xcrun --find clang >/dev/null 2>&1
 }
+if command -v tmux >/dev/null 2>&1; then
+  echo 'tmux is already installed. Return to Harness.'
+  exit 0
+fi
 if ! apple_developer_tools_ready; then
   if [ -x /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild ]; then
-    echo 'Xcode is installed but is not the active developer directory.'
-    echo 'macOS may ask for your password to select it.'
-    sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
+    # xcrun answers "not ready" for two different reasons, and only one of them is the developer
+    # directory. An unaccepted Xcode licence exits 69 and no amount of xcode-select fixes it.
+    if ! /usr/bin/xcodebuild -license check >/dev/null 2>&1; then
+      echo 'Xcode is installed but its licence has not been accepted.'
+      echo 'macOS may ask for your password to accept it.'
+      sudo /usr/bin/xcodebuild -license accept
+    fi
+    if ! apple_developer_tools_ready; then
+      echo 'Xcode is installed but is not the active developer directory.'
+      echo 'macOS may ask for your password to select it.'
+      sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
+    fi
   else
     echo 'Apple developer tools are missing. Installing Command Line Tools; finish the macOS dialog to continue.'
     xcode-select --install || true
