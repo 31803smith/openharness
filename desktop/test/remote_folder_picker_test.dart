@@ -416,7 +416,7 @@ void main() {
       expect(find.byType(AlertDialog), findsOneWidget);
       expect(find.text('/home/dev/target'), findsOneWidget);
       expect(app.launches, isEmpty);
-      await tester.tap(find.widgetWithText(FilledButton, 'New Agent'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Create Agent'));
       await tester.pumpAndSettle();
       expect(app.launches, [
         (machine: 'remote', engine: 'codex', folder: '/home/dev/target'),

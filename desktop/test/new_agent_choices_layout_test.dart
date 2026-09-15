@@ -142,6 +142,20 @@ void main() {
       }
 
       await capture('initial');
+      await tester.tap(
+        find.byKey(const ValueKey('new-agent-folder-newProject')),
+      );
+      await tester.pumpAndSettle();
+      await capture('new-project');
+      await tester.tap(find.byKey(const ValueKey('new-agent-folder-remote')));
+      await tester.pumpAndSettle();
+      await capture('repository');
+      await tester.tap(find.byKey(const ValueKey('new-agent-folder-local')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('new-agent-machine-field')), findsNothing);
+      await tester.tap(find.byKey(const Key('new-agent-machine-toggle')));
+      await tester.pumpAndSettle();
+      await capture('machines');
       for (final label in [
         'iMac - Office',
         if (scale == 1) ...['M2', 'T480 - Omarchy'],
@@ -151,7 +165,7 @@ void main() {
       ]) {
         expect(
           tester
-              .renderObject<RenderParagraph>(find.text(label))
+              .renderObject<RenderParagraph>(find.text(label).last)
               .didExceedMaxLines,
           isFalse,
           reason: label,

@@ -28,7 +28,7 @@ void main() {
     expect(fieldRect.right, panelRect.right - 28);
     await chord(tester, LogicalKeyboardKey.keyN);
     expect(find.byType(AlertDialog), findsOneWidget);
-    expect(find.widgetWithText(FilledButton, 'New Agent'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, 'Create Agent'), findsOneWidget);
     expect(results, findsNothing);
     expect(find.text('Back to Search'), findsNothing);
     expect(app.panes, [pane]);

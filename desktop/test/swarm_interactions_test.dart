@@ -595,6 +595,8 @@ void main() {
       await tester.pump(const Duration(milliseconds: 300));
       await tester.tap(find.text('Browse…'));
       await tester.pump();
+      await tester.tap(find.byKey(const Key('new-agent-machine-toggle')));
+      await tester.pump();
       final field = find.byKey(const Key('new-agent-machine-field'));
       tester.widget<AppChoicePicker<String>>(field).onChanged('b');
       await tester.pump();

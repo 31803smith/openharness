@@ -96,6 +96,7 @@ void main() {
       findsOneWidget,
     );
     expect(find.textContaining('uses an older Harness CLI'), findsNothing);
+    await tester.ensureVisible(find.byKey(const Key('new-agent-advanced')));
     await tester.tap(find.byKey(const Key('new-agent-advanced')));
     await tester.pump();
     expect(
@@ -135,6 +136,7 @@ void main() {
       app: app,
     );
     await tester.tap(find.byKey(const ValueKey('new-agent-quick-codex')));
+    await tester.ensureVisible(find.byKey(const Key('new-agent-advanced')));
     await tester.tap(find.byKey(const Key('new-agent-advanced')));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('Bypass permission prompts'));
@@ -186,7 +188,7 @@ void main() {
       findsOneWidget,
     );
     expect(app.launches, isEmpty);
-    await tester.tap(find.widgetWithText(FilledButton, 'New Agent'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Create Agent'));
     await tester.pump();
     expect(app.launches.single, {
       'machine': 'machine-1',
@@ -216,9 +218,12 @@ void main() {
     final pending = app.pending['machine-1'] = Completer<void>();
     await tester.tap(find.byKey(const Key('new-agent-retry-check')));
     await tester.pump();
+    await tester.tap(find.byKey(const Key('new-agent-machine-toggle')));
+    await tester.pump();
     await tester.tap(find.byKey(const ValueKey('new-agent-machine-machine-2')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('new-agent-quick-codex')));
+    await tester.ensureVisible(find.byKey(const Key('new-agent-advanced')));
     await tester.tap(find.byKey(const Key('new-agent-advanced')));
     await tester.pumpAndSettle();
     expect(

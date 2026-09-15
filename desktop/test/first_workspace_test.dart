@@ -160,10 +160,12 @@ void main() {
         expect(node.hasPrimaryFocus, isTrue);
       }
 
-      await tabTo(
-        Focus.of(tester.element(find.text('Workshop machine'))),
-        back: true,
-      );
+      final machineToggle = find.byKey(const Key('new-agent-machine-toggle'));
+      await tabTo(Focus.of(tester.element(find.text('My computer').last)));
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(machineToggle, findsOneWidget);
+      await tabTo(Focus.of(tester.element(find.text('Workshop machine'))));
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pumpAndSettle();
       expect(
@@ -343,6 +345,8 @@ void main() {
       await tester.pump();
       expect(picker.opened, 1);
       expect(find.text('/work/my-project'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('new-agent-machine-toggle')));
+      await tester.pump();
       await tester.tap(find.byKey(const ValueKey('new-agent-machine-m')));
       await tester.pump();
       expect(find.text('/work/my-project'), findsOneWidget);
@@ -516,6 +520,8 @@ void main() {
         expect(find.byType(AlertDialog), findsOneWidget);
         expect(find.text('/work/existing'), findsNothing);
         expect(find.text('Choose a folder…'), findsOneWidget);
+        await tester.tap(find.byKey(const Key('new-agent-machine-toggle')));
+        await tester.pump();
         final machineField = tester.widget<AppChoicePicker<String>>(
           find.byKey(const Key('new-agent-machine-field')),
         );
@@ -539,7 +545,7 @@ void main() {
         expect(app.panes, [pane]);
         expect(app.launches, isEmpty);
         expect(app.input, isEmpty);
-        expect(find.text('Cancel'), findsNothing);
+        expect(find.text('Cancel'), findsOneWidget);
         expect(find.text('Back to Search'), findsNothing);
         await tester.sendKeyEvent(LogicalKeyboardKey.escape);
         await tester.pump();
@@ -593,7 +599,7 @@ void main() {
       );
       expect(submit.focusNode!.hasPrimaryFocus, isTrue);
       expect(app.launches, isEmpty);
-      expect(find.text('Cancel'), findsNothing);
+      expect(find.text('Cancel'), findsOneWidget);
       expect(find.text('Back to Search'), findsNothing);
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pump();
@@ -689,8 +695,8 @@ void main() {
     expect(engine.value, 'codex');
     expect(find.byKey(const Key('new-agent-machine-field')), findsNothing);
     expect(
-      tester.getTopLeft(find.text('Working folder')).dy,
-      lessThan(tester.getTopLeft(find.text('Agent')).dy),
+      tester.getTopLeft(find.text('Agent')).dy,
+      lessThan(tester.getTopLeft(find.text('Project')).dy),
     );
     expect(picker.opened, 0);
     await tester.tap(find.byKey(const Key('new-agent-folder')));

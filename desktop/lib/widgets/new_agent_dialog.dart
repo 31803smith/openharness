@@ -109,6 +109,8 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   final _actionFocus = FocusNode(debugLabel: 'Create or check agent');
   final _repositoryFocus = FocusNode(debugLabel: 'Repository URL');
   final _repository = TextEditingController();
+  final _advancedKey = GlobalKey();
+  final _choicesScroll = ScrollController();
   _FolderSource _folderSource = _FolderSource.local;
   String? _preparedFolder;
   AgentCreationAttempt? _creation;
@@ -128,6 +130,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   /// it is shut for the case it exists to serve, and a drawer that remembers
   /// being open is a drawer that is open for somebody who never asked.
   bool _advancedOpen = false;
+  bool _machineChoicesOpen = false;
   bool _submitting = false;
 
   @override
@@ -136,6 +139,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     _actionFocus.dispose();
     _repositoryFocus.dispose();
     _repository.dispose();
+    _choicesScroll.dispose();
     super.dispose();
   }
 
@@ -295,21 +299,8 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   /// older CLI has no recipe. Stated rather than silently offered, because the
   /// create WILL fail and the person needs to fix that machine first.
 
-  /// What the fold says about itself while it is shut.
-  ///
-  /// Two facts in the order they matter: which Codex home, and whether the
-  /// prompts are on. It is the ONLY thing on screen reporting either once the
-  /// drawer is closed, which is why it is built here rather than left to a
-  /// string in the widget — the two have to stay in step.
-  String _advancedState() {
-    // THE PROFILE ONLY. It also carried "prompts on" / "prompts OFF", and that
-    // was cut on the owner's call for the reason that decides most copy here:
-    // it did not say what it meant. "Prompts" names a thing the sentence inside
-    // the fold explains and the row outside it does not, so the row was asking
-    // people to already know.
-    if (_engine != 'codex') return '';
-    return _codexProfile?.label ?? 'default profile';
-  }
+  /// Surface a changed permission setting without repeating the default profile.
+  String _advancedState() => _bypassPermission ? 'Approvals off' : '';
 
   /// This engine is absent and Harness would install it before launching.
   bool get _willInstall {
@@ -503,6 +494,25 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     });
   }
 
+  void _toggleAdvanced() {
+    setState(() => _advancedOpen = !_advancedOpen);
+    if (!_advancedOpen) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_advancedOpen) return;
+      final anchor = _advancedKey.currentContext;
+      if (anchor == null) return;
+      unawaited(
+        Scrollable.ensureVisible(
+          anchor,
+          duration: MediaQuery.disableAnimationsOf(context)
+              ? Duration.zero
+              : const Duration(milliseconds: 160),
+          curve: Curves.easeOut,
+        ),
+      );
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     // Reads colour tokens, and lives in an Overlay — a top-down rebuild never
@@ -537,40 +547,63 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
         PaneResizeAxis.y => 'New Agent below',
         null => 'New Agent',
       }),
-      titleTextStyle: Theme.of(context).textTheme.titleMedium,
+      titleTextStyle: Theme.of(context).textTheme.headlineSmall?.copyWith(
+        fontSize: 24,
+        fontWeight: grid.AppFont.semibold,
+        color: grid.AppPalette.textPrimary,
+      ),
+      titlePadding: const EdgeInsets.fromLTRB(28, 28, 28, 0),
+      contentPadding: const EdgeInsets.fromLTRB(28, 24, 28, 16),
+      actionsPadding: const EdgeInsets.fromLTRB(28, 0, 28, 24),
+      actionsOverflowButtonSpacing: 8,
       content: SizedBox(
         width: _dialogWidth,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              AbsorbPointer(
-                absorbing: _choicesLocked,
-                child: ExcludeFocus(
-                  excluding: _choicesLocked,
-                  child: _choices(bypassFlag),
-                ),
-              ),
-              if (_error != null) ...[
-                const SizedBox(height: _gapBlock),
-                Semantics(
-                  liveRegion: true,
-                  child: Text(
-                    _error!,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: _confirmationPending
-                          ? grid.AppPalette.textSecondary
-                          : Theme.of(context).colorScheme.error,
-                    ),
+        child: Scrollbar(
+          controller: _choicesScroll,
+          thumbVisibility: true,
+          thickness: 4,
+          radius: const Radius.circular(2),
+          child: SingleChildScrollView(
+            controller: _choicesScroll,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                AbsorbPointer(
+                  absorbing: _choicesLocked,
+                  child: ExcludeFocus(
+                    excluding: _choicesLocked,
+                    child: _choices(bypassFlag),
                   ),
                 ),
+                if (_error != null) ...[
+                  const SizedBox(height: _gapBlock),
+                  Semantics(
+                    liveRegion: true,
+                    child: Text(
+                      _error!,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: _confirmationPending
+                            ? grid.AppPalette.textSecondary
+                            : Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                  ),
+                ],
               ],
-            ],
+            ),
           ),
         ),
       ),
       actions: [
+        if (!_confirmationPending && !widget.offerBackToSearch)
+          TextButton(
+            onPressed: _submitting ? null : () => Navigator.of(context).pop(),
+            style: TextButton.styleFrom(
+              foregroundColor: grid.AppPalette.textSecondary,
+            ),
+            child: const Text('Cancel'),
+          ),
         if (_confirmationPending || widget.offerBackToSearch)
           TextButton(
             onPressed: _submitting
@@ -602,6 +635,10 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
           focusNode: _actionFocus,
           onPressed: canCreate ? _submit : null,
           style: FilledButton.styleFrom(
+            minimumSize: const Size(136, 42),
+            padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 12),
+            backgroundColor: grid.AppPalette.swarmAccent,
+            foregroundColor: grid.AppPalette.swarmTabBar,
             shape: const StadiumBorder(),
             disabledForegroundColor: _submitting
                 ? grid.AppPalette.textPrimary
@@ -630,133 +667,20 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                     ],
                   ),
                 )
-              : Text(_confirmationPending ? 'Check status' : 'New Agent'),
+              : Text(_confirmationPending ? 'Check status' : 'Create Agent'),
         ),
       ],
     );
   }
 
-  /// The left column: what the user actually decides.
   Widget _choices(String? bypassFlag) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (widget.notifier.machineStates.length != 1 ||
-            !_machineIsThisComputer ||
-            widget.notifier.machineStates[_machineId]?.nodeOnline == false ||
-            widget.notifier.machineStates[_machineId]?.needsLink == true) ...[
-          const FieldLabel('Machine'),
-          AppChoicePicker<String>(
-            key: const Key('new-agent-machine-field'),
-            value: _machineId,
-            moreKey: const Key('new-agent-machine-more'),
-            moreLabel: 'More machines',
-            optionKey: (id) => ValueKey('new-agent-machine-$id'),
-            showDetails: true,
-            wrap: false,
-            preferredValues: [
-              for (final machine in widget.notifier.machineStates.values)
-                if (machine.isLocalMachine) machine.machine.machineId,
-            ],
-            options: [
-              for (final machine in widget.notifier.machineStates.values)
-                SelectOption(
-                  value: machine.machine.machineId,
-                  label: machine.machine.displayName,
-                  detail: _machineDetail(machine),
-                  leading: () => Icon(
-                    machine.isLocalMachine
-                        ? LucideIcons.laptop
-                        : LucideIcons.monitor,
-                    size: 18,
-                  ),
-                ),
-            ],
-            onChanged: (id) {
-              if (id == _machineId || _choicesLocked) return;
-              setState(() {
-                _machineRevision++;
-                _machineId = id;
-                _folder = null;
-                _preparedFolder = null;
-                _codexProfile = null;
-                _codexProfilesBusy = true;
-                _error = null;
-              });
-              unawaited(_probeEngines());
-            },
-          ),
-          const SizedBox(height: _gapField),
-        ],
-        const FieldLabel('Working folder'),
-        AppChoicePicker<_FolderSource>(
-          value: _folderSource,
-          moreLabel: 'Folder sources',
-          optionKey: (source) => ValueKey('new-agent-folder-${source.name}'),
-          options: [
-            SelectOption(
-              value: _FolderSource.newProject,
-              label: 'New',
-              leading: () => const Icon(LucideIcons.folderPlus, size: 18),
-            ),
-            SelectOption(
-              value: _FolderSource.local,
-              label: 'Local',
-              leading: () => const Icon(LucideIcons.folderOpen, size: 18),
-            ),
-            SelectOption(
-              value: _FolderSource.remote,
-              label: 'Remote',
-              leading: () => const Icon(LucideIcons.gitBranch, size: 18),
-            ),
-          ],
-          onChanged: _selectFolderSource,
-        ),
-        const SizedBox(height: 10),
-        if (_folderSource == _FolderSource.local)
-          _FolderControl(
-            folder: _folder,
-            machineName: _machineName,
-            machineIsThisComputer: _machineIsThisComputer,
-            picking: _picking,
-            focusNode: _folderFocus,
-            hovered: _folderHovered,
-            focused: _folderFocused,
-            onHover: (value) => setState(() => _folderHovered = value),
-            onFocusChange: (value) => setState(() => _folderFocused = value),
-            onPressed: _browse,
-          ),
-        if (_folderSource == _FolderSource.newProject)
-          Text(
-            'Start in a new folder in ~/Harness Projects on $_machineName.',
-            style: Theme.of(context).textTheme.bodySmall
-                ?.copyWith(color: grid.AppPalette.textSecondary),
-          ),
-        if (_folderSource == _FolderSource.remote) ...[
-          TextField(
-            key: const ValueKey('new-agent-repository'),
-            controller: _repository,
-            focusNode: _repositoryFocus,
-            decoration: const InputDecoration(
-              hintText: 'GitHub URL or owner/repository',
-            ),
-            onChanged: (_) => setState(() {
-              _preparedFolder = null;
-              _error = null;
-            }),
-            onSubmitted: (_) => _submit(),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            'Clone into ~/Harness Projects on $_machineName.',
-            style: Theme.of(context).textTheme.bodySmall
-                ?.copyWith(color: grid.AppPalette.textSecondary),
-          ),
-        ],
-        const SizedBox(height: _gapField),
         const FieldLabel('Agent'),
         AgentPicker(
+          compact: true,
           value: _engine,
           options: [
             for (final identity in allEngines)
@@ -826,19 +750,78 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
             ],
           ),
         ],
-        // THE FOLD. What is behind it is what most people never touch: a Codex
-        // home to run under, and the flag that turns the approvals off. Leaving
-        // them in the main column made this a four-question dialog to do a
-        // two-question job.
-        //
-        // The row REPORTS ITS OWN STATE on the right, and that is what makes
-        // folding them away safe rather than merely tidy. A drawer that hides
-        // what it is set to is a drawer people open every time to check.
+        const SizedBox(height: _gapField),
+        _projectHeader(),
+        const SizedBox(height: 10),
+        if (_folderSource == _FolderSource.local)
+          _FolderControl(
+            folder: _folder,
+            machineName: _machineName,
+            machineIsThisComputer: _machineIsThisComputer,
+            picking: _picking,
+            focusNode: _folderFocus,
+            hovered: _folderHovered,
+            focused: _folderFocused,
+            onHover: (value) => setState(() => _folderHovered = value),
+            onFocusChange: (value) => setState(() => _folderFocused = value),
+            onPressed: _browse,
+          ),
+        if (_folderSource == _FolderSource.newProject)
+          ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 52),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Creates a new folder in ~/Harness Projects.',
+                style: Theme.of(context).textTheme.bodySmall
+                    ?.copyWith(color: grid.AppPalette.textSecondary),
+              ),
+            ),
+          ),
+        if (_folderSource == _FolderSource.remote) ...[
+          TextField(
+            key: const ValueKey('new-agent-repository'),
+            controller: _repository,
+            focusNode: _repositoryFocus,
+            decoration: InputDecoration(
+              hintText: 'GitHub URL or owner/repository',
+              filled: true,
+              fillColor: grid.AppSurface.recess,
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 14,
+                vertical: 16,
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(grid.AppControl.radius),
+                borderSide: BorderSide.none,
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(grid.AppControl.radius),
+                borderSide: BorderSide(color: grid.AppPalette.accentOnSurface),
+              ),
+            ),
+            onChanged: (_) => setState(() {
+              _preparedFolder = null;
+              _error = null;
+            }),
+            onSubmitted: (_) => _submit(),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Clone into ~/Harness Projects on $_machineName.',
+            style: Theme.of(context).textTheme.bodySmall
+                ?.copyWith(color: grid.AppPalette.textSecondary),
+          ),
+        ],
+        const SizedBox(height: _gapField),
+        _machineSelector(),
+        // Profiles keep loading while collapsed; creation still waits for them.
         const SizedBox(height: _gapBlock),
         _Advanced(
+          key: _advancedKey,
           open: _advancedOpen,
           state: _advancedState(),
-          onToggle: () => setState(() => _advancedOpen = !_advancedOpen),
+          onToggle: _toggleAdvanced,
           children: [
             if (_engineCheckFailed) ...[
               Text(
@@ -908,10 +891,191 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
       ],
     );
   }
+
+  Widget _projectHeader() => SizedBox(
+    width: double.infinity,
+    child: Wrap(
+      alignment: WrapAlignment.spaceBetween,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      runSpacing: 8,
+      children: [
+        Text(
+          'Project',
+          style: Theme.of(context).textTheme.labelMedium
+              ?.copyWith(color: grid.AppPalette.textSecondary),
+        ),
+        DecoratedBox(
+          decoration: BoxDecoration(
+            color: grid.AppSurface.recess,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(3),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (final (source, label) in [
+                  (_FolderSource.newProject, 'New'),
+                  (_FolderSource.local, 'Local'),
+                  (_FolderSource.remote, 'Remote'),
+                ])
+                  Semantics(
+                    selected: _folderSource == source,
+                    inMutuallyExclusiveGroup: true,
+                    child: TextButton(
+                      key: ValueKey('new-agent-folder-${source.name}'),
+                      onPressed: () => _selectFolderSource(source),
+                      style: TextButton.styleFrom(
+                        minimumSize: const Size(60, 30),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 7,
+                        ),
+                        foregroundColor: _folderSource == source
+                            ? grid.AppPalette.textPrimary
+                            : grid.AppPalette.textSecondary,
+                        backgroundColor: _folderSource == source
+                            ? grid.AppSurface.recessHover
+                            : Colors.transparent,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(7),
+                        ),
+                      ),
+                      child: Text(label),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Widget _machineSelector() {
+    final machine = widget.notifier.stateOf(_machineId);
+    final status = machine?.nodeOnline == false
+        ? 'Offline'
+        : machine?.needsLink == true
+        ? 'Link required'
+        : null;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(
+              'Run on',
+              style: Theme.of(context).textTheme.bodySmall
+                  ?.copyWith(color: grid.AppPalette.textSecondary),
+            ),
+            const SizedBox(width: 10),
+            Flexible(
+              child: Tooltip(
+                message: 'Choose machine',
+                child: TextButton(
+                  key: const Key('new-agent-machine-toggle'),
+                  onPressed: () => setState(
+                    () => _machineChoicesOpen = !_machineChoicesOpen,
+                  ),
+                  style: TextButton.styleFrom(
+                    foregroundColor: grid.AppPalette.textPrimary,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 6,
+                    ),
+                    minimumSize: const Size(0, 32),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        _machineIsThisComputer
+                            ? LucideIcons.laptop
+                            : LucideIcons.monitor,
+                        size: 16,
+                      ),
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Text(
+                          _machineName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      if (status != null) ...[
+                        const SizedBox(width: 8),
+                        Text(
+                          status,
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(color: grid.AppPalette.textSecondary),
+                        ),
+                      ],
+                      const SizedBox(width: 6),
+                      Icon(
+                        _machineChoicesOpen
+                            ? Icons.expand_less
+                            : Icons.expand_more,
+                        size: 16,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+        if (_machineChoicesOpen) ...[
+          const SizedBox(height: 8),
+          _machineOptions(),
+        ],
+      ],
+    );
+  }
+
+  Widget _machineOptions() => AppChoicePicker<String>(
+    key: const Key('new-agent-machine-field'),
+    value: _machineId,
+    moreKey: const Key('new-agent-machine-more'),
+    moreLabel: 'More machines',
+    optionKey: (id) => ValueKey('new-agent-machine-$id'),
+    showDetails: true,
+    compact: true,
+    wrap: false,
+    preferredValues: [
+      for (final machine in widget.notifier.machineStates.values)
+        if (machine.isLocalMachine) machine.machine.machineId,
+    ],
+    options: [
+      for (final machine in widget.notifier.machineStates.values)
+        SelectOption(
+          value: machine.machine.machineId,
+          label: machine.machine.displayName,
+          detail: _machineDetail(machine),
+          leading: () => Icon(
+            machine.isLocalMachine ? LucideIcons.laptop : LucideIcons.monitor,
+            size: 18,
+          ),
+        ),
+    ],
+    onChanged: (id) {
+      if (id == _machineId || _choicesLocked) return;
+      setState(() {
+        _machineRevision++;
+        _machineId = id;
+        _folder = null;
+        _preparedFolder = null;
+        _codexProfile = null;
+        _codexProfilesBusy = true;
+        _error = null;
+      });
+      unawaited(_probeEngines());
+    },
+  );
 }
 
-/// Room for three readable machine choices and the overflow control in one row.
-const double _dialogWidth = 760;
+/// A focused creation form; machine details expand only when requested.
+const double _dialogWidth = 600;
 
 /// A path shortened from its HEAD, so the leaf survives.
 ///
@@ -981,7 +1145,7 @@ const double _gapTight = 4;
 const double _gapBlock = 12;
 
 /// One field and the next, down the choices column.
-const double _gapField = 16;
+const double _gapField = 24;
 
 /// The folder control: one target, not a text box with a button beside it.
 ///
@@ -1003,6 +1167,7 @@ const double _gapField = 16;
 /// already what this app gives that flag wherever else it appears.
 class _Advanced extends StatelessWidget {
   const _Advanced({
+    super.key,
     required this.open,
     required this.state,
     required this.onToggle,
@@ -1024,7 +1189,6 @@ class _Advanced extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        Divider(height: 1, color: grid.AppGlass.hair),
         InkWell(
           key: const Key('new-agent-advanced'),
           onTap: onToggle,
@@ -1160,11 +1324,14 @@ class _FolderControl extends StatelessWidget {
               duration: grid.AppMotion.hover,
               curve: grid.AppMotion.curve,
               constraints: BoxConstraints(
-                minHeight: grid.AppControl.heightFieldScaled,
+                minHeight: grid.AppControl.heightFieldScaled.clamp(
+                  52.0,
+                  double.infinity,
+                ),
               ),
               // The select field's own padding, so the two controls stacked in
               // this column share one left edge and one right edge.
-              padding: const EdgeInsets.only(left: 10, right: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               decoration: BoxDecoration(
                 color: (hovered || focused) && !picking
                     ? grid.AppSurface.recessHover
@@ -1180,8 +1347,8 @@ class _FolderControl extends StatelessWidget {
                 children: [
                   Icon(
                     Icons.folder_outlined,
-                    size: grid.AppControl.iconSize,
-                    color: grid.AppPalette.textFaint,
+                    size: 20,
+                    color: grid.AppPalette.textSecondary,
                   ),
                   const SizedBox(width: 8),
                   Expanded(
@@ -1216,7 +1383,7 @@ class _FolderControl extends StatelessWidget {
                           style: chosen != null && !picking
                               ? _mono(color: grid.AppPalette.textPrimary)
                               : theme.textTheme.labelMedium?.copyWith(
-                                  color: grid.AppPalette.textFaint,
+                                  color: grid.AppPalette.textSecondary,
                                 ),
                         ),
                       ),
@@ -1243,8 +1410,7 @@ class _FolderControl extends StatelessWidget {
         if (!machineIsThisComputer) ...[
           const SizedBox(height: _gapTight),
           Text(
-            'This agent will run on $machineName. Its folders are browsed '
-            'through the remote CLI.',
+            'Choose a folder on $machineName.',
             style: theme.textTheme.bodySmall,
           ),
         ],

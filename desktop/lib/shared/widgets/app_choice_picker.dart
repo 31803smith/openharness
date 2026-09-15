@@ -19,6 +19,7 @@ class AppChoicePicker<T> extends StatefulWidget {
     this.preferredValues = const [],
     this.showDetails = false,
     this.wrap = true,
+    this.compact = false,
   });
 
   final T value;
@@ -30,6 +31,7 @@ class AppChoicePicker<T> extends StatefulWidget {
   final List<T> preferredValues;
   final bool showDetails;
   final bool wrap;
+  final bool compact;
 
   @override
   State<AppChoicePicker<T>> createState() => _AppChoicePickerState<T>();
@@ -97,7 +99,9 @@ class _AppChoicePickerState<T> extends State<AppChoicePicker<T>> {
       fontSize: 12,
       fontWeight: FontWeight.w400,
     );
-    final height = widget.showDetails ? 58.0 : 44.0;
+    final height = widget.showDetails
+        ? (widget.compact ? 52.0 : 58.0)
+        : (widget.compact ? 40.0 : 44.0);
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -119,18 +123,21 @@ class _AppChoicePickerState<T> extends State<AppChoicePicker<T>> {
             labelWidth = math.max(labelWidth, painter.width);
             textHeight += painter.height + 2;
           }
-          controlHeight = math.max(controlHeight, textHeight + 20);
+          controlHeight = math.max(
+            controlHeight,
+            textHeight + (widget.compact ? 16 : 20),
+          );
           // Long custom names truncate with their full text in the tooltip.
           // Larger system text gets wider choices and additional rows.
           final width =
               math.min(labelWidth, scaler.scale(13) * 9) +
               (option.leading == null ? 0 : 26) +
-              42;
+              (widget.compact ? 34 : 42);
           minimumWidth = math.max(minimumWidth, width);
         }
         painter.dispose();
         const gap = 8.0;
-        const moreWidth = 44.0;
+        final moreWidth = widget.compact ? 40.0 : 44.0;
         var visible = candidates;
         if (!widget.wrap) {
           var count = candidates.length;
@@ -213,7 +220,9 @@ class _AppChoicePickerState<T> extends State<AppChoicePicker<T>> {
     double height,
   ) {
     final selected = widget.value == option.value;
-    final foreground = selected
+    final foreground = widget.compact
+        ? AppPalette.textPrimary
+        : selected
         ? AppPalette.accentOnSurface
         : AppPalette.textPrimary;
     return Semantics(
@@ -227,13 +236,15 @@ class _AppChoicePickerState<T> extends State<AppChoicePicker<T>> {
           style:
               TextButton.styleFrom(
                 foregroundColor: foreground,
-                backgroundColor: selected
+                backgroundColor: widget.compact
+                    ? (selected ? AppSurface.recess : Colors.transparent)
+                    : selected
                     ? AppPalette.accentOnSurface.withValues(alpha: .16)
                     : AppSurface.recess,
                 minimumSize: Size(0, height),
-                padding: const EdgeInsets.symmetric(
+                padding: EdgeInsets.symmetric(
                   horizontal: 10,
-                  vertical: 10,
+                  vertical: widget.compact ? 8 : 10,
                 ),
                 textStyle: textStyle,
                 shape: RoundedRectangleBorder(
@@ -244,6 +255,10 @@ class _AppChoicePickerState<T> extends State<AppChoicePicker<T>> {
                   (states) => BorderSide(
                     color: states.contains(WidgetState.focused)
                         ? AppPalette.accentOnSurface
+                        : widget.compact
+                        ? (selected
+                              ? AppPalette.accentOnSurface.withValues(alpha: .6)
+                              : AppGlass.hair)
                         : Colors.transparent,
                   ),
                 ),

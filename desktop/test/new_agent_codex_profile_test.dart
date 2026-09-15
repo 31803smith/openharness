@@ -189,6 +189,7 @@ void main() {
     await tester.tap(find.text('open'));
     await tester.pumpAndSettle();
     if (!revealOptions) return n;
+    await tester.ensureVisible(find.byKey(const Key('new-agent-engine-field')));
     await tester.tap(find.byKey(const Key('new-agent-engine-field')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Codex').last);
@@ -249,9 +250,10 @@ void main() {
     );
     expect(find.text('Codex profile'), findsOneWidget);
     expect(find.text('Link a profile folder…'), findsOneWidget);
+    await tester.ensureVisible(find.byKey(const Key('new-agent-folder')));
     await tester.tap(find.text('Browse…'));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'New Agent'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Create Agent'));
     await tester.pumpAndSettle();
     expect(notifier.calls.single['codexHome'], isNull);
   });
@@ -270,9 +272,10 @@ void main() {
     expect(find.text('Codex profile'), findsOneWidget);
     expectProfile(tester, 'work-login');
     expect(find.text('Link a profile folder…'), findsOneWidget);
+    await tester.ensureVisible(find.byKey(const Key('new-agent-folder')));
     await tester.tap(find.text('Browse…'));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'New Agent'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Create Agent'));
     await tester.pumpAndSettle();
     expect(notifier.calls.single['codexHome'], '/custom/work-login');
     expect(tester.takeException(), isNull);
@@ -286,19 +289,15 @@ void main() {
         local: false,
         initialPaths: const ['/custom/work-login'],
       );
+      await tester.tap(find.byKey(const Key('new-agent-machine-toggle')));
+      await tester.pump();
       final machineField = tester.widget<AppChoicePicker<String>>(
         find.byKey(const Key('new-agent-machine-field')),
       );
       expect(machineField.options.single.label, 'This Mac');
       expect(machineField.options.single.detail, 'Remote');
-      expect(find.widgetWithText(FilledButton, 'New Agent'), findsOneWidget);
-      expect(
-        find.text(
-          'This agent will run on This Mac. Its folders are browsed through '
-          'the remote CLI.',
-        ),
-        findsOneWidget,
-      );
+      expect(find.widgetWithText(FilledButton, 'Create Agent'), findsOneWidget);
+      expect(find.text('Choose a folder on This Mac.'), findsOneWidget);
       expect(
         find.byKey(const Key('new-agent-codex-profile-field')),
         findsOneWidget,
@@ -351,7 +350,7 @@ void main() {
     await tester.pump();
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pumpAndSettle();
-    final createButton = find.widgetWithText(FilledButton, 'New Agent');
+    final createButton = find.widgetWithText(FilledButton, 'Create Agent');
     expect(tester.widget<FilledButton>(createButton).onPressed, isNull);
     expect(folderFocus.hasPrimaryFocus, isTrue);
     expect(notifier.calls, isEmpty);
@@ -387,9 +386,10 @@ void main() {
     await tester.tap(find.text('codex1').last);
     await tester.pumpAndSettle();
     expectProfile(tester, 'codex1');
+    await tester.ensureVisible(find.byKey(const Key('new-agent-folder')));
     await tester.tap(find.text('Browse…'));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'New Agent'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Create Agent'));
     await tester.pumpAndSettle();
     expect(notifier.calls.single['codexHome'], '/accounts/codex1');
   });
@@ -411,9 +411,10 @@ void main() {
       findsOneWidget,
     );
     expectProfile(tester, 'Default profile');
+    await tester.ensureVisible(find.byKey(const Key('new-agent-folder')));
     await tester.tap(find.text('Browse…'));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'New Agent'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Create Agent'));
     await tester.pumpAndSettle();
     expect(notifier.calls.single['codexHome'], isNull);
   });
@@ -424,9 +425,10 @@ void main() {
       final notifier = await open(tester);
       await selectSecond(tester);
       expectProfile(tester, 'codex2');
+      await tester.ensureVisible(find.byKey(const Key('new-agent-folder')));
       await tester.tap(find.text('Browse…'));
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(FilledButton, 'New Agent'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Create Agent'));
       await tester.pumpAndSettle();
       expect(notifier.calls, [
         {'engine': 'codex', 'codexHome': '/accounts/codex2', 'folder': '/work'},
@@ -494,6 +496,7 @@ void main() {
   testWidgets('changing engines clears the selected account', (tester) async {
     final notifier = await open(tester);
     await selectSecond(tester);
+    await tester.ensureVisible(find.byKey(const Key('new-agent-engine-field')));
     await tester.tap(find.byKey(const Key('new-agent-engine-field')));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('Claude Code').last);
@@ -504,9 +507,10 @@ void main() {
       find.byKey(const Key('new-agent-codex-profile-field')),
       findsNothing,
     );
+    await tester.ensureVisible(find.byKey(const Key('new-agent-folder')));
     await tester.tap(find.text('Browse…'));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'New Agent'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Create Agent'));
     await tester.pumpAndSettle();
     expect(notifier.calls.single['codexHome'], isNull);
     expect(notifier.calls.single['engine'], 'claude');
@@ -524,9 +528,10 @@ void main() {
         find.text('Update Harness CLI on This Mac to choose a Codex profile.'),
         findsOneWidget,
       );
+      await tester.ensureVisible(find.byKey(const Key('new-agent-folder')));
       await tester.tap(find.text('Browse…'));
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(FilledButton, 'New Agent'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Create Agent'));
       await tester.pumpAndSettle();
       expect(notifier.calls.single['codexHome'], isNull);
     },

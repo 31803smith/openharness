@@ -10,15 +10,18 @@ class AgentPicker extends StatelessWidget {
     required this.value,
     required this.options,
     required this.onChanged,
+    this.compact = false,
   });
   final String value;
   final List<SelectOption<String>> options;
   final ValueChanged<String> onChanged;
+  final bool compact;
   static const quickAgents = ['codex', 'claude', 'cursor'];
 
   @override
   Widget build(BuildContext context) => AppChoicePicker<String>(
     value: value,
+    compact: compact,
     options: [
       for (final option in options)
         SelectOption(

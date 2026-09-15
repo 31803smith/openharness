@@ -34,7 +34,19 @@ user for a benchmark window.
 
 ## Current product contract
 
-### Latest: compact customization button on wallpapers
+### Latest: focused New Agent form
+
+The creation dialog is now 600 pixels wide with compact Agent choices, Project
+tabs, a prominent folder/repository control, and a quiet Run on machine row.
+Machine choices expand on demand. Advanced hides the default profile summary;
+opening it scrolls its controls into view. Cancel and Create Agent remain in
+the footer, with existing local/remote folder selection, profile readiness,
+creation recovery and split targeting preserved. Final checks and captures are
+in `/private/tmp/harness-new-agent-refined-final-tests.log` and
+`/private/tmp/harness-new-agent-refined-final-captures`; palette/large-text
+captures are in `/private/tmp/harness-new-agent-refined-palettes`.
+
+### Compact customization button — pushed 98e8056
 
 Default retains the **Customize Harness** pill. Any wallpaper switches it to a
 40-pixel circular pencil button, keeping the tooltip and accessible label.
@@ -312,8 +324,8 @@ are:
   both actions participate in the configurable Search keymap.
 - The Harness application menu includes **Check for Updates…**, using the
   existing manual update-check dialog, directly above Flash Firmware.
-- The dedicated **New Agent** form keeps Machine, Working folder, Agent and
-  Advanced choices. Pending creation cannot be dismissed accidentally; uncertain
+- The dedicated **New Agent** form shows Agent, Project, Run on and Advanced.
+  Machine details expand on request. Pending creation cannot be dismissed accidentally; uncertain
   results retain Close and Check status without creating again. Folder choosers
   preserve the form, and successful creation focuses the new pane.
 - A single-agent tab/search/history entry uses that agent's engine icon;
