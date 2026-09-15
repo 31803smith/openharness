@@ -88,10 +88,10 @@ Saved and pushed to `origin/main`: **9d0150d** (remote project preparation),
 validation cleanup). The 339-test pass was followed by six passing focused
 checks after the analyzer cleanup; changed Dart files now analyze without issues.
 
-The latest Release preview was built from **bef8cd6** and passes deep/strict
+The installed Release preview was built from **454544a** and passes deep/strict
 codesign verification, both before and after staging. Prepared app:
 `/private/tmp/harness-pane-controls-release/Build/Products/Release/Harness.app`.
-Build log: `/private/tmp/harness-menu-isolation-release.log`.
+Build log: `/private/tmp/harness-label-action-release.log`.
 The previous incremental build left a stale outer app seal after rebuilding
 App.framework; verifying the framework separately and refreshing the existing
 ad-hoc outer signature resolved it. The latest build verifies without that repair.
@@ -108,12 +108,17 @@ dial/creation/menu tests and 40 CLI input tests. Earlier build/test logs:
 `/private/tmp/harness-project-folder-cli-tests.log`,
 `/private/tmp/harness-agent-menus-native.log`.
 
-**Installation is authorized and the user has quit Harness.** An exact-process
-check confirmed the app is stopped. Finish verifying the latest container labels
-and solid Open Agent action, rebuild/stage, then install at the supported path
-and reopen it. The previous **d22b338** bundle has a verified backup at
-`/private/tmp/harness-before-agent-entry-ldyjh3ru/Harness.app`;
-`/private/tmp/harness-agent-preview-install.json` records the bundle paths.
+**454544a is installed and verified live.** The user quit normally; the exact
+process was confirmed stopped before swapping the verified bundle. CUA reopened
+the supported path and regained window access. All four saved Harness tabs
+restored, including the renamed empty page. File labels, solid Open Agent,
+New / Local / Remote folders, one-row machine choices and Machines agent counts
+and submenus were inspected without creating, stopping or typing into an agent.
+The previous bundle remains at
+`desktop/build/macos/Build/Products/Release/.harness-before-labels-k3lw36qc/Harness.app`
+and the verified backup is
+`/private/tmp/harness-before-agent-entry-ldyjh3ru/Harness.app`.
+`/private/tmp/harness-agent-preview-install.json` records the install.
 
 **Quit Harness (Cmd-Q) is the correct graceful quit command.** The prior request
 for “Quit and Keep Windows” was incorrect; that item does not exist in this app.
@@ -124,8 +129,8 @@ gone immediately before swapping the verified bundle, and do not launch the
 derived-data copy alongside the supported one.
 
 CUA-sent Command-N remains inconclusive from the earlier live preview, although
-native callback and exported shortcut checks pass. The current CUA window access
-failure does not justify changing keyboard dispatch.
+native callback and exported shortcut checks pass. Window access is restored;
+that earlier inconclusive result does not justify changing keyboard dispatch.
 
 Use [the detailed entry/pane contract](harness-agent-first-tabs.md) when editing
 or validating UI. The decisions that previously conflicted with older handoffs
