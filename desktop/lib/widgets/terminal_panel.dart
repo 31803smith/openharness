@@ -62,6 +62,11 @@ class TerminalPanel extends StatefulWidget {
   final (String, int)? paneLocation;
   final (int, int, int?)? layoutRequest;
   final bool compactHeader;
+
+  /// The tile's own header strip — engine, title, status, pin, close. Off on a
+  /// phone, whose page draws its own header and has no tile to pin, close or
+  /// drag (`phone/terminal_page.dart` in the mobile package).
+  final bool showHeader;
   final int focusRequest;
 
   /// Whether this tile's composer textbox is showing. Only consulted for a remote machine.
@@ -90,6 +95,7 @@ class TerminalPanel extends StatefulWidget {
     this.paneLocation,
     this.layoutRequest,
     this.compactHeader = false,
+    this.showHeader = true,
     this.focusRequest = 0,
     this.composerVisible = false,
     this.readOnly = false,
@@ -323,6 +329,28 @@ class _TerminalPanelState extends State<TerminalPanel>
   void _onSessionChanged() {
     if (!mounted) return;
     _syncCursorBlink();
+    // A pane can open BEFORE its screen exists: over the relay it mounts empty
+    // and the retained scrollback is replayed a moment later, so the jump in
+    // `_afterTerminalMounted` lands on nothing and the screen then fills in
+    // above the reader. xterm does not close this — its own `_scrollToBottom`
+    // answers typing and the keyboard opening, never new output.
+    //
+    // Gated on [_followTail], which is kept as "the view is showing its end",
+    // so a pane the reader has scrolled up in — or one restored to a saved
+    // position — is not at the end, and is never followed.
+    // Visible only. A parked pane holds the offset it was left at while output
+    // arrives behind it — `swarm_screen_test` pins that — and comes back to the
+    // end through `_afterTerminalMounted`, which is where returning is handled.
+    if (_followTail && widget.visible) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !widget.visible) return;
+        if (!_followTail || !_scrollController.hasClients) return;
+        final position = _scrollController.position;
+        if (position.pixels != position.maxScrollExtent) {
+          position.jumpTo(position.maxScrollExtent);
+        }
+      });
+    }
     if (!_composerFocusPending) return;
     if (!widget.focused || !_showsComposer) {
       _composerFocusPending = false;
@@ -1136,7 +1164,9 @@ class _TerminalPanelState extends State<TerminalPanel>
                   maintainSize: true,
                   maintainAnimation: true,
                   maintainState: true,
-                  child: _buildHeader(context),
+                  child: widget.showHeader
+                      ? _buildHeader(context)
+                      : const SizedBox.shrink(),
                 ),
                 // Attach the focused pane's input before Find is requested.
                 // Hidden/unfocused panes need no dormant editor or index.
