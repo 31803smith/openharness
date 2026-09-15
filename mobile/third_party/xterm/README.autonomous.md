@@ -131,3 +131,35 @@ it if one is dropped.
    `--flag` stay syntax rather than typography. Regression:
    `mobile/test/terminal_ime_input_test.dart`, the only build that reaches the
    mobile branch.
+
+10. **The keyboard may paste, and may hand over an image**
+    (`lib/src/ui/custom_text_edit.dart`, `lib/src/terminal_view.dart`).
+    `enableIMEPersonalizedLearning: false` reads as a privacy default and is
+    not one on Android: it sets `IME_FLAG_NO_PERSONALIZED_LEARNING`, which puts
+    Gboard in incognito mode, and incognito replaces the toolbar with the
+    incognito glasses — taking the CLIPBOARD with it. A phone has no ⌘V and no
+    readable system clipboard for anything but `text/plain`, so that one flag
+    left a pane with no way to receive text from elsewhere on the device at
+    all. The two are one switch in Gboard; the cost of turning it back on is
+    that words typed at this prompt are learned, masked password prompts
+    included, since a pty cannot tell the keyboard one is open.
+
+    Images are a second, separate refusal: Gboard rejects them in the keyboard
+    with "the current app does not allow pasting images here" whenever
+    `EditorInfo.contentMimeTypes` is empty, which is what Flutter sends while
+    `allowedMimeTypes` is unset — before any Dart runs, so `insertContent`
+    being an empty stub was never the reason. It is now forwarded through
+    `TerminalView.onContentInserted`, and the embedder decides what an image
+    means; `mobile/lib/widgets/terminal_panel.dart` sends it as the chunked
+    `TerminalSession.pasteImage` upload, which on a phone is the only path
+    there is — every pane is remote.
+
+    ⚠️ `image/png` alone, and not because other types are rare: the daemon
+    names what it receives `<uuid>.png` outright
+    (`cli/src/lib/pasteDropFiles.ts`), so a JPEG would arrive under a name that
+    lies about it. Widening this means teaching the CLI the real type first.
+
+    ⚠️ Kept out of the desktop copy deliberately. The flag is Android-only, and
+    desktop reads images through `NativeClipboard` on ⌘V instead — mirroring it
+    there would have been an inert change carrying a privacy decision made for
+    a platform that never sees it.

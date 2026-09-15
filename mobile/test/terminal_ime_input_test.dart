@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:xterm/xterm.dart';
 
@@ -118,5 +119,86 @@ void main() {
       expect(outbound, ['hôm ']);
     },
     variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
+
+  testWidgets(
+    'the keyboard keeps its clipboard, at the price of learning what is typed',
+    (tester) async {
+      final config = await attachedConfig(tester);
+
+      // `false` here is IME_FLAG_NO_PERSONALIZED_LEARNING, which Gboard reads
+      // as incognito — and incognito takes the toolbar, and with it the
+      // CLIPBOARD. A phone has no ⌘V and no readable clipboard beyond
+      // `text/plain`, so declining the learning also declined every paste.
+      expect(config['enableIMEPersonalizedLearning'], isTrue);
+    },
+    variant: TargetPlatformVariant.all(),
+  );
+
+  testWidgets(
+    'an undeclared content type is refused before Dart sees it',
+    (tester) async {
+      final config = await attachedConfig(tester);
+
+      // Empty is Flutter's default, and it is what makes Gboard answer a
+      // clipboard image with "the current app does not allow pasting images
+      // here" — in the keyboard, with nothing reaching `insertContent` at all.
+      expect(config['contentCommitMimeTypes'], isEmpty);
+    },
+    variant: TargetPlatformVariant.all(),
+  );
+
+  testWidgets(
+    'a declared type is offered and its bytes reach the host',
+    (tester) async {
+      KeyboardInsertedContent? received;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 400,
+              height: 320,
+              child: TerminalView(
+                newTerminal(),
+                autofocus: true,
+                allowedMimeTypes: const ['image/png'],
+                onContentInserted: (content) => received = content,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(
+        tester.testTextInput.setClientArgs!['contentCommitMimeTypes'],
+        ['image/png'],
+      );
+
+      // What the engine sends once the keyboard hands an image over. Delivered
+      // on the platform channel rather than through `testTextInput`, which has
+      // no helper for content.
+      final bytes = <int>[137, 80, 78, 71];
+      await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+        'flutter/textinput',
+        const JSONMethodCodec().encodeMethodCall(
+          MethodCall('TextInputClient.performAction', <Object?>[
+            -1,
+            'TextInputAction.commitContent',
+            <String, dynamic>{
+              'mimeType': 'image/png',
+              'data': bytes,
+              'uri': 'content://clip/1',
+            },
+          ]),
+        ),
+        (_) {},
+      );
+      await tester.pump();
+
+      expect(received?.mimeType, 'image/png');
+      expect(received?.data, bytes);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.android),
   );
 }

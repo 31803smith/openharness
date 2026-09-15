@@ -22,6 +22,8 @@ class CustomTextEdit extends StatefulWidget {
     this.inputAction = TextInputAction.newline,
     this.keyboardAppearance = Brightness.light,
     this.deleteDetection = false,
+    this.allowedMimeTypes = const <String>[],
+    this.onContentInserted,
   });
 
   final Widget child;
@@ -49,6 +51,21 @@ class CustomTextEdit extends StatefulWidget {
   final Brightness keyboardAppearance;
 
   final bool deleteDetection;
+
+  /// Content types this connection accepts from the keyboard's own clipboard, as
+  /// `EditorInfo.contentMimeTypes` on Android.
+  ///
+  /// ⚠️ Empty — the default — is what makes Gboard refuse a clipboard image with
+  /// "the current app does not allow pasting images here". The refusal happens in
+  /// the keyboard, before anything reaches Dart, so no amount of handling here
+  /// substitutes for declaring the type.
+  final List<String> allowedMimeTypes;
+
+  /// One item of [allowedMimeTypes] arriving from the keyboard.
+  ///
+  /// ⚠️ [KeyboardInsertedContent.data] can be null even for a type that was asked
+  /// for: the platform hands over a URI it could not read for us.
+  final void Function(KeyboardInsertedContent content)? onContentInserted;
 
   @override
   CustomTextEditState createState() => CustomTextEditState();
@@ -209,7 +226,20 @@ class CustomTextEditState extends State<CustomTextEdit> with TextInputClient {
         // autocorrect on above is what would finally let iOS act on them.
         smartDashesType: SmartDashesType.disabled,
         smartQuotesType: SmartQuotesType.disabled,
-        enableIMEPersonalizedLearning: false,
+        // ⚠️ `false` here maps to Android's IME_FLAG_NO_PERSONALIZED_LEARNING,
+        // which puts Gboard in INCOGNITO MODE — and incognito costs far more
+        // than the learning it declines. Gboard replaces its toolbar with the
+        // incognito glasses, and the clipboard goes with it: no pasting into a
+        // terminal from anywhere else on the phone. The two are one switch in
+        // Gboard, so a terminal that wants paste cannot also decline learning.
+        //
+        // Declining was the safer default and is no longer the right one: a
+        // phone has no other way to get text INTO a pane, where a desktop has
+        // ⌘V. The cost is real — Gboard now learns words typed at this prompt,
+        // masked password prompts included, since a pty gives the keyboard no
+        // way to know one is open.
+        enableIMEPersonalizedLearning: true,
+        allowedMimeTypes: widget.allowedMimeTypes,
       );
 
       _connection = TextInput.attach(this, config);
@@ -429,7 +459,9 @@ class CustomTextEditState extends State<CustomTextEdit> with TextInputClient {
   ) {}
 
   @override
-  void insertContent(KeyboardInsertedContent content) {}
+  void insertContent(KeyboardInsertedContent content) {
+    widget.onContentInserted?.call(content);
+  }
 
   @override
   bool onFocusReceived() => false;

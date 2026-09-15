@@ -934,6 +934,26 @@ class _TerminalPanelState extends State<TerminalPanel>
   /// upload, daemon writes the far side's OS clipboard, daemon replays Ctrl+V) is
   /// reserved for a genuinely REMOTE pane, whose engine reads a DIFFERENT
   /// clipboard than this one — see `MachineState.isLocalMachine`.
+  /// An image handed over by the software keyboard's own clipboard.
+  ///
+  /// This is the phone's ONLY way to get an image into a pane: Flutter's
+  /// [Clipboard] reads `text/plain` and nothing else, and the native reader
+  /// [_paste] falls back on is macOS/Linux. Gboard hands the bytes over directly,
+  /// so there is no clipboard to read at all.
+  ///
+  /// ⚠️ A pane on a phone is ALWAYS remote — the agent runs on another machine,
+  /// whose engine reads a different OS clipboard — so unlike the desktop there is
+  /// no local shortcut here: every paste is the chunked upload.
+  void _onContentInserted(KeyboardInsertedContent content) {
+    final bytes = content.data;
+    if (bytes == null || bytes.isEmpty) return;
+    if (widget.readOnly || !widget.session.acceptsInput) return;
+    if (bytes.length > terminalLocalImagePasteMaxPayloadBytes) return;
+    final machine = widget.notifier.stateOf(widget.session.machineId);
+    if (machine == null || !machine.terminalImagePasteAvailable) return;
+    unawaited(widget.session.pasteImage(bytes));
+  }
+
   Future<void> _paste() async {
     if (widget.readOnly || !widget.session.acceptsInput) return;
     final text = (await Clipboard.getData(Clipboard.kTextPlain))?.text;
@@ -1281,6 +1301,16 @@ class _TerminalPanelState extends State<TerminalPanel>
                           // holds from the very first frame — no scaled first paint
                           // and no startup resize.
                           textScaler: TextScaler.noScaling,
+                          // ⚠️ PNG alone, and not because other types are rare.
+                          // The daemon writes what it receives to a file it names
+                          // `<uuid>.png` outright (`cli/src/lib/pasteDropFiles.ts`),
+                          // so a JPEG would arrive on the far machine under a name
+                          // that lies about it. Widening this means teaching the
+                          // CLI the real type first — and an older CLI, which
+                          // `terminalImagePasteAvailable` already gates on, would
+                          // still not know it.
+                          allowedMimeTypes: const ['image/png'],
+                          onContentInserted: _onContentInserted,
                           onKeyEvent: _onTerminalKey,
                           onTapDown: _onLinkTapDown,
                           onTapUp: _onLinkTapUp,

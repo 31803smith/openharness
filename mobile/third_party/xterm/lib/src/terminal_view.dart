@@ -48,6 +48,8 @@ class TerminalView extends StatefulWidget {
     this.cursorType = TerminalCursorType.block,
     this.alwaysShowCursor = false,
     this.deleteDetection = false,
+    this.allowedMimeTypes = const <String>[],
+    this.onContentInserted,
     this.shortcuts,
     this.onKeyEvent,
     this.readOnly = false,
@@ -140,6 +142,15 @@ class TerminalView extends StatefulWidget {
   /// emit hardware delete event. Prefered on mobile platforms. [false] by
   /// default.
   final bool deleteDetection;
+
+  /// Clipboard content types this terminal accepts from a software keyboard —
+  /// see [CustomTextEdit.allowedMimeTypes]. Empty means the keyboard refuses the
+  /// paste itself, without asking.
+  final List<String> allowedMimeTypes;
+
+  /// One accepted clipboard item, handed straight to the host: a pty takes bytes,
+  /// and what to do with an image is the embedder's decision, not this widget's.
+  final void Function(KeyboardInsertedContent content)? onContentInserted;
 
   /// Shortcuts for this terminal. This has higher priority than input handler
   /// of the terminal If not provided, [defaultTerminalShortcuts] will be used.
@@ -305,6 +316,8 @@ class TerminalViewState extends State<TerminalView> {
         inputType: widget.keyboardType,
         keyboardAppearance: widget.keyboardAppearance,
         deleteDetection: widget.deleteDetection,
+        allowedMimeTypes: widget.allowedMimeTypes,
+        onContentInserted: widget.onContentInserted,
         onInsert: _onInsert,
         onDelete: (count) {
           _scrollToBottom();
