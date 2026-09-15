@@ -7,16 +7,17 @@ proposals in the progress log.
 
 ## Open and New Harness
 
-**Cmd-T / New Tab** and the tab-bar plus open the Harness start page. Its solid
-background matches the selected tab. The centered title and search controls sit
-lower with generous empty space. A single row, capped at 784 logical pixels,
-contains a compact search field, **Open Harness**, and accented **+ New Harness**.
-The pill buttons use a smaller 48-pixel height, with reduced input padding. The New Tab
-preview stays beside its results at widths of 700 logical pixels and above.
-Activating search expands the field into the buttons' space and hides the buttons;
-the overall row edges remain fixed. Results and preview appear side by side.
-Escape restores the compact field and both actions. At narrow widths or large text
-sizes, the actions use labeled icons so the search field remains usable.
+**Cmd-T / New Tab** and the tab-bar plus open the Harness start page over its
+restored soft mesh wallpaper. A long search field, capped at 1120 logical pixels,
+shows **Find a harness** in place of a large heading. **Open Harness** and accented
+**+ New Harness** sit underneath, aligned with the field's left edge. The pill
+buttons retain their smaller 48-pixel height and wrap at narrow widths or large
+text sizes. The device image and its caption share that same left edge farther
+down the page.
+
+Activating search keeps the field's width fixed and reveals results and preview
+side by side at widths of 700 logical pixels and above. The actions hide while
+searching. Escape restores both actions and retains the query.
 
 The field starts empty and focused so typing works immediately. Typing, clicking
 it or Open Harness, or pressing an arrow reveals the same input, results,

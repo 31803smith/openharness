@@ -103,14 +103,14 @@ void main() {
       expect(_startInput, findsOneWidget);
       expect(find.byType(FloatingActionButton), findsNothing);
       expect(
-        tester.getRect(_startInput).right,
+        tester.getRect(_startInput).bottom,
         lessThan(
-          tester.getRect(find.byKey(const ValueKey('harness-start-open'))).left,
+          tester.getRect(find.byKey(const ValueKey('harness-start-open'))).top,
         ),
       );
       expect(
         tester.widget<TextField>(_startInput).decoration!.hintText,
-        isEmpty,
+        'Find a harness',
       );
       expect(tester.widget<TextField>(_startInput).focusNode!.hasFocus, isTrue);
       expect(find.byKey(const ValueKey('harness-device-link')), findsOneWidget);

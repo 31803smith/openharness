@@ -94,18 +94,22 @@ void main() {
         final create = find.byKey(const ValueKey('harness-start-new'));
         final open = find.byKey(const ValueKey('harness-start-open'));
         final device = find.byKey(const ValueKey('harness-device-link'));
-        expect(find.text('Harness'), findsOneWidget);
-        expect(tester.widget<TextField>(field).decoration!.hintText, isEmpty);
+        expect(find.text('Harness'), findsNothing);
+        expect(
+          tester.widget<TextField>(field).decoration!.hintText,
+          'Find a harness',
+        );
         expect(tester.widget<TextField>(field).focusNode!.hasFocus, isTrue);
         expect(find.byType(ListTile), findsNothing);
         final fieldRect = tester.getRect(field);
         final createRect = tester.getRect(create);
         final openRect = tester.getRect(open);
-        expect(createRect.center.dy, closeTo(fieldRect.center.dy, 1));
-        expect(openRect.center.dy, closeTo(fieldRect.center.dy, 1));
-        expect(openRect.left, greaterThan(fieldRect.right));
+        expect(createRect.center.dy, closeTo(openRect.center.dy, 1));
+        expect(openRect.top, greaterThan(fieldRect.bottom));
+        expect(openRect.left, closeTo(fieldRect.left, 1));
         expect(createRect.left, greaterThan(openRect.right));
-        expect((fieldRect.left + createRect.right) / 2, closeTo(width / 2, 1));
+        expect(fieldRect.center.dx, closeTo(width / 2, 1));
+        expect(tester.getRect(device).left, closeTo(fieldRect.left, 1));
         expect(create.hitTestable(), findsOneWidget);
         expect(open.hitTestable(), findsOneWidget);
         expect(createRect.bottom, lessThanOrEqualTo(height));
@@ -140,7 +144,7 @@ void main() {
         expect(tester.getRect(results).height, greaterThan(140));
         expect(tester.getRect(results).width, tester.getRect(field).width);
         expect(tester.getRect(field).left, closeTo(fieldRect.left, 1));
-        expect(tester.getRect(field).right, closeTo(createRect.right, 1));
+        expect(tester.getRect(field).right, closeTo(fieldRect.right, 1));
         expect(create, findsNothing);
         expect(open, findsNothing);
         await tester.sendKeyEvent(LogicalKeyboardKey.escape);

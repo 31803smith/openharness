@@ -41,6 +41,7 @@ import '../widgets/swarm_dialogs.dart';
 import '../widgets/swarm_search_input.dart';
 import '../widgets/swarm_attention.dart';
 import '../widgets/swarm_switcher.dart';
+import '../widgets/swarm_wallpaper.dart';
 import '../widgets/swarm_icon.dart';
 import '../widgets/task_palette.dart';
 
@@ -1311,9 +1312,9 @@ class _SwarmScreenState extends State<SwarmScreen> {
                       fit: StackFit.expand,
                       children: [
                         if (app.panes.isEmpty)
-                          ColoredBox(
-                            color: grid.AppPalette.swarmField,
-                            key: const ValueKey('harness-start-background'),
+                          const RepaintBoundary(
+                            key: ValueKey('harness-start-background'),
+                            child: SwarmWallpaper(),
                           ),
                         Padding(
                           padding: app.panes.isEmpty

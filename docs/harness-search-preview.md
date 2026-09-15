@@ -4,12 +4,13 @@ Both Open Harness and inline start-page search now display existing session
 content in a shared preview. This document records the content rules, data path,
 and remaining coverage limits.
 
-The start page keeps one row, capped at 784 logical pixels: a compact search field,
-Open Harness, and New Harness. Activating search expands the field into the actions'
-space; the outer edges stay fixed while results and preview appear side by side.
-The pill buttons use a compact 48-pixel height, with reduced input padding. The New Tab preview
-stays beside the results from 700 pixels wide; Cmd-O retains its existing size.
-Escape restores the original row and retains the query.
+The start page uses a long field capped at 1120 logical pixels, with **Find a
+harness** as its hint. Open Harness and New Harness sit underneath, aligned left,
+and the device card shares that left edge over the restored mesh wallpaper.
+The field keeps its width when search opens; results and preview appear side by
+side from 700 pixels wide. The actions hide while searching. The pill buttons
+retain their compact 48-pixel height, with reduced input padding. Cmd-O retains
+its existing size. Escape restores the actions and retains the query.
 Page Up/Down scrolls the preview with overlap while the query keeps keyboard focus.
 Arrow keys still choose results, and Enter opens the selection. The two preview
 paging commands can be remapped or unbound in the Search keymap. Paging only moves

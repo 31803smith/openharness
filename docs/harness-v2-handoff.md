@@ -45,19 +45,20 @@ are:
   Cmd-H/J/K/L and Cmd-arrows focus panes; Cmd-1…9 select tabs. User bindings take
   precedence. Cmd-R splits right and Cmd-D splits down. Native menus, help and actual
   dispatch must agree; native menu and titlebar hover hints are removed.
-- New Tab uses the Google-like page with a **solid selected-tab background**,
-  lower centered controls and generous whitespace. A single row (at most 784
-  logical pixels) contains search, Open Harness, and New Harness. Search starts
-  blank and focused, with results hidden. Activating search expands the field
-  into the buttons' space; the row edges stay fixed and results/preview appear
-  side by side from 700 pixels wide. The pill buttons use a compact 48-pixel
-  height, with reduced input padding; Cmd-O retains its existing width. Escape restores the original
-  row and query.
+- New Tab uses the **restored soft mesh wallpaper**, a long search field capped
+  at 1120 logical pixels, and no large Harness heading. The hint is **Find a
+  harness**. Search starts blank and focused, with results hidden. Open Harness
+  and New Harness sit underneath, aligned with the search field's left edge.
+  Activating search preserves the field width; results and preview appear side
+  by side from 700 pixels wide, and the actions hide. The pill buttons retain
+  their compact 48-pixel height and wrap when needed; Cmd-O retains its existing
+  width. Escape restores the actions and query.
   Typing, clicking, or pressing an arrow
   reveals the same results, selection, arrows and Enter behavior as Cmd-O.
   Focus alone leaves results hidden and builds no catalog. Open Harness and
-  accented **+ New Harness** share the row; a small official device image and
-  introduction sit well below, linking to autonomous.ai/harness-device.
+  accented **+ New Harness** share a row below search; a small official device
+  image and introduction sit well below, aligned to the same left edge and
+  linking to autonomous.ai/harness-device.
   The five recent-agent rows are removed. Both pairs of actions are rounded
   pills, with transparent outlined Open buttons and hand cursors. The official
   `2.webp` device photo is cropped and centered in its viewport, with a hand cursor.
@@ -333,7 +334,7 @@ post-inspired implementation:
 ### Visual quality and first impression
 
 - The start page, titlebar, modal result rows and pane controls follow the current
-  entry/pane contract. Flat backgrounds, whitespace, title/metadata hierarchy,
+  entry/pane contract. The start-page mesh, whitespace, title/metadata hierarchy,
   single/group icons, labels and native/Flutter button contrast are consistent.
 - All six coordinated palettes, real fonts/content, larger text, narrow windows,
   keyboard focus indicators and accessibility labels remain legible and usable.

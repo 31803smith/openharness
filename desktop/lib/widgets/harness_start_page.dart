@@ -46,8 +46,7 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _revealScheduled = false;
       if (!mounted || !_showResults || !_pickerFocus.hasFocus) return;
-      // Reveal the full search panel. The actions share its row while closed,
-      // and the activated field takes their space without moving the row edges.
+      // Keep the full search panel visible without changing its width.
       Scrollable.ensureVisible(
         _searchSurface.currentContext!,
         alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
@@ -89,23 +88,21 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
     widget.onNew();
   }
 
-  Widget _action({required bool create, required bool compact}) {
+  Widget _action({required bool create}) {
     final label = create ? 'New Harness' : 'Open Harness';
-    final content = compact
-        ? Icon(create ? LucideIcons.plus300 : LucideIcons.search300, size: 20)
-        : Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (create) ...[
-                const Icon(LucideIcons.plus300, size: 18),
-                const SizedBox(width: 8),
-              ],
-              Text(label),
-            ],
-          );
-    final size = Size(compact ? 48 : 140, 48);
-    final padding = EdgeInsets.symmetric(horizontal: compact ? 12 : 20);
-    final button = create
+    final content = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (create) ...[
+          const Icon(LucideIcons.plus300, size: 18),
+          const SizedBox(width: 8),
+        ],
+        Text(label),
+      ],
+    );
+    const size = Size(140, 48);
+    const padding = EdgeInsets.symmetric(horizontal: 20);
+    return create
         ? FilledButton(
             key: const ValueKey('harness-start-new'),
             onPressed: _new,
@@ -133,8 +130,74 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
             ),
             child: content,
           );
-    return compact ? Tooltip(message: label, child: button) : button;
   }
+
+  Widget _searchPanel(BoxConstraints constraints) => TextFieldTapRegion(
+    groupId: _searchGroup,
+    child: Focus(
+      focusNode: _pickerFocus,
+      child: Material(
+        key: _searchSurface,
+        color: _showResults
+            ? grid.AppPalette.swarmSearchSurface
+            : Colors.transparent,
+        elevation: _showResults ? 12 : 0,
+        shadowColor: Colors.black54,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(_showResults ? 12 : 30),
+          side: _showResults
+              ? const BorderSide(color: Colors.white24)
+              : BorderSide.none,
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: SwarmSearchKeys(
+          search: _search,
+          editing: _query,
+          onChoose: _choose,
+          onClose: _close,
+          onOpen: _open,
+          onNewAgent: _new,
+          onRefocus: _focus.requestFocus,
+          child: Column(
+            children: [
+              Semantics(
+                label: 'Find a harness',
+                child: SwarmSearchInput(
+                  inputKey: const ValueKey('harness-start-search'),
+                  controller: _query,
+                  focusNode: _focus,
+                  search: _search,
+                  onClose: _close,
+                  onChanged: (_) => _open(),
+                  onOpen: _open,
+                  onTapOutside: _close,
+                  groupId: _searchGroup,
+                  autofocus: true,
+                  showClose: _showResults,
+                  hintText: 'Find a harness',
+                  rounded: true,
+                  compact: true,
+                ),
+              ),
+              if (_showResults) ...[
+                const Divider(height: 1, color: Colors.white12),
+                SizedBox(
+                  height: (constraints.maxHeight * 0.54).clamp(260, 480),
+                  child: SwarmSearchResults(
+                    key: const ValueKey('harness-start-results'),
+                    search: _search!,
+                    sideBySideMinWidth: 700,
+                    onChoose: _choose,
+                    onRefocus: _focus.requestFocus,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
 
   @override
   void dispose() {
@@ -160,119 +223,23 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
             ),
             child: Center(
               child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 784),
+                constraints: const BoxConstraints(maxWidth: 1120),
                 child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'Harness',
-                      style: TextStyle(
-                        fontSize: 48,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: -1.5,
+                    _searchPanel(constraints),
+                    if (!_showResults) ...[
+                      const SizedBox(height: 20),
+                      Wrap(
+                        spacing: 12,
+                        runSpacing: 12,
+                        children: [
+                          _action(create: false),
+                          _action(create: true),
+                        ],
                       ),
-                    ),
-                    const SizedBox(height: 32),
-                    LayoutBuilder(
-                      builder: (context, rowConstraints) {
-                        final compactActions =
-                            rowConstraints.maxWidth <
-                            700 *
-                                MediaQuery.textScalerOf(context).scale(14) /
-                                14;
-                        return Row(
-                          children: [
-                            Expanded(
-                              child: TextFieldTapRegion(
-                                groupId: _searchGroup,
-                                child: Focus(
-                                  focusNode: _pickerFocus,
-                                  child: Material(
-                                    key: _searchSurface,
-                                    color: _showResults
-                                        ? grid.AppPalette.swarmSearchSurface
-                                        : Colors.transparent,
-                                    elevation: _showResults ? 12 : 0,
-                                    shadowColor: Colors.black54,
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(
-                                        _showResults ? 12 : 30,
-                                      ),
-                                      side: _showResults
-                                          ? const BorderSide(
-                                              color: Colors.white24,
-                                            )
-                                          : BorderSide.none,
-                                    ),
-                                    clipBehavior: Clip.antiAlias,
-                                    child: SwarmSearchKeys(
-                                      search: _search,
-                                      editing: _query,
-                                      onChoose: _choose,
-                                      onClose: _close,
-                                      onOpen: _open,
-                                      onNewAgent: _new,
-                                      onRefocus: _focus.requestFocus,
-                                      child: Column(
-                                        children: [
-                                          Semantics(
-                                            label: 'Find a harness',
-                                            child: SwarmSearchInput(
-                                              inputKey: const ValueKey(
-                                                'harness-start-search',
-                                              ),
-                                              controller: _query,
-                                              focusNode: _focus,
-                                              search: _search,
-                                              onClose: _close,
-                                              onChanged: (_) => _open(),
-                                              onOpen: _open,
-                                              onTapOutside: _close,
-                                              groupId: _searchGroup,
-                                              autofocus: true,
-                                              showClose: _showResults,
-                                              hintText: '',
-                                              rounded: true,
-                                              compact: true,
-                                            ),
-                                          ),
-                                          if (_showResults) ...[
-                                            const Divider(
-                                              height: 1,
-                                              color: Colors.white12,
-                                            ),
-                                            SizedBox(
-                                              height:
-                                                  (constraints.maxHeight * 0.54)
-                                                      .clamp(260, 480),
-                                              child: SwarmSearchResults(
-                                                key: const ValueKey(
-                                                  'harness-start-results',
-                                                ),
-                                                search: _search!,
-                                                sideBySideMinWidth: 700,
-                                                onChoose: _choose,
-                                                onRefocus: _focus.requestFocus,
-                                              ),
-                                            ),
-                                          ],
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                            if (!_showResults) ...[
-                              const SizedBox(width: 10),
-                              _action(create: false, compact: compactActions),
-                              const SizedBox(width: 10),
-                              _action(create: true, compact: compactActions),
-                            ],
-                          ],
-                        );
-                      },
-                    ),
-                    const SizedBox(height: 224),
+                    ],
+                    const SizedBox(height: 160),
                     Semantics(
                       link: true,
                       child: InkWell(
@@ -283,9 +250,10 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
                           mode: LaunchMode.externalApplication,
                         ),
                         borderRadius: BorderRadius.circular(12),
-                        child: Padding(
-                          padding: const EdgeInsets.all(12),
+                        child: SizedBox(
+                          width: 256,
                           child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               ClipRRect(
                                 borderRadius: BorderRadius.circular(10),
@@ -307,11 +275,13 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
                               const Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  Text(
-                                    'The ultimate Harness setup',
-                                    style: TextStyle(
-                                      fontSize: 13,
-                                      color: Colors.white70,
+                                  Flexible(
+                                    child: Text(
+                                      'The ultimate Harness setup',
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        color: Colors.white70,
+                                      ),
                                     ),
                                   ),
                                   SizedBox(width: 4),
@@ -325,7 +295,7 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
                               const SizedBox(height: 6),
                               const Text(
                                 'Scroll, switch panes, and give voice commands.',
-                                textAlign: TextAlign.center,
+                                textAlign: TextAlign.start,
                                 style: TextStyle(
                                   fontSize: 12,
                                   color: Colors.white54,
