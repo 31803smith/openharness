@@ -270,6 +270,14 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
 
   func menuWillOpen(_ menu: NSMenu) {
     syncMenuKeys()
+    if menu === historyMenu {
+      for item in menu.items {
+        guard let row = item.view as? SwarmHistoryMenuRow else { continue }
+        item.isEnabled = validateMenuItem(item)
+        row.setAccessibilityEnabled(item.isEnabled)
+        row.needsDisplay = true
+      }
+    }
     guard menu === modelsMenu, actionsEnabled else { return }
     // The native menu opens from its cache. Network/credential reads happen
     // asynchronously in Dart and never hold up AppKit's menu tracking.

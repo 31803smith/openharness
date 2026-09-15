@@ -699,6 +699,13 @@ private extension SwarmTitlebar {
     let historyCallCount = messenger.calls.count
     try checkTitlebar(recentView.accessibilityPerformPress() && messenger.calls.count == historyCallCount + 1 &&
       messenger.calls.last?.method == "historyDestination", "The full-width History row opens the same native destination")
+    actionsEnabled = false
+    menuWillOpen(historyMenu)
+    try checkTitlebar(!recent.isEnabled && !recentView.accessibilityPerformPress(),
+      "A modal disables full-width History rows and their accessibility action")
+    actionsEnabled = true
+    menuWillOpen(historyMenu)
+    try checkTitlebar(recent.isEnabled, "History rows become available again after the modal closes")
     try checkTitlebar(recent.image?.size == NSSize(width: 16, height: 16) && recent.image?.isTemplate == false,
       "History uses the colored Claude mark at native menu size")
     try checkTitlebar(recent.state == .on && recent.toolTip == nil, "History adds no hover hints")
