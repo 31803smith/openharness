@@ -14,8 +14,10 @@ import 'phone_status.dart';
 ///
 /// The desktop lists machines in account order, because its rail shows every one at once and the
 /// order is the only stable thing about it. A phone screen holds five or six rows, so the order
-/// has to carry meaning instead: a machine somebody must DO something about — enter a password,
-/// start Harness — goes above the ones that are simply working.
+/// has to carry meaning instead: the machines that are linked and working go first, because those
+/// are the ones somebody opens day to day. The machines that want something — a password, a
+/// Harness that is not running — collect underneath, where they read as a to-do list rather than
+/// as the thing standing between you and the machine you actually came for.
 class MachinesTab extends StatelessWidget {
   const MachinesTab({super.key, required this.notifier});
 
@@ -68,6 +70,7 @@ class _Body extends StatelessWidget {
 
     // Two runs, by whether the machine is usable as it stands. A machine that is merely connecting
     // belongs with the working ones: it needs nothing from anybody, it is just not ready yet.
+    // The runs are built in this order and rendered working-first; see the class comment.
     final needsAttention = <MachineState>[];
     final working = <MachineState>[];
     for (final state in states) {
@@ -87,14 +90,15 @@ class _Body extends StatelessWidget {
         physics: const AlwaysScrollableScrollPhysics(),
         padding: phoneListPadding(context),
         children: [
-          if (needsAttention.isNotEmpty) ...[
-            const _SectionLabel('Needs your attention'),
-            for (final state in needsAttention) _tile(context, state),
+          if (working.isNotEmpty) ...[
+            const _SectionLabel('Linked'),
+            for (final state in working) _tile(context, state),
             const SizedBox(height: 6),
           ],
-          if (working.isNotEmpty) ...[
-            if (needsAttention.isNotEmpty) const _SectionLabel('Linked'),
-            for (final state in working) _tile(context, state),
+          if (needsAttention.isNotEmpty) ...[
+            if (working.isNotEmpty)
+              const _SectionLabel('Needs your attention'),
+            for (final state in needsAttention) _tile(context, state),
           ],
         ],
       ),
