@@ -3804,8 +3804,22 @@ async function runForeground(session: AuthSession): Promise<void> {
     // validate, and respawning over a pane whose occupant we cannot identify is how you replace
     // something that was not ours.
     if (!session.processIdentity) return { ok: false, error: 'NO_ACTIVE_PROCESS' }
+    // Leaving for a grid is the LAST moment this agent's own model is observable: once the pane is on
+    // the grid, the engine reports the grid's model and the previous choice exists nowhere. So it is
+    // read now and kept, and a later move back returns the person to it rather than to whatever
+    // default the engine would otherwise fall to. Read from the live engine, not from the row.
+    //
+    // Coming back reads what was kept. Not cleared on the way home: an agent bounced between a grid
+    // and its own login should land on the same model every time, not only the first.
+    const remembered = grid
+      ? (runtimeProfiles.selectedModel(session) ?? null)
+      : (session.subscriptionModel ?? null)
     // What this machine cannot do at all is said first, before the pane is even looked at.
-    const target: LaunchSource = { gridLaunch: grid, codexHome: session.codexHome }
+    const target: LaunchSource = {
+      gridLaunch: grid,
+      codexHome: session.codexHome,
+      ...(grid ? {} : { subscriptionModel: remembered }),
+    }
     const valid = await validateLaunchOverrides(launchOverridesDeps, session.engine, target)
     if (!valid.ok) return { ok: false, error: valid.error, detail: valid.detail }
     // Mid-turn is the one state where restarting costs real work: the conversation comes back but
@@ -3875,6 +3889,10 @@ async function runForeground(session: AuthSession): Promise<void> {
       registry.updateProcessIdentity(session.agentId, outcome.processIdentity, gateway.kind, assignment)
       // The launch that just worked is the one a restart or a post-reboot restore must repeat.
       registry.setGridLaunch(session.agentId, grid)
+      // Persisted only on the way OUT, and only once the move actually succeeded — a refused move
+      // must not overwrite the model the agent is still sitting on. Survives a daemon restart, so an
+      // agent left on a grid for a week still knows where it came from.
+      if (grid && remembered) registry.setSubscriptionModel(session.agentId, remembered)
       registry.setActive(session.agentId, true)
       await clearPaneRemainOnExit(pane.paneId)
       const refreshed = registry.byAgent(session.agentId)

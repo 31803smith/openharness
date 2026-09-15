@@ -112,6 +112,16 @@ export interface RegisteredSession {
    */
   gridLaunch?: GridLaunchOverride | null
   /**
+   * The engine's OWN model this agent was on immediately before it moved to a grid.
+   *
+   * Captured at the moment of leaving, because that is the only moment it is still observable: once
+   * the pane is on a grid, the engine reports the GRID's model and the previous one exists nowhere.
+   * Re-selected when the agent moves back, so coming home does not mean landing on whatever default
+   * the vendor would otherwise pick. Null when the agent has never left, or was on no particular
+   * model when it did.
+   */
+  subscriptionModel?: string | null
+  /**
    * The CODEX_HOME folder this agent was launched against, if one was chosen instead of `~/.codex`.
    * Codex only. Unlike `grid`, this is chosen once at creation and never re-derived from the live
    * process — a running agent cannot be moved to a different profile the way it can be retargeted
@@ -1339,6 +1349,17 @@ class Registry {
     const session = this.agents.get(agentId)
     if (!session) return false
     session.gridLaunch = gridLaunch
+    session.updatedAt = Date.now()
+    this.save()
+    return true
+  }
+
+  /** Remember the engine's own model an agent is leaving behind, so a later move back can restore it.
+   *  Kept even while the agent is on a grid — it is the only record that the previous choice existed. */
+  setSubscriptionModel(agentId: string, model: string | null): boolean {
+    const session = this.agents.get(agentId)
+    if (!session) return false
+    session.subscriptionModel = model
     session.updatedAt = Date.now()
     this.save()
     return true

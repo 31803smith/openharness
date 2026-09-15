@@ -14,6 +14,7 @@
 
 import { join } from 'node:path'
 import type { AgentEngine } from '../engines/types.js'
+import { subscriptionModelLaunch } from './subscriptionModel.js'
 import {
   buildGridEngineLaunch,
   gridConflictingEnvToClear,
@@ -53,6 +54,13 @@ export interface LaunchOverridesDeps {
 export interface LaunchSource {
   gridLaunch?: GridLaunchOverride | null
   codexHome?: string | null
+  /**
+   * The engine's OWN model to come back to, when this relaunch is a move off a grid.
+   *
+   * Ignored while `gridLaunch` is set — that launch names its own model. Absent means "let the
+   * engine decide", which is what happens for an engine with no cited mechanism.
+   */
+  subscriptionModel?: string | null
 }
 
 /** Fresh each time: callers hand `env` to tmux and may extend it, and a shared object would carry
@@ -101,6 +109,23 @@ export async function buildLaunchOverrides(
 ): Promise<LaunchOverridesResult> {
   const valid = await validateLaunchOverrides(deps, engine, source)
   if (!valid.ok) return valid
+  if (!source.gridLaunch) {
+    // Coming back to the engine's own login: re-select the model this agent was on before it left,
+    // so the engine does not fall back to a house default. See `subscriptionModel.ts` for why an
+    // engine with no cited mechanism is given nothing rather than a guess.
+    const restored = subscriptionModelLaunch(engine, source.subscriptionModel)
+    if (restored) {
+      const base = noOverrides()
+      return {
+        ok: true,
+        overrides: {
+          ...base,
+          env: { ...base.env, ...restored.env },
+          extraArgs: [...base.extraArgs, ...restored.args],
+        },
+      }
+    }
+  }
   if (source.gridLaunch) {
     const built = buildGridEngineLaunch(engine, source.gridLaunch)
     if (!built.ok) return { ok: false, error: built.error, detail: built.detail }

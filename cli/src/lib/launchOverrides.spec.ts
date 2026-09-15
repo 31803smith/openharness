@@ -87,3 +87,33 @@ describe('buildLaunchOverrides — a relaunch comes back where the agent was', (
     }
   })
 })
+
+describe('buildLaunchOverrides — coming back off a grid', () => {
+  it('re-selects the model the agent was on before it left', async () => {
+    // Without this the engine restores the model its OWN session file remembers — the grid's — fails
+    // to resolve it, and falls back to a house default. Measured on Claude Code: "Session model
+    // Qwen3.6-35B-A3B-UD-Q5_K_XL could not be restored … using opus instead."
+    const result = await buildLaunchOverrides(deps().d, 'claude', { subscriptionModel: 'opus' }, 'a')
+    expect(result).toMatchObject({ ok: true, overrides: { env: { ANTHROPIC_MODEL: 'opus' } } })
+  })
+
+  it('uses argv for an engine whose interactive CLI resolves the model there', async () => {
+    const result = await buildLaunchOverrides(deps().d, 'codex', { subscriptionModel: 'gpt-5-codex' }, 'a')
+    expect(result).toMatchObject({ ok: true, overrides: { extraArgs: ['-m', 'gpt-5-codex'] } })
+  })
+
+  it('adds nothing when there is no model to come back to', async () => {
+    const result = await buildLaunchOverrides(deps().d, 'claude', {}, 'a')
+    expect(result).toMatchObject({ ok: true, overrides: { env: {}, extraArgs: [] } })
+  })
+
+  it('never lets a remembered model reach a GRID launch — that launch names its own', async () => {
+    const result = await buildLaunchOverrides(
+      deps().d, 'claude', { gridLaunch: GRID, subscriptionModel: 'opus' }, 'a',
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    // The grid's model, not the remembered one.
+    expect(result.overrides.env.ANTHROPIC_MODEL).toBe('gpt-5')
+  })
+})
