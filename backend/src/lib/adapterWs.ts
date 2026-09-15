@@ -214,7 +214,13 @@ async function attachAdapter(ws: WebSocket, machineId: string, userId: string, c
   }
   // Tell the adapter its machine's display name (it mirrors it locally for `harness status`); null when
   // unnamed so a stale mirror clears. Renames while connected arrive the same way (machine_meta).
-  send({ t: 'down', connId: '', frame: { type: 'machine_meta', payload: { name: currentName?.trim() || seededName } } })
+  // The account's private harness grid, carried on the frame the adapter already gets on connect.
+  // Minted and remembered by `routes/grid.ts`; read-only here. A user who has never signed in since
+  // the route shipped simply has none yet, and the daemon treats that as "no grid" rather than an
+  // error — the next `harness login` mints it.
+  const gridName = (await prisma.user.findUnique({ where: { id: userId }, select: { gridName: true } })
+    .catch(() => null))?.gridName ?? null
+  send({ t: 'down', connId: '', frame: { type: 'machine_meta', payload: { name: currentName?.trim() || seededName, gridName } } })
 
   // The node role — down subscription, presence, `__clients` resync, node_status — is shared with
   // every other backer of a machine and lives in nodeRole.ts. Only the delivery and teardown are

@@ -10,7 +10,7 @@ import { registerAuthMiddleware } from './middlewares/authMiddleware.js'
 import { cursorRoutes } from './routes/cursor.js'
 import { voiceRoutes } from './routes/voice.js'
 import { deviceAuthRoutes } from './routes/deviceAuth.js'
-import { healthRoutes, authRoutes, userRoutes, machineRoutes, planRoutes, deviceRoutes, mobileRoutes, appRoutes, analyticsRoutes, agentRouteRoutes } from './routes/index.js'
+import { healthRoutes, authRoutes, userRoutes, machineRoutes, planRoutes, gridRoutes, deviceRoutes, mobileRoutes, appRoutes, analyticsRoutes, agentRouteRoutes } from './routes/index.js'
 import { startSubdomainProxy, startMeshProxy } from './lib/subdomainProxy.js'
 import { handleDeviceUpgrade } from './lib/deviceWs.js'
 import { handleWebUpgrade } from './lib/webWs.js'
@@ -139,6 +139,7 @@ async function start(): Promise<void> {
   await app.register(userRoutes)
   await app.register(machineRoutes)
   await app.register(planRoutes)
+  await app.register(gridRoutes) // the account's private harness grid name
   await app.register(deviceRoutes)
   await app.register(mobileRoutes)
   await app.register(appRoutes)
