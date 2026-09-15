@@ -1,9 +1,9 @@
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { TmuxBackend } from './tmuxBackend.js'
-import { ensureTmuxOnPath, requireTmuxAvailable, resolveViaLoginShell } from './tmuxOnPath.js'
+import { ensureTmuxOnPath, managedTmuxPath, requireTmuxAvailable, resolveViaLoginShell } from './tmuxOnPath.js'
 
 const dirs: string[] = []
 const originalPath = process.env.PATH
@@ -17,6 +17,9 @@ function scratch(prefix: string): string {
   dirs.push(dir)
   return dir
 }
+
+/** A runtime dir with no managed tmux — so a developer machine's real ~/.harness never leaks in. */
+const noManagedTmux = () => scratch('tmux-onpath-no-runtime-')
 
 /** A stand-in for the user's shell: it knows about `binDir`, the daemon's own PATH does not. */
 function fakeShell(binDir: string): string {
@@ -63,7 +66,7 @@ describe('ensureTmuxOnPath', () => {
     const binDir = fakeTmux()
     const env: NodeJS.ProcessEnv = { PATH: '/nonexistent-for-this-test' }
 
-    const outcome = await ensureTmuxOnPath(env, fakeShell(binDir))
+    const outcome = await ensureTmuxOnPath(env, fakeShell(binDir), noManagedTmux())
 
     expect(outcome.state).toBe('adopted')
     if (outcome.state !== 'adopted') return
@@ -80,7 +83,7 @@ describe('ensureTmuxOnPath', () => {
     // bash keeps it in .bash_profile, which only `-l` does.
     const binDir = fakeTmux()
     const env: NodeJS.ProcessEnv = { PATH: '/nonexistent' }
-    const outcome = await ensureTmuxOnPath(env, loginOnlyShell(binDir))
+    const outcome = await ensureTmuxOnPath(env, loginOnlyShell(binDir), noManagedTmux())
 
     expect(outcome.state).toBe('adopted')
     expect(env.PATH?.split(delimiter)[0]).toBe(binDir)
@@ -97,17 +100,47 @@ PATH="${binDir}" exec /bin/sh -c "$@"
     chmodSync(shell, 0o700)
     const env: NodeJS.ProcessEnv = { PATH: '/nonexistent-for-this-test' }
 
-    const outcome = await ensureTmuxOnPath(env, shell)
+    const outcome = await ensureTmuxOnPath(env, shell, noManagedTmux())
 
     expect(outcome).toMatchObject({ state: 'adopted', path: join(binDir, 'tmux') })
     expect(env.PATH?.split(delimiter)[0]).toBe(binDir)
+  })
+
+  it('adopts the managed tmux before asking any shell', async () => {
+    const runtimeDir = scratch('tmux-onpath-runtime-')
+    const binDir = join(runtimeDir, 'tmux-9.9-darwin-arm64', 'bin')
+    mkdirSync(binDir, { recursive: true })
+    const managed = join(binDir, 'tmux')
+    writeFileSync(managed, '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+    writeFileSync(join(runtimeDir, 'current-tmux'), `${managed}\n`)
+    const env: NodeJS.ProcessEnv = { PATH: '/nonexistent' }
+
+    // A shell that would answer is deliberately NOT given: the managed build needs none.
+    const outcome = await ensureTmuxOnPath(env, '/nonexistent/shell', runtimeDir)
+
+    expect(outcome).toEqual({ state: 'adopted', path: managed, from: 'managed runtime' })
+    expect(env.PATH!.split(delimiter)[0]).toBe(binDir)
+  })
+
+  it('ignores a current-tmux that points outside the runtime dir or cannot run', () => {
+    const runtimeDir = scratch('tmux-onpath-runtime-bad-')
+    const elsewhere = scratch('tmux-onpath-elsewhere-')
+    const outside = join(elsewhere, 'tmux')
+    writeFileSync(outside, '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+    writeFileSync(join(runtimeDir, 'current-tmux'), `${outside}\n`)
+    expect(managedTmuxPath(runtimeDir)).toBeNull()
+
+    writeFileSync(join(runtimeDir, 'current-tmux'), `${join(runtimeDir, 'gone', 'bin', 'tmux')}\n`)
+    expect(managedTmuxPath(runtimeDir)).toBeNull()
+
+    expect(managedTmuxPath(scratch('tmux-onpath-runtime-empty-'))).toBeNull()
   })
 
   it('leaves an already-working PATH untouched', async () => {
     const binDir = fakeTmux()
     const env: NodeJS.ProcessEnv = { PATH: binDir }
 
-    const outcome = await ensureTmuxOnPath(env, fakeShell(binDir))
+    const outcome = await ensureTmuxOnPath(env, fakeShell(binDir), noManagedTmux())
 
     expect(outcome.state).toBe('present')
     // No duplicate entry: this runs on every start, so it has to be idempotent.
@@ -118,7 +151,7 @@ PATH="${binDir}" exec /bin/sh -c "$@"
     const emptyBin = scratch('tmux-onpath-empty-')
     const env: NodeJS.ProcessEnv = { PATH: '/nonexistent-for-this-test' }
 
-    const outcome = await ensureTmuxOnPath(env, fakeShell(emptyBin))
+    const outcome = await ensureTmuxOnPath(env, fakeShell(emptyBin), noManagedTmux())
 
     expect(outcome.state).toBe('absent')
     expect(env.PATH).toBe('/nonexistent-for-this-test')
@@ -155,7 +188,7 @@ exit 0
     if (before.state !== 'succeeded') expect(before.reason).toBe('tmux is unavailable')
 
     // After: the same call, once the daemon has been told where the user's shell finds tmux.
-    expect((await ensureTmuxOnPath(process.env, shell)).state).toBe('adopted')
+    expect((await ensureTmuxOnPath(process.env, shell, noManagedTmux())).state).toBe('adopted')
     const after = await new TmuxBackend().create({ cwd: '/tmp', label: 'harness-test' })
 
     expect(after).toEqual({

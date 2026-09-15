@@ -328,9 +328,9 @@ class _EnvironmentSetupScreenState extends State<EnvironmentSetupScreen> {
       return Platform.isLinux ? '$base · tmux, ps' : base;
     }
     if (Platform.isLinux) return '$base · installs with apt';
-    final titles = steps.map((item) => item.title).toList();
-    if (titles.length == 1) return '$base · installs with Homebrew';
-    return '$base · installs ${titles.join(', then ')}';
+    // macOS: one in-app step; the item's detail says whether Homebrew or the
+    // managed download does it.
+    return '$base · ${steps.first.detail.toLowerCase()}';
   }
 
   String? get _linuxClipboardPackage {

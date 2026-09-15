@@ -58,7 +58,7 @@ Until that managed manifest covers a platform, the desktop build falls back to i
 official Node 22 archive for it. The fallback keeps first-run setup functional but is intentionally
 not a replacement for publishing the managed runtime channel before release.
 
-Homebrew and `apt` are still used for **tmux**, which is a separate step and unrelated to Node — and only when tmux is missing; a computer that already runs it is never asked about either.
+**tmux** is a separate step and unrelated to Node: on macOS it comes from Homebrew when Homebrew is already there, else from the managed runtime below; on Linux from `apt` — and only when tmux is missing; a computer that already runs it is never asked about any of them.
 
 ## Managed tmux runtime (macOS)
 
@@ -87,9 +87,13 @@ make upload-tmux-runtime ARGS="3.7c /path/to/archives"                          
 
 The manifest is `harness/runtime/tmux/metadata.json` — its own file, because `install.sh` slices a
 manifest by the first `"<platform>"` key and Node's already has one — with the same
-`{version,url,sha256,size,archiveRoot}` entries. **Nothing consumes it yet**: `install.sh` still
-reaches tmux through Homebrew on macOS. Teaching it to download this archive (and the CLI to put
-`~/.harness/runtime/current-tmux` on the daemon's PATH) is the next step; publish the runtime first.
+`{version,url,sha256,size,archiveRoot}` entries. `install.sh` reads it on a Mac that has no tmux and
+no Homebrew (Homebrew's tmux is used when Homebrew is already there): download into
+`~/.harness/runtime/tmux-<ver>-<platform>`, verify, record the binary in `~/.harness/runtime/current-tmux`
+(which the daemon's `ensureTmuxOnPath` puts on its PATH, exactly like `current-node`) and link it as
+`~/.local/bin/tmux`. The desktop runs that same `install.sh --host` in-app, so on macOS first-run setup
+never opens a Terminal window. Publish a new runtime **before** the `install.sh` that pins a newer
+tmux level, and keep it level with what Homebrew ships.
 
 ## Two macOS builds — Intel on Skia, Apple Silicon on Impeller
 

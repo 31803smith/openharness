@@ -18,14 +18,8 @@ const _review = EnvironmentReadiness(
     EnvironmentStep.harness: EnvironmentStepStatus.failed,
   },
   phase: EnvironmentSetupPhase.review,
-  // The full ladder — nothing on this computer — so the layout tests see the
-  // longest plan the screen can render.
-  plan: [
-    EnvironmentPlanItem.appleDeveloperTools,
-    EnvironmentPlanItem.homebrew,
-    EnvironmentPlanItem.tmuxViaHomebrew,
-    EnvironmentPlanItem.harnessCli,
-  ],
+  // Nothing on this computer — the longest plan the screen renders on macOS.
+  plan: [EnvironmentPlanItem.tmuxManaged, EnvironmentPlanItem.harnessCli],
 );
 
 class _Login extends CliLogin {
@@ -214,7 +208,7 @@ void main() {
       final app = _app(provisioner);
       addTearDown(app.dispose);
       await _mount(tester, app, textScale: scale);
-      expect(find.text('Install 4 tools').hitTestable(), findsOneWidget);
+      expect(find.text('Install 2 tools').hitTestable(), findsOneWidget);
       expect(provisioner.attempts, isEmpty);
       app.environmentReadiness = _review.copyWith(
         phase: EnvironmentSetupPhase.failed,

@@ -13,7 +13,9 @@
  * on the daemon's PATH, once, at startup. Every existing `execFile('tmux', …)` then works unchanged.
  */
 import { execFile } from 'node:child_process'
-import { delimiter, dirname, isAbsolute } from 'node:path'
+import { accessSync, constants, readFileSync } from 'node:fs'
+import { delimiter, dirname, isAbsolute, join, sep } from 'node:path'
+import { env as appEnv } from '../config/env.js'
 import { binaryOnPath } from './binaryOnPath.js'
 import { interactiveEngineShell } from './engineLaunch.js'
 
@@ -24,7 +26,7 @@ const RESOLVE_SCRIPT = 'command -v "$1" 2>/dev/null'
 export type TmuxPathOutcome =
   /** Already resolvable; the daemon's PATH was left alone. */
   | { state: 'present'; path?: string }
-  /** Found via the user's shell and its directory prepended to PATH. */
+  /** Found — through the managed runtime or the user's shell — and its directory prepended to PATH. */
   | { state: 'adopted'; path: string; from: string }
   /** Not resolvable either way — tmux is genuinely absent, or there is no usable login shell. */
   | { state: 'absent'; reason: string }
@@ -40,6 +42,27 @@ export function requireTmuxAvailable(outcome: TmuxPathOutcome): AvailableTmuxPat
     )
   }
   return outcome
+}
+
+/**
+ * The tmux the installer put under ~/.harness/runtime, recorded in `current-tmux` exactly as the
+ * managed Node is recorded in `current-node` — on a Mac that had no tmux and no Homebrew, the
+ * installer downloads our checksum-verified build there and links it as ~/.local/bin/tmux. Null on
+ * every other machine, and for a record that names something outside the runtime dir or not
+ * executable: only a path inside the directory we own is ever trusted, the same containment check
+ * `managedNodePath` applies.
+ */
+export function managedTmuxPath(runtimeDir: string = appEnv.ADAPTER_RUNTIME_DIR): string | null {
+  try {
+    const recorded = readFileSync(join(runtimeDir, 'current-tmux'), 'utf-8').trim()
+    if (recorded && recorded.startsWith(runtimeDir + sep)) {
+      accessSync(recorded, constants.X_OK)
+      return recorded
+    }
+  } catch {
+    // No managed tmux here — the ordinary case on a Mac with Homebrew and on every Linux box.
+  }
+  return null
 }
 
 /** Where the user's own interactive shell finds a command, which is not where the daemon looks. */
@@ -100,8 +123,18 @@ function probe(shellPath: string, args: readonly string[], command: string): Pro
 export async function ensureTmuxOnPath(
   env: NodeJS.ProcessEnv = process.env,
   shell: string | undefined = undefined,
+  runtimeDir: string = appEnv.ADAPTER_RUNTIME_DIR,
 ): Promise<TmuxPathOutcome> {
   if (binaryOnPath('tmux', env)) return { state: 'present' }
+  // The managed build comes before asking the shell: it is what the user's own shells resolve too
+  // (~/.local/bin is put first on PATH by the installer), so the daemon and the terminal keep
+  // talking to one server — and it needs no shell at all, which a launch-agent context may lack.
+  const managed = managedTmuxPath(runtimeDir)
+  if (managed) {
+    const dir = dirname(managed)
+    env.PATH = env.PATH ? `${dir}${delimiter}${env.PATH}` : dir
+    return { state: 'adopted', path: managed, from: 'managed runtime' }
+  }
   const resolved = await resolveViaLoginShell('tmux', shell)
   if (!resolved) {
     return {
