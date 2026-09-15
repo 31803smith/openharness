@@ -36,6 +36,29 @@ fix and the regression in `test/terminal_session_test.dart` passes against it.
   Ordinary clicks and drag selection keep their existing behavior. Regressions:
   `test/terminal_link_gesture_test.dart`, `test/terminal_panel_links_test.dart`.
 
+- **Alternate-screen scrolling reaches the program even when its grid is taller
+  than the pane** (`lib/src/ui/scroll_handler.dart`). With `resizeBuffer: false`
+  the local grid is the remote one, so a remote screen that has not taken this
+  pane's size yet — or that another client keeps larger — leaves the alternate
+  screen a few pixels of local scroll extent. The buffer's `Scrollable` sits
+  inside `TerminalScrollGestureHandler`, and a Scrollable with somewhere to go
+  wins the trackpad pan and the wheel signal, so the TUI received nothing and
+  the pane could not be scrolled. While the alternate screen is up that
+  Scrollable now takes no user scrolling; programmatic tail alignment is
+  unaffected, and the normal screen still scrolls local history. Regressions:
+  `test/terminal_alt_buffer_scroll_test.dart`.
+
+- **The alternate screen's scroll view keeps listening after its position is
+  replaced** (`lib/src/ui/infinite_scroll_view.dart`). `attach` listens to the
+  `ScrollPosition` with `_onScroll`, but the `position` setter moved
+  `markNeedsLayout` instead. `Scrollable` replaces its position whenever its
+  dependencies change — the pane grid reparenting a terminal is enough — so
+  `_onScroll` stayed on the discarded position and every later wheel or
+  trackpad scroll reached nothing: a Claude Code pane scrolled two or three
+  times and then stopped for good, with no error anywhere. The setter now moves
+  `_onScroll`. Regression: the reparent test in
+  `test/terminal_alt_buffer_scroll_test.dart`.
+
 Each of these has to survive an upstream bump — the tests named are what catch
 it if one is dropped.
 
