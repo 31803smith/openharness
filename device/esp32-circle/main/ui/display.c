@@ -96,7 +96,7 @@ static void heartbeat(void)
     touch_stats(&t);
     lv_mem_monitor_t m;
     lv_mem_monitor(&m);
-    ESP_LOGI(TAG, "alive up=%lus heap=%u/%u psram=%u lv=%u%%used frag=%u%% touches=%lu last_press=%lus%s%s%s",
+    ESP_LOGI(TAG, "alive up=%lus heap=%u/%u psram=%u lv=%u%%used frag=%u%% touches=%lu last_press=%lus%s%s%s%s",
              (unsigned long)(lv_tick_get() / 1000),
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
@@ -105,6 +105,7 @@ static void heartbeat(void)
              (unsigned long)t.presses, (unsigned long)(t.last_press_ms_ago / 1000),
              t.controller_ok ? "" : " TOUCH-DEAD",
              t.read_failures ? " read-fails" : "",
+             t.inferred_releases ? " inferred-releases" : "",
              t.held_now ? " PRESS-HELD" : "");
 }
 
