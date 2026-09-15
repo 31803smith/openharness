@@ -13,13 +13,51 @@ import chokidar, { type FSWatcher } from 'chokidar'
 import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { basename, dirname } from 'node:path'
 
+export type DshPhaseState = 'done' | 'active' | 'pending' | 'failed'
+
+/** One entry of the verdict's `phases`: where the work is, for the pane header's strip. */
+export interface DshPhase {
+  id: string
+  name: string
+  state: DshPhaseState
+  artifact: string | null
+}
+
 export interface DshVerdict {
   ready: boolean
   summary: string | null
   errors: number
   warnings: number
   artifact: string | null
+  /** In order, at most 12; empty when the harness names none. */
+  phases: DshPhase[]
   updatedAt: string | null
+}
+
+const PHASE_STATES: ReadonlySet<string> = new Set(['done', 'active', 'pending', 'failed'])
+const MAX_PHASES = 12
+
+function cleanLabel(value: unknown, max: number): string | null {
+  if (typeof value !== 'string') return null
+  const text = value.trim().slice(0, max)
+  return text ? text : null
+}
+
+/** The phases a verdict names, sanitised: a name is required, a state defaults to pending. */
+function parsePhases(raw: unknown): DshPhase[] {
+  if (!Array.isArray(raw)) return []
+  const phases: DshPhase[] = []
+  for (const item of raw) {
+    if (phases.length >= MAX_PHASES) break
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue
+    const entry = item as Record<string, unknown>
+    const name = cleanLabel(entry.name, 40)
+    if (!name) continue
+    const id = cleanLabel(entry.id, 40) ?? name.toLowerCase().replace(/[^a-z0-9]+/g, '-')
+    const state = typeof entry.state === 'string' && PHASE_STATES.has(entry.state) ? entry.state as DshPhaseState : 'pending'
+    phases.push({ id, name, state, artifact: cleanRelative(entry.artifact) })
+  }
+  return phases
 }
 
 function cleanRelative(value: unknown): string | null {
@@ -54,7 +92,9 @@ export function parseVerdict(text: string): DshVerdict | null {
   const updatedAt = typeof raw.updatedAt === 'string' && !Number.isNaN(Date.parse(raw.updatedAt))
     ? raw.updatedAt
     : null
-  return { ready: raw.ready, summary, errors, warnings, artifact: cleanRelative(raw.artifact), updatedAt }
+  return {
+    ready: raw.ready, summary, errors, warnings, artifact: cleanRelative(raw.artifact), phases: parsePhases(raw.phases), updatedAt,
+  }
 }
 
 export function readVerdictFile(file: string): DshVerdict | null {

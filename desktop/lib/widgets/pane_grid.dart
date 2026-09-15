@@ -1278,6 +1278,7 @@ class _PaneContent extends StatelessWidget {
         ownerName: owner?.name ?? pane.ownerAgentId ?? 'Viewer',
         ownerEngine: owner?.identityEngine,
         ownerDisplayName: owner?.identityDisplayName,
+        verdict: owner?.verdict,
         onClose: close,
         compactHeader: swarmMode,
         zoomed: notifier.zoomedPaneId == pane.id,

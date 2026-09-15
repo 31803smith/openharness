@@ -27,8 +27,36 @@ describe('parseVerdict', () => {
       errors: 2,
       warnings: 1,
       artifact: 'boards/main.board.json',
+      phases: [],
       updatedAt: '2026-09-14T20:00:00Z',
     })
+  })
+
+  it('keeps the phases in order, sanitised, and never more than twelve', () => {
+    const verdict = parseVerdict(JSON.stringify({
+      spec: 1,
+      ready: false,
+      phases: [
+        { id: 'build', name: 'Build', state: 'done', artifact: 'model.step' },
+        { name: 'Checks', state: 'active' },
+        { name: ' Fab ', state: 'someday' },
+        { name: '', state: 'done' },
+        'nope',
+        { id: 'x', state: 'done' },
+        { name: 'Bad path', state: 'done', artifact: '../out.step' },
+      ],
+    }))
+    expect(verdict?.phases).toEqual([
+      { id: 'build', name: 'Build', state: 'done', artifact: 'model.step' },
+      { id: 'checks', name: 'Checks', state: 'active', artifact: null },
+      { id: 'fab', name: 'Fab', state: 'pending', artifact: null },
+      { id: 'bad-path', name: 'Bad path', state: 'done', artifact: null },
+    ])
+    const many = parseVerdict(JSON.stringify({
+      spec: 1, ready: true, phases: Array.from({ length: 20 }, (_, i) => ({ name: `P${i}` })),
+    }))
+    expect(many?.phases).toHaveLength(12)
+    expect(parseVerdict(JSON.stringify({ spec: 1, ready: true, phases: 'later' }))?.phases).toEqual([])
   })
 
   it('refuses what is not a verdict, and scrubs an artifact that leaves the workspace', () => {

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import '../core/models.dart' show AgentVerdict;
 import '../core/test_run.dart';
 import '../shared/theme/app_theme.dart' as grid;
 import '../state/app_state.dart';
@@ -11,6 +12,7 @@ import '../state/terminal_pane.dart';
 import '../theme/app_theme.dart';
 import 'engine_identity.dart';
 import 'pane_header_actions.dart';
+import 'verdict_marks.dart';
 
 /// A domain harness's viewer, in a tile beside its agent's terminal.
 ///
@@ -33,6 +35,7 @@ class WebPanePanel extends StatefulWidget {
     required this.ownerName,
     required this.ownerEngine,
     this.ownerDisplayName,
+    this.verdict,
     this.onClose,
     this.onToggleZoom,
     this.zoomed = false,
@@ -46,6 +49,11 @@ class WebPanePanel extends StatefulWidget {
   final String ownerName;
   final String? ownerEngine;
   final String? ownerDisplayName;
+
+  /// The harness's verdict on the workspace this viewer shows, for the phase
+  /// strip and the chip in the header. The viewer IS the product, so this
+  /// header carries them in full where the terminal's shows only the chip.
+  final AgentVerdict? verdict;
   final VoidCallback? onClose;
   final VoidCallback? onToggleZoom;
   final bool zoomed;
@@ -199,6 +207,19 @@ class _WebPanePanelState extends State<WebPanePanel> {
                 ),
               ),
               const SizedBox(width: 8),
+              if (widget.verdict case final verdict?) ...[
+                if (!compact && verdict.phases.isNotEmpty)
+                  Flexible(
+                    child: Padding(
+                      padding: const EdgeInsets.only(right: 10),
+                      child: PhaseStrip(phases: verdict.phases),
+                    ),
+                  ),
+                Padding(
+                  padding: const EdgeInsets.only(right: 6),
+                  child: VerdictChip(verdict: verdict),
+                ),
+              ],
               if (_loading)
                 const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 6),

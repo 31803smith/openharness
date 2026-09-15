@@ -307,6 +307,42 @@ class Agent {
 /// `.harness/verdict.json` (see `dsh/spec/README.md`). Counts rather than the findings
 /// themselves: the pane header has room for "3 errors", and the findings live in the
 /// harness's own viewer.
+enum AgentPhaseState { done, active, pending, failed }
+
+/// One phase of a harness's work, as its verdict names it: where the agent is.
+class AgentPhase {
+  const AgentPhase({
+    required this.id,
+    required this.name,
+    this.state = AgentPhaseState.pending,
+    this.artifact,
+  });
+
+  final String id;
+  final String name;
+  final AgentPhaseState state;
+  final String? artifact;
+
+  static AgentPhase? fromJson(Object? raw) {
+    if (raw is! Map) return null;
+    final name = AgentVerdict._safeText(raw['name'], 40);
+    if (name == null || name.isEmpty) return null;
+    final id = AgentVerdict._safeText(raw['id'], 40);
+    final state = switch (raw['state']) {
+      'done' => AgentPhaseState.done,
+      'active' => AgentPhaseState.active,
+      'failed' => AgentPhaseState.failed,
+      _ => AgentPhaseState.pending,
+    };
+    return AgentPhase(
+      id: id == null || id.isEmpty ? name.toLowerCase() : id,
+      name: name,
+      state: state,
+      artifact: AgentVerdict._safeText(raw['artifact'], 1024),
+    );
+  }
+}
+
 @immutable
 class AgentVerdict {
   const AgentVerdict({
@@ -315,6 +351,7 @@ class AgentVerdict {
     this.errors = 0,
     this.warnings = 0,
     this.artifact,
+    this.phases = const [],
     this.updatedAt,
   });
 
@@ -328,7 +365,15 @@ class AgentVerdict {
 
   /// Workspace-relative path of the primary thing to look at, when the harness named one.
   final String? artifact;
+
+  /// Where the work is, in order — at most twelve; empty when the harness
+  /// names no phases, and then the header draws no strip.
+  final List<AgentPhase> phases;
   final DateTime? updatedAt;
+
+  /// The phase under way, when one is.
+  AgentPhase? get activePhase =>
+      phases.where((p) => p.state == AgentPhaseState.active).firstOrNull;
 
   static AgentVerdict? fromJson(Object? raw) {
     if (raw is! Map) return null;
@@ -341,8 +386,14 @@ class AgentVerdict {
       errors: _safeCount(raw['errors']),
       warnings: _safeCount(raw['warnings']),
       artifact: _safeText(raw['artifact'], 1024),
+      phases: _phases(raw['phases']),
       updatedAt: updated is String ? DateTime.tryParse(updated) : null,
     );
+  }
+
+  static List<AgentPhase> _phases(Object? raw) {
+    if (raw is! List) return const [];
+    return [for (final item in raw.take(12)) ?AgentPhase.fromJson(item)];
   }
 
   static int _safeCount(Object? raw) {

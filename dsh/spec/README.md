@@ -64,9 +64,19 @@ grids and Codex profiles use, on create AND on every relaunch (`buildLaunchOverr
     { "severity": "error", "kind": "source_trace_not_connected", "message": "…", "ref": "U3.pin7" }
   ],                                      // severity ∈ error | warning | info; kind is open
   "artifact": "boards/main.board.json",   // optional; primary thing to view, workspace-relative
+  "phases": [                             // optional; where the work is, in order, for the pane header
+    { "id": "build", "name": "Build", "state": "done" },
+    { "id": "checks", "name": "Checks", "state": "active" },
+    { "id": "fab", "name": "Fab", "state": "pending" }
+  ],                                      // state ∈ done | active | pending | failed; ≤ 12 phases
   "updatedAt": "2026-09-14T20:00:00Z"
 }
 ```
+
+The verdict is a feed, not a gate: write it at every phase change and every check, not only at the
+end. The pane is the product, and it must move while the agent works — a harness that only writes a
+final verdict is not progressive. `phases` is how the header says "you are here"; `ready` stays the
+one final truth.
 
 Lifted from Circuit's `.board.json` and TV's `.episode.json` sidecars (same severity gate). Circuit
 writes it beside the sidecar in `circuitpy.generation`; Workshop writes it from `verify_project`.
@@ -76,7 +86,7 @@ writes it beside the sidecar in `circuitpy.generation`; Workshop writes it from 
 - `agent_create` payload gains `dsh?: string`. Refused with `INVALID_DSH` when not installed on
   this machine or when `engine` is not the DSH's base.
 - `AgentFrame` gains `dsh: string | null`, `dshName: string | null`, `viewerUrl: string | null`,
-  `verdict: { ready, summary, errors, warnings, artifact, updatedAt } | null`. Null is a real answer
+  `verdict: { ready, summary, errors, warnings, artifact, phases, updatedAt } | null`. Null is a real answer
   (see `agentFrame.ts`'s doc on erased fields).
 - `dsh_list` → `{ dsh: [{ id, name, description, engine, installed, viewer, tier }] }`: installed
   DSHs on this machine merged with the bundled registry (`dsh/registry/**/*.json`).

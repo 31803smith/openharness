@@ -9,7 +9,6 @@ import 'package:flutter/services.dart';
 import 'package:xterm/xterm.dart';
 
 import '../clipboard/native_clipboard.dart';
-import '../core/models.dart';
 import '../state/app_state.dart';
 
 import 'agent_drag.dart';
@@ -33,6 +32,7 @@ import '../shared/theme/app_theme.dart' as grid;
 import '../theme/app_theme.dart';
 import 'engine_identity.dart';
 import 'pane_header_actions.dart';
+import 'verdict_marks.dart';
 
 /// The pane header's own horizontal inset.
 const double _stripPadding = 14;
@@ -1641,7 +1641,7 @@ class _TerminalHeader extends StatelessWidget {
                 if (agent?.verdict != null)
                   Padding(
                     padding: const EdgeInsets.only(right: 6),
-                    child: _VerdictChip(verdict: agent!.verdict!),
+                    child: VerdictChip(verdict: agent!.verdict!),
                   ),
                 // Which of the three paths carries this pane's bytes. Absent for a local machine's own
                 // terminal, which has no such distinction and so gets no badge.
@@ -1755,64 +1755,6 @@ class _TerminalHeader extends StatelessWidget {
 /// error count, amber the warning count when nothing blocks, grey "Checked" a clean run that the
 /// harness still would not call ready. The summary rides in the tooltip; the findings themselves
 /// live in the harness's own viewer, which is the pane beside this one.
-class _VerdictChip extends StatelessWidget {
-  const _VerdictChip({required this.verdict});
-
-  final AgentVerdict verdict;
-
-  @override
-  Widget build(BuildContext context) {
-    final (label, color, icon) = verdict.ready
-        ? ('Ready', AppColors.success, LucideIcons.circleCheck)
-        : verdict.errors > 0
-        ? (
-            '${verdict.errors} ${verdict.errors == 1 ? 'error' : 'errors'}',
-            AppColors.danger,
-            LucideIcons.circleX,
-          )
-        : verdict.warnings > 0
-        ? (
-            '${verdict.warnings} ${verdict.warnings == 1 ? 'warning' : 'warnings'}',
-            AppColors.warning,
-            LucideIcons.triangleAlert,
-          )
-        : ('Checked', AppColors.mutedStrong, LucideIcons.circleDashed);
-    return Tooltip(
-      message: verdict.summary ?? label,
-      child: Semantics(
-        label: 'Verdict: $label',
-        child: Container(
-          key: const ValueKey('pane-verdict-chip'),
-          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-          decoration: BoxDecoration(
-            color: color.withValues(alpha: .12),
-            borderRadius: BorderRadius.circular(999),
-            border: Border.all(color: color.withValues(alpha: .35)),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 12, color: color),
-              const SizedBox(width: 5),
-              Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: color,
-                  fontFamily: AppFonts.sans,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 /// The pane header's transport badge: a compact topology for the path carrying terminal bytes.
 ///
 /// The three shapes describe one hop, an intermediate hop, and a central server respectively. That
