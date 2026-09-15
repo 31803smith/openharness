@@ -8,6 +8,8 @@ import { decodeTerminalLocal, TerminalBinaryKind } from './lib/terminalBinary.js
 import { registry, type RegisteredSession } from './lib/registry.js'
 import * as mediaPreview from './lib/mediaPreview.js'
 import { randomUUID } from 'node:crypto'
+import { fakeGridAnswers, installFakeGrid, type FakeGrid } from './lib/__fixtures__/fakeGrid.js'
+import { clearGridMcpUrlCache } from './lib/gridMcpUrl.js'
 
 const wsMock = vi.hoisted(() => {
   const instances: MockWebSocket[] = []
@@ -1120,6 +1122,75 @@ describe('agent_retarget clearGrid', () => {
     const { seen, reply } = await retarget({ requestId: 'r', agentId: 'a1' })
     expect(reply?.payload?.error).toBe('INVALID_GRID')
     expect(seen).toHaveLength(0)
+  })
+})
+
+/**
+ * The desktop's retarget names a Local model and nothing else; the daemon resolves everything from
+ * its own signed-in `grid`. This is that resolution through the real frame handler, against the
+ * plan-driven fake `grid` — the seam `gridEnsure.spec.ts` established.
+ */
+describe('agent_retarget onto a Local model resolves web tools', () => {
+  const { gridName: GRID_NAME, networkId, baseUrl: BASE_URL, mcpUrl: MCP_URL, token: TOKEN, plan } = fakeGridAnswers()
+
+  let fake: FakeGrid | null = null
+  afterEach(async () => {
+    fake?.dispose()
+    fake = null
+    clearGridMcpUrlCache()
+    wsMock.instances.length = 0
+    vi.restoreAllMocks()
+  })
+
+  async function retargetOntoLocalModel(model: string) {
+    const seen: Array<{ agentId: string; grid: unknown }> = []
+    const socket = new BackendSocket('token')
+    socket.onRetargetAgent = async (input) => { seen.push(input); return { ok: true } }
+    socket.connect()
+    const ws = wsMock.instances[0]
+    ws.open()
+    // The grid name is the backend's, pushed on connect; the daemon holds it in memory only.
+    ws.message({ t: 'down', connId: 'web-1', frame: { type: 'machine_meta', payload: { name: 'mac', gridName: GRID_NAME } } })
+    ws.message({ t: 'down', connId: 'web-1', frame: { type: 'agent_retarget', payload: { requestId: 'r', agentId: 'a1', gridModel: model } } })
+    await vi.waitFor(() => expect(parseSent(ws).some((item) => (item.frame as { type?: string } | undefined)?.type === 'agent_retarget_result')).toBe(true), { timeout: 10_000 })
+    const reply = parseSent(ws)
+      .map((item) => item.frame as { type?: string; payload?: Record<string, unknown> } | undefined)
+      .find((frame) => frame?.type === 'agent_retarget_result')
+    await socket.stop()
+    return { seen, reply }
+  }
+
+  it('yields a launch override whose MCP URL is exactly the printed url, asking `mcp config` before `info --env`', async () => {
+    fake = installFakeGrid(plan)
+    const { seen, reply } = await retargetOntoLocalModel('GLM-4.7-Flash')
+    expect(reply?.payload).toMatchObject({ retargeted: true })
+    expect(seen).toEqual([{
+      agentId: 'a1',
+      grid: {
+        networkId,
+        networkName: GRID_NAME,
+        baseUrl: BASE_URL,
+        apiKey: TOKEN,
+        model: 'GLM-4.7-Flash',
+        mcpUrl: MCP_URL,
+      },
+    }])
+    expect(fake.verbs()).toEqual(['mcp', 'info', 'ls'])
+    expect(fake.calls()[0]).toEqual(['--remote', 'mcp', 'config', GRID_NAME, '--json'])
+  })
+
+  it('still retargets, with no MCP URL, when the binary is too old for `mcp config`', async () => {
+    const warned: string[] = []
+    vi.spyOn(console, 'warn').mockImplementation((...parts: unknown[]) => { warned.push(parts.map(String).join(' ')) })
+    fake = installFakeGrid({ ...plan, mcp: { exit: 2, stderr: "grid: error: invalid choice: 'mcp'\n" } })
+    const { seen, reply } = await retargetOntoLocalModel('GLM-4.7-Flash')
+    expect(reply?.payload).toMatchObject({ retargeted: true })
+    expect(seen).toHaveLength(1)
+    expect(seen[0]!.grid).toMatchObject({ baseUrl: BASE_URL, apiKey: TOKEN, model: 'GLM-4.7-Flash' })
+    expect(seen[0]!.grid).not.toHaveProperty('mcpUrl')
+    // The reason reaches the daemon log, and nothing else — the retarget error path is untouched.
+    expect(warned.join('\n')).toMatch(/web tools unavailable .* older than/)
+    expect(reply?.payload).not.toHaveProperty('error')
   })
 })
 

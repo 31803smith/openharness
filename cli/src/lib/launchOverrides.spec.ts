@@ -30,7 +30,7 @@ describe('buildLaunchOverrides — a relaunch comes back where the agent was', (
     if (!result.ok) return
     expect(result.overrides.env).toMatchObject({ ANTHROPIC_AUTH_TOKEN: 'gridkey-abc123', ANTHROPIC_MODEL: 'gpt-5' })
     expect(result.overrides.env.ANTHROPIC_BASE_URL).toMatch(/^https:\/\/grid\.example\/grid-abc\/relay/)
-    expect(result.overrides.extraArgs).toEqual(expect.arrayContaining(['--disallowedTools=WebSearch']))
+    expect(result.overrides.extraArgs).toEqual(expect.arrayContaining(['--disallowedTools=WebSearch,WebFetch']))
     // Everything the launch does not set itself, so an inherited key cannot outrank the grid.
     for (const name of GRID_CONFLICTING_ENV_VARS) {
       expect(result.overrides.clearEnv.includes(name)).toBe(!(name in result.overrides.env))

@@ -6,6 +6,7 @@
  * a person, and what an agent is told to ask for.
  */
 import { gridExec, gridJson } from './gridExec.js'
+import { resolveGridMcpUrl } from './gridMcpUrl.js'
 
 /** A row of `grid models --json`. `node` names the machine serving it — on a private grid, one of
  *  the user's own. */
@@ -95,6 +96,19 @@ async function relayModelIds(gridName: string): Promise<string[]> {
 /** `grid info --env` prints shell exports; these are the two that matter. */
 const ENV_LINE = /^export\s+(OPENAI_BASE_URL|OPENAI_API_KEY)=(.*)$/gm
 
+/** What `resolveGridTarget` answers: the launch override an engine is built from. */
+export interface GridTarget {
+  networkId: string
+  networkName: string
+  baseUrl: string
+  /** A live credential — see the function comment. */
+  apiKey: string
+  model: string
+  /** The control plane's web-tools MCP endpoint. Absent when it could not be obtained; the agent
+   *  then runs on the grid with no web tools, and the daemon log says why. */
+  mcpUrl?: string
+}
+
 /**
  * Everything an engine needs to be pointed at `gridName`, resolved on THIS machine.
  *
@@ -105,12 +119,17 @@ const ENV_LINE = /^export\s+(OPENAI_BASE_URL|OPENAI_API_KEY)=(.*)$/gm
  * ⚠️ The returned `apiKey` is a live credential. It goes into the engine's ENVIRONMENT and never into
  * argv or a log line — `gridLaunch.ts` is what enforces that, and this value must keep travelling
  * through it rather than around it.
+ *
+ * Web tools ride on the same credential: the control plane's MCP server accepts the inference token,
+ * so `mcpUrl` is the only thing added here, and it is added FIRST. `grid mcp config` renews the token
+ * when it is within a month of expiry and persists the renewal; `info --env` never renews, so asked
+ * in the other order it could hand inference an older token than the one the web tools hold — both
+ * valid, and a mismatch nobody would think to look for. A missing `mcpUrl` degrades rather than
+ * refuses: inference is the feature, web search is an accessory (`gridMcpUrl.ts`).
  */
-export async function resolveGridTarget(
-  gridName: string | null,
-  model: string,
-): Promise<{ networkId: string; networkName: string; baseUrl: string; apiKey: string; model: string } | null> {
+export async function resolveGridTarget(gridName: string | null, model: string): Promise<GridTarget | null> {
   if (!gridName?.trim() || !model.trim()) return null
+  const mcpUrl = await resolveGridMcpUrl(gridName)
   const info = await gridExec(['--remote', 'info', gridName, '--env'])
   if (info.code !== 'OK') return null
   const { baseUrl, apiKey } = readEnvExports(info.stdout)
@@ -125,6 +144,7 @@ export async function resolveGridTarget(
     baseUrl,
     apiKey,
     model,
+    ...(mcpUrl ? { mcpUrl } : {}),
   }
 }
 

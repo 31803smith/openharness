@@ -51,6 +51,7 @@ import { AuthSessionError, AuthSessionManager, clearAuthSession, readAuthSession
 import { handOffToGrid } from './lib/gridHandoff.js'
 import { ensureHarnessGrid } from './lib/gridEnsure.js'
 import { passThroughToGridLogout } from './lib/gridLogout.js'
+import { clearGridMcpUrlCache } from './lib/gridMcpUrl.js'
 import { warnIfGridSignInRemains } from './lib/gridCredentials.js'
 import { ENGINE_CLI_COMMANDS, ENGINES, engineBin, enginePathOverride } from './lib/engineBin.js'
 import type { AgentEngine } from './engines/types.js'
@@ -4270,6 +4271,9 @@ async function runForeground(session: AuthSession): Promise<void> {
   backend.onRevoked = () => {
     console.log('[cli] this computer was removed from the machine — clearing credentials and stopping')
     clearAuthSession()
+    // The web-tools cache lives exactly as long as the sign-in. `harness logout` and `reset` stop
+    // the daemon outright; this is the one sign-out the daemon learns of from inside.
+    clearGridMcpUrlCache()
     void shutdown('revoked')
   }
 

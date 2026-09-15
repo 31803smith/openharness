@@ -46,11 +46,11 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { AgentEngine } from '../engines/types.js'
 import {
-  CLAUDE_DISALLOW_WEB_SEARCH_ARG,
+  CLAUDE_DISALLOW_WEB_TOOLS_ARG,
+  CODEX_DISABLE_WEB_SEARCH_ARGS,
   mcpServersConfig,
   codexMcpArgs,
   GRID_MCP_AUTH_VAR,
-  GRID_MCP_SERVER_NAME,
   GROK_CONFIG_FILE,
   GROK_GRID_HOME_LINKS,
   GROK_HOME_VAR,
@@ -60,6 +60,7 @@ import {
   hermesManagedConfig,
   mcpAuthorizationHeader,
 } from './gridWebMcp.js'
+import { HARNESS_MCP_SERVER_NAME } from './harnessWebTools.js'
 
 /** Where Pi keeps the skills the user manages, handed back through our own settings.json. */
 function userPiSkillsDir(): string {
@@ -299,7 +300,7 @@ function opencodeGridConfig(
     ...(override.mcpUrl
       ? {
         mcp: {
-          [GRID_MCP_SERVER_NAME]: {
+          [HARNESS_MCP_SERVER_NAME]: {
             type: 'remote',
             url: override.mcpUrl,
             enabled: true,
@@ -521,8 +522,9 @@ const GRID_ENGINE_CONTRACTS: Partial<Record<AgentEngine, GridEngineContract>> = 
       },
       args: [
         // On every grid launch, web tools or not: the built-in search is an Anthropic server tool
-        // that no grid runs. See `CLAUDE_DISALLOW_WEB_SEARCH_ARG`.
-        CLAUDE_DISALLOW_WEB_SEARCH_ARG,
+        // that no grid runs, and the built-in fetch summarises through a model the grid does not
+        // serve. See `CLAUDE_DISALLOW_WEB_TOOLS_ARG`.
+        CLAUDE_DISALLOW_WEB_TOOLS_ARG,
         ...(override.mcpUrl ? ['--mcp-config', mcpServersConfig(override.mcpUrl, GRID_KEY_VAR)] : []),
       ],
     }),
@@ -549,6 +551,9 @@ const GRID_ENGINE_CONTRACTS: Partial<Record<AgentEngine, GridEngineContract>> = 
         '-c', 'model_providers.grid.wire_api="responses"',
         // The relay streams HTTP SSE, not WebSocket.
         '-c', 'model_providers.grid.supports_websockets=false',
+        // On every grid launch, web tools or not: the native search is a Responses-API feature no
+        // grid serves. See `CODEX_DISABLE_WEB_SEARCH_ARGS`.
+        ...CODEX_DISABLE_WEB_SEARCH_ARGS,
         ...(override.mcpUrl ? codexMcpArgs(override.mcpUrl) : []),
         ...(override.model ? ['-m', override.model] : []),
       ],

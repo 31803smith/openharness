@@ -336,7 +336,7 @@ describe('web tools do not disturb the probe', () => {
 
   it('never reads the control plane as the place an agent is running', () => {
     // Codex is the one at risk: its endpoint comes out of argv, which now also carries
-    // `mcp_servers.grid_web.url=…`. Reading that as the endpoint would report an agent as running on
+    // `mcp_servers.harness.url=…`. Reading that as the endpoint would report an agent as running on
     // the control plane, and the app would offer to move it off a grid it is already on.
     expect(classify('codex', WITH_MCP)?.baseUrl).toBe(RELAY_V1)
   })

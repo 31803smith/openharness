@@ -43,15 +43,7 @@
  * authentication with nothing naming why.
  */
 
-/**
- * What the server is called in the harness's own listing — an agent sees
- * `mcp__grid-web__web_search`.
- *
- * ↔ `SERVER_NAME` in autonomous-grid's `cli/mcp_config.py`. Same name on purpose: a person who has
- * run `grid mcp config` by hand and an agent launched from the desktop should be looking at one
- * server, not two that do the same thing under different names.
- */
-export const GRID_MCP_SERVER_NAME = 'grid-web'
+import { HARNESS_MCP_SERVER_NAME } from './harnessWebTools.js'
 
 /**
  * The variable Codex reads its header out of.
@@ -90,7 +82,7 @@ export function mcpAuthorizationHeader(apiKey: string): string {
 export function mcpServersConfig(mcpUrl: string, keyVar: string): string {
   return JSON.stringify({
     mcpServers: {
-      [GRID_MCP_SERVER_NAME]: {
+      [HARNESS_MCP_SERVER_NAME]: {
         type: 'http',
         url: mcpUrl,
         headers: { Authorization: `Bearer \${${keyVar}}` },
@@ -100,50 +92,87 @@ export function mcpServersConfig(mcpUrl: string, keyVar: string): string {
 }
 
 /**
- * Claude Code's own `WebSearch`, taken off every Claude agent launched onto a grid.
+ * Claude Code's own `WebSearch` and `WebFetch`, taken off every Claude agent launched onto a grid.
  *
- * It is the one web tool Claude Code does not run itself. Invoking it sends a second Messages request
- * carrying the `web_search_20250305` SERVER tool, which Anthropic's API executes and nothing else
- * does — and a grid is not Anthropic's API. The grid refuses it outright (autonomous-grid's CLI seat
- * rejects every typed tool on the Anthropic wire, `_reject_server_tools` in `shared/agent/cli_seat.py`)
- * and the pane prints `API Error: 400 Unsupported tool type: web_search_20250305`. The cost is not the
- * one failed call: the model reaches for its built-in search FIRST, spends turns on the refusal, then
- * scrapes pages with `WebFetch` — while `mcp__grid-web__web_search`, the search the grid actually
- * serves, sits unused in the same tool list.
+ * Neither works without Anthropic's API behind the base URL, for two different reasons:
  *
- * On every grid launch, not only one carrying an MCP url: the refusal does not depend on whether web
- * tools were wired, and a tool that can only fail is a trap either way. Moving the agent back to its
- * own login rebuilds its argv without this, so the built-in search returns with the login it works
- * against. A bare tool name here REMOVES the tool from what the model is offered rather than refusing
- * the call, which is the point — a call-time refusal would still let the model reach for it first.
- * `WebFetch` is left alone: it fetches from this machine and is not a server tool.
+ *  * `WebSearch` is not a tool Claude Code runs. Invoking it sends a second Messages request carrying
+ *    the `web_search_20250305` SERVER tool, which Anthropic's API executes and nothing else does. The
+ *    grid refuses it outright (autonomous-grid's CLI seat rejects every typed tool on the Anthropic
+ *    wire, `_reject_server_tools` in `shared/agent/cli_seat.py`) and the pane prints `API Error: 400
+ *    Unsupported tool type: web_search_20250305`.
+ *  * `WebFetch` DOES fetch the page from this machine — and then summarises it through a haiku call
+ *    on the SAME base URL. The grid's relay serves only the models its nodes run and answers any
+ *    other name `503 no_providers_available` (grid-src `private_server/relay.py`; only the reserved
+ *    `auto` is routed), so the fetch succeeds and the tool still fails. An earlier version of this
+ *    comment left `WebFetch` enabled on the belief that a local fetch made it safe; it does not.
+ *
+ * The cost is not the failed calls: a model offered a familiar dead tool reaches for it FIRST, spends
+ * turns on the refusal, and only then finds `mcp__harness__web_search`, the search the grid actually
+ * serves, in the same tool list. So both are removed on every grid launch, not only one carrying an
+ * MCP url — the refusal does not depend on whether a replacement was wired, and a tool that can only
+ * fail is a trap either way. Moving the agent back to its own login rebuilds its argv without this,
+ * so the built-in tools return with the login they work against. A bare tool name here REMOVES the
+ * tool from what the model is offered rather than refusing the call, which is the point — a
+ * call-time refusal would still let the model reach for it first.
  *
  * ⚠️ **The `=` is load-bearing.** The flag is VARIADIC, so the two-token form swallows every argument
  * after it up to the next flag. Nothing positional follows a grid's args today —
  * `buildEngineCommandArgv` appends them last — but that is an ordering this should not depend on.
+ * The comma form is the one `claude --help` documents ("Comma or space-separated list", 2.1.272);
+ * it keeps the whole list in that one token.
  *
  * Measured 2026-09-11 against a Messages listener on loopback, Claude Code 2.1.268: the main request
- * offered 21 tools with `WebSearch` among them, and 20 with this flag — `WebSearch` gone, `WebFetch`
- * still there, the prompt after the flag intact. The two-token form read that same prompt as a second
- * tool name ("Permission deny rule … matches no known tool") and sent no Messages request at all.
+ * offered 21 tools with `WebSearch` among them, and 20 with `--disallowedTools=WebSearch` — the prompt
+ * after the flag intact. The two-token form read that same prompt as a second tool name ("Permission
+ * deny rule … matches no known tool") and sent no Messages request at all. Measured again 2026-09-15
+ * on 2.1.272 with this exact token: the request carried neither `WebSearch` nor `WebFetch`, and every
+ * other tool — a plugin's 26 MCP tools included — was still offered.
  */
-export const CLAUDE_DISALLOW_WEB_SEARCH_ARG = '--disallowedTools=WebSearch'
+export const CLAUDE_DISALLOW_WEB_TOOLS_ARG = '--disallowedTools=WebSearch,WebFetch'
+
+/**
+ * Codex's native `web_search`, turned off on every Codex agent launched onto a grid.
+ *
+ * The native tool is a feature of OpenAI's Responses API — the request carries a `web_search` tool
+ * spec the endpoint executes — and a grid's relay is not that endpoint. Same trap as Claude Code's:
+ * a model offered it reaches for it before the MCP tool that works. Codex's own config knob for it
+ * is `web_search`, set through the same `-c` overrides the provider block already uses.
+ *
+ * Verified on codex-cli 0.154.0 rather than read off a page: `--strict-config -c web_search="…"` is
+ * accepted, its variants are `disabled`, `cached`, `indexed`, `live`, and `web_search_mode` — the
+ * spelling one might guess from the binary's strings — is refused as an unknown field. The runtime
+ * type is a `Constrained<WebSearchMode>` that "must always support Disabled", so no admin policy
+ * (`allowed_web_search_modes`) can refuse this value.
+ *
+ * The value is quoted as JSON because a `-c` value is parsed as TOML, like every override beside it.
+ *
+ * Claude Code and Codex are the only engines that lose a native web tool, checked rather than
+ * assumed (2026-09-15):
+ *
+ *  * opencode's `websearch` is its own MCP call to Exa or Parallel (`packages/core/src/tool/
+ *    websearch.ts`) and `webfetch` converts the page locally — neither goes through the model
+ *    provider, so both keep working on a grid and there is nothing to take away.
+ *  * Hermes' `web_search` / `web_extract` run on its own search-provider keys, not on inference.
+ *  * Copilot CLI and Grok document no knob for their web tools; inventing one would be this module
+ *    guessing at another program's internals, which its refusals exist to avoid.
+ */
+export const CODEX_DISABLE_WEB_SEARCH_ARGS: readonly string[] = ['-c', 'web_search="disabled"']
 
 /**
  * The same server as Codex `-c` overrides, which is how its provider is configured too — so this
  * needs no config file either. Values are quoted as JSON because a `-c` value is parsed as TOML.
  *
- * ⚠️ The name keeps its HYPHEN here, like everywhere else. A dotted `-c` path looks like it would
- * need `grid_web` — TOML bare keys do allow `-`, and `codex mcp add` writes `[mcp_servers.grid-web]`
- * itself. Renaming it for this one harness would rename its TOOLS too: an agent would see
- * `mcp__grid_web__web_search` on Codex and `mcp__grid-web__web_search` everywhere else, so a prompt
- * or skill naming one would silently miss on the other. Measured against codex 0.144.6, which reads
- * the hyphenated key back from `-c` without complaint.
+ * The name is spelled exactly as [HARNESS_MCP_SERVER_NAME] here, like everywhere else — a dotted `-c`
+ * path takes a TOML bare key, and any respelling for this one harness would rename its TOOLS too:
+ * an agent would see one `mcp__…__web_search` on Codex and another everywhere else, so a prompt or
+ * skill naming one would silently miss on the other. (When the name carried a hyphen, codex 0.144.6
+ * read it back from `-c` without complaint; a bare word needs no such care.)
  */
 export function codexMcpArgs(mcpUrl: string): string[] {
   return [
-    '-c', `mcp_servers.${GRID_MCP_SERVER_NAME}.url=${JSON.stringify(mcpUrl)}`,
-    '-c', `mcp_servers.${GRID_MCP_SERVER_NAME}.env_http_headers.Authorization=${JSON.stringify(GRID_MCP_AUTH_VAR)}`,
+    '-c', `mcp_servers.${HARNESS_MCP_SERVER_NAME}.url=${JSON.stringify(mcpUrl)}`,
+    '-c', `mcp_servers.${HARNESS_MCP_SERVER_NAME}.env_http_headers.Authorization=${JSON.stringify(GRID_MCP_AUTH_VAR)}`,
   ]
 }
 
@@ -153,7 +182,7 @@ export function codexMcpArgs(mcpUrl: string): string[] {
  * a **managed-scope overlay**: `HERMES_MANAGED_DIR` names a directory whose `config.yaml` is
  * `_deep_merge`d over the user's (`hermes_cli/managed_scope.get_managed_dir`,
  * `hermes_cli/config._merge_managed_overlay`). That merge recurses dict-over-dict, so pinning
- * `mcp_servers.grid-web` leaves every server the user configured for themselves in place — the same
+ * `mcp_servers.harness` leaves every server the user configured for themselves in place — the same
  * promise `--strict-mcp-config`'s absence makes for Claude Code.
  *
  * Two things were checked before choosing it over `HERMES_HOME`, which also redirects config:
@@ -193,7 +222,7 @@ export const HERMES_MANAGED_CONFIG_FILE = 'config.yaml'
 export function hermesManagedConfig(mcpUrl: string, keyVar: string): string {
   return `${JSON.stringify({
     mcp_servers: {
-      [GRID_MCP_SERVER_NAME]: {
+      [HARNESS_MCP_SERVER_NAME]: {
         url: mcpUrl,
         // Hermes interpolates `${VAR}` Cursor-style against the process environment
         // (`tools/mcp_tool_config._ENV_VAR_PATTERN`), so the key stays out of this file too.
@@ -300,8 +329,9 @@ export const GROK_GRID_HOME_LINKS: readonly string[] = ['sessions']
  * under `[model."Auto"]` answered through the router with `auth_mode=null` and no probe. What must
  * NOT happen is no block at all: that is the path back to the session token and the 401.
  *
- * ⚠️ The MCP server name keeps its HYPHEN, as it does for Codex and for the same reason — Grok
- * namespaces MCP tools as `<server>__<tool>`, so renaming it here would rename its tools too.
+ * ⚠️ The MCP server name is spelled exactly as [HARNESS_MCP_SERVER_NAME], as it is for Codex and for
+ * the same reason — Grok namespaces MCP tools as `<server>__<tool>`, so respelling it here would
+ * rename its tools too.
  *
  * The MCP key is referenced the same way: Grok interpolates `${VAR}` in `headers` against the process
  * environment, measured on the wire.
@@ -319,7 +349,7 @@ export function grokGridConfig(
     + `base_url = ${JSON.stringify(baseUrl)}\n`
     + `env_key = ${JSON.stringify(keyVar)}\n`
   if (mcpUrl) {
-    config += `\n[mcp_servers.${GRID_MCP_SERVER_NAME}]\n`
+    config += `\n[mcp_servers.${HARNESS_MCP_SERVER_NAME}]\n`
       + `url = ${JSON.stringify(mcpUrl)}\n`
       + `headers = { Authorization = ${JSON.stringify(`Bearer \${${keyVar}}`)} }\n`
   }
