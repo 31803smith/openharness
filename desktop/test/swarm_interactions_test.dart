@@ -170,7 +170,7 @@ void main() {
     (tester) async {
       final app = createApp();
       await mount(tester, app);
-      await chord(tester, LogicalKeyboardKey.keyO);
+      await chord(tester, LogicalKeyboardKey.keyN);
       await tester.pump();
       expect(app.panes, isEmpty);
       await tester.enterText(

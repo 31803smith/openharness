@@ -127,7 +127,7 @@ private extension SwarmTabStrip {
     let zoomFrame = zoom.convert(zoom.bounds, to: nil)
     let newFrame = newButton.convert(newButton.bounds, to: nil)
     try checkTitlebar(bounds.height >= 48, "Native title bar leaves room around the pill actions")
-    for button in [createButton, openButton] {
+    for button in [openButton] {
       let labelWidth = (button.title as NSString).size(withAttributes: [.font: button.font!]).width
       try checkTitlebar(button.frame.minY >= 6 && bounds.height - button.frame.maxY >= 6 && button.frame.width - labelWidth >= 32,
         "\(button.title) has vertical breathing room and readable horizontal padding")
@@ -229,22 +229,21 @@ private extension SwarmTabStrip {
     try checkTitlebar(!newButton.isEnabled,
       "New Tab respects the workspace's availability")
     update(state([["id": "swarm-0", "name": "Renamed tab"]], active: "swarm-0"))
-    try checkTitlebar(newButton.toolTip == nil && createButton.toolTip == nil && openButton.toolTip == nil,
+    try checkTitlebar(newButton.toolTip == nil && openButton.toolTip == nil,
       "Titlebar actions add no hover hints")
     try checkTitlebar(notificationButton.frame.maxX <= scroll.frame.minX,
       "The bell is before the tabs beside the traffic lights")
-    try checkTitlebar((newButton.isHidden || newButton.frame.maxX <= createButton.frame.minX) && scroll.frame.maxX <= createButton.frame.minX && createButton.frame.maxX < openButton.frame.minX,
-      "New and Open Harness have separate targets on the right")
-    try checkTitlebar(createButton.title == "New Harness" && openButton.title == "Open Harness",
-      "Creation and opening are explicit in the titlebar")
+    try checkTitlebar((newButton.isHidden || newButton.frame.maxX <= openButton.frame.minX) && scroll.frame.maxX <= openButton.frame.minX,
+      "Add Harness has its own target on the right")
+    try checkTitlebar(openButton.title == "Add Harness",
+      "The titlebar has one Add Harness entry point")
     try checkTitlebar(!subviews.contains(where: { $0 is NSTextField }), "The titlebar has no competing text editor")
     events.removeAll()
     newButton.performClick(nil)
     notificationButton.performClick(nil)
-    createButton.performClick(nil)
     openButton.performClick(nil)
-    try checkTitlebar(events == ["new", "notifications", "newAgent", "addAgent"],
-      "The new tab, notification, create and open buttons dispatch separate actions once")
+    try checkTitlebar(events == ["new", "notifications", "addAgent"],
+      "The new tab, notification and Add Harness buttons dispatch once")
     try checkTitlebar(notificationButton.hasAttention, "The bell represents pending agent attention")
     let oldButton = newButton
     var themedState = state([["id": "swarm-0", "name": "Renamed tab"]], active: "swarm-0")
@@ -259,17 +258,16 @@ private extension SwarmTabStrip {
     original.clickBothActions()
     try checkTitlebar(events == ["select", "close"], "Native selection and close dispatch once each")
 
-    let actionPixels = [createButton.renderedPixels(), openButton.renderedPixels()]
+    let actionPixels = [openButton.renderedPixels()]
     events.removeAll()
     update(state([["id": "swarm-0", "name": "Renamed tab"]], active: "swarm-0", enabled: false))
     try original.checkEnabled(false)
-    try checkTitlebar(!newButton.isEnabled && !notificationButton.isEnabled && !createButton.isEnabled && !openButton.isEnabled, "Titlebar actions disable with a modal")
-    try checkTitlebar(actionPixels == [createButton.renderedPixels(), openButton.renderedPixels()],
-      "New and Open Harness keep their rendered colors when a workspace modal opens")
+    try checkTitlebar(!newButton.isEnabled && !notificationButton.isEnabled && !openButton.isEnabled, "Titlebar actions disable with a modal")
+    try checkTitlebar(actionPixels == [openButton.renderedPixels()],
+      "Add Harness keeps its rendered colors when a workspace modal opens")
     original.clickBothActions()
     newButton.performClick(nil)
     notificationButton.performClick(nil)
-    createButton.performClick(nil)
     openButton.performClick(nil)
     try checkTitlebar(events.isEmpty, "Disabled controls emit no actions")
     try checkDragOperations()
@@ -567,8 +565,11 @@ private extension SwarmTitlebar {
     let settings = appItem.submenu!.items[0]
     try checkTitlebar(settings.title == "Settings…" && settings.representedObject as? String == "settings", "Settings stays in the application menu")
     let agent = main.item(withTitle: "File")!.submenu!
+    let addHarness = agent.items.first(where: { $0.representedObject as? String == "addAgent" })!
+    try checkTitlebar(addHarness.title == "Add Harness…" && addHarness.keyEquivalent == "n" && addHarness.keyEquivalentModifierMask == [.command],
+      "The single Add Harness menu entry advertises Command-N")
     let historyMenu = main.item(withTitle: "History")!.submenu!
-    try checkTitlebar(agent.items.map { $0.isSeparatorItem ? "separator" : ($0.representedObject as? String ?? "") } == ["new", "newAgent", "addAgent", "renameActive", "closeActive", "separator", "splitRight", "splitDown", "zoomPane", "closePane"], "File groups Harness and Pane actions, without Pin or Add Project clutter")
+    try checkTitlebar(agent.items.map { $0.isSeparatorItem ? "separator" : ($0.representedObject as? String ?? "") } == ["new", "addAgent", "renameActive", "closeActive", "separator", "splitRight", "splitDown", "zoomPane", "closePane"], "File groups Harness and Pane actions, without Pin or Add Project clutter")
     try checkTitlebar(agent.items.filter { !$0.isSeparatorItem }.allSatisfy { $0.image != nil && $0.toolTip == nil },
       "Every File action has a native icon and no hover hint")
     try checkTitlebar(agent.items.contains { $0.title == "Rename Tab…" && $0.representedObject as? String == "renameActive" }, "Rename Tab preserves its command")

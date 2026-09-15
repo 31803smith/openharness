@@ -565,7 +565,7 @@ Future<bool> activateSwarmSearchSelection(
           )) {
         return false;
       }
-      if (target.panes.isEmpty && target.name == 'New Harness') {
+      if (target.panes.isEmpty && target.name == Swarm.defaultName) {
         app.renameSwarm(target.id, destination.title);
       }
       // Every membership is recorded before awaiting any attachment. A slow

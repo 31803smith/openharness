@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../shared/theme/app_theme.dart' as grid;
 import '../state/swarm_navigation.dart';
 import '../state/swarm_search.dart';
+import 'harness_entry_actions.dart';
 import 'swarm_search_input.dart';
 import 'swarm_switcher.dart';
 
@@ -70,50 +70,6 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
   void _new() {
     _close();
     widget.onNew();
-  }
-
-  Widget _action({required bool create}) {
-    final label = create ? 'New Harness' : 'Open Harness';
-    final content = Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (create) ...[
-          const Icon(LucideIcons.plus300, size: 18),
-          const SizedBox(width: 8),
-        ],
-        Text(label),
-      ],
-    );
-    const size = Size(140, 48);
-    const padding = EdgeInsets.symmetric(horizontal: 20);
-    return create
-        ? FilledButton(
-            key: const ValueKey('harness-start-new'),
-            onPressed: _new,
-            style: FilledButton.styleFrom(
-              enabledMouseCursor: SystemMouseCursors.click,
-              minimumSize: size,
-              padding: padding,
-              backgroundColor: grid.AppPalette.swarmAccent,
-              foregroundColor: grid.AppPalette.swarmTabBar,
-              shape: const StadiumBorder(),
-            ),
-            child: content,
-          )
-        : OutlinedButton(
-            key: const ValueKey('harness-start-open'),
-            onPressed: _open,
-            style: OutlinedButton.styleFrom(
-              enabledMouseCursor: SystemMouseCursors.click,
-              minimumSize: size,
-              padding: padding,
-              backgroundColor: Colors.transparent,
-              foregroundColor: Colors.white,
-              side: const BorderSide(color: Colors.white24),
-              shape: const StadiumBorder(),
-            ),
-            child: content,
-          );
   }
 
   Widget _searchPanel() => TextFieldTapRegion(
@@ -287,13 +243,11 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
                               Flexible(child: _searchPanel()),
                               if (!_showResults) ...[
                                 const SizedBox(height: 20),
-                                Wrap(
-                                  spacing: 12,
-                                  runSpacing: 12,
-                                  children: [
-                                    _action(create: false),
-                                    _action(create: true),
-                                  ],
+                                HarnessEntryActions(
+                                  onOpen: _open,
+                                  onNew: _new,
+                                  openKey: const ValueKey('harness-start-open'),
+                                  newKey: const ValueKey('harness-start-new'),
                                 ),
                               ],
                             ],

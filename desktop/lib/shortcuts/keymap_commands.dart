@@ -272,7 +272,7 @@ final harnessCommands = <HarnessCommand>[
   ),
   const HarnessCommand(
     'agent.add',
-    'Open Harness',
+    'Add Harness',
     ShortcutGroup.actions,
     action: ShortcutAction.addAgent,
     nativeAction: 'addAgent',
