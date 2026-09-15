@@ -64,10 +64,16 @@ Saved and pushed to `origin/main`: **9d0150d** (remote project preparation),
 validation cleanup). The 339-test pass was followed by six passing focused
 checks after the analyzer cleanup; changed Dart files now analyze without issues.
 
-The release build of **10811c3** succeeded and passed deep/strict codesign
+The release build of **fb29d7d** succeeded and passed deep/strict codesign
 verification at
 `/private/tmp/harness-pane-controls-release/Build/Products/Release/Harness.app`.
-Build log: `/private/tmp/harness-agent-experience-release.log`; test logs:
+This includes the concurrently pushed busy-Codex input and dial navigation work
+(d9bd13c) and firmware version note (5c3a7fa), preserved by rebasing the final
+documentation commit. After that rebase, 17 desktop dial/creation/menu checks and
+40 CLI input checks passed. No real daemon or firmware was updated.
+Build log: `/private/tmp/harness-agent-rebased-release.log`; test logs:
+`/private/tmp/harness-agent-rebased-checks.log`,
+`/private/tmp/harness-agent-rebased-cli-tests.log`,
 `/private/tmp/harness-agent-ui-regressions.log`,
 `/private/tmp/harness-agent-final-checks.log`,
 `/private/tmp/harness-project-folder-cli-tests.log`,
