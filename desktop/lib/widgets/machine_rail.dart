@@ -288,6 +288,31 @@ class _MachineRailState extends State<MachineRail> {
                   ],
                 ),
               ),
+              // Says out loud that these rows are a cached copy. Without it a backend outage looks
+              // identical to a healthy list, and the only clue is machines whose state never changes.
+              if (widget.notifier.machinesAreStale && machines.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                  child: Row(
+                    children: [
+                      Icon(
+                        LucideIcons.cloudOff300,
+                        size: 13,
+                        color: grid.AppPalette.textSecondary,
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          'Offline copy — backend unreachable',
+                          style: TextStyle(
+                            color: grid.AppPalette.textSecondary,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               Expanded(
                 child: machines.isEmpty
                     // Two kinds of empty, and they must not look the same: the

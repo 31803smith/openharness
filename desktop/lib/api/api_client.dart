@@ -50,9 +50,16 @@ class ApiClient {
   }
 
   // -- machines (control plane, proxied by the local CLI) --
+  /// Whether the last [machines] answer came from the daemon's cache rather than the backend.
+  ///
+  /// The daemon answers 200 with the last known-good list when the backend leg is unreachable, so a
+  /// caller that only checked the status code would mistake an outage for a healthy, current read.
+  bool lastMachinesStale = false;
+
   Future<List<Machine>> machines() async {
     final res = await _dio.get('/api/machines');
     final data = _unwrap(res) as Map<String, dynamic>;
+    lastMachinesStale = data['stale'] == true;
     final list = data['machines'] as List<dynamic>? ?? [];
     return list
         .map((e) => Machine.fromJson(e as Map<String, dynamic>))

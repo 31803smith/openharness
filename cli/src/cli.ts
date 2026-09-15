@@ -34,7 +34,7 @@ import { buildLogBundle, bundleFileName, redactSecretsInText } from './lib/logBu
 import { CableSession } from './cable/cableSession.js'
 import { DaemonCableHost, cableEventFor, cableQuestionFor, cableQuestionCloseFor } from './cable/cableHost.js'
 
-import { MachineListCache } from './device/machineList.js'
+import { MachineListCache, machineListCachePath, withStaleMarker } from './device/machineList.js'
 import { DeviceLink } from './device/deviceLink.js'
 import { DeviceFleet } from './device/deviceFleet.js'
 import { registry, projectDisplayName, type RegisteredSession } from './lib/registry.js'
@@ -956,6 +956,9 @@ async function logout(): Promise<void> {
   await stopDaemonProcess()
   clearAuthSession()
   rmSync(MACHINE_NAME_FILE, { force: true })
+  // Same reason as the name above: the cached machine list describes the account that just left, and the
+  // local `/api/machines` fallback would otherwise hand it to whoever signs in next on this computer.
+  rmSync(machineListCachePath(), { force: true })
   console.log('Signed out. Run `harness login`, then `harness start`, to reconnect this computer.')
   // Existence is the whole of the test — nothing is read out of the store, and nothing is written
   // into it. On stderr, so a script reading this command's output is unaffected by it.
@@ -2573,6 +2576,43 @@ async function runForeground(session: AuthSession): Promise<void> {
     return { status: res.status, body: json }
   }
 
+  // Built HERE rather than beside the cable stack that also uses it (further down), because the hook
+  // server starts long before that point and agent restore can sit between the two. A cache bound late
+  // is a cache that is still null exactly when a cold boot during an outage needs it most.
+  const machineListCache = new MachineListCache(
+    () => proxyBackend('GET', '/api/machines'),
+    computerId,
+    (line) => console.log(`[cable] ${line}`),
+    undefined,
+    // A machine row is per (user, computer): the one local fact that distinguishes two ACCOUNTS here.
+    // Read fresh each time — a re-login swaps it under a daemon that never restarted.
+    () => readAuthSession()?.machineId ?? null,
+  )
+
+  /**
+   * `GET /api/machines` for local clients, answered from the last known-good list when the backend leg
+   * is down.
+   *
+   * The daemon already keeps that list: it re-reads it every 60s for the dial's wheel and persists it to
+   * `machines.json`, with the explicit policy that an outage keeps the rows and stops claiming they are
+   * live. The desktop app was the one consumer that got none of that — a bare pass-through handed it the
+   * 502 and it had nothing to draw, so a ten-second network blip emptied the machine list and left every
+   * pane spinning. Stale rows are not wrong rows; the marker below says which they are.
+   */
+  async function machinesListWithFallback(): Promise<{ status: number; body: Record<string, unknown> }> {
+    const res = await proxyBackend('GET', '/api/machines')
+    if (res.status === 200) {
+      // Feed the cache the answer we already have rather than making it fetch the same thing again.
+      machineListCache.adopt(res.body)
+      return res
+    }
+    // A real end of session is the caller's answer, not an outage: never serve a list from behind it.
+    if (res.status === 401 || res.status === 403) return res
+    const cached = machineListCache.lastResponse()
+    if (!cached) return res
+    return { status: 200, body: withStaleMarker(cached.body, cached.fetchedAt) }
+  }
+
   // Update-handoff state, declared here — ahead of the /api/status handler that reads `restarting` —
   // rather than beside the updater that writes it, so the closure never reaches a `let` in its TDZ.
   let restarting = false
@@ -2951,7 +2991,7 @@ async function runForeground(session: AuthSession): Promise<void> {
       try { return readFileSync(LOG_FILE, 'utf-8').split('\n').slice(-120).join('\n') } catch { return '' }
     },
     onStop: () => { setTimeout(() => process.kill(process.pid, 'SIGTERM'), 50) }, // let the 200 flush first
-    onMachinesList: () => proxyBackend('GET', '/api/machines'),
+    onMachinesList: () => machinesListWithFallback(),
     onMachineRename: (machineId, name) => proxyBackend('PATCH', `/api/machines/${encodeURIComponent(machineId)}`, { name }),
     onMachineDelete: (machineId) => proxyBackend('DELETE', `/api/machines/${encodeURIComponent(machineId)}`),
     onAuthMe: () => proxyBackend('GET', '/api/auth/me'),
@@ -4247,11 +4287,9 @@ async function runForeground(session: AuthSession): Promise<void> {
   // Three independent things, on purpose. The LIST is a REST read that works while the backend socket is
   // down; `local` is derived from the computer id and needs no network at all; and the LANE is a device
   // socket that only exists while the dial is actually looking at another machine.
-  const machineList = new MachineListCache(
-    () => proxyBackend('GET', '/api/machines'),
-    computerId,
-    (line) => console.log(`[cable] ${line}`),
-  )
+  // The same cache the local `/api/machines` handler answers from (built up near `proxyBackend`), so the
+  // dial's wheel and the desktop's list cannot disagree — and neither can go stale while the other is fresh.
+  const machineList = machineListCache
   void machineList.refresh()
   const machineListTimer = setInterval(() => void machineList.refresh(), 60_000)
   machineListTimer.unref?.()

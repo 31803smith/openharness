@@ -1099,6 +1099,19 @@ class AppNotifier extends ChangeNotifier {
   }
 
   String? get lastError => _lastError;
+
+  /// The machine list's own failure, separate from [lastError] — that slot is shared with agent-launch
+  /// and other one-off errors, and is cleared by [dismissError]. A pane asking "is this machine missing
+  /// because we could not read the list?" needs the narrower question.
+  String? get machineListError => _machineLoadError;
+
+  /// True when the machine list on screen came from the daemon's cache because the backend could not be
+  /// reached. The rows are the last known-good ones, not current.
+  bool machinesAreStale = false;
+
+  /// Whether a machine-list recovery is armed. Mirrors [environmentRecheckPending] — the honest way for a
+  /// test to ask "is this still trying?" without reaching into a private timer.
+  bool get machineRecoveryPending => _machineRecoveryTimer != null;
   bool get lastErrorRetryable => _lastErrorRetryable;
   String? get bootStatusMessage => _bootStatusMessage;
 
@@ -2663,7 +2676,15 @@ class AppNotifier extends ChangeNotifier {
     try {
       await _refreshMachines(revision);
       if (_authWorkCurrent(revision)) {
-        _stopMachineRecovery();
+        // A cached answer is readable but not current, so the job is not done: leave the recovery timer
+        // running and it converges on its own once the backend is back. Without this the daemon's 200
+        // would read as success, recovery would stop, and the app would sit on stale rows until
+        // somebody pressed reload.
+        if (machinesAreStale) {
+          _scheduleMachineRecovery(revision);
+        } else {
+          _stopMachineRecovery();
+        }
         if (_lastError != null && _lastError == _machineLoadError) {
           _lastError = null;
           notifyListeners();
@@ -2732,6 +2753,34 @@ class AppNotifier extends ChangeNotifier {
     _machineLoadError = message;
   }
 
+  /// What the loopback probe means for one machine's transport.
+  ///
+  /// Written once because two callers need the same answer: the refresh loop, and the failure path that
+  /// keeps this computer usable when the backend list could not be read.
+  void _applyLocalTransport(
+    MachineState state,
+    LocalCliEndpoint? localEndpoint,
+    String? localComputerId,
+  ) {
+    if (state.localOnly && localEndpoint?.computerId == localComputerId) {
+      state.localEndpoint = localEndpoint;
+      state.transportMode =
+          state.connectionStatus == ConnectionStatus.connected
+          ? MachineTransportMode.localPlaintext
+          : MachineTransportMode.localOffline;
+    } else if (state.localOnly) {
+      // The token still identifies this as local, but the CLI is offline or
+      // failed its identity/capability check. Never fall back to cloud E2EE.
+      state.localEndpoint = null;
+      state.transportMode = MachineTransportMode.localOffline;
+      state.nodeOnline = false;
+      _startOfflineRetry(state);
+    } else {
+      state.localEndpoint = null;
+      state.transportMode = MachineTransportMode.cloudE2ee;
+    }
+  }
+
   Future<void> _refreshMachines(int revision) async {
     final discovery = _discovery;
     // The CLI computer id is the local identity source of truth. The loopback
@@ -2739,9 +2788,45 @@ class AppNotifier extends ChangeNotifier {
     final localComputerId = await discovery.computerId();
     if (!_authWorkCurrent(revision)) return;
     final localFuture = discovery.discover(expectedComputerId: localComputerId);
-    final list = await _fetchMachines();
-    final localEndpoint = await localFuture;
+    // The two legs stay independent. The loopback probe reads a local file and asks 127.0.0.1, so it
+    // cannot fail for a network reason — but awaiting it BEHIND the backend call meant a cloud outage
+    // threw first and threw away an answer that was already correct, while awaiting it FIRST would let a
+    // slow probe hold up the list. Latch it as it lands instead, and use it on both paths.
+    LocalCliEndpoint? probed;
+    final localSettled = localFuture.then((value) => probed = value).catchError((
+      Object error,
+    ) {
+      // A probe that fails is the CLI being unreachable, which the transport decision below already
+      // handles — but swallowing it silently leaves nothing to diagnose from.
+      debugPrint('local CLI probe failed: $error');
+      return null;
+    });
+    final List<Machine> list;
+    try {
+      list = await _fetchMachines();
+      machinesAreStale = api.lastMachinesStale;
+    } catch (_) {
+      // A backend outage must not cost this computer its own transport. Without this the probe result
+      // stayed unapplied, so `usesLocalTransport` went false and `_connectMachine` skipped the local
+      // machine — while relayed machines, which never consult it, kept streaming. That asymmetry was the
+      // bug: the local terminal stopped rendering and the relayed ones did not.
+      await localSettled;
+      if (_authWorkCurrent(revision)) {
+        final endpoint = probed;
+        for (final state in machineStates.values) {
+          _applyLocalTransport(state, endpoint, localComputerId);
+          _connectMachine(state);
+        }
+        if (endpoint != null) _updateLocalProjectSnapshot(endpoint);
+        notifyListeners();
+      }
+      rethrow; // the recovery timer owns the retry; this only protects what already works
+    }
+    await localSettled;
+    // Both legs are in: this is the one gate that decides whether a result that arrived after a
+    // sign-out or a dispose may still be published.
     if (!_authWorkCurrent(revision)) return;
+    final localEndpoint = probed;
     machines = list
         .where((machine) => machine.authMode == MachineAuthMode.remote)
         .toList();
@@ -2764,24 +2849,7 @@ class AppNotifier extends ChangeNotifier {
       state.localOnly =
           localComputerId != null &&
           _normalizeComputerId(machine.computerId) == localComputerId;
-      if (state.localOnly && localEndpoint?.computerId == localComputerId) {
-        state.localEndpoint = localEndpoint;
-        if (state.connectionStatus == ConnectionStatus.connected) {
-          state.transportMode = MachineTransportMode.localPlaintext;
-        } else {
-          state.transportMode = MachineTransportMode.localOffline;
-        }
-      } else if (state.localOnly) {
-        // The token still identifies this as local, but the CLI is offline or
-        // failed its identity/capability check. Never fall back to cloud E2EE.
-        state.localEndpoint = null;
-        state.transportMode = MachineTransportMode.localOffline;
-        state.nodeOnline = false;
-        _startOfflineRetry(state);
-      } else {
-        state.localEndpoint = null;
-        state.transportMode = MachineTransportMode.cloudE2ee;
-      }
+      _applyLocalTransport(state, localEndpoint, localComputerId);
       final reportedOnline = _nodeOnlineFromStatus(machine.status);
       if (!state.isLocalMachine &&
           reportedOnline != null &&
