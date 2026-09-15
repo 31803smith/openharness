@@ -13,7 +13,7 @@ import 'package:harness/ws/ws_conn.dart';
 /// request's own 12-second timeout, and a spinner that never stops means `pumpAndSettle` never
 /// returns — the test would be measuring the timeout rather than the menu.
 class _Conn extends WsConn {
-  _Conn(this.models)
+  _Conn(this.models, {this.localModelEngines})
     : super(
         wsBaseUrl: 'ws://fixture.invalid',
         autonomousEnv: 'test',
@@ -26,23 +26,35 @@ class _Conn extends WsConn {
 
   final List<Map<String, Object?>> models;
 
+  /// The daemon's list of engines a Local model can be offered to; null = an older daemon that
+  /// sends no such field.
+  final List<String>? localModelEngines;
+
   @override
   Future<Map<String, dynamic>> request(
     String type, {
     Map<String, dynamic> payload = const {},
     Duration timeout = const Duration(seconds: 20),
-  }) async => {'gridName': models.isEmpty ? null : 'someone-7f3a91c4', 'models': models};
+  }) async => {
+    'gridName': models.isEmpty ? null : 'someone-7f3a91c4',
+    'models': models,
+    if (localModelEngines != null) 'localModelEngines': localModelEngines,
+  };
 }
 
 void main() {
   late AppNotifier notifier;
 
-  void build({List<Map<String, Object?>> models = const []}) {
+  void build({
+    List<Map<String, Object?>> models = const [],
+    List<String>? localModelEngines,
+  }) {
     notifier = AppNotifier(
       config: AppConfig.dev,
       authSession: AuthSession(),
       configStore: null,
-      connectionForTest: (_) => _Conn(models),
+      connectionForTest: (_) =>
+          _Conn(models, localModelEngines: localModelEngines),
     );
   }
 
@@ -53,6 +65,7 @@ void main() {
     WidgetTester tester, {
     String? currentModel,
     GridWebSearch? webSearch,
+    String engine = 'claude',
     VoidCallback? onOwnLogin,
     ValueChanged<GridModel>? onSelected,
   }) async {
@@ -65,7 +78,7 @@ void main() {
           child: GridModelPicker(
             notifier: notifier,
             machineId: 'local',
-            engineLabel: 'claude',
+            engineLabel: engine,
             currentModel: currentModel,
             webSearch: webSearch,
             onUseOwnLogin: onOwnLogin,
@@ -229,6 +242,37 @@ void main() {
       build(models: served);
       await open(tester, currentModel: null, webSearch: GridWebSearch.unavailable);
       expect(find.textContaining('Web search'), findsNothing);
+    });
+  });
+
+  group('an engine that cannot run on a Local model', () {
+    const served = [
+      {'id': 'qwen/qwen3.6-35b-a3b', 'node': 'macbook-m1max'},
+    ];
+    const capable = ['claude', 'codex', 'opencode', 'hermes', 'grok', 'pi', 'copilot'];
+
+    testWidgets('is told so under Local, and offered no rows', (tester) async {
+      // The daemon refuses a Cursor retarget (`GRID_ENGINE_UNSUPPORTED`): Cursor Agent can only be
+      // re-pointed at another Cursor API. Offering the row anyway was a dead end that said nothing.
+      build(models: served, localModelEngines: capable);
+      GridModel? picked;
+      await open(tester, engine: 'cursor', onSelected: (m) => picked = m);
+      expect(find.text('Cursor can only run on its own login.'), findsOneWidget);
+      expect(find.text('qwen/qwen3.6-35b-a3b'), findsNothing);
+      expect(picked, isNull);
+    });
+
+    testWidgets('a capable engine still gets the rows', (tester) async {
+      build(models: served, localModelEngines: capable);
+      await open(tester, engine: 'codex');
+      expect(find.text('qwen/qwen3.6-35b-a3b'), findsOneWidget);
+      expect(find.textContaining('own login'), findsNothing);
+    });
+
+    testWidgets('an older daemon that names no engines offers everything, as before', (tester) async {
+      build(models: served);
+      await open(tester, engine: 'cursor');
+      expect(find.text('qwen/qwen3.6-35b-a3b'), findsOneWidget);
     });
   });
 }

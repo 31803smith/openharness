@@ -27,7 +27,7 @@ import { registry, projectDisplayName, type RegisteredSession } from './lib/regi
 import { ENGINES, type AgentEngine } from './engines/types.js'
 import { listDir } from './lib/fsBrowse.js'
 import { linkCodexProfile, listCodexProfiles } from './lib/codexProfiles.js'
-import { parseGridLaunchOverride, type GridLaunchOverride } from './lib/gridLaunch.js'
+import { gridCapableEngines, parseGridLaunchOverride, type GridLaunchOverride } from './lib/gridLaunch.js'
 import { listGridModels, resolveGridTarget } from './lib/gridModels.js'
 import { readAccountUsage, type AccountUsageReading } from './lib/accountUsage.js'
 import { probeEngines } from './lib/engineProbe.js'
@@ -1423,6 +1423,12 @@ export class BackendSocket {
           reply(type, requestId, {
             gridName: this.harnessGridName,
             models: await listGridModels(this.harnessGridName),
+            // Which engines a Local model can be offered to at all. Static per CLI version — it is
+            // the set of launch contracts in `gridLaunch.ts` — and answered here, beside the list,
+            // so the picker can say "Cursor runs only on its own login" instead of offering a row
+            // whose retarget the daemon would refuse. An older app ignores the field; an older
+            // daemon omits it, which the app reads as "offer everything", as before.
+            localModelEngines: gridCapableEngines(),
           })
           return
         }

@@ -191,10 +191,24 @@ class _GridModelPickerState extends State<GridModelPicker> {
         ),
         const PopupMenuDivider(),
         _header('Local'),
+        // An engine with no way onto a Local model (Cursor talks only to its own API; the daemon
+        // refuses the move) is told so here, instead of being offered rows whose click would do
+        // nothing. The daemon names the capable engines beside the list; an older daemon names
+        // none, and then every row is offered as before.
+        if (!answer.canRunLocally(widget.engineLabel))
+          PopupMenuItem<_Choice>(
+            enabled: false,
+            height: 30,
+            padding: const EdgeInsets.only(left: _menuInset + _rowPadding),
+            child: Text(
+              '${engineIdentity(widget.engineLabel).label} can only run on its own login.',
+              style: TextStyle(fontSize: 11, color: AppColors.textSoft),
+            ),
+          )
         // An empty grid and no grid at all are different facts, and each gets its own sentence: one
         // is "nobody is serving yet", the other "there is nothing to serve on". A single "no models"
         // would send a person looking in the wrong place.
-        if (answer.models.isEmpty)
+        else if (answer.models.isEmpty)
           PopupMenuItem<_Choice>(
             enabled: false,
             height: 30,
@@ -208,22 +222,23 @@ class _GridModelPickerState extends State<GridModelPicker> {
               style: TextStyle(fontSize: 11, color: AppColors.textSoft),
             ),
           ),
-        for (final model in answer.models)
-          PopupMenuItem<_Choice>(
-            value: _Choice.model(model),
-            // Taller only for the current row carrying a sentence; every other row keeps its height
-            // so the menu does not grow for a fact about one agent.
-            height: _subtitleFor(model) != null ? 46 : 32,
-            padding: EdgeInsets.zero,
-            child: _Row(
-              selected: widget.currentModel == model.id,
-              title: model.id,
-              // Which of the user's machines answers it — the part that makes a private grid
-              // legible, and the reason `node` is carried through at all.
-              status: model.node.isEmpty ? null : model.node,
-              subtitle: _subtitleFor(model),
+        if (answer.canRunLocally(widget.engineLabel))
+          for (final model in answer.models)
+            PopupMenuItem<_Choice>(
+              value: _Choice.model(model),
+              // Taller only for the current row carrying a sentence; every other row keeps its
+              // height so the menu does not grow for a fact about one agent.
+              height: _subtitleFor(model) != null ? 46 : 32,
+              padding: EdgeInsets.zero,
+              child: _Row(
+                selected: widget.currentModel == model.id,
+                title: model.id,
+                // Which of the user's machines answers it — the part that makes a private grid
+                // legible, and the reason `node` is carried through at all.
+                status: model.node.isEmpty ? null : model.node,
+                subtitle: _subtitleFor(model),
+              ),
             ),
-          ),
       ],
     );
     if (chosen == null) return;

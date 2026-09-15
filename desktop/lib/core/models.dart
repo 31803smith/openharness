@@ -493,5 +493,23 @@ class GridModels {
   final String? gridName;
   final List<GridModel> models;
 
-  const GridModels({required this.gridName, required this.models});
+  /// The engines a Local model can be offered to at all, as the daemon on that machine names them
+  /// (`localModelEngines`; the set of launch contracts in its `gridLaunch.ts`). Null when the
+  /// daemon is older and sends no such list — read as "offer everything", the behaviour before.
+  final Set<String>? localModelEngines;
+
+  const GridModels({
+    required this.gridName,
+    required this.models,
+    this.localModelEngines,
+  });
+
+  /// Whether [engine] may be pointed at one of [models]: unknown engines are refused only when the
+  /// daemon gave a list — a picker that guessed would refuse the wrong ones on an older daemon.
+  bool canRunLocally(String? engine) {
+    final capable = localModelEngines;
+    if (capable == null) return true;
+    final id = engine?.trim().toLowerCase();
+    return id != null && capable.contains(id);
+  }
 }
