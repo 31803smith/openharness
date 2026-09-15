@@ -49,6 +49,7 @@ import { readOrMintComputerId } from './lib/computerIdentity.js'
 import { renderLoginSuccessHtml } from './lib/loginPage.js'
 import { AuthSessionError, AuthSessionManager, clearAuthSession, readAuthSession, writeAuthSession, type AuthSession } from './lib/authSession.js'
 import { handOffToGrid } from './lib/gridHandoff.js'
+import { ensureHarnessGrid } from './lib/gridEnsure.js'
 import { passThroughToGridLogout } from './lib/gridLogout.js'
 import { warnIfGridSignInRemains } from './lib/gridCredentials.js'
 import { ENGINE_CLI_COMMANDS, ENGINES, engineBin, enginePathOverride } from './lib/engineBin.js'
@@ -484,6 +485,42 @@ type SignInOutcome =
   /** Refused. Under `--json` its own coded result line has already been emitted. */
   | { signedIn: false }
 
+/**
+ * Sign this computer in to its grid too, and make sure the account's private harness grid exists.
+ *
+ * ⚠️ **Best-effort, always.** A machine with no `grid`, one too old for `--harness`, a grid sign-in
+ * that fails, a backend that predates `POST /api/grid/name` — every one of them is a sentence on
+ * stderr and a harness sign-in that still succeeds. The harness is what the person asked for; the
+ * grid is what it can usually also arrange. `harness grid login` stays the explicit path, where the
+ * same failure IS the command's failure and exits non-zero.
+ *
+ * Returns what happened, so `--json` callers can carry it on their own result line.
+ */
+async function attachGridToSignIn(token: string, json: boolean): Promise<Record<string, unknown>> {
+  const note = (line: string): void => { if (!json) console.error(`  · ${line}`) }
+  const handoff = await handOffToGrid(token, { json: true })
+  if (handoff.code !== 'OK') {
+    note(handoff.message)
+    return { grid: { signedIn: false, code: handoff.code } }
+  }
+  // The name is the backend's to mint and remember — this CLI holds neither the account's email nor
+  // its id (see backend/src/routes/grid.ts). A backend without the route is simply an older backend:
+  // no grid is ensured, nothing fails, and the next sign-in after it ships picks this up.
+  let gridName: string | null = null
+  try {
+    const { headers } = await controlPlaneAuth()
+    gridName = (await postJson<{ gridName?: string }>('/api/grid/name', {}, headers)).gridName ?? null
+  } catch (err) {
+    note(`Could not read this account's grid name (${(err as Error).message}); skipping grid setup.`)
+    return { grid: { signedIn: true, ensured: 'skipped' } }
+  }
+  if (!gridName) return { grid: { signedIn: true, ensured: 'skipped' } }
+  const ensured = await ensureHarnessGrid(gridName)
+  if (ensured.status === 'failed' || ensured.status === 'skipped') note(ensured.message)
+  else if (ensured.status === 'created') note(`Created your private grid '${gridName}'.`)
+  return { grid: { signedIn: true, ensured: ensured.status, name: gridName } }
+}
+
 async function loginCommand(
   foreground: boolean,
   force: boolean,
@@ -492,9 +529,21 @@ async function loginCommand(
 ): Promise<SignInOutcome> {
   if (foreground) throw new Error('`harness login` does not run the adapter. Use `harness start -f`.')
   const emit = (line: Record<string, unknown>): void => { if (json) console.log(JSON.stringify(line)) }
-  const succeed = (alreadySignedIn: boolean): SignInOutcome => {
+  const succeed = async (alreadySignedIn: boolean): Promise<SignInOutcome> => {
+    // `chained` is `harness grid login`, which runs the hand-off itself and reports it as its own
+    // result — doing it here too would sign in to the grid twice and print two answers for one act.
+    let grid: Record<string, unknown> = {}
+    if (!opts.chained) {
+      try {
+        grid = await attachGridToSignIn(await new AuthSessionManager(backendHttpBase()).accessToken(), json)
+      } catch {
+        // The harness session is already saved and valid; a grid step that throws is still only a
+        // grid step. Never let it turn a completed sign-in into a failure.
+        grid = {}
+      }
+    }
     if (opts.chained) return { signedIn: true, alreadySignedIn }
-    if (json) emit(alreadySignedIn ? { type: 'result', status: 'success', alreadySignedIn: true } : { type: 'result', status: 'success' })
+    if (json) emit(alreadySignedIn ? { type: 'result', status: 'success', alreadySignedIn: true, ...grid } : { type: 'result', status: 'success', ...grid })
     else if (alreadySignedIn) console.log('\n  ✓ Already signed in. Run `harness start` to connect this computer.\n')
     else console.log('\n  ✓ Signed in. Run `harness start` to connect this computer.\n')
     return { signedIn: true, alreadySignedIn }
@@ -517,7 +566,7 @@ async function loginCommand(
       }
       throw err
     }
-    return succeed(true)
+    return await succeed(true)
   }
   // A forced login may intentionally switch SSO accounts. The old daemon must not keep streaming
   // under its existing socket while this process replaces the durable session.
@@ -610,7 +659,7 @@ async function loginCommand(
       if (json) { emit({ type: 'result', status: 'error', code: 'BACKEND_ERROR', message: (err as Error).message }); process.exitCode = 1; return { signedIn: false } }
       throw err
     }
-    return succeed(false)
+    return await succeed(false)
   } finally {
     await new Promise<void>((resolve) => callback.close(() => resolve()))
   }
@@ -925,23 +974,33 @@ async function updateCommand(force: boolean): Promise<void> {
 /**
  * Stop the local adapter and discard this computer's SSO session — local, and unable to fail.
  *
- * ⚠️ **This never touches the grid credential store, and must not learn to.** Two reasons, and both
- * matter: `grid logout` can refuse and exit non-zero over a serve child it cannot confirm stopped,
- * so cascading would let a grid condition block a harness sign-out for a reason that has nothing to
- * do with the harness; and the store may predate the harness entirely, having been written by a
- * browser sign-in this CLI knows nothing about. All that is owed is the sentence below, so that a
- * long-lived credential is not left behind in silence.
+ * **This DOES sign the grid out too, as of the one-sign-in flow.** That reverses the rule this
+ * comment used to state, so the reversal is written down rather than left to be rediscovered: one
+ * sign-in creates the grid session, so one sign-out ends it. The two objections that rule was built
+ * on are both answered rather than ignored —
+ *
+ *   * `grid logout` can refuse and exit non-zero over a serve child it cannot confirm stopped. So
+ *     its refusal is REPORTED, never propagated: a grid condition must not block a harness sign-out.
+ *   * the grid store may predate the harness, written by a browser sign-in this CLI knows nothing
+ *     about. Ending that session is now the intended behaviour, not an overreach — and when no
+ *     `grid` can be run at all, the old sentence is still printed so nothing is left behind silently.
+ *
+ * It runs BEFORE the harness session is cleared, because `grid logout` tears down every serve child
+ * on this box first, while the token that makes their deregistration authoritative still exists.
  */
 async function logout(): Promise<void> {
   // Through the lock-taking stop, not an inline kill: a logout that lands mid-handoff would otherwise
   // SIGTERM the OLD daemon, leave the new one coming up, and then delete the session under it.
   await stopDaemonProcess()
+  // Before clearAuthSession: see the note above on serve children. Its exit code is deliberately
+  // dropped — this command cannot fail — and its own words have already reached the terminal.
+  const gridOut = await passThroughToGridLogout([])
   clearAuthSession()
   rmSync(MACHINE_NAME_FILE, { force: true })
   console.log('Signed out. Run `harness login`, then `harness start`, to reconnect this computer.')
-  // Existence is the whole of the test — nothing is read out of the store, and nothing is written
-  // into it. On stderr, so a script reading this command's output is unaffected by it.
-  warnIfGridSignInRemains()
+  // Only when there was no `grid` to run at all. A child that ran has already said what it did, and
+  // repeating "your grid sign-in is still here" after a successful sign-out would be false.
+  if (!gridOut.ran) warnIfGridSignInRemains()
   process.exit(0)
 }
 

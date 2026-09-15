@@ -26,6 +26,7 @@ import { ENGINES, type AgentEngine } from './engines/types.js'
 import { listDir } from './lib/fsBrowse.js'
 import { linkCodexProfile, listCodexProfiles } from './lib/codexProfiles.js'
 import { parseGridLaunchOverride, type GridLaunchOverride } from './lib/gridLaunch.js'
+import { listGridModels, resolveGridTarget } from './lib/gridModels.js'
 import { readAccountUsage, type AccountUsageReading } from './lib/accountUsage.js'
 import { probeEngines } from './lib/engineProbe.js'
 import { engineInstallRecipe } from './lib/engineInstall.js'
@@ -543,6 +544,13 @@ export class BackendSocket {
   remotePasswordStatus(): ReturnType<E2eeManager['remotePasswordStatus']> {
     return this.e2ee.remotePasswordStatus()
   }
+
+  /** The account's private harness grid name, as the backend last reported it. Null until the first
+   *  `machine_meta` lands, or when this account has none yet. */
+  private harnessGridName: string | null = null
+
+  /** Which grid this machine's agents can be pointed at — for `harness status` and the models RPC. */
+  gridName(): string | null { return this.harnessGridName }
 
   connect(): void {
     if (this.closed || this.ws || this.connecting) return
@@ -1109,7 +1117,12 @@ export class BackendSocket {
 
     // Machine display name (seed on connect + web renames) — mirrored locally for `harness status`.
     if (type === 'machine_meta') {
-      const name = (frame.payload as { name?: unknown } | undefined)?.name
+      const meta = frame.payload as { name?: unknown; gridName?: unknown } | undefined
+      const name = meta?.name
+      // The account's private grid, pushed on every connect. Held in memory only: it is the
+      // backend's value, and a daemon that cached it on disk would keep answering with a stale one
+      // after the account's grid changed.
+      this.harnessGridName = typeof meta?.gridName === 'string' && meta.gridName.trim() ? meta.gridName.trim() : null
       this.onMachineMeta?.(typeof name === 'string' && name.trim() ? name.trim() : null)
       return
     }
@@ -1409,6 +1422,16 @@ export class BackendSocket {
           return
         }
 
+        case 'grid_models_list': {
+          // Only the account's OWN private grid: the picker is "models my machines serve", not a
+          // catalogue of every grid this computer's `grid` CLI happens to be signed into.
+          reply(type, requestId, {
+            gridName: this.harnessGridName,
+            models: await listGridModels(this.harnessGridName),
+          })
+          return
+        }
+
         case 'models_list': {
           const sessionId = typeof payload.agentId === 'string' && payload.agentId
             ? payload.agentId
@@ -1594,6 +1617,19 @@ export class BackendSocket {
           if (!agentId) { reply(type, requestId, { error: 'MISSING_AGENT_ID' }); return }
           if (!this.onRetargetAgent) { reply(type, requestId, { error: 'UNSUPPORTED_ON_REMOTE' }); return }
           const clear = payload.clearGrid === true
+          // `gridModel` is the header picker's frame: a model id and nothing else. The endpoint and
+          // the credential are resolved HERE, from this machine's own signed-in `grid`, so neither
+          // ever crosses the relay and the app cannot be the source of truth for an address it does
+          // not know. A client that sends the full `grid` object still works unchanged.
+          const picked = typeof payload.gridModel === 'string' ? payload.gridModel : ''
+          if (picked && payload.grid === undefined && !clear) {
+            const resolved = await resolveGridTarget(this.harnessGridName, picked)
+            if (!resolved) {
+              reply(type, requestId, { error: 'GRID_UNAVAILABLE', detail: 'Could not read this machine\'s grid endpoint.' })
+              return
+            }
+            payload.grid = resolved
+          }
           const target = parseGridLaunchOverride(payload.grid)
           // Exactly one, and `clearGrid` is a separate field rather than `grid: null` on purpose:
           // parseGridLaunchOverride already answers `absent` for both undefined and null, so
