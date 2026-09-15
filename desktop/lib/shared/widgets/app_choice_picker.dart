@@ -428,7 +428,6 @@ class AppChoiceTile extends StatelessWidget {
           label: label,
           detail: detail,
           leading: leading,
-          trailing: selected ? const Icon(Icons.check, size: 16) : null,
         ),
       ),
     ),
