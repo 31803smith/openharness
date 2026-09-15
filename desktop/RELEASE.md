@@ -60,6 +60,32 @@ not a replacement for publishing the managed runtime channel before release.
 
 Homebrew and `apt` are still used for **tmux**, which is a separate step and unrelated to Node — and only when tmux is missing; a computer that already runs it is never asked about either.
 
+## Managed tmux runtime (macOS)
+
+The same idea as Node, for the one host dependency that still came from a package manager: a
+checksum-verified `tmux` archive under `harness/runtime/tmux/`, built once per tmux version so a Mac
+with no tmux and no Homebrew can obtain it with no compiler, no package manager and no password.
+`cli/scripts/build-managed-tmux.sh` builds tmux against static libevent and ncurses (terminfo is
+read from macOS's own `/usr/share/terminfo`); the result links only `libSystem` and is ad-hoc
+signed. Its three macOS traps — the toolchain `clang` needing `SDKROOT`, tmux's configure silently
+linking the system ncurses 5.4 unless `LIBTINFO_LIBS` is explicit, and libevent's autoconf detecting
+a `pipe2` macOS does not have — are handled in the script and gated by `otool -L` and a real
+`new-session` smoke test (under Rosetta for the x64 build).
+
+Publish from CI, never by hand unless rebuilding the same version:
+
+```bash
+gh workflow run release-tmux-runtime.yml -f tmux_version=3.5a                  # build both, publish
+gh workflow run release-tmux-runtime.yml -f tmux_version=3.5a -f publish=false # build only, inspect
+make upload-tmux-runtime ARGS="3.5a /path/to/archives"                          # the publisher CI calls
+```
+
+The manifest is `harness/runtime/tmux/metadata.json` — its own file, because `install.sh` slices a
+manifest by the first `"<platform>"` key and Node's already has one — with the same
+`{version,url,sha256,size,archiveRoot}` entries. **Nothing consumes it yet**: `install.sh` still
+reaches tmux through Homebrew on macOS. Teaching it to download this archive (and the CLI to put
+`~/.harness/runtime/current-tmux` on the daemon's PATH) is the next step; publish the runtime first.
+
 ## Two macOS builds — Intel on Skia, Apple Silicon on Impeller
 
 Every release ships the macOS app **twice**: the same universal (arm64 + x86_64) build of the same

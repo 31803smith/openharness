@@ -1,0 +1,101 @@
+name: Release tmux runtime
+
+# Build and publish the managed tmux for macOS — the archive a Mac with no tmux and no Homebrew will
+# download into ~/.harness/runtime, the way it already downloads Node. Built once per tmux version,
+# here, so obtaining tmux never needs a compiler, a package manager or a password on the user's
+# computer. The recipe (static libevent + ncurses, tmux linked against them) and its three macOS
+# traps live in cli/scripts/build-managed-tmux.sh; publishing is desktop/scripts/publish-managed-
+# tmux-runtime.sh, a sibling of the Node publisher, writing harness/runtime/tmux/metadata.json.
+#
+#   gh workflow run release-tmux-runtime.yml -f tmux_version=3.5a                # build + publish
+#   gh workflow run release-tmux-runtime.yml -f tmux_version=3.5a -f publish=false   # build only, inspect the artifacts
+#
+# A macos-15 runner is Apple Silicon; the x64 archive is cross-built there and smoke-tested under
+# Rosetta by the build script itself. Nothing consumes the manifest until install.sh is taught to.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tmux_version:
+        description: 'tmux release to build (its sha256 is pinned in the build script)'
+        required: true
+        default: '3.5a'
+      publish:
+        description: 'Upload the archives and rewrite harness/runtime/tmux/metadata.json'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+env:
+  GCS_BUCKET: s3-autonomous-upgrade-3
+
+jobs:
+  # Proving the credential first: the builds take minutes, a bad secret costs seconds.
+  preflight:
+    if: ${{ inputs.publish }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Verify GCS write access
+        run: |
+          set -euo pipefail
+          probe="gs://${GCS_BUCKET}/harness/runtime/tmux/.ci-preflight/${GITHUB_RUN_ID}"
+          echo "$GITHUB_RUN_ID" | gsutil cp - "$probe"
+          gsutil rm "$probe"
+
+  build:
+    runs-on: macos-15
+    strategy:
+      fail-fast: true
+      matrix:
+        platform: [darwin-arm64, darwin-x64]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build tmux ${{ inputs.tmux_version }} for ${{ matrix.platform }}
+        env:
+          TMUX_VERSION: ${{ inputs.tmux_version }}
+        run: |
+          set -euo pipefail
+          bash cli/scripts/build-managed-tmux.sh "${{ matrix.platform }}" "$RUNNER_TEMP/dist"
+          archive="$RUNNER_TEMP/dist/tmux-${TMUX_VERSION}-${{ matrix.platform }}.tar.gz"
+          {
+            echo "### tmux ${TMUX_VERSION} · ${{ matrix.platform }}"
+            echo '```'
+            echo "size    $(wc -c < "$archive" | tr -d ' ') bytes"
+            echo "sha256  $(shasum -a 256 "$archive" | awk '{print $1}')"
+            tar -tzf "$archive"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tmux-${{ inputs.tmux_version }}-${{ matrix.platform }}
+          path: ${{ runner.temp }}/dist/tmux-${{ inputs.tmux_version }}-${{ matrix.platform }}.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    if: ${{ inputs.publish }}
+    needs: [preflight, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: tmux-${{ inputs.tmux_version }}-*
+          path: dist
+          merge-multiple: true
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Publish archives and manifest
+        run: |
+          set -euo pipefail
+          ls -la dist
+          bash desktop/scripts/publish-managed-tmux-runtime.sh "${{ inputs.tmux_version }}" dist
+          echo "Published tmux **${{ inputs.tmux_version }}** → \`https://storage.googleapis.com/${GCS_BUCKET}/harness/runtime/tmux/metadata.json\`" >> "$GITHUB_STEP_SUMMARY"
