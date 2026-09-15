@@ -104,6 +104,9 @@ void main() {
       await _mount(tester, app);
       expect(app.prepared, isEmpty);
       expect(connection.calls, isEmpty);
+      await tester.ensureVisible(
+        find.byKey(const Key('new-agent-project-bar')),
+      );
       await tester.tap(find.byKey(const Key('new-agent-project-bar')));
       await tester.pumpAndSettle();
       await tester.tap(
@@ -162,6 +165,9 @@ void main() {
         app.dispose();
       });
       await _mount(tester, app);
+      await tester.ensureVisible(
+        find.byKey(const Key('new-agent-project-bar')),
+      );
       await tester.tap(find.byKey(const Key('new-agent-project-bar')));
       await tester.pumpAndSettle();
       final field = find.byKey(const Key('new-agent-project-search'));

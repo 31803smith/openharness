@@ -20,7 +20,7 @@ class AppChoicePicker<T> extends StatefulWidget {
     this.showDetails = false,
     this.wrap = true,
     this.compact = false,
-    this.quiet = false,
+    this.tileSize,
     this.allVisible = false,
   });
 
@@ -34,7 +34,7 @@ class AppChoicePicker<T> extends StatefulWidget {
   final bool showDetails;
   final bool wrap;
   final bool compact;
-  final bool quiet;
+  final Size? tileSize;
   final bool allVisible;
 
   @override
@@ -91,7 +91,7 @@ class _AppChoicePickerState<T> extends State<AppChoicePicker<T>> {
   @override
   Widget build(BuildContext context) {
     AppTheme.watch(context);
-    if (widget.quiet) return _quietChoices();
+    if (widget.tileSize != null) return _tileChoices();
     final candidates = _visibleOptions;
     if (candidates.isEmpty) return const SizedBox.shrink();
     final textStyle = TextStyle(
@@ -218,7 +218,7 @@ class _AppChoicePickerState<T> extends State<AppChoicePicker<T>> {
     );
   }
 
-  Widget _quietChoices() {
+  Widget _tileChoices() {
     final visible = widget.allVisible
         ? _orderedOptions
         : [
@@ -227,71 +227,97 @@ class _AppChoicePickerState<T> extends State<AppChoicePicker<T>> {
                 .skip(3)
                 .where((option) => option.value == widget.value),
           ];
+    final size = widget.tileSize!;
     return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: 10,
+      runSpacing: 10,
       children: [
         for (final option in visible)
-          Semantics(
-            selected: widget.value == option.value,
-            inMutuallyExclusiveGroup: true,
-            child: TextButton(
-              key: widget.optionKey(option.value),
-              onPressed: () => _choose(option.value),
-              style: TextButton.styleFrom(
-                foregroundColor: widget.value == option.value
-                    ? AppPalette.textPrimary
-                    : AppPalette.textSecondary,
-                backgroundColor: widget.value == option.value
-                    ? AppPalette.swarmAccent.withValues(alpha: .13)
-                    : Colors.transparent,
-                minimumSize: const Size(0, 44),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 15,
-                  vertical: 12,
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (option.leading != null) ...[
-                    option.leading!(),
-                    const SizedBox(width: 9),
-                  ],
-                  Flexible(
-                    child: Text(
-                      option.label,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                      ),
+          SizedBox(
+            width: size.width,
+            height: size.height,
+            child: Semantics(
+              selected: widget.value == option.value,
+              inMutuallyExclusiveGroup: true,
+              child: Tooltip(
+                message: [
+                  option.label,
+                  option.detail,
+                  option.note,
+                ].nonNulls.join(' · '),
+                child: TextButton(
+                  key: widget.optionKey(option.value),
+                  onPressed: () => _choose(option.value),
+                  style: TextButton.styleFrom(
+                    foregroundColor: AppPalette.textPrimary,
+                    backgroundColor: widget.value == option.value
+                        ? AppPalette.swarmAccent.withValues(alpha: .16)
+                        : AppSurface.recess,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(AppControl.radius),
+                    ),
+                    side: BorderSide(
+                      color: widget.value == option.value
+                          ? AppPalette.swarmAccent.withValues(alpha: .7)
+                          : Colors.transparent,
                     ),
                   ),
-                  if (option.note != null) ...[
-                    const SizedBox(width: 8),
-                    Text(
-                      option.note!,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: AppPalette.textFaint,
+                  child: Row(
+                    children: [
+                      if (option.leading != null) ...[
+                        option.leading!(),
+                        const SizedBox(width: 10),
+                      ],
+                      Expanded(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              option.label,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 14,
+                                height: 1.25,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                            if (option.detail != null ||
+                                option.note != null) ...[
+                              const SizedBox(height: 2),
+                              Text(
+                                [
+                                  option.detail,
+                                  option.note,
+                                ].nonNulls.join(' · '),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  height: 1.25,
+                                  color: AppPalette.textSecondary,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
                       ),
-                    ),
-                  ],
-                  const SizedBox(width: 10),
-                  Visibility(
-                    visible: widget.value == option.value,
-                    maintainSize: true,
-                    maintainState: true,
-                    maintainAnimation: true,
-                    child: const Icon(Icons.check, size: 16),
+                      const SizedBox(width: 8),
+                      Visibility(
+                        visible: widget.value == option.value,
+                        maintainSize: true,
+                        maintainState: true,
+                        maintainAnimation: true,
+                        child: const Icon(Icons.check, size: 16),
+                      ),
+                    ],
                   ),
-                ],
+                ),
               ),
             ),
           ),
@@ -301,28 +327,19 @@ class _AppChoicePickerState<T> extends State<AppChoicePicker<T>> {
             value: widget.value,
             options: widget.options,
             onChanged: _choose,
-            width: math.max(
-              104,
-              MediaQuery.textScalerOf(context).scale(14) * 4.2 + 32,
-            ),
-            height: math.max(
-              44,
-              MediaQuery.textScalerOf(context).scale(14) * 1.5 + 24,
-            ),
-            fillColor: Colors.transparent,
-            trigger: Padding(
-              padding: const EdgeInsets.only(left: 5),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  'More…',
-                  maxLines: 1,
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: AppPalette.textSecondary,
-                  ),
+            width: size.width,
+            height: size.height,
+            fillColor: AppSurface.recess,
+            trigger: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.more_horiz, size: 20),
+                const SizedBox(width: 8),
+                Text(
+                  'More',
+                  style: TextStyle(fontSize: 14, color: AppPalette.textPrimary),
                 ),
-              ),
+              ],
             ),
           ),
       ],

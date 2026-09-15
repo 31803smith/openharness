@@ -103,7 +103,7 @@ void main() {
     await tester.pump();
     expect(
       find.textContaining('If harness-remote-box uses an older Harness CLI'),
-      findsOneWidget,
+      findsNothing,
     );
   });
 
@@ -137,12 +137,15 @@ void main() {
       (engines) => engines.error = 'Check failed',
       app: app,
     );
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('new-agent-quick-codex')),
+    );
     await tester.tap(find.byKey(const ValueKey('new-agent-quick-codex')));
     await tester.ensureVisible(find.byKey(const Key('new-agent-advanced')));
     await tester.tap(find.byKey(const Key('new-agent-advanced')));
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('Bypass permission prompts'));
-    await tester.tap(find.text('Bypass permission prompts'));
+    await tester.ensureVisible(find.text('Bypass approvals'));
+    await tester.tap(find.text('Bypass approvals'));
     await tester.pump();
     final retry = find.byKey(const Key('new-agent-retry-check'));
     await tester.ensureVisible(retry);
@@ -190,7 +193,7 @@ void main() {
       findsOneWidget,
     );
     expect(app.launches, isEmpty);
-    await tester.tap(find.widgetWithText(FilledButton, 'Create Agent'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Create'));
     await tester.pump();
     expect(app.launches.single, {
       'machine': 'machine-1',
@@ -223,6 +226,9 @@ void main() {
     await tester.pump();
     await tester.tap(find.byKey(const ValueKey('new-agent-machine-machine-2')));
     await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('new-agent-quick-codex')),
+    );
     await tester.tap(find.byKey(const ValueKey('new-agent-quick-codex')));
     await tester.ensureVisible(find.byKey(const Key('new-agent-advanced')));
     await tester.tap(find.byKey(const Key('new-agent-advanced')));

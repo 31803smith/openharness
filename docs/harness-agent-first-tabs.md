@@ -96,19 +96,23 @@ the preview without taking typing focus. Page Up/Down scrolls the preview while
 retaining the query and selection. Native menus and the titlebar retain normal
 colors while modal actions are blocked.
 
-New Agent uses a focused 600-pixel form: compact **Agent** choices first,
-**Project** in the center, then a quiet **Run on** machine disclosure. The
-machine row expands to direct choices when requested. Machine and agent pickers
-show up to three choices and an overflow control; a selected overflow choice
-replaces the third visible choice. **New / Local / Remote** are small project
-tabs and mean
-create a folder, choose an existing folder and clone a GitHub repository onto
-the selected machine. Local is initially selected. New and Remote prepare a
-unique folder under `~/Harness Projects` only on submission. The footer keeps
-**Cancel / Create Agent** accessible while tall content scrolls. Advanced retains
-profiles and permissions, hides the default profile summary, and scrolls its
-controls into view when opened. A late saved preference equal to the selected engine
-preserves loaded profile readiness. Failure keeps the choices and prepared folder;
+New Agent uses the same generous width as Open Agent. Three stacked sections
+lead through **Choose an engine**, **Select a machine**, and **Which project will
+this agent work in?** Engines and machines share one tile width and height;
+Claude Code, Codex, and OpenCode stay visible, with More for other engines.
+All machines stay visible, with **This machine** identifying the local computer.
+Tiles wrap and the body scrolls on smaller windows or with larger text.
+
+The project bar opens **Search projects or paste a Git URL**, with pinned
+**New project**, machine-scoped recent folders, Browse, and existing GitHub
+cloning. Arrows preview existing README/Git/files content; Enter selects into
+the bar, and clicking it reopens search. Each machine remembers its last choice;
+first use selects New. New folders use `~/harnesses/agent-1`, `agent-2`, ….
+The sole ordinary footer action is a bright **Create** button. Escape or an
+outside click dismisses. A quiet **Advanced** disclosure groups Codex profiles
+and permissions, side by side when space permits; these stay out of the usual
+creation path. A late saved preference equal to the selected engine preserves
+loaded profile readiness. Failure keeps the choices and prepared folder;
 an uncertain launch retains its receipt and offers **Check status** and **Close**
 without cloning or starting again. Success focuses the new agent.
 

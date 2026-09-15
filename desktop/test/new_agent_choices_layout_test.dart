@@ -22,6 +22,7 @@ class _ChoicesApp extends AppNotifier {
       ('office', 'M2'),
       ('home', 'T480 - Omarchy'),
       ('studio', 'Studio'),
+      ('laptop', 'dees-MacBook-Pro.local'),
     ]) {
       final machine = Machine(
         machineId: id,
@@ -168,12 +169,40 @@ void main() {
       }
 
       await capture('initial');
-      for (final id in ['local', 'office', 'home', 'studio']) {
+      for (final id in ['local', 'office', 'home', 'studio', 'laptop']) {
         expect(find.byKey(ValueKey('new-agent-machine-$id')), findsOneWidget);
       }
       for (final id in ['codex', 'claude', 'opencode']) {
         expect(find.byKey(ValueKey('new-agent-quick-$id')), findsOneWidget);
       }
+      void expectUniformTiles({bool withKilo = false}) {
+        final tile = tester.getSize(
+          find.byKey(const ValueKey('new-agent-quick-codex')),
+        );
+        for (final key in [
+          for (final id in ['claude', 'opencode', if (withKilo) 'kilo'])
+            'new-agent-quick-$id',
+          for (final id in ['local', 'office', 'home', 'studio', 'laptop'])
+            'new-agent-machine-$id',
+          'new-agent-engine-field',
+        ]) {
+          expect(tester.getSize(find.byKey(ValueKey(key))), tile, reason: key);
+        }
+      }
+
+      expectUniformTiles();
+      expect(find.text('This machine'), findsOneWidget);
+      expect(find.text('Cancel'), findsNothing);
+      expect(find.widgetWithText(FilledButton, 'Create'), findsOneWidget);
+      final advanced = find.byKey(const Key('new-agent-advanced'));
+      await tester.ensureVisible(advanced);
+      await tester.tap(advanced);
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Bypass approvals'));
+      await capture('advanced');
+      await tester.ensureVisible(advanced);
+      await tester.tap(advanced);
+      await tester.pumpAndSettle();
       final bar = find.byKey(const Key('new-agent-project-bar'));
       await tester.ensureVisible(bar);
       await tester.tap(bar);
@@ -215,6 +244,7 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('Kilo'), findsOneWidget);
+      expectUniformTiles(withKilo: true);
       expect(
         find.text('Harness will install Kilo before starting.'),
         findsNothing,

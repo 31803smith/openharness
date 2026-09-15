@@ -24,11 +24,11 @@ void main() {
     expect(find.byKey(const ValueKey('swarm-search-new-agent')), findsNothing);
     final panelRect = tester.getRect(results);
     final fieldRect = tester.getRect(field);
-    expect(fieldRect.left, panelRect.left + 28);
-    expect(fieldRect.right, panelRect.right - 28);
+    expect(fieldRect.left, panelRect.left);
+    expect(fieldRect.right, panelRect.right);
     await chord(tester, LogicalKeyboardKey.keyN);
     expect(find.byType(AlertDialog), findsOneWidget);
-    expect(find.widgetWithText(FilledButton, 'Create Agent'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, 'Create'), findsOneWidget);
     expect(results, findsNothing);
     expect(find.text('Back to Search'), findsNothing);
     expect(app.panes, [pane]);

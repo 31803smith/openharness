@@ -48,9 +48,11 @@ Logs: `/private/tmp/harness-friendly-names-tests.log` and
 ### Project picker in New Agent
 
 Agent → Machine → Project now replaces the old New / Local / Remote form.
-Codex, Claude Code and OpenCode stay visible in stable order; all machines are
-visible. Wide windows use quiet horizontal choice rows; small windows and large
-text wrap and scroll. Options retains Codex profiles and permission controls.
+Claude Code, Codex and OpenCode stay visible in stable order; all machines are
+visible. Engine and machine tiles share one width and height beneath stacked
+section labels. Small windows and large text wrap and scroll. A quiet Advanced
+disclosure groups Codex profiles and permissions. The normal footer has one
+bright Create action; Escape and outside click dismiss.
 
 Project combines a pinned New project, machine-scoped recent folders, search,
 existing GitHub HTTPS/SSH/owner-repo cloning, and Browse. Arrows update the
@@ -72,6 +74,17 @@ CLI typechecking passes. Logs: `/private/tmp/harness-launcher-final-tests.log`,
 `/private/tmp/harness-launcher-final-cli-tests.log`, and
 `/private/tmp/harness-launcher-full-analyze.log`. Render captures:
 `/private/tmp/harness-project-launcher-captures`.
+
+The uniform-tile refinement passes 108 affected desktop checks across the
+initial suite and focused reruns, with no static-analysis issues. Captures at
+1280, 900, 880, and 600 pixels include project search, selection, and Advanced;
+600 pixels also uses double-size text. Logs:
+`/private/tmp/harness-uniform-choices-tests.log`,
+`/private/tmp/harness-uniform-choices-rerun.log`,
+`/private/tmp/harness-uniform-choices-browse-tests.log`,
+`/private/tmp/harness-uniform-choices-remote-tests.log`, and
+`/private/tmp/harness-uniform-choices-analyze.log`. Final captures:
+`/private/tmp/harness-uniform-choices-captures`.
 
 The user has renewed authorization to push each completed feature separately.
 The latest installed preview is **2b332f2**, at the supported checkout path.

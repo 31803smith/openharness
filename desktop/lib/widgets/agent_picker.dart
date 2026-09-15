@@ -11,20 +11,20 @@ class AgentPicker extends StatelessWidget {
     required this.options,
     required this.onChanged,
     this.compact = false,
-    this.quiet = false,
+    this.tileSize,
   });
   final String value;
   final List<SelectOption<String>> options;
   final ValueChanged<String> onChanged;
   final bool compact;
-  final bool quiet;
+  final Size? tileSize;
   static const quickAgents = ['codex', 'claude', 'cursor'];
 
   @override
   Widget build(BuildContext context) => AppChoicePicker<String>(
     value: value,
     compact: compact,
-    quiet: quiet,
+    tileSize: tileSize,
     options: [
       for (final option in options)
         SelectOption(
@@ -36,8 +36,8 @@ class AgentPicker extends StatelessWidget {
           trailing: option.trailing,
         ),
     ],
-    preferredValues: quiet
-        ? const ['codex', 'claude', 'opencode']
+    preferredValues: tileSize != null
+        ? const ['claude', 'codex', 'opencode']
         : quickAgents,
     onChanged: onChanged,
     optionKey: (id) => ValueKey('new-agent-quick-$id'),

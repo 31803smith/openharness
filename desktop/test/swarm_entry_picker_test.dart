@@ -155,12 +155,12 @@ void main() {
       expect(
         find.descendant(
           of: find.byType(AlertDialog),
-          matching: find.widgetWithText(FilledButton, 'Create Agent'),
+          matching: find.widgetWithText(FilledButton, 'Create'),
         ),
         findsOneWidget,
       );
       expect(find.text('Back to Search'), findsNothing);
-      expect(find.text('Cancel'), findsOneWidget);
+      expect(find.text('Cancel'), findsNothing);
       expect(_results, findsNothing);
       await tester.tapAt(const Offset(20, 200));
       await tester.pump(const Duration(milliseconds: 200));

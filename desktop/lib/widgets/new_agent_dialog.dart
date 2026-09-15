@@ -492,166 +492,107 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
           ),
         ),
         actions: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              TextButton(
-                key: const Key('new-agent-advanced'),
-                style: TextButton.styleFrom(
-                  foregroundColor: grid.AppPalette.textSecondary,
-                ),
-                onPressed: _choicesLocked ? null : _toggleAdvanced,
-                child: Text(
-                  _bypassPermission ? 'Options · Approvals off' : 'Options',
-                ),
+          if (_confirmationPending)
+            TextButton(
+              onPressed: _submitting ? null : () => Navigator.of(context).pop(),
+              style: TextButton.styleFrom(
+                foregroundColor: grid.AppPalette.textSecondary,
               ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: OverflowBar(
-                  alignment: MainAxisAlignment.end,
-                  spacing: 8,
-                  overflowSpacing: 8,
-                  children: [
-                    if (!_confirmationPending && !widget.offerBackToSearch)
-                      TextButton(
-                        onPressed: _submitting
-                            ? null
-                            : () => Navigator.of(context).pop(),
-                        style: TextButton.styleFrom(
-                          foregroundColor: grid.AppPalette.textSecondary,
+              child: const Text('Close'),
+            ),
+          if (widget.offerFindExisting &&
+              _confirmationPending &&
+              (!_submitting || _checkingCreation))
+            TextButton.icon(
+              onPressed: _submitting
+                  ? null
+                  : () =>
+                        Navigator.of(context)
+                            .pop(NewAgentDialogResult.findExisting),
+              icon: const Icon(LucideIcons.search, size: 16),
+              label: const Text('Find an agent'),
+            ),
+          FilledButton(
+            key: const ValueKey('create-agent-submit'),
+            focusNode: _actionFocus,
+            onPressed: canCreate ? _submit : null,
+            style: FilledButton.styleFrom(
+              minimumSize: const Size(144, 48),
+              padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 14),
+              backgroundColor: grid.AppPalette.accent,
+              foregroundColor: Colors.white,
+              textStyle: TextStyle(
+                fontFamily: grid.AppFont.sans,
+                fontFamilyFallback: grid.AppFont.sansFallback,
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+              ),
+              shape: const StadiumBorder(),
+              disabledForegroundColor: _submitting
+                  ? grid.AppPalette.textPrimary
+                  : null,
+            ),
+            child: _submitting
+                ? Semantics(
+                    liveRegion: true,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 2,
+                          ),
                         ),
-                        child: const Text('Cancel'),
-                      ),
-                    if (_confirmationPending || widget.offerBackToSearch)
-                      TextButton(
-                        onPressed: _submitting
-                            ? null
-                            : () => Navigator.of(context).pop(
-                                widget.offerBackToSearch &&
-                                        !_confirmationPending
-                                    ? NewAgentDialogResult.backToSearch
-                                    : null,
-                              ),
-                        style: TextButton.styleFrom(
-                          foregroundColor: grid.AppPalette.textSecondary,
+                        const SizedBox(width: 8),
+                        Text(
+                          _checkingCreation
+                              ? 'Checking status…'
+                              : _folderSource == _FolderSource.remote &&
+                                    _preparedFolder == null
+                              ? 'Cloning and starting…'
+                              : 'Creating agent…',
                         ),
-                        child: Text(
-                          _confirmationPending ? 'Close' : 'Back to Search',
-                        ),
-                      ),
-                    if (widget.offerFindExisting &&
-                        _confirmationPending &&
-                        (!_submitting || _checkingCreation))
-                      TextButton.icon(
-                        onPressed: _submitting
-                            ? null
-                            : () =>
-                                  Navigator.of(context)
-                                      .pop(NewAgentDialogResult.findExisting),
-                        icon: const Icon(LucideIcons.search, size: 16),
-                        label: const Text('Find an agent'),
-                      ),
-                    FilledButton(
-                      key: const ValueKey('create-agent-submit'),
-                      focusNode: _actionFocus,
-                      onPressed: canCreate ? _submit : null,
-                      style: FilledButton.styleFrom(
-                        minimumSize: const Size(136, 42),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 22,
-                          vertical: 12,
-                        ),
-                        backgroundColor: grid.AppPalette.swarmAccent,
-                        foregroundColor: grid.AppPalette.swarmTabBar,
-                        shape: const StadiumBorder(),
-                        disabledForegroundColor: _submitting
-                            ? grid.AppPalette.textPrimary
-                            : null,
-                      ),
-                      child: _submitting
-                          ? Semantics(
-                              liveRegion: true,
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const SizedBox(
-                                    width: 14,
-                                    height: 14,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    _checkingCreation
-                                        ? 'Checking status…'
-                                        : _folderSource ==
-                                                  _FolderSource.remote &&
-                                              _preparedFolder == null
-                                        ? 'Cloning and starting…'
-                                        : 'Creating agent…',
-                                  ),
-                                ],
-                              ),
-                            )
-                          : Text(
-                              _confirmationPending
-                                  ? 'Check status'
-                                  : 'Create Agent',
-                            ),
+                      ],
                     ),
-                  ],
-                ),
-              ),
-            ],
+                  )
+                : Text(_confirmationPending ? 'Check status' : 'Create'),
           ),
         ],
       ),
     );
   }
 
-  Widget _choiceRow(String label, Widget choices) => LayoutBuilder(
-    builder: (context, constraints) {
-      if (constraints.maxWidth <
-          700 *
-              math.min(1.3, MediaQuery.textScalerOf(context).scale(14) / 14)) {
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [FieldLabel(label), choices],
-        );
-      }
-      return Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 76,
-            child: Padding(
-              padding: const EdgeInsets.only(top: 13),
-              child: Text(
-                label,
-                style: TextStyle(
-                  fontSize: 13,
-                  color: grid.AppPalette.textSecondary,
-                ),
-              ),
-            ),
-          ),
-          Expanded(child: choices),
-        ],
-      );
-    },
+  Widget _sectionLabel(String label) => Padding(
+    padding: const EdgeInsets.only(bottom: 10),
+    child: Text(
+      label,
+      style: TextStyle(
+        fontSize: 14,
+        fontWeight: FontWeight.w500,
+        color: grid.AppPalette.textSecondary,
+      ),
+    ),
   );
 
-  Widget _choices(String? bypassFlag) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _choiceRow(
-          'Agent',
+  Widget _choices(String? bypassFlag) => LayoutBuilder(
+    builder: (context, constraints) {
+      final columns = ((constraints.maxWidth + 10) / 190).floor().clamp(1, 5);
+      final scaler = MediaQuery.textScalerOf(context);
+      final tileSize = Size(
+        (constraints.maxWidth - 10 * (columns - 1)) / columns,
+        math.max(76, scaler.scale(14) * 2.5 + scaler.scale(12) * 1.25 + 24),
+      );
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _sectionLabel('Choose an engine'),
           AgentPicker(
             compact: true,
-            quiet: true,
+            tileSize: tileSize,
             value: _engine,
             options: [
               for (final identity in allEngines)
@@ -676,134 +617,160 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
               });
             },
           ),
-        ),
-        if (!_confirmationPending && _engineCheckFailed) ...[
-          const SizedBox(height: 6),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Text(
-                  'Couldn’t check whether ${engineIdentity(_engine).label} is installed. '
-                  'You can still try creating an agent.',
-                  style: Theme.of(context).textTheme.bodySmall
-                      ?.copyWith(color: grid.AppPalette.textSecondary),
+          if (!_confirmationPending && _engineCheckFailed) ...[
+            const SizedBox(height: 6),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Text(
+                    'Couldn’t check whether ${engineIdentity(_engine).label} is installed. '
+                    'You can still try creating an agent.',
+                    style: Theme.of(context).textTheme.bodySmall
+                        ?.copyWith(color: grid.AppPalette.textSecondary),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                TextButton(
+                  key: const Key('new-agent-retry-check'),
+                  onPressed: _checkingEngines ? null : _retryEngineCheck,
+                  child: Text(_checkingEngines ? 'Checking…' : 'Retry'),
+                ),
+              ],
+            ),
+          ],
+          const SizedBox(height: _gapField),
+          _sectionLabel('Select a machine'),
+          _machineOptions(tileSize),
+          const SizedBox(height: _gapField),
+          _sectionLabel('Which project will this agent work in?'),
+          NewAgentProjectPicker(
+            key: ValueKey('new-agent-projects-$_machineId'),
+            notifier: widget.notifier,
+            machineId: _machineId,
+            initialFolder: _folder,
+            focusNode: _folderFocus,
+            locked: _choicesLocked,
+            onCreate: _picking || _waitingForCodexProfile || _choicesLocked
+                ? null
+                : _submit,
+            onBrowse: _browse,
+            onSelected: (folder, repository) {
+              if (_choicesLocked) return;
+              setState(() {
+                _folder = folder;
+                _repository = repository;
+                _folderSource = repository != null
+                    ? _FolderSource.remote
+                    : folder != null
+                    ? _FolderSource.local
+                    : _FolderSource.newProject;
+                _preparedFolder = null;
+                _error = null;
+              });
+            },
+          ),
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              key: const Key('new-agent-advanced'),
+              onPressed: _choicesLocked ? null : _toggleAdvanced,
+              style: TextButton.styleFrom(
+                foregroundColor: grid.AppPalette.textSecondary,
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+                textStyle: TextStyle(
+                  fontFamily: grid.AppFont.sans,
+                  fontFamilyFallback: grid.AppFont.sansFallback,
+                  fontSize: 12,
                 ),
               ),
-              const SizedBox(width: 12),
-              TextButton(
-                key: const Key('new-agent-retry-check'),
-                onPressed: _checkingEngines ? null : _retryEngineCheck,
-                child: Text(_checkingEngines ? 'Checking…' : 'Retry'),
+              icon: Icon(
+                _advancedOpen
+                    ? LucideIcons.chevronDown
+                    : LucideIcons.chevronRight,
+                size: 14,
               ),
+              label: Text(
+                _bypassPermission ? 'Advanced · Approvals off' : 'Advanced',
+              ),
+            ),
+          ),
+          _Advanced(
+            key: _advancedKey,
+            open: _advancedOpen,
+            children: [
+              if (_engine == 'codex') _profileOptions(),
+              _permissionOptions(bypassFlag),
             ],
           ),
         ],
-        const SizedBox(height: _gapField),
-        _choiceRow('Machine', _machineOptions()),
-        const SizedBox(height: _gapField),
-        const FieldLabel('Project'),
-        NewAgentProjectPicker(
-          key: ValueKey('new-agent-projects-$_machineId'),
+      );
+    },
+  );
+
+  Widget _profileOptions() => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      if (_availability('codex')?.supportsCodexHome == true)
+        CodexProfileField(
           notifier: widget.notifier,
           machineId: _machineId,
-          initialFolder: _folder,
-          focusNode: _folderFocus,
-          locked: _choicesLocked,
-          onCreate: _picking || _waitingForCodexProfile || _choicesLocked
-              ? null
-              : _submit,
-          onBrowse: _browse,
-          onSelected: (folder, repository) {
-            if (_choicesLocked) return;
-            setState(() {
-              _folder = folder;
-              _repository = repository;
-              _folderSource = repository != null
-                  ? _FolderSource.remote
-                  : folder != null
-                  ? _FolderSource.local
-                  : _FolderSource.newProject;
-              _preparedFolder = null;
-              _error = null;
-            });
+          machineIsThisComputer: _machineIsThisComputer,
+          value: _codexProfile,
+          observedPaths: {
+            for (final agent in widget.notifier.stateOf(_machineId)!.agents)
+              if (agent.engine == 'codex' && agent.codexHome != null)
+                agent.codexHome!,
           },
+          onChanged: (profile) {
+            if (!_choicesLocked) {
+              setState(() => _codexProfile = profile);
+            }
+          },
+          onBusyChanged: (busy) {
+            if (_codexProfilesBusy != busy) {
+              setState(() => _codexProfilesBusy = busy);
+            }
+          },
+        )
+      else
+        Text(
+          _availability('codex') == null
+              ? _engineCheckFailed && !_checkingEngines
+                    ? 'Retry the agent check above to load Codex profiles.'
+                    : 'Checking whether $_machineName supports Codex profiles…'
+              : 'Update Harness CLI on $_machineName to choose a Codex profile.',
+          style: Theme.of(context).textTheme.bodySmall,
         ),
-        const SizedBox(height: 16),
-        _Advanced(
-          key: _advancedKey,
-          open: _advancedOpen,
-          children: [
-            if (_engineCheckFailed) ...[
-              Text(
-                'If $_machineName uses an older Harness CLI, update it to enable engine checks.',
-                style: Theme.of(context).textTheme.bodySmall
-                    ?.copyWith(color: grid.AppPalette.textSecondary),
-              ),
-              const SizedBox(height: 10),
-            ],
-            if (_engine == 'codex') ...[
-              if (_availability('codex')?.supportsCodexHome == true)
-                CodexProfileField(
-                  notifier: widget.notifier,
-                  machineId: _machineId,
-                  machineIsThisComputer: _machineIsThisComputer,
-                  value: _codexProfile,
-                  observedPaths: {
-                    for (final agent
-                        in widget.notifier.stateOf(_machineId)!.agents)
-                      if (agent.engine == 'codex' && agent.codexHome != null)
-                        agent.codexHome!,
-                  },
-                  onChanged: (profile) {
-                    if (!_choicesLocked) {
-                      setState(() => _codexProfile = profile);
-                    }
-                  },
-                  onBusyChanged: (busy) {
-                    if (_codexProfilesBusy != busy) {
-                      setState(() => _codexProfilesBusy = busy);
-                    }
-                  },
-                )
-              else
-                Text(
-                  _availability('codex') == null
-                      ? _engineCheckFailed && !_checkingEngines
-                            ? 'Retry the agent check above to load Codex profiles.'
-                            : 'Checking whether $_machineName supports Codex profiles…'
-                      : 'Update Harness CLI on $_machineName to choose a Codex profile.',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-            ],
-            if (_engine == 'codex') ...[
-              const SizedBox(height: 12),
-              Divider(height: 1, color: grid.AppGlass.hair),
-              const SizedBox(height: 16),
-            ],
-            const FieldLabel('Permissions'),
-            if (bypassFlag != null)
-              _BypassCheck(
-                value: _bypassPermission,
-                flag: bypassFlag,
-                hovered: _bypassHovered,
-                onHover: (value) => setState(() => _bypassHovered = value),
-                onChanged: (value) => setState(() => _bypassPermission = value),
-              )
-            else
-              // Not silence: an engine with no checkbox looks identical to one whose
-              // checkbox the user simply missed.
-              Text(
-                'Managed by ${engineIdentity(_engine).label}.',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-          ],
-        ),
-      ],
-    );
-  }
+    ],
+  );
 
-  Widget _machineOptions() => AppChoicePicker<String>(
+  Widget _permissionOptions(String? bypassFlag) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      const FieldLabel('Permissions'),
+      if (bypassFlag != null)
+        _BypassCheck(
+          value: _bypassPermission,
+          flag: bypassFlag,
+          hovered: _bypassHovered,
+          onHover: (value) => setState(() => _bypassHovered = value),
+          onChanged: (value) => setState(() => _bypassPermission = value),
+        )
+      else
+        // Not silence: an engine with no checkbox looks identical to one whose
+        // checkbox the user simply missed.
+        Text(
+          'Managed by ${engineIdentity(_engine).label}.',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+    ],
+  );
+
+  Widget _machineOptions(Size tileSize) => AppChoicePicker<String>(
     key: const Key('new-agent-machine-field'),
     value: _machineId,
     moreKey: const Key('new-agent-machine-more'),
@@ -812,7 +779,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     showDetails: true,
     compact: true,
     wrap: true,
-    quiet: true,
+    tileSize: tileSize,
     allVisible: true,
     preferredValues: [
       for (final machine in widget.notifier.machineStates.values)
@@ -823,6 +790,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
         SelectOption(
           value: machine.machine.machineId,
           label: machine.machine.displayName,
+          detail: machine.isLocalMachine ? 'This machine' : null,
           note: machine.nodeOnline == false
               ? 'Offline'
               : machine.needsLink
@@ -856,13 +824,11 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
 /// The project picker shares Open Agent’s generous reading space.
 const double _dialogWidth = 1080;
 
-const double _gapTight = 4;
-
 /// Blocks inside one card: the command, the facts, the reason.
 const double _gapBlock = 12;
 
 /// One field and the next, down the choices column.
-const double _gapField = 20;
+const double _gapField = 24;
 
 class _Advanced extends StatelessWidget {
   const _Advanced({super.key, required this.open, required this.children});
@@ -874,20 +840,32 @@ class _Advanced extends StatelessWidget {
     offstage: !open,
     child: ExcludeFocus(
       excluding: !open,
-      child: Align(
-        alignment: Alignment.centerLeft,
-        child: Container(
-          constraints: const BoxConstraints(maxWidth: 560),
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: grid.AppSurface.hoverFill,
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            mainAxisSize: MainAxisSize.min,
-            children: children,
-          ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(4, 14, 4, 12),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            if (constraints.maxWidth >= 640 && children.length > 1) {
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (var i = 0; i < children.length; i++) ...[
+                    if (i > 0) const SizedBox(width: 32),
+                    Expanded(child: children[i]),
+                  ],
+                ],
+              );
+            }
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (var i = 0; i < children.length; i++) ...[
+                  if (i > 0) const SizedBox(height: 20),
+                  children[i],
+                ],
+              ],
+            );
+          },
         ),
       ),
     ),
@@ -902,7 +880,6 @@ class _BypassCheck extends StatelessWidget {
     required this.onHover,
     required this.onChanged,
   });
-
   final bool value;
   final String flag;
   final bool hovered;
@@ -912,7 +889,6 @@ class _BypassCheck extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     grid.AppTheme.watch(context);
-    final theme = Theme.of(context);
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       onEnter: (_) => onHover(true),
@@ -920,69 +896,28 @@ class _BypassCheck extends StatelessWidget {
       child: GestureDetector(
         onTap: () => onChanged(!value),
         behavior: HitTestBehavior.opaque,
-        child: AnimatedContainer(
-          duration: grid.AppMotion.hover,
-          curve: grid.AppMotion.curve,
-          // Bled out to the left so the row's fill lines up with the fields
-          // above it, and the text still starts on their left edge once the
-          // box and its gap are counted.
-          // NO SIDE PADDING. Ten pixels of it pushed the box in from the
-          // margin every other control on this dialog starts at, so the one row
-          // that is not a labelled field was also the one row that did not line
-          // up with them. The hover fill simply spans the row instead.
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          decoration: BoxDecoration(
-            color: hovered ? grid.AppSurface.hoverFill : Colors.transparent,
-            borderRadius: BorderRadius.circular(grid.AppControl.radius),
-          ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 10),
           child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Nudged down onto the label's own line: the row is top-aligned
-              // so the two-line block reads from its title, and a 16px box
-              // centred on a 13pt cap sits a hair proud of it.
-              Padding(
-                padding: const EdgeInsets.only(top: 1),
-                child: AppCheckbox(
-                  value: value,
-                  hovered: hovered,
-                  onChanged: onChanged,
-                ),
-              ),
+              AppCheckbox(value: value, hovered: hovered, onChanged: onChanged),
               const SizedBox(width: 10),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            'Bypass permission prompts',
-                            style: theme.textTheme.labelMedium?.copyWith(
-                              color: grid.AppPalette.textPrimary,
-                            ),
-                          ),
-                        ),
-                        Tooltip(
-                          message: flag,
-                          child: Icon(
-                            LucideIcons.info,
-                            size: 14,
-                            color: grid.AppPalette.textSecondary,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: _gapTight),
-                    Text(
-                      'Allow this agent to act without asking for approval.',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: grid.AppPalette.textSecondary,
-                      ),
-                    ),
-                  ],
+                child: Text(
+                  'Bypass approvals',
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: grid.AppPalette.textPrimary,
+                  ),
+                ),
+              ),
+              Tooltip(
+                message:
+                    'Allow this agent to act without asking for approval.\n$flag',
+                child: Icon(
+                  LucideIcons.info,
+                  size: 14,
+                  color: grid.AppPalette.textSecondary,
                 ),
               ),
             ],

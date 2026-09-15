@@ -122,7 +122,7 @@ void main() {
         }
         await tester.pumpAndSettle();
         expect(find.byType(AlertDialog), findsOneWidget);
-        expect(find.text('Cancel'), findsOneWidget);
+        expect(find.text('Cancel'), findsNothing);
         expect(find.text('Back to Search'), findsNothing);
         if (dismissal == 'outside') {
           await tester.tapAt(const Offset(12, 72));
@@ -629,7 +629,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('/work'), findsOneWidget);
-      expect(find.widgetWithText(FilledButton, 'Create Agent'), findsNothing);
+      expect(find.widgetWithText(FilledButton, 'Create'), findsNothing);
       final action = tester.widget<FilledButton>(
         find.widgetWithText(FilledButton, 'Check status'),
       );
