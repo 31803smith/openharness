@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/terminal/terminal_binary.dart';
+import 'package:harness/widgets/new_agent_dialog.dart';
 import 'package:xterm/xterm.dart';
 
 import 'swarm_interactions_test.dart' show chord;
@@ -151,17 +152,10 @@ void main() {
       expect(_results, findsNothing);
       await tester.tap(find.byKey(const ValueKey('harness-start-new')));
       await tester.pump(const Duration(milliseconds: 200));
-      expect(find.byType(AlertDialog), findsOneWidget);
-      expect(
-        find.descendant(
-          of: find.byType(AlertDialog),
-          matching: find.widgetWithText(FilledButton, 'New Agent'),
-        ),
-        findsOneWidget,
-      );
-      expect(find.text('Back to Search'), findsNothing);
-      expect(find.text('Cancel'), findsNothing);
-      expect(_results, findsNothing);
+      expect(find.byType(NewAgentComposer), findsOneWidget);
+      expect(find.widgetWithText(FilledButton, 'Create'), findsOneWidget);
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(_results, findsOneWidget);
       await tester.tapAt(const Offset(20, 200));
       await tester.pump(const Duration(milliseconds: 200));
       expect(find.byType(AlertDialog), findsNothing);

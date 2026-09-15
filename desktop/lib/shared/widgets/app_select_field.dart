@@ -74,6 +74,7 @@ class AppSelectField<T> extends StatefulWidget {
     this.width,
     this.height = AppControl.height,
     this.trigger,
+    this.focusNode,
   });
 
   final T value;
@@ -88,6 +89,7 @@ class AppSelectField<T> extends StatefulWidget {
   /// An alternate compact trigger, such as the agent picker's More button.
   /// Selection, keyboard navigation and menu rows remain shared.
   final Widget? trigger;
+  final FocusNode? focusNode;
 
   @override
   State<AppSelectField<T>> createState() => _AppSelectFieldState<T>();
@@ -95,7 +97,8 @@ class AppSelectField<T> extends StatefulWidget {
 
 class _AppSelectFieldState<T> extends State<AppSelectField<T>> {
   final _controller = MenuController();
-  final _fieldFocus = FocusNode(debugLabel: 'Select field');
+  final _ownedFocus = FocusNode(debugLabel: 'Select field');
+  FocusNode get _fieldFocus => widget.focusNode ?? _ownedFocus;
   final _optionFocus = <T, FocusNode>{};
   ({T value})? _pendingFocus;
   String _prefix = '';
@@ -139,7 +142,7 @@ class _AppSelectFieldState<T> extends State<AppSelectField<T>> {
 
   @override
   void dispose() {
-    _fieldFocus.dispose();
+    _ownedFocus.dispose();
     for (final node in _optionFocus.values) {
       node.dispose();
     }
@@ -385,80 +388,83 @@ class _AppSelectFieldState<T> extends State<AppSelectField<T>> {
               hoverColor: Colors.transparent,
               focusColor: Colors.transparent,
               borderRadius: BorderRadius.circular(AppControl.radius),
-              child: AnimatedContainer(
-                duration: AppMotion.hover,
-                curve: AppMotion.curve,
+              child: SizedBox(
                 width: widget.width,
                 height: widget.height,
-                padding: const EdgeInsets.only(left: 10, right: 8),
-                decoration: BoxDecoration(
-                  color: _hovered || _focused || controller.isOpen
-                      ? AppSurface.recessHover
-                      : AppSurface.recess,
-                  borderRadius: BorderRadius.circular(AppControl.radius),
-                  border: Border.all(
-                    color: _focused
-                        ? AppPalette.accentOnSurface
-                        : Colors.transparent,
+                child: AnimatedContainer(
+                  duration: AppMotion.hover,
+                  curve: AppMotion.curve,
+                  padding: const EdgeInsets.only(left: 10, right: 8),
+                  decoration: BoxDecoration(
+                    color: _hovered || _focused || controller.isOpen
+                        ? AppSurface.recessHover
+                        : AppSurface.recess,
+                    borderRadius: BorderRadius.circular(AppControl.radius),
+                    border: Border.all(
+                      color: _focused
+                          ? AppPalette.accentOnSurface
+                          : Colors.transparent,
+                    ),
                   ),
-                ),
-                child:
-                    widget.trigger ??
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Row(
-                            children: [
-                              if (current?.leading != null) ...[
-                                current!.leading!(),
-                                const SizedBox(width: 8),
-                              ],
-                              Flexible(
-                                child: Text(
-                                  current?.label ?? '—',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontFamily: AppFont.sans,
-                                    fontFamilyFallback: AppFont.sansFallback,
-                                    fontSize: AppControl.fontSize,
-                                    fontWeight: AppControl.fontWeight,
-                                    letterSpacing: AppFont.trackingFor(
-                                      AppControl.fontSize,
-                                    ),
-                                    color: AppPalette.textPrimary,
-                                  ),
-                                ),
-                              ),
-                              if (current?.note != null) ...[
-                                const SizedBox(width: 8),
+                  child:
+                      widget.trigger ??
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Row(
+                              children: [
+                                if (current?.leading != null) ...[
+                                  current!.leading!(),
+                                  const SizedBox(width: 8),
+                                ],
                                 Flexible(
                                   child: Text(
-                                    current!.note!,
+                                    current?.label ?? '—',
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                     style: TextStyle(
                                       fontFamily: AppFont.sans,
                                       fontFamilyFallback: AppFont.sansFallback,
-                                      fontSize: 11.5,
-                                      color: AppPalette.textFaint,
+                                      fontSize: AppControl.fontSize,
+                                      fontWeight: AppControl.fontWeight,
+                                      letterSpacing: AppFont.trackingFor(
+                                        AppControl.fontSize,
+                                      ),
+                                      color: AppPalette.textPrimary,
                                     ),
                                   ),
                                 ),
+                                if (current?.note != null) ...[
+                                  const SizedBox(width: 8),
+                                  Flexible(
+                                    child: Text(
+                                      current!.note!,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontFamily: AppFont.sans,
+                                        fontFamilyFallback:
+                                            AppFont.sansFallback,
+                                        fontSize: 11.5,
+                                        color: AppPalette.textFaint,
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ],
-                            ],
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 6),
-                        Icon(
-                          Icons.expand_more_rounded,
-                          size: AppControl.iconSize,
-                          color: _hovered || controller.isOpen
-                              ? AppPalette.textPrimary
-                              : AppPalette.textSecondary,
-                        ),
-                      ],
-                    ),
+                          const SizedBox(width: 6),
+                          Icon(
+                            Icons.expand_more_rounded,
+                            size: AppControl.iconSize,
+                            color: _hovered || controller.isOpen
+                                ? AppPalette.textPrimary
+                                : AppPalette.textSecondary,
+                          ),
+                        ],
+                      ),
+                ),
               ),
             ),
           ),

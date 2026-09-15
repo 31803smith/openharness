@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../analytics/analytics.dart';
@@ -17,6 +18,8 @@ import '../shared/widgets/app_dialog.dart';
 import '../shared/widgets/app_select_field.dart';
 import '../shared/widgets/labeled_field.dart';
 import '../state/app_state.dart';
+import '../shortcuts/app_keymap.dart';
+import '../shortcuts/keymap.dart';
 import 'engine_identity.dart';
 import 'codex_profile_field.dart';
 import 'agent_picker.dart';
@@ -79,6 +82,49 @@ Future<NewAgentDialogResult?> showNewAgentDialog(
   );
 }
 
+/// Creation stays mounted beside search, so editing a query never resets it.
+class NewAgentComposer extends StatelessWidget {
+  const NewAgentComposer({
+    super.key,
+    required this.notifier,
+    required this.machineId,
+    required this.swarmId,
+    required this.onFinished,
+    required this.onBusyChanged,
+    required this.onDismiss,
+    this.initialFolder,
+    this.split,
+    this.focusNode,
+    this.available = true,
+  });
+
+  final AppNotifier notifier;
+  final String machineId, swarmId;
+  final String? initialFolder;
+  final PaneSplitRequest? split;
+  final FocusNode? focusNode;
+  final bool available;
+  final VoidCallback onFinished, onDismiss;
+  final ValueChanged<bool> onBusyChanged;
+
+  @override
+  Widget build(BuildContext context) => _NewAgentDialog(
+    notifier: notifier,
+    machineId: machineId,
+    swarmId: swarmId,
+    initialFolder: initialFolder,
+    split: split,
+    offerFindExisting: false,
+    offerBackToSearch: false,
+    embedded: true,
+    available: available,
+    creationFocus: focusNode,
+    onFinished: onFinished,
+    onBusyChanged: onBusyChanged,
+    onDismiss: onDismiss,
+  );
+}
+
 class _NewAgentDialog extends StatefulWidget {
   final AppNotifier notifier;
   final String machineId;
@@ -88,6 +134,10 @@ class _NewAgentDialog extends StatefulWidget {
   final Future<void>? initialEngineProbe;
   final bool offerFindExisting;
   final bool offerBackToSearch;
+  final bool embedded, available;
+  final FocusNode? creationFocus;
+  final VoidCallback? onFinished, onDismiss;
+  final ValueChanged<bool>? onBusyChanged;
 
   const _NewAgentDialog({
     required this.notifier,
@@ -98,6 +148,12 @@ class _NewAgentDialog extends StatefulWidget {
     this.initialEngineProbe,
     required this.offerFindExisting,
     required this.offerBackToSearch,
+    this.embedded = false,
+    this.available = true,
+    this.creationFocus,
+    this.onFinished,
+    this.onBusyChanged,
+    this.onDismiss,
   });
 
   @override
@@ -109,7 +165,10 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   final _actionFocus = FocusNode(debugLabel: 'Create or check agent');
   final _repositoryFocus = FocusNode(debugLabel: 'Repository URL');
   final _repository = TextEditingController();
-  _FolderSource _folderSource = _FolderSource.local;
+  late _FolderSource _folderSource =
+      widget.embedded && widget.initialFolder == null
+      ? _FolderSource.newProject
+      : _FolderSource.local;
   String? _preparedFolder;
   AgentCreationAttempt? _creation;
   bool _checkingCreation = false;
@@ -154,18 +213,14 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     // engine and is only ever read on this screen. Deferred a frame so the
     // probe's first notifyListeners() does not land mid-build.
     //
-    // `force`, every time this dialog opens. A cached answer is worth nothing
-    // here: engines arrive and leave through a terminal this app never sees —
-    // `npm i -g opencode-ai`, `npm uninstall -g`, a venv deleted out from under
-    // a symlink — and an install this very dialog started makes its own stored
-    // answer stale the moment it finishes. Re-asking is bounded (one sweep, on
-    // a deliberate user action) and the stored rows keep rendering until the new
-    // answer lands, so nothing blanks.
+    // Explicit standalone creation refreshes availability. The shared search
+    // surface reuses the cached answer, so opening search doesn't repeat a
+    // sweep of interactive shells. Launch still checks the selected engine.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         // The modal's fallback focus can win autofocus. Claim the first
         // actionable control once the route and its focus tree are mounted.
-        _folderFocus.requestFocus();
+        if (!widget.embedded) _folderFocus.requestFocus();
         unawaited(_probeEngines(initialProbe: widget.initialEngineProbe));
         unawaited(_loadAgentPreference());
       }
@@ -202,7 +257,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     final machineId = _machineId;
     final revision = _machineRevision;
     await (initialProbe ??
-        widget.notifier.probeEngines(machineId, force: true));
+        widget.notifier.probeEngines(machineId, force: !widget.embedded));
     if (!mounted ||
         revision != _machineRevision ||
         _choicesLocked ||
@@ -371,6 +426,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     // remote filesystem over the `fs_list_dir` RPC.
     var acceptedFolder = false;
     setState(() => _picking = true);
+    _reportBusy();
     final pickingRevision = _machineRevision;
     try {
       final picked = _machineIsThisComputer
@@ -401,6 +457,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
         }
       });
     } finally {
+      if (mounted) _reportBusy();
       if (mounted && restoreFocus) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted &&
@@ -426,7 +483,8 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     final folder =
         _preparedFolder ??
         (_folderSource == _FolderSource.local ? _folder : null);
-    if ((folder == null && project == null) ||
+    if ((!widget.available && !_confirmationPending) ||
+        (folder == null && project == null) ||
         _submitting ||
         (!_confirmationPending && _waitingForCodexProfile)) {
       return;
@@ -441,6 +499,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
       _submitting = true;
       _error = null;
     });
+    _reportBusy();
     final error = await widget.notifier.createAgent(
       _machineId,
       engine: engine,
@@ -463,14 +522,23 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
         _submitting = false;
         _error = error;
       });
+      _reportBusy();
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _actionFocus.requestFocus();
       });
       return;
     }
     analytics.agentCreated(engine: engine, bypassPermission: bypassPermission);
-    Navigator.of(context).pop(NewAgentDialogResult.created);
+    if (widget.embedded) {
+      widget.onFinished!();
+    } else {
+      Navigator.of(context).pop(NewAgentDialogResult.created);
+    }
   }
+
+  void _reportBusy() => widget.onBusyChanged?.call(
+    _submitting || _picking || _confirmationPending,
+  );
 
   ProjectFolderRequest? get _projectFolder => switch (_folderSource) {
     _FolderSource.newProject => const ProjectFolderRequest.newProject(),
@@ -490,6 +558,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      if (widget.embedded && source != _FolderSource.remote) return;
       switch (source) {
         case _FolderSource.local:
           _folderFocus.requestFocus();
@@ -513,7 +582,407 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
         // The launch request cannot be cancelled after it is sent. Keep its
         // outcome visible instead of allowing an accidental second launch.
         canPop: !_submitting,
-        child: _buildDialog(context),
+        child: widget.embedded
+            ? _buildComposer(context)
+            : _buildDialog(context),
+      ),
+    );
+  }
+
+  void _selectEngine(String value) {
+    if (value == _engine || _choicesLocked || _picking) return;
+    setState(() {
+      unawaited(widget.notifier.agentPreference.select(value));
+      _engineChosenByUser = true;
+      _engine = value;
+      _error = null;
+      _codexProfile = null;
+      _codexProfilesBusy = true;
+      if (!kEngineBypassPermissionFlag.containsKey(value)) {
+        _bypassPermission = false;
+      }
+    });
+  }
+
+  void _selectMachine(String id) {
+    if (id == _machineId || _choicesLocked) return;
+    setState(() {
+      _machineRevision++;
+      _machineId = id;
+      _folder = null;
+      _preparedFolder = null;
+      if (widget.embedded && _folderSource == _FolderSource.local) {
+        _folderSource = _FolderSource.newProject;
+      }
+      _codexProfile = null;
+      _codexProfilesBusy = true;
+      _error = null;
+    });
+    unawaited(_probeEngines());
+  }
+
+  String _folderName(String path) =>
+      path
+          .replaceAll(r'\', '/')
+          .split('/')
+          .where((part) => part.isNotEmpty)
+          .lastOrNull ??
+      path;
+
+  String get _projectValue => switch (_folderSource) {
+    _FolderSource.newProject => 'new',
+    _FolderSource.remote => 'remote',
+    _FolderSource.local => _folder == null ? 'unselected' : 'folder:$_folder',
+  };
+
+  String get _projectLabel => switch (_folderSource) {
+    _FolderSource.newProject => 'New project',
+    _FolderSource.remote => 'Remote repository',
+    _FolderSource.local =>
+      _folder == null ? 'Local folder…' : _folderName(_folder!),
+  };
+
+  List<SelectOption<String>> get _projectOptions {
+    return [
+      SelectOption(
+        value: 'new',
+        label: 'New project',
+        detail: 'Create a folder in ~/Harness Projects',
+        leading: () => const Icon(LucideIcons.folderPlus, size: 18),
+      ),
+      SelectOption(
+        value: 'browse',
+        label: 'Local folder…',
+        detail: 'Choose an existing folder on $_machineName',
+        leading: () => const Icon(LucideIcons.folderOpen, size: 18),
+      ),
+      SelectOption(
+        value: 'remote',
+        label: 'Remote repository…',
+        detail: 'Clone a GitHub repository on $_machineName',
+        leading: () => const Icon(LucideIcons.gitBranch, size: 18),
+      ),
+      if (_folder case final folder?)
+        SelectOption(
+          value: 'folder:$folder',
+          label: _folderName(folder),
+          detail: folder,
+          leading: () => const Icon(LucideIcons.folder, size: 18),
+        ),
+    ];
+  }
+
+  Future<void> _selectProject(String value) async {
+    if (_choicesLocked || _picking) return;
+    if (value == 'new') {
+      _selectFolderSource(_FolderSource.newProject);
+    } else if (value == 'remote') {
+      _selectFolderSource(_FolderSource.remote);
+    } else if (value == 'browse') {
+      _selectFolderSource(_FolderSource.local);
+      await _browse();
+    } else if (value.startsWith('folder:')) {
+      setState(() {
+        _folderSource = _FolderSource.local;
+        _folder = value.substring('folder:'.length);
+        _preparedFolder = null;
+        _error = null;
+      });
+    }
+  }
+
+  Widget _composerSelect({
+    required String label,
+    required String value,
+    required String selectedLabel,
+    required Widget icon,
+    required List<SelectOption<String>> options,
+    required ValueChanged<String> onChanged,
+    FocusNode? focusNode,
+  }) => Semantics(
+    label: label,
+    child: Tooltip(
+      message: selectedLabel,
+      child: AppSelectField<String>(
+        key: ValueKey('agent-composer-${label.toLowerCase()}'),
+        value: value,
+        options: options,
+        onChanged: onChanged,
+        focusNode: focusNode,
+        height: 58 * MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 1.5),
+        trigger: Row(
+          children: [
+            icon,
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: grid.AppPalette.textSecondary,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    selectedLabel,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Icon(
+              Icons.expand_more_rounded,
+              size: 18,
+              color: grid.AppPalette.textSecondary,
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+
+  bool get _canSubmit =>
+      (widget.available || _confirmationPending) &&
+      (_preparedFolder != null ||
+          (_folderSource == _FolderSource.local
+              ? _folder != null
+              : _projectFolder != null)) &&
+      !_picking &&
+      !_submitting &&
+      (_confirmationPending || !_waitingForCodexProfile);
+
+  Widget _buildComposer(BuildContext context) {
+    final bypassFlag = kEngineBypassPermissionFlag[_engine];
+    final scale = MediaQuery.textScalerOf(context).scale(1);
+    final height = 58 * scale.clamp(1.0, 1.5);
+    final fields = <Widget>[
+      _composerSelect(
+        label: 'Agent',
+        value: _engine,
+        selectedLabel: _engine == 'claude'
+            ? 'Claude Code'
+            : engineIdentity(_engine).label,
+        icon: EngineMark(engine: _engine, size: 20),
+        focusNode: widget.creationFocus,
+        options: [
+          for (final identity in allEngines)
+            SelectOption(
+              value: identity.id,
+              label: identity.id == 'claude' ? 'Claude Code' : identity.label,
+              note: _engineInstallNote(identity.id),
+              leading: () => EngineMark(engine: identity.id, size: 18),
+            ),
+        ],
+        onChanged: _selectEngine,
+      ),
+      _composerSelect(
+        label: 'Project',
+        value: _projectValue,
+        selectedLabel: _projectLabel,
+        icon: Icon(
+          _folderSource == _FolderSource.remote
+              ? LucideIcons.gitBranch
+              : LucideIcons.folder,
+          size: 20,
+        ),
+        options: _projectOptions,
+        onChanged: _selectProject,
+      ),
+      _composerSelect(
+        label: 'Machine',
+        value: _machineId,
+        selectedLabel: _machineName,
+        icon: Icon(
+          _machineIsThisComputer ? LucideIcons.laptop : LucideIcons.monitor,
+          size: 20,
+        ),
+        options: [
+          for (final machine in widget.notifier.machineStates.values)
+            SelectOption(
+              value: machine.machine.machineId,
+              label: machine.machine.displayName,
+              detail: _machineDetail(machine),
+              leading: () => Icon(
+                machine.isLocalMachine
+                    ? LucideIcons.laptop
+                    : LucideIcons.monitor,
+                size: 18,
+              ),
+            ),
+        ],
+        onChanged: _selectMachine,
+      ),
+    ];
+    final create = SizedBox(
+      height: height,
+      child: FilledButton(
+        key: const ValueKey('create-agent-submit'),
+        focusNode: _actionFocus,
+        onPressed: _canSubmit ? _submit : null,
+        style: FilledButton.styleFrom(
+          backgroundColor: grid.AppPalette.swarmAccent,
+          foregroundColor: grid.AppPalette.swarmTabBar,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
+        ),
+        child: _submitting
+            ? Semantics(
+                liveRegion: true,
+                label: _checkingCreation
+                    ? 'Checking agent status'
+                    : 'Creating agent',
+                child: const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              )
+            : Text(_confirmationPending ? 'Check status' : 'Create'),
+      ),
+    );
+    return KeymapRegion(
+      // Search navigation must never handle an arrow or Enter in a form/menu.
+      contextKind: KeymapContext.workspace,
+      actions: {'agent.new': () => widget.creationFocus?.requestFocus()},
+      child: CallbackShortcuts(
+        bindings: {
+          const SingleActivator(LogicalKeyboardKey.escape): () {
+            if (!_submitting && !_picking && !_confirmationPending) {
+              widget.onDismiss?.call();
+            }
+          },
+        },
+        child: Material(
+          color: grid.AppPalette.swarmSearchSurface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+            side: const BorderSide(color: Colors.white12),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        switch (widget.split?.axis) {
+                          PaneResizeAxis.x => 'New agent · split right',
+                          PaneResizeAxis.y => 'New agent · split down',
+                          null => 'New agent',
+                        },
+                        style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    if (_confirmationPending)
+                      TextButton(
+                        onPressed: _submitting ? null : widget.onFinished,
+                        child: const Text('Close'),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final wide =
+                        constraints.maxWidth >= 700 * scale.clamp(1.0, 1.5);
+                    Widget choices(Widget child) => AbsorbPointer(
+                      absorbing: _choicesLocked || _picking,
+                      child: ExcludeFocus(
+                        excluding: _choicesLocked || _picking,
+                        child: child,
+                      ),
+                    );
+                    if (wide) {
+                      return Row(
+                        children: [
+                          for (var i = 0; i < fields.length; i++) ...[
+                            Expanded(
+                              flex: i == 1 ? 3 : 2,
+                              child: choices(fields[i]),
+                            ),
+                            const SizedBox(width: 10),
+                          ],
+                          SizedBox(width: 116 * scale, child: create),
+                        ],
+                      );
+                    }
+                    final width = constraints.maxWidth >= 440
+                        ? (constraints.maxWidth - 10) / 2
+                        : constraints.maxWidth;
+                    return Wrap(
+                      spacing: 10,
+                      runSpacing: 10,
+                      children: [
+                        for (final field in fields)
+                          SizedBox(width: width, child: choices(field)),
+                        SizedBox(width: width, child: create),
+                      ],
+                    );
+                  },
+                ),
+                if (_folderSource == _FolderSource.remote) ...[
+                  const SizedBox(height: 12),
+                  TextField(
+                    key: const ValueKey('new-agent-repository'),
+                    controller: _repository,
+                    focusNode: _repositoryFocus,
+                    enabled: !_choicesLocked,
+                    decoration: const InputDecoration(
+                      hintText: 'GitHub URL or owner/repository',
+                    ),
+                    onChanged: (_) => setState(() {
+                      _preparedFolder = null;
+                      _error = null;
+                    }),
+                    onSubmitted: (_) {
+                      if (_canSubmit) _submit();
+                    },
+                  ),
+                ],
+                if (_error != null) ...[
+                  const SizedBox(height: 10),
+                  Semantics(
+                    liveRegion: true,
+                    child: Text(
+                      _error!,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: _confirmationPending
+                            ? grid.AppPalette.textSecondary
+                            : Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                  ),
+                ],
+                AbsorbPointer(
+                  absorbing: _choicesLocked || _picking,
+                  child: ExcludeFocus(
+                    excluding: _choicesLocked || _picking,
+                    child: _details(bypassFlag),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -671,19 +1140,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                   ),
                 ),
             ],
-            onChanged: (id) {
-              if (id == _machineId || _choicesLocked) return;
-              setState(() {
-                _machineRevision++;
-                _machineId = id;
-                _folder = null;
-                _preparedFolder = null;
-                _codexProfile = null;
-                _codexProfilesBusy = true;
-                _error = null;
-              });
-              unawaited(_probeEngines());
-            },
+            onChanged: _selectMachine,
           ),
           const SizedBox(height: _gapField),
         ],
@@ -773,139 +1230,138 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                     : null,
               ),
           ],
-          onChanged: (value) => setState(() {
-            unawaited(widget.notifier.agentPreference.select(value));
-            _engineChosenByUser = true;
-            _engine = value;
-            _error = null;
-            _codexProfile = null;
-            _codexProfilesBusy = true;
-            if (!kEngineBypassPermissionFlag.containsKey(value)) {
-              _bypassPermission = false;
-            }
-          }),
+          onChanged: _selectEngine,
         ),
-        // Unconditional now: Codex here is always on its own login, so the
-        // profile it runs under is always a live question.
-        // WHAT THE SUMMARY'S HEADING USED TO SAY, minus the half that had
-        // somewhere else to live.
-        //
-        // Four states were printed on that card. Two of them already have a
-        // home: "not installed" is a note on the engine's own row, and "pick a
-        // folder" is the Create button being disabled. These two had nowhere
-        // else, and losing them would have made a machine that Harness has not
-        // managed to reach look exactly like one it has.
-        if (!_confirmationPending && (_willInstall || _engineCheckFailed)) ...[
-          const SizedBox(height: 6),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Text(
-                  _willInstall
-                      ? 'Harness will install ${engineIdentity(_engine).label} before starting.'
-                      : 'Couldn’t check whether ${engineIdentity(_engine).label} is installed. '
-                            'You can still try creating an agent.',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: _willInstall
-                        ? grid.AppPalette.accentOnSurface
-                        : grid.AppPalette.textSecondary,
-                  ),
-                ),
-              ),
-              if (_engineCheckFailed) ...[
-                const SizedBox(width: 12),
-                TextButton(
-                  key: const Key('new-agent-retry-check'),
-                  onPressed: _checkingEngines ? null : _retryEngineCheck,
-                  child: Text(_checkingEngines ? 'Checking…' : 'Retry'),
-                ),
-              ],
-            ],
-          ),
-        ],
-        // THE FOLD. What is behind it is what most people never touch: a Codex
-        // home to run under, and the flag that turns the approvals off. Leaving
-        // them in the main column made this a four-question dialog to do a
-        // two-question job.
-        //
-        // The row REPORTS ITS OWN STATE on the right, and that is what makes
-        // folding them away safe rather than merely tidy. A drawer that hides
-        // what it is set to is a drawer people open every time to check.
-        const SizedBox(height: _gapBlock),
-        _Advanced(
-          open: _advancedOpen,
-          state: _advancedState(),
-          onToggle: () => setState(() => _advancedOpen = !_advancedOpen),
-          children: [
-            if (_engineCheckFailed) ...[
-              Text(
-                'If $_machineName uses an older Harness CLI, update it to enable engine checks.',
-                style: Theme.of(context).textTheme.bodySmall
-                    ?.copyWith(color: grid.AppPalette.textSecondary),
-              ),
-              const SizedBox(height: 10),
-            ],
-            if (_engine == 'codex') ...[
-              if (_availability('codex')?.supportsCodexHome == true)
-                CodexProfileField(
-                  notifier: widget.notifier,
-                  machineId: _machineId,
-                  machineIsThisComputer: _machineIsThisComputer,
-                  value: _codexProfile,
-                  observedPaths: {
-                    for (final agent
-                        in widget.notifier.stateOf(_machineId)!.agents)
-                      if (agent.engine == 'codex' && agent.codexHome != null)
-                        agent.codexHome!,
-                  },
-                  onChanged: (profile) {
-                    if (!_choicesLocked) {
-                      setState(() => _codexProfile = profile);
-                    }
-                  },
-                  onBusyChanged: (busy) {
-                    if (_codexProfilesBusy != busy) {
-                      setState(() => _codexProfilesBusy = busy);
-                    }
-                  },
-                )
-              else
-                Text(
-                  _availability('codex') == null
-                      ? _engineCheckFailed && !_checkingEngines
-                            ? 'Retry the agent check above to load Codex profiles.'
-                            : 'Checking whether $_machineName supports Codex profiles…'
-                      : 'Update Harness CLI on $_machineName to choose a Codex profile.',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-            ],
-            if (_engine == 'codex') ...[
-              const SizedBox(height: 12),
-              Divider(height: 1, color: grid.AppGlass.hair),
-              const SizedBox(height: 16),
-            ],
-            const FieldLabel('Permissions'),
-            if (bypassFlag != null)
-              _BypassCheck(
-                value: _bypassPermission,
-                flag: bypassFlag,
-                hovered: _bypassHovered,
-                onHover: (value) => setState(() => _bypassHovered = value),
-                onChanged: (value) => setState(() => _bypassPermission = value),
-              )
-            else
-              // Not silence: an engine with no checkbox looks identical to one whose
-              // checkbox the user simply missed.
-              Text(
-                'Managed by ${engineIdentity(_engine).label}.',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-          ],
-        ),
+        _details(bypassFlag),
       ],
     );
   }
+
+  Widget _details(String? bypassFlag) => Column(
+    mainAxisSize: MainAxisSize.min,
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      // Unconditional now: Codex here is always on its own login, so the
+      // profile it runs under is always a live question.
+      // WHAT THE SUMMARY'S HEADING USED TO SAY, minus the half that had
+      // somewhere else to live.
+      //
+      // Four states were printed on that card. Two of them already have a
+      // home: "not installed" is a note on the engine's own row, and "pick a
+      // folder" is the Create button being disabled. These two had nowhere
+      // else, and losing them would have made a machine that Harness has not
+      // managed to reach look exactly like one it has.
+      if (!_confirmationPending && (_willInstall || _engineCheckFailed)) ...[
+        const SizedBox(height: 6),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Text(
+                _willInstall
+                    ? 'Harness will install ${engineIdentity(_engine).label} before starting.'
+                    : 'Couldn’t check whether ${engineIdentity(_engine).label} is installed. '
+                          'You can still try creating an agent.',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: _willInstall
+                      ? grid.AppPalette.accentOnSurface
+                      : grid.AppPalette.textSecondary,
+                ),
+              ),
+            ),
+            if (_engineCheckFailed) ...[
+              const SizedBox(width: 12),
+              TextButton(
+                key: const Key('new-agent-retry-check'),
+                onPressed: _checkingEngines ? null : _retryEngineCheck,
+                child: Text(_checkingEngines ? 'Checking…' : 'Retry'),
+              ),
+            ],
+          ],
+        ),
+      ],
+      // THE FOLD. What is behind it is what most people never touch: a Codex
+      // home to run under, and the flag that turns the approvals off. Leaving
+      // them in the main column made this a four-question dialog to do a
+      // two-question job.
+      //
+      // The row REPORTS ITS OWN STATE on the right, and that is what makes
+      // folding them away safe rather than merely tidy. A drawer that hides
+      // what it is set to is a drawer people open every time to check.
+      SizedBox(height: widget.embedded ? 6 : _gapBlock),
+      _Advanced(
+        compact: widget.embedded,
+        open: _advancedOpen,
+        state: _advancedState(),
+        onToggle: () => setState(() => _advancedOpen = !_advancedOpen),
+        children: [
+          if (_engineCheckFailed) ...[
+            Text(
+              'If $_machineName uses an older Harness CLI, update it to enable engine checks.',
+              style: Theme.of(context).textTheme.bodySmall
+                  ?.copyWith(color: grid.AppPalette.textSecondary),
+            ),
+            const SizedBox(height: 10),
+          ],
+          if (_engine == 'codex') ...[
+            if (_availability('codex')?.supportsCodexHome == true)
+              CodexProfileField(
+                notifier: widget.notifier,
+                machineId: _machineId,
+                machineIsThisComputer: _machineIsThisComputer,
+                value: _codexProfile,
+                observedPaths: {
+                  for (final agent
+                      in widget.notifier.stateOf(_machineId)!.agents)
+                    if (agent.engine == 'codex' && agent.codexHome != null)
+                      agent.codexHome!,
+                },
+                onChanged: (profile) {
+                  if (!_choicesLocked) {
+                    setState(() => _codexProfile = profile);
+                  }
+                },
+                onBusyChanged: (busy) {
+                  if (_codexProfilesBusy != busy) {
+                    setState(() => _codexProfilesBusy = busy);
+                  }
+                },
+              )
+            else
+              Text(
+                _availability('codex') == null
+                    ? _engineCheckFailed && !_checkingEngines
+                          ? 'Retry the agent check above to load Codex profiles.'
+                          : 'Checking whether $_machineName supports Codex profiles…'
+                    : 'Update Harness CLI on $_machineName to choose a Codex profile.',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+          ],
+          if (_engine == 'codex') ...[
+            const SizedBox(height: 12),
+            Divider(height: 1, color: grid.AppGlass.hair),
+            const SizedBox(height: 16),
+          ],
+          const FieldLabel('Permissions'),
+          if (bypassFlag != null)
+            _BypassCheck(
+              value: _bypassPermission,
+              flag: bypassFlag,
+              hovered: _bypassHovered,
+              onHover: (value) => setState(() => _bypassHovered = value),
+              onChanged: (value) => setState(() => _bypassPermission = value),
+            )
+          else
+            // Not silence: an engine with no checkbox looks identical to one whose
+            // checkbox the user simply missed.
+            Text(
+              'Managed by ${engineIdentity(_engine).label}.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+        ],
+      ),
+    ],
+  );
 }
 
 /// Room for three readable machine choices and the overflow control in one row.
@@ -1001,13 +1457,14 @@ const double _gapField = 16;
 /// already what this app gives that flag wherever else it appears.
 class _Advanced extends StatelessWidget {
   const _Advanced({
+    this.compact = false,
     required this.open,
     required this.state,
     required this.onToggle,
     required this.children,
   });
 
-  final bool open;
+  final bool open, compact;
 
   /// What is set, in a few words — see `_advancedState`. Empty says nothing.
   final String state;
@@ -1022,13 +1479,13 @@ class _Advanced extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        Divider(height: 1, color: grid.AppGlass.hair),
+        if (!compact) Divider(height: 1, color: grid.AppGlass.hair),
         InkWell(
           key: const Key('new-agent-advanced'),
           onTap: onToggle,
           borderRadius: BorderRadius.circular(6),
           child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 9),
+            padding: EdgeInsets.symmetric(vertical: compact ? 6 : 9),
             child: Row(
               children: [
                 // Rotated rather than swapped for a second glyph: one shape
@@ -1045,10 +1502,12 @@ class _Advanced extends StatelessWidget {
                 ),
                 const SizedBox(width: 6),
                 Text(
-                  'Advanced',
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: grid.AppPalette.textSecondary,
-                  ),
+                  compact ? 'Options' : 'Advanced',
+                  style:
+                      (compact
+                              ? theme.textTheme.bodySmall
+                              : theme.textTheme.bodyMedium)
+                          ?.copyWith(color: grid.AppPalette.textSecondary),
                 ),
                 const Spacer(),
                 if (!open)

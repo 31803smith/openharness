@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:harness/shared/widgets/app_select_field.dart';
+import 'package:harness/widgets/new_agent_dialog.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/screens/swarm_screen.dart';
@@ -581,7 +583,7 @@ void main() {
     (true, true),
   ]) {
     testWidgets(
-      'New closes inline search before opening its form (native=$fromMenu, result focused=$resultFocused)',
+      'New moves from inline search to the shared creation row (native=$fromMenu, result focused=$resultFocused)',
       (tester) async {
         tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
           nativeChannel,
@@ -612,11 +614,17 @@ void main() {
           await key(tester, LogicalKeyboardKey.keyN, cmd: true, shift: true);
         }
         await tester.pumpAndSettle();
-        expect(find.byType(AlertDialog), findsOneWidget);
-        expect(find.byType(SwarmSearchResults), findsNothing);
+        expect(find.byType(NewAgentComposer), findsOneWidget);
+        expect(find.byType(SwarmSearchResults), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('harness-start-results')),
+          findsNothing,
+        );
         expect(
           tester
-              .widget<InkWell>(find.byKey(const Key('new-agent-folder')))
+              .widget<AppSelectField<String>>(
+                find.byKey(const ValueKey('agent-composer-agent')),
+              )
               .focusNode!
               .hasPrimaryFocus,
           isTrue,

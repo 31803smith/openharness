@@ -60,6 +60,7 @@ class _Connection extends WsConn {
     Map<String, dynamic> payload = const {},
     Duration timeout = const Duration(seconds: 20),
   }) {
+    if (type == 'agent_recent') return Future.value(<String, dynamic>{});
     if (type == 'engines_probe') return Future.value({'engines': []});
     if (type == 'codex_profiles_list') return Future.value({'profiles': []});
     final request = _Request(type, Map.of(payload));
@@ -86,6 +87,13 @@ Future<void> _timeOut(
   expect(attempt.awaitingConfirmation, isTrue);
 }
 
+Future<void> _chooseLocal(WidgetTester tester) async {
+  await tester.tap(find.byKey(const ValueKey('agent-composer-project')));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('Local folder…'));
+  await tester.pumpAndSettle();
+}
+
 void main() {
   for (final entry in ['header', 'shortcut', 'search shortcut', 'start page']) {
     for (final dismissal in ['outside', 'escape']) {
@@ -106,7 +114,7 @@ void main() {
               find.byKey(const ValueKey('swarm-add-harness-button')),
             );
             await tester.pump();
-            await tester.tap(find.byKey(const ValueKey('harness-picker-new')));
+            await chord(tester, LogicalKeyboardKey.keyN, shift: true);
           case 'start page':
             await chord(tester, LogicalKeyboardKey.keyT);
             await tester.tap(find.byKey(const ValueKey('harness-start-new')));
@@ -121,7 +129,7 @@ void main() {
             await chord(tester, LogicalKeyboardKey.keyN, shift: true);
         }
         await tester.pumpAndSettle();
-        expect(find.byType(AlertDialog), findsOneWidget);
+        expect(find.byType(NewAgentComposer), findsOneWidget);
         expect(find.text('Cancel'), findsNothing);
         expect(find.text('Back to Search'), findsNothing);
         if (dismissal == 'outside') {
@@ -130,7 +138,7 @@ void main() {
           await tester.sendKeyEvent(LogicalKeyboardKey.escape);
         }
         await tester.pumpAndSettle();
-        expect(find.byType(AlertDialog), findsNothing);
+        expect(find.byType(NewAgentComposer), findsNothing);
         expect(find.byType(SwarmSearchResults), findsNothing);
         if (entry == 'start page') {
           expect(app.swarms, hasLength(2));
@@ -166,10 +174,10 @@ void main() {
     await mount(tester, app);
     await chord(tester, LogicalKeyboardKey.keyN, shift: true);
     await tester.pumpAndSettle();
-    expect(find.byType(AlertDialog), findsOneWidget);
+    expect(find.byType(NewAgentComposer), findsOneWidget);
     await tester.tapAt(const Offset(12, 72));
     await tester.pumpAndSettle();
-    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.byType(NewAgentComposer), findsNothing);
     expect(find.byType(SwarmSearchResults), findsNothing);
     expect(
       tester
@@ -209,19 +217,19 @@ void main() {
           await tester.pump();
         }
         expect(find.byType(SwarmSearchResults), findsOneWidget);
-        await tester.tap(find.byKey(const ValueKey('harness-picker-new')));
+        await chord(tester, LogicalKeyboardKey.keyN, shift: true);
         await tester.pumpAndSettle();
-        expect(find.byType(AlertDialog), findsOneWidget);
-        expect(find.byType(SwarmSearchResults), findsNothing);
+        expect(find.byType(NewAgentComposer), findsOneWidget);
+        expect(find.byType(SwarmSearchResults), findsOneWidget);
         expect(
           find.text(switch (entry) {
-            'Split right' => 'New Agent to the right',
-            'Split down' => 'New Agent below',
-            _ => 'New Agent',
+            'Split right' => 'New agent · split right',
+            'Split down' => 'New agent · split down',
+            _ => 'New agent',
           }),
           findsWidgets,
         );
-        await tester.tap(find.byKey(const Key('new-agent-folder')));
+        await _chooseLocal(tester);
         await tester.pumpAndSettle();
         await tester.tap(find.byKey(const ValueKey('create-agent-submit')));
         await tester.pump();
@@ -230,7 +238,7 @@ void main() {
         // The fake new terminal has no handshake, so its spinner never settles.
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 200));
-        expect(find.byType(AlertDialog), findsNothing);
+        expect(find.byType(NewAgentComposer), findsNothing);
         expect(find.byType(SwarmSearchResults), findsNothing);
         expect(app.activeSwarm, same(target));
         expect(target.panes.first, same(pane));
@@ -271,7 +279,7 @@ void main() {
       }
       await chord(tester, LogicalKeyboardKey.keyN, shift: true);
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('new-agent-folder')));
+      await _chooseLocal(tester);
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('create-agent-submit')));
       await tester.pump();
@@ -312,7 +320,7 @@ void main() {
       check.created();
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 200));
-      expect(find.byType(AlertDialog), findsNothing);
+      expect(find.byType(NewAgentComposer), findsNothing);
       expect(find.byType(SwarmSearchResults), findsNothing);
       expect(app.activeSwarmId, current);
       if (change == 'closed' || change == 'stale split') {
@@ -347,7 +355,7 @@ void main() {
     await chord(tester, LogicalKeyboardKey.keyN);
     await chord(tester, LogicalKeyboardKey.keyN, shift: true);
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('new-agent-folder')));
+    await _chooseLocal(tester);
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('create-agent-submit')));
     await tester.pump();
@@ -362,7 +370,7 @@ void main() {
     await tester.pump();
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pumpAndSettle();
-    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.byType(NewAgentComposer), findsNothing);
     expect(find.byType(SwarmSearchResults), findsNothing);
     expect(app.panes, [pane]);
     expect(connection.calls.map((c) => c.type), ['agent_create']);
@@ -372,7 +380,7 @@ void main() {
     expect(input.single.bytes, [27, 91, 66]);
     await chord(tester, LogicalKeyboardKey.keyN);
     expect(find.byType(SwarmSearchResults), findsOneWidget);
-    expect(find.byKey(const ValueKey('harness-picker-new')), findsOneWidget);
+    expect(find.byType(NewAgentComposer), findsOneWidget);
     expect(connection.calls, hasLength(1));
     await tester.pumpWidget(const SizedBox());
     app.dispose();

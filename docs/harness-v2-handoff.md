@@ -41,10 +41,27 @@ user for a benchmark window.
   menus. **Harness** now names the tab container as well as the app/device/CLI:
   New Harness, Rename Harness, Close Harness, and navigation/help labels. Custom
   names and wire IDs stay; the old New Tab default restores as New Harness.
-- Cmd-N now opens results and preview immediately, with Open Agent / New Agent
-  below. Open Agent has a solid neutral fill in the modal; the start-page button
-  retains its outline. This supersedes the earlier compact-first modal.
-  New Harness remains compact until search activation.
+- **Current refinement:** Cmd-N opens **Find an agent**, results and preview
+  above a compact, bottom-anchored **New agent** section. The row is **Agent /
+  Project / Machine / Create**, with selected defaults and keyboard dropdowns.
+  Query/result changes leave the row's position and choices intact. Open Agent
+  remains solid neutral beneath results; Shift-Cmd-N focuses the creation row.
+  This supersedes both the earlier compact-first modal and the separate full
+  workspace creation dialog. New Harness remains compact until search activation.
+- The compact form reuses creation, folder preparation, account/engine checks
+  and uncertain-outcome recovery. Defaults are the remembered agent, New project
+  and this computer; splits inherit their source machine/project. Project offers
+  New project, Local folder and Remote repository. Cached engine checks are reused;
+  building a query does not scan agent metadata for project suggestions.
+- Verification: the 56 navigation/picker checks, 27 creation/engine checks and
+  54 combined recovery/render checks pass (overlapping suites). Captures at
+  1280×900, 760×760 and 600×680 with double text were inspected; six palettes and
+  normal/double text render without overflow. Logs:
+  `/private/tmp/harness-composer-picker-tests.log`,
+  `/private/tmp/harness-composer-creation-tests.log`,
+  `/private/tmp/harness-composer-final-tests.log`.
+  Captures: `/private/tmp/harness-composer-captures` and
+  `/private/tmp/harness-composer-surfaces`.
 - The Harness labels and picker fill pass 96 affected Flutter tests plus 12
   render checks across six palettes and two text sizes. Changed Dart files
   analyze cleanly. The exported-keymap fixture, 96 native keyboard checks and
@@ -54,11 +71,12 @@ user for a benchmark window.
   `/private/tmp/harness-label-action-native.log`,
   `/private/tmp/harness-label-action-render.log`. Captures:
   `/private/tmp/harness-label-action-captures`.
-- New Agent is 760 logical pixels wide. Machines stay in one row; narrow/large
-  text moves excess machines into the overflow while preserving the selection.
+- Standalone creation entry points retain the 760-pixel direct-choice form.
+  The workspace uses the combined panel described above, up to 1120 pixels wide.
 - Working folder now offers **New / Local / Remote**. New creates a unique
   project under `~/Harness Projects`; Local browses the selected machine;
-  Remote clones a GitHub repository onto that machine. Folder preparation begins
+  Remote clones a GitHub repository onto that machine. The standalone form starts
+  on Local; the new compact row defaults to New project. Folder preparation begins
   only on submit. A known refused launch retains its prepared folder for retry.
   Local works with the existing daemon protocol. Remote preparation needs this
   checkout's accompanying CLI change; no real daemon was updated or restarted.
@@ -138,39 +156,30 @@ are:
 
 - **Add Agent unifies search and creation.** A single titlebar button and
   File → Add Agent… open results and preview immediately, with the search
-  field focused and Open/New actions below. This supersedes compact-first modal
-  entry; the New Harness page stays compact until activated. New preserves split
+  field focused, Open Agent below results and the compact creation row anchored
+  beneath. This supersedes compact-first modal entry and separate creation;
+  the New Harness page stays compact until activated. Creation preserves split
   placement. The bell stays beside the traffic lights.
-- **Cmd-T: New Harness; Cmd-N: Add Agent; Shift-Cmd-N: direct New Agent; Cmd-S: Layout.**
+- **Cmd-T: New Harness; Cmd-N: Add Agent; Shift-Cmd-N: focus creation; Cmd-S: Layout.**
   Cmd-O is unbound by default.
   Cmd-H/J/K/L and Cmd-arrows focus panes; Cmd-1…9 select tabs. User bindings take
   precedence. Cmd-R splits right and Cmd-D splits down. Native menus, help and actual
   dispatch must agree; native menu and titlebar hover hints are removed.
-- New Harness uses the **restored lake-at-dusk wallpaper**, a long search field capped
-  at 1120 logical pixels, and no large Harness heading. The hint is **Find an
-  agent**. Search starts blank and focused, with results hidden. Open Agent
-  and New Agent sit underneath, aligned with the search field's left edge.
-  Search has a **64-pixel minimum height** with more vertical padding; the
-  action buttons remain 48 pixels high. The Cmd-N chooser shares the taller field.
-  Activating search preserves the field position and width; results and preview
-  appear side by side from 700 pixels wide, and the actions hide. The buttons
-  wrap when needed. Escape restores the actions and query.
-  Typing, clicking, or pressing an arrow
-  reveals the same results, selection, arrows and Enter behavior as the Cmd-N chooser.
-  Focus alone leaves results hidden and builds no catalog. Open Agent and
-  accented **+ New Agent** share a row below search; a small official device
-  image and **Meet the Harness device** caption stay in a footer 32 pixels above
-  the bottom, aligned to the same left edge and linking to autonomous.ai/harness-device.
-  Search uses the remaining space above the footer, which stays still when results
-  open or close. Short windows use a compact horizontal device card.
-  The five recent-agent rows are removed. Both pairs of actions are rounded
-  pills with hand cursors. Open Agent is outlined on the start page and solid
-  neutral in the modal picker. The official `2.webp` device photo is cropped and centered in its viewport, with a hand cursor.
+- New Harness preserves incoming **fea77a8**: an Aurora mesh background in the
+  app/accent/agent colours and a glass product strip with the device cutout.
+  The long search field is capped at 1120 logical pixels with a 64-pixel minimum
+  height and **Find an agent** hint. It starts blank and focused, with results
+  hidden until typing, clicking or pressing an arrow. Open Agent and New Agent
+  sit underneath at the same left edge; the Open button is outlined here.
+  Search retains its position and width; results and preview are side by side
+  from 700 pixels. Escape restores the actions and query. The product strip stays
+  32 pixels above the bottom while search opens and closes, with a compact form
+  for short windows. The old lake screenshot is no longer the current background.
 - Search is single-choice. Session names appear above **project · branch ·
   machine**, without repeated workspace titles. Only the highlighted row shows
   **Open Agent / Open N Agents**, or the explicit split action. The modal
-  has a 90% black backdrop. Its Open/New buttons remain beneath results;
-  there is no Commands footer or “or” divider.
+  has a 90% black backdrop. Open Agent remains beneath results and the New agent
+  creation row stays below; there is no Commands footer or “or” divider.
   Commands remain available through Shift-Cmd-P or typing **>**.
 - Both search entry points show existing session excerpts. Working sessions lead
   with the observed request and activity; idle sessions show an existing response.
@@ -185,17 +194,16 @@ are:
   both actions participate in the configurable Search keymap.
 - The Harness application menu includes **Check for Updates…**, using the
   existing manual update-check dialog, directly above Flash Firmware.
-- Creation uses **New Agent** for its title and CTA, with no ordinary Cancel.
-  Escape or one outside click dismisses it directly. A pending launch cannot be
-  dismissed accidentally; an uncertain outcome retains Close and Check status.
-  The form does not restore search underneath it. Machine and Agent show up to
-  three direct choices and **…** for the rest. An overflow choice replaces the
-  third slot and remains available while switching between the first two.
-  Selected choices use an accent tint and check, distinct from the focus outline.
-  Machine names retain local/remote and offline/link details. Clicking the current
-  machine preserves the working folder. The form is 760 logical pixels wide;
-  machines stay on one row, moving excess choices into **…** when needed.
-  Working folder offers New / Local / Remote as described above.
+- The combined panel uses **New agent** for the creation heading and **Create**
+  for its action. Agent, Project and Machine dropdowns show selected defaults;
+  keyboard input stays with the active menu or field. Options contains account
+  and permission settings. Escape or one outside click dismisses the panel;
+  an in-progress launch cannot be dismissed accidentally. An uncertain outcome
+  retains Close and Check status and the original receipt, never starting twice.
+  Search/destination controls are blocked during launch or uncertainty.
+  Opening a local/remote folder chooser preserves the mounted form and selections.
+  Creation success focuses the newly created pane instead of the old terminal.
+  The standalone direct-choice form remains for non-workspace entry points.
 - A single-agent tab/search/history entry uses that agent's engine icon;
   multiple agents use four outlined tiles. An empty tab uses a plain plus, and
   tab close marks appear only on hover/focus. Only one unused New Harness page

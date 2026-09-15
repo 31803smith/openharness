@@ -10,6 +10,8 @@ import 'package:harness/shared/theme/app_theme.dart' as grid;
 import 'package:harness/shortcuts/app_keymap.dart';
 import 'package:harness/terminal/terminal_binary.dart';
 import 'package:harness/widgets/swarm_switcher.dart';
+import 'package:harness/widgets/new_agent_dialog.dart';
+import 'package:harness/shared/widgets/app_select_field.dart';
 
 import 'swarm_interactions_test.dart' show chord;
 import 'swarm_screen_test.dart' show terminal;
@@ -22,6 +24,10 @@ void main() {
     await loadRealFonts();
     for (final (name, asset) in [
       ('MaterialIcons', 'fonts/MaterialIcons-Regular.otf'),
+      (
+        'packages/lucide_icons_flutter/Lucide',
+        'packages/lucide_icons_flutter/assets/lucide.ttf',
+      ),
       (
         'packages/lucide_icons_flutter/Lucide300',
         'packages/lucide_icons_flutter/assets/build_font/LucideVariable-w300.ttf',
@@ -75,7 +81,9 @@ void main() {
         findsOneWidget,
       );
       expect(find.byKey(const ValueKey('harness-picker-open')), findsOneWidget);
-      expect(find.byKey(const ValueKey('harness-picker-new')), findsOneWidget);
+      expect(find.byType(NewAgentComposer), findsOneWidget);
+      final create = find.byKey(const ValueKey('create-agent-submit'));
+      final createRect = tester.getRect(create);
       final before = tester.getRect(field);
       final controller = tester.widget<TextField>(field).controller;
       expect(tester.widget<TextField>(field).focusNode!.hasFocus, isTrue);
@@ -83,6 +91,12 @@ void main() {
       Future<void> capture(String state) async {
         final output = Platform.environment['HARNESS_PICKER_CAPTURE_DIR'];
         if (output == null) return;
+        await tester.runAsync(() async {
+          await precacheImage(
+            const AssetImage('assets/engine-icons/codex.png'),
+            boundaryKey.currentContext!,
+          );
+        });
         await tester.pumpAndSettle();
         final boundary =
             boundaryKey.currentContext!.findRenderObject()!
@@ -105,20 +119,26 @@ void main() {
       expect(tester.widget<TextField>(field).controller, same(controller));
       expect(find.textContaining('Payment retries now reuse'), findsOneWidget);
       await capture('results');
-      // Creation remains reachable after a query, including with the keyboard.
-      Focus.of(
-        tester.element(
-          find.descendant(
-            of: find.byKey(const ValueKey('harness-picker-new')),
-            matching: find.text('New Agent'),
-          ),
-        ),
-      ).requestFocus();
-      await tester.pump();
+      // Search leaves the creation row, selected choices and focus ownership intact.
+      expect(tester.getRect(create), createRect);
+      await chord(tester, LogicalKeyboardKey.keyN, shift: true);
+      await tester.pumpAndSettle();
+      final agent = find.byKey(const ValueKey('agent-composer-agent'));
+      expect(
+        tester.widget<AppSelectField<String>>(agent).focusNode!.hasFocus,
+        isTrue,
+      );
+      expect(field, findsOneWidget);
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pumpAndSettle();
-      expect(find.byType(AlertDialog), findsOneWidget);
-      expect(field, findsNothing);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyC, character: 'c');
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyL, character: 'l');
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(tester.widget<AppSelectField<String>>(agent).value, 'claude');
+      expect(tester.widget<TextField>(field).controller!.text, 'idempotency');
+      expect(find.byType(AlertDialog), findsNothing);
+      await capture('creation');
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
       await tester.pumpAndSettle();
       expect(app.focusedPane, same(pane));

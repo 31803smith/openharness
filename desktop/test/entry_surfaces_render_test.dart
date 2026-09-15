@@ -195,11 +195,11 @@ void main() {
         await tester.pumpAndSettle();
         await capture('new');
         expect(tester.takeException(), isNull);
-        for (final label in ['Codex', 'Claude Code', 'Cursor']) {
+        for (final label in ['Agent', 'Project', 'Machine', 'Create']) {
           if (tester
               .renderObject<RenderParagraph>(find.text(label))
               .didExceedMaxLines) {
-            issues.add('$label is truncated when choosing an agent');
+            issues.add('$label is truncated in the creation row');
           }
         }
         expect(issues, isEmpty);
