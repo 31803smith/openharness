@@ -123,6 +123,12 @@ class Agent {
   final String? engineDisplayName;
   final String? engineIconHint;
   final String? codexHome;
+
+  /// The grid model this agent is CURRENTLY running on, or null for its own vendor login.
+  ///
+  /// Read by the daemon off the live process on every discovery, never bookkept — so it is the
+  /// truth even for an agent someone re-pointed by hand. Null is a real answer, not a missing one.
+  final String? gridModel;
   final String? parentAgentId;
   final AgentProject? project;
   final String status;
@@ -140,6 +146,7 @@ class Agent {
     this.engineDisplayName,
     this.engineIconHint,
     this.codexHome,
+    this.gridModel,
     this.parentAgentId,
     this.project,
     this.status = 'active',
@@ -182,6 +189,7 @@ class Agent {
       engineDisplayName: _safeLabel(j['engineDisplayName']),
       engineIconHint: _safeLabel(j['engineIconHint']),
       codexHome: j['engine'] == 'codex' ? _safeCodexHome(j['codexHome']) : null,
+      gridModel: _safeLabel((j['grid'] as Map<String, dynamic>?)?['model']),
       parentAgentId: _safeLabel(j['parentAgentId'] ?? j['parentId']),
       project: AgentProject.fromJson(j['project']),
       status: (j['status'] as String?) ?? 'active',
@@ -206,6 +214,7 @@ class Agent {
     engineDisplayName: engineDisplayName,
     engineIconHint: engineIconHint,
     codexHome: codexHome,
+    gridModel: gridModel,
     parentAgentId: parentAgentId,
     project: project,
     status: status,
@@ -422,4 +431,27 @@ class AgentProject {
       branch: field('branch', 256),
     );
   }
+}
+
+/// One model the account's private harness grid can answer right now.
+class GridModel {
+  /// The id an engine is pointed at, verbatim from the grid.
+  final String id;
+
+  /// Which machine serves it. Display only, and empty when the grid does not say — on a private
+  /// grid this is one of the user's own computers, which is the useful part of the answer.
+  final String node;
+
+  const GridModel({required this.id, required this.node});
+}
+
+/// The picker's whole answer: which grid was asked, and what it offers.
+///
+/// `gridName` is null when the machine has no grid yet — told apart from "a grid with nothing on
+/// it", because the two need different sentences in front of a person.
+class GridModels {
+  final String? gridName;
+  final List<GridModel> models;
+
+  const GridModels({required this.gridName, required this.models});
 }

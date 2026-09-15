@@ -2768,6 +2768,76 @@ class AppNotifier extends ChangeNotifier {
     }
   }
 
+  /// Put one agent back on its own vendor login — the Claude / Codex subscription it had before a
+  /// grid model was chosen.
+  ///
+  /// `clearGrid` is a separate flag rather than `gridModel: null` on purpose: the daemon treats an
+  /// absent field as "I did not mention the grid", so overloading null would make a forgotten field
+  /// and a deliberate "put it back" the same frame. Same pane respawn as picking a model.
+  Future<void> clearAgentGrid(String machineId, String agentId) async {
+    try {
+      await _conn(machineId).request(
+        'agent_retarget',
+        payload: {'agentId': agentId, 'clearGrid': true},
+        timeout: const Duration(seconds: 30),
+      );
+    } catch (_) {
+      // The daemon owns the refusal (a busy pane, a launch that would not start) and the pane shows
+      // it; a second error surface here would tell one story twice.
+    }
+  }
+
+  /// Point one agent at a model on the account's private grid.
+  ///
+  /// Sends the model id and nothing else: the daemon on that machine resolves the endpoint and the
+  /// credential from its own signed-in `grid`, so neither travels over the relay and the app never
+  /// holds a grid key. Moving an agent re-execs its pane, which is why this is an explicit choice in
+  /// a menu rather than something that can happen by hovering.
+  Future<void> retargetAgentToGridModel(
+    String machineId,
+    String agentId,
+    String modelId,
+  ) async {
+    try {
+      await _conn(machineId).request(
+        'agent_retarget',
+        payload: {'agentId': agentId, 'gridModel': modelId},
+        timeout: const Duration(seconds: 30),
+      );
+    } catch (_) {
+      // The daemon answers its own refusals (a busy pane, an unreachable grid) and the pane shows
+      // what actually happened; a second error surface here would be a second story about one act.
+    }
+  }
+
+  /// Live models on the account's private harness grid, for the pane header's picker.
+  ///
+  /// Asked of the machine the pane belongs to rather than kept in app state: the answer is whatever
+  /// that machine's `grid` reports at this moment (an engine can join or leave between two opens),
+  /// and a cached list would offer a model nobody is serving any more.
+  ///
+  /// Never throws — a machine whose daemon is too old to know the RPC, one with no grid, and one
+  /// that timed out are all "nothing to offer", which is what the picker shows.
+  Future<GridModels> gridModels(String machineId) async {
+    try {
+      final response = await _conn(machineId).request(
+        'grid_models_list',
+        timeout: const Duration(seconds: 12),
+      );
+      final models = (response['models'] as List<dynamic>? ?? [])
+          .whereType<Map<String, dynamic>>()
+          .map((m) => GridModel(
+                id: (m['id'] as String?) ?? '',
+                node: (m['node'] as String?) ?? '',
+              ))
+          .where((m) => m.id.isNotEmpty)
+          .toList();
+      return GridModels(gridName: response['gridName'] as String?, models: models);
+    } catch (_) {
+      return const GridModels(gridName: null, models: []);
+    }
+  }
+
   WsConn _conn(String machineId) {
     final testConnection = connectionForTest;
     if (testConnection != null) return testConnection(machineId);

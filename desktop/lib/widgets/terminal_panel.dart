@@ -32,6 +32,7 @@ import '../shared/theme/app_theme.dart' as grid;
 import '../theme/app_theme.dart';
 import 'engine_identity.dart';
 import 'pane_actions_menu.dart';
+import 'grid_model_picker.dart';
 
 /// The pane header's own horizontal inset.
 const double _stripPadding = 14;
@@ -1436,6 +1437,28 @@ class _TerminalHeader extends StatelessWidget {
                   ),
                 ),
               ),
+              // The model picker sits next to the NAME, because that is the pair a person reads
+              // together: this agent, on that model. Hidden while a notice is showing — a header
+              // asking to reconnect is not the moment to offer a menu.
+              if (status == null && !readOnly) ...[
+                const SizedBox(width: 8),
+                GridModelPicker(
+                  notifier: notifier,
+                  machineId: session.machineId,
+                  currentModel: agent?.gridModel,
+                  engineLabel: session.engineId,
+                  onSelected: (model) => unawaited(
+                    notifier.retargetAgentToGridModel(
+                      session.machineId,
+                      session.agentId,
+                      model.id,
+                    ),
+                  ),
+                  onUseOwnLogin: () => unawaited(
+                    notifier.clearAgentGrid(session.machineId, session.agentId),
+                  ),
+                ),
+              ],
               if (compact && status == null && project?.branch != null) ...[
                 const SizedBox(width: 16),
                 Tooltip(
