@@ -59,7 +59,10 @@ user for a benchmark window.
   normal/double text render without overflow. Logs:
   `/private/tmp/harness-composer-picker-tests.log`,
   `/private/tmp/harness-composer-creation-tests.log`,
-  `/private/tmp/harness-composer-final-tests.log`.
+  `/private/tmp/harness-composer-final-tests.log`. The final focus/folder pass
+  adds 40 passing checks after cleanup in
+  `/private/tmp/harness-composer-final-focus-tests.log`; the analyzer reports
+  no issues in `/private/tmp/harness-composer-final-analyze.log`.
   Captures: `/private/tmp/harness-composer-captures` and
   `/private/tmp/harness-composer-surfaces`.
 - The Harness labels and picker fill pass 96 affected Flutter tests plus 12
@@ -106,13 +109,22 @@ Saved and pushed to `origin/main`: **9d0150d** (remote project preparation),
 validation cleanup). The 339-test pass was followed by six passing focused
 checks after the analyzer cleanup; changed Dart files now analyze without issues.
 
-The installed Release preview was built from **454544a** and passes deep/strict
-codesign verification, both before and after staging. Prepared app:
+The combined panel is saved and pushed as **c0fd824**. Its Release build succeeds
+and passes deep/strict codesign verification before and after staging. Prepared:
 `/private/tmp/harness-pane-controls-release/Build/Products/Release/Harness.app`.
-Build log: `/private/tmp/harness-label-action-release.log`.
-The previous incremental build left a stale outer app seal after rebuilding
-App.framework; verifying the framework separately and refreshing the existing
-ad-hoc outer signature resolved it. The latest build verifies without that repair.
+Build log: `/private/tmp/harness-composer-release.log`. The incremental build
+left a stale outer seal; App.framework verified independently, and refreshing
+the ad-hoc outer signature restored full verification.
+
+**c0fd824 is staged, not yet installed.** The verified staging bundle is
+`desktop/build/macos/Build/Products/Release/.harness-composer-stage-tk5_7p2i/Harness.app`.
+The live process still uses **454544a**. CUA again reports `cgWindowNotFound`,
+including the attempt to send normal Cmd-Q, so the user has been asked to choose
+**Harness → Quit Harness**. Do not force quit or replace the running bundle.
+After the user confirms, verify the exact process is gone, keep the live bundle
+as a unique backup, install the staged copy and reopen the supported path.
+The receipt `/private/tmp/harness-agent-preview-install.json` records this state;
+the previous installed receipt is `/private/tmp/harness-agent-preview-before-composer.json`.
 
 Incoming main work was preserved, including terminal theme synchronization
 (4c7af5e), Codex question detection (12a63a9), and CLI status cleanup (afc9e77).
@@ -126,7 +138,7 @@ dial/creation/menu tests and 40 CLI input tests. Earlier build/test logs:
 `/private/tmp/harness-project-folder-cli-tests.log`,
 `/private/tmp/harness-agent-menus-native.log`.
 
-**454544a is installed and verified live.** The user quit normally; the exact
+**Previous live verification: 454544a.** The user quit normally; the exact
 process was confirmed stopped before swapping the verified bundle. CUA reopened
 the supported path and regained window access. All four saved Harness tabs
 restored, including the renamed empty page. File labels, solid Open Agent,
@@ -147,8 +159,9 @@ gone immediately before swapping the verified bundle, and do not launch the
 derived-data copy alongside the supported one.
 
 CUA-sent Command-N remains inconclusive from the earlier live preview, although
-native callback and exported shortcut checks pass. Window access is restored;
-that earlier inconclusive result does not justify changing keyboard dispatch.
+native callback and exported shortcut checks pass. Window access was restored
+for 454544a but is currently unavailable again; this does not justify changing
+keyboard dispatch. The combined panel still needs a live inspection after installation.
 
 Use [the detailed entry/pane contract](harness-agent-first-tabs.md) when editing
 or validating UI. The decisions that previously conflicted with older handoffs
