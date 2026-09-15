@@ -4446,7 +4446,6 @@ async function runningDaemonVersion(): Promise<string> {
 function printInfoBlock(opts: {
   status: string; pid: number; machineId?: string; sessions: number; version: string
 }): void {
-  const link = opts.machineId ? `${env.WEB_URL.replace(/\/$/, '')}/machine/${opts.machineId}` : env.WEB_URL
   const row = (k: string, v: string): string => `   ${k.padEnd(10)} ${v}`
   const rule = '  ' + '─'.repeat(37)
   console.log('')
@@ -4460,17 +4459,12 @@ function printInfoBlock(opts: {
   if (machineName) console.log(row('machine', machineName))
   console.log(row('version', `v${opts.version}`))
   console.log(row('backend', env.BACKEND_WS_URL))
-  console.log(row('watching', tildify(env.CLAUDE_PROJECTS_DIR)))
   console.log(row('agents', `${opts.sessions} available`))
   console.log(row('pid', String(opts.pid)))
   console.log(row('logs', tildify(LOG_FILE)))
   console.log(row('dial log', tildify(join(env.HARNESS_LOGS_DIR, 'dial-YYYYMMDD.log'))))
   console.log(row('dashboard', `http://127.0.0.1:${daemonPort()}`))
   console.log(rule)
-  console.log('   ▸ Open in your browser to chat with this computer:')
-  console.log(`     ${link}`)
-  console.log('   ▸ Set up a browser:')
-  console.log('     harness browser-link')
   console.log('  running in background · stop with: harness stop')
   console.log('')
 }
