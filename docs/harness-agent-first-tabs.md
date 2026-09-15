@@ -130,7 +130,12 @@ switches only within that open dialog. An explicitly supplied project from a
 split entry and a prepared-folder retry retain their destination. New folders use
 `~/harnesses/agent-1`, `agent-2`, …. Switching engines keeps the project.
 
-A small settings icon at the bottom left reveals Codex profiles and permissions.
+A small settings icon at the bottom left toggles a compact row beside it:
+**Bypass approvals**, followed for Codex by **Codex profile: [name] ⌄** and
+**Add**. There is no Permissions heading or separate settings block. Refresh is
+inside the profile menu. Settings start hidden, and hiding them retains the
+chosen profile and launch readiness. At narrow widths or larger text, the row
+wraps and Create stays visible below it.
 The sole ordinary footer action is a large bright **Create** button. Escape or
 an outside click dismisses. No hover hints repeat labels already on screen.
 Icon-only controls retain accessible names. A late saved preference equal to
@@ -204,9 +209,10 @@ then **Split Right, Split Down, Zoom Pane, Close Pane**. Pin/Unpin and Add Proje
 are removed from this menu. File actions have native system icons, with the same
 four-corner Zoom and plain Close cross as the pane header. Machines starts with **Open Machines Manager**, then
 linked computers with their status and cached agent count, followed by Link
-Machine and Refresh Machines. History and Machines fit their visible labels,
-with metadata in a right-aligned column and no fixed minimum width or empty
-wide span. Long names truncate to keep the menus compact. Machine counts sit
+Machine and Refresh Machines. History and Machines are about 20% wider than the
+initial compact pass; Models is 20% narrower. History machine names align at the
+right edge. Long names truncate to keep the menus compact. Machine counts and
+Link required labels sit
 before the native submenu chevron. Each computer is a submenu of named agents with
 engine icons. Selecting an agent opens its exact machine/agent identity, reusing
 an existing pane when present. The submenu retains Find Agents for the full

@@ -62,12 +62,25 @@ and a monitor for machines, replaced by the chosen option’s own icon.
 Every new dialog defaults to New project. Recent is history only; choices made
 within an open dialog survive machine switches without carrying into the next
 dialog. Explicit split project context and prepared-folder retries retain their
-destination. Switching engines keeps the project. The settings gear is small and quiet at
-the bottom left; Create is a larger 192 × 56 primary button. Escape/outside click
+destination. Switching engines keeps the project. The small, quiet settings gear
+toggles controls beside it on the same footer line: **Bypass approvals** and, for
+Codex, **Codex profile: [name] ⌄** followed by **Add**. No Permissions heading,
+separate settings block or refresh icon remains; refresh lives in the profile
+menu. Controls retain state while hidden, including an explicit Default profile.
+Narrow windows and large text wrap neatly, with Create visible below settings.
+Create is a larger 192 × 56 primary button. Escape/outside click
 still dismiss, and Cmd-Return creates. Repeated-label tooltips are removed from
 the form and shared choices, sidebar rows, section labels, and picker hints.
 Icon-only controls retain accessible names. Prepared-folder recovery, profile
 readiness and uncertain-create status checks remain intact.
+
+The final settings pass has 54 passing focused layout, profile, engine-check and
+creation-recovery tests. The four affected Dart files analyze cleanly. Evidence:
+`/private/tmp/harness-inline-settings-verified-tests.log`,
+`/private/tmp/harness-inline-settings-analyze.log`, and captures in
+`/private/tmp/harness-inline-settings-captures`. The New project default and
+per-dialog machine choices also pass all seven project-picker tests in
+`/private/tmp/harness-new-project-default-final-tests.log`.
 
 Affected Flutter checks pass across `/private/tmp/harness-four-tile-tests.log`,
 `/private/tmp/harness-four-tile-final-tests.log`, and
@@ -136,9 +149,10 @@ refinement increases History and Machines by about 20% and reduces Models from
 a 440-point base to 352 points. Link-required labels and agent counts align by
 the Machines submenu arrow. History rows use the full width for right-aligned
 machine names; native titles, validation and target/actions retain navigation.
-Models balances stay aligned and readable. 404 AppKit checks pass, including
-native window layout, menu sizing, History highlight and activation:
-`/private/tmp/harness-menu-refinement-native-checks.log`.
+Models balances stay aligned and readable. 406 AppKit checks pass, including
+native window layout, menu sizing, History highlight and activation, and keeping
+History actions disabled while a dialog is open:
+`/private/tmp/harness-history-final-native-checks.log`.
 
 ### Shared icon feedback
 

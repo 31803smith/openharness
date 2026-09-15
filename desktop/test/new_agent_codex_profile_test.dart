@@ -48,6 +48,15 @@ void expectProfile(WidgetTester tester, String label) {
   );
 }
 
+Future<void> refreshProfiles(WidgetTester tester) async {
+  final field = find.byKey(const Key('new-agent-codex-profile-field'));
+  await tester.ensureVisible(field);
+  await tester.tap(field);
+  await tester.pumpAndSettle();
+  await tester.ensureVisible(find.text('Refresh profiles'));
+  await tester.tap(find.text('Refresh profiles'));
+}
+
 String _labelFor(String path) =>
     path.split('/').where((p) => p.isNotEmpty).last;
 
@@ -253,8 +262,8 @@ void main() {
       find.byKey(const Key('new-agent-codex-profile-field')),
       findsOneWidget,
     );
-    expect(find.text('Codex profile'), findsOneWidget);
-    expect(find.text('Link a profile folder…'), findsOneWidget);
+    expect(find.textContaining('Codex profile:'), findsOneWidget);
+    expect(find.text('Add'), findsOneWidget);
     await browseNewAgentProject(tester);
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, 'Create'));
@@ -273,9 +282,9 @@ void main() {
       find.byKey(const Key('new-agent-codex-profile-field')),
       findsOneWidget,
     );
-    expect(find.text('Codex profile'), findsOneWidget);
+    expect(find.textContaining('Codex profile:'), findsOneWidget);
     expectProfile(tester, 'work-login');
-    expect(find.text('Link a profile folder…'), findsOneWidget);
+    expect(find.text('Add'), findsOneWidget);
     await browseNewAgentProject(tester);
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, 'Create'));
@@ -305,7 +314,7 @@ void main() {
         findsOneWidget,
       );
       expectProfile(tester, 'work-login');
-      expect(find.text('Link a profile folder…'), findsOneWidget);
+      expect(find.text('Add'), findsOneWidget);
     },
   );
 
@@ -321,7 +330,7 @@ void main() {
       findsOneWidget,
     );
     notifier.paths.add('/accounts/codex2');
-    await tester.tap(find.bySemanticsLabel('Refresh profiles'));
+    await refreshProfiles(tester);
     await tester.pumpAndSettle();
     expect(
       find.byKey(const Key('new-agent-codex-profile-field')),
@@ -330,7 +339,7 @@ void main() {
     expectProfile(tester, 'codex1');
     await selectSecond(tester);
     notifier.paths.remove('/accounts/codex1');
-    await tester.tap(find.bySemanticsLabel('Refresh profiles'));
+    await refreshProfiles(tester);
     await tester.pumpAndSettle();
     expect(
       find.byKey(const Key('new-agent-codex-profile-field')),
@@ -376,7 +385,7 @@ void main() {
     final notifier = await open(tester);
     await selectSecond(tester);
     notifier.paths.remove('/accounts/codex2');
-    await tester.tap(find.bySemanticsLabel('Refresh profiles'));
+    await refreshProfiles(tester);
     await tester.pumpAndSettle();
     expect(
       find.byKey(const Key('new-agent-codex-profile-field')),
@@ -398,49 +407,59 @@ void main() {
     expect(notifier.calls.single['codexHome'], '/accounts/codex1');
   });
 
-  testWidgets('refresh preserves an explicitly chosen default launch', (
-    tester,
-  ) async {
-    final notifier = await open(tester);
-    await selectSecond(tester);
-    await tester.ensureVisible(
-      find.byKey(const Key('new-agent-codex-profile-field')),
-    );
-    await tester.tap(find.byKey(const Key('new-agent-codex-profile-field')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Default profile').last);
-    await tester.pumpAndSettle();
-    notifier.paths.remove('/accounts/codex2');
-    await tester.tap(find.bySemanticsLabel('Refresh profiles'));
-    await tester.pumpAndSettle();
-    expect(
-      find.byKey(const Key('new-agent-codex-profile-field')),
-      findsOneWidget,
-    );
-    expectProfile(tester, 'Default profile');
-    await browseNewAgentProject(tester);
-    await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'Create'));
-    await tester.pumpAndSettle();
-    expect(notifier.calls.single['codexHome'], isNull);
-  });
-
   testWidgets(
-    'creates with the selected account and shows its full path before the click',
+    'refresh and hiding settings preserve an explicit default launch',
     (tester) async {
       final notifier = await open(tester);
       await selectSecond(tester);
-      expectProfile(tester, 'codex2');
+      await tester.ensureVisible(
+        find.byKey(const Key('new-agent-codex-profile-field')),
+      );
+      await tester.tap(find.byKey(const Key('new-agent-codex-profile-field')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Default profile').last);
+      await tester.pumpAndSettle();
+      final settings = find.byKey(const Key('new-agent-advanced'));
+      await tester.tap(settings);
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('new-agent-codex-profile-field')),
+        findsNothing,
+      );
+      await tester.tap(settings);
+      await tester.pumpAndSettle();
+      expectProfile(tester, 'Default profile');
+      notifier.paths.remove('/accounts/codex2');
+      await refreshProfiles(tester);
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('new-agent-codex-profile-field')),
+        findsOneWidget,
+      );
+      expectProfile(tester, 'Default profile');
       await browseNewAgentProject(tester);
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, 'Create'));
       await tester.pumpAndSettle();
-      expect(notifier.calls, [
-        {'engine': 'codex', 'codexHome': '/accounts/codex2', 'folder': '/work'},
-      ]);
-      expect(tester.takeException(), isNull);
+      expect(notifier.calls.single['codexHome'], isNull);
     },
   );
+
+  testWidgets('creates with the account selected in the profile menu', (
+    tester,
+  ) async {
+    final notifier = await open(tester);
+    await selectSecond(tester);
+    expectProfile(tester, 'codex2');
+    await browseNewAgentProject(tester);
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+    await tester.pumpAndSettle();
+    expect(notifier.calls, [
+      {'engine': 'codex', 'codexHome': '/accounts/codex2', 'folder': '/work'},
+    ]);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets(
     'discovers newly observed local profiles while ignoring remote machine paths',
@@ -490,7 +509,7 @@ void main() {
       final notifier = await open(tester);
       await selectSecond(tester);
       notifier.extraPaths.add('/elsewhere/new-profile');
-      await tester.tap(find.bySemanticsLabel('Refresh profiles'));
+      await refreshProfiles(tester);
       await tester.pumpAndSettle();
       expectProfile(tester, 'codex2');
       await tester.ensureVisible(

@@ -17,7 +17,6 @@ import '../shared/widgets/app_checkbox.dart';
 import '../shared/widgets/app_choice_picker.dart';
 import '../shared/widgets/app_dialog.dart';
 import '../shared/widgets/app_select_field.dart';
-import '../shared/widgets/labeled_field.dart';
 import '../state/app_state.dart';
 import 'engine_identity.dart';
 import 'codex_profile_field.dart';
@@ -111,7 +110,6 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   final _folderFocus = FocusNode(debugLabel: 'Working folder');
   final _actionFocus = FocusNode(debugLabel: 'Create or check agent');
   GitHubRepository? _repository;
-  final _advancedKey = GlobalKey();
   final _choicesScroll = ScrollController();
   final _projectChoices = PageStorageBucket();
   late _FolderSource _folderSource = widget.initialFolder == null
@@ -370,24 +368,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     },
   };
 
-  void _toggleAdvanced() {
-    setState(() => _advancedOpen = !_advancedOpen);
-    if (!_advancedOpen) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_advancedOpen) return;
-      final anchor = _advancedKey.currentContext;
-      if (anchor == null) return;
-      unawaited(
-        Scrollable.ensureVisible(
-          anchor,
-          duration: MediaQuery.disableAnimationsOf(context)
-              ? Duration.zero
-              : const Duration(milliseconds: 160),
-          curve: Curves.easeOut,
-        ),
-      );
-    });
-  }
+  void _toggleAdvanced() => setState(() => _advancedOpen = !_advancedOpen);
 
   @override
   Widget build(BuildContext context) {
@@ -427,7 +408,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
         },
       },
       child: AlertDialog(
-        constraints: const BoxConstraints(maxWidth: 1160),
+        constraints: const BoxConstraints.tightFor(width: _dialogWidth + 56),
         backgroundColor: grid.AppPalette.swarmField,
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
@@ -468,7 +449,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                       absorbing: _choicesLocked,
                       child: ExcludeFocus(
                         excluding: _choicesLocked,
-                        child: _choices(bypassFlag),
+                        child: _choices(),
                       ),
                     ),
                     if (_error != null) ...[
@@ -493,26 +474,11 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
           ),
         ),
         actions: [
-          Row(
-            children: [
-              Semantics(
-                label: 'Advanced settings',
-                button: true,
-                toggled: _advancedOpen,
-                child: IconButton(
-                  key: const Key('new-agent-advanced'),
-                  onPressed: _choicesLocked ? null : _toggleAdvanced,
-                  icon: const Icon(LucideIcons.settings, size: 16),
-                  color: grid.AppPalette.textFaint,
-                  style: IconButton.styleFrom(
-                    minimumSize: const Size(28, 28),
-                    padding: const EdgeInsets.all(6),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Wrap(
+          SizedBox(
+            width: _dialogWidth,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final actions = Wrap(
                   alignment: WrapAlignment.end,
                   spacing: 8,
                   runSpacing: 8,
@@ -594,9 +560,30 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                             ),
                     ),
                   ],
-                ),
-              ),
-            ],
+                );
+                final scale = MediaQuery.textScalerOf(context).scale(13) / 13;
+                final stacked =
+                    (_advancedOpen || _confirmationPending) &&
+                    constraints.maxWidth < 740 * math.min(1.4, scale);
+                // Keep the controls mounted when the footer wraps or hides.
+                // In particular, an explicit Default profile must stay chosen.
+                return Flex(
+                  direction: stacked ? Axis.vertical : Axis.horizontal,
+                  mainAxisSize: stacked ? MainAxisSize.min : MainAxisSize.max,
+                  crossAxisAlignment: stacked
+                      ? CrossAxisAlignment.start
+                      : CrossAxisAlignment.center,
+                  children: [
+                    Flexible(
+                      fit: stacked ? FlexFit.loose : FlexFit.tight,
+                      child: _settingsRow(bypassFlag),
+                    ),
+                    SizedBox(width: stacked ? 0 : 16, height: stacked ? 12 : 0),
+                    Align(alignment: Alignment.centerRight, child: actions),
+                  ],
+                );
+              },
+            ),
           ),
         ],
       ),
@@ -615,7 +602,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     ),
   );
 
-  Widget _choices(String? bypassFlag) => LayoutBuilder(
+  Widget _choices() => LayoutBuilder(
     builder: (context, constraints) {
       final scaler = MediaQuery.textScalerOf(context);
       final minimumTileWidth = 180 * math.min(1.3, scaler.scale(14) / 14);
@@ -714,14 +701,6 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
               },
             ),
           ),
-          _Advanced(
-            key: _advancedKey,
-            open: _advancedOpen,
-            children: [
-              if (_engine == 'codex') _profileOptions(),
-              _permissionOptions(bypassFlag),
-            ],
-          ),
         ],
       );
     },
@@ -765,26 +744,46 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     ],
   );
 
-  Widget _permissionOptions(String? bypassFlag) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    mainAxisSize: MainAxisSize.min,
+  Widget _settingsRow(String? bypassFlag) => Wrap(
+    spacing: 12,
+    runSpacing: 8,
+    crossAxisAlignment: WrapCrossAlignment.center,
     children: [
-      const FieldLabel('Permissions'),
-      if (bypassFlag != null)
+      Semantics(
+        label: 'Advanced settings',
+        button: true,
+        toggled: _advancedOpen,
+        child: IconButton(
+          key: const Key('new-agent-advanced'),
+          onPressed: _choicesLocked ? null : _toggleAdvanced,
+          icon: const Icon(LucideIcons.settings, size: 16),
+          color: grid.AppPalette.textFaint,
+          style: IconButton.styleFrom(
+            minimumSize: const Size(28, 28),
+            padding: const EdgeInsets.all(6),
+          ),
+        ),
+      ),
+      _setting(
         _BypassCheck(
-          value: _bypassPermission,
+          value: bypassFlag != null && _bypassPermission,
           hovered: _bypassHovered,
           onHover: (value) => setState(() => _bypassHovered = value),
-          onChanged: (value) => setState(() => _bypassPermission = value),
-        )
-      else
-        // Not silence: an engine with no checkbox looks identical to one whose
-        // checkbox the user simply missed.
-        Text(
-          'Managed by ${engineIdentity(_engine).label}.',
-          style: Theme.of(context).textTheme.bodySmall,
+          onChanged: bypassFlag == null
+              ? null
+              : (value) => setState(() => _bypassPermission = value),
         ),
+      ),
+      if (_engine == 'codex') _setting(_profileOptions()),
     ],
+  );
+
+  Widget _setting(Widget child) => Offstage(
+    offstage: !_advancedOpen,
+    child: ExcludeFocus(
+      excluding: !_advancedOpen || _choicesLocked,
+      child: IgnorePointer(ignoring: _choicesLocked, child: child),
+    ),
   );
 
   bool _machineOnline(MachineState machine) =>
@@ -875,48 +874,6 @@ const double _gapBlock = 12;
 /// One field and the next, down the choices column.
 const double _gapField = 24;
 
-class _Advanced extends StatelessWidget {
-  const _Advanced({super.key, required this.open, required this.children});
-  final bool open;
-  final List<Widget> children;
-
-  @override
-  Widget build(BuildContext context) => Offstage(
-    offstage: !open,
-    child: ExcludeFocus(
-      excluding: !open,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(4, 14, 4, 12),
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            if (constraints.maxWidth >= 640 && children.length > 1) {
-              return Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  for (var i = 0; i < children.length; i++) ...[
-                    if (i > 0) const SizedBox(width: 32),
-                    Expanded(child: children[i]),
-                  ],
-                ],
-              );
-            }
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                for (var i = 0; i < children.length; i++) ...[
-                  if (i > 0) const SizedBox(height: 20),
-                  children[i],
-                ],
-              ],
-            );
-          },
-        ),
-      ),
-    ),
-  );
-}
-
 class _BypassCheck extends StatelessWidget {
   const _BypassCheck({
     required this.value,
@@ -927,31 +884,34 @@ class _BypassCheck extends StatelessWidget {
   final bool value;
   final bool hovered;
   final ValueChanged<bool> onHover;
-  final ValueChanged<bool> onChanged;
+  final ValueChanged<bool>? onChanged;
 
   @override
   Widget build(BuildContext context) {
     grid.AppTheme.watch(context);
     return MouseRegion(
-      cursor: SystemMouseCursors.click,
+      cursor: onChanged == null
+          ? SystemMouseCursors.basic
+          : SystemMouseCursors.click,
       onEnter: (_) => onHover(true),
       onExit: (_) => onHover(false),
       child: GestureDetector(
-        onTap: () => onChanged(!value),
+        onTap: onChanged == null ? null : () => onChanged!(!value),
         behavior: HitTestBehavior.opaque,
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 10),
           child: Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
               AppCheckbox(value: value, hovered: hovered, onChanged: onChanged),
               const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  'Bypass approvals',
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: grid.AppPalette.textPrimary,
-                  ),
+              Text(
+                'Bypass approvals',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: onChanged == null
+                      ? grid.AppPalette.textFaint
+                      : grid.AppPalette.textPrimary,
                 ),
               ),
             ],
