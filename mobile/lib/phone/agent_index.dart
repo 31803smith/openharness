@@ -1,5 +1,5 @@
-import 'package:harness/core/models.dart';
-import 'package:harness/state/app_state.dart';
+import 'package:harness_mobile/core/models.dart';
+import 'package:harness_mobile/state/app_state.dart';
 import 'phone_status.dart';
 
 /// One agent, together with the machine it runs on.

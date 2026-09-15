@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../core/asset_owner.dart';
 
 import '../shared/theme/app_theme.dart' as grid;
 import 'login_relay_diagram.dart';
@@ -150,7 +149,6 @@ class _BootAppMark extends StatelessWidget {
       ),
       alignment: Alignment.center,
       child: Image.asset(
-        package: harnessAssetPackage,
         'assets/app_icon.png',
         width: 36,
         height: 36,

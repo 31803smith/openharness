@@ -7,24 +7,43 @@ version: 1.0.0+1
 environment:
   sdk: ^3.13.0
 
+# This package is SELF-CONTAINED: it depends on no other package in this repo.
+# The app it runs — state, API, auth, WS/relay, E2EE, the viewer's stand-ins for
+# the harness CLI, and the design system — lives under `lib/`, in the same
+# folders the desktop app uses for it (`core/`, `state/`, `ws/`, `e2ee/`,
+# `viewer/`, `terminal/`, `shared/`, `widgets/`). It was vendored from
+# `../desktop` rather than imported from it: a path dependency made every
+# desktop-only concern (the managed window, the self-updater, first-run
+# provisioning) a concern of the phone build too, and pinned this package to a
+# Flutter app that targets macOS and Linux.
 dependencies:
   flutter:
     sdk: flutter
 
-  # The shared app: state, API, auth, WS/relay, E2EE, the viewer's stand-ins for
-  # the harness CLI, and the design system. A path dependency rather than a copy
-  # — the mobile work once lived in a separate checkout and drifted out of reach,
-  # which is the whole reason it had to be ported back by hand. One source, two
-  # entry points.
-  harness:
-    path: ../desktop
-
-  # Used directly by this package's own code (lib/phone/, lib/main.dart). Kept
-  # explicit rather than leaned on transitively, so an import here cannot break
-  # because the shared app dropped a dependency it no longer uses.
   cupertino_icons: ^1.0.8
-  flutter_riverpod: ^2.6.1
   lucide_icons_flutter: ^3.1.15
+  flutter_riverpod: ^2.6.1
+
+  # Backend HTTP (`api/`, `viewer/direct_auth_api.dart`) and the update manifest.
+  dio: ^5.11.0
+  # The relay socket every machine is reached over (`ws/`).
+  web_socket_channel: ^3.0.3
+  # Sign-in hands the SSO URL to the system browser (`viewer/sign_in_browser.dart`)
+  # and the terminal opens links a program printed (`terminal/terminal_link_opener.dart`).
+  url_launcher: ^6.3.2
+  # X25519/HKDF/ChaCha20-Poly1305 for the end-to-end encryption this app
+  # terminates itself, being a viewer (`e2ee/`).
+  cryptography: ^2.9.0
+  # Unicode normalisation for the viewer's password-linking PAKE: the same
+  # password must hash identically whatever form the keyboard produced it in.
+  unorm_dart: ^0.3.2
+  # Keep the terminal core in-tree until the upstream circular-buffer ownership
+  # fix is released. See third_party/xterm/lib/src/core/buffer/buffer.dart.
+  xterm:
+    path: third_party/xterm
+  # The running build's version, shown in Settings and sent with analytics.
+  package_info_plus: ^10.2.1
+  path: ^1.9.1
 
   # The phone's second wire to a machine: the `terminal-v1` data channel the
   # harness CLI opens with werift on the desktop's behalf (lib/p2p/). Data
@@ -43,3 +62,7 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/engine-icons/
+    # The real app icon, shown on the sign-in and bootstrapping screens.
+    - assets/app_icon.png

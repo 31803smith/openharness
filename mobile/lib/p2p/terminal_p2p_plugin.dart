@@ -2,9 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:harness/logging/app_log.dart';
-import 'package:harness/terminal/terminal_binary.dart';
-import 'package:harness/ws/terminal_transport_plugin.dart';
+import 'package:harness_mobile/logging/app_log.dart';
+import 'package:harness_mobile/terminal/terminal_binary.dart';
+import 'package:harness_mobile/ws/terminal_transport_plugin.dart';
 
 import 'terminal_p2p_link.dart';
 import 'terminal_p2p_policy.dart';

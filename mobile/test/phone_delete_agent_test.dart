@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:harness/auth/auth_session.dart';
-import 'package:harness/core/config.dart';
-import 'package:harness/core/models.dart';
-import 'package:harness/state/app_state.dart';
-import 'package:harness/ws/ws_conn.dart';
+import 'package:harness_mobile/auth/auth_session.dart';
+import 'package:harness_mobile/core/config.dart';
+import 'package:harness_mobile/core/models.dart';
+import 'package:harness_mobile/state/app_state.dart';
+import 'package:harness_mobile/ws/ws_conn.dart';
 import 'package:harness_mobile/phone/agent_tile.dart';
 import 'package:harness_mobile/phone/agents_page.dart';
 

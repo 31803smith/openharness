@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/cupertino.dart';
 
-import 'package:harness/state/app_state.dart';
+import 'package:harness_mobile/state/app_state.dart';
 import 'agent_index.dart';
 import 'agent_swipe.dart';
 import 'agents_page.dart';

@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import 'package:harness/state/app_state.dart';
+import 'package:harness_mobile/state/app_state.dart';
 import 'agent_index.dart';
 import 'terminal_page.dart';
 

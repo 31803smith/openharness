@@ -3,12 +3,12 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
-import 'package:harness/core/codex_profiles.dart';
-import 'package:harness/core/models.dart';
-import 'package:harness/shared/theme/app_theme.dart';
-import 'package:harness/state/app_state.dart';
-import 'package:harness/widgets/engine_identity.dart';
-import 'package:harness/widgets/remote_folder_picker.dart';
+import 'package:harness_mobile/core/codex_profiles.dart';
+import 'package:harness_mobile/core/models.dart';
+import 'package:harness_mobile/shared/theme/app_theme.dart';
+import 'package:harness_mobile/state/app_state.dart';
+import 'package:harness_mobile/widgets/engine_identity.dart';
+import 'package:harness_mobile/widgets/remote_folder_picker.dart';
 
 import 'phone_header.dart';
 import 'settings_row.dart';

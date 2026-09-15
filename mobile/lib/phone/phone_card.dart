@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-import 'package:harness/shared/theme/app_theme.dart';
-import 'package:harness/shared/widgets/skeleton.dart';
+import 'package:harness_mobile/shared/theme/app_theme.dart';
+import 'package:harness_mobile/shared/widgets/skeleton.dart';
 
 /// The gap between two cards in a phone list.
 const double kPhoneCardGap = 10;

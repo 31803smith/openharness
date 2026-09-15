@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 
-import 'package:harness/shared/theme/app_theme.dart';
-import 'package:harness/state/app_state.dart';
-import 'package:harness/widgets/link_machine_screen.dart';
+import 'package:harness_mobile/shared/theme/app_theme.dart';
+import 'package:harness_mobile/state/app_state.dart';
+import 'package:harness_mobile/widgets/link_machine_screen.dart';
 import 'agents_page.dart';
 import 'phone_header.dart';
 import 'phone_navigation.dart';

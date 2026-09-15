@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
-import 'package:harness/shared/theme/app_theme.dart';
+import 'package:harness_mobile/shared/theme/app_theme.dart';
 
 /// The three places a phone can be. Agents first: it is where the app opens and the only tab with
 /// anything to act on.

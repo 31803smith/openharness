@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'package:harness/state/app_state.dart';
+import 'package:harness_mobile/state/app_state.dart';
 
 import '../p2p/phone_terminal_p2p.dart';
 import 'agent_index.dart';

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-import 'package:harness/shared/theme/app_theme.dart';
-import 'package:harness/state/app_state.dart';
+import 'package:harness_mobile/shared/theme/app_theme.dart';
+import 'package:harness_mobile/state/app_state.dart';
 import 'phone_status.dart';
 import 'status_pill.dart';
 

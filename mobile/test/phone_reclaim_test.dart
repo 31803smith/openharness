@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:harness/terminal/terminal_session.dart';
+import 'package:harness_mobile/terminal/terminal_session.dart';
 import 'package:harness_mobile/phone/phone_status.dart';
 
 TerminalSession _session(TerminalSessionStatus status) => TerminalSession(

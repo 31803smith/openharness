@@ -37,10 +37,11 @@ typedef AuthenticatedScreenBuilder = Widget Function(AppNotifier app);
 /// crash log, the keyboard config, the saved appearance, and the native window
 /// where there is one.
 ///
-/// Lives here rather than in either `main.dart` so the two cannot drift — the
-/// mobile app is a separate package (`../mobile`) that depends on this one, and
-/// a second copy of this preamble is exactly how the last mobile build ended up
-/// stranded from the desktop it shared a codebase with.
+/// Lives here rather than in `main.dart` so every screen up to sign-in has one
+/// definition of what precedes it. `../mobile` carries its own vendored copy of
+/// this file — it depended on this package until it was made standalone — so a
+/// change here that belongs on the phone too has to be carried across; the two
+/// trees are otherwise byte-identical outside `lib/phone/` and `lib/p2p/`.
 Future<void> startHarness({
   required AuthenticatedScreenBuilder authenticatedScreen,
   /// A viewer build's second wire to each machine (see

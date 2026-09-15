@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
-import 'package:harness/shared/theme/app_theme.dart';
+import 'package:harness_mobile/shared/theme/app_theme.dart';
 
 /// The pieces a phone settings list is built from — the grouped inset list every phone OS uses,
 /// rather than the desktop's `SettingRow` (a raised block with a fixed-width control on the right,

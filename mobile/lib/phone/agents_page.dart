@@ -3,11 +3,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
-import 'package:harness/core/models.dart';
-import 'package:harness/shared/theme/app_theme.dart';
-import 'package:harness/shared/widgets/app_icon_button.dart';
-import 'package:harness/shared/widgets/empty_state.dart';
-import 'package:harness/state/app_state.dart';
+import 'package:harness_mobile/core/models.dart';
+import 'package:harness_mobile/shared/theme/app_theme.dart';
+import 'package:harness_mobile/shared/widgets/app_icon_button.dart';
+import 'package:harness_mobile/shared/widgets/empty_state.dart';
+import 'package:harness_mobile/state/app_state.dart';
 
 import 'agent_tile.dart';
 import 'link_page.dart';

@@ -1,6 +1,6 @@
-import 'package:harness/core/models.dart';
-import 'package:harness/state/app_state.dart';
-import 'package:harness/terminal/terminal_session.dart';
+import 'package:harness_mobile/core/models.dart';
+import 'package:harness_mobile/state/app_state.dart';
+import 'package:harness_mobile/terminal/terminal_session.dart';
 
 /// How a phone status line is coloured. The widgets turn this into a palette colour, so the
 /// rules below stay testable without a theme.

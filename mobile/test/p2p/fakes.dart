@@ -4,9 +4,9 @@ import 'dart:typed_data';
 
 import 'package:fake_async/fake_async.dart';
 
-import 'package:harness/terminal/terminal_binary.dart';
-import 'package:harness/ws/relay_codec.dart';
-import 'package:harness/ws/terminal_transport_plugin.dart';
+import 'package:harness_mobile/terminal/terminal_binary.dart';
+import 'package:harness_mobile/ws/relay_codec.dart';
+import 'package:harness_mobile/ws/terminal_transport_plugin.dart';
 import 'package:harness_mobile/p2p/terminal_p2p_link.dart';
 import 'package:harness_mobile/p2p/terminal_p2p_plugin.dart';
 import 'package:harness_mobile/p2p/terminal_p2p_policy.dart';

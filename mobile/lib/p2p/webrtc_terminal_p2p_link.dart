@@ -4,7 +4,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter_webrtc/flutter_webrtc.dart';
-import 'package:harness/logging/app_log.dart';
+import 'package:harness_mobile/logging/app_log.dart';
 
 import 'terminal_p2p_link.dart';
 import 'terminal_p2p_policy.dart';

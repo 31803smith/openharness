@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../core/asset_owner.dart';
 
 import '../shared/theme/app_theme.dart' as grid;
 import '../state/app_state.dart';
@@ -412,7 +411,6 @@ class _AppMark extends StatelessWidget {
       // No ClipRRect: the asset carries its own rounded corners, and clipping
       // would cut the edge twice. Same reason About renders it bare.
       child: Image.asset(
-        package: harnessAssetPackage,
         'assets/app_icon.png',
         width: 36,
         height: 36,

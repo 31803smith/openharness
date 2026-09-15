@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
-import 'package:harness/shared/theme/app_theme.dart';
-import 'package:harness/shared/widgets/empty_state.dart';
-import 'package:harness/state/app_state.dart';
+import 'package:harness_mobile/shared/theme/app_theme.dart';
+import 'package:harness_mobile/shared/widgets/empty_state.dart';
+import 'package:harness_mobile/state/app_state.dart';
 import 'machine_tile.dart';
 import 'phone_card.dart';
 import 'phone_header.dart';

@@ -1,7 +1,7 @@
 import 'package:flutter/widgets.dart';
 
-import 'package:harness/core/viewer_mode.dart';
-import 'package:harness/shared/layouts/window_size.dart';
+import 'package:harness_mobile/core/viewer_mode.dart';
+import 'package:harness_mobile/shared/layouts/window_size.dart';
 
 /// The shortest side under which a viewer draws its phone layout — the shell's own compact
 /// breakpoint, so an iPad keeps the rail beside its terminals.
