@@ -166,76 +166,67 @@ class _SwarmSearchPreviewState extends State<SwarmSearchPreview> {
       return Semantics(
         container: true,
         label: 'Agent preview',
-        child: ColoredBox(
-          color: Colors.black.withValues(alpha: .10),
-          child: Scrollbar(
-            controller: _scroll,
-            child: agents.length != 1
-                ? ListView.builder(
-                    key: ValueKey('preview-content:${row.id}'),
-                    controller: _scroll,
-                    padding: EdgeInsets.all(widget.compactHeader ? 16 : 24),
-                    scrollCacheExtent: const ScrollCacheExtent.pixels(120),
-                    itemCount: agents.length + 1,
-                    itemBuilder: (context, index) => index == 0
-                        ? Padding(
-                            padding: const EdgeInsets.only(bottom: 24),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  row.title,
-                                  style: const TextStyle(
-                                    fontSize: 20,
-                                    fontWeight: FontWeight.w600,
+        child: Scrollbar(
+          controller: _scroll,
+          child: agents.length != 1
+              ? ListView.builder(
+                  key: ValueKey('preview-content:${row.id}'),
+                  controller: _scroll,
+                  padding: EdgeInsets.all(widget.compactHeader ? 16 : 24),
+                  scrollCacheExtent: const ScrollCacheExtent.pixels(120),
+                  itemCount: agents.length + 1,
+                  itemBuilder: (context, index) => index == 0
+                      ? Padding(
+                          padding: const EdgeInsets.only(bottom: 24),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                row.title,
+                                style: const TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              Text(row.detail, style: _muted),
+                              if (agents.isEmpty)
+                                const Padding(
+                                  padding: EdgeInsets.only(top: 24),
+                                  child: Text(
+                                    'No recent session text available.',
+                                    style: _muted,
                                   ),
                                 ),
-                                const SizedBox(height: 6),
-                                Text(row.detail, style: _muted),
-                                if (agents.isEmpty)
-                                  const Padding(
-                                    padding: EdgeInsets.only(top: 24),
-                                    child: Text(
-                                      'No recent session text available.',
-                                      style: _muted,
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          )
-                        : Padding(
-                            padding: EdgeInsets.only(top: index > 1 ? 20 : 0),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                _AgentPreview(
-                                  app: app,
-                                  item: agents[index - 1],
-                                  compact: true,
-                                ),
-                                if (index < agents.length)
-                                  const Padding(
-                                    padding: EdgeInsets.only(top: 20),
-                                    child: Divider(
-                                      height: 1,
-                                      color: Colors.white10,
-                                    ),
-                                  ),
-                              ],
-                            ),
+                            ],
                           ),
-                  )
-                : SingleChildScrollView(
-                    key: ValueKey('preview-content:${row.id}'),
-                    controller: _scroll,
-                    padding: EdgeInsets.all(widget.compactHeader ? 16 : 24),
-                    child: _AgentPreview(
-                      app: app,
-                      item: agents.single,
-                      dense: widget.compactHeader,
-                    ),
+                        )
+                      : Padding(
+                          padding: EdgeInsets.only(top: index > 1 ? 20 : 0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _AgentPreview(
+                                app: app,
+                                item: agents[index - 1],
+                                compact: true,
+                              ),
+                              if (index < agents.length)
+                                const SizedBox(height: 20),
+                            ],
+                          ),
+                        ),
+                )
+              : SingleChildScrollView(
+                  key: ValueKey('preview-content:${row.id}'),
+                  controller: _scroll,
+                  padding: EdgeInsets.all(widget.compactHeader ? 16 : 24),
+                  child: _AgentPreview(
+                    app: app,
+                    item: agents.single,
+                    dense: widget.compactHeader,
                   ),
-          ),
+                ),
         ),
       );
     },
@@ -468,8 +459,7 @@ class _AgentPreview extends StatelessWidget {
               padding: EdgeInsets.only(bottom: 24),
               child: Text('No recent session text available.', style: _muted),
             ),
-          const Divider(height: 1, color: Colors.white10),
-          const SizedBox(height: 16),
+          const SizedBox(height: 8),
           if (project?.cwd case final cwd?) Text(cwd, style: _muted),
           if (project?.branch case final branch?)
             Padding(

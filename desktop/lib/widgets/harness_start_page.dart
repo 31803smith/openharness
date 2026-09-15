@@ -92,16 +92,13 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
     child: Focus(
       focusNode: _pickerFocus,
       child: Material(
-        color: _showResults
-            ? grid.AppPalette.swarmSearchSurface
-            : Colors.transparent,
-        elevation: _showResults ? 12 : 0,
-        shadowColor: Colors.black54,
+        color: grid.AppPalette.swarmSearchSurface,
+        surfaceTintColor: Colors.transparent,
+        elevation: _showResults ? 10 : 2,
+        shadowColor: Colors.black38,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(32),
-          side: _showResults
-              ? const BorderSide(color: Colors.white24)
-              : BorderSide.none,
+          side: BorderSide(color: Colors.white.withValues(alpha: .10)),
         ),
         clipBehavior: Clip.antiAlias,
         child: SwarmSearchKeys(
@@ -135,16 +132,18 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
                 ),
               ),
               if (_showResults) ...[
-                const Divider(height: 1, color: Colors.white12),
                 Flexible(
-                  child: SizedBox(
-                    height: 480,
-                    child: SwarmSearchResults(
-                      key: const ValueKey('harness-start-results'),
-                      search: _search!,
-                      sideBySideMinWidth: 700,
-                      onChoose: _choose,
-                      onRefocus: _focus.requestFocus,
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: SizedBox(
+                      height: 480,
+                      child: SwarmSearchResults(
+                        key: const ValueKey('harness-start-results'),
+                        search: _search!,
+                        sideBySideMinWidth: 700,
+                        onChoose: _choose,
+                        onRefocus: _focus.requestFocus,
+                      ),
                     ),
                   ),
                 ),

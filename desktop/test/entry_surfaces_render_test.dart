@@ -65,6 +65,12 @@ void main() {
           rootBundle.load('packages/lucide_icons_flutter/assets/lucide.ttf'),
         ))
         .load();
+    await (FontLoader('packages/lucide_icons_flutter/Lucide300')..addFont(
+          rootBundle.load(
+            'packages/lucide_icons_flutter/assets/build_font/LucideVariable-w300.ttf',
+          ),
+        ))
+        .load();
     await (FontLoader('packages/cupertino_icons/CupertinoIcons')..addFont(
           rootBundle.load('packages/cupertino_icons/assets/CupertinoIcons.ttf'),
         ))
@@ -78,6 +84,9 @@ void main() {
         tester.view.devicePixelRatio = 1;
         tester.view.physicalSize = const Size(880, 560);
         addTearDown(tester.view.reset);
+        final previousShadows = debugDisableShadows;
+        debugDisableShadows = false;
+        addTearDown(() => debugDisableShadows = previousShadows);
         const nativeTabs = MethodChannel('harness/swarm_tabs');
         tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
           nativeTabs,
@@ -165,6 +174,7 @@ void main() {
         ];
         tester.view.physicalSize = const Size(1280, 800);
         await tester.pumpAndSettle();
+        await capture('inline-wide');
         for (var i = 0; i < 5; i++) {
           await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
           await tester.pump();
@@ -194,6 +204,7 @@ void main() {
         await chord(tester, LogicalKeyboardKey.keyN);
         await tester.pumpAndSettle();
         await capture('new');
+        debugDisableShadows = previousShadows;
         expect(tester.takeException(), isNull);
         for (final label in ['Codex', 'Claude Code', 'Cursor']) {
           if (tester

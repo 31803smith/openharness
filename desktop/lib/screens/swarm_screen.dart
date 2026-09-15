@@ -933,14 +933,13 @@ class _SwarmScreenState extends State<SwarmScreen> {
     final commandsOnly = search.commandsOnly;
     final panel = Material(
       key: const ValueKey('swarm-search-results'),
-      elevation: 16,
-      shadowColor: Colors.black54,
-      color: commandsOnly
-          ? grid.AppPalette.swarmSearchSurface
-          : grid.AppPalette.agentEntrySurface,
+      elevation: 10,
+      shadowColor: Colors.black38,
+      color: grid.AppPalette.swarmSearchSurface,
+      surfaceTintColor: Colors.transparent,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(commandsOnly ? 14 : 20),
-        side: const BorderSide(color: Colors.white12),
+        borderRadius: BorderRadius.circular(commandsOnly ? 14 : 32),
+        side: BorderSide(color: Colors.white.withValues(alpha: .10)),
       ),
       clipBehavior: Clip.antiAlias,
       child: Column(
@@ -1006,13 +1005,9 @@ class _SwarmScreenState extends State<SwarmScreen> {
                 prominent: !commandsOnly,
                 hintText: commandsOnly ? null : '',
                 outlined: !commandsOnly,
-                fillColor: commandsOnly
-                    ? null
-                    : grid.AppPalette.agentEntryField,
               ),
             ),
           ),
-          const Divider(height: 1, color: Colors.white12),
           Expanded(
             child: SwarmSearchResults(
               search: search,

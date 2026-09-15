@@ -34,7 +34,18 @@ user for a benchmark window.
 
 ## Current product contract
 
-### Latest: focused New Agent form
+### Latest: continuous search surface
+
+The compact New Harness input and expanded results use the same palette fill,
+32-pixel outer corners and a subtle edge. Internal search/preview dividers and
+the darker preview fill are removed; whitespace and soft rounded selection
+provide structure. Open Agent uses the same surface while retaining its heading
+and blank input. Keyboard, focus, preview and entry checks pass (64 tests) in
+`/private/tmp/harness-search-surface-tests.log`; captures are in
+`/private/tmp/harness-search-surface-captures` and
+`/private/tmp/harness-search-surface-previews`.
+
+### Focused New Agent form — pushed 2cdfa88
 
 The creation dialog is now 600 pixels wide with compact Agent choices, Project
 tabs, a prominent folder/repository control, and a quiet Run on machine row.

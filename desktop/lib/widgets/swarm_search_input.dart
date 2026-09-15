@@ -63,9 +63,9 @@ class SwarmSearchInput extends StatelessWidget {
               : 12,
         ),
       ),
-      borderSide: BorderSide(
-        color: open && !outlined ? Colors.transparent : Colors.white24,
-      ),
+      borderSide: outlined
+          ? BorderSide(color: Colors.white.withValues(alpha: .10))
+          : BorderSide.none,
     );
     return TextField(
       key: inputKey,
@@ -104,11 +104,7 @@ class SwarmSearchInput extends StatelessWidget {
               )
             : null,
         filled: true,
-        fillColor:
-            fillColor ??
-            (open
-                ? grid.AppPalette.swarmSearchSurface
-                : const Color(0xa6111521)),
+        fillColor: fillColor ?? grid.AppPalette.swarmSearchSurface,
         contentPadding: EdgeInsets.symmetric(
           horizontal: 18,
           vertical: prominent ? 22 : 18,

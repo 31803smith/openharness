@@ -391,7 +391,7 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
         final sideBySide = constraints.maxWidth >= widget.sideBySideMinWidth;
         final compactAction =
             (sideBySide ? constraints.maxWidth / 2 : constraints.maxWidth) <
-            380;
+            380 * scale.scale(14) / 14;
         final geometry = (constraints.biggest, _rowHeight);
         if (_geometry != geometry) {
           _geometry = geometry;
@@ -461,10 +461,10 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                             selectedColor: Colors.white,
                             hoverColor: Colors.transparent,
                             selectedTileColor: Colors.white.withValues(
-                              alpha: .075,
+                              alpha: .055,
                             ),
                             shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(6),
+                              borderRadius: BorderRadius.circular(12),
                             ),
                             contentPadding: const EdgeInsets.symmetric(
                               horizontal: 12,
@@ -570,7 +570,6 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                       ),
               ),
               if (unavailable) ...[
-                const Divider(height: 1, color: Colors.white12),
                 SizedBox(
                   height: 48,
                   child: Padding(
@@ -616,14 +615,14 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Expanded(flex: 5, child: results),
-                  const VerticalDivider(width: 1, color: Colors.white12),
+                  const SizedBox(width: 8),
                   Expanded(flex: 5, child: preview),
                 ],
               )
             : Column(
                 children: [
                   Expanded(flex: 5, child: results),
-                  const Divider(height: 1, color: Colors.white12),
+                  const SizedBox(height: 8),
                   Expanded(flex: 6, child: preview),
                 ],
               );

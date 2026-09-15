@@ -58,13 +58,16 @@ and titlebar. Find fields keep the magnifying glass for search.
 search field and **Open Agent / New Agent** buttons below it. The field is capped
 at 1120 logical pixels, has a 64-pixel minimum height and shows **Find an agent**.
 Its position, width and 32-pixel outer corners stay fixed when results open.
+The input, results and preview share one palette surface in both states, with
+a subtle outer edge and shadow. Soft rounded selection and whitespace separate
+content without internal dividing lines or a darker preview column.
 Results and preview share the space above the fixed device footer. Typing,
 clicking or pressing an arrow opens search; focus alone does not build its catalog.
 Escape closes results and retains the query. The default background matches the selected tab, and the device
 product strip stays above the customization button. New without a linked machine opens machine linking.
 
-Open Agent has a large **Find an agent** heading, a blank rounded input and an
-almost-black surface over a 90% black canvas veil. Results appear immediately;
+Open Agent has a large **Find an agent** heading, a blank rounded input and the
+same palette surface over a 90% black canvas veil. Results appear immediately;
 arrows select and Enter or a row click opens the agent. There is no footer
 button or New Agent form. Results and preview sit side by side from 700 logical
 pixels; narrower windows stack them. Both scroll independently. Hover updates
