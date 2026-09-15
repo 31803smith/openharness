@@ -10,7 +10,7 @@
  * `require` via the banner so ws's try/catch fallback works without them.
  */
 import * as esbuild from 'esbuild'
-import { readFileSync, copyFileSync, rmSync } from 'fs'
+import { readFileSync, copyFileSync, rmSync, mkdirSync } from 'fs'
 
 const version =
   process.env.ADAPTER_VERSION ||
@@ -43,4 +43,11 @@ await esbuild.build({
 })
 
 copyFileSync('hook/notify.mjs', 'dist/notify.mjs')
-console.log(`✓ Bundled dist/cli.js (v${version}) + dist/notify.mjs`)
+
+// harnessComputeSkill.ts reads this doc at runtime, as a SIBLING `skills/` dir next to cli.js —
+// same layout notify.mjs uses, and the same "the doc is the source, install just ships it" split
+// the source file documents.
+mkdirSync('dist/skills', { recursive: true })
+copyFileSync('../docs/skills/harness-compute.md', 'dist/skills/harness-compute.md')
+
+console.log(`✓ Bundled dist/cli.js (v${version}) + dist/notify.mjs + dist/skills/`)
