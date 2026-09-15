@@ -384,7 +384,7 @@ class _AgentPreview extends StatelessWidget {
                 record?.interrupted == true
                     ? 'Last response · interrupted'
                     : 'Latest response',
-                response,
+                record?.responseExcerpt ?? response,
                 maxLines: record?.earlierResponses.isNotEmpty == true
                     ? 6
                     : null,

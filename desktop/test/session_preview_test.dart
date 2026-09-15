@@ -58,7 +58,7 @@ void main() {
           'events': [
             {
               'kind': 'summary',
-              'fullText': 'I’ll commit the prototype.\n\nCommitted and pushed.',
+              'fullText': 'I’ll commit the prototype.\n\nPushing now.\n\nCommitted and pushed.\n\nThe shared comments are saved.',
             },
             {
               'kind': 'summary',
@@ -79,7 +79,11 @@ void main() {
       final preview = store.read(a)!;
       expect(
         preview.response,
-        'I’ll commit the prototype.\n\nCommitted and pushed.',
+        'I’ll commit the prototype.\n\nPushing now.\n\nCommitted and pushed.\n\nThe shared comments are saved.',
+      );
+      expect(
+        preview.responseExcerpt,
+        'Committed and pushed.\n\nThe shared comments are saved.',
       );
       expect(
         preview.contextResponse,

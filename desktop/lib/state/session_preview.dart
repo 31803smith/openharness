@@ -33,6 +33,18 @@ class SessionPreview {
       ? requests.skip(1).firstOrNull
       : null;
   String? get response => completedText ?? savedText;
+  String? get responseExcerpt {
+    final text = response;
+    if (text == null || completedText != null || contextResponse == text)
+      return text;
+    // Cached fullText may include the "I'll commit" preamble before the final
+    // receipt. Keep the existing outcome paragraphs, not just the preamble.
+    final paragraphs = text.split(RegExp(r'\n\s*\n'));
+    return paragraphs
+        .skip(paragraphs.length > 2 ? paragraphs.length - 2 : 0)
+        .join('\n\n');
+  }
+
   // A commit receipt often follows the actual explanation. Reuse an earlier
   // existing response for compact group context, keeping the receipt available
   // as the latest response in the full preview. This is text selection only.
