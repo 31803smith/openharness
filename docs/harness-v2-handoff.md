@@ -34,7 +34,18 @@ user for a benchmark window.
 
 ## Current product contract
 
-### Latest: minimal Customize Harness
+### Latest: clearer device companion link
+
+The user refined the device treatment: remove the box and make the product
+clearer. The cutout is now 64 pixels tall beside the quiet **Meet the Harness
+device** label. There is no background, border, description or secondary action.
+Search and agent actions remain the page's focus.
+Six existing entry/layout checks pass. Captures:
+`/private/tmp/harness-device-link-captures`; validation:
+`/private/tmp/harness-device-link-tests.log` and
+`/private/tmp/harness-device-link-analyze.log`.
+
+### Minimal Customize Harness — pushed 0c764cf
 
 The user explicitly prefers **less is better**: short labels, no repeated titles,
 no promotional descriptions and explanations only when a decision needs them.
@@ -51,7 +62,7 @@ focus restoration and terminal scale isolation. Captures and logs:
 `/private/tmp/harness-customize-minimal-tests.log` and
 `/private/tmp/harness-customize-minimal-analyze.log`.
 
-### Quiet device companion card — pushed f363c9f
+### Earlier device companion card — pushed f363c9f, superseded above
 
 New Harness now shows a small **Meet the Harness device** card with a 36-pixel
 product image. The description and separate Learn more button are removed.
@@ -334,13 +345,13 @@ are:
   precedence. Cmd-R splits right and Cmd-D splits down. Native menus, help and actual
   dispatch must agree; native menu and titlebar hover hints are removed.
 - New Harness defaults to the selected tab fill. Customize Harness offers the
-  prior Aurora mesh and restored images. The device cutout sits in a small companion card.
+  prior Aurora mesh and restored images. The device cutout sits beside a quiet companion link.
   The long search field is capped at 1120 logical pixels with a 64-pixel minimum
   height and **Find an agent** hint. It starts blank and focused, with results
   hidden until typing, clicking or pressing an arrow. Open Agent and New Agent
   sit underneath at the same left edge; the Open button is outlined here.
   Search retains its position and width; results and preview are side by side
-  from 700 pixels. Escape restores the actions and query. The small device card stays
+  from 700 pixels. Escape restores the actions and query. The device companion link stays
   above the bottom-right Customize button while search opens and closes.
   Wallpaper is now an explicit saved choice.
 - Search is single-choice. Session names appear above **project · branch ·

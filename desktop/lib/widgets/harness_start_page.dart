@@ -162,29 +162,26 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 320),
         child: Material(
-          color: Colors.white.withValues(alpha: .025),
-          shape: RoundedRectangleBorder(
-            side: BorderSide(color: Colors.white.withValues(alpha: .07)),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          clipBehavior: Clip.antiAlias,
+          color: Colors.transparent,
           child: InkWell(
             key: const ValueKey('harness-device-link'),
             mouseCursor: SystemMouseCursors.click,
             onTap: _openDevicePage,
+            borderRadius: BorderRadius.circular(12),
+            hoverColor: Colors.transparent,
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(10, 8, 14, 8),
+              padding: const EdgeInsets.symmetric(vertical: 4),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Image.asset(
                     'assets/harness_device.png',
-                    height: 36,
-                    width: 32,
+                    height: 64,
+                    width: 56,
                     fit: BoxFit.contain,
                     excludeFromSemantics: true,
                   ),
-                  const SizedBox(width: 10),
+                  const SizedBox(width: 12),
                   Flexible(
                     child: Text(
                       'Meet the Harness device',

@@ -81,9 +81,10 @@ content without internal dividing lines or a darker preview column.
 Results and preview share the space above the fixed device footer. Typing,
 clicking or pressing an arrow opens search; focus alone does not build its catalog.
 Escape closes results and retains the query. The default background matches the selected tab, and the device
-card stays above the customization button. It contains a small device image and
-**Meet the Harness device**, with no description or separate Learn more action.
-The whole card opens the device page. New without a linked machine opens machine linking.
+link stays above the customization button. A clear 64-pixel device cutout sits
+beside **Meet the Harness device**, with no box, description or separate Learn
+more action. The image and label open the device page together.
+New without a linked machine opens machine linking.
 
 Open Agent has a large **Find an agent** heading, a blank rounded input and the
 same palette surface over a 90% black canvas veil. Results appear immediately;
