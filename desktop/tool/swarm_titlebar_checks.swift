@@ -623,9 +623,9 @@ private extension SwarmTitlebar {
     try checkTitlebar(messenger.calls.last?.method == "manageMachines",
       "Machines Manager opens through the Flutter command bridge")
     let destinations = machineMenu.items.filter { $0.action == #selector(machineAction(_:)) }
-    try checkTitlebar(machineMenu.minimumWidth == 0 && machineMenu.size.width < 360 &&
+    try checkTitlebar(machineMenu.minimumWidth == 0 && machineMenu.size.width < 432 &&
       destinations.first?.attributedTitle?.string.hasSuffix("\t2 agents") == true,
-      "Machines fits names and its aligned counts without a wide minimum")
+      "Machines gives labels twenty percent more room with aligned counts")
     try checkTitlebar(destinations.map { $0.representedObject as? String } == ["office", "home"],
       "Machines lists each linked computer as a destination")
     try checkTitlebar(destinations[0].attributedTitle?.string.contains("Online") == true &&
@@ -690,7 +690,15 @@ private extension SwarmTitlebar {
     try checkTitlebar(historyMenu.items.allSatisfy { $0.submenu == nil }, "Recent work is available without nested menus")
     let recent = recentItems[0]
     let closed = closedItems[0]
-    try checkTitlebar(historyMenu.size.width < 420, "History fits agent and machine labels without an empty fixed-width span")
+    try checkTitlebar(historyMenu.size.width < 504 && historyMenu.minimumWidth > 0, "History adds twenty percent reading room")
+    let recentView = recent.view as! SwarmHistoryMenuRow
+    try checkTitlebar(recentView.machineFrame.maxX == recentView.bounds.width - 18,
+      "History machine names align at the right edge beyond the command shortcut column")
+    menu(historyMenu, willHighlight: recent)
+    try checkTitlebar(recentView.highlighted, "Keyboard and mouse menu highlight reaches the full History row")
+    let historyCallCount = messenger.calls.count
+    try checkTitlebar(recentView.accessibilityPerformPress() && messenger.calls.count == historyCallCount + 1 &&
+      messenger.calls.last?.method == "historyDestination", "The full-width History row opens the same native destination")
     try checkTitlebar(recent.image?.size == NSSize(width: 16, height: 16) && recent.image?.isTemplate == false,
       "History uses the colored Claude mark at native menu size")
     try checkTitlebar(recent.state == .on && recent.toolTip == nil, "History adds no hover hints")
@@ -786,7 +794,7 @@ private extension SwarmTitlebar {
       let cell = view.balance.cell!
       let drawing = cell.drawingRect(forBounds: view.balance.bounds)
       let glyphWidth = (view.balance.stringValue as NSString).size(withAttributes: [.font: view.balance.font!]).width
-      try checkTitlebar(view.bounds.width >= 440 && drawing.width >= glyphWidth,
+      try checkTitlebar(view.bounds.width >= 352 && view.bounds.width < 440 && drawing.width >= glyphWidth,
         "Remaining usage and sign-in status have enough actual text-cell width to display in full")
     }
     try checkTitlebar(secondRow.balance.frame.maxX == row.balance.frame.maxX,

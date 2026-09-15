@@ -246,6 +246,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     add(file, "Close Pane", "w", "closePane", [.command, .shift])
     install(file, at: 1)
 
+    historyMenu.delegate = self
     rebuildHistoryMenu()
     install(historyMenu, at: main.items.firstIndex(where: { $0.title == "Window" }) ?? main.numberOfItems)
 
@@ -284,11 +285,14 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
 
   private func rebuildMachinesMenu() {
     machinesMenu.removeAllItems()
+    machinesMenu.minimumWidth = 0
     let labels = machines.map { machine in
       (name: SwarmMenuText.fitted(machine.name, width: 200), status: machine.status,
        count: machine.agentCount.map { "\($0) \($0 == 1 ? "agent" : "agents")" } ?? "")
     }
-    let trailingEdge = SwarmMenuText.trailingEdge(labels.map { ($0.name + "  " + $0.status, $0.count) })
+    // Preserve the compact menu's proportions, with the requested extra room.
+    let compactEdge = SwarmMenuText.trailingEdge(labels.map { ($0.name + "  " + $0.status, $0.count) })
+    let trailingEdge = ceil((compactEdge + 62) * 1.2) - 62
     let manager = NSMenuItem(title: "Open Machines Manager", action: #selector(menuAction(_:)), keyEquivalent: "")
     manager.target = self
     manager.representedObject = "manageMachines"
@@ -303,7 +307,9 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
       paragraph.tabStops = [NSTextTab(textAlignment: .right, location: trailingEdge)]
       let label = NSMutableAttributedString(string: parts.name,
         attributes: [.font: NSFont.menuFont(ofSize: 0), .paragraphStyle: paragraph])
-      let suffix = "  " + parts.status + (parts.count.isEmpty ? "" : "\t" + parts.count)
+      let suffix = parts.count.isEmpty
+        ? "\t" + parts.status
+        : "  " + parts.status + "\t" + parts.count
       label.append(NSAttributedString(string: suffix,
         attributes: [.font: NSFont.menuFont(ofSize: 0), .paragraphStyle: paragraph,
           .foregroundColor: NSColor.secondaryLabelColor]))
@@ -377,7 +383,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
       }
     }
     section("Subscription")
-    let rowWidth = subscriptions.map(SwarmSubscriptionView.preferredWidth).max() ?? 440
+    let rowWidth = subscriptions.map(SwarmSubscriptionView.preferredWidth).max() ?? 352
     for entry in subscriptions {
       let item = NSMenuItem(title: entry.accessibilityLabel, action: nil, keyEquivalent: "")
       let icon = historyIcons.image(engine: entry.engine, asset: entry.iconAsset)
@@ -412,6 +418,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
 
   private func rebuildHistoryMenu() {
     historyMenu.removeAllItems()
+    historyMenu.minimumWidth = 0
     let visited = Array(history.prefix(15))
     let closed = Array(closedHistory.prefix(10))
     let trailingEdge = SwarmMenuText.trailingEdge((closed + visited).map { ($0.menuName, $0.menuMachine) })
@@ -438,6 +445,20 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     historyMenu.addItem(.separator())
     command("Show Full History", "y", "showHistory")
     if let keymap { keymap.applyMenuKeys(to: historyMenu, context: flutterKeyContext) }
+    let rowWidth = ceil(historyMenu.size.width * 1.2)
+    historyMenu.minimumWidth = rowWidth
+    for item in historyMenu.items {
+      guard let id = item.representedObject as? String,
+            let entry = (closed + visited).first(where: { $0.id == id }) else { continue }
+      item.view = SwarmHistoryMenuRow(item: item, entry: entry, width: rowWidth)
+    }
+  }
+
+  func menu(_ menu: NSMenu, willHighlight item: NSMenuItem?) {
+    guard menu === historyMenu else { return }
+    for row in menu.items {
+      (row.view as? SwarmHistoryMenuRow)?.highlighted = row === item
+    }
   }
 
   private func appendHistorySection(_ title: String, entries: [SwarmHistoryEntry], closed: Bool, trailingEdge: CGFloat) {
@@ -626,7 +647,7 @@ private final class SwarmSubscriptionView: NSView {
   static func preferredWidth(_ entry: SwarmSubscriptionEntry) -> CGFloat {
     let identityWidth = textWidth(entry.title + "  " + entry.account)
     let balanceWidth = textWidth(entry.status)
-    return min(720, max(440, identityWidth + balanceWidth + 88))
+    return min(576, max(352, identityWidth + balanceWidth + 88))
   }
 
   init(entry: SwarmSubscriptionEntry, icon: NSImage, width: CGFloat) {
@@ -670,6 +691,83 @@ private final class SwarmSubscriptionView: NSView {
       y: (bounds.height - height) / 2, width: balanceWidth, height: height)
     identity.frame = NSRect(x: 40, y: balance.frame.minY,
       width: max(0, balance.frame.minX - 24 - 40), height: height)
+  }
+}
+
+/// A History row uses the full menu width; shortcut columns belong to commands.
+/// Native item titles/actions still own type-select, validation and activation.
+private final class SwarmHistoryMenuRow: NSView {
+  private weak var item: NSMenuItem?
+  private let entry: SwarmHistoryEntry
+  var highlighted = false { didSet { needsDisplay = true } }
+  var machineFrame: NSRect {
+    let width = ceil(SwarmMenuText.width(entry.menuMachine))
+    return NSRect(x: bounds.width - 18 - width, y: 4, width: width, height: 18)
+  }
+
+  init(item: NSMenuItem, entry: SwarmHistoryEntry, width: CGFloat) {
+    self.item = item
+    self.entry = entry
+    super.init(frame: NSRect(x: 0, y: 0, width: width, height: 24))
+    autoresizingMask = [.width]
+    setAccessibilityElement(true)
+    setAccessibilityRole(.menuItem)
+    setAccessibilityLabel([entry.title, entry.machineName].filter { !$0.isEmpty }.joined(separator: ", "))
+  }
+  required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+  override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+    highlighted = false
+    setAccessibilityEnabled(item?.isEnabled == true)
+    needsDisplay = true
+  }
+  override func draw(_ dirtyRect: NSRect) {
+    guard let item else { return }
+    let selected = highlighted && item.isEnabled
+    if selected {
+      NSColor.selectedContentBackgroundColor.setFill()
+      NSBezierPath(roundedRect: bounds.insetBy(dx: 4, dy: 0), xRadius: 5, yRadius: 5).fill()
+    }
+    let color = !item.isEnabled ? NSColor.disabledControlTextColor
+      : selected ? .selectedMenuItemTextColor : .labelColor
+    let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.menuFont(ofSize: 0), .foregroundColor: color]
+    if item.state == .on {
+      let mark = NSImage(systemSymbolName: "checkmark", accessibilityDescription: nil)!
+      let tinted = mark.copy() as! NSImage
+      tinted.lockFocus()
+      color.set()
+      NSRect(origin: .zero, size: tinted.size).fill(using: .sourceAtop)
+      tinted.unlockFocus()
+      tinted.draw(in: NSRect(x: 7, y: 5, width: 13, height: 13))
+    }
+    if let icon = item.image {
+      if icon.isTemplate, let tinted = icon.copy() as? NSImage {
+        tinted.lockFocus()
+        color.set()
+        NSRect(origin: .zero, size: tinted.size).fill(using: .sourceAtop)
+        tinted.unlockFocus()
+        tinted.draw(in: NSRect(x: 25, y: 4, width: 16, height: 16))
+      } else {
+        icon.draw(in: NSRect(x: 25, y: 4, width: 16, height: 16))
+      }
+    }
+    let right = entry.menuMachine.isEmpty ? bounds.width - 18 : machineFrame.minX - 20
+    let name = SwarmMenuText.fitted(entry.title, width: max(0, right - 48))
+    (name as NSString).draw(at: NSPoint(x: 48, y: 4), withAttributes: attributes)
+    (entry.menuMachine as NSString).draw(at: machineFrame.origin, withAttributes: attributes)
+  }
+  override func mouseUp(with event: NSEvent) {
+    guard bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
+    activate()
+  }
+  override func accessibilityPerformPress() -> Bool { activate() }
+  @discardableResult private func activate() -> Bool {
+    guard let item, item.isEnabled, let menu = item.menu else { return false }
+    let index = menu.index(of: item)
+    guard index >= 0 else { return false }
+    menu.cancelTracking()
+    menu.performActionForItem(at: index)
+    return true
   }
 }
 
