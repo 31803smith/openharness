@@ -837,7 +837,7 @@ void main() {
             )
             .focusNode!
             .hasFocus,
-        isFalse,
+        isTrue,
       );
       expect(find.byKey(const ValueKey('harness-start-open')), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('harness-start-new')));
@@ -1090,7 +1090,7 @@ void main() {
 
     await chord(tester, LogicalKeyboardKey.keyP, shift: true);
     await tester.enterText(
-      find.byKey(const ValueKey('swarm-search-input')),
+      find.byKey(const ValueKey('harness-start-search')),
       '> link machine',
     );
     await tester.pump();
@@ -1176,7 +1176,7 @@ void main() {
 
     await chord(tester, LogicalKeyboardKey.keyP, shift: true);
     await tester.enterText(
-      find.byKey(const ValueKey('swarm-search-input')),
+      find.byKey(const ValueKey('harness-start-search')),
       '> link machine',
     );
     await tester.pump();

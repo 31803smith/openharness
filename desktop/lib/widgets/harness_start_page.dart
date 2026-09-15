@@ -12,10 +12,12 @@ import 'swarm_switcher.dart';
 class HarnessStartPage extends StatefulWidget {
   const HarnessStartPage({
     super.key,
+    required this.focusNode,
     required this.createSearch,
     required this.onNew,
     required this.onChoose,
   });
+  final FocusNode focusNode;
   final SwarmSearchController Function() createSearch;
   final VoidCallback onNew;
   final ValueChanged<SwarmSearchSelection> onChoose;
@@ -25,7 +27,7 @@ class HarnessStartPage extends StatefulWidget {
 
 class _HarnessStartPageState extends State<HarnessStartPage> {
   final _query = TextEditingController();
-  final _focus = FocusNode(debugLabel: 'Start page search');
+  FocusNode get _focus => widget.focusNode;
   final _pickerFocus = FocusNode(
     debugLabel: 'Start page picker',
     canRequestFocus: false,
@@ -90,7 +92,6 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
   void dispose() {
     _search?.dispose();
     _query.dispose();
-    _focus.dispose();
     _pickerFocus.dispose();
     super.dispose();
   }
@@ -167,7 +168,7 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
                                     onOpen: _open,
                                     onTapOutside: _close,
                                     groupId: _searchGroup,
-                                    autofocus: false,
+                                    autofocus: true,
                                     showClose: _showResults,
                                     hintText: '',
                                     rounded: true,

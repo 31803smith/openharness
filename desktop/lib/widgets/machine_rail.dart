@@ -1233,8 +1233,8 @@ class _AgentRowState extends State<_AgentRow> {
                 ),
                 const AppMenuDivider(),
                 AppMenuItem(
-                  icon: LucideIcons.trash2300,
-                  label: 'Delete',
+                  icon: LucideIcons.circleStop300,
+                  label: 'Stop Harness',
                   danger: true,
                   onPressed: () {
                     _agentMenu.close();

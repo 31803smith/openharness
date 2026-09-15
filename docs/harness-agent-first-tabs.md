@@ -12,9 +12,11 @@ background matches the selected tab. The centered title and search controls sit
 lower with generous empty space. The field is no wider than 640 logical pixels,
 with **Open Harness** and accented **+ New Harness** buttons underneath.
 
-The field starts empty and unfocused. Clicking it or Open Harness reveals the
-same input, results, highlight, action arrow and keyboard navigation as Cmd-O.
-Typing filters immediately; arrows select and Enter opens. Escape or clicking
+The field starts empty and focused so typing works immediately. Typing, clicking
+it or Open Harness, or pressing an arrow reveals the same input, results,
+highlight, action arrow and keyboard navigation as Cmd-O. Focus alone does not
+build a search catalog or reveal results. New Tab refocuses an existing unused
+page too. Typing filters immediately; arrows select and Enter opens. Escape or clicking
 outside closes the dropdown and hides the caret. The recent-agent list is removed.
 The closed page retains only search text and selection: it does not keep a live
 search subscription or build a catalog when an unused page closes. Reopening
@@ -137,8 +139,8 @@ Switching between panes or tabs, closing them, or moving between zoomed panes
 transfers keyboard and text input to the ready retained view before the next
 rendered frame. Its existing terminal, composer or
 Find field receives the next key with its draft and selection intact. Blank
-pages release the previous terminal immediately and leave welcome search
-unfocused. A connecting composer releases the old input connection and receives
+pages release the previous terminal immediately and focus the start-page search
+without showing results until interaction. A connecting composer releases the old input connection and receives
 focus once ready. Dialogs keep input while background destinations or connection
 state change; dismissal returns it to the current destination without restoring an
 older agent's focus.
@@ -150,10 +152,14 @@ shows **folder • branch • machine**, omitting unavailable folder/branch data
 Long details truncate, with full context in the session-name tooltip.
 
 Hovering anywhere on the header replaces the details with small, muted controls:
-**Zoom, Delete, Close**, with **Keyboard** first for remote sessions. Keyboard
+**Zoom Pane, Stop Harness, Close Pane**, with **Keyboard** first for remote sessions. Keyboard
 focus also reveals the controls. The title keeps the same space during the swap,
-and hovering retains the terminal renderer. Delete uses the existing confirmation;
-Close removes only this view. Keyboard toggles the remote message composer.
+and hovering retains the terminal renderer. Stop uses a Lucide circle-stop icon
+and an explicit confirmation: it ends the engine process and removes the active
+harness, preserving project files and saved conversation history. The existing
+`agent_delete` protocol remains unchanged. It is not Pause and promises no live
+process suspension/resume. Close Pane removes only this view and leaves the agent
+running. Keyboard toggles the remote message composer.
 
 Resize grips are invisible while idle and appear on divider hover, keyboard
 focus or active drag. Their hit targets and resize behavior stay the same. The

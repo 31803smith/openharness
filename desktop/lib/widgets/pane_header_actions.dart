@@ -8,7 +8,6 @@ import '../theme/app_theme.dart';
 class PaneHeaderActions extends StatelessWidget {
   const PaneHeaderActions({
     super.key,
-    required this.name,
     required this.zoomed,
     this.onZoom,
     this.onDelete,
@@ -18,7 +17,6 @@ class PaneHeaderActions extends StatelessWidget {
     this.details,
   });
 
-  final String name;
   final bool zoomed, composerVisible;
   final VoidCallback? onZoom, onDelete, onClose, onToggleComposer;
 
@@ -81,14 +79,14 @@ class PaneHeaderActions extends StatelessWidget {
               const SizedBox(width: 2),
             ],
             action(
-              zoomed ? 'Restore panes' : 'Zoom $name',
+              'Zoom Pane',
               zoomed ? LucideIcons.minimize : LucideIcons.maximize,
               onZoom,
             ),
             const SizedBox(width: 2),
-            action('Delete Harness', LucideIcons.trash2, onDelete),
+            action('Stop Harness', LucideIcons.circleStop, onDelete),
             const SizedBox(width: 2),
-            action('Close pane', LucideIcons.x, onClose),
+            action('Close Pane', LucideIcons.x, onClose),
           ],
         ),
       ),

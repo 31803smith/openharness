@@ -90,7 +90,7 @@ void main() {
         final device = find.byKey(const ValueKey('harness-device-link'));
         expect(find.text('Harness'), findsOneWidget);
         expect(tester.widget<TextField>(field).decoration!.hintText, isEmpty);
-        expect(tester.widget<TextField>(field).focusNode!.hasFocus, isFalse);
+        expect(tester.widget<TextField>(field).focusNode!.hasFocus, isTrue);
         expect(find.byType(ListTile), findsNothing);
         final fieldRect = tester.getRect(field);
         final createRect = tester.getRect(create);

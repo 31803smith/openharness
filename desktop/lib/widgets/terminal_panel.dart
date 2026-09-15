@@ -1613,7 +1613,6 @@ class _TerminalHeader extends StatelessWidget {
                     ),
                   ),
                   child: PaneHeaderActions(
-                    name: session.agentName,
                     zoomed: zoomed,
                     onZoom: onToggleZoom,
                     onDelete: onDelete,

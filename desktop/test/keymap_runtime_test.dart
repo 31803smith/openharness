@@ -202,7 +202,7 @@ void main() {
           .widget<TextField>(find.byKey(const ValueKey('harness-start-search')))
           .focusNode!
           .hasPrimaryFocus,
-      isFalse,
+      isTrue,
     );
     expect(find.byType(SwarmSearchResults), findsNothing);
     expect(original.panes.last, same(focused));
@@ -433,7 +433,7 @@ void main() {
     await mount(tester, app, map);
     final initialId = app.activeSwarmId;
     final field = find.byKey(const ValueKey('harness-start-search'));
-    expect(tester.widget<TextField>(field).focusNode!.hasFocus, isFalse);
+    expect(tester.widget<TextField>(field).focusNode!.hasFocus, isTrue);
     await tester.tap(field);
     await tester.pump();
     expect(tester.widget<TextField>(field).focusNode!.hasPrimaryFocus, isTrue);

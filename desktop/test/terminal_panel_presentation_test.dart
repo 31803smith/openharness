@@ -51,9 +51,9 @@ void main() {
       );
       await tester.pump(const Duration(milliseconds: 120));
       await tester.tap(find.byTooltip('Show message composer'));
-      await tester.tap(find.byTooltip('Zoom ${session.agentName}'));
-      await tester.tap(find.byTooltip('Delete Harness'));
-      await tester.tap(find.byTooltip('Close pane'));
+      await tester.tap(find.byTooltip('Zoom Pane'));
+      await tester.tap(find.byTooltip('Stop Harness'));
+      await tester.tap(find.byTooltip('Close Pane'));
       await tester.pump();
       expect(closed, [1]);
       expect(deleted, [1]);
@@ -78,7 +78,7 @@ void main() {
       expect(find.text('Renamed terminal'), findsOneWidget);
       expect(find.text('fast-focus'), findsOneWidget);
       expect(find.text('terminal'), findsOneWidget);
-      expect(find.byTooltip('Restore panes'), findsOneWidget);
+      expect(find.byTooltip('Zoom Pane'), findsOneWidget);
       session.status = TerminalSessionStatus.takenOver;
       revision.value = 3;
       await tester.pump();
@@ -157,7 +157,7 @@ void main() {
           tester.getRect(find.text('Test host')).left,
           greaterThan(tester.getRect(find.text('main')).right),
         );
-        expect(find.byTooltip('Delete Harness').hitTestable(), findsNothing);
+        expect(find.byTooltip('Stop Harness').hitTestable(), findsNothing);
         expect(
           find.descendant(of: controls, matching: find.byType(IconButton)),
           findsNWidgets(local ? 3 : 4),
@@ -166,7 +166,7 @@ void main() {
         await mouse.addPointer(location: tester.getCenter(title));
         await tester.pump(const Duration(milliseconds: 120));
         expect(tester.widget<AnimatedOpacity>(details).opacity, 0);
-        expect(find.byTooltip('Delete Harness').hitTestable(), findsOneWidget);
+        expect(find.byTooltip('Stop Harness').hitTestable(), findsOneWidget);
         expect(tester.getRect(title), titleBounds);
         expect(
           tester.widget<TerminalView>(find.byType(TerminalView)),
@@ -175,11 +175,11 @@ void main() {
         await mouse.moveTo(const Offset(300, 200));
         await tester.pump(const Duration(milliseconds: 120));
         expect(tester.widget<AnimatedOpacity>(details).opacity, 1);
-        expect(find.byTooltip('Delete Harness').hitTestable(), findsNothing);
+        expect(find.byTooltip('Stop Harness').hitTestable(), findsNothing);
         // Keyboard users can reveal and reach the same actions without a mouse.
-        Focus.of(tester.element(find.byTooltip('Delete Harness'))).nextFocus();
+        Focus.of(tester.element(find.byTooltip('Stop Harness'))).nextFocus();
         await tester.pump(const Duration(milliseconds: 120));
-        expect(find.byTooltip('Delete Harness').hitTestable(), findsOneWidget);
+        expect(find.byTooltip('Stop Harness').hitTestable(), findsOneWidget);
         await mouse.removePointer();
         await tester.pumpWidget(const SizedBox());
         session.dispose();

@@ -4075,8 +4075,8 @@ class AppNotifier extends ChangeNotifier {
     return null;
   }
 
-  /// Deletes an agent via `agent_delete`. Returns null on success, or an error message to show
-  /// inline in the caller's dialog.
+  /// Stops an agent via the legacy `agent_delete` request, removing its active
+  /// entry while preserving files and saved history. Returns an error on failure.
   Future<String?> deleteAgent(String machineId, String agentId) async {
     final machine = machineStates[machineId];
     if (machine == null) return 'Machine not found';
@@ -4085,10 +4085,10 @@ class AppNotifier extends ChangeNotifier {
       result = await _conn(machineId)
           .request('agent_delete', payload: {'agentId': agentId});
     } catch (error) {
-      return 'Delete failed: $error';
+      return 'Stop failed: $error';
     }
     final error = result['error'];
-    if (error is String) return 'Delete failed: $error';
+    if (error is String) return 'Stop failed: $error';
     await _removeAgent(machine, agentId);
     notifyListeners();
     return null;
