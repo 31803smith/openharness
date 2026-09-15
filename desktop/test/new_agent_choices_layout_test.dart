@@ -235,7 +235,7 @@ void main() {
       expect(find.text('Kilo'), findsOneWidget);
       expect(
         find.text('Harness will install Kilo before starting.'),
-        findsOneWidget,
+        findsNothing,
       );
       await capture('selected');
       final submit = find.byKey(const ValueKey('create-agent-submit'));

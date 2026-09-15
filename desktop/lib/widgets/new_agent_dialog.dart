@@ -237,49 +237,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     return machine.engines[engine];
   }
 
-  /// The row's note about installation, or null when there is nothing to say —
-  /// which covers both "it is here" and "the machine has not answered yet".
-  ///
-  /// Those two produce the same absent note on purpose. A row cannot say
-  /// "not installed" on the strength of a probe that has not returned; the
-  /// dialog's own preflight panel is where the settled answer is stated, and it
-  /// arrives a moment later without moving anything.
-  String? _engineInstallNote(String engine) {
-    final entry = _availability(engine);
-    if (entry == null || entry.installed) return null;
-    // Only the state Harness cannot fix keeps words. It is rare, it is the one
-    // the reader has to act on themselves, and a glyph for "we cannot help you
-    // here" would be a glyph nobody decodes in time.
-    return entry.installable ? null : 'not installed';
-  }
-
-  /// The one caveat worth printing beside an engine's name, or none.
-  ///
-  /// Stated in the row rather than discovered after picking: each of these
-  /// changes what the engine can do, and finding out by watching the checkbox
-  /// vanish — or by reading `command not found` out of a pane — is a worse way
-  /// to learn it. One note per row, so the row stays a name with a caveat
-  /// rather than a sentence.
-  String? _engineNote(String engine) {
-    return _engineInstallNote(engine) ??
-        (kEngineBypassPermissionFlag.containsKey(engine)
-            ? null
-            : 'no bypass flag');
-  }
-
-  /// This engine is absent and Harness would install it before launching.
-  bool _willInstallEngine(String engine) {
-    final entry = _availability(engine);
-    return entry != null && !entry.installed && entry.installable;
-  }
-
-  /// The system panel is modal and slow enough to notice. Without this the
-  /// button stays live and a second click stacks a second panel behind the
-  /// first — on macOS that leaves one the user cannot reach until they dismiss
-  /// the one on top.
-  /// refuse it either, it simply never replies, so this arrives 30s later —
-  /// and until it is rendered the panel says "Ready to launch" over an engine
-  /// nobody checked for, which the create then fails on at the far end.
+  /// A failed availability check can be retried without changing the choices.
   bool get _engineCheckFailed {
     final machine = widget.notifier.stateOf(_machineId);
     if (machine == null) return false;
@@ -294,19 +252,8 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     unawaited(_probeEngines());
   }
 
-  /// The engine is missing but this machine cannot safely auto-install it — for
-  /// example, an explicit ENGINE_PATH override points at a missing file, or an
-  /// older CLI has no recipe. Stated rather than silently offered, because the
-  /// create WILL fail and the person needs to fix that machine first.
-
   /// Surface a changed permission setting without repeating the default profile.
   String _advancedState() => _bypassPermission ? 'Approvals off' : '';
-
-  /// This engine is absent and Harness would install it before launching.
-  bool get _willInstall {
-    final entry = _availability(_engine);
-    return entry != null && !entry.installed && entry.installable;
-  }
 
   bool _picking = false;
   bool _folderHovered = false;
@@ -687,16 +634,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
               SelectOption(
                 value: identity.id,
                 label: identity.label,
-                note: _engineNote(identity.id),
                 leading: () => EngineMark(engine: identity.id, size: 14),
-                // "will install" said in words repeated down a third of the
-                // list, and a column of the same two words is a column the eye
-                // has to read to discover it says nothing new. The glyph is
-                // scanned once; the sentence moves to its tooltip and to the
-                // preflight panel, which names the exact command anyway.
-                trailing: _willInstallEngine(identity.id)
-                    ? () => _InstallMark(engine: identity.id)
-                    : null,
               ),
           ],
           onChanged: (value) => setState(() {
@@ -711,42 +649,25 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
             }
           }),
         ),
-        // Unconditional now: Codex here is always on its own login, so the
-        // profile it runs under is always a live question.
-        // WHAT THE SUMMARY'S HEADING USED TO SAY, minus the half that had
-        // somewhere else to live.
-        //
-        // Four states were printed on that card. Two of them already have a
-        // home: "not installed" is a note on the engine's own row, and "pick a
-        // folder" is the Create button being disabled. These two had nowhere
-        // else, and losing them would have made a machine that Harness has not
-        // managed to reach look exactly like one it has.
-        if (!_confirmationPending && (_willInstall || _engineCheckFailed)) ...[
+        if (!_confirmationPending && _engineCheckFailed) ...[
           const SizedBox(height: 6),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Expanded(
                 child: Text(
-                  _willInstall
-                      ? 'Harness will install ${engineIdentity(_engine).label} before starting.'
-                      : 'Couldn’t check whether ${engineIdentity(_engine).label} is installed. '
-                            'You can still try creating an agent.',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: _willInstall
-                        ? grid.AppPalette.accentOnSurface
-                        : grid.AppPalette.textSecondary,
-                  ),
+                  'Couldn’t check whether ${engineIdentity(_engine).label} is installed. '
+                  'You can still try creating an agent.',
+                  style: Theme.of(context).textTheme.bodySmall
+                      ?.copyWith(color: grid.AppPalette.textSecondary),
                 ),
               ),
-              if (_engineCheckFailed) ...[
-                const SizedBox(width: 12),
-                TextButton(
-                  key: const Key('new-agent-retry-check'),
-                  onPressed: _checkingEngines ? null : _retryEngineCheck,
-                  child: Text(_checkingEngines ? 'Checking…' : 'Retry'),
-                ),
-              ],
+              const SizedBox(width: 12),
+              TextButton(
+                key: const Key('new-agent-retry-check'),
+                onPressed: _checkingEngines ? null : _retryEngineCheck,
+                child: Text(_checkingEngines ? 'Checking…' : 'Retry'),
+              ),
             ],
           ),
         ],
@@ -1518,50 +1439,6 @@ class _BypassCheck extends StatelessWidget {
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-/// What this launch actually is, stated before it happens.
-///
-/// The dialog's inputs each answer a different question, and the one they add
-/// up to — *what will be running, where, on whose account* — was the one thing
-/// the old dialog never said. It matters most for the setting that reaches
-/// outside this window: a bypass flag turns off an engine's own guardrails on a
-/// machine that may not be this one.
-///
-/// Read-only on purpose, and shaped so: it takes the recessed inset fill, never
-/// a field's, so nothing here invites a click.
-/// "Not here yet — Harness will fetch it first."
-///
-/// A download arrow rather than the words, because this state recurs down the
-/// engine list and a repeated two-word phrase stops being read. The tooltip
-/// carries the meaning for a first encounter; the preflight panel carries the
-/// actual command, which is the thing worth reading.
-///
-/// Drawn in [AppPalette.textFaint] — the ink the row's own qualifiers use. This
-/// is a fact about the engine, not a warning about the choice: installing is a
-/// normal outcome of picking it, and an amber glyph would say otherwise.
-class _InstallMark extends StatelessWidget {
-  const _InstallMark({required this.engine});
-
-  final String engine;
-
-  @override
-  Widget build(BuildContext context) {
-    grid.AppTheme.watch(context);
-    return Tooltip(
-      message:
-          '${engineIdentity(engine).label} is not on this machine — '
-          'Harness installs it before launching',
-      child: Icon(
-        LucideIcons.download300,
-        // A shade under the note text beside it: the glyph reads heavier than
-        // type at the same nominal size, and matching the number makes it
-        // louder than the words it replaced.
-        size: 12,
-        color: grid.AppPalette.textFaint,
       ),
     );
   }

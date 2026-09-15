@@ -34,6 +34,32 @@ user for a benchmark window.
 
 ## Current product contract
 
+### Pending: friendly defaults and a fresh New Agent design
+
+The user requests `~/Harnesses` instead of `~/Harness Projects`, default agent
+names `agent-1`, `agent-2`, …, and automatic tab names `harness-1`, `harness-2`, ….
+These naming changes are not implemented yet. Preserve existing folders and
+custom names. Folder creation lives in `desktop/lib/core/project_folder.dart`
+and `cli/src/lib/projectFolder.ts`; agent naming is in the CLI registry; tab
+auto-naming is in `AppNotifier.assignAgentToPane`.
+
+The user now wants to discuss a fresh New Agent design before implementation:
+as spacious as Open Agent, focused on the fastest path to starting an agent.
+Do not merely enlarge the existing form. The quiet picker cleanup below is
+verified locally, but publishing was rejected by automatic approval review and
+a renewed GitHub approval question is pending. The latest installed preview is
+**0c764cf** (receipt `/private/tmp/harness-minimal-preview-install.json`);
+subsequent search/device/chooser refinements have not been installed yet.
+
+### Quiet agent choices
+
+The New Agent picker shows agent icons, names and selection only. Removed
+the bypass labels, download glyphs and automatic-install notice. Installation
+still runs when needed during creation; failed availability checks retain
+their Retry action. Twenty-one picker/profile checks and analysis pass:
+`/private/tmp/harness-clean-agent-choices-tests.log` and
+`/private/tmp/harness-clean-agent-choices-analyze.log`.
+
 ### Latest: matching Open Agent and New Harness search
 
 Open Agent now uses the same full-width input and continuous surface as the
