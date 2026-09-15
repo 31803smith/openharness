@@ -98,7 +98,133 @@ class _FolderPicker extends FileSelectorPlatform {
   }
 }
 
+class _KeyboardCreationApp extends _FirstUseApp {
+  final folderRequests = <({String machine, String? path})>[];
+
+  @override
+  Future<Map<String, dynamic>> listRemoteFolder(
+    String machineId,
+    String? path,
+  ) async {
+    folderRequests.add((machine: machineId, path: path));
+    return {'path': path ?? '/home/dev', 'entries': <Object>[]};
+  }
+}
+
 void main() {
+  testWidgets(
+    'machine, remote folder and agent can be chosen entirely by keyboard',
+    (tester) async {
+      final app = _KeyboardCreationApp();
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox());
+        app.dispose();
+      });
+      await app.agentPreference.select('claude');
+      const remote = Machine(
+        machineId: 'workshop',
+        name: 'Workshop machine',
+        authMode: MachineAuthMode.remote,
+      );
+      app.machines = [...app.machines, remote];
+      app.machineStates['workshop'] = MachineState(remote)
+        ..nodeOnline = true
+        ..agentLoadStatus = AgentLoadStatus.loaded;
+      app.machineStates['workshop']!.engines.replace(const [
+        EngineAvailability(engine: 'claude', installed: true),
+        EngineAvailability(engine: 'hermes', installed: true),
+      ]);
+      await mount(tester, app);
+      await chord(tester, LogicalKeyboardKey.keyN);
+      await tester.pumpAndSettle();
+      FocusNode fieldFocus(String key) => tester
+          .widget<InkWell>(
+            find
+                .descendant(
+                  of: find.byKey(Key(key)),
+                  matching: find.byType(InkWell),
+                )
+                .first,
+          )
+          .focusNode!;
+      Future<void> tabTo(FocusNode node, {bool back = false}) async {
+        if (back) await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+        for (var i = 0; i < 12 && !node.hasPrimaryFocus; i++) {
+          await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+          await tester.pump();
+        }
+        if (back) await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+        expect(node.hasPrimaryFocus, isTrue);
+      }
+
+      await tabTo(fieldFocus('new-agent-machine-field'), back: true);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyW, character: 'w');
+      await tester.pumpAndSettle();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<AppSelectField<String>>(
+              find.byKey(const Key('new-agent-machine-field')),
+            )
+            .value,
+        'workshop',
+      );
+      expect(app.launches, isEmpty);
+
+      final folder = tester
+          .widget<InkWell>(find.byKey(const Key('new-agent-folder')))
+          .focusNode!;
+      await tabTo(folder);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      tester.testTextInput.enterText('/work/selected-project');
+      await tester.pump();
+      // Return in a platform text field arrives as the input method's action.
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      await chord(tester, LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(find.text('Choose a folder'), findsNothing);
+      expect(app.folderRequests, [
+        (machine: 'workshop', path: null),
+        (machine: 'workshop', path: '/work/selected-project'),
+      ]);
+
+      await tabTo(fieldFocus('new-agent-engine-field'), back: true);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      for (final code in 'hermes'.codeUnits) {
+        await tester.sendKeyEvent(
+          LogicalKeyboardKey(code),
+          character: String.fromCharCode(code),
+        );
+      }
+      await tester.pumpAndSettle();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(find.text('Hermes'), findsOneWidget);
+      expect(app.launches, isEmpty);
+      final submit = tester.widget<FilledButton>(
+        find.byKey(const ValueKey('create-agent-submit')),
+      );
+      await tabTo(submit.focusNode!);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(app.launches, [
+        (
+          machine: 'workshop',
+          engine: 'hermes',
+          folder: '/work/selected-project',
+          bypass: false,
+        ),
+      ]);
+      expect(app.input, isEmpty);
+      expect(tester.takeException(), isNull);
+    },
+    variant: const TargetPlatformVariant({TargetPlatform.macOS}),
+  );
+
   testWidgets('first use starts idle with separate Open and New actions', (
     tester,
   ) async {

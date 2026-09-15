@@ -45,6 +45,10 @@ cancellation or failure returns focus to the folder control. If a required Codex
 account lookup is still pending, focus stays on the folder instead of a disabled
 submit action. Completing that lookup does not steal focus.
 
+Machine and agent menus support typing a name to highlight a choice. Enter
+selects it; Escape returns to the field without changing the value. These keys
+also work immediately after opening the menu, before its first frame.
+
 The Open popup keeps its full-width **Find a harness** field, single-choice
 results and 90% black backdrop. Only the highlighted row shows **Open Harness**,
 **Open N Harnesses**, or **Split right/down**, depending on context.

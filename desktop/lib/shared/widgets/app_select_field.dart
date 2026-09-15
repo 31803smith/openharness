@@ -96,24 +96,169 @@ class AppSelectField<T> extends StatefulWidget {
 class _AppSelectFieldState<T> extends State<AppSelectField<T>> {
   final _controller = MenuController();
   final _fieldFocus = FocusNode(debugLabel: 'Select field');
-  final _selectedFocus = FocusNode(debugLabel: 'Selected option');
+  final _optionFocus = <T, FocusNode>{};
+  ({T value})? _pendingFocus;
+  String _prefix = '';
+  Duration? _lastTyped;
+  bool _focusScheduled = false;
   bool _hovered = false;
   bool _focused = false;
+
+  FocusNode _focusFor(T value) => _optionFocus.putIfAbsent(
+    value,
+    () => FocusNode(debugLabel: 'Select option'),
+  );
+
+  SelectOption<T>? get _currentOption =>
+      widget.options
+          .where((option) => option.value == widget.value)
+          .firstOrNull ??
+      widget.options.firstOrNull;
+
+  @override
+  void didUpdateWidget(AppSelectField<T> oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final values = widget.options.map((option) => option.value).toSet();
+    var lostFocus = false;
+    for (final value in _optionFocus.keys.toList()) {
+      if (values.contains(value)) continue;
+      final node = _optionFocus.remove(value)!;
+      lostFocus |= node.hasFocus || _pendingFocus?.value == value;
+      node.dispose();
+    }
+    if (!_controller.isOpen || !lostFocus) return;
+    _prefix = '';
+    _lastTyped = null;
+    final next = _currentOption;
+    if (next == null) {
+      _controller.close();
+    } else {
+      _focusOption(next);
+    }
+  }
 
   @override
   void dispose() {
     _fieldFocus.dispose();
-    _selectedFocus.dispose();
+    for (final node in _optionFocus.values) {
+      node.dispose();
+    }
     super.dispose();
   }
 
   void _open() {
     if (widget.options.isEmpty || _controller.isOpen) return;
+    _prefix = '';
+    _lastTyped = null;
     _controller.open();
+    // Unopened controls need no per-option focus nodes. Mount them with the
+    // menu, including any match typed before its first frame.
+    setState(() {});
+    _focusOption(_currentOption!, afterLayout: true);
+  }
+
+  void _focusOption(SelectOption<T> option, {bool afterLayout = false}) {
+    _pendingFocus = (value: option.value);
+    final node = _focusFor(option.value);
+    if (!afterLayout &&
+        !_focusScheduled &&
+        node.parent != null &&
+        node.context?.mounted == true) {
+      node.requestFocus();
+      Scrollable.ensureVisible(node.context!);
+      return;
+    }
+    // Opening and typing can happen before the menu's first frame. Keep the
+    // newest match, rather than restoring the old selection after it mounts.
+    if (_focusScheduled) return;
+    _focusScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && _controller.isOpen) _selectedFocus.requestFocus();
+      _focusScheduled = false;
+      if (!mounted || !_controller.isOpen) return;
+      final pending = _pendingFocus;
+      if (pending == null) return;
+      final node = _optionFocus[pending.value];
+      if (node?.context == null) return;
+      node!.requestFocus();
+      Scrollable.ensureVisible(node.context!);
     });
   }
+
+  int get _highlightedIndex {
+    final focused = widget.options.indexWhere(
+      (option) => _optionFocus[option.value]?.hasPrimaryFocus == true,
+    );
+    if (focused >= 0) return focused;
+    final pending = _pendingFocus;
+    return pending == null
+        ? -1
+        : widget.options.indexWhere((option) => option.value == pending.value);
+  }
+
+  void _choose(SelectOption<T> option) {
+    _controller.close();
+    _fieldFocus.requestFocus();
+    if (option.value != widget.value) widget.onChanged(option.value);
+  }
+
+  KeyEventResult _typeAhead(FocusNode _, KeyEvent event) {
+    if (!_controller.isOpen || event is KeyUpEvent) {
+      return KeyEventResult.ignored;
+    }
+    final keyboard = HardwareKeyboard.instance;
+    if (keyboard.isMetaPressed ||
+        keyboard.isControlPressed ||
+        keyboard.isAltPressed) {
+      return KeyEventResult.ignored;
+    }
+    if (!keyboard.isShiftPressed) {
+      if (event.logicalKey == LogicalKeyboardKey.escape) {
+        _controller.close();
+        _fieldFocus.requestFocus();
+        return KeyEventResult.handled;
+      }
+      if (event.logicalKey == LogicalKeyboardKey.enter ||
+          event.logicalKey == LogicalKeyboardKey.numpadEnter) {
+        final index = _highlightedIndex;
+        if (index >= 0) _choose(widget.options[index]);
+        return KeyEventResult.handled;
+      }
+    }
+    final text = event.character?.toLowerCase();
+    if (text == null ||
+        text.isEmpty ||
+        text.runes.any((r) => r < 32 || r == 127)) {
+      _prefix = '';
+      return KeyEventResult.ignored;
+    }
+    if (_lastTyped == null ||
+        event.timeStamp < _lastTyped! ||
+        event.timeStamp - _lastTyped! > const Duration(seconds: 1)) {
+      _prefix = '';
+    }
+    if (text == ' ' && _prefix.isEmpty) return KeyEventResult.ignored;
+    _lastTyped = event.timeStamp;
+    final continuing = _prefix.isNotEmpty && _prefix != text;
+    _prefix = continuing ? _prefix + text : text;
+    final current = _highlightedIndex;
+    final start = current < 0 ? 0 : current + (continuing ? 0 : 1);
+    for (var offset = 0; offset < widget.options.length; offset++) {
+      final option = widget.options[(start + offset) % widget.options.length];
+      if (option.label.trimLeft().toLowerCase().startsWith(_prefix)) {
+        _focusOption(option);
+        break;
+      }
+    }
+    return KeyEventResult.handled;
+  }
+
+  Widget _typingRegion(Widget child, {Key? key}) => Focus(
+    key: key,
+    canRequestFocus: false,
+    skipTraversal: true,
+    onKeyEvent: _typeAhead,
+    child: child,
+  );
 
   /// How tall this panel may draw.
   ///
@@ -178,6 +323,11 @@ class _AppSelectFieldState<T> extends State<AppSelectField<T>> {
     return MenuAnchor(
       controller: _controller,
       childFocusNode: _fieldFocus,
+      onClose: () {
+        _prefix = '';
+        _lastTyped = null;
+        _pendingFocus = null;
+      },
       // Below the control, by the app's one menu gap — and the panel takes its
       // fill, rim and radius from [AppMenu], the app's single panel recipe.
       alignmentOffset: const Offset(0, AppControl.menuGap),
@@ -192,129 +342,124 @@ class _AppSelectFieldState<T> extends State<AppSelectField<T>> {
       style: AppMenu.style(maxHeight: _panelHeight),
       menuChildren: [
         for (final option in widget.options)
-          SizedBox(
-            width: math.max(panelWidth ?? 0, _minPanelWidth),
-            child: AppMenuItem(
-              // No glyph of its own: the leading slot belongs to the tick,
-              // and stays empty (not a blank checkbox) on rows without it.
-              // `selected` also carries the wash and the heavier label, so the
-              // choice is marked three ways rather than by a tick alone.
-              // A picker's list, not a context menu's: this menu IS the
-              // control, it is read down rather than glanced at, and it is the
-              // only place these choices are ever shown.
-              metrics: AppMenuRowMetrics.roomy,
-              focusNode:
-                  option == current ||
-                      (current == null && option == widget.options.first)
-                  ? _selectedFocus
-                  : null,
-              selected: option.value == widget.value,
-              label: option.label,
-              note: option.note,
-              detail: option.detail,
-              leading: option.leading?.call(),
-              trailing: option.trailing?.call(),
-              onPressed: () {
-                _controller.close();
-                _fieldFocus.requestFocus();
-                if (option.value != widget.value) {
-                  widget.onChanged(option.value);
-                }
-              },
+          _typingRegion(
+            SizedBox(
+              width: math.max(panelWidth ?? 0, _minPanelWidth),
+              child: AppMenuItem(
+                // No glyph of its own: the leading slot belongs to the tick,
+                // and stays empty (not a blank checkbox) on rows without it.
+                // `selected` also carries the wash and the heavier label, so the
+                // choice is marked three ways rather than by a tick alone.
+                // A picker's list, not a context menu's: this menu IS the
+                // control, it is read down rather than glanced at, and it is the
+                // only place these choices are ever shown.
+                metrics: AppMenuRowMetrics.roomy,
+                focusNode: _controller.isOpen ? _focusFor(option.value) : null,
+                selected: option.value == widget.value,
+                label: option.label,
+                note: option.note,
+                detail: option.detail,
+                leading: option.leading?.call(),
+                trailing: option.trailing?.call(),
+                onPressed: () => _choose(option),
+              ),
             ),
+            key: ValueKey(option.value),
           ),
       ],
-      builder: (context, controller, _) => MouseRegion(
-        cursor: SystemMouseCursors.click,
-        onEnter: (_) => setState(() => _hovered = true),
-        onExit: (_) => setState(() => _hovered = false),
-        child: CallbackShortcuts(
-          bindings: {
-            const SingleActivator(LogicalKeyboardKey.arrowDown): _open,
-            const SingleActivator(LogicalKeyboardKey.arrowUp): _open,
-          },
-          child: InkWell(
-            focusNode: _fieldFocus,
-            onFocusChange: (value) => setState(() => _focused = value),
-            onTap: () => controller.isOpen ? controller.close() : _open(),
-            splashFactory: NoSplash.splashFactory,
-            hoverColor: Colors.transparent,
-            focusColor: Colors.transparent,
-            borderRadius: BorderRadius.circular(AppControl.radius),
-            child: AnimatedContainer(
-              duration: AppMotion.hover,
-              curve: AppMotion.curve,
-              width: widget.width,
-              height: widget.height,
-              padding: const EdgeInsets.only(left: 10, right: 8),
-              decoration: BoxDecoration(
-                color: _hovered || _focused || controller.isOpen
-                    ? AppSurface.recessHover
-                    : AppSurface.recess,
-                borderRadius: BorderRadius.circular(AppControl.radius),
-                border: Border.all(
-                  color: _focused
-                      ? AppPalette.accentOnSurface
-                      : Colors.transparent,
+      builder: (context, controller, _) => _typingRegion(
+        MouseRegion(
+          cursor: SystemMouseCursors.click,
+          onEnter: (_) => setState(() => _hovered = true),
+          onExit: (_) => setState(() => _hovered = false),
+          child: CallbackShortcuts(
+            bindings: {
+              const SingleActivator(LogicalKeyboardKey.arrowDown): _open,
+              const SingleActivator(LogicalKeyboardKey.arrowUp): _open,
+            },
+            child: InkWell(
+              focusNode: _fieldFocus,
+              onFocusChange: (value) => setState(() => _focused = value),
+              onTap: () => controller.isOpen ? controller.close() : _open(),
+              splashFactory: NoSplash.splashFactory,
+              hoverColor: Colors.transparent,
+              focusColor: Colors.transparent,
+              borderRadius: BorderRadius.circular(AppControl.radius),
+              child: AnimatedContainer(
+                duration: AppMotion.hover,
+                curve: AppMotion.curve,
+                width: widget.width,
+                height: widget.height,
+                padding: const EdgeInsets.only(left: 10, right: 8),
+                decoration: BoxDecoration(
+                  color: _hovered || _focused || controller.isOpen
+                      ? AppSurface.recessHover
+                      : AppSurface.recess,
+                  borderRadius: BorderRadius.circular(AppControl.radius),
+                  border: Border.all(
+                    color: _focused
+                        ? AppPalette.accentOnSurface
+                        : Colors.transparent,
+                  ),
                 ),
-              ),
-              child:
-                  widget.trigger ??
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Row(
-                          children: [
-                            if (current?.leading != null) ...[
-                              current!.leading!(),
-                              const SizedBox(width: 8),
-                            ],
-                            Flexible(
-                              child: Text(
-                                current?.label ?? '—',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontFamily: AppFont.sans,
-                                  fontFamilyFallback: AppFont.sansFallback,
-                                  fontSize: AppControl.fontSize,
-                                  fontWeight: AppControl.fontWeight,
-                                  letterSpacing: AppFont.trackingFor(
-                                    AppControl.fontSize,
-                                  ),
-                                  color: AppPalette.textPrimary,
-                                ),
-                              ),
-                            ),
-                            if (current?.note != null) ...[
-                              const SizedBox(width: 8),
+                child:
+                    widget.trigger ??
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Row(
+                            children: [
+                              if (current?.leading != null) ...[
+                                current!.leading!(),
+                                const SizedBox(width: 8),
+                              ],
                               Flexible(
                                 child: Text(
-                                  current!.note!,
+                                  current?.label ?? '—',
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                   style: TextStyle(
                                     fontFamily: AppFont.sans,
                                     fontFamilyFallback: AppFont.sansFallback,
-                                    fontSize: 11.5,
-                                    color: AppPalette.textFaint,
+                                    fontSize: AppControl.fontSize,
+                                    fontWeight: AppControl.fontWeight,
+                                    letterSpacing: AppFont.trackingFor(
+                                      AppControl.fontSize,
+                                    ),
+                                    color: AppPalette.textPrimary,
                                   ),
                                 ),
                               ),
+                              if (current?.note != null) ...[
+                                const SizedBox(width: 8),
+                                Flexible(
+                                  child: Text(
+                                    current!.note!,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontFamily: AppFont.sans,
+                                      fontFamilyFallback: AppFont.sansFallback,
+                                      fontSize: 11.5,
+                                      color: AppPalette.textFaint,
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ],
-                          ],
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: 6),
-                      Icon(
-                        Icons.expand_more_rounded,
-                        size: AppControl.iconSize,
-                        color: _hovered || controller.isOpen
-                            ? AppPalette.textPrimary
-                            : AppPalette.textSecondary,
-                      ),
-                    ],
-                  ),
+                        const SizedBox(width: 6),
+                        Icon(
+                          Icons.expand_more_rounded,
+                          size: AppControl.iconSize,
+                          color: _hovered || controller.isOpen
+                              ? AppPalette.textPrimary
+                              : AppPalette.textSecondary,
+                        ),
+                      ],
+                    ),
+              ),
             ),
           ),
         ),
