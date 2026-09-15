@@ -56,9 +56,12 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
         self.canCreateSwarm = state["canOpenNewTab"] as? Bool
           ?? ((state["tabs"] as? [Any] ?? []).count < 24)
         self.updateHistory(state["history"] as? [[String: Any]] ?? [], closed: state["closedHistory"] as? [[String: Any]] ?? [])
-        self.updateMachines(state["machines"] as? [[String: Any]] ?? [])
         self.strip.update(state)
         self.window?.backgroundColor = self.strip.palette.tabBar
+        result(nil)
+      case "machinesState":
+        let state = call.arguments as? [String: Any] ?? [:]
+        self.updateMachines(state["machines"] as? [[String: Any]] ?? [])
         result(nil)
       case "modelsState":
         let state = call.arguments as? [String: Any] ?? [:]

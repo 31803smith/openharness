@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io' show Platform;
 
 import 'package:file_selector/file_selector.dart';
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -91,6 +92,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
   bool _routeIsCurrent = true;
   String? _linkDialogMachineId;
   String? _nativeState;
+  List<Object?>? _machinesPresentation;
   ModelsMenuController? _modelsMenu;
   String? _modelsState;
   final _defaultKeymap = AppKeymap();
@@ -169,6 +171,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
       unawaited(
         _channel.invokeMethod<void>('modelsState', {'subscriptions': []}),
       );
+      unawaited(_channel.invokeMethod<void>('machinesState', {'machines': []}));
       app.removeListener(_syncNative);
       _channel.setMethodCallHandler(null);
       unawaited(
@@ -284,10 +287,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
   }
 
   void _syncNative() {
-    final openAgents = {
-      for (final tab in app.swarms)
-        for (final pane in tab.panes) (pane.machineId, pane.agentId),
-    };
+    _syncMachines();
     final payload = {
       'enabled': _routeIsCurrent && !_dialogOpen && !_spokenPaletteOpen,
       'activeId': app.activeSwarmId,
@@ -313,41 +313,6 @@ class _SwarmScreenState extends State<SwarmScreen> {
           },
       ],
       'attention': _attention,
-      'machines': [
-        for (final machine in app.machineStates.values)
-          {
-            'id': machine.machine.machineId,
-            'name': machine.machine.displayName,
-            'local': machine.isLocalMachine,
-            'agentCount':
-                machine.agents.isNotEmpty ||
-                    machine.agentLoadStatus == AgentLoadStatus.loaded
-                ? machine.agents.length
-                : null,
-            'agents': [
-              for (final agent in machine.agents.take(512))
-                {
-                  'id': agent.id,
-                  'title': agent.name,
-                  'engine': agent.engine,
-                  'iconAsset': engineIdentity(agent.engine).asset,
-                  'canOpen':
-                      agent.terminalAvailable ||
-                      openAgents.contains((
-                        machine.machine.machineId,
-                        agent.id,
-                      )),
-                },
-            ],
-            'status': machine.needsLink
-                ? 'Link required'
-                : machine.nodeOnline == false
-                ? 'Offline'
-                : machine.nodeOnline == true
-                ? 'Online'
-                : 'Connecting…',
-          },
-      ],
       'history': [
         for (final entry in _navigation.menuDestinations(app))
           {
@@ -384,6 +349,81 @@ class _SwarmScreenState extends State<SwarmScreen> {
     if (encoded == _nativeState) return;
     _nativeState = encoded;
     unawaited(_channel.invokeMethod<void>('update', payload));
+  }
+
+  void _syncMachines() {
+    final openAgents = {
+      for (final tab in app.swarms)
+        for (final pane in tab.panes) (pane.machineId, pane.agentId),
+    };
+    final machines = app.machineStates.values.take(128);
+    // Compare only visible values before building/encoding a potentially large
+    // inventory. Tab focus, palette and attention changes use the small update
+    // message; they never resend or decode every agent on the native thread.
+    final presentation = <Object?>[
+      for (final machine in machines) ...[
+        (
+          machine.machine.machineId,
+          machine.machine.displayName,
+          machine.isLocalMachine,
+          machine.nodeOnline,
+          machine.needsLink,
+          machine.agents.isNotEmpty ||
+                  machine.agentLoadStatus == AgentLoadStatus.loaded
+              ? machine.agents.length
+              : null,
+        ),
+        for (final agent in machine.agents.take(512))
+          (
+            agent.id,
+            agent.name,
+            agent.engine,
+            agent.terminalAvailable ||
+                openAgents.contains((machine.machine.machineId, agent.id)),
+          ),
+      ],
+    ];
+    if (listEquals(presentation, _machinesPresentation)) return;
+    _machinesPresentation = presentation;
+    unawaited(
+      _channel.invokeMethod<void>('machinesState', {
+        'machines': [
+          for (final machine in machines)
+            {
+              'id': machine.machine.machineId,
+              'name': machine.machine.displayName,
+              'local': machine.isLocalMachine,
+              'agentCount':
+                  machine.agents.isNotEmpty ||
+                      machine.agentLoadStatus == AgentLoadStatus.loaded
+                  ? machine.agents.length
+                  : null,
+              'agents': [
+                for (final agent in machine.agents.take(512))
+                  {
+                    'id': agent.id,
+                    'title': agent.name,
+                    'engine': agent.engine,
+                    'iconAsset': engineIdentity(agent.engine).asset,
+                    'canOpen':
+                        agent.terminalAvailable ||
+                        openAgents.contains((
+                          machine.machine.machineId,
+                          agent.id,
+                        )),
+                  },
+              ],
+              'status': machine.needsLink
+                  ? 'Link required'
+                  : machine.nodeOnline == false
+                  ? 'Offline'
+                  : machine.nodeOnline == true
+                  ? 'Online'
+                  : 'Connecting…',
+            },
+        ],
+      }),
+    );
   }
 
   void _syncModels() {

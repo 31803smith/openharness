@@ -607,7 +607,7 @@ private extension SwarmTitlebar {
                   ["id": "two", "title": "Unavailable session", "canOpen": false]]],
       ["id": "home", "name": "iMac – Home", "status": "Offline", "local": false, "agentCount": 0],
     ]
-    updateMachines(machineRows)
+    _ = try messenger.receive("machinesState", arguments: ["machines": machineRows])
     let machineMenu = main.item(withTitle: "Machines")!.submenu!
     let manager = machineMenu.items.first!
     try checkTitlebar(manager.title == "Open Machines Manager" && manager.representedObject as? String == "manageMachines" && machineMenu.items[1].isSeparatorItem,
@@ -626,6 +626,13 @@ private extension SwarmTitlebar {
     let agentItems = destinations[0].submenu!.items.filter { $0.action == #selector(machineAgentAction(_:)) }
     try checkTitlebar(agentItems.map(\.title) == ["App work", "Unavailable session"] && agentItems[0].image != nil,
       "Machines expand into named agents with engine icons")
+    _ = try messenger.receive("update", arguments: [
+      "tabs": [["id": "navigation-check", "name": "Another tab"]],
+      "activeId": "navigation-check", "enabled": true,
+    ])
+    try checkTitlebar(machineMenu.items.contains(where: { $0 === destinations[0] }) &&
+      destinations[0].submenu?.items.contains(where: { $0 === agentItems[0] }) == true,
+      "Tab updates retain the existing machine menu and agent controls")
     try checkTitlebar(validateMenuItem(agentItems[0]) && !validateMenuItem(agentItems[1]),
       "Unavailable agents cannot be activated")
     machineAgentAction(agentItems[0])
@@ -652,7 +659,7 @@ private extension SwarmTitlebar {
     updateMachines(machineRows)
     try checkTitlebar(machineMenu.items.contains(where: { $0 === destinations[0] }),
       "Unchanged machine data retains menu controls")
-    updateMachines([])
+    _ = try messenger.receive("machinesState", arguments: ["machines": []])
     try checkTitlebar(!validateMenuItem(destinations[0]) && !validateMenuItem(agentItems[0]) &&
       machineMenu.item(withTitle: "No Machines Linked")?.isEnabled == false,
       "Unlinking computers clears destinations and invalidates stale actions")
