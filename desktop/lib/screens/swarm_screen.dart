@@ -1365,21 +1365,22 @@ class _SwarmScreenState extends State<SwarmScreen> {
   );
 
   Widget _tabStrip() => Container(
-    height: 44,
+    height: 52,
     color: grid.AppPalette.swarmTabBar,
     child: Row(
       children: [
         IconButton(
           key: const ValueKey('swarm-notifications-button'),
-          tooltip: withEffectiveShortcutHint(
-            context,
-            'Harnesses needing input',
-            ShortcutAction.showAttention,
-          ),
           onPressed: _notifications,
           icon: Badge(
             isLabelVisible: _attention > 0,
-            child: const Icon(Icons.notifications_none, size: 20),
+            child: Icon(
+              Icons.notifications_none,
+              size: 20,
+              semanticLabel: _attention > 0
+                  ? '$_attention harnesses need input'
+                  : 'Notifications',
+            ),
           ),
         ),
         const SizedBox(width: 10),
@@ -1398,68 +1399,78 @@ class _SwarmScreenState extends State<SwarmScreen> {
                 index: index,
                 child: GestureDetector(
                   onDoubleTap: () => _rename(swarm.id),
-                  child: Container(
-                    width: 186,
-                    margin: const EdgeInsets.only(top: 6, right: 2),
-                    decoration: BoxDecoration(
-                      color: app.activeSwarmId == swarm.id
-                          ? grid.AppPalette.swarmField
-                          : Colors.transparent,
-                      borderRadius: const BorderRadius.vertical(
-                        top: Radius.circular(9),
+                  child: _TabActionsReveal(
+                    builder: (showClose) => Container(
+                      width: 186,
+                      margin: const EdgeInsets.only(top: 6, right: 2),
+                      decoration: BoxDecoration(
+                        color: app.activeSwarmId == swarm.id
+                            ? grid.AppPalette.swarmField
+                            : Colors.transparent,
+                        borderRadius: const BorderRadius.vertical(
+                          top: Radius.circular(9),
+                        ),
                       ),
-                    ),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: TextButton(
-                            onPressed: () => app.selectSwarm(swarm.id),
-                            style: TextButton.styleFrom(
-                              animationDuration: Duration.zero,
-                              foregroundColor: app.activeSwarmId == swarm.id
-                                  ? Colors.white
-                                  : Colors.white70,
-                            ),
-                            child: Row(
-                              children: [
-                                if (swarm.panes.length == 1)
-                                  EngineMark(
-                                    key: ValueKey('tab-engine:${swarm.id}'),
-                                    engine: _tabEngine(swarm),
-                                    size: 16,
-                                  )
-                                else if (swarm.panes.length > 1)
-                                  SwarmIcon(
-                                    key: ValueKey('tab-group:${swarm.id}'),
-                                    size: 16,
-                                    color: Colors.white70,
-                                  )
-                                else
-                                  const Icon(Icons.add_box_outlined, size: 16),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    swarm.name,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(fontSize: 13),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: TextButton(
+                              onPressed: () => app.selectSwarm(swarm.id),
+                              style: TextButton.styleFrom(
+                                animationDuration: Duration.zero,
+                                foregroundColor: app.activeSwarmId == swarm.id
+                                    ? Colors.white
+                                    : Colors.white70,
+                              ),
+                              child: Row(
+                                children: [
+                                  if (swarm.panes.length == 1)
+                                    EngineMark(
+                                      key: ValueKey('tab-engine:${swarm.id}'),
+                                      engine: _tabEngine(swarm),
+                                      size: 16,
+                                    )
+                                  else if (swarm.panes.length > 1)
+                                    SwarmIcon(
+                                      key: ValueKey('tab-group:${swarm.id}'),
+                                      size: 16,
+                                      color: Colors.white70,
+                                    )
+                                  else
+                                    const Icon(Icons.add, size: 16),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      swarm.name,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(fontSize: 13),
+                                    ),
                                   ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
                           ),
-                        ),
-                        IconButton(
-                          tooltip: 'Close ${swarm.name}',
-                          onPressed: () => app.closeSwarm(swarm.id),
-                          icon: const Icon(Icons.close, size: 13),
-                          constraints: const BoxConstraints.tightFor(
-                            width: 30,
-                            height: 30,
+                          Opacity(
+                            key: ValueKey('tab-close:${swarm.id}'),
+                            opacity: showClose ? 1 : 0,
+                            alwaysIncludeSemantics: true,
+                            child: IconButton(
+                              onPressed: () => app.closeSwarm(swarm.id),
+                              icon: Icon(
+                                Icons.close,
+                                size: 13,
+                                semanticLabel: 'Close ${swarm.name}',
+                              ),
+                              constraints: const BoxConstraints.tightFor(
+                                width: 30,
+                                height: 30,
+                              ),
+                              padding: EdgeInsets.zero,
+                            ),
                           ),
-                          padding: EdgeInsets.zero,
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -1469,51 +1480,64 @@ class _SwarmScreenState extends State<SwarmScreen> {
         ),
         IconButton(
           key: const ValueKey('swarm-new-tab-button'),
-          tooltip: withEffectiveShortcutHint(
-            context,
-            'New Tab',
-            ShortcutAction.newSwarm,
-          ),
           onPressed: app.swarms.length < AppNotifier.maxSwarms ? _newTab : null,
-          icon: const Icon(Icons.add, size: 18),
+          icon: const Icon(Icons.add, size: 18, semanticLabel: 'New Tab'),
         ),
         _harnessButton(create: true),
-        const SizedBox(width: 8),
+        const SizedBox(width: 12),
         _harnessButton(create: false),
-        const SizedBox(width: 6),
+        const SizedBox(width: 12),
       ],
     ),
   );
 
   Widget _harnessButton({required bool create}) {
     final label = create ? 'New Harness' : 'Open Harness';
-    return Tooltip(
-      message: withEffectiveShortcutHint(
-        context,
-        label,
-        create ? ShortcutAction.newAgent : ShortcutAction.addAgent,
+    return TextButton(
+      key: ValueKey(
+        create ? 'swarm-new-harness-button' : 'swarm-open-harness-button',
       ),
-      child: TextButton(
-        key: ValueKey(
-          create ? 'swarm-new-harness-button' : 'swarm-open-harness-button',
-        ),
-        onPressed: create ? _newAgent : _addAgent,
-        style: TextButton.styleFrom(
-          minimumSize: Size(create ? 106 : 108, 28),
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          textStyle: Theme.of(context).textTheme.labelLarge
-              ?.copyWith(fontSize: 12, fontWeight: FontWeight.w500),
-          backgroundColor: create
-              ? grid.AppPalette.swarmAccent
-              : grid.AppPalette.swarmSearchSurface,
-          foregroundColor: create
-              ? grid.AppPalette.swarmTabBar
-              : grid.AppPalette.swarmAccent,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-        ),
-        child: Text(label),
+      onPressed: create ? _newAgent : _addAgent,
+      style: TextButton.styleFrom(
+        minimumSize: Size(create ? 122 : 128, 34),
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        textStyle: Theme.of(context).textTheme.labelLarge
+            ?.copyWith(fontSize: 12, fontWeight: FontWeight.w500),
+        backgroundColor: create
+            ? grid.AppPalette.swarmAccent
+            : grid.AppPalette.swarmSearchSurface,
+        foregroundColor: create
+            ? grid.AppPalette.swarmTabBar
+            : grid.AppPalette.swarmAccent,
+        shape: const StadiumBorder(),
       ),
+      child: Text(label),
     );
   }
+}
+
+/// Hovering or focusing one tab only rebuilds its own controls.
+class _TabActionsReveal extends StatefulWidget {
+  const _TabActionsReveal({required this.builder});
+  final Widget Function(bool visible) builder;
+
+  @override
+  State<_TabActionsReveal> createState() => _TabActionsRevealState();
+}
+
+class _TabActionsRevealState extends State<_TabActionsReveal> {
+  bool _hovered = false, _focused = false;
+
+  @override
+  Widget build(BuildContext context) => MouseRegion(
+    onEnter: (_) => setState(() => _hovered = true),
+    onExit: (_) => setState(() => _hovered = false),
+    child: Focus(
+      canRequestFocus: false,
+      includeSemantics: false,
+      onFocusChange: (value) => setState(() => _focused = value),
+      child: widget.builder(_hovered || _focused),
+    ),
+  );
 }

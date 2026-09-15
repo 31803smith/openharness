@@ -8,7 +8,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
   private weak var window: NSWindow?
   private let channel: FlutterMethodChannel
   private let accessory = NSTitlebarAccessoryViewController()
-  private let strip = SwarmTabStrip(frame: NSRect(x: 0, y: 0, width: 900, height: 40))
+  private let strip = SwarmTabStrip(frame: NSRect(x: 0, y: 0, width: 900, height: 52))
   private var observers: [NSObjectProtocol] = []
   private var configured = false
   private var actionsEnabled = false
@@ -113,12 +113,6 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
 
   private func setKeymap(_ map: HarnessNativeKeymap) {
     keymap = map
-    let hint = map.hint(for: "swarm.new", context: "workspace")
-    strip.newButton.toolTip = hint.map { "New Tab (\($0))" } ?? "New Tab"
-    strip.createButton.toolTip = map.hint(for: "agent.new", context: "workspace")
-      .map { "New Harness (\($0))" } ?? "New Harness"
-    strip.openButton.toolTip = map.hint(for: "agent.add", context: "workspace")
-      .map { "Open Harness (\($0))" } ?? "Open Harness"
     if let main = NSApp.mainMenu, let window {
       let menu = main as? HarnessKeymapMenu ?? HarnessKeymapMenu.replacing(main)
       if NSApp.mainMenu !== menu { NSApp.mainMenu = menu }
@@ -149,13 +143,13 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     window.styleMask.remove(.fullSizeContentView)
     window.backgroundColor = strip.palette.tabBar
     // AppKit fixes a right accessory's height to the title bar. A taller view
-    // alone is clipped. A compact unified toolbar gives the native traffic
-    // lights and the tab strip one 40-point row, without a second toolbar row.
+    // alone is clipped. A unified toolbar gives the native traffic lights and
+    // the tab strip one spacious row, without a second toolbar row.
     let toolbar = NSToolbar(identifier: "harness.swarm.titlebar")
     toolbar.displayMode = .iconOnly
     toolbar.allowsUserCustomization = false
     window.toolbar = toolbar
-    window.toolbarStyle = .unifiedCompact
+    window.toolbarStyle = .unified
     window.titlebarSeparatorStyle = .none
     accessory.layoutAttribute = .right
     accessory.view = strip
@@ -170,7 +164,11 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
   private func resize() {
     guard let window else { return }
     // AppKit owns height; only width is configurable for a right accessory.
-    strip.setFrameSize(NSSize(width: max(200, window.frame.width - 88), height: strip.frame.height))
+    let trafficLightEdge = window.standardWindowButton(.zoomButton).map {
+      $0.convert($0.bounds, to: nil).maxX
+    } ?? 76
+    let leading = max(88, trafficLightEdge + 16)
+    strip.setFrameSize(NSSize(width: max(200, window.frame.width - leading), height: strip.frame.height))
     strip.needsLayout = true
   }
 
@@ -195,6 +193,16 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
       item.target = self
       item.representedObject = action
       item.identifier = NSUserInterfaceItemIdentifier(HarnessKeymapMenu.actionPrefix + action)
+      let symbols = [
+        "new": "plus.square", "newAgent": "plus", "addAgent": "magnifyingglass",
+        "renameActive": "pencil", "closeActive": "xmark",
+        "splitRight": "rectangle.split.2x1", "splitDown": "rectangle.split.1x2",
+        "zoomPane": "arrow.up.left.and.arrow.down.right", "closePane": "xmark.square",
+        "commands": "command", "notifications": "bell",
+      ]
+      if let symbol = symbols[action] {
+        item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
+      }
       menu.addItem(item)
     }
     func install(_ menu: NSMenu, at index: Int) {
@@ -210,8 +218,8 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     add(file, "Rename Harness…", "r", "renameActive", [.command, .shift])
     add(file, "Close Harness", "w", "closeActive")
     file.addItem(.separator())
-    add(file, "Split Right…", "", "splitRight")
-    add(file, "Split Down…", "", "splitDown")
+    add(file, "Split Right…", "r", "splitRight")
+    add(file, "Split Down…", "d", "splitDown")
     add(file, "Zoom Pane", "", "zoomPane")
     add(file, "Close Pane", "w", "closePane", [.command, .shift])
     install(file, at: 1)
@@ -267,7 +275,6 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
       let label = NSMutableAttributedString(string: machine.name)
       label.append(NSAttributedString(string: "  " + machine.status, attributes: [.foregroundColor: NSColor.secondaryLabelColor]))
       item.attributedTitle = label
-      item.toolTip = "Find harnesses on " + machine.name
       item.image = NSImage(systemSymbolName: machine.local ? "laptopcomputer" : "desktopcomputer", accessibilityDescription: nil)
       machinesMenu.addItem(item)
     }
@@ -313,7 +320,6 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
       let item = NSMenuItem(title: entry.accessibilityLabel, action: nil, keyEquivalent: "")
       let icon = historyIcons.image(engine: entry.engine, asset: entry.iconAsset)
       item.view = SwarmSubscriptionView(entry: entry, icon: icon, width: rowWidth)
-      item.toolTip = entry.details.joined(separator: "\n")
       item.isEnabled = false
       modelsMenu.addItem(item)
     }
@@ -383,7 +389,6 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
       item.attributedTitle = entry.menuTitle
       item.target = self
       item.representedObject = entry.id
-      item.toolTip = [entry.title, entry.machineName, entry.detail].filter { !$0.isEmpty }.joined(separator: "\n")
       item.state = entry.current ? .on : .off
       item.image = entry.swarm && entry.agentCount != 1
         ? SwarmIdentity.menuIcon
@@ -457,8 +462,8 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
 }
 
 private enum SwarmIdentity {
-  // Same four-pane symbol as widgets/swarm_icon.dart.
-  static let menuIcon = NSImage(systemSymbolName: "square.split.2x2", accessibilityDescription: nil)
+  // Same four separate tiles as widgets/swarm_icon.dart.
+  static let menuIcon = NSImage(systemSymbolName: "square.grid.2x2", accessibilityDescription: nil)
 }
 
 private struct SwarmMachineEntry: Equatable {
@@ -547,7 +552,6 @@ private final class SwarmSubscriptionView: NSView {
     setAccessibilityElement(true)
     setAccessibilityRole(.staticText)
     setAccessibilityLabel(entry.accessibilityLabel)
-    toolTip = entry.details.joined(separator: "\n")
     layout()
   }
 
@@ -743,7 +747,7 @@ private final class SwarmActionButton: NSButton {
       ? fillColor.blended(withFraction: isHighlighted ? 0.16 : 0.08, of: labelColor) ?? fillColor
       : fillColor
     fill.withAlphaComponent(opacity).setFill()
-    NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
+    NSBezierPath(roundedRect: bounds, xRadius: bounds.height / 2, yRadius: bounds.height / 2).fill()
     let label = NSAttributedString(string: title, attributes: [
       .font: font ?? NSFont.systemFont(ofSize: 12, weight: .medium),
       .foregroundColor: labelColor.withAlphaComponent(opacity),
@@ -788,11 +792,10 @@ private final class SwarmTabStrip: NSView {
       button.contentTintColor = palette.accent
       button.target = self
       button.action = action
-      button.toolTip = label
       button.setAccessibilityLabel(label)
       addSubview(button)
     }
-    button(newButton, "plus", "New Tab (⌘T)", #selector(newSwarm))
+    button(newButton, "plus", "New Tab", #selector(newSwarm))
     newButton.setAccessibilityLabel("New Tab")
     newButton.isEnabled = false
     button(notificationButton, "bell", "Notifications", #selector(openNotifications))
@@ -804,7 +807,6 @@ private final class SwarmTabStrip: NSView {
       button.setButtonType(.momentaryChange)
       button.target = self
       button.action = action
-      button.toolTip = label
       button.setAccessibilityLabel(label)
       button.isEnabled = false
       addSubview(button)
@@ -858,7 +860,7 @@ private final class SwarmTabStrip: NSView {
         ? icons.image(engine: row["engine"] as? String, asset: row["iconAsset"] as? String)
         : count > 1
         ? SwarmIdentity.menuIcon
-        : NSImage(systemSymbolName: "plus.square", accessibilityDescription: "New Harness")
+        : NSImage(systemSymbolName: "plus", accessibilityDescription: "New Harness")
       tab.selected = id == activeId
       tab.actionsEnabled = actionsEnabled
       tab.attention = (row["attention"] as? Int ?? 0) > 0
@@ -881,8 +883,7 @@ private final class SwarmTabStrip: NSView {
     openButton.isEnabled = actionsEnabled
     let attention = state["attention"] as? Int ?? 0
     notificationButton.hasAttention = attention > 0
-    notificationButton.toolTip = attention > 0 ? "\(attention) harnesses need input" : "Notifications"
-    notificationButton.setAccessibilityLabel(notificationButton.toolTip)
+    notificationButton.setAccessibilityLabel(attention > 0 ? "\(attention) harnesses need input" : "Notifications")
     needsLayout = true
     layoutSubtreeIfNeeded()
     if ids != previousOrder {
@@ -905,7 +906,12 @@ private final class SwarmTabStrip: NSView {
     let previousScrollSize = scroll.frame.size
     let previousDocumentSize = document.frame.size
     let leading: CGFloat = 36
-    let actionsWidth: CGFloat = 232
+    let spacious = bounds.width >= 480
+    let createWidth: CGFloat = spacious ? 122 : 106
+    let openWidth: CGFloat = spacious ? 128 : 108
+    let actionGap: CGFloat = spacious ? 12 : 8
+    let trailing: CGFloat = spacious ? 12 : 8
+    let actionsWidth = createWidth + actionGap + openWidth + trailing
     newButton.isHidden = bounds.width < 420
     let available = max(32, bounds.width - leading - actionsWidth - (newButton.isHidden ? 0 : 36))
     let width = min(220, max(min(132, available), available / CGFloat(max(1, tabs.count))))
@@ -919,8 +925,9 @@ private final class SwarmTabStrip: NSView {
     let buttonY = (bounds.height - 28) / 2
     notificationButton.frame = NSRect(x: 0, y: buttonY, width: 28, height: 28)
     newButton.frame = NSRect(x: leading + occupied + 4, y: buttonY, width: 28, height: 28)
-    createButton.frame = NSRect(x: bounds.width - actionsWidth, y: buttonY, width: 106, height: 28)
-    openButton.frame = NSRect(x: bounds.width - 116, y: buttonY, width: 108, height: 28)
+    let actionY = (bounds.height - 34) / 2
+    createButton.frame = NSRect(x: bounds.width - actionsWidth, y: actionY, width: createWidth, height: 34)
+    openButton.frame = NSRect(x: bounds.width - trailing - openWidth, y: actionY, width: openWidth, height: 34)
     let geometryChanged = scroll.frame.size != previousScrollSize || document.frame.size != previousDocumentSize
     if let active, revealActiveAfterLayout || (activeWasVisible && (geometryChanged || tabOrderChanged)) {
       document.scrollToVisible(active.frame)
@@ -999,7 +1006,7 @@ private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidati
   var emit: ((String, Any?) -> Void)?
   var hoverChanged: (() -> Void)?
   var isHovered: Bool { hovered && actionsEnabled }
-  private let closeButton = SwarmTabActionButton()
+  private let closeButton = SwarmCloseButton()
   private let selectButton = SwarmSelectButton()
   private let iconView = NSImageView()
   var icon: NSImage? {
@@ -1041,7 +1048,6 @@ private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidati
     closeButton.isBordered = false
     closeButton.target = self
     closeButton.action = #selector(closeSwarm)
-    closeButton.toolTip = "Close Harness"
     addSubview(closeButton)
     let menu = NSMenu()
     for (title, action) in [("Rename Harness…", #selector(renameSwarm)), ("Close Harness", #selector(closeSwarm))] {
@@ -1072,8 +1078,12 @@ private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidati
   private func setHovered(_ value: Bool) {
     guard hovered != value else { return }
     hovered = value
+    updateCloseVisibility()
     needsDisplay = true
     hoverChanged?()
+  }
+  fileprivate func updateCloseVisibility() {
+    closeButton.showsGlyph = hovered || selectButton.hasKeyboardFocus || closeButton.hasKeyboardFocus
   }
   private func invalidateLabel() {
     cachedLabel = nil
@@ -1130,7 +1140,6 @@ private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidati
     selectButton.setAccessibilityLabel("Select \(name)")
     selectButton.setAccessibilityValue(selected ? "Selected" : "")
     selectButton.setAccessibilityHelp(attention ? "Contains harnesses needing input" : nil)
-    toolTip = "\(name) — double-click to rename"
     closeButton.setAccessibilityLabel("Close \(name)")
   }
   func validateMenuItem(_ menuItem: NSMenuItem) -> Bool { actionsEnabled }
@@ -1164,10 +1173,28 @@ private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidati
 /// UI automation can reach the close action without treating the tab as a leaf.
 private class SwarmTabActionButton: NSButton {
   weak var owner: SwarmTabButton?
+  private(set) var hasKeyboardFocus = false
   override func becomeFirstResponder() -> Bool {
     guard super.becomeFirstResponder() else { return false }
+    hasKeyboardFocus = true
+    owner?.updateCloseVisibility()
     if let owner { owner.scrollToVisible(owner.bounds) }
     return true
+  }
+  override func resignFirstResponder() -> Bool {
+    guard super.resignFirstResponder() else { return false }
+    hasKeyboardFocus = false
+    owner?.updateCloseVisibility()
+    return true
+  }
+}
+
+/// Keep the close action reachable by keyboard and VoiceOver while its glyph
+/// rests quietly. Reserving its space avoids shifting labels on hover.
+private final class SwarmCloseButton: SwarmTabActionButton {
+  var showsGlyph = false { didSet { if showsGlyph != oldValue { needsDisplay = true } } }
+  override func draw(_ dirtyRect: NSRect) {
+    if showsGlyph { super.draw(dirtyRect) }
   }
 }
 

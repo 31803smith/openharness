@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/core/models.dart';
@@ -58,6 +59,46 @@ TerminalSession terminal(String id, List<TerminalBinaryFrame> input) =>
       ..streamId = 'stream-$id';
 
 void main() {
+  testWidgets('tab close marks follow hover and keyboard focus', (
+    tester,
+  ) async {
+    final app = createApp();
+    final first = app.activeSwarm;
+    app.renameSwarm(first.id, 'First tab');
+    app.newSwarm();
+    final second = app.activeSwarm;
+    app.renameSwarm(second.id, 'Second tab');
+    await mount(tester, app);
+    Finder close(String id) => find.byKey(ValueKey('tab-close:$id'));
+    double opacity(String id) => tester.widget<Opacity>(close(id)).opacity;
+    expect(opacity(first.id), 0);
+    expect(opacity(second.id), 0);
+    final pointer = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await pointer.addPointer(location: const Offset(900, 500));
+    await pointer.moveTo(tester.getCenter(find.text('First tab')));
+    await tester.pump();
+    expect(opacity(first.id), 1);
+    expect(opacity(second.id), 0);
+    await pointer.moveTo(const Offset(900, 500));
+    await tester.pump();
+    expect(opacity(first.id), 0);
+    Focus.of(tester.element(find.text('First tab'))).requestFocus();
+    await tester.pumpAndSettle();
+    expect(opacity(first.id), 1);
+    final closeIcon = find.descendant(
+      of: close(first.id),
+      matching: find.byType(Icon),
+    );
+    Focus.of(tester.element(closeIcon)).requestFocus();
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.space);
+    await tester.pump();
+    expect(app.swarms.map((swarm) => swarm.id), [second.id]);
+    await pointer.removePointer();
+    await tester.pumpWidget(const SizedBox());
+    app.dispose();
+  });
+
   for (final native in [false, true]) {
     testWidgets('tab identity follows its agent count (native=$native)', (
       tester,

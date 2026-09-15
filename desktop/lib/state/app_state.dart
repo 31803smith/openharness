@@ -873,7 +873,7 @@ class AppNotifier extends ChangeNotifier {
   /// Choosing a preset also resets custom sizes for that pane count. Selecting
   /// the current preset in Command-S is the quick way back to its proportions.
   void setPreset(int paneCount, PanePreset preset) {
-    if (!PanePreset.forCount(paneCount).contains(preset)) return;
+    if (!preset.supportsCount(paneCount)) return;
     final resized = activeSwarm.paneSizes.keys.any(
       (key) => key.startsWith('$paneCount:'),
     );
@@ -2260,8 +2260,9 @@ class AppNotifier extends ChangeNotifier {
       _resetLoginBrowser();
       notifyListeners();
       await _finishBootstrapSignedIn();
-      if (!_authWorkCurrent(revision) || status != AppStatus.authenticated)
+      if (!_authWorkCurrent(revision) || status != AppStatus.authenticated) {
         return;
+      }
       analytics.signedIn();
       // Restarts the clock even if `_trackAppOpened` already started one: this
       // person met the login screen, so their wait begins where the launch's
@@ -2928,8 +2929,9 @@ class AppNotifier extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    if (!_authWorkCurrent(revision) || status == AppStatus.unauthenticated)
+    if (!_authWorkCurrent(revision) || status == AppStatus.unauthenticated) {
       return;
+    }
     if (currentUser == null) unawaited(_loadProfile());
     try {
       await refreshMachines();
@@ -5012,7 +5014,7 @@ class AppNotifier extends ChangeNotifier {
                 count >= 2 &&
                 count <= maxPanes &&
                 preset != null &&
-                PanePreset.forCount(count).contains(preset)) {
+                preset.supportsCount(count)) {
               swarm.presets[count] = preset;
             }
           }

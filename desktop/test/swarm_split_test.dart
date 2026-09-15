@@ -48,6 +48,56 @@ void main() {
   for (final axis in PaneResizeAxis.values) {
     final direction = axis == PaneResizeAxis.x ? 'right' : 'down';
     testWidgets(
+      'Command-${direction == 'right' ? 'R' : 'D'} splits the focused pane $direction',
+      (tester) async {
+        final app = createApp();
+        final machine = app.machineStates['m']!;
+        machine.nodeOnline = true;
+        machine.localOnly = true;
+        machine.agents[2] = const Agent(
+          id: 'a2',
+          name: 'New split helper',
+          engine: 'codex',
+          terminalAvailable: true,
+        );
+        final frames = <TerminalBinaryFrame>[];
+        final first = app.adoptSessionForTest(terminal('a0', frames));
+        final original = app.activeSwarmId;
+        app.newSwarm();
+        final helper = app.adoptSessionForTest(terminal('a2', frames));
+        app.selectSwarm(original);
+        app.focusPane(first.id);
+        await mountWide(tester, app);
+        await chord(
+          tester,
+          axis == PaneResizeAxis.x
+              ? LogicalKeyboardKey.keyR
+              : LogicalKeyboardKey.keyD,
+        );
+        await tester.pump();
+        final search = find.byKey(const ValueKey('swarm-search-input'));
+        expect(search, findsOneWidget);
+        await tester.enterText(search, 'New split helper');
+        await tester.pump();
+        await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+        await tester.pump();
+        expect(app.panes, [first, helper]);
+        final before = tester.getRect(find.byKey(first.cellKey));
+        final after = tester.getRect(find.byKey(helper.cellKey));
+        if (axis == PaneResizeAxis.x) {
+          expect(after.left, greaterThan(before.right));
+          expect(after.top, before.top);
+        } else {
+          expect(after.top, greaterThan(before.bottom));
+          expect(after.left, before.left);
+        }
+        expect(frames, isEmpty);
+        await tester.pumpWidget(const SizedBox());
+        app.dispose();
+      },
+    );
+
+    testWidgets(
       'hover split $direction targets that pane without disturbing its neighbor',
       (tester) async {
         final app = createApp();

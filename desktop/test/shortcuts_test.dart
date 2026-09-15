@@ -357,7 +357,7 @@ void main() {
   });
 
   group('the developer shortcut', () {
-    // ⌘D opens Settings ▸ Debug. It is the one shortcut that is not always
+    // ⇧⌘D opens Settings ▸ Debug. It is the one shortcut that is not always
     // there — a release build has no Debug screen — so what is guarded is that
     // the list and the build agree, in both directions.
     test(
@@ -366,7 +366,7 @@ void main() {
         expect(kDebugSurfaceEnabled, isTrue, reason: 'tests run in debug mode');
         expect(appShortcuts(), contains(kDebugShortcut));
         expect(kAppShortcuts, isNot(contains(kDebugShortcut)));
-        expect(describeShortcut(kDebugShortcut.activator), '⌘D');
+        expect(describeShortcut(kDebugShortcut.activator), '⇧⌘D');
       },
     );
 
@@ -375,7 +375,7 @@ void main() {
         handlers: {ShortcutAction.showDebug: () {}},
       );
       expect(bindings.containsKey(kDebugShortcut.activator), isTrue);
-      expect(shortcutHintFor(ShortcutAction.showDebug), '⌘D');
+      expect(shortcutHintFor(ShortcutAction.showDebug), '⇧⌘D');
       expect(
         shortcutRows().map((row) => row.label),
         contains(kDebugShortcut.label),

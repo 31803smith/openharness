@@ -95,6 +95,12 @@ class PaneGrid extends StatelessWidget {
   Widget _arrange(List<Widget> cells) {
     final preset = notifier.presetFor(cells.length);
 
+    if (preset != null &&
+        (preset.usesTileGeometry ||
+            (preset == PanePreset.rows && cells.length > 2))) {
+      return _PresetCells(cells: cells, preset: preset);
+    }
+
     // Above four, one family of shapes: a grid whose COLUMN COUNT is either
     // stated by the preset or measured from the width. The hand-tuned shapes
     // below stay as they are — three tiles are two over one with the bottom one
@@ -682,6 +688,44 @@ class _SwarmGeometry {
   double height;
   int? columns;
   List<Rect> rectangles = const [];
+}
+
+/// Non-retained grids use the same geometry for the new spanning presets.
+/// The active Swarm canvas continues to keep all terminal subtrees in place.
+class _PresetCells extends StatelessWidget {
+  const _PresetCells({required this.cells, required this.preset});
+
+  final List<Widget> cells;
+  final PanePreset preset;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final minimum = _MinTile.of();
+      final geometry = _SwarmGeometry(
+        count: cells.length,
+        viewport: constraints.biggest,
+        preset: preset,
+        minimum: Size(minimum.width, minimum.height),
+      );
+      final canvas = SizedBox(
+        width: constraints.maxWidth,
+        height: geometry.height,
+        child: Stack(
+          children: [
+            for (var i = 0; i < cells.length; i++)
+              Positioned.fromRect(
+                rect: geometry.rectangles[i],
+                child: ClipRect(child: cells[i]),
+              ),
+          ],
+        ),
+      );
+      return geometry.height > constraints.maxHeight
+          ? SingleChildScrollView(child: canvas)
+          : canvas;
+    },
+  );
 }
 
 /// A hidden view retains its last configuration and geometry. Status changes

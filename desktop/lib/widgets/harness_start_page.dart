@@ -205,13 +205,14 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
                       spacing: 12,
                       runSpacing: 12,
                       children: [
-                        FilledButton(
+                        OutlinedButton(
                           key: const ValueKey('harness-start-open'),
                           onPressed: _open,
-                          style: FilledButton.styleFrom(
+                          style: OutlinedButton.styleFrom(
                             minimumSize: const Size(160, 44),
-                            backgroundColor: grid.AppPalette.swarmSearchSurface,
+                            backgroundColor: Colors.transparent,
                             foregroundColor: Colors.white,
+                            side: const BorderSide(color: Colors.white24),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(8),
                             ),
@@ -252,9 +253,9 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
                                 borderRadius: BorderRadius.circular(10),
                                 child: Image.asset(
                                   'assets/harness_device.webp',
-                                  width: 192,
-                                  height: 120,
-                                  fit: BoxFit.cover,
+                                  width: 256,
+                                  height: 144,
+                                  fit: BoxFit.contain,
                                   semanticLabel: 'Harness Device',
                                 ),
                               ),
@@ -263,7 +264,7 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   Text(
-                                    'Meet Harness Device',
+                                    'The ultimate Harness setup',
                                     style: TextStyle(
                                       fontSize: 13,
                                       color: Colors.white70,
@@ -279,7 +280,7 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
                               ),
                               const SizedBox(height: 6),
                               const Text(
-                                'Voice control for your agents, right on your desk.',
+                                'Scroll, switch panes, and give voice commands.',
                                 textAlign: TextAlign.center,
                                 style: TextStyle(
                                   fontSize: 12,

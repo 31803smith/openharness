@@ -118,6 +118,7 @@ void main() {
         await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
         await tester.sendKeyEvent(shortcut);
         await tester.sendKeyEvent(shortcut);
+        await tester.sendKeyEvent(shortcut);
         await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
         await tester.pump();
         expect(find.byType(Dialog), findsOneWidget);
@@ -188,7 +189,7 @@ void main() {
     await mount(tester, app, map);
     await key(tester, LogicalKeyboardKey.keyS, cmd: true);
     await tester.pumpAndSettle();
-    expect(find.text('Layout · 2 tiles'), findsOneWidget);
+    expect(find.text('Layout · 2 panes'), findsOneWidget);
     expect(app.focusedPane, same(focused));
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pumpAndSettle();

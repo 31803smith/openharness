@@ -15,10 +15,8 @@ import '../theme/app_theme.dart';
 /// four words in a different order, and nobody reads a layout name twice; the
 /// little diagram is the whole interface and the label only confirms it.
 ///
-/// Every size has a choice except one tile. Up to four they are named shapes;
-/// above that the choice is the column count, with "Auto" — as many columns as
-/// the width carries at the forty-column floor — sitting among them as the
-/// measured answer rather than as the only one.
+/// Every card describes a distinct concrete arrangement. Automatic defaults
+/// resolve to the matching card, instead of adding a duplicate picture.
 /// Set while the palette is up, so a second ⌘S can be answered rather than
 /// stacking a route.
 ///
@@ -81,7 +79,10 @@ class _Strip {
   static const sidePadding = 14.0;
 
   /// The dialog's own width, which changes with how many shapes there are.
-  static double width(int choices) => choices > 3 ? 500 : 420;
+  static double width(int choices) {
+    final columns = choices > 4 ? 3 : choices.clamp(1, 4);
+    return sidePadding * 2 + shape * columns + gap * (columns - 1);
+  }
 
   /// How many shapes sit on one line. The same arithmetic Wrap does.
   static int perRow(int choices, double width, double shape) {
@@ -142,7 +143,7 @@ class _LayoutPaletteState extends State<_LayoutPalette> {
     if (choices.isEmpty) return true;
     // presetFor is keyed on the PANE COUNT, not on how many shapes that count
     // offers — the two are different numbers and only one of them is a key.
-    final at = _cursorIn(choices, widget.notifier.presetFor(count));
+    final at = _cursorIn(choices, _currentChoice(count));
     _select((at + 1) % choices.length);
     return true;
   }
@@ -185,18 +186,39 @@ class _LayoutPaletteState extends State<_LayoutPalette> {
     return start.clamp(0, choices.length - 1);
   }
 
+  PanePreset? _currentChoice(int count) {
+    final notifier = widget.notifier;
+    final preset = notifier.presetFor(count);
+    if (preset == null || PanePreset.forCount(count).contains(preset)) {
+      return preset;
+    }
+    final actual = notifier.activeSwarm.arranged?.tiles;
+    if (actual != null && actual.length == count) {
+      return PanePreset.matchingChoice(count, actual);
+    }
+    final viewport = MediaQuery.sizeOf(context);
+    final resolved =
+        preset == PanePreset.splitLong && viewport.height > viewport.width
+        ? PanePreset.rows
+        : preset;
+    return PanePreset.matchingChoice(
+      count,
+      resolved.tilesFor(count, columns: notifier.gridColumns),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final notifier = widget.notifier;
     grid.AppTheme.watch(context);
     final count = notifier.panes.length;
     final choices = PanePreset.forCount(count);
-    final current = notifier.presetFor(count);
+    final current = _currentChoice(count);
     final cursor = _cursorIn(choices, current);
     final textScale = MediaQuery.textScalerOf(context).scale(11.5) / 11.5;
     final shapeWidth = (_Strip.shape * textScale).clamp(_Strip.shape, 216.0);
     final paletteWidth =
-        _Strip.width(choices.length) * textScale.clamp(1.0, 1.5);
+        _Strip.width(choices.length) * textScale.clamp(1.0, 2.0);
 
     return KeymapRegion(
       contextKind: KeymapContext.workspace,
@@ -282,7 +304,7 @@ class _LayoutPaletteState extends State<_LayoutPalette> {
                       Padding(
                         padding: const EdgeInsets.fromLTRB(18, 16, 18, 12),
                         child: Text(
-                          choices.isEmpty ? 'Layout' : 'Layout · $count tiles',
+                          choices.isEmpty ? 'Layout' : 'Layout · $count panes',
                           style: TextStyle(
                             color: grid.AppPalette.textSecondary,
                             fontSize: 11.5,
@@ -498,14 +520,17 @@ class _ShapePainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    const gap = 1.5;
     final fill = Paint()..color = AppColors.accent.withValues(alpha: 0.55);
     for (final unit in preset.tilesFor(count)) {
+      // Dense layouts must still draw every pane. A fixed 3px inset erased
+      // short rows entirely once the diagram contained more than 21 rows.
+      final gapX = (unit.width * size.width * .12).clamp(0.0, 1.5);
+      final gapY = (unit.height * size.height * .12).clamp(0.0, 1.5);
       final rect = Rect.fromLTRB(
-        unit.left * size.width + gap,
-        unit.top * size.height + gap,
-        unit.right * size.width - gap,
-        unit.bottom * size.height - gap,
+        unit.left * size.width + gapX,
+        unit.top * size.height + gapY,
+        unit.right * size.width - gapX,
+        unit.bottom * size.height - gapY,
       );
       canvas.drawRRect(
         RRect.fromRectAndRadius(rect, const Radius.circular(2)),

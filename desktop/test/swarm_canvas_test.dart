@@ -10,6 +10,61 @@ import 'swarm_state_test.dart' show createApp;
 import 'swarm_screen_test.dart' show terminal;
 
 void main() {
+  for (final count in [3, 4, 5, 6, 9, 16]) {
+    testWidgets(
+      'all $count-pane choices retain views and reveal latest output',
+      (tester) async {
+        final app = createApp();
+        app.machineStates['m']!.nodeOnline = true;
+        for (var i = 0; i < count; i++) {
+          final session = terminal('a$i', []);
+          session.terminal.write(
+            List.generate(200, (line) => 'pane $i line $line\r\n').join(),
+          );
+          app.adoptSessionForTest(session);
+        }
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = const Size(1600, 1000);
+        addTearDown(tester.view.reset);
+        await tester.pumpWidget(
+          MaterialApp(home: PaneGrid(notifier: app, swarmMode: true)),
+        );
+        await tester.pump();
+        final views = [
+          for (final pane in app.panes)
+            find.byWidgetPredicate(
+              (w) => w is TerminalView && w.terminal == pane.session!.terminal,
+            ),
+        ];
+        final states = [for (final view in views) tester.state(view)];
+        final focus = app.focusedPaneId;
+        for (final preset in PanePreset.forCount(count)) {
+          for (final view in views) {
+            tester.widget<TerminalView>(view).scrollController!.jumpTo(0);
+          }
+          await tester.pump();
+          app.setPreset(count, preset);
+          await tester.pump();
+          for (var i = 0; i < count; i++) {
+            expect(tester.state(views[i]), same(states[i]), reason: preset.id);
+            final scroll = tester
+                .widget<TerminalView>(views[i])
+                .scrollController!;
+            expect(
+              scroll.offset,
+              scroll.position.maxScrollExtent,
+              reason: '$count ${preset.id} pane $i',
+            );
+          }
+          expect(app.focusedPaneId, focus);
+          expect(tester.takeException(), isNull);
+        }
+        await tester.pumpWidget(const SizedBox());
+        app.dispose();
+      },
+    );
+  }
+
   testWidgets(
     'changed terminal metrics update the grid without a font-size change',
     (tester) async {

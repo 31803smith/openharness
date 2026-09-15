@@ -2,16 +2,9 @@ import 'dart:ui' show Rect;
 
 /// The named shapes a grid of tiles can take.
 ///
-/// A shape is not a free-form tree. Up to four tiles the shapes are few enough
-/// to name, and naming them is what the whole feature is for: people do not
-/// want to draw a layout, they want to pick the one they meant.
-///
-/// Above four, naming every arrangement would be silly — but there IS still a
-/// choice, and it is the only one that matters at that size: HOW MANY COLUMNS.
-/// The first cut of this feature said the window decides and offered nothing,
-/// which was wrong: the window decides how many columns FIT, not how many the
-/// person wants. [auto] is that measured answer kept as one option among the
-/// column counts, not as the only one.
+/// The picker offers concrete, distinct arrangements. Automatic and older
+/// lattice presets still restore saved work, but are not duplicate cards in
+/// the picker. New balanced grids fill every row and use all the canvas.
 enum PanePreset {
   /// Two tiles: split whichever side is longer. A terminal's usable size is its
   /// column count first, so halving the short axis is what protects it.
@@ -59,24 +52,51 @@ enum PanePreset {
   quad,
 
   /// Four tiles: one tall on the left, three stacked on the right.
-  mainAndStack;
+  mainAndStack,
+
+  /// Three tiles: two on the left and one full-height on the right.
+  mainRight,
+
+  /// Five tiles: two above three, with both rows filling the width.
+  twoOverThree,
+
+  /// Row counts follow the requested maximum columns; panes are distributed
+  /// evenly between rows so there are no unused cells or sparse trailing rows.
+  balanced2,
+  balanced3,
+  balanced4,
+  balanced5,
+
+  /// A full-height main pane beside a balanced grid of supporting panes.
+  mainAndGrid,
+
+  /// A full-width main pane above a balanced grid of supporting panes.
+  mainOverGrid;
 
   /// What the picker prints.
   String get label => switch (this) {
     PanePreset.splitLong => 'Split',
     PanePreset.columns => 'Columns',
     PanePreset.rows => 'Rows',
-    PanePreset.twoOverOne => 'Two over one',
-    PanePreset.oneOverTwo => 'One over two',
-    PanePreset.mainLeft => 'Main + stack',
+    PanePreset.twoOverOne => 'Main bottom',
+    PanePreset.oneOverTwo => 'Main top',
+    PanePreset.mainLeft => 'Main left',
     PanePreset.quad => 'Grid',
-    PanePreset.mainAndStack => 'Main + stack',
+    PanePreset.mainAndStack => 'Main left',
     PanePreset.auto => 'Auto',
     PanePreset.cols2 => '2 columns',
     PanePreset.cols3 => '3 columns',
     PanePreset.cols4 => '4 columns',
     PanePreset.cols5 => '5 columns',
     PanePreset.middleMain => 'Middle + sides',
+    PanePreset.mainRight => 'Main right',
+    PanePreset.twoOverThree => 'Two over three',
+    PanePreset.balanced2 => '2 columns',
+    PanePreset.balanced3 => '3 columns',
+    PanePreset.balanced4 => '4 columns',
+    PanePreset.balanced5 => '5 columns',
+    PanePreset.mainAndGrid => 'Main left',
+    PanePreset.mainOverGrid => 'Main top',
   };
 
   /// The column count this shape states, or null for [auto] and for the shapes
@@ -89,6 +109,19 @@ enum PanePreset {
     _ => null,
   };
 
+  /// These shapes use their unit rectangles directly in both renderers.
+  bool get usesTileGeometry => switch (this) {
+    PanePreset.mainRight ||
+    PanePreset.twoOverThree ||
+    PanePreset.balanced2 ||
+    PanePreset.balanced3 ||
+    PanePreset.balanced4 ||
+    PanePreset.balanced5 ||
+    PanePreset.mainAndGrid ||
+    PanePreset.mainOverGrid => true,
+    _ => false,
+  };
+
   /// The tiles this shape makes, as fractions of the grid.
   ///
   /// This is the shape's DESCRIPTION, and it lives here rather than in the
@@ -96,23 +129,14 @@ enum PanePreset {
   /// rectangles and a test measures the real layout against them, so a diagram
   /// cannot drift into advertising a shape the grid does not build.
   ///
-  /// Two shapes are approximate on purpose. [splitLong] is written as columns
-  /// because that is what a wide window gets; on a tall one it splits the other
-  /// way. [auto] is drawn at the column count a typical wide window carries,
-  /// since its real answer is not knowable without the window — which is
-  /// exactly what "auto" means.
-  /// [columns] answers the one shape that cannot know its own: `auto` measures
-  /// the window at build time, so the grid tells this what it actually laid out.
-  /// Every other shape states its columns and ignores the argument.
+  /// Legacy automatic layouts accept their measured column count. They are
+  /// not offered in the picker because they resolve to another shape there.
   List<Rect> tilesFor(int count, {int? columns}) => switch (this) {
     PanePreset.columns || PanePreset.splitLong => const [
       Rect.fromLTRB(0, 0, .5, 1),
       Rect.fromLTRB(.5, 0, 1, 1),
     ],
-    PanePreset.rows => const [
-      Rect.fromLTRB(0, 0, 1, .5),
-      Rect.fromLTRB(0, .5, 1, 1),
-    ],
+    PanePreset.rows => _lattice(count, 1),
     PanePreset.twoOverOne => const [
       Rect.fromLTRB(0, 0, .5, .5),
       Rect.fromLTRB(.5, 0, 1, .5),
@@ -127,6 +151,11 @@ enum PanePreset {
       Rect.fromLTRB(0, 0, .5, 1),
       Rect.fromLTRB(.5, 0, 1, .5),
       Rect.fromLTRB(.5, .5, 1, 1),
+    ],
+    PanePreset.mainRight => const [
+      Rect.fromLTRB(0, 0, .5, .5),
+      Rect.fromLTRB(.5, 0, 1, 1),
+      Rect.fromLTRB(0, .5, .5, 1),
     ],
     PanePreset.quad => const [
       Rect.fromLTRB(0, 0, .5, .5),
@@ -150,12 +179,62 @@ enum PanePreset {
       Rect.fromLTRB(0, 1 / 2, 1 / 3, 1),
       Rect.fromLTRB(2 / 3, 1 / 2, 1, 1),
     ],
+    PanePreset.twoOverThree => _balanced(count, 3, largerRowsLast: true),
+    PanePreset.balanced2 => _balanced(count, 2),
+    PanePreset.balanced3 => _balanced(count, 3),
+    PanePreset.balanced4 => _balanced(count, 4),
+    PanePreset.balanced5 => _balanced(count, 5),
+    PanePreset.mainAndGrid => [
+      const Rect.fromLTRB(0, 0, .5, 1),
+      for (final tile in _balanced(count - 1, 2))
+        Rect.fromLTRB(
+          .5 + tile.left / 2,
+          tile.top,
+          .5 + tile.right / 2,
+          tile.bottom,
+        ),
+    ],
+    PanePreset.mainOverGrid => [
+      const Rect.fromLTRB(0, 0, 1, .5),
+      for (final tile in _balanced(
+        count - 1,
+        count == 4 ? 3 : ((count - 1) / 2).ceil().clamp(2, 5),
+      ))
+        Rect.fromLTRB(
+          tile.left,
+          .5 + tile.top / 2,
+          tile.right,
+          .5 + tile.bottom / 2,
+        ),
+    ],
     PanePreset.auto => _lattice(
       count,
       columns ?? _autoColumnsForDrawing(count),
     ),
     _ => _lattice(count, statedColumns!.clamp(1, count)),
   };
+
+  static List<Rect> _balanced(
+    int count,
+    int columns, {
+    bool largerRowsLast = false,
+  }) {
+    final rows = (count / columns.clamp(1, count)).ceil();
+    final perRow = count ~/ rows;
+    final extra = count % rows;
+    int columnsIn(int row) =>
+        perRow + ((largerRowsLast ? row >= rows - extra : row < extra) ? 1 : 0);
+    return [
+      for (var row = 0; row < rows; row++)
+        for (var col = 0; col < columnsIn(row); col++)
+          Rect.fromLTRB(
+            col / columnsIn(row),
+            row / rows,
+            (col + 1) / columnsIn(row),
+            (row + 1) / rows,
+          ),
+    ];
+  }
 
   /// The lattice, laid out the way `_Lattice` lays it: row-major, the last row
   /// short when the count does not divide.
@@ -195,53 +274,111 @@ enum PanePreset {
     return _legacyIds[id];
   }
 
-  /// The shapes on offer for this many tiles, the shipped one first.
-  ///
-  /// One tile has nothing to choose. Everything else does — including the big
-  /// grids, where the choice is the column count and [auto] is the measured
-  /// answer sitting among them rather than replacing them.
-  static List<PanePreset> forCount(int count) => switch (count) {
+  /// At most six useful shapes. Balanced grids that resolve to the same
+  /// rectangles at a particular count are offered only once.
+  static List<PanePreset> forCount(int count) {
+    if (count < 2) return const [];
+    return _choices.putIfAbsent(count, () {
+      final seen = <String>{};
+      return List.unmodifiable([
+        for (final preset in _candidates(count))
+          if (seen.add(_shapeKey(preset.tilesFor(count)))) preset,
+      ]);
+    });
+  }
+
+  static final _choices = <int, List<PanePreset>>{};
+
+  static List<PanePreset> _candidates(int count) => switch (count) {
     < 2 => const [],
-    2 => const [PanePreset.splitLong, PanePreset.columns, PanePreset.rows],
+    2 => const [PanePreset.columns, PanePreset.rows],
     3 => const [
       PanePreset.twoOverOne,
       PanePreset.oneOverTwo,
       PanePreset.mainLeft,
+      PanePreset.mainRight,
       PanePreset.cols3,
+      PanePreset.rows,
     ],
-    4 => const [PanePreset.quad, PanePreset.mainAndStack, PanePreset.cols4],
-    // A column count equal to the tile count is one row, which is worth having;
-    // more columns than tiles is the same grid with empty air in it, so the
-    // list stops there. Five is the practical end: six 40-column terminals need
-    // a window almost nobody has, and the floor would clamp it back anyway.
-    // Five has a shape of its own to offer, beside the column counts.
-    5 => [
-      PanePreset.auto,
+    4 => const [
+      PanePreset.quad,
+      PanePreset.mainAndStack,
+      PanePreset.mainOverGrid,
+      PanePreset.cols4,
+      PanePreset.rows,
+    ],
+    5 => const [
+      PanePreset.balanced3,
+      PanePreset.twoOverThree,
       PanePreset.middleMain,
-      for (final preset in const [
-        PanePreset.cols2,
-        PanePreset.cols3,
-        PanePreset.cols4,
-        PanePreset.cols5,
-      ])
-        preset,
+      PanePreset.mainAndGrid,
+      PanePreset.mainOverGrid,
+      PanePreset.cols5,
     ],
     _ => [
-      PanePreset.auto,
-      for (final preset in const [
-        PanePreset.cols2,
-        PanePreset.cols3,
-        PanePreset.cols4,
-        PanePreset.cols5,
-      ])
-        if (preset.statedColumns! <= count) preset,
+      PanePreset.balanced2,
+      PanePreset.balanced3,
+      PanePreset.balanced4,
+      PanePreset.balanced5,
+      if (count <= 9) ...[PanePreset.mainAndGrid, PanePreset.mainOverGrid],
     ],
   };
 
+  /// Saved automatic/regular grids remain valid even though the picker now
+  /// offers explicit, filled arrangements. Do not silently discard their IDs.
+  bool supportsCount(int count) => switch (this) {
+    PanePreset.splitLong || PanePreset.columns => count == 2,
+    PanePreset.rows => count >= 2 && count <= 4,
+    PanePreset.twoOverOne ||
+    PanePreset.oneOverTwo ||
+    PanePreset.mainLeft ||
+    PanePreset.mainRight => count == 3,
+    PanePreset.quad || PanePreset.mainAndStack => count == 4,
+    PanePreset.middleMain || PanePreset.twoOverThree => count == 5,
+    PanePreset.cols2 || PanePreset.auto => count >= 5,
+    PanePreset.cols3 => count >= 3,
+    PanePreset.cols4 => count >= 4,
+    PanePreset.cols5 ||
+    PanePreset.balanced2 ||
+    PanePreset.balanced3 ||
+    PanePreset.balanced4 ||
+    PanePreset.balanced5 ||
+    PanePreset.mainAndGrid => count >= 5,
+    PanePreset.mainOverGrid => count >= 4,
+  };
+
+  /// Match the visible geometry rather than the old preset's name or tile
+  /// order. This highlights Columns/Rows for saved automatic two-pane splits.
+  static PanePreset? matchingChoice(int count, List<Rect> tiles) {
+    final key = _shapeKey(tiles);
+    for (final choice in forCount(count)) {
+      if (_shapeKey(choice.tilesFor(count)) == key) return choice;
+    }
+    return null;
+  }
+
+  static String _shapeKey(List<Rect> tiles) {
+    final parts = [
+      for (final tile in tiles)
+        [
+          tile.left,
+          tile.top,
+          tile.right,
+          tile.bottom,
+        ].map((edge) => (edge * 1e8).round()).join(','),
+    ]..sort();
+    return parts.join(';');
+  }
+
   /// What a grid of this size looks like when nobody has chosen.
   static PanePreset? defaultFor(int count) {
-    final choices = forCount(count);
-    return choices.isEmpty ? null : choices.first;
+    return switch (count) {
+      < 2 => null,
+      2 => PanePreset.splitLong,
+      3 => PanePreset.twoOverOne,
+      4 => PanePreset.quad,
+      _ => PanePreset.auto,
+    };
   }
 
   /// Ids written by the build that named these two by hand, before the column

@@ -24,7 +24,11 @@ Opening the dropdown keeps its whole list viewport inside the window. Resizing
 or changing text size reveals the highlighted row without changing the selection.
 A small product image and introduction sit well below the controls and link to
 https://www.autonomous.ai/harness-device. The bundled image is the official
-product photo from https://cdn.autonomous.ai/production/ecm/260731/2.webp.
+device image from https://cdn.autonomous.ai/production/ecm/260731/1-2.webp,
+as shown on https://www.autonomous.ai/harness. The short introduction is
+“The ultimate Harness setup” / “Scroll, switch panes, and give voice commands.”
+The start-page Open Harness button is transparent with a subtle border; New
+Harness retains its accent fill.
 Unused default-name empty pages are excluded from Recently Closed.
 
 The titlebar places the bell beside the traffic lights, then the tabs and tab
@@ -32,8 +36,11 @@ plus. Explicit **New Harness** and **Open Harness** buttons sit on the right.
 There is no floating +. Cmd-N opens creation directly; Cmd-O opens existing-work
 search. Each has its own popup, with no creation CTA or “or” divider in search,
 no Back to Search button in creation, and no stacked dialog on dismissal.
-The Flutter titlebar uses the same compact accent/secondary button treatment as
-AppKit, inherits the app's font, and exposes current shortcut hints on hover.
+The titlebar actions are 34-point-high pills with generous horizontal padding,
+12 points between them and at the right edge. AppKit uses one unified toolbar
+row; the Flutter titlebar is 52 points high and uses the same accent/secondary
+treatment and app font. Titlebar and native menu hover hints are
+removed. Accessible names remain, and menus and Keyboard Shortcuts show bindings.
 The creation dialog title and CTA are **New Harness**. Cancel is removed; Escape
 and clicking outside dismiss it. Launch-in-progress and uncertain-outcome states
 retain their existing safeguards and recovery actions.
@@ -52,7 +59,8 @@ also work immediately after opening the menu, before its first frame.
 The Open popup keeps its full-width **Find a harness** field, single-choice
 results and 90% black backdrop. Only the highlighted row shows **Open Harness**,
 **Open N Harnesses**, or **Split right/down**, depending on context.
-Secondary text is **project · branch · machine**. Missing metadata is omitted
+Secondary text is **project · branch · machine**, with one small muted Git branch
+mark immediately before the branch in search and pane headers. Missing metadata is omitted
 and the containing workspace name is not repeated.
 The Commands footer stays removed; Shift-Cmd-P and typing `>` expose commands.
 An explicit Cmd-N while choosing a split replaces search with creation in that
@@ -69,7 +77,10 @@ handing keyboard ownership back to Flutter and preserve in-progress search compo
 
 ## Tabs and menus
 
-One harness shows its engine mark; multiple harnesses use the group mark. Returning
+One harness shows its engine mark; multiple harnesses use four separate outlined
+tiles, matching the native square.grid.2x2 symbol. An empty tab uses a plain plus.
+Tab close marks appear only on hover or keyboard focus, retaining their space
+and accessible actions while idle. Returning
 to one restores the engine mark. The same rule applies in search and History,
 including Recently Closed; a closure retains its engine identity even if the
 agent disappears from discovery. Tab names remain editable. Former default names
@@ -79,7 +90,7 @@ the first agent's name when opened.
 The macOS menus are **Harness, File, Edit, View, History, Models, Machines,
 Window, Help**. File groups **New Tab, New Harness, Open Harness, Rename Harness, Close Harness**;
 then **Split Right, Split Down, Zoom Pane, Close Pane**. Pin/Unpin and Add Project
-are removed from this menu. Machines starts with **Open Machines Manager**, then
+are removed from this menu. File actions have native system icons. Machines starts with **Open Machines Manager**, then
 linked computers with their status, followed by Link Machine and Refresh Machines.
 The manager has a visible **Rename** action on each computer and uses the existing
 machine rename API. It reports failures inline and refreshes names in the menu
@@ -88,12 +99,22 @@ name filled in; no agent is opened until the user chooses a result.
 
 **Cmd-T** opens the start page, **Cmd-N** opens New Harness
 directly, and **Cmd-O** finds an existing harness. **Cmd-S** opens Layout.
+**Cmd-R** splits right and **Cmd-D** splits down, opening the shared picker for
+that position. Refresh Machines stays in the Machines menu and command search,
+without a default chord. The developer-only Debug shortcut is Shift-Cmd-D.
 Pressing the configured Layout key again cycles choices without applying them;
 Enter applies the highlighted choice and Escape cancels. Plain digits choose
 directly, while modified digits and arrows cannot accidentally apply a shape.
 Layout cards keep fixed diagram bounds as the highlight moves. Larger text gets
 wider cards and readable labels, with arrow navigation following the rendered
 rows and scrolling the selected choice into view when necessary.
+Two panes offer only Columns and Rows. Three and four panes add spanning main
+panes and explicit rows/columns; five adds balanced 3+2 and 2+3 rows, a central
+main pane, and main-plus-grid choices. Larger counts offer balanced grids, with
+main-plus-grid choices through nine panes. Every offered shape fills the canvas;
+equivalent rectangles are deduplicated at each count through the 64-pane limit.
+Automatic and older grid IDs still restore saved geometry, but do not appear as
+duplicate cards. Their matching explicit card is highlighted when available.
 **Cmd-H/J/K/L** and **Cmd-arrows** focus panes; **Shift-Cmd-arrows** move them.
 **Cmd-1…Cmd-9** select tabs in their visible order; missing numbers do nothing.
 Cmd-W closes the tab, Shift-Cmd-W closes the focused pane, and Shift-Cmd-T

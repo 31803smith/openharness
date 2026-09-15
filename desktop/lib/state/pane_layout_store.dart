@@ -100,7 +100,7 @@ class PaneLayoutStore {
         if (count == null || count < 2 || count > maxPanes) continue;
         final preset = PanePreset.byId(entry.value?.toString());
         if (preset == null) continue;
-        if (!PanePreset.forCount(count).contains(preset)) continue;
+        if (!preset.supportsCount(count)) continue;
         out[count] = preset;
       }
       return out;

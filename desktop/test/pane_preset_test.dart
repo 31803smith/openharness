@@ -34,11 +34,7 @@ Future<List<Rect>> _layout(
   bool swarmMode = false,
   Size size = const Size(1600, 1500),
 }) async {
-  // Tall enough that no shape here hits the scroll fallback. Two columns of
-  // nine tiles is five rows, and a window without the height for five rows at
-  // the terminal floor SCROLLS rather than squeezing — correct behaviour, and
-  // covered in pane_lattice_test, but it puts tiles outside the grid box and
-  // there are no fractions of a visible grid left to measure.
+  // Measure the entire canvas, including panes below the visible scroll area.
   await tester.binding.setSurfaceSize(size);
   await tester.pumpWidget(
     MaterialApp(
@@ -47,15 +43,21 @@ Future<List<Rect>> _layout(
   );
   await tester.pump();
   final grid = tester.getRect(find.byType(PaneGrid));
+  final rectangles = [
+    for (final pane in notifier.panes) tester.getRect(find.byKey(pane.cellKey)),
+  ];
+  final height = rectangles.fold<double>(
+    grid.height,
+    (height, rect) => (rect.bottom - grid.top).clamp(height, double.infinity),
+  );
   return [
-    for (final pane in notifier.panes)
+    for (final r in rectangles)
       () {
-        final r = tester.getRect(find.byKey(pane.cellKey));
         return Rect.fromLTRB(
           (r.left - grid.left) / grid.width,
-          (r.top - grid.top) / grid.height,
+          (r.top - grid.top) / height,
           (r.right - grid.left) / grid.width,
-          (r.bottom - grid.top) / grid.height,
+          (r.bottom - grid.top) / height,
         );
       }(),
   ];
@@ -114,12 +116,8 @@ void main() {
     },
   );
 
-  for (final count in [2, 3, 4, 5, 6, 7, 9]) {
+  for (final count in [2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 16, 32, 64]) {
     for (final preset in PanePreset.forCount(count)) {
-      // `auto` measures the window, so its diagram is openly approximate and
-      // there is nothing to hold it to — every other shape states its answer
-      // and must lay out exactly that way.
-      if (preset == PanePreset.auto) continue;
       testWidgets('$count tiles · ${preset.id} is laid out as it is drawn', (
         tester,
       ) async {
@@ -188,10 +186,10 @@ void main() {
     expect(shape[4].bottom, closeTo(1, 0.02));
   });
 
-  test('a big grid offers auto first, then column counts that fit', () {
-    expect(PanePreset.forCount(5).first, PanePreset.auto);
+  test('a big grid offers concrete balanced arrangements', () {
+    expect(PanePreset.forCount(5).first, PanePreset.balanced3);
     for (var count = 5; count <= 9; count++) {
-      for (final preset in PanePreset.forCount(count).skip(1)) {
+      for (final preset in PanePreset.forCount(count)) {
         final columns = preset.statedColumns;
         // A shape that is not a lattice carries its own rectangles instead —
         // `middleMain` is a full-height column with two stacked either side, and

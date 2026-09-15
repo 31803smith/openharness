@@ -5,8 +5,8 @@ import '../logging/debug_surface.dart';
 
 /// Harness uses Command as a direct prefix for frequent workspace actions.
 /// T opens a tab, N creates a harness, O finds one, S changes layout,
-/// H/J/K/L and arrows focus panes, B routes a task
-/// and R refreshes discovery. The same definitions feed live keys, help and search.
+/// H/J/K/L and arrows focus panes, B routes a task, D splits down and R splits
+/// right. The same definitions feed live keys, help and search.
 ///
 /// Unclaimed input stays with the focused agent or text field. Composition,
 /// copy/paste and the coding agent's own prompt editing must keep working.
@@ -307,12 +307,11 @@ const List<AppShortcut> kAppShortcuts = [
 ///
 /// Kept out of [kAppShortcuts] because it is not always there: a release build
 /// has no Debug screen (see [kDebugSurfaceEnabled]), and a key that opens
-/// nothing is worse than a key that was never taken. `⌘D` is free on this list
-/// and on this OS's own menus, and — like every other shortcut here — never
-/// reaches the pty.
+/// nothing is worse than a key that was never taken. Shift keeps it separate
+/// from the everyday Command-D split action.
 const AppShortcut kDebugShortcut = AppShortcut(
   action: ShortcutAction.showDebug,
-  activator: SingleActivator(LogicalKeyboardKey.keyD, meta: true),
+  activator: SingleActivator(LogicalKeyboardKey.keyD, meta: true, shift: true),
   label: 'Open the debug log',
   group: ShortcutGroup.actions,
 );
@@ -329,6 +328,7 @@ List<AppShortcut> appShortcuts({bool swarmMode = true}) => [
         (!const {
               ShortcutAction.toggleRail,
               ShortcutAction.closePane,
+              ShortcutAction.reload,
             }.contains(shortcut.action) &&
             !shortcut.activator.control))
       shortcut,

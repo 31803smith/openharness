@@ -14,7 +14,8 @@ let changed = HarnessNativeKeymap(fixture["changed"]!)!
 for (key, command) in [
   ("cmd+left", "pane.focus_left"), ("cmd+down", "pane.focus_below"),
   ("cmd+up", "pane.focus_above"), ("cmd+right", "pane.focus_right"),
-  ("cmd+s", "pane.layout"), ("cmd+r", "machines.refresh"),
+  ("cmd+s", "pane.layout"), ("cmd+r", "pane.split_right"),
+  ("cmd+d", "pane.split_down"),
   ("cmd+b", "task.route"), ("cmd+t", "swarm.new"),
   ("cmd+n", "agent.new"), ("cmd+o", "agent.add"),
   ("cmd+h", "pane.focus_left"), ("cmd+j", "pane.focus_below"),

@@ -88,7 +88,7 @@ void main() {
     final notifier = railNotifier();
     await pumpRail(tester, notifier);
 
-    final reload = find.byTooltip('Reload machines  ⌘R');
+    final reload = find.byTooltip('Reload machines');
     RotationTransition glyph() => tester.widget<RotationTransition>(
       find.descendant(of: reload, matching: find.byType(RotationTransition)),
     );
@@ -112,7 +112,7 @@ void main() {
     // 2px between glyphs was the old spacing and it read as one smudge. The
     // gap is measured between the buttons' boxes, so it survives a change of
     // glyph size.
-    final reload = tester.getRect(find.byTooltip('Reload machines  ⌘R'));
+    final reload = tester.getRect(find.byTooltip('Reload machines'));
     final collapse = tester.getRect(find.byTooltip('Collapse sidebar  ⌘\\'));
     expect(collapse.left - reload.right, greaterThanOrEqualTo(6));
 

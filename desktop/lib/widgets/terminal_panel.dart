@@ -1494,6 +1494,9 @@ class _TerminalHeader extends StatelessWidget {
       if (project?.branch?.trim().isNotEmpty == true) project!.branch!,
       machineName,
     ];
+    final branchIndex = project?.branch?.trim().isNotEmpty == true
+        ? (folder?.isNotEmpty == true ? 1 : 0)
+        : null;
     final strip = PaneHeaderHover(
       child: SizedBox(
         height: compact ? 38 : 46,
@@ -1637,15 +1640,30 @@ class _TerminalHeader extends StatelessWidget {
                                 ),
                               ),
                             Flexible(
-                              child: Text(
-                                details[i],
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontFamily: AppFonts.sans,
-                                  fontSize: 12,
-                                  color: AppColors.mutedStrong,
-                                ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  if (i == branchIndex) ...[
+                                    Icon(
+                                      LucideIcons.gitBranch300,
+                                      size: 12,
+                                      color: AppColors.mutedStrong,
+                                    ),
+                                    const SizedBox(width: 4),
+                                  ],
+                                  Flexible(
+                                    child: Text(
+                                      details[i],
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontFamily: AppFonts.sans,
+                                        fontSize: 12,
+                                        color: AppColors.mutedStrong,
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
                           ],

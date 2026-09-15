@@ -1,6 +1,7 @@
 import 'swarm_search_field.dart';
 
 import 'package:flutter/material.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:flutter/services.dart';
 
 import '../shortcuts/app_keymap.dart';
@@ -481,6 +482,14 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                                 ? null
                                 : SearchResultText(
                                     row.detail,
+                                    iconOffset: row.detailBranchOffset ?? 0,
+                                    inlineIcon: row.detailBranchOffset == null
+                                        ? null
+                                        : const Icon(
+                                            LucideIcons.gitBranch300,
+                                            size: 12,
+                                            color: Colors.white60,
+                                          ),
                                     matches: matches.where(
                                       (match) => !match.title,
                                     ),

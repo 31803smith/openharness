@@ -152,6 +152,7 @@ class SwarmDestination {
     required this.id,
     required this.title,
     required this.detail,
+    this.detailBranchOffset,
     required this.swarmId,
     required this.current,
     this.machineId,
@@ -172,6 +173,9 @@ class SwarmDestination {
        ];
 
   final String id, title, detail, machineLabel;
+
+  /// The branch's start in the readable metadata, for its decorative glyph.
+  final int? detailBranchOffset;
   final String? swarmId, machineId, agentId, engine;
   final String? closedId;
   final String? commandId, shortcut;
@@ -192,6 +196,26 @@ class SwarmDestination {
 }
 
 enum SwarmSearchAction { open, addHere }
+
+({String text, int? branchOffset}) _harnessDetail(
+  AgentProject? project,
+  String machine,
+  bool offline,
+) {
+  final name = project?.name;
+  final branch = project?.branch;
+  return (
+    text: [
+      name,
+      branch,
+      machine,
+      if (offline) 'Offline',
+    ].whereType<String>().where((part) => part.isNotEmpty).join(' · '),
+    branchOffset: branch?.isNotEmpty == true
+        ? (name?.isNotEmpty == true ? name!.length + 3 : 0)
+        : null,
+  );
+}
 
 class SwarmSearchSelection {
   const SwarmSearchSelection(
@@ -390,16 +414,16 @@ class SwarmLocationCatalog {
     final project = agent == null ? null : machine?.projectOf(agent);
     final machineLabel = machine?.machine.displayName ?? pane.machineId;
     final engine = agent?.engine ?? pane.session?.engineId;
-    final detail = [
-      project?.name,
-      project?.branch,
+    final detail = _harnessDetail(
+      project,
       machineLabel,
-      if (machine?.nodeOnline == false) 'Offline',
-    ].whereType<String>().where((s) => s.isNotEmpty).toSet().join(' · ');
+      machine?.nodeOnline == false,
+    );
     return SwarmDestination(
       id: agentLocationId(swarm.id, pane.id),
       title: agent?.name ?? pane.session?.agentName ?? pane.agentId!,
-      detail: detail,
+      detail: detail.text,
+      detailBranchOffset: detail.branchOffset,
       swarmId: swarm.id,
       swarmName: swarm.name,
       paneId: pane.id,
@@ -408,7 +432,7 @@ class SwarmLocationCatalog {
       agentId: pane.agentId,
       engine: engine,
       current: swarm.id == app.activeSwarmId && pane.id == app.focusedPaneId,
-      searchFields: [detail, project?.cwd, engine, swarm.name],
+      searchFields: [detail.text, project?.cwd, engine, swarm.name],
     );
   }
 }
@@ -801,16 +825,17 @@ List<SwarmDestination> swarmDestinations(
     final project = row?.$1.projectOf(row.$2);
     final machineName = machine?.machine.displayName ?? machineId;
     final engine = row?.$2.engine ?? pane?.session?.engineId;
+    final detail = _harnessDetail(
+      project,
+      machineName,
+      machine?.nodeOnline == false,
+    );
     result.add(
       SwarmDestination(
         id: id,
         title: row?.$2.name ?? pane?.session?.agentName ?? agentId,
-        detail: [
-          project?.name,
-          project?.branch,
-          machineName,
-          if (machine?.nodeOnline == false) 'Offline',
-        ].whereType<String>().where((s) => s.isNotEmpty).toSet().join(' · '),
+        detail: detail.text,
+        detailBranchOffset: detail.branchOffset,
         swarmId: owner?.id,
         machineId: machineId,
         machineLabel: machineName,
