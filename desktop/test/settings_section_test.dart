@@ -23,13 +23,11 @@ void main() {
   test('Settings opens on a row the rail actually shows', () {
     expect(sectionsOf(settingsGroups), contains(kDefaultSettingsSection));
     final shipped = settingsGroupsFor(debugSurface: false);
-    expect(shipped.first.sections.first, SettingsSection.appearance);
+    expect(shipped.first.sections.first, SettingsSection.usage);
   });
 
   test('everything outside the gate is always listed', () {
     expect(sectionsOf(settingsGroupsFor(debugSurface: false)), [
-      SettingsSection.appearance,
-      SettingsSection.terminal,
       // Usage carries no gate of its own: it reads only this machine's own
       // files, and it reads nothing at all until a provider is switched on, so
       // there is nothing here for a shipped build to hide.

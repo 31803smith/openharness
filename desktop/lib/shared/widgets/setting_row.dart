@@ -57,7 +57,9 @@ class SettingRow extends StatelessWidget {
       ),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: LayoutBuilder(
-        builder: (context, constraints) => constraints.maxWidth < _stackBelow
+        builder: (context, constraints) =>
+            constraints.maxWidth <
+                MediaQuery.textScalerOf(context).scale(_stackBelow)
             ? Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [text, const SizedBox(height: 10), control],

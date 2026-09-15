@@ -12,7 +12,7 @@ import '../../terminal/terminal_font_store.dart';
 import '../../terminal/terminal_theme.dart';
 import '../../terminal/terminal_theme_store.dart';
 
-/// Settings ▸ Terminal: the colours and the face the agent's output is drawn in.
+/// Customize Harness ▸ Terminal: the colours and the face the agent's output is drawn in.
 ///
 /// Laid out in the app's own [SettingRow]s rather than in bare Material, for
 /// the same reason Appearance is: a preference reads as a preference here or it
@@ -28,10 +28,7 @@ class TerminalSection extends StatelessWidget {
     grid.AppTheme.watch(context);
     return SectionScaffold(
       title: 'Terminal',
-      subtitle:
-          "The colours and font every terminal pane is drawn in, at its own "
-          "size — the app's UI scale never reaches it. ⌘+ and ⌘- resize "
-          "without leaving this screen.",
+      subtitle: 'Colors and fonts for your agent terminals.',
       // A SingleChildScrollView, never a ListView — same reason as Appearance:
       // a lazy list keeps children across a rebuild and strands them on the
       // palette they first mounted with.
@@ -75,9 +72,7 @@ class _Controls extends StatelessWidget {
         const SizedBox(height: 10),
         SettingRow(
           title: 'Font',
-          detail:
-              'Monospaced faces only — a proportional one misaligns '
-              'every column an agent draws',
+          detail: 'Font for agent output',
           control: _FamilyField(family: terminalFontStore.family),
         ),
         const SizedBox(height: 10),
@@ -85,8 +80,7 @@ class _Controls extends StatelessWidget {
           title: 'Size',
           detail:
               '${TerminalFontStore.minSize.round()}–'
-              '${TerminalFontStore.maxSize.round()}pt. A change '
-              "re-derives the grid and resizes the agent's terminal",
+              '${TerminalFontStore.maxSize.round()}pt. Resize with ⌘+ and ⌘−',
           control: _SizeStepper(size: style.fontSize),
         ),
         const SizedBox(height: 14),
@@ -267,11 +261,13 @@ class _Preview extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 12,
+            runSpacing: 4,
             children: [
-              Expanded(
-                child: Text('Preview', style: theme.textTheme.titleSmall),
-              ),
+              Text('Preview', style: theme.textTheme.titleSmall),
               // What the pick costs in geometry. This is the number that turns
               // into a `terminal_resize` frame and a SIGWINCH at the far end,
               // so the screen says it out loud rather than leaving the user to
@@ -370,15 +366,17 @@ class _ResetRow extends StatelessWidget {
     // own: its default is a named option the user can pick straight from the
     // list ('Match app appearance').
     final atDefault = terminalFontStore.isDefault;
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.end,
+    return Wrap(
+      alignment: WrapAlignment.end,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: 10,
+      runSpacing: 8,
       children: [
         Text(
           '⌘0',
           style: Theme.of(context).textTheme.bodySmall
               ?.copyWith(color: grid.AppPalette.textFaint),
         ),
-        const SizedBox(width: 10),
         OutlinedButton(
           key: const Key('terminal-settings-reset-button'),
           // Dead at the default, because that is what pressing it would leave

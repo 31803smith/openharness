@@ -10,6 +10,36 @@ New Agent, Stop Agent, Restart Agent, and Find an agent. Harness
 also names the tab container, application, CLI and device. Custom saved names
 and protocol identifiers are unchanged.
 
+## Customize Harness
+
+The New Harness page defaults to the selected tab's solid fill, using the same
+workspace palette color. **Customize Harness** is a pill at the bottom right.
+It opens a right-hand pane with **Background / Appearance / Terminal** sections.
+Wide windows keep the page beside it; narrow windows overlay the pane without
+squeezing the search controls. Closing it restores focus to the Customize button
+and preserves the query. Escape closes an open settings menu before the pane.
+
+Background offers **Default, Aurora, Lake, Silk, Threads and Constellation**.
+The lake and generated images are restored from the existing asset history;
+Aurora reuses the existing mesh. Choices apply immediately, persist under
+`harness_start_background`, and affect only empty Harness pages. Default stays
+in step with palette changes. Unknown saved choices fall back to Default.
+
+Appearance and Terminal move out of Settings into this pane, reusing their
+existing palette, UI font/size, terminal scheme, font/size, preview and reset
+controls and stores. Settings now starts at Usage. The device footer stays fixed
+above the bottom-right button while search opens and closes. No uploads,
+background downloads, theme editor or new dependency is added.
+
+Validation: 46 affected Flutter tests pass, including wallpaper persistence and
+keyboard selection, focus restoration, dropdown dismissal, existing-agent entry,
+moved settings, palette propagation, terminal scale isolation and narrow-window
+rendering. All 17 changed Dart/test files analyze cleanly. Captures at 1280×800,
+880×560 and 600×680 with 1.7× text are in
+`/private/tmp/harness-customize-captures`.
+The macOS Release build and deep/strict signature verification pass; all four
+restored image assets are present in the bundle.
+
 ## Open and New Agent
 
 **New Agent (Cmd-N)** opens the dedicated creation dialog. **Open Agent (Cmd-O)**
@@ -27,8 +57,8 @@ at 1120 logical pixels, has a 64-pixel minimum height and shows **Find an agent*
 Its position, width and 32-pixel outer corners stay fixed when results open.
 Results and preview share the space above the fixed device footer. Typing,
 clicking or pressing an arrow opens search; focus alone does not build its catalog.
-Escape closes results and retains the query. The Aurora mesh ground and device
-product strip are preserved. New without a linked machine opens machine linking.
+Escape closes results and retains the query. The default background matches the selected tab, and the device
+product strip stays above the customization button. New without a linked machine opens machine linking.
 
 Open Agent has a large **Find an agent** heading, a blank rounded input and an
 almost-black surface over a 90% black canvas veil. Results appear immediately;

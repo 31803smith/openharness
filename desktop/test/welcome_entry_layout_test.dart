@@ -114,7 +114,7 @@ void main() {
         expect(createRect.left, greaterThan(openRect.right));
         expect(fieldRect.center.dx, closeTo(width / 2, 1));
         expect(deviceRect.left, closeTo(fieldRect.left, 1));
-        expect(deviceRect.bottom, closeTo(height - 32, 1));
+        expect(deviceRect.bottom, closeTo(height - 80, 1));
         expect(find.text('Meet the Harness device'), findsOneWidget);
         expect(create.hitTestable(), findsOneWidget);
         expect(open.hitTestable(), findsOneWidget);

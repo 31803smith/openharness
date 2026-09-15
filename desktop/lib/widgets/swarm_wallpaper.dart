@@ -3,29 +3,55 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 
 import '../shared/theme/app_theme.dart' as grid;
+import '../shared/theme/appearance_prefs_store.dart';
+import '../shared/theme/harness_background.dart';
 import 'engine_identity.dart';
 
-/// The ground behind the empty new-swarm canvas (mockup/swarm-background.html,
-/// "9 · Aurora mesh").
-///
-/// It used to be a photograph — a lake at dusk under a gradient — and it was
-/// the one surface in the app with a subject. Every other screen stands on the
-/// same near-black panel with Geist on it; that one said "mountains", warmed
-/// the white headline orange at the top, and made the accent button compete
-/// with a sunset. A ground should be a ground.
-///
-/// This is the panel colour with three very dim washes at the corners, in the
-/// three colours the app already owns — the accent, and the marks Claude and
-/// Codex wear in the rail — meeting in the middle as plain ground. Each stays
-/// under 15%, which is what keeps it a tinted room rather than a poster, and
-/// what keeps the New agent button the only real blue on screen. Drawn, not
-/// scaled, so it holds at any window size and costs no asset.
+/// Empty pages default to the selected tab's fill. An explicit background is
+/// used for picker thumbnails; the page follows the saved appearance choice.
 class SwarmWallpaper extends StatelessWidget {
-  const SwarmWallpaper({super.key});
+  const SwarmWallpaper({super.key, this.background, this.thumbnail = false});
+  final HarnessBackground? background;
+  final bool thumbnail;
 
   @override
   Widget build(BuildContext context) {
     grid.AppTheme.watch(context);
+    if (background case final choice?) return _paint(choice);
+    return ValueListenableBuilder<AppearancePrefs>(
+      valueListenable: appearancePrefsStore,
+      builder: (context, prefs, _) => _paint(prefs.background),
+    );
+  }
+
+  Widget _paint(HarnessBackground choice) {
+    if (choice == HarnessBackground.plain) {
+      return ColoredBox(color: grid.AppPalette.swarmField);
+    }
+    if (choice.asset case final asset?) {
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          Image.asset(
+            asset,
+            fit: BoxFit.cover,
+            cacheWidth: thumbnail ? 360 : 1920,
+            excludeFromSemantics: true,
+            errorBuilder: (_, _, _) =>
+                ColoredBox(color: grid.AppPalette.swarmField),
+          ),
+          const DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [Color(0x1211111c), Color(0x750c111e)],
+              ),
+            ),
+          ),
+        ],
+      );
+    }
     // Lighter in light mode: a wash that reads as a tint on charcoal reads as
     // a stain on white.
     final strength = grid.AppTheme.pick(0.6, 1.0);

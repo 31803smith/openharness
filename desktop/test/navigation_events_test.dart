@@ -102,17 +102,17 @@ void main() {
       await openSettings(
         tester,
         source: 'account_menu',
-        initialSection: SettingsSection.appearance,
+        initialSection: SettingsSection.shortcuts,
       );
-      await tester.tap(find.text('Terminal'));
+      await tester.tap(find.text('Account'));
       await tester.pumpAndSettle();
 
       // Two visits, two sources: the door into Settings, then the rail. A
       // second view that inherited `account_menu` would report every pane a
       // reader wandered through as having been opened from the account menu.
       expect(tracked.allOf('screen_view'), [
-        {'screen': 'settings_appearance', 'source': 'account_menu'},
-        {'screen': 'settings_terminal', 'source': 'rail'},
+        {'screen': 'settings_shortcuts', 'source': 'account_menu'},
+        {'screen': 'settings_account', 'source': 'rail'},
       ]);
     });
   });

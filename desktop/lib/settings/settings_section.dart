@@ -10,8 +10,6 @@ import '../logging/debug_surface.dart';
 /// be listed without a screen behind it or reachable without a row.
 enum SettingsSection {
   account(LucideIcons.user300, 'Account'),
-  appearance(LucideIcons.sun300, 'Appearance'),
-  terminal(LucideIcons.terminal300, 'Terminal'),
   usage(LucideIcons.chartNoAxesColumn300, 'Usage'),
   devices(LucideIcons.zap300, 'Autonomous devices'),
   shortcuts(LucideIcons.keyboard300, 'Keyboard shortcuts'),
@@ -83,8 +81,6 @@ const _kSettingsGroups = [
   // a run titled "what you change" by carrying the three switches that decide
   // which logs are read at all — the pane is off until somebody sets it.
   SettingsGroup('Preferences', [
-    SettingsSection.appearance,
-    SettingsSection.terminal,
     SettingsSection.usage,
     SettingsSection.devices,
     SettingsSection.account,

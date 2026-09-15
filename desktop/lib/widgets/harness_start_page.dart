@@ -5,6 +5,7 @@ import '../shared/theme/app_theme.dart' as grid;
 import '../state/swarm_navigation.dart';
 import '../state/swarm_search.dart';
 import 'harness_entry_actions.dart';
+import 'harness_customize_pane.dart';
 import 'swarm_search_input.dart';
 import 'swarm_switcher.dart';
 
@@ -34,9 +35,21 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
     canRequestFocus: false,
   );
   final _searchGroup = Object();
+  final _customizeButtonFocus = FocusNode(debugLabel: 'Customize Harness');
+  bool _customizing = false;
   SwarmSearchController? _search;
   SwarmSearchDraft? _draft;
   bool get _showResults => _search != null;
+
+  void _customize() {
+    _close();
+    setState(() => _customizing = true);
+  }
+
+  void _closeCustomization() {
+    setState(() => _customizing = false);
+    _customizeButtonFocus.requestFocus();
+  }
 
   void _open() {
     // Commands can replace the editor value without a TextField onChanged.
@@ -262,6 +275,7 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
     _search?.dispose();
     _query.dispose();
     _pickerFocus.dispose();
+    _customizeButtonFocus.dispose();
     super.dispose();
   }
 
@@ -270,8 +284,61 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
     grid.AppTheme.watch(context);
     return LayoutBuilder(
       builder: (context, constraints) {
+        final paneWidth = constraints.maxWidth.clamp(0.0, 420.0);
+        final sideBySide = constraints.maxWidth >= 1000;
+        return Row(
+          children: [
+            Expanded(
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  _page(),
+                  Positioned(
+                    right: 20,
+                    bottom: 16,
+                    child: FilledButton.icon(
+                      key: const ValueKey('harness-customize-button'),
+                      focusNode: _customizeButtonFocus,
+                      onPressed: _customizing
+                          ? _closeCustomization
+                          : _customize,
+                      icon: const Icon(Icons.edit_outlined, size: 16),
+                      label: const Text('Customize Harness'),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: grid.AppPalette.swarmAccent,
+                        foregroundColor: grid.AppPalette.swarmTabBar,
+                        minimumSize: const Size(0, 36),
+                        shape: const StadiumBorder(),
+                      ),
+                    ),
+                  ),
+                  if (_customizing && !sideBySide)
+                    Positioned(
+                      top: 0,
+                      bottom: 0,
+                      right: 0,
+                      width: paneWidth,
+                      child: HarnessCustomizePane(onClose: _closeCustomization),
+                    ),
+                ],
+              ),
+            ),
+            if (_customizing && sideBySide)
+              SizedBox(
+                width: paneWidth,
+                child: HarnessCustomizePane(onClose: _closeCustomization),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _page() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
         return Padding(
-          padding: const EdgeInsets.fromLTRB(24, 0, 24, 32),
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 80),
           child: Center(
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 1120),

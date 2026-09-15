@@ -34,7 +34,21 @@ user for a benchmark window.
 
 ## Current product contract
 
-### Latest: separate New Agent and Open Agent
+### Latest: Customize Harness
+
+New Harness defaults to the selected tab's solid color. The bottom-right
+**Customize Harness** button opens Background, Appearance and Terminal in a
+right-hand pane. Appearance/Terminal have moved out of Settings and keep their
+existing stores and controls. Background offers Default, Aurora, Lake, Silk,
+Threads and Constellation, reusing existing generated assets and the mesh.
+Choices apply immediately and persist; only empty Harness pages get wallpaper.
+Forty-six affected checks and analysis of all 17 changed Dart/test units pass.
+Logs: `/private/tmp/harness-customize-final-tests.log`,
+`/private/tmp/harness-customize-analyze.log`. Captures:
+`/private/tmp/harness-customize-captures`. The incoming edge New/Open actions
+remain a separate feature and push.
+
+### Separate New Agent and Open Agent — pushed aa327c0
 
 The user rejected combined Add Agent. **Cmd-N / New Agent** now opens the dedicated
 creation dialog; **Cmd-O / Open Agent** opens search/results/preview only. Both
@@ -51,8 +65,8 @@ Logs: `/private/tmp/harness-separate-entry-final-tests.log`,
 `/private/tmp/harness-separate-entry-final-analyze.log`.
 Captures: `/private/tmp/harness-separate-entry-picker`.
 The installed preview is still **8873f27** until the next build/install.
-Push this rollback first. The user then requested Customize Harness, followed by
-distinct New/Open edge actions; implement and push each feature separately.
+The rollback was pushed first as **aa327c0**. The user requests one feature per
+commit and push; Customize Harness and distinct edge New/Open actions follow separately.
 
 ### Earlier September 15 checkpoint (combined form superseded)
 
@@ -244,16 +258,16 @@ are:
   Cmd-H/J/K/L and Cmd-arrows focus panes; Cmd-1…9 select tabs. User bindings take
   precedence. Cmd-R splits right and Cmd-D splits down. Native menus, help and actual
   dispatch must agree; native menu and titlebar hover hints are removed.
-- New Harness preserves incoming **fea77a8**: an Aurora mesh background in the
-  app/accent/agent colours and a glass product strip with the device cutout.
+- New Harness defaults to the selected tab fill. Customize Harness offers the
+  prior Aurora mesh and restored images. The device cutout remains in its product strip.
   The long search field is capped at 1120 logical pixels with a 64-pixel minimum
   height and **Find an agent** hint. It starts blank and focused, with results
   hidden until typing, clicking or pressing an arrow. Open Agent and New Agent
   sit underneath at the same left edge; the Open button is outlined here.
   Search retains its position and width; results and preview are side by side
   from 700 pixels. Escape restores the actions and query. The product strip stays
-  32 pixels above the bottom while search opens and closes, with a compact form
-  for short windows. The old lake screenshot is no longer the current background.
+  above the bottom-right Customize button while search opens and closes, with
+  a compact form for short windows. Wallpaper is now an explicit saved choice.
 - Search is single-choice. Session names appear above **project · branch ·
   machine**, without repeated workspace titles. Only the highlighted row shows
   **Open Agent / Open N Agents**, or the explicit split action. The modal
