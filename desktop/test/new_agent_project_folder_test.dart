@@ -70,7 +70,7 @@ class _App extends AppNotifier {
   }
 }
 
-Future<void> mount(WidgetTester tester, _App app) async {
+Future<void> _mount(WidgetTester tester, _App app) async {
   await app.agentPreference.select('claude');
   await tester.pumpWidget(
     MaterialApp(
@@ -101,7 +101,7 @@ void main() {
         await tester.pumpWidget(const SizedBox());
         app.dispose();
       });
-      await mount(tester, app);
+      await _mount(tester, app);
       expect(app.prepared, isEmpty);
       expect(connection.calls, isEmpty);
       await tester.tap(
@@ -159,7 +159,7 @@ void main() {
         await tester.pumpWidget(const SizedBox());
         app.dispose();
       });
-      await mount(tester, app);
+      await _mount(tester, app);
       await tester.tap(find.byKey(const ValueKey('new-agent-folder-remote')));
       await tester.pumpAndSettle();
       final field = find.byKey(const ValueKey('new-agent-repository'));

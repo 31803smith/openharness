@@ -8,7 +8,8 @@ import 'repository_clone.dart';
 /// Existing folders continue to use the ordinary agent_create cwd payload.
 class ProjectFolderRequest {
   const ProjectFolderRequest.newProject() : repository = null;
-  const ProjectFolderRequest.remote(GitHubRepository value) : repository = value;
+  const ProjectFolderRequest.remote(GitHubRepository value)
+    : repository = value;
 
   final GitHubRepository? repository;
 
@@ -32,7 +33,10 @@ class ProjectFolderRequest {
     try {
       await root.create(recursive: true);
       if (repository case final repo?) {
-        return (createClone?.call() ?? RepositoryClone()).run(repo, root.path);
+        return await (createClone?.call() ?? RepositoryClone()).run(
+          repo,
+          root.path,
+        );
       }
       // The OS reserves a unique folder atomically. No name prompt or existing
       // project is needed, and two deliberate creations cannot share a folder.
