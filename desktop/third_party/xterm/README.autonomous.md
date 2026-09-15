@@ -154,3 +154,19 @@ it if one is dropped.
    `--flag` stay syntax rather than typography. Regression:
    `mobile/test/terminal_ime_input_test.dart`, the only build that reaches the
    mobile branch.
+
+10. **Return does not leave the line it just sent sitting in the prompt**
+    (`lib/src/ui/custom_text_edit.dart`). iOS answers the Return key by calling
+    `performAction` and then inserting the `\n` into its own buffer anyway:
+    `shouldChangeTextInRange:` returns YES for the default return key
+    (`FlutterTextInputPlugin.mm`). So an editing value the terminal has ALREADY
+    acted on arrives right after the action — by which point
+    `resetEditingState` has emptied the mirror, so the diff retyped the whole
+    line into the pty and followed it with a literal LF. A TUI reads that as
+    Ctrl+J, a soft newline rather than a submit, so the message the user just
+    sent reappeared in the prompt underneath its own answer. That one value is
+    now recognised by its shape, dropped, and the native buffer put back on the
+    state the action left. It is one shot, so real typing after a submit is
+    never swallowed, and Android performs its editor action without the second
+    insert so nothing there matches. Regression:
+    `mobile/test/terminal_ime_input_test.dart`.
