@@ -64,7 +64,7 @@ Future<Color> _firstCellColor(
 
 void main() {
   testWidgets(
-    'hidden streamed output preserves selection, scroll and follow-tail without frames',
+    'hidden output does no rendering and reveals the latest on return',
     (tester) async {
       final app = createApp();
       app.machineStates['m']!.nodeOnline = true;
@@ -124,7 +124,7 @@ void main() {
       app.selectSwarm(first);
       await tester.pump();
       expect(viewA.renderTerminal, same(renderA));
-      expect(scrollA.offset, 100);
+      expect(scrollA.offset, scrollA.position.maxScrollExtent);
       expect(a.terminal.buffer.getText(selection.selection), selected);
       expect(scrollB.position.maxScrollExtent, greaterThan(oldExtent));
       expect(scrollB.offset, scrollB.position.maxScrollExtent);

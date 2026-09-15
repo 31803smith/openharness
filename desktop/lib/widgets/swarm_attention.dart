@@ -1,3 +1,5 @@
+import 'swarm_search_field.dart';
+
 import 'package:flutter/material.dart';
 
 import '../shared/widgets/app_dialog.dart';
@@ -5,7 +7,6 @@ import '../state/app_state.dart';
 import '../state/swarm_attention.dart';
 import '../state/swarm_navigation.dart';
 import 'engine_identity.dart';
-import 'swarm_welcome.dart';
 
 Future<SwarmAttentionEntry?> showSwarmAttention(
   BuildContext context,
@@ -146,7 +147,7 @@ class _SwarmAttentionState extends State<_SwarmAttention> {
               const SizedBox(height: 8),
               SwarmSearchField(
                 autofocus: true,
-                hintText: 'Find a question, agent, or project…',
+                hintText: 'Find a question, harness, or project',
                 onChanged: (value) => setState(() {
                   _query = value;
                   _cursor = 0;
@@ -162,7 +163,7 @@ class _SwarmAttentionState extends State<_SwarmAttention> {
                     ? Center(
                         child: Text(
                           _catalog.isEmpty
-                              ? 'No agents need your input'
+                              ? 'No harnesses need your input'
                               : 'No matching questions',
                           style: const TextStyle(
                             fontSize: 13,
@@ -236,7 +237,7 @@ class _SwarmAttentionState extends State<_SwarmAttention> {
                                   ? 'Unavailable'
                                   : destination.hasView
                                   ? 'Jump'
-                                  : 'Open agent',
+                                  : 'Open Harness',
                               style: const TextStyle(
                                 fontSize: 11,
                                 color: Colors.white54,
@@ -254,9 +255,9 @@ class _SwarmAttentionState extends State<_SwarmAttention> {
                 alignment: Alignment.centerLeft,
                 child: Text(
                   selected != null && !selected.available
-                      ? 'This agent’s terminal is unavailable · Esc to close'
+                      ? 'This harness’s terminal is unavailable · Esc to close'
                       : selected != null && !selected.destination.hasView
-                      ? '↵ Open agent in $_targetName · Esc to close'
+                      ? '↵ Open Harness in $_targetName · Esc to close'
                       : '↑↓ or ⌃N ⌃P to choose · Return to jump · Esc to close',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,

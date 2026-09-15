@@ -181,6 +181,41 @@ describe('Autonomous device turn.summary carries the complete answer', () => {
   })
 })
 
+describe('Autonomous device agents.list carries the newest recap headline', () => {
+  const build = (recent: (agentId: string, n: number) => unknown[]) => new AutonomousDeviceService({ machineId: 'machine',
+    agents: () => [{ agentId: 'a', name: 'Alpha', engine: 'claude', state: 'idle' }, { agentId: 'b', name: 'Beta', engine: 'codex', state: 'running' }],
+    submit: vi.fn(), stop: async () => true, answer: async () => true, cancelDelivery: () => true, recent })
+  const list = (service: AutonomousDeviceService) => service.request('device', { type: 'agents.list', requestId: randomUUID() })
+
+  it('inlines each agent\'s latest recap, and only the headline', async () => {
+    const recent = vi.fn((agentId: string) => agentId === 'a'
+      ? [{ kind: 'summary', recap: 'Fixed the retry path', text: 'Fixed the retry path in client.ts and server.ts.', fullText: 'Fixed the retry path…\n\n- client.ts\n- server.ts' }]
+      : [])
+    const result = await list(build(recent))
+    expect(result.agents).toEqual([
+      { machineId: 'machine', agentId: 'a', name: 'Alpha', engine: 'claude', state: 'idle', recap: 'Fixed the retry path' },
+      // No summarised turn yet → no field at all, not an empty string.
+      { machineId: 'machine', agentId: 'b', name: 'Beta', engine: 'codex', state: 'running' },
+    ])
+    // One turn per agent is all the list needs; the fuller views stay behind `recap`, where n ≤ 5 bounds them.
+    expect(recent).toHaveBeenCalledWith('a', 1)
+    expect(recent).toHaveBeenCalledWith('b', 1)
+  })
+
+  it('flattens and caps the headline so the list stays inside the socket\'s frame budget', async () => {
+    const long = 'word '.repeat(80).trim()
+    const result = await list(build(() => [{ kind: 'summary', recap: `two\n lines  ${long}`, text: '' }]))
+    const rows = result.agents as Array<{ recap?: string }>
+    expect(rows[0].recap!.startsWith('two lines word')).toBe(true)
+    expect(rows[0].recap!.length).toBe(200)
+  })
+
+  it('treats a malformed recent row as no recap', async () => {
+    const result = await list(build(() => ['not an object', { kind: 'summary', recap: 42 }]))
+    expect((result.agents as Array<Record<string, unknown>>)[0]).not.toHaveProperty('recap')
+  })
+})
+
 describe('Autonomous device app focus', () => {
   it('exposes revisions, remote focus, owner-aware clear and server identity', async () => {
     const f = fixture()

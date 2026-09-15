@@ -355,6 +355,40 @@ void main() {
     app.dispose();
   });
 
+  testWidgets('Option+Enter adds a line instead of sending', (tester) async {
+    final outbound = <String>[];
+    final app = _notifier(local: false);
+    final session = await _liveSession(outbound);
+    await tester.pumpWidget(_host(app, session));
+    await tester.pump();
+
+    await tester.tap(find.byType(TextField));
+    await tester.pump();
+    await tester.enterText(find.byType(TextField), 'first');
+    await tester.pump();
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
+    await tester.pump(const Duration(milliseconds: 12));
+
+    expect(outbound, isEmpty, reason: '⌥⏎ composes, it does not send');
+    // Unlike Shift+Enter, this newline IS observable: the composer writes it into the controller
+    // itself rather than handing the key to a text-input channel a widget test never runs.
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).controller?.text,
+      'first\n',
+    );
+
+    await tester.enterText(find.byType(TextField), 'first\nsecond');
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump(const Duration(milliseconds: 12));
+    expect(outbound, ['first\nsecond']);
+    session.dispose();
+    app.dispose();
+  });
+
   testWidgets('Ctrl+W deletes the last word', (tester) async {
     final app = _notifier(local: false);
     final session = await _liveSession([]);

@@ -14,7 +14,7 @@ class WelcomeWorkspacePreview extends StatelessWidget {
     final palette = grid.AppTheme.palette.value;
     return Semantics(
       image: true,
-      label: 'Example swarm: Claude Code and Codex working side by side.',
+      label: 'Example agent group: Claude Code and Codex working side by side.',
       child: ExcludeSemantics(
         child: Container(
           decoration: BoxDecoration(

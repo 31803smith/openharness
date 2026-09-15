@@ -4,7 +4,7 @@ name: Release desktop
 # (or `make release-desktop` from the repo root, which does exactly that).
 #
 # The `_desktop` suffix exists only so this workflow's tag trigger never fires on the CLI's
-# `v*_cli` or the backend's `v*_api` release tags, now that all three live in this one repo. It is
+# `v*_cli` or the backend's `v*_backend` release tags, now that all three live in this one repo. It is
 # stripped below before anything treats the value as a version — the manifest, --build-name, the
 # release title and the updater's semver comparison all only ever see a bare X.Y.Z.
 #

@@ -252,7 +252,7 @@ class _AgentSwitcherState extends State<_AgentSwitcher> {
                       decoration: InputDecoration(
                         border: InputBorder.none,
                         isDense: true,
-                        hintText: 'Go to agent…',
+                        hintText: 'Find a harness',
                         hintStyle: TextStyle(
                           fontSize: 17,
                           color: grid.AppPalette.textFaint,
@@ -270,7 +270,7 @@ class _AgentSwitcherState extends State<_AgentSwitcher> {
                     Padding(
                       padding: const EdgeInsets.fromLTRB(16, 18, 16, 20),
                       child: Text(
-                        'No agent matches that.',
+                        'No harness matches that.',
                         style: TextStyle(
                           fontSize: 13,
                           color: grid.AppPalette.textFaint,

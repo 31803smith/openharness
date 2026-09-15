@@ -14,7 +14,7 @@ import 'swarm_switcher_test.dart' show selectedRow;
 Finder get attentionField => find.byWidgetPredicate(
   (w) =>
       w is TextField &&
-      w.decoration?.hintText == 'Find a question, agent, or project…',
+      w.decoration?.hintText == 'Find a question, harness, or project',
 );
 
 void main() {
@@ -115,13 +115,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 10));
       expect(firstInput.single.bytes, [27, 91, 68]);
       expect(secondInput, isEmpty);
-      await chord(tester, LogicalKeyboardKey.keyP);
-      expect(
-        find.descendant(of: selectedRow, matching: find.text('Agent 1')),
-        findsOneWidget,
-      );
-      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-      await tester.pump();
+      await chord(tester, LogicalKeyboardKey.bracketLeft);
       expect(app.activeSwarmId, second.id);
       expect(app.focusedPaneId, secondPane.id);
       await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
@@ -229,7 +223,7 @@ void main() {
       machine.blockedAgents.clear();
       app.dismissError();
       await tester.pump();
-      expect(find.text('No agents need your input'), findsOneWidget);
+      expect(find.text('No harnesses need your input'), findsOneWidget);
       await tester.tap(find.byTooltip('Close notifications'));
       await tester.pump();
       expect(app.panes, isEmpty);

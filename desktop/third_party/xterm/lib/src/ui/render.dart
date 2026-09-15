@@ -192,13 +192,27 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   final TerminalPainter _painter;
 
   var _stickToBottom = true;
+  double _laidOutMaxScrollExtent = 0;
   bool _editableRectPending = false;
 
   void _onScroll() {
-    _stickToBottom = _scrollOffset >= _maxScrollExtent;
+    // Output may already have extended the buffer since the last layout. The
+    // scroll position still describes that layout, so comparing it to the live
+    // buffer would mistake a jump to the tail for scrolling up into history.
+    _stickToBottom = _scrollOffset >= _laidOutMaxScrollExtent - 0.5;
     if (!_renderingEnabled) return;
     markNeedsLayout();
     _scheduleEditableRect();
+  }
+
+  /// Resolve the tail against the buffer and viewport of the next layout,
+  /// rather than jumping to a ScrollPosition extent from the previous frame.
+  void scrollToBottom() {
+    final needsLayout = !_stickToBottom ||
+        !hasSize ||
+        (_maxScrollExtent - _scrollOffset).abs() > 0.5;
+    _stickToBottom = true;
+    if (_renderingEnabled && needsLayout) markNeedsLayout();
   }
 
   void _onFocusChange() {
@@ -252,13 +266,19 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     size = constraints.biggest;
     if (!_renderingEnabled) return;
 
+    final followTail = _stickToBottom;
     _updateViewportSize();
 
-    _updateScrollOffset();
-
-    if (_stickToBottom) {
+    if (followTail) {
+      // Correct before publishing the dimensions. A terminal redraw may empty
+      // its history for one frame; publishing that short extent while pixels
+      // still points into the old history starts a macOS bounce to the top.
+      // That animation would keep scrolling even as the next output refills it.
       _offset.correctBy(_maxScrollExtent - _scrollOffset);
     }
+    _updateScrollOffset();
+    if (followTail) _stickToBottom = true;
+    _laidOutMaxScrollExtent = _maxScrollExtent;
     _scheduleEditableRect();
   }
 

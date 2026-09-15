@@ -119,6 +119,18 @@ a terminal, instead of a second copy here that had to keep its own pinned checks
 screen ever opens a terminal: a fresh Homebrew or any `apt-get install` needs a password prompt on a
 real tty.
 
+**Readiness is the list of commands the app runs, nothing more** (`EnvironmentStep`: tmux — plus `ps`
+on Linux — the Harness CLI, and on a Linux desktop the clipboard helper). Homebrew, the Apple developer
+tools, apt and the curl/tar/sed/awk/sha256sum the CLI installer downloads Node with are *recipes* for a
+missing command, kept in `EnvironmentReadiness.plan` and probed top-down only while the command is
+missing: a Mac with tmux is never asked about Homebrew, a Mac with Homebrew never about `xcrun`, and a
+Linux box with a managed runtime never about curl. The ladder itself is implemented once, in
+`cli/scripts/install.sh` (`--host` runs just that half); the macOS Terminal window the app opens is a
+log/exit-code frame around it, while the Linux one keeps the app's own apt transaction so its
+clock-skew repair stays. Gating readiness on the recipes was what sent a computer whose tmux ran fine
+into Terminal to reinstall developer tools after a macOS upgrade — the screen renders `plan`, it does
+not infer one.
+
 ### Boot and state
 
 `lib/main.dart`: `CrashLog.install()` → `loadPersistedSettings()` (theme mode + terminal font, awaited
@@ -448,8 +460,11 @@ from `node_status` pushes — distinct from our own socket status, pending offli
   ▸ Keyboard shortcuts, group cards reflowed across the pane, plus the recessed "the terminal keeps"
   card built from `kTerminalOwnedKeys`). Same rows behind both, so they cannot disagree; keycaps come
   from `shortcuts/key_cap.dart`. Every shortcut is ⌘-based — Ctrl belongs to the shell/tmux, ⌥ is a
-  Meta prefix for the pty, and ⌘C/⌘V/⌘A are owned by xterm — with one pinned exception, `⌃⇥`/`⌃⇧⇥`
-  for the panes, which the terminal is made to let past.
+  Meta prefix for the pty (⌥⏎ only — `MetaEnterInputHandler` in
+  `lib/terminal/terminal_input.dart` turns it into `ESC` + Return so the engine's prompt breaks the
+  line instead of submitting; ⌥ stays the compose key everywhere else, and the composer answers the
+  same chord by writing the newline itself), and ⌘C/⌘V/⌘A are owned by xterm — with one pinned
+  exception, `⌃⇥`/`⌃⇧⇥` for the panes, which the terminal is made to let past.
 - `lib/flash/` flashes the ESP32-S3 dial through the CLI runner; `SerialPortLease` pauses daemon
   supervision while the port is held so `harness start` cannot steal it mid-write.
 - `lib/update/desktop_updater.dart` self-updates from the GCS manifest (sha256-verified, strictly

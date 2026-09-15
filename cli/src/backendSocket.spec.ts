@@ -2,10 +2,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'fs'
 import { fileURLToPath } from 'url'
 import { BackendSocket, compactRuntimePickerModels, deviceAgentListItem, grokHistoryPage } from './backendSocket.js'
+import { WS_IDLE_DEADLINE_MS as IDLE_DEADLINE_MS } from './lib/wsLiveness.js'
 import type { TerminalStreamManager } from './lib/terminalStreamManager.js'
 import { decodeTerminalLocal, TerminalBinaryKind } from './lib/terminalBinary.js'
 import { registry, type RegisteredSession } from './lib/registry.js'
 import * as mediaPreview from './lib/mediaPreview.js'
+import { randomUUID } from 'node:crypto'
 
 const wsMock = vi.hoisted(() => {
   const instances: MockWebSocket[] = []
@@ -17,6 +19,9 @@ const wsMock = vi.hoisted(() => {
     readyState = MockWebSocket.CONNECTING
     sent: string[] = []
     failNextSend: Error | null = null
+    /** Peer stopped answering pings (a half-open TCP link, a laptop coming back from sleep). */
+    silent = false
+    pings = 0
     private handlers = new Map<string, Array<(...args: unknown[]) => void>>()
 
     constructor(readonly url: string, readonly protocols: string[], readonly options?: { handshakeTimeout?: number }) {
@@ -28,6 +33,15 @@ const wsMock = vi.hoisted(() => {
       list.push(cb)
       this.handlers.set(event, list)
       return this
+    }
+
+    once(event: string, cb: (...args: unknown[]) => void): this {
+      const wrapped = (...args: unknown[]): void => {
+        const list = this.handlers.get(event) ?? []
+        this.handlers.set(event, list.filter((fn) => fn !== wrapped))
+        cb(...args)
+      }
+      return this.on(event, wrapped)
     }
 
     private emit(event: string, ...args: unknown[]): void {
@@ -70,7 +84,13 @@ const wsMock = vi.hoisted(() => {
     }
 
     ping(): void {
-      this.emit('pong')
+      this.pings++
+      if (!this.silent) this.emit('pong')
+    }
+
+    /** The backend's own liveness ping (every 25s from `trackSocketLiveness`). */
+    peerPing(): void {
+      this.emit('ping')
     }
   }
 
@@ -133,6 +153,53 @@ describe('BackendSocket outbound queue', () => {
     expect(ws2.options?.handshakeTimeout).toBe(15_000)
     ws2.open()
     expect(socket.isConnected()).toBe(true)
+
+    await socket.stop()
+  })
+
+  it('gives a silent peer the whole deadline, not one missed pong, before terminating', async () => {
+    // The old heartbeat killed the link the first time a ping went unanswered (20–40s), which is
+    // what every macOS DarkWake looked like from inside the daemon: the pre-sleep ping's pong never
+    // came, so the first tick after wake terminated a link that was about to work again.
+    vi.useFakeTimers()
+    const socket = new BackendSocket('token')
+    socket.connect()
+    const ws = wsMock.instances[0]
+    ws.open()
+    ws.silent = true
+
+    await vi.advanceTimersByTimeAsync(IDLE_DEADLINE_MS - 1_000)
+    expect(socket.isConnected()).toBe(true)
+    expect(ws.pings).toBeGreaterThanOrEqual(2) // it kept asking the whole time
+    expect(wsMock.instances).toHaveLength(1)
+
+    await vi.advanceTimersByTimeAsync(20_000)
+    expect(socket.isConnected()).toBe(false)
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(wsMock.instances).toHaveLength(2) // and re-entered the ordinary backoff
+
+    await socket.stop()
+  })
+
+  it('counts data and the backend\'s own pings as proof of life, not only pongs', async () => {
+    // A backend busy streaming data can answer a control-frame ping late; the data itself is the
+    // stronger proof, and the backend pings this socket every 25s on its own.
+    vi.useFakeTimers()
+    const socket = new BackendSocket('token')
+    socket.connect()
+    const ws = wsMock.instances[0]
+    ws.open()
+    ws.silent = true
+
+    await vi.advanceTimersByTimeAsync(40_000)
+    ws.message({ t: 'down', connId: 'c1', frame: { type: 'noop' } })
+    await vi.advanceTimersByTimeAsync(40_000) // 80s in, 40s since the last frame
+    expect(socket.isConnected()).toBe(true)
+    ws.peerPing()
+    await vi.advanceTimersByTimeAsync(40_000)
+    expect(socket.isConnected()).toBe(true)
+    await vi.advanceTimersByTimeAsync(IDLE_DEADLINE_MS)
+    expect(socket.isConnected()).toBe(false)
 
     await socket.stop()
   })
@@ -476,6 +543,126 @@ describe('BackendSocket outbound queue', () => {
     await vi.waitFor(() => expect(frames.some((frame) => frame.type === 'engines_probe_result')).toBe(true))
     await socket.unregisterLocalClient('local:create')
     await socket.stop()
+  })
+
+  it('recovers a delayed creation on the same connection without starting another agent', async () => {
+    const socket = new BackendSocket('token')
+    const frames: Array<Record<string, unknown>> = []
+    socket.registerLocalClient('local:receipt', {
+      sendFrame: (frame) => { frames.push(frame); return true }, sendBinary: () => true,
+    })
+    const pending: RegisteredSession = {
+      schemaVersion: 2, active: true, launch: { state: 'starting' },
+      agentId: 'receipt-agent', sessionId: '', boundAt: null, engine: 'claude',
+      transcriptPath: null, projectDir: 'work', cwd: '/tmp/work',
+      runtimes: [{ backend: 'tmux', paneId: '%receipt' }], primaryRuntimeKey: 'tmux/%receipt', tmuxPane: '%receipt',
+      source: null, title: null, model: null, cliVersion: null, processIdentity: null,
+      registeredAt: 1, updatedAt: 1, lastHookAt: 1, lastTranscriptAt: 1,
+    }
+    const lookup = vi.spyOn(registry, 'byAgent').mockReturnValue(pending)
+    let finish!: () => void
+    const create = vi.fn(() => new Promise<{ ok: true; session: RegisteredSession }>((resolve) => {
+      finish = () => resolve({ ok: true, session: pending })
+    }))
+    socket.onCreateAgent = create
+    const creationId = randomUUID()
+    const ask = (type: string, requestId: string, choices = {}) => socket.handleLocalFrame('local:receipt', {
+      type, payload: { requestId, creationId, ...choices },
+    })
+    try {
+      ask('agent_create', 'first', { engine: 'claude', cwd: '/tmp/work' })
+      await vi.waitFor(() => expect(create).toHaveBeenCalledTimes(1))
+      ask('agent_create_status', 'while-pending')
+      await vi.waitFor(() => expect(frames).toContainEqual({
+        type: 'agent_create_status_result', payload: { requestId: 'while-pending', creationId, state: 'pending' },
+      }))
+      // New transport request id, same deliberate creation intent.
+      ask('agent_create', 'retry', { engine: 'claude', cwd: '/tmp/work' })
+      finish()
+      for (const requestId of ['first', 'retry']) {
+        await vi.waitFor(() => expect(frames).toContainEqual(expect.objectContaining({
+          type: 'agent_create_result', payload: expect.objectContaining({ requestId, creationId, state: 'created', agent: expect.objectContaining({ id: pending.agentId }) }),
+        })))
+      }
+      expect(create).toHaveBeenCalledTimes(1)
+      ask('agent_create_status', 'recovered')
+      await vi.waitFor(() => expect(frames).toContainEqual(expect.objectContaining({
+        type: 'agent_create_status_result', payload: expect.objectContaining({ requestId: 'recovered', creationId, state: 'created', agent: expect.objectContaining({ id: pending.agentId }) }),
+      })))
+      ask('agent_create', 'changed', { engine: 'codex', cwd: '/tmp/work' })
+      await vi.waitFor(() => expect(frames).toContainEqual(expect.objectContaining({
+        type: 'agent_create_result', payload: expect.objectContaining({ requestId: 'changed', error: 'CREATION_CONFLICT' }),
+      })))
+      lookup.mockReturnValue(undefined)
+      ask('agent_create', 'deleted', { engine: 'claude', cwd: '/tmp/work' })
+      await vi.waitFor(() => expect(frames).toContainEqual(expect.objectContaining({
+        type: 'agent_create_result', payload: expect.objectContaining({ requestId: 'deleted', creationId, state: 'unavailable' }),
+      })))
+      expect(create).toHaveBeenCalledTimes(1)
+    } finally {
+      finish?.()
+      await socket.unregisterLocalClient('local:receipt')
+      await socket.stop()
+    }
+  })
+
+  it('checks an unknown creation without spawning and rejects malformed creation ids before launch', async () => {
+    const socket = new BackendSocket('token')
+    const frames: Array<Record<string, unknown>> = []
+    socket.registerLocalClient('local:missing-receipt', {
+      sendFrame: (frame) => { frames.push(frame); return true }, sendBinary: () => true,
+    })
+    const create = vi.fn(async () => ({ ok: false as const, error: 'CWD_NOT_FOUND' }))
+    socket.onCreateAgent = create
+    const creationId = randomUUID()
+    try {
+      socket.handleLocalFrame('local:missing-receipt', {
+        type: 'agent_create_status', payload: { requestId: 'missing', creationId },
+      })
+      await vi.waitFor(() => expect(frames).toContainEqual({
+        type: 'agent_create_status_result', payload: { requestId: 'missing', creationId, state: 'missing' },
+      }))
+      socket.handleLocalFrame('local:missing-receipt', {
+        type: 'agent_create', payload: { requestId: 'invalid', creationId: '../bad', engine: 'claude', cwd: '/tmp/work' },
+      })
+      await vi.waitFor(() => expect(frames).toContainEqual(expect.objectContaining({
+        type: 'agent_create_result', payload: expect.objectContaining({ requestId: 'invalid', error: 'INVALID_CREATION_ID' }),
+      })))
+      expect(create).not.toHaveBeenCalled()
+    } finally {
+      await socket.unregisterLocalClient('local:missing-receipt')
+      await socket.stop()
+    }
+  })
+
+  it.each([
+    ['CWD_NOT_FOUND', 'failed'],
+    ['SPAWN_FAILED', 'unconfirmed'],
+    ['REGISTRATION_FAILED', 'unconfirmed'],
+  ])('does not relaunch a recorded %s outcome', async (error, state) => {
+    const socket = new BackendSocket('token')
+    const frames: Array<Record<string, unknown>> = []
+    socket.registerLocalClient('local:refusal', {
+      sendFrame: (frame) => { frames.push(frame); return true }, sendBinary: () => true,
+    })
+    const create = vi.fn(async () => ({ ok: false as const, error }))
+    socket.onCreateAgent = create
+    const creationId = randomUUID()
+    try {
+      for (const requestId of ['initial', 'retry']) {
+        socket.handleLocalFrame('local:refusal', {
+          type: 'agent_create', payload: { requestId, creationId, engine: 'claude', cwd: '/tmp/work' },
+        })
+        await vi.waitFor(() => expect(frames).toContainEqual({
+          type: 'agent_create_result',
+          payload: { requestId, creationId, state, ...(state === 'failed' ? { failure: { code: error } } : {}) },
+        }))
+      }
+      expect(create).toHaveBeenCalledTimes(1)
+    } finally {
+      await socket.unregisterLocalClient('local:refusal')
+      await socket.stop()
+    }
   })
 
   it('sends a device focus request to one desktop window only', async () => {

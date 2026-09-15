@@ -326,6 +326,12 @@ const envSchema = z.object({
   AMP_SUMMARY_MODE: z.string().default('medium'),
   // Shared recap reasoning level for Claude and Codex. Cursor effort is part of its model identifier.
   SUMMARY_EFFORT: z.enum(['low', 'medium', 'high']).default('low'),
+  // How the device recap is written. `model`: a disposable one-shot of the session's own engine, fed the
+  // PREVIOUS recap, the user's ask and the answer — so a turn that says "same fix, other file" recaps as
+  // what it did, not as a fragment; costs the one-shot's latency per turn. `local`: no model in the loop,
+  // the answer's first sentence is excerpted — instant, but every recap stands alone.
+  SUMMARY_MODE: z.enum(['model', 'local']).default('model'),
+  RECAP_WITHOUT_DEVICE: z.string().default('true').transform((v) => v !== 'false'),
   // Model for the voice router one-shot classifier (Overview voice → pick the agent). Small/fast by default.
   VOICE_ROUTE_MODEL: z.string().default('haiku'),
   // Test override: run the recap even with no device connected (mirrors node isRecapForced()).

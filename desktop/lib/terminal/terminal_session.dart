@@ -8,6 +8,7 @@ import 'package:xterm/xterm.dart';
 
 import '../core/crash_log.dart';
 import 'terminal_binary.dart';
+import 'terminal_input.dart';
 import 'terminal_viewport.dart';
 
 typedef TerminalFrameSender = Future<bool> Function(
@@ -777,6 +778,9 @@ class TerminalSession extends ChangeNotifier {
     final result = Terminal(
       maxLines: 10000,
       platform: TerminalTargetPlatform.macos,
+      // ⌥⏎ has to become a Meta-prefixed Return before it reaches the pty, or the engine's prompt
+      // reads it as the submit it is byte-identical to. See [MetaEnterInputHandler].
+      inputHandler: harnessInputHandler,
       // The remote pane owns its grid and redraws after resize. Reflowing TUI
       // rows locally both changes their geometry and exercises an xterm.dart
       // circular-buffer bug when a remote/local switch changes viewport size.
@@ -1108,6 +1112,8 @@ class TerminalSession extends ChangeNotifier {
 
   void find(TerminalFindAction action) => _viewport?.find(action);
 
+  bool focusInput() => _viewport?.focusInput() ?? false;
+
   /// Coalescing windows for the two things the user drives directly.
   ///
   /// Both are leading + trailing: act on the first event, batch the rest. A flat trailing debounce
@@ -1353,7 +1359,7 @@ class TerminalSession extends ChangeNotifier {
   }
 
   void transportLost([
-    String message = 'Connection lost. Select the agent to reconnect.',
+    String message = 'Connection lost. Select the harness to reconnect.',
   ]) {
     // `takenOver` is a deliberate dead end (see `_paneNeedsAttach`): only the user's own retry
     // may reopen a stream someone else claimed. A WS hiccup must not quietly overwrite that into

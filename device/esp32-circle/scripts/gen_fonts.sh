@@ -33,4 +33,14 @@ for s in 16 20 24 25 32 34 38; do gen "$REG" reg "$s"; done
 for s in 28 32 38 48;       do gen "$MED" med "$s"; done
 # One SemiBold: the reset confirm's primary, which the design sets a weight above its neighbours.
 for s in 24;                do gen "$SEM" sem "$s"; done
+# The Overview's agent count — DIGITS ONLY. A 64px face over the full range would be the largest file in
+# the tree for one number; ten glyphs and a space are a few KB. Anything else set in it draws a box.
+digits() {  # digits <src> <tag> <size>
+  local out="main/ui/geist_$2_$3.c"
+  [ -s "$out" ] && { echo "  skip $out"; return; }
+  npx --yes lv_font_conv@1.5.3 --bpp 4 --size "$3" --format lvgl --no-compress --no-prefilter \
+    --font "$1" --range 0x20,0x30-0x39 -o "$out" --lv-include lvgl.h
+  printf "  %-26s %6.0f KB\n" "$out" "$(($(stat -f%z "$out")/1024))"
+}
+digits "$MED" med 64
 echo "xong"

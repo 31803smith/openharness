@@ -1,9 +1,10 @@
+import 'swarm_search_field.dart';
+
 import 'package:flutter/material.dart';
 
 import '../shared/widgets/app_dialog.dart';
 import '../state/app_state.dart';
 import '../state/swarm_catalog.dart';
-import 'swarm_welcome.dart';
 
 Future<SavedSwarmProject?> showSwarmProjectAgents(
   BuildContext context,
@@ -66,13 +67,13 @@ class _ProjectAgentsState extends State<_ProjectAgents> {
             ),
             const SizedBox(height: 8),
             const Text(
-              'Include agents from any machine. Matching repositories are included automatically.',
+              'Include harnesses from any machine. Matching repositories are included automatically.',
               style: TextStyle(fontSize: 12),
             ),
             const SizedBox(height: 16),
             SwarmSearchField(
               autofocus: true,
-              hintText: 'Find an agent or machine…',
+              hintText: 'Find a harness or machine',
               onChanged: (value) => setState(() => _query = value),
             ),
             const SizedBox(height: 12),
@@ -82,7 +83,7 @@ class _ProjectAgentsState extends State<_ProjectAgents> {
                 builder: (context, _) {
                   final rows = swarmAgents(widget.app, _query);
                   if (rows.isEmpty) {
-                    return const Center(child: Text('No matching agents'));
+                    return const Center(child: Text('No matching harnesses'));
                   }
                   return ListView.builder(
                     itemCount: rows.length,

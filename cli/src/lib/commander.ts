@@ -8,7 +8,8 @@
  *   tool_start Task/Agent   → + {kind:'agents', agents:[{text,color}]} (live sub-agent list)
  *   subagent_finished       → + {kind:'agents', …} with that row ticked off
  *   turn_ended (device on)  → {kind:'processing', text:'Summarizing…'} then, once the LLM one-shot
- *                             returns, {kind:'summary', text:body, recap} (persisted per session)
+ *                             returns, {kind:'summary', text:body, recap} (persisted per session,
+ *                             and handed to the NEXT turn's summariser as its previous recap)
  *   turn_ended (no device)  → nothing (device-gated; the summary map is left untouched)
  *   turn_ended (empty text) → {kind:'done'}                          (clear busy)
  *
@@ -38,7 +39,16 @@ export interface CommanderMirrorOpts {
    *  Gates the live turn-card STREAM; the turn-done `summary` card ignores it so a background machine still
    *  badges. Omitted → defaults to hasDevice (single-machine firmware: attached == active, streams as before). */
   active?: () => boolean
-  summarize: (text: string, signal?: AbortSignal, userMessage?: string, sessionId?: string) => Promise<string | null>
+  /** `previousRecap` is the stored `recap\n\nbody` of this session's last summarised turn, when there is
+   *  one — the continuity a recap of THIS turn alone cannot carry ("same fix, other file" is a fragment
+   *  without it). Undefined on a session's first turn. */
+  summarize: (
+    text: string,
+    signal?: AbortSignal,
+    userMessage?: string,
+    sessionId?: string,
+    previousRecap?: string,
+  ) => Promise<string | null>
   /** True when `summarize` is a local derivation rather than a model call — see startSummary. */
   summarizeIsLocal?: boolean
   /** Agent display name for a sessionId — rides the summary's outer frame so a BACKGROUND machine's device
@@ -51,6 +61,7 @@ export interface CommanderMirrorOpts {
   agentIdFor?: (sessionId: string) => string | undefined
   dataDir: string
   recapForce?: boolean
+  alwaysGenerate?: boolean
 }
 
 interface SessionState {
@@ -548,10 +559,19 @@ export class CommanderMirror {
     const sid = sessionId.slice(0, 8)
     const device = this.opts.hasDevice()
 
-    // Device-gated: only run the (costly) LLM recap while a device is connected (mirrors the hosted runtime's
-    // isDeviceConnected()). No device → no card, and the summaries map is left untouched.
-    if (!device && !this.opts.recapForce) {
-      // Console-only: no device means no recap flow to watch.
+    // Whether to GENERATE at all. Two independent reasons to proceed without a device:
+    //   • recapForce — the test override, which ALSO un-gates emit() (streaming cards ride to a device
+    //     that is not there). Kept as-is for the scripted device tests.
+    //   • alwaysGenerate — persist a recap on EVERY turn so `agent.recap`/`agents.list` are populated
+    //     for a programmatic client (a local-ws app), with no device ever paired. Unlike recapForce it
+    //     does NOT touch emit(): the persistence below runs, `emit()` stays device-gated on its own, so
+    //     nothing rides the wire to an absent device. This is the fix for the back-fill gap — a device
+    //     that pairs LATER restores real tiles from what was persisted here, instead of blank ones,
+    //     because replayAll() only re-emits stored recaps and never regenerates a past turn.
+    // Cost: with SUMMARY_MODE=model this is one engine one-shot per turn, per agent, forever — the very
+    // cost the device gate used to avoid. SUMMARY_MODE=local makes it free (no model, same-tick excerpt).
+    if (!device && !this.opts.recapForce && !this.opts.alwaysGenerate) {
+      // Console-only: no device and generation is off, so there is no recap flow to watch.
       console.log(`[recap] ${sid} turn-end · SKIP (no device connected) · textLen=${fallbackText.length}`)
       return
     }
@@ -613,7 +633,9 @@ export class CommanderMirror {
     }
 
     const ask = userMessage.replace(/\s+/g, ' ').trim().slice(0, 60)
-    this.trace(sessionId, `${sid} summarizing · source=${source} · textLen=${text.length} · device=${device}${this.opts.recapForce ? ' · recapForce' : ''}${ask ? ` · ask="${ask}"` : ''}`)
+    // Read BEFORE the new summary is stored below, or the "previous" recap is this turn's own.
+    const previousRecap = this.summaries.get(sessionId)
+    this.trace(sessionId, `${sid} summarizing · source=${source} · textLen=${text.length} · device=${device}${this.opts.recapForce ? ' · recapForce' : ''}${ask ? ` · ask="${ask}"` : ''} · prev=${previousRecap ? 'yes' : 'none'}`)
     // Device: busy "Summarizing…" card. Web: the "Summarizing for device…" indicator (mirrors the
     // node's handleBrainSummaryEvent — the web ignores the summary text, only toggles the flag).
     //
@@ -626,7 +648,7 @@ export class CommanderMirror {
     }
 
     this.opts
-      .summarize(text, ac.signal, userMessage, sessionId)
+      .summarize(text, ac.signal, userMessage, sessionId, previousRecap)
       .then((summary) => {
         const ms = Date.now() - t0
         if (ac.signal.aborted) { this.trace(sessionId, `${sid} superseded after ${ms}ms (newer turn) — dropping result`); return }

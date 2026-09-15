@@ -3,7 +3,7 @@
 # .github/workflows/release.yml bundles the CLI, publishes it to GCS, and creates the GitHub Release.
 # The tag IS the version; CI never bumps on its own. Tags are "vX.Y.Z_cli" — the "_cli" suffix is
 # stripped by release.yml before anything treats it as a version; it exists only so this tag never
-# also triggers the backend's "vX.Y.Z_api" release (.github/workflows/production-be-build.yaml).
+# also triggers the backend's "vX.Y.Z_backend" release (.github/workflows/production-be-build.yaml).
 #
 # Usage:
 #   bash cli/scripts/release-cli.sh                    # bump the patch and release
@@ -107,7 +107,7 @@ fi
 # --- current version, source 1: the highest release tag in git ---
 # The brace group keeps `set -e` from killing the script when grep legitimately matches nothing.
 # Tags are "vX.Y.Z_cli" — the suffix only exists so release.yml's tag trigger never collides with
-# the backend's "vX.Y.Z_api" tags now that both live in one repo. Strip "v" and "_cli" so TAG_VER
+# the backend's "vX.Y.Z_backend" tags now that both live in one repo. Strip "v" and "_cli" so TAG_VER
 # is always a bare X.Y.Z for the version-comparison logic below.
 TAG_VER="$(git tag -l 'v*_cli' \
   | { grep -E '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)_cli$' || true; } \

@@ -5,12 +5,19 @@ import 'dart:io';
 import '../core/harness_cli_runner.dart';
 
 /// The CLI-only installer contract for callers that already own host setup.
-/// Desktop verifies system tools, the active Linux clipboard helper and tmux
-/// before reaching this command, then performs its own complete verification
-/// again after Harness lands.
+/// Desktop verifies tmux, the active Linux clipboard helper and the rest of
+/// what the CLI runs before reaching this command, then performs its own
+/// complete verification again after Harness lands.
 const String kHarnessDesktopInstallCommand =
     'curl -fsSL https://cdn.autonomous.ai/harness/cli/install.sh | '
     '/bin/sh -s -- --desktop';
+
+/// The same installer's host half — tmux and what the CLI runs beside it —
+/// for the Terminal window the app opens when obtaining them needs a
+/// password. One ladder, implemented once, in the script.
+const String kHarnessHostSetupCommand =
+    'curl -fsSL https://cdn.autonomous.ai/harness/cli/install.sh | '
+    '/bin/sh -s -- --host';
 
 const int _linuxClockSyncFailureExitCode = 31;
 const int _linuxAptUpdateFailureExitCode = 32;
@@ -20,9 +27,20 @@ const String _linuxClockRepairCommand =
     'sudo chronyc makestep; else sudo timedatectl set-ntp true && '
     'sudo systemctl restart systemd-timesyncd; fi';
 
+/// What Harness Desktop RUNS — the only things readiness is about. Everything
+/// else the setup screen ever mentions (Homebrew, the Apple developer tools,
+/// apt, curl) is a way of obtaining one of these, appears only in the plan
+/// for a step that is missing, and is never probed while the step is ready.
 enum EnvironmentStep {
+  /// The native image-paste helper of the active Linux display (`wl-copy` /
+  /// `xclip`). Not applicable on macOS or a headless Linux host.
   clipboard,
+
+  /// The managed Node runtime and `cli.js` under `~/.harness`.
   harness,
+
+  /// The terminal backend: `tmux`, and on Linux the `ps` the CLI's process
+  /// liveness and agent discovery run beside it.
   tmux;
 
   /// Harness Desktop is only ready when every command in this list works.
@@ -43,7 +61,7 @@ enum EnvironmentSetupPhase {
 enum EnvironmentSetupMode { automatic, manual }
 
 /// Identifies which host setup owns a visible Terminal handoff. Linux can wait
-/// on base/clipboard packages even when tmux itself is already ready, so a
+/// on the clipboard helper even when tmux itself is already ready, so a
 /// resumed failure must not always be attributed to the tmux row.
 enum EnvironmentTerminalSetup { linuxHost, tmux }
 
@@ -79,6 +97,66 @@ enum EnvironmentStepStatus {
   unavailable,
 }
 
+/// One thing setup will do to obtain a missing [step], in the order it will
+/// be done. Computed by the provisioner from what it actually probed, so the
+/// screen renders it rather than inferring it — a plan that names Xcode is a
+/// plan for a computer where Homebrew was found missing, never a guess.
+class EnvironmentPlanItem {
+  final EnvironmentStep step;
+  final String title;
+  final String detail;
+  final String command;
+
+  /// Needs a real tty for a password or an OS dialog, so automatic setup
+  /// hands it to a visible Terminal window.
+  final bool requiresTerminal;
+
+  /// Linux: the apt packages this item installs, so a resumed Terminal
+  /// handoff can name what is still missing without re-probing.
+  final List<String> packages;
+
+  const EnvironmentPlanItem({
+    required this.step,
+    required this.title,
+    required this.detail,
+    required this.command,
+    this.requiresTerminal = false,
+    this.packages = const [],
+  });
+
+  /// The macOS ladder for tmux, one rung each, and the CLI installer — the
+  /// items a plan is assembled from, written down once.
+  static const appleDeveloperTools = EnvironmentPlanItem(
+    step: EnvironmentStep.tmux,
+    title: 'Apple developer tools',
+    detail: 'Xcode or Command Line Tools · needed by the Homebrew installer',
+    command: '/usr/bin/xcrun --find clang || { if [ -x /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild ]; then sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer; else xcode-select --install; fi; }',
+    requiresTerminal: true,
+  );
+
+  static const homebrew = EnvironmentPlanItem(
+    step: EnvironmentStep.tmux,
+    title: 'Homebrew',
+    detail: 'Package manager that installs tmux',
+    command: '/bin/bash -c "\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"',
+    requiresTerminal: true,
+  );
+
+  static const tmuxViaHomebrew = EnvironmentPlanItem(
+    step: EnvironmentStep.tmux,
+    title: 'tmux',
+    detail: 'Required for every terminal session',
+    command: 'eval "\$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv)" && brew install tmux',
+  );
+
+  static const harnessCli = EnvironmentPlanItem(
+    step: EnvironmentStep.harness,
+    title: 'Managed Node 20+ & Harness CLI',
+    detail: '~/.harness only',
+    command: kHarnessDesktopInstallCommand,
+  );
+}
+
 class EnvironmentReadiness {
   final Map<EnvironmentStep, EnvironmentStepStatus> steps;
   final String? message;
@@ -89,10 +167,9 @@ class EnvironmentReadiness {
   final String? terminalLogPath;
   final String? terminalResultPath;
   final EnvironmentTerminalSetup? terminalSetup;
-  final bool systemReady;
-  final bool? homebrewReady;
-  final bool? tmuxBinaryReady;
-  final List<String> missingLinuxPackages;
+
+  /// What setup will install, in order — empty when everything runs.
+  final List<EnvironmentPlanItem> plan;
 
   const EnvironmentReadiness({
     required this.steps,
@@ -104,10 +181,7 @@ class EnvironmentReadiness {
     this.terminalLogPath,
     this.terminalResultPath,
     this.terminalSetup,
-    this.systemReady = false,
-    this.homebrewReady,
-    this.tmuxBinaryReady,
-    this.missingLinuxPackages = const [],
+    this.plan = const [],
   });
 
   factory EnvironmentReadiness.initial() => EnvironmentReadiness(
@@ -117,19 +191,34 @@ class EnvironmentReadiness {
     },
   );
 
-  bool get isReady =>
-      systemReady &&
-      steps.values.every(
-        (status) =>
-            status == EnvironmentStepStatus.ready ||
-            status == EnvironmentStepStatus.notApplicable,
-      );
+  bool get isReady => steps.values.every(
+    (status) =>
+        status == EnvironmentStepStatus.ready ||
+        status == EnvironmentStepStatus.notApplicable,
+  );
+
+  /// Every step but the Harness CLI itself is satisfied — the point at which
+  /// automatic setup can run the CLI installer without another host prompt.
+  bool get hostReady => steps.entries.every(
+    (entry) =>
+        entry.key == EnvironmentStep.harness ||
+        entry.value == EnvironmentStepStatus.ready ||
+        entry.value == EnvironmentStepStatus.notApplicable,
+  );
 
   bool get needsTerminal =>
       phase == EnvironmentSetupPhase.waitingForTerminal ||
       steps.values.any(
         (status) => status == EnvironmentStepStatus.needsTerminal,
       );
+
+  /// The plan items serving one step, in order.
+  List<EnvironmentPlanItem> planFor(EnvironmentStep step) =>
+      plan.where((item) => item.step == step).toList();
+
+  /// The plan with one step's items done.
+  List<EnvironmentPlanItem> planWithout(EnvironmentStep step) =>
+      plan.where((item) => item.step != step).toList();
 
   EnvironmentReadiness copyWith({
     Map<EnvironmentStep, EnvironmentStepStatus>? steps,
@@ -141,10 +230,7 @@ class EnvironmentReadiness {
     String? terminalLogPath,
     String? terminalResultPath,
     EnvironmentTerminalSetup? terminalSetup,
-    bool? systemReady,
-    bool? homebrewReady,
-    bool? tmuxBinaryReady,
-    List<String>? missingLinuxPackages,
+    List<EnvironmentPlanItem>? plan,
     bool clearFailure = false,
     bool clearTerminalHandoff = false,
   }) => EnvironmentReadiness(
@@ -163,10 +249,7 @@ class EnvironmentReadiness {
     terminalSetup: clearTerminalHandoff
         ? null
         : terminalSetup ?? this.terminalSetup,
-    systemReady: systemReady ?? this.systemReady,
-    homebrewReady: homebrewReady ?? this.homebrewReady,
-    tmuxBinaryReady: tmuxBinaryReady ?? this.tmuxBinaryReady,
-    missingLinuxPackages: missingLinuxPackages ?? this.missingLinuxPackages,
+    plan: plan ?? this.plan,
   );
 }
 
@@ -318,10 +401,7 @@ class EnvironmentProvisioner {
       String? terminalLogPath,
       String? terminalResultPath,
       EnvironmentTerminalSetup? terminalSetup,
-      bool? systemReady,
-      bool? homebrewReady,
-      bool? tmuxBinaryReady,
-      List<String>? missingLinuxPackages,
+      List<EnvironmentPlanItem>? plan,
     }) {
       final next = Map<EnvironmentStep, EnvironmentStepStatus>.from(
         state.steps,
@@ -345,13 +425,60 @@ class EnvironmentProvisioner {
         terminalLogPath: terminalLogPath ?? state.terminalLogPath,
         terminalResultPath: terminalResultPath ?? state.terminalResultPath,
         terminalSetup: terminalSetup ?? state.terminalSetup,
-        systemReady: systemReady ?? state.systemReady,
-        homebrewReady: homebrewReady ?? state.homebrewReady,
-        tmuxBinaryReady: tmuxBinaryReady ?? state.tmuxBinaryReady,
-        missingLinuxPackages:
-            missingLinuxPackages ?? state.missingLinuxPackages,
+        plan: plan ?? state.plan,
       );
       onProgress(state);
+    }
+
+    // One read-only look at the computer, reported step by step, with the
+    // plan it implies. Called for the pre-flight and again for the final
+    // verification, so both answer the same question the same way.
+    Future<_HostProbe> probeAndReport() async {
+      final probe = await _probe();
+      emit(
+        step: EnvironmentStep.tmux,
+        status: probe.terminalReady
+            ? EnvironmentStepStatus.ready
+            : EnvironmentStepStatus.failed,
+        message: probe.tmuxMessage,
+        output: probe.tmuxOutput,
+      );
+      emit(
+        step: EnvironmentStep.clipboard,
+        status: !probe.clipboardApplicable
+            ? EnvironmentStepStatus.notApplicable
+            : probe.clipboardRuns
+            ? EnvironmentStepStatus.ready
+            : EnvironmentStepStatus.failed,
+        message: probe.clipboardApplicable
+            ? probe.clipboardRuns
+                  ? 'Native image clipboard is ready.'
+                  : '${probe.clipboardPackage} is required for native image paste.'
+            : _isLinux
+            ? 'Native image clipboard is not applicable on a headless Linux host.'
+            : null,
+        output: probe.clipboardApplicable
+            ? probe.clipboardRuns
+                  ? '✓ native image clipboard · ${probe.clipboardCommand}'
+                  : '✗ native image clipboard · ${probe.clipboardCommand}'
+            : _isLinux
+            ? '– native image clipboard N/A (headless)'
+            : null,
+      );
+      emit(
+        step: EnvironmentStep.harness,
+        status: probe.harnessRuns
+            ? EnvironmentStepStatus.ready
+            : EnvironmentStepStatus.failed,
+        message: probe.harnessRuns
+            ? 'Harness CLI and managed Node are ready.'
+            : 'Harness CLI or its managed Node runtime is missing.',
+        output: probe.harnessRuns
+            ? '✓ managed Node >= 20 · harness version'
+            : '✗ managed Node >= 20 · harness version',
+        plan: probe.plan,
+      );
+      return probe;
     }
 
     final previousTerminalLog = state.terminalLogPath;
@@ -426,8 +553,6 @@ class EnvironmentProvisioner {
             failure: EnvironmentFailure(
               step: !linuxHost
                   ? EnvironmentStep.tmux
-                  : !state.systemReady
-                  ? null
                   : clipboardFailed
                   ? EnvironmentStep.clipboard
                   : tmuxFailed
@@ -442,7 +567,9 @@ class EnvironmentProvisioner {
               command:
                   classifiedFailure?.command ??
                   (linuxHost
-                      ? await _linuxHostManualCommand()
+                      ? await _linuxHostManualCommand(
+                          _aptPackagesOf(state.plan),
+                        )
                       : _manualCommandFor(EnvironmentStep.tmux)),
               exitCode: exitCode,
             ),
@@ -472,115 +599,21 @@ class EnvironmentProvisioner {
     }
 
     try {
-      var linuxMissingBasePackages = <String>[];
-      String? linuxMissingClipboardPackage;
-      EnvironmentFailure? systemFailure;
-      if (_isMacOS) {
-        systemFailure = await _systemPreflightFailure();
-      } else {
-        if (!await _hasWritableHome()) {
-          systemFailure = const EnvironmentFailure(
-            title: 'Home directory is not writable',
-            detail: 'Harness needs to write ~/.harness and ~/.local/bin.',
-          );
-        } else {
-          linuxMissingBasePackages = await _missingLinuxBasePackages();
-          linuxMissingClipboardPackage = await _missingLinuxClipboardPackage();
-        }
-      }
-      if (systemFailure != null) {
+      // The one thing every step needs and no plan can install.
+      if (!await _hasWritableHome()) {
+        const failure = EnvironmentFailure(
+          title: 'Home directory is not writable',
+          detail: 'Harness needs to write ~/.harness and ~/.local/bin.',
+        );
         emit(
-          message: systemFailure.detail,
+          message: failure.detail,
           phase: EnvironmentSetupPhase.failed,
-          failure: systemFailure,
+          failure: failure,
         );
         return state;
       }
-      var systemReady = _isMacOS
-          ? await _hasAppleDeveloperTools()
-          : linuxMissingBasePackages.isEmpty;
-      emit(
-        systemReady: systemReady,
-        missingLinuxPackages: _isLinux
-            ? <String>[
-                ...linuxMissingBasePackages,
-                ?linuxMissingClipboardPackage,
-              ]
-            : const [],
-        output: systemReady
-            ? '✓ required system tools · writable home'
-            : _isMacOS
-            ? '✗ Apple developer tools · xcrun --find clang'
-            : '✗ missing Linux base packages · ${linuxMissingBasePackages.join(', ')}',
-      );
 
-      final clipboardApplicable = _isLinux && _linuxClipboardCommand() != null;
-      var clipboardReady =
-          !clipboardApplicable || linuxMissingClipboardPackage == null;
-      emit(
-        step: EnvironmentStep.clipboard,
-        status: clipboardApplicable
-            ? clipboardReady
-                  ? EnvironmentStepStatus.ready
-                  : EnvironmentStepStatus.failed
-            : EnvironmentStepStatus.notApplicable,
-        message: clipboardApplicable
-            ? clipboardReady
-                  ? 'Native image clipboard is ready.'
-                  : '$linuxMissingClipboardPackage is required for native image paste.'
-            : _isLinux
-            ? 'Native image clipboard is not applicable on a headless Linux host.'
-            : null,
-        output: clipboardApplicable
-            ? clipboardReady
-                  ? '✓ native image clipboard · ${_linuxClipboardCommand()}'
-                  : '✗ native image clipboard · $linuxMissingClipboardPackage'
-            : _isLinux
-            ? '– native image clipboard N/A (headless)'
-            : null,
-      );
-
-      final homebrewReady = !_isMacOS || await _hasHomebrew();
-      var tmuxBinaryReady = await _hasTmux();
-      var tmuxReady =
-          tmuxBinaryReady && (!_isMacOS || (homebrewReady && systemReady));
-      emit(
-        step: EnvironmentStep.tmux,
-        status: tmuxReady
-            ? EnvironmentStepStatus.ready
-            : EnvironmentStepStatus.failed,
-        message: tmuxReady
-            ? (_isMacOS ? 'Homebrew and tmux are ready.' : 'tmux is ready.')
-            : _isMacOS && !systemReady
-            ? 'Apple developer tools are required.'
-            : _isMacOS && !homebrewReady
-            ? 'Homebrew is required.'
-            : 'tmux is required.',
-        output: tmuxReady
-            ? (_isMacOS ? '✓ Homebrew · tmux --version' : '✓ tmux --version')
-            : _isMacOS && !systemReady
-            ? '✗ Apple developer tools · xcrun --find clang'
-            : _isMacOS && !homebrewReady
-            ? '✗ Homebrew · brew --version'
-            : '✗ tmux --version',
-        homebrewReady: _isMacOS ? homebrewReady : null,
-        tmuxBinaryReady: tmuxBinaryReady,
-      );
-
-      final harnessReady = await _hasHarness();
-      emit(
-        step: EnvironmentStep.harness,
-        status: harnessReady
-            ? EnvironmentStepStatus.ready
-            : EnvironmentStepStatus.failed,
-        message: harnessReady
-            ? 'Harness CLI and managed Node are ready.'
-            : 'Harness CLI or its managed Node runtime is missing.',
-        output: harnessReady
-            ? '✓ managed Node >= 20 · harness version'
-            : '✗ managed Node >= 20 · harness version',
-      );
-
+      var probe = await probeAndReport();
       if (state.isReady) {
         emit(
           message: 'All required tools passed verification.',
@@ -590,12 +623,7 @@ class EnvironmentProvisioner {
       }
 
       if (!install) {
-        final linuxMissingPackages = <String>[
-          ...linuxMissingBasePackages,
-          ?linuxMissingClipboardPackage,
-        ];
-        if (terminalResultPending &&
-            (!systemReady || !clipboardReady || !tmuxReady)) {
+        if (terminalResultPending && !state.hostReady) {
           emit(
             message:
                 state.message ?? 'Complete the visible prompts in Terminal.',
@@ -603,44 +631,46 @@ class EnvironmentProvisioner {
           );
           return state;
         }
-        if (completedTerminalSetup == EnvironmentTerminalSetup.linuxHost &&
-            (linuxMissingPackages.isNotEmpty || !tmuxBinaryReady)) {
+        if (completedTerminalSetup != null && !state.hostReady) {
+          final linuxHost =
+              completedTerminalSetup == EnvironmentTerminalSetup.linuxHost;
           emit(
-            message: 'The Linux host dependency install finished, but verification still found missing packages.',
+            message: linuxHost
+                ? 'The Linux host dependency install finished, but verification still found missing packages.'
+                : 'The Terminal setup finished, but tmux still did not pass verification.',
             phase: EnvironmentSetupPhase.failed,
             failure: EnvironmentFailure(
-              step: !systemReady
-                  ? null
-                  : linuxMissingClipboardPackage != null
+              step: !probe.terminalReady
+                  ? EnvironmentStep.tmux
+                  : !probe.clipboardRuns
                   ? EnvironmentStep.clipboard
-                  : EnvironmentStep.tmux,
+                  : null,
               title: 'Host dependency verification failed',
               detail:
-                  'Still missing: ${[...linuxMissingPackages, if (!tmuxBinaryReady) 'tmux'].join(', ')}. Review the Terminal log, then retry when ready.',
-              command: await _linuxHostManualCommand(),
+                  'Still missing: ${probe.missingHostNames.join(', ')}. Review the Terminal log, then retry when ready.',
+              command: linuxHost
+                  ? await _linuxHostManualCommand(probe.aptPackages)
+                  : _manualCommandFor(EnvironmentStep.tmux),
             ),
           );
           return state;
         }
         emit(
-          message: _isLinux && linuxMissingPackages.isNotEmpty
-              ? 'Linux host packages required: ${linuxMissingPackages.join(', ')}.'
+          message: _isLinux && probe.aptPackages.isNotEmpty
+              ? 'Linux host packages required: ${probe.aptPackages.join(', ')}.'
               : 'Review what Harness will install before continuing.',
           phase: EnvironmentSetupPhase.review,
         );
         return state;
       }
 
-      // Strict dependency order: one host-package transaction (base tools,
-      // tmux and the active clipboard helper) -> managed Node/Harness.
-      if (_isLinux && (!systemReady || !clipboardReady || !tmuxBinaryReady)) {
-        var packages = <String>{
-          ...linuxMissingBasePackages,
-          ?linuxMissingClipboardPackage,
-          if (!tmuxBinaryReady) 'tmux',
-        }.toList();
+      // Strict dependency order: one host-package transaction (tmux, ps, the
+      // active clipboard helper and, when the CLI must be downloaded, the
+      // tools that download it) -> managed Node/Harness.
+      if (_isLinux && probe.aptPackages.isNotEmpty) {
+        var packages = probe.aptPackages;
         if (!await _hasAptGet()) {
-          final command = await _linuxHostManualCommand();
+          final command = await _linuxHostManualCommand(packages);
           emit(
             message: 'Automatic Linux package installation supports apt-based distributions only.',
             phase: EnvironmentSetupPhase.failed,
@@ -656,17 +686,10 @@ class EnvironmentProvisioner {
 
         ProcessResult? backgroundInstall;
         if (await _canInstallAptUnattended()) {
-          if (linuxMissingClipboardPackage != null) {
-            emit(
-              step: EnvironmentStep.clipboard,
-              status: EnvironmentStepStatus.running,
-            );
+          for (final step in probe.missingHostSteps) {
+            emit(step: step, status: EnvironmentStepStatus.running);
           }
-          emit(
-            step: tmuxBinaryReady ? null : EnvironmentStep.tmux,
-            status: tmuxBinaryReady ? null : EnvironmentStepStatus.running,
-            message: 'Installing Linux system packages…',
-          );
+          emit(message: 'Installing Linux system packages…');
           try {
             backgroundInstall = await _shellStreaming(
               _linuxAptInstallCommand(packages, nonInteractiveSudo: true),
@@ -682,26 +705,7 @@ class EnvironmentProvisioner {
             emit(output: 'Background Linux package install failed: $error');
           }
 
-          linuxMissingBasePackages = await _missingLinuxBasePackages();
-          linuxMissingClipboardPackage = await _missingLinuxClipboardPackage();
-          systemReady = linuxMissingBasePackages.isEmpty;
-          clipboardReady =
-              !clipboardApplicable || linuxMissingClipboardPackage == null;
-          tmuxBinaryReady = await _hasTmux();
-          tmuxReady = tmuxBinaryReady;
-          emit(
-            step: EnvironmentStep.clipboard,
-            status: clipboardApplicable
-                ? clipboardReady
-                      ? EnvironmentStepStatus.ready
-                      : EnvironmentStepStatus.failed
-                : EnvironmentStepStatus.notApplicable,
-            missingLinuxPackages: <String>[
-              ...linuxMissingBasePackages,
-              ?linuxMissingClipboardPackage,
-            ],
-            tmuxBinaryReady: tmuxBinaryReady,
-          );
+          probe = await probeAndReport();
           final classifiedBackgroundFailure = backgroundInstall == null
               ? null
               : _classifiedLinuxPackageFailure(
@@ -709,24 +713,11 @@ class EnvironmentProvisioner {
                   _resultText(backgroundInstall),
                 );
           if (classifiedBackgroundFailure != null) {
-            if (!tmuxReady) {
-              emit(
-                step: EnvironmentStep.tmux,
-                status: EnvironmentStepStatus.failed,
-              );
-            }
             emit(
               message: classifiedBackgroundFailure.detail,
               phase: EnvironmentSetupPhase.failed,
-              systemReady: systemReady,
               failure: EnvironmentFailure(
-                step: !systemReady
-                    ? null
-                    : !clipboardReady
-                    ? EnvironmentStep.clipboard
-                    : !tmuxReady
-                    ? EnvironmentStep.tmux
-                    : null,
+                step: probe.missingHostSteps.firstOrNull,
                 title: classifiedBackgroundFailure.title,
                 detail: classifiedBackgroundFailure.detail,
                 command: classifiedBackgroundFailure.command,
@@ -735,15 +726,10 @@ class EnvironmentProvisioner {
             );
             return state;
           }
-          if (systemReady && clipboardReady && tmuxReady) {
+          if (probe.aptPackages.isEmpty) {
             emit(
-              step: EnvironmentStep.tmux,
-              status: EnvironmentStepStatus.ready,
-              message: 'Linux system packages and tmux are ready.',
+              message: 'Linux system packages are ready.',
               output: '✓ Linux host dependencies installed and verified',
-              systemReady: true,
-              tmuxBinaryReady: true,
-              missingLinuxPackages: const [],
             );
           } else {
             if (backgroundInstall != null) {
@@ -754,27 +740,14 @@ class EnvironmentProvisioner {
                           '${_resultText(backgroundInstall)}',
               );
             }
-            packages = <String>{
-              ...linuxMissingBasePackages,
-              ?linuxMissingClipboardPackage,
-              if (!tmuxBinaryReady) 'tmux',
-            }.toList();
+            packages = probe.aptPackages;
           }
         }
 
-        if (!systemReady || !clipboardReady || !tmuxReady) {
+        if (probe.aptPackages.isNotEmpty) {
           final terminal = await _launchLinuxHostSetup(packages);
-          if (linuxMissingClipboardPackage != null) {
-            emit(
-              step: EnvironmentStep.clipboard,
-              status: EnvironmentStepStatus.needsTerminal,
-            );
-          }
-          if (!tmuxReady) {
-            emit(
-              step: EnvironmentStep.tmux,
-              status: EnvironmentStepStatus.needsTerminal,
-            );
+          for (final step in probe.missingHostSteps) {
+            emit(step: step, status: EnvironmentStepStatus.needsTerminal);
           }
           emit(
             message: 'Complete the visible Linux package prompts in Terminal. Harness never sees your password.',
@@ -785,87 +758,65 @@ class EnvironmentProvisioner {
             terminalLogPath: terminal.log.path,
             terminalResultPath: terminal.result.path,
             terminalSetup: EnvironmentTerminalSetup.linuxHost,
-            systemReady: systemReady,
           );
           return state;
         }
       }
 
-      if (_isMacOS && systemReady && homebrewReady && !tmuxBinaryReady) {
-        emit(
-          step: EnvironmentStep.tmux,
-          status: EnvironmentStepStatus.running,
-          message: 'Installing tmux via Homebrew…',
-        );
-        ProcessResult? installResult;
-        try {
-          installResult = await _shellStreaming(
-            'brew install tmux',
-            onOutput: (line) => emit(output: line),
-          );
-        } catch (error) {
-          emit(output: 'Background tmux install failed: $error');
-        }
-        tmuxReady = installResult?.exitCode == 0 && await _hasTmux();
-        if (tmuxReady) {
-          emit(
-            step: EnvironmentStep.tmux,
-            status: EnvironmentStepStatus.ready,
-            message: 'Homebrew and tmux are ready.',
-            output: '✓ tmux installed via Homebrew',
-            homebrewReady: true,
-            tmuxBinaryReady: true,
-          );
-        } else {
-          if (installResult != null) {
-            emit(
-              output: installResult.exitCode == 0
-                  ? 'Homebrew finished, but tmux did not pass verification.'
-                  : 'Background tmux install exited ${installResult.exitCode}: '
-                        '${_resultText(installResult)}',
-            );
-          }
+      if (_isMacOS && !probe.tmuxRuns) {
+        if (probe.homebrewInstallsTmux) {
+          // Homebrew is here, so tmux is one bottle away and needs no password.
           emit(
             step: EnvironmentStep.tmux,
             status: EnvironmentStepStatus.running,
-            message: 'tmux needs attention in Terminal…',
+            message: 'Installing tmux via Homebrew…',
           );
-          final terminal = await _launchTmuxSetup();
-          emit(
-            step: EnvironmentStep.tmux,
-            status: EnvironmentStepStatus.needsTerminal,
-            message: 'Complete the visible Homebrew prompts in Terminal. Harness never sees your password.',
-            output: 'Background install failed; Terminal opened to retry tmux.',
-            phase: EnvironmentSetupPhase.waitingForTerminal,
-            terminalLogPath: terminal.log.path,
-            terminalResultPath: terminal.result.path,
-            terminalSetup: EnvironmentTerminalSetup.tmux,
+          ProcessResult? installResult;
+          try {
+            installResult = await _shellStreaming(
+              'brew install tmux',
+              onOutput: (line) => emit(output: line),
+            );
+          } catch (error) {
+            emit(output: 'Background tmux install failed: $error');
+          }
+          if (installResult?.exitCode == 0 && await _hasTmux()) {
+            emit(
+              step: EnvironmentStep.tmux,
+              status: EnvironmentStepStatus.ready,
+              message: 'tmux is ready.',
+              output: '✓ tmux installed via Homebrew',
+              plan: state.planWithout(EnvironmentStep.tmux),
+            );
+          } else {
+            if (installResult != null) {
+              emit(
+                output: installResult.exitCode == 0
+                    ? 'Homebrew finished, but tmux did not pass verification.'
+                    : 'Background tmux install exited ${installResult.exitCode}: '
+                          '${_resultText(installResult)}',
+              );
+            }
+            await _handTmuxToTerminal(
+              emit,
+              'Complete the visible Homebrew prompts in Terminal. Harness never sees your password.',
+              'Background install failed; Terminal opened to retry tmux.',
+            );
+            return state;
+          }
+        } else {
+          // Homebrew (and maybe the developer tools) must be installed first,
+          // and both ask for a password — a real terminal's job.
+          await _handTmuxToTerminal(
+            emit,
+            'Complete any password or macOS prompts in Terminal. Harness never sees your password.',
+            'Terminal opened to install ${probe.planFor(EnvironmentStep.tmux).map((item) => item.title).join(', ')}.',
           );
           return state;
         }
-      } else if (!tmuxReady) {
-        emit(
-          step: EnvironmentStep.tmux,
-          status: EnvironmentStepStatus.running,
-          message: 'Preparing tmux in a secure terminal…',
-        );
-        final terminal = await _launchTmuxSetup();
-        emit(
-          step: EnvironmentStep.tmux,
-          status: EnvironmentStepStatus.needsTerminal,
-          message: 'Complete any password or macOS prompts in Terminal. Harness never sees your password.',
-          output: _isMacOS
-              ? 'Terminal opened to install Homebrew and tmux.'
-              : 'Terminal opened to install tmux.',
-          phase: EnvironmentSetupPhase.waitingForTerminal,
-          terminalLogPath: terminal.log.path,
-          terminalResultPath: terminal.result.path,
-          terminalSetup: EnvironmentTerminalSetup.tmux,
-        );
-        return state;
       }
 
-      if (!harnessReady) {
+      if (!probe.harnessRuns) {
         emit(
           step: EnvironmentStep.harness,
           status: EnvironmentStepStatus.running,
@@ -883,46 +834,15 @@ class EnvironmentProvisioner {
         message: 'Verifying every required command…',
         phase: EnvironmentSetupPhase.verifying,
       );
-      if (_isLinux) {
-        final missingBase = await _missingLinuxBasePackages();
-        final missingClipboard = await _missingLinuxClipboardPackage();
-        final writableHome = await _hasWritableHome();
-        if (missingBase.isNotEmpty ||
-            missingClipboard != null ||
-            !writableHome) {
-          if (missingClipboard != null) {
-            emit(
-              step: EnvironmentStep.clipboard,
-              status: EnvironmentStepStatus.failed,
-            );
-          }
-          emit(
-            message:
-                'Linux system dependencies did not pass final verification.',
-            phase: EnvironmentSetupPhase.failed,
-            systemReady: writableHome && missingBase.isEmpty,
-            failure: EnvironmentFailure(
-              title: 'Linux system verification failed',
-              detail: !writableHome
-                  ? 'The home directory is not writable.'
-                  : 'Still missing packages: ${[...missingBase, ?missingClipboard].join(', ')}',
-              command: await _linuxHostManualCommand(),
-            ),
-          );
-          return state;
-        }
-      }
-      final finalChecks = <EnvironmentStep, Future<bool> Function()>{
-        EnvironmentStep.tmux: _isTmuxEnvironmentReady,
-        EnvironmentStep.harness: _hasHarness,
-      };
-      for (final entry in finalChecks.entries) {
-        if (!await entry.value()) {
-          emit(step: entry.key, status: EnvironmentStepStatus.failed);
-          throw StateError(
-            '${entry.key.name} did not pass final version verification.',
-          );
-        }
+      await probeAndReport();
+      if (!state.isReady) {
+        final failed = state.steps.entries
+            .where((entry) => entry.value == EnvironmentStepStatus.failed)
+            .map((entry) => entry.key)
+            .firstOrNull;
+        throw StateError(
+          '${failed?.name ?? 'environment'} did not pass final version verification.',
+        );
       }
       emit(message: 'Environment ready.', phase: EnvironmentSetupPhase.ready);
       return state;
@@ -950,6 +870,126 @@ class EnvironmentProvisioner {
       );
       return state;
     }
+  }
+
+  /// Opens the Terminal window that installs tmux (and whatever obtaining it
+  /// takes) and leaves the tmux row waiting on it.
+  Future<void> _handTmuxToTerminal(
+    void Function({
+      EnvironmentStep? step,
+      EnvironmentStepStatus? status,
+      String? message,
+      String? output,
+      EnvironmentSetupPhase? phase,
+      EnvironmentFailure? failure,
+      String? terminalLogPath,
+      String? terminalResultPath,
+      EnvironmentTerminalSetup? terminalSetup,
+      List<EnvironmentPlanItem>? plan,
+    })
+    emit,
+    String message,
+    String output,
+  ) async {
+    emit(
+      step: EnvironmentStep.tmux,
+      status: EnvironmentStepStatus.running,
+      message: 'Preparing tmux in a secure terminal…',
+    );
+    final terminal = await _launchTmuxSetup();
+    emit(
+      step: EnvironmentStep.tmux,
+      status: EnvironmentStepStatus.needsTerminal,
+      message: message,
+      output: output,
+      phase: EnvironmentSetupPhase.waitingForTerminal,
+      terminalLogPath: terminal.log.path,
+      terminalResultPath: terminal.result.path,
+      terminalSetup: EnvironmentTerminalSetup.tmux,
+    );
+  }
+
+  /// One read-only look at what this computer runs, and the plan for what it
+  /// does not — each rung probed only when the one above it is missing.
+  Future<_HostProbe> _probe() async {
+    final plan = <EnvironmentPlanItem>[];
+    if (_isMacOS) {
+      final tmuxRuns = await _hasTmux();
+      var homebrewInstallsTmux = false;
+      if (!tmuxRuns) {
+        if (await _hasHomebrew()) {
+          homebrewInstallsTmux = true;
+        } else {
+          // Homebrew's installer is what needs the developer tools — not
+          // tmux, and not this app — so they are asked about only here.
+          if (!await _hasAppleDeveloperTools()) {
+            plan.add(EnvironmentPlanItem.appleDeveloperTools);
+          }
+          plan.add(EnvironmentPlanItem.homebrew);
+        }
+        plan.add(EnvironmentPlanItem.tmuxViaHomebrew);
+      }
+      final harnessRuns = await _hasHarness();
+      if (!harnessRuns) plan.add(EnvironmentPlanItem.harnessCli);
+      return _HostProbe(
+        tmuxRuns: tmuxRuns,
+        clipboardApplicable: false,
+        clipboardRuns: true,
+        harnessRuns: harnessRuns,
+        homebrewInstallsTmux: homebrewInstallsTmux,
+        plan: plan,
+      );
+    }
+
+    final tmuxRuns = await _hasTmux();
+    final psRuns = await _hasCommand('ps');
+    final clipboardCommand = _linuxClipboardCommand();
+    final clipboardRuns =
+        clipboardCommand == null || await _hasCommand(clipboardCommand);
+    final harnessRuns = await _hasHarness();
+    final apt = <String>[
+      if (!tmuxRuns) 'tmux',
+      if (!psRuns) 'procps',
+      if (!clipboardRuns) _linuxClipboardPackage()!,
+    ];
+    if (!harnessRuns) {
+      // The installer downloads the runtime with these; a minimal Ubuntu can
+      // lack curl. Asked about only because there is a download coming.
+      if (!await _hasCommand('curl')) apt.add('curl');
+      if (!await _hasCommands(_linuxDownloadToolPackages.keys)) {
+        for (final entry in _linuxDownloadToolPackages.entries) {
+          if (!await _hasCommand(entry.key)) apt.add(entry.value);
+        }
+      }
+    }
+    if (apt.isNotEmpty) {
+      plan.add(
+        EnvironmentPlanItem(
+          step: !tmuxRuns || !psRuns
+              ? EnvironmentStep.tmux
+              : !clipboardRuns
+              ? EnvironmentStep.clipboard
+              : EnvironmentStep.harness,
+          title: 'Linux host dependencies',
+          detail: '${apt.join(', ')} · one apt transaction',
+          command: 'sudo apt-get install -y ${apt.join(' ')}',
+          requiresTerminal: true,
+          packages: apt,
+        ),
+      );
+    }
+    if (!harnessRuns) plan.add(EnvironmentPlanItem.harnessCli);
+    return _HostProbe(
+      tmuxRuns: tmuxRuns,
+      psRuns: psRuns,
+      clipboardApplicable: clipboardCommand != null,
+      clipboardRuns: clipboardRuns,
+      clipboardCommand: clipboardCommand,
+      clipboardPackage: _linuxClipboardPackage(),
+      harnessRuns: harnessRuns,
+      aptPackages: apt,
+      plan: plan,
+    );
   }
 
   /// Windows gets a VERIFY pass rather than the install pass above.
@@ -1009,81 +1049,38 @@ class EnvironmentProvisioner {
     );
   }
 
-  Future<EnvironmentFailure?> _systemPreflightFailure() async {
-    final tools = _isMacOS
-        ? 'command -v sh zsh bash curl tar sed awk shasum >/dev/null'
-        : 'command -v sh bash curl tar sed awk sha256sum >/dev/null';
-    final base = await _shell(tools);
-    if (base.exitCode != 0) {
-      return EnvironmentFailure(
-        title: 'Required system tools are missing',
-        detail: _resultText(base).isEmpty
-            ? 'Harness needs curl, tar, sed, awk, checksum tools and a POSIX shell.'
-            : _resultText(base),
-        command: _isMacOS
-            ? 'xcode-select --install'
-            : 'sudo apt-get install -y bash curl tar sed gawk coreutils',
-      );
-    }
-    if (!await _hasWritableHome()) {
-      return const EnvironmentFailure(
-        title: 'Home directory is not writable',
-        detail: 'Harness needs to write ~/.harness and ~/.local/bin.',
-      );
-    }
-    return null;
-  }
-
   Future<bool> _hasWritableHome() async {
     final writable = await _shell('test -w "\$HOME"');
     return writable.exitCode == 0;
   }
 
-  /// Base packages the desktop needs before it can hand host setup to the
-  /// CLI-only installer. Native clipboard support is reported separately so
-  /// the UI can explain it without creating a second install transaction.
-  Future<List<String>> _missingLinuxBasePackages() async {
-    if (!_isLinux) return const [];
-    const commandPackages = <String, String>{
-      'sh': 'dash',
-      'bash': 'bash',
-      'curl': 'curl',
-      'tar': 'tar',
-      'sed': 'sed',
-      'awk': 'gawk',
-      'sha256sum': 'coreutils',
-    };
-    final missing = <String>[];
-    for (final entry in commandPackages.entries) {
-      final probe = await _shell('command -v ${entry.key} >/dev/null 2>&1');
-      if (probe.exitCode != 0) missing.add(entry.value);
-    }
-    return missing.toSet().toList();
+  Future<bool> _hasCommand(String command) async {
+    final probe = await _shell('command -v $command >/dev/null 2>&1');
+    return probe.exitCode == 0;
   }
+
+  /// All of [commands] resolve. One shell for the lot: `command -v a b`
+  /// answers "any" in bash, so it is a loop rather than a list.
+  Future<bool> _hasCommands(Iterable<String> commands) async {
+    final probe = await _shell(
+      'for c in ${commands.join(' ')}; do command -v "\$c" >/dev/null 2>&1 || exit 1; done',
+    );
+    return probe.exitCode == 0;
+  }
+
+  /// What the CLI installer downloads and unpacks the runtime with, by the
+  /// apt package that provides it. `curl` is probed on its own first, since
+  /// it is the one a minimal Ubuntu actually lacks.
+  static const _linuxDownloadToolPackages = <String, String>{
+    'tar': 'tar',
+    'sed': 'sed',
+    'awk': 'gawk',
+    'sha256sum': 'coreutils',
+  };
 
   /// Clipboard selection intentionally matches osClipboard.ts: Wayland wins
   /// when both display variables exist, X11 is the fallback, and a headless
   /// machine has no native clipboard requirement to satisfy.
-  Future<String?> _missingLinuxClipboardPackage() async {
-    if (!_isLinux) return null;
-    final clipboardCommand = _linuxClipboardCommand();
-    final clipboardPackage = _linuxClipboardPackage();
-    if (clipboardCommand != null && clipboardPackage != null) {
-      final probe = await _shell(
-        'command -v $clipboardCommand >/dev/null 2>&1',
-      );
-      if (probe.exitCode != 0) return clipboardPackage;
-    }
-    return null;
-  }
-
-  Future<List<String>> _missingLinuxHostPackages() async {
-    final packages = <String>{...await _missingLinuxBasePackages()};
-    final clipboard = await _missingLinuxClipboardPackage();
-    if (clipboard != null) packages.add(clipboard);
-    return packages.toList();
-  }
-
   String? _linuxClipboardCommand() {
     if (!_isLinux) return null;
     if ((_platformEnvironment['WAYLAND_DISPLAY'] ?? '').isNotEmpty) {
@@ -1098,6 +1095,10 @@ class EnvironmentProvisioner {
     'xclip' => 'xclip',
     _ => null,
   };
+
+  /// The apt packages a plan still owes, for a failure's manual command.
+  static List<String> _aptPackagesOf(List<EnvironmentPlanItem> plan) =>
+      plan.expand((item) => item.packages).toSet().toList();
 
   Future<bool> _hasAptGet() async {
     final result = await _shell('command -v apt-get >/dev/null 2>&1');
@@ -1247,16 +1248,13 @@ else
 fi''';
   }
 
-  Future<String> _linuxHostManualCommand() async {
-    final packages = <String>{
-      ...await _missingLinuxHostPackages(),
-      if (!await _hasTmux()) 'tmux',
-    }.join(' ');
-    if (packages.isEmpty) return 'Recheck Linux system dependencies.';
+  Future<String> _linuxHostManualCommand(List<String> packages) async {
+    final names = packages.toSet().join(' ');
+    if (names.isEmpty) return 'Recheck Linux system dependencies.';
     if (!await _hasAptGet()) {
-      return 'Install with your distribution package manager: $packages';
+      return 'Install with your distribution package manager: $names';
     }
-    return 'sudo apt-get install -y $packages';
+    return 'sudo apt-get install -y $names';
   }
 
   Future<bool> _hasHarness() async {
@@ -1349,12 +1347,6 @@ fi''';
     return result.exitCode == 0;
   }
 
-  Future<bool> _isTmuxEnvironmentReady() async {
-    if (_isMacOS && !await _hasAppleDeveloperTools()) return false;
-    if (_isMacOS && !await _hasHomebrew()) return false;
-    return _hasTmux();
-  }
-
   /// `xcode-select -p` only proves that a path was selected. It also succeeds
   /// for an incomplete or moved Command Line Tools directory. Resolve a tool
   /// through xcrun so pre-flight reflects whether Homebrew can actually use
@@ -1377,6 +1369,9 @@ fi''';
     await directory.create(recursive: true);
     await _run('/bin/chmod', ['700', directory.path]);
     if (_isMacOS) {
+      // The ladder itself — tmux, else Homebrew, else the developer tools
+      // first — lives in the CLI installer's `--host` mode, so this window
+      // only adds what the app needs from it: a log and an exit code.
       final script = File('${directory.path}/install-tmux.command');
       await script.writeAsString('''#!/bin/zsh
 set -e
@@ -1395,38 +1390,8 @@ finish() {
   return "\$status"
 }
 trap finish EXIT
-apple_developer_tools_ready() {
-  /usr/bin/xcrun --find clang >/dev/null 2>&1
-}
-if ! apple_developer_tools_ready; then
-  if [ -x /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild ]; then
-    echo 'Xcode is installed but is not the active developer directory.'
-    echo 'macOS may ask for your password to select it.'
-    sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
-  else
-    echo 'Apple developer tools are missing. Installing Command Line Tools; finish the macOS dialog to continue.'
-    xcode-select --install || true
-  fi
-  attempts=0
-  until apple_developer_tools_ready; do
-    attempts=\$((attempts + 1))
-    if [ "\$attempts" -ge 200 ]; then
-      echo 'Apple developer tools did not become ready within 10 minutes.' >&2
-      echo 'Finish the macOS installer, then retry setup.' >&2
-      exit 12
-    fi
-    sleep 3
-  done
-fi
-if ! command -v brew >/dev/null 2>&1; then
-  echo 'Installing Homebrew (macOS may ask for your password)…'
-  /bin/bash -c "\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-fi
-eval "\$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv)"
-if ! command -v tmux >/dev/null 2>&1; then
-  brew install tmux
-fi
-echo 'tmux is ready. Return to Harness.'
+$kHarnessHostSetupCommand
+echo 'Return to Harness.'
 ''', flush: true);
       await _run('/bin/chmod', ['700', script.path]);
       return script;
@@ -1436,14 +1401,13 @@ echo 'tmux is ready. Return to Harness.'
         : linuxPackages.toSet().toList();
     final packages = packageList.join(' ');
     const packageCommands = <String, String>{
-      'dash': 'sh',
-      'bash': 'bash',
       'curl': 'curl',
       'tar': 'tar',
       'sed': 'sed',
       'gawk': 'awk',
       'coreutils': 'sha256sum',
       'tmux': 'tmux',
+      'procps': 'ps',
       'xclip': 'xclip',
       'wl-clipboard': 'wl-copy',
     };
@@ -1608,4 +1572,82 @@ fi
 
 extension on Iterable<EnvironmentStep> {
   EnvironmentStep? get firstOrNull => isEmpty ? null : first;
+}
+
+/// The result of one read-only look at the computer: which required commands
+/// run, and the plan for the ones that do not.
+class _HostProbe {
+  final bool tmuxRuns;
+  final bool psRuns;
+  final bool clipboardApplicable;
+  final bool clipboardRuns;
+  final String? clipboardCommand;
+  final String? clipboardPackage;
+  final bool harnessRuns;
+
+  /// macOS: Homebrew is present, so tmux installs in-app without a password.
+  final bool homebrewInstallsTmux;
+
+  /// Linux: the one apt transaction, in install order. Empty when nothing
+  /// needs apt.
+  final List<String> aptPackages;
+  final List<EnvironmentPlanItem> plan;
+
+  const _HostProbe({
+    required this.tmuxRuns,
+    this.psRuns = true,
+    required this.clipboardApplicable,
+    required this.clipboardRuns,
+    this.clipboardCommand,
+    this.clipboardPackage,
+    required this.harnessRuns,
+    this.homebrewInstallsTmux = false,
+    this.aptPackages = const [],
+    required this.plan,
+  });
+
+  List<EnvironmentPlanItem> planFor(EnvironmentStep step) =>
+      plan.where((item) => item.step == step).toList();
+
+  /// The terminal backend as a whole: tmux, and on Linux `ps` beside it.
+  bool get terminalReady => tmuxRuns && psRuns;
+
+  /// The host steps (everything but the Harness CLI) that are not ready.
+  List<EnvironmentStep> get missingHostSteps => [
+    if (!terminalReady) EnvironmentStep.tmux,
+    if (clipboardApplicable && !clipboardRuns) EnvironmentStep.clipboard,
+  ];
+
+  /// What is still missing, by command name, for a failure detail.
+  List<String> get missingHostNames => [
+    if (!tmuxRuns) 'tmux',
+    if (!psRuns) 'ps',
+    if (clipboardApplicable && !clipboardRuns) ?clipboardCommand,
+  ];
+
+  String get tmuxMessage {
+    if (terminalReady) return 'tmux is ready.';
+    final titles = planFor(EnvironmentStep.tmux).map((item) => item.title);
+    if (homebrewInstallsTmux) return 'tmux will be installed with Homebrew.';
+    if (titles.length > 1) {
+      return '${titles.join(', then ')} will be installed in Terminal.';
+    }
+    return '${psRuns ? 'tmux' : 'tmux and ps'} will be installed with apt.';
+  }
+
+  String get tmuxOutput {
+    if (terminalReady) return '✓ tmux --version';
+    final lines = <String>[tmuxRuns ? '✓ tmux --version' : '✗ tmux --version'];
+    if (!psRuns) lines.add('✗ ps');
+    if (homebrewInstallsTmux) lines.add('✓ brew --version');
+    for (final item in planFor(EnvironmentStep.tmux)) {
+      if (identical(item, EnvironmentPlanItem.homebrew)) {
+        lines.add('✗ brew --version');
+      }
+      if (identical(item, EnvironmentPlanItem.appleDeveloperTools)) {
+        lines.add('✗ xcrun --find clang');
+      }
+    }
+    return lines.join(' · ');
+  }
 }

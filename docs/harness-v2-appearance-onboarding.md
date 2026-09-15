@@ -95,6 +95,79 @@ were inspected at 1280×800 and at 880×560 with 2× text. These are synthetic U
 checks; first-install/provider-sign-in observation and measured time to a useful
 real agent remain release qualification work.
 
+## First-launch installation
+
+The tools screen before sign-in keeps its primary action outside the scrollable
+body. **Install N tools**, **Retry**, **Check again** and **Continue to sign in**
+stay visible at the minimum 880×560 window size and with 2× text. The required
+tool list is denser, larger text stacks its details, and the footer states what
+comes next. Verbose output starts collapsed under **Setup details**; Copy
+diagnostics remains available, and expanded output stays selectable.
+
+Enter activates the current step and can retry after a failed installation.
+Repeated Enter while work is pending does not start a duplicate attempt. Users
+who explicitly focus manual controls or details retain that focus through
+asynchronous updates. Manual Retry now checks installed tools without installing
+anything; the previous callback entered the automatic path, which returned
+without doing anything in manual mode. Manual review uses **Check again**.
+
+The 59 affected workflow checks and one real-font render check pass. Six new
+regressions cover visibility, keyboard recovery, manual-mode focus and retry,
+and diagnostics copying. Review, CLI-only, manual, failed, Terminal handoff and
+expanded-details screens were rendered at minimum size, including 2× review
+and failure states. Analysis has no errors/warnings and 14 existing infos; the
+normal arm64 Release build succeeds. Provisioning and authentication use fakes
+in these checks. Actual dependency installation, administrator prompts and
+provider sign-in still need first-use observation. Native benchmarking remains
+deferred at the user's request.
+
+## Browser sign-in recovery
+
+Sign-in keeps its workspace example and action in the same card through CLI
+startup, browser authorization and workspace restoration. It now offers
+**Open browser** and **Copy link** when an authorization URL is available.
+Reopening reuses that URL; it does not launch a second CLI sign-in. Browser
+launch failure stays recoverable in place, with no raw URL or platform error
+rendered in the message.
+
+**Cancel** returns immediately, including while the CLI process is still
+starting. An obsolete process cannot publish a link, finish a replacement login
+or clear its process handle. Browser responses likewise belong to their original
+attempt and URL. After authorization succeeds, browser recovery and Cancel
+disappear while the workspace restores. The initial Sign in button takes keyboard
+focus; cancellation returns focus there so Enter can try again.
+
+The minimum-height layout keeps the normal-size controls visible at 880×560.
+Large text wraps the actions within the existing scrollable card. Sixty-four
+affected workflow tests and one real-font render check pass, with minimum-size,
+2× text and synthetic light/dark review. The shipping app remains dark-only.
+Analysis has no errors/warnings and 14 existing infos; the normal arm64 Release
+build succeeds. These checks use fake subprocess, browser and clipboard replies.
+Real first-install, provider sign-in and time to a useful agent remain unverified.
+
+## Repository clone recovery
+
+The separate Clone repository dialog keeps the original repository and
+destination after a failed clone. Enter can retry immediately, and the error is
+brought into view at large text sizes while the actions remain visible.
+**Escape** performs the same cancellation as the Cancel button, showing
+**Cancelling…** until the clone service settles. Clicking outside a running clone
+continues to leave it active.
+
+If a checkout finishes just as cancellation arrives, the completed folder is
+preserved but is not returned to the parent flow. Cancelling therefore cannot
+replace the working folder in New agent or unexpectedly advance first use.
+Partial-checkout cleanup remains owned by the existing clone service.
+
+The affected workflow/render suite passes 50 checks, including three reproduced
+cancellation/keyboard regressions and an error-visibility regression found in
+the 880×560, 2× text render. Analysis and the normal arm64 Release build pass.
+A direct service check cloned public `octocat/Hello-World` from GitHub using
+isolated Git configuration, verified its HEAD and staging cleanup, then removed
+the disposable checkout. This verifies public cloning, not private repository
+authentication or the native folder chooser. Those remain part of genuine
+first-use observation.
+
 ## Earlier onboarding evidence and direction (historical)
 
 | Primary source | Observed behavior | Harness adaptation |
@@ -120,11 +193,28 @@ These are implementation and fixture results, not a measured conversion rate. A 
 
 ## First-agent recovery pass
 
+The September 14 feature continuation adds **Retry** beside a failed agent
+availability check. It rechecks the selected machine in the same New agent
+form, shows **Checking…** while pending, and keeps the working folder, explicit
+agent choice, permission setting and Advanced state. Successful recovery can
+load Codex profiles without closing the form; it never starts an agent itself.
+Switching machines while a retry is pending preserves the newer machine and
+agent choice. Profile guidance names the selected machine rather than calling
+a remote host “this computer.”
+
+The two new recovery regressions and the surrounding onboarding/Add/profile
+checks pass (47 tests). Analysis has zero errors/warnings and the same 14
+existing infos. Synthetic real-font renders were checked at 880×560 with
+normal and 2× text. Artifacts:
+`/private/tmp/harness-agent-check-retry-{verified,analyze,render}.log` and
+`/private/tmp/harness-agent-check-retry-{failed,checking,large-text}.png`.
+No provider installation, real agent launch or native benchmark was performed.
+
 Rechecked the primary-source guidance on 2026-09-13: [Zed's welcome page](https://zed.dev/docs/getting-started) disappears after a project opens; [VS Code's first-agent quickstart](https://code.visualstudio.com/docs/agents/quickstart) proceeds from a folder through a real task and verification. The useful adaptation here is to make the existing first-agent path dependable and explain recovery where it is needed. A compulsory tour or sample task is not needed to exercise it.
 
 The audit reproduced a pending-launch bug: Escape dismissed New agent despite its disabled Cancel button, leaving the request running without its outcome visible. The form now keeps the pending request visible with a readable “Creating agent…” state. It permits dismissal again when the request completes. A failed request retains the machine, folder and coding agent; selecting another folder or agent clears the obsolete error. Completion still opens the requested agent, with no automatic task input.
 
-Known missing/invalid-folder failures now name the target machine and ask the user to choose another folder. Missing tmux gets its required recovery instead of a wire code. Other server details remain visible. A request timeout is described as an unconfirmed outcome and directs the user to Search before creating another agent; it is never automatically retried. Protocol-level creation idempotency and late-reply reconciliation remain separate future reliability work.
+Known missing/invalid-folder failures name the target machine and ask the user to choose another folder. Missing tmux gets its required recovery instead of a wire code. The September 14 continuation adds [creation receipts and recovery](harness-agent-creation.md): after a timeout/disconnect, the form preserves and locks its choices and changes its primary action to **Check status**. Checking is read-only, even if an older CLI was upgraded after creation and has no receipt. A confirmed result opens the original agent in its intended swarm and counts once. If its destination changed, the agent remains discoverable in **Add agent**. Unknown results on older CLIs direct the user there as well. Form closure/app restart recovery and a real remote-disconnect exercise remain unfinished.
 
 Validation: the new pending-launch regression failed before the fix and passed afterward. Forty-six focused onboarding/profile/split/async checks passed, plus isolated 880×560 renders of pending, invalid-folder and timeout states. These checks use synthetic state and requests; they do not install software, launch a provider, or send a task to a real agent.
 
@@ -139,3 +229,29 @@ A later full-screen probe found that first launch focused the shell, while arriv
 The [W3C combobox pattern](https://www.w3.org/WAI/ARIA/apg/patterns/combobox/) documents a collapsed default and several possible expansion triggers, including Down Arrow, focus and typing. Our choice is to keep the welcome useful while making search immediately available. This is a Harness interaction decision, not a claim of complete ARIA or native accessibility conformance. Keymap overrides, composition ownership, explicit command mode and both search locations retain their existing behavior.
 
 The full Flutter screen was rendered at 880×560 for fresh welcome, prefilled creation, New swarm after work and inline results. Regression checks cover first arrival, close-last-swarm, keyboard opening, retained query/selection/composition, native-search cancellation and the first folder action. The render uses Flutter's fallback titlebar; native field behavior is checked separately in a hidden AppKit window. Live first-install observation and native input-to-display timing remain unmeasured.
+
+## Remote folder selection
+
+The shared remote folder chooser now names the machine and offers an editable
+full path. Enter opens the path; Down moves into the list, arrows browse, Enter
+opens a folder, Alt-Up returns to the parent, and Cmd-Enter (Ctrl-Enter on other
+platforms) selects the currently loaded folder. Home remains available when an
+initial folder no longer exists. The list also explains when the remote server's
+bounded reply omits more folders, which can still be opened by their full paths.
+
+A regression reproduced Select returning the previous folder while the next one
+was still loading. Selection now requires a successfully loaded path matching
+the editor. Late replies cannot replace a newer request or path draft; IME and
+selection survive a reply. A failed hop keeps the last usable list visible,
+names the directory still shown, and offers Retry without leaving the dialog.
+Cancel returns to the same New agent form; selecting a folder preserves the
+chosen agent and does not create a runtime by itself.
+
+Nine new folder regressions and the surrounding onboarding, project, profile
+and creation checks pass (57 total), plus real-font renders at 880×560 with
+normal and 2× text. The visual pass adjusted icon controls and button height for
+large text. Analysis has zero errors/warnings and 14 existing infos. Artifacts:
+`/private/tmp/harness-remote-folder-{final-tests,final-analyze}.log` and
+`/private/tmp/harness-remote-folder-{ready,error,large-text}.png`. The checks use
+isolated remote replies and creation calls, not real remote agents; native
+input timing and observed first-install flows remain unverified.

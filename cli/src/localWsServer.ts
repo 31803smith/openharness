@@ -3,6 +3,7 @@ import type { AppSwarms } from './cable/cableSession.js'
 import type http from 'node:http'
 import type { Socket } from 'node:net'
 import { WebSocket, WebSocketServer, type RawData } from 'ws'
+import { watchSocketLiveness } from './lib/wsLiveness.js'
 import type { Frame, LocalClientSink } from './backendSocket.js'
 import {
   decodeTerminalLocal,
@@ -16,12 +17,12 @@ export const LOCAL_WS_PATH = '/api/local-ws'
 export const LOCAL_WS_PROTOCOL_VERSION = 1
 
 const MAX_JSON_BYTES = 512 * 1024
+const LOCAL_IDLE_DEADLINE_MS = 40_000
 // The `ws` library enforces this on EVERY message on this socket, JSON or binary — so it has to
 // cover the largest binary frame this transport carries, not just JSON control frames. That is a
 // paste (see TERMINAL_LOCAL_PASTE_MAX_PAYLOAD_BYTES in terminalBinary.ts), plus a little slack for
 // the local frame header; ordinary JSON frames stay bounded by MAX_JSON_BYTES regardless.
 const MAX_WS_MESSAGE_BYTES = TERMINAL_LOCAL_PASTE_MAX_PAYLOAD_BYTES + 4_096
-const HEARTBEAT_MS = 20_000
 
 import type { WindowVoiceReply } from './cable/windowRoute.js'
 
@@ -228,7 +229,6 @@ export function attachLocalWsServer(server: http.Server, options: LocalWsServerO
     /** Whether this connection ever reported a tile roster — only then is clearing it ours to do. */
     let sentPanes = false
     let sentSwarms = false
-    let alive = true
     let chain = Promise.resolve()
 
     const sink: LocalClientSink = {
@@ -246,7 +246,6 @@ export function attachLocalWsServer(server: http.Server, options: LocalWsServerO
       try { ws.close(code, reason) } catch { ws.terminate() }
     }
 
-    ws.on('pong', () => { alive = true })
     ws.on('message', (raw, isBinary) => {
       chain = chain.then(async () => {
         if (!selected) {
@@ -446,15 +445,16 @@ export function attachLocalWsServer(server: http.Server, options: LocalWsServerO
       }).catch(() => close(1011, 'local dispatch failed'))
     })
 
-    const heartbeat = setInterval(() => {
-      if (!alive) { ws.terminate(); return }
-      alive = false
-      try { ws.ping() } catch { ws.terminate() }
-    }, HEARTBEAT_MS)
-    heartbeat.unref?.()
+    // Loopback: a late pong here means the app is hung or gone, not a slow network, so the deadline is
+    // tighter than the cloud link's — two pings, not three. Noticing a crashed window sooner is what
+    // clears its tile roster (see cleanup) sooner.
+    const heartbeat = watchSocketLiveness(ws, {
+      deadlineMs: LOCAL_IDLE_DEADLINE_MS,
+      onIdle: (idleMs) => console.log(`[local-ws] ${connId} no traffic for ${Math.round(idleMs / 1000)}s — terminating`),
+    })
 
     const cleanup = (): void => {
-      clearInterval(heartbeat)
+      heartbeat.stop()
       if (boundMachineId) options.onAppFocusState?.(boundMachineId, null, connId)
       // A window that went away has no tiles open. Left standing, the roster
       // would keep silencing the dial for agents nobody can see any more —

@@ -18,7 +18,7 @@ void main() {
       addTearDown(app.dispose);
       final command = SwarmDestination(
         id: 'command:swarm.new',
-        title: 'New swarm',
+        title: 'New Harness',
         detail: 'Navigate',
         swarmId: null,
         current: false,
@@ -32,7 +32,7 @@ void main() {
         commands: () => available ? [command] : [],
       );
       addTearDown(search.dispose);
-      search.setQuery('New swarm');
+      search.setQuery('New Harness');
       expect(search.rows.any((row) => row.isCommand), isFalse);
       search.setQuery('> new');
       expect(search.selected, same(command));
@@ -68,13 +68,19 @@ void main() {
       final pane = app.adoptSessionForTest(terminal('a0', frames));
       final original = app.activeSwarm;
       await mount(tester, app);
-      await chord(tester, LogicalKeyboardKey.keyP);
+      await chord(tester, LogicalKeyboardKey.keyP, shift: true);
       final input = find.byKey(const ValueKey('swarm-search-input'));
       await tester.enterText(input, '> pin');
       await tester.pump();
       expect(find.text('⌘⇧P'), findsNothing);
       expect(find.text('⇧⌘P'), findsNothing);
-      expect(find.text('Add to this swarm'), findsNothing);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('swarm-search-results')),
+          matching: find.text('Open Harness'),
+        ),
+        findsNothing,
+      );
       expect(find.byKey(const ValueKey('command:pane.pin')), findsOneWidget);
       expect(app.isPanePinned(pane), isFalse);
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
@@ -106,19 +112,22 @@ void main() {
   );
 
   testWidgets(
-    'New swarm commands stay inline and hand focus to the chosen dialog',
+    'New Harness commands use the shared picker and hand focus to the chosen dialog',
     (tester) async {
       final app = createApp();
       await mount(tester, app);
-      final input = find.byKey(const ValueKey('swarm-welcome-search-input'));
-      await tester.tap(input);
+      final input = find.byKey(const ValueKey('swarm-search-input'));
+      await chord(tester, LogicalKeyboardKey.keyO);
       await tester.enterText(input, '> rename');
       await tester.pump();
       expect(
         find.byKey(const ValueKey('command:swarm.rename')),
         findsOneWidget,
       );
-      expect(find.byKey(const ValueKey('swarm-search-results')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('swarm-search-results')),
+        findsOneWidget,
+      );
       final text = tester.widget<TextField>(input).controller!;
       text.value = text.value.copyWith(
         composing: const TextRange(start: 2, end: 8),
@@ -129,10 +138,7 @@ void main() {
       text.clearComposing();
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pumpAndSettle();
-      expect(
-        find.byKey(const ValueKey('swarm-welcome-search-results')),
-        findsNothing,
-      );
+      expect(find.byKey(const ValueKey('swarm-search-results')), findsNothing);
       expect(find.byType(Dialog), findsOneWidget);
       final dialogInput = find.descendant(
         of: find.byType(Dialog),

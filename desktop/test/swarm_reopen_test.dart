@@ -168,19 +168,19 @@ void main() {
         await app.closeSwarm(app.activeSwarmId);
       }
       for (var i = 0; i < AppNotifier.maxSwarms - 1; i++) {
-        app.newSwarm();
+        app.newSwarm(name: 'Occupied $i');
       }
       expect(app.canReopenClosedSwarm, isFalse);
       app.reopenClosedSwarm();
       expect(app.swarms, hasLength(AppNotifier.maxSwarms));
-      await app.closeSwarm(app.activeSwarmId);
+      await app.closeSwarm(app.swarms.first.id);
       app.reopenClosedSwarm();
-      expect(app.activeSwarm.name, 'New swarm');
+      expect(app.activeSwarm.name, 'Closed 26');
       // Free slots directly without adding newer close records to this check.
       app.swarms.removeRange(1, app.swarms.length);
       app.selectSwarm(app.swarms.single.id);
       app.reopenClosedSwarm();
-      expect(app.activeSwarm.name, 'Closed 26');
+      expect(app.activeSwarm.name, 'Closed 25');
     },
   );
 

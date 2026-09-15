@@ -7,7 +7,7 @@ app (`desktop/`) — and every workflow lives under [`.github/workflows/`](../.g
 |---|---|---|
 | `ci.yml` | every pull request against `main`; on demand | `npm ci` → `npx tsc --noEmit` → `npx vitest run`, i.e. `make cli-test` |
 | `release.yml` | a pushed `v*_cli` tag (`make release-cli`); on demand | bundles and publishes the CLI, then verifies the published bytes |
-| `production-be-build.yaml` | a pushed `v*_api` tag (`make release-backend`) | builds `backend/Dockerfile.k8s` and pushes it to GCR |
+| `production-be-build.yaml` | a pushed `v*_backend` tag (`make release-backend`) | builds `backend/Dockerfile.k8s` and pushes it to GCR |
 | `release-desktop.yml` | a pushed `v*_desktop` tag (`make release-desktop`); on demand | builds, signs and publishes both macOS builds and both Linux architectures of the desktop app — see `desktop/RELEASE.md` |
 | `desktop-internal-build.yml` | a push to `internal/**`; on demand | a signed, notarized desktop build for testers behind an unlisted link, no release |
 
@@ -22,7 +22,7 @@ specific to this repo.
 ## Why the tag suffixes
 
 Three release triggers live in one repo, so each one has to be unmistakable: `v0.1.72_cli` publishes
-the CLI, `v1.4.0_api` builds the backend image, and `v1.1.14_desktop` releases the desktop app. Each
+the CLI, `v1.4.0_backend` builds the backend image, and `v1.1.14_desktop` releases the desktop app. Each
 workflow (and each `release-*.sh`) strips both the `v` and its suffix before anything treats the
 string as a version — the suffix is a routing marker for the trigger and never reaches the manifest,
 the release title or an updater's version comparison.
@@ -191,7 +191,7 @@ Two identities rather than one is not ceremony here: it means a compromised imag
 the release bucket that every daemon on the fleet polls, and vice versa.
 
 **Merge order matters.** `docker-build-and-push-v2.yaml` has to exist on `github-templates`' `main`
-before this repo's caller points at it. The reverse order breaks every `v*_api` tag build until it is
+before this repo's caller points at it. The reverse order breaks every `v*_backend` tag build until it is
 fixed — though only this repo's, which is the point of the clone.
 
 **`permissions:` belongs to the caller.** A called workflow can never hold more permission than the

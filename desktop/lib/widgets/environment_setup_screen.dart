@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../bootstrap/environment_provisioner.dart';
+import '../shared/theme/app_theme.dart' as grid;
 import '../shared/widgets/command_row.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
@@ -21,6 +22,25 @@ class EnvironmentSetupScreen extends StatefulWidget {
 
 class _EnvironmentSetupScreenState extends State<EnvironmentSetupScreen> {
   String? _copied;
+  final _scroll = ScrollController();
+  final _primaryFocus = FocusNode(debugLabel: 'Setup action');
+  final _bodyFocus = FocusNode(
+    debugLabel: 'Setup details',
+    skipTraversal: true,
+  );
+  final _manualFocus = FocusNode(debugLabel: 'Switch setup method');
+  EnvironmentSetupPhase? _lastPhase;
+  bool _actionWasAvailable = false;
+  bool _detailsOpen = false;
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    _primaryFocus.dispose();
+    _bodyFocus.dispose();
+    _manualFocus.dispose();
+    super.dispose();
+  }
 
   Future<void> _copy(String value) async {
     await Clipboard.setData(ClipboardData(text: value));
@@ -33,23 +53,68 @@ class _EnvironmentSetupScreenState extends State<EnvironmentSetupScreen> {
 
   @override
   Widget build(BuildContext context) {
+    grid.AppTheme.watch(context);
     final state = widget.notifier.environmentReadiness;
+    final phaseChanged = _lastPhase != state.phase;
+    final actionAvailable =
+        !widget.notifier.environmentSetupInFlight &&
+        const {
+          EnvironmentSetupPhase.review,
+          EnvironmentSetupPhase.chooseMethod,
+          EnvironmentSetupPhase.failed,
+          EnvironmentSetupPhase.waitingForTerminal,
+          EnvironmentSetupPhase.ready,
+        }.contains(state.phase);
+    if (phaseChanged || (actionAvailable && !_actionWasAvailable)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || ModalRoute.of(context)?.isCurrent == false) return;
+        if (widget.notifier.environmentReadiness.phase != state.phase) return;
+        if (phaseChanged && _scroll.hasClients) _scroll.jumpTo(0);
+        // A new next step should be usable with Enter. Keep an explicit choice
+        // to read/copy details or change methods when asynchronous updates land.
+        if (actionAvailable &&
+            !widget.notifier.environmentSetupInFlight &&
+            !_bodyFocus.hasFocus &&
+            !_manualFocus.hasFocus) {
+          _primaryFocus.requestFocus();
+        }
+      });
+    }
+    _lastPhase = state.phase;
+    _actionWasAvailable = actionAvailable;
+    final compact = MediaQuery.sizeOf(context).height < 640;
     return Scaffold(
       backgroundColor: AppColors.background,
-      body: Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 760),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(32, 28, 32, 24),
-                  child: _body(state),
+      body: SafeArea(
+        child: Padding(
+          padding: EdgeInsets.all(compact ? 16 : 24),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 760),
+              child: Material(
+                color: AppColors.sidebar,
+                clipBehavior: Clip.antiAlias,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  side: BorderSide(color: AppColors.border),
                 ),
-                _footer(state),
-              ],
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Flexible(
+                      child: SingleChildScrollView(
+                        controller: _scroll,
+                        padding: EdgeInsets.all(compact ? 20 : 28),
+                        child: Focus(
+                          focusNode: _bodyFocus,
+                          child: _body(state),
+                        ),
+                      ),
+                    ),
+                    _footer(state),
+                  ],
+                ),
+              ),
             ),
           ),
         ),
@@ -80,14 +145,14 @@ class _EnvironmentSetupScreenState extends State<EnvironmentSetupScreen> {
           letterSpacing: 1.4,
         ),
       ),
-      const SizedBox(height: 10),
+      const SizedBox(height: 6),
       Text(
         title,
         style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w600),
       ),
-      const SizedBox(height: 12),
+      const SizedBox(height: 8),
       Text(lead, style: TextStyle(color: AppColors.textSoft, height: 1.55)),
-      const SizedBox(height: 26),
+      const SizedBox(height: 16),
     ],
   );
 
@@ -97,24 +162,17 @@ class _EnvironmentSetupScreenState extends State<EnvironmentSetupScreen> {
       _heading(
         'Getting started',
         'Checking this computer',
-        'This check is read-only. Harness verifies every tool it needs before proposing any changes.',
+        'Checking the tools Harness needs to run your harnesses.',
       ),
-      _notice(
-        Icons.lock_outline,
-        'Nothing is being installed',
-        'No files, packages or system settings change during this check.',
-      ),
-      const SizedBox(height: 18),
       _checkList(state, checking: true),
     ],
   );
 
   Widget _choose(EnvironmentReadiness state) {
     final mode = state.mode ?? EnvironmentSetupMode.automatic;
-    final items = _installItems(state);
+    final items = state.plan;
     final count = items.length;
-    final countLabel =
-        '$count missing ${count == 1 ? 'dependency' : 'dependencies'}';
+    final countLabel = '$count ${count == 1 ? 'tool' : 'tools'}';
     final needsTerminal = items.any((item) => item.requiresTerminal);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -123,9 +181,10 @@ class _EnvironmentSetupScreenState extends State<EnvironmentSetupScreen> {
           'Getting started',
           'Get this computer ready',
           count == 0
-              ? 'Nothing is left to install. Harness will run one final verification.'
-              : 'Harness brings your coding agents together in one workspace. '
-                    'Set up the $countLabel below, then sign in to get started.',
+              ? 'Your tools are ready. Verify them to continue.'
+              : count == 1
+              ? 'Install this tool, then sign in to start your first harness.'
+              : 'Install these $countLabel, then sign in to start your first harness.',
         ),
         Row(
           children: [
@@ -156,16 +215,13 @@ class _EnvironmentSetupScreenState extends State<EnvironmentSetupScreen> {
             _notice(
               Icons.terminal,
               'Admin prompts stay in Terminal',
-              'Harness opens one operating system Terminal for the missing host dependencies. Your password is entered there and is never read or stored by this app.',
-              warning: true,
+              'Complete any installation prompts there, then return to Harness.',
             ),
             const SizedBox(height: 16),
           ],
           _planList(items),
         ] else
           _manualList(items),
-        const SizedBox(height: 14),
-        _verificationHint(),
       ],
     );
   }
@@ -186,8 +242,7 @@ class _EnvironmentSetupScreenState extends State<EnvironmentSetupScreen> {
         _notice(
           Icons.lock_outline,
           'Harness cannot see your password',
-          'Complete the visible prompts in Terminal. This screen checks again automatically every 5 seconds.',
-          warning: true,
+          'Finish the prompts in Terminal, then return here. Harness checks progress automatically.',
         ),
       const SizedBox(height: 18),
       _checkList(state, checking: true),
@@ -205,13 +260,6 @@ class _EnvironmentSetupScreenState extends State<EnvironmentSetupScreen> {
           failure?.title ?? 'Environment setup failed',
           failure?.detail ?? state.message ?? 'Review the full error below.',
         ),
-        _notice(
-          Icons.error_outline,
-          'The app stopped safely',
-          'Nothing after the failed required step was started. Retry or switch to Manual.',
-          error: true,
-        ),
-        const SizedBox(height: 16),
         _checkList(state),
         if (failure?.command != null) ...[
           const SizedBox(height: 16),
@@ -235,63 +283,54 @@ class _EnvironmentSetupScreenState extends State<EnvironmentSetupScreen> {
         'Every required command passed. Continue to Harness sign-in.',
       ),
       _checkList(state),
-      const SizedBox(height: 18),
-      _notice(
-        Icons.check_circle_outline,
-        'Verified, not assumed',
-        'Harness repeats this quick read-only check whenever the desktop app starts.',
-      ),
     ],
   );
 
-  Widget _checkList(EnvironmentReadiness state, {bool checking = false}) =>
-      _Panel(
-        child: Column(
-          children: [
-            const _CheckSectionLabel('Host dependencies'),
-            _CheckRow(
-              label: 'System tools & writable home',
-              detail: Platform.isMacOS
-                  ? 'Shell, curl, tar, sed, awk, shasum · Xcode or Command Line Tools'
-                  : 'Shell, curl, tar, sed, awk, sha256sum · writable home',
-              status: _systemStatus(state),
-              checking:
-                  checking && state.phase == EnvironmentSetupPhase.preflight,
-            ),
-            _CheckRow(
-              label: Platform.isMacOS
-                  ? 'Homebrew & tmux terminal backend'
-                  : 'tmux terminal backend',
-              detail: 'Required for every terminal session',
-              status: state.steps[EnvironmentStep.tmux],
-            ),
-            if (Platform.isLinux)
-              _CheckRow(
-                label: 'Native image clipboard',
-                detail: _linuxClipboardDetail,
-                status: state.steps[EnvironmentStep.clipboard],
-              ),
-            const _CheckSectionLabel('Harness components'),
-            _CheckRow(
-              label: 'Managed Node 20+ & Harness CLI',
-              detail: '~/.harness/runtime · harness version',
-              status: state.steps[EnvironmentStep.harness],
-            ),
-          ],
+  /// One row per command Harness runs — never one per way of obtaining it.
+  /// What obtaining a missing one takes is the row's detail, read off the
+  /// plan the provisioner computed.
+  Widget _checkList(
+    EnvironmentReadiness state, {
+    bool checking = false,
+  }) => _Panel(
+    child: Column(
+      children: [
+        const _CheckSectionLabel('Host dependencies'),
+        _CheckRow(
+          label: 'tmux terminal backend',
+          detail: _tmuxDetail(state),
+          status: state.steps[EnvironmentStep.tmux],
+          checking: checking && state.phase == EnvironmentSetupPhase.preflight,
         ),
-      );
+        if (Platform.isLinux)
+          _CheckRow(
+            label: 'Native image clipboard',
+            detail: _linuxClipboardDetail,
+            status: state.steps[EnvironmentStep.clipboard],
+            checking:
+                checking && state.phase == EnvironmentSetupPhase.preflight,
+          ),
+        const _CheckSectionLabel('Harness components'),
+        _CheckRow(
+          label: 'Managed Node 20+ & Harness CLI',
+          detail: '~/.harness/runtime · harness version',
+          status: state.steps[EnvironmentStep.harness],
+          checking: checking && state.phase == EnvironmentSetupPhase.preflight,
+        ),
+      ],
+    ),
+  );
 
-  EnvironmentStepStatus? _systemStatus(EnvironmentReadiness state) {
-    if (state.systemReady) return EnvironmentStepStatus.ready;
-    if (state.phase == EnvironmentSetupPhase.preflight) return null;
-    if (state.phase == EnvironmentSetupPhase.waitingForTerminal &&
-        state.terminalSetup == EnvironmentTerminalSetup.linuxHost) {
-      return EnvironmentStepStatus.needsTerminal;
+  String _tmuxDetail(EnvironmentReadiness state) {
+    const base = 'Required for every terminal session';
+    final steps = state.planFor(EnvironmentStep.tmux);
+    if (steps.isEmpty) {
+      return Platform.isLinux ? '$base · tmux, ps' : base;
     }
-    if (state.phase == EnvironmentSetupPhase.installing) {
-      return EnvironmentStepStatus.running;
-    }
-    return EnvironmentStepStatus.failed;
+    if (Platform.isLinux) return '$base · installs with apt';
+    final titles = steps.map((item) => item.title).toList();
+    if (titles.length == 1) return '$base · installs with Homebrew';
+    return '$base · installs ${titles.join(', then ')}';
   }
 
   String? get _linuxClipboardPackage {
@@ -308,93 +347,7 @@ class _EnvironmentSetupScreenState extends State<EnvironmentSetupScreen> {
     _ => 'Not applicable · image paste uses file-path fallback',
   };
 
-  bool _needsInstall(EnvironmentStepStatus? status) =>
-      status != EnvironmentStepStatus.ready &&
-      status != EnvironmentStepStatus.notApplicable;
-
-  List<_InstallItem> _installItems(EnvironmentReadiness state) {
-    final items = <_InstallItem>[];
-    final tmuxStatusMissing = _needsInstall(state.steps[EnvironmentStep.tmux]);
-    final tmuxMissing =
-        state.tmuxBinaryReady == false ||
-        (state.tmuxBinaryReady == null && tmuxStatusMissing);
-
-    if (Platform.isMacOS) {
-      if (!state.systemReady) {
-        items.add(
-          const _InstallItem(
-            title: 'Apple developer tools',
-            detail: 'Xcode or Command Line Tools',
-            command: '/usr/bin/xcrun --find clang || { if [ -x /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild ]; then sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer; else xcode-select --install; fi; }',
-            requiresTerminal: true,
-          ),
-        );
-      }
-      final homebrewMissing =
-          state.homebrewReady == false ||
-          (state.homebrewReady == null && tmuxStatusMissing);
-      if (homebrewMissing) {
-        items.add(
-          const _InstallItem(
-            title: 'Homebrew',
-            detail: 'Required package manager for tmux',
-            command: '/bin/bash -c "\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"',
-            requiresTerminal: true,
-          ),
-        );
-      }
-      if (tmuxMissing) {
-        items.add(
-          const _InstallItem(
-            title: 'tmux',
-            detail: 'Required for every terminal session',
-            command: 'eval "\$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv)" && brew install tmux',
-          ),
-        );
-      }
-    } else if (Platform.isLinux) {
-      final packages = <String>{...state.missingLinuxPackages};
-      if (!state.systemReady && packages.isEmpty) {
-        packages.addAll(const [
-          'bash',
-          'curl',
-          'tar',
-          'sed',
-          'gawk',
-          'coreutils',
-        ]);
-      }
-      if (_needsInstall(state.steps[EnvironmentStep.clipboard]) &&
-          _linuxClipboardPackage != null) {
-        packages.add(_linuxClipboardPackage!);
-      }
-      if (tmuxMissing) packages.add('tmux');
-      if (packages.isNotEmpty) {
-        final names = packages.join(', ');
-        items.add(
-          _InstallItem(
-            title: 'Linux host dependencies',
-            detail: '$names · one apt transaction',
-            command: 'sudo apt-get install -y ${packages.join(' ')}',
-            requiresTerminal: true,
-          ),
-        );
-      }
-    }
-
-    if (_needsInstall(state.steps[EnvironmentStep.harness])) {
-      items.add(
-        const _InstallItem(
-          title: 'Managed Node 20+ & Harness CLI',
-          detail: '~/.harness only',
-          command: kHarnessDesktopInstallCommand,
-        ),
-      );
-    }
-    return items;
-  }
-
-  Widget _planList(List<_InstallItem> items) {
+  Widget _planList(List<EnvironmentPlanItem> items) {
     if (items.isEmpty) {
       return _notice(
         Icons.check_circle_outline,
@@ -402,11 +355,13 @@ class _EnvironmentSetupScreenState extends State<EnvironmentSetupScreen> {
         'Every dependency is ready. Continue to final verification.',
       );
     }
+    final stacked = MediaQuery.textScalerOf(context).scale(1) > 1.25;
     return _Panel(
       child: Column(
         children: [
           for (var index = 0; index < items.length; index++)
             ListTile(
+              dense: true,
               leading: CircleAvatar(
                 radius: 14,
                 backgroundColor: AppColors.hover,
@@ -419,23 +374,31 @@ class _EnvironmentSetupScreenState extends State<EnvironmentSetupScreen> {
                 items[index].title,
                 style: const TextStyle(fontSize: 13),
               ),
-              trailing: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 280),
-                child: Text(
-                  items[index].detail,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.end,
-                  style: TextStyle(color: AppColors.muted, fontSize: 11),
-                ),
-              ),
+              subtitle: stacked
+                  ? Text(
+                      items[index].detail,
+                      style: TextStyle(color: AppColors.textSoft, fontSize: 11),
+                    )
+                  : null,
+              trailing: stacked
+                  ? null
+                  : ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 280),
+                      child: Text(
+                        items[index].detail,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.end,
+                        style: TextStyle(color: AppColors.muted, fontSize: 11),
+                      ),
+                    ),
             ),
         ],
       ),
     );
   }
 
-  Widget _manualList(List<_InstallItem> items) => Column(
+  Widget _manualList(List<EnvironmentPlanItem> items) => Column(
     children: [
       if (items.isEmpty)
         _notice(
@@ -471,19 +434,6 @@ class _EnvironmentSetupScreenState extends State<EnvironmentSetupScreen> {
     ],
   );
 
-  Widget _verificationHint() => Row(
-    children: [
-      Icon(Icons.verified_outlined, size: 16, color: AppColors.success),
-      const SizedBox(width: 8),
-      Expanded(
-        child: Text(
-          'After installation, Harness verifies every required command.',
-          style: TextStyle(color: AppColors.textSoft, fontSize: 11),
-        ),
-      ),
-    ],
-  );
-
   Widget _logs(EnvironmentReadiness state) {
     if (state.output.isEmpty) return const SizedBox.shrink();
     final diagnostics = state.output.join('\n');
@@ -495,28 +445,30 @@ class _EnvironmentSetupScreenState extends State<EnvironmentSetupScreen> {
         border: Border.all(color: AppColors.border),
         borderRadius: BorderRadius.circular(10),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            child: Row(
-              children: [
-                const Text(
-                  'Live logs',
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-                ),
-                const Spacer(),
-                TextButton.icon(
-                  onPressed: () => _copy(diagnostics),
-                  icon: const Icon(Icons.copy, size: 14),
-                  label: Text(
-                    _copied == diagnostics ? 'Copied' : 'Copy diagnostics',
-                  ),
-                ),
-              ],
+      child: ExpansionTile(
+        initiallyExpanded: _detailsOpen,
+        maintainState: true,
+        expandedCrossAxisAlignment: CrossAxisAlignment.stretch,
+        expansionAnimationStyle: AnimationStyle.noAnimation,
+        onExpansionChanged: (open) => setState(() => _detailsOpen = open),
+        title: Row(
+          children: [
+            const Expanded(
+              child: Text(
+                'Setup details',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+              ),
             ),
-          ),
+            TextButton.icon(
+              onPressed: () => _copy(diagnostics),
+              icon: const Icon(Icons.copy, size: 14),
+              label: Text(
+                _copied == diagnostics ? 'Copied' : 'Copy diagnostics',
+              ),
+            ),
+          ],
+        ),
+        children: [
           Divider(height: 1, color: AppColors.border),
           ConstrainedBox(
             constraints: const BoxConstraints(maxHeight: 210),
@@ -539,18 +491,8 @@ class _EnvironmentSetupScreenState extends State<EnvironmentSetupScreen> {
     );
   }
 
-  Widget _notice(
-    IconData icon,
-    String title,
-    String detail, {
-    bool warning = false,
-    bool error = false,
-  }) {
-    final tone = error
-        ? AppColors.danger
-        : warning
-        ? AppColors.warning
-        : AppColors.accent;
+  Widget _notice(IconData icon, String title, String detail) {
+    final tone = AppColors.accent;
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -594,103 +536,108 @@ class _EnvironmentSetupScreenState extends State<EnvironmentSetupScreen> {
   Widget _footer(EnvironmentReadiness state) {
     final busy = widget.notifier.environmentSetupInFlight;
     final mode = state.mode ?? EnvironmentSetupMode.automatic;
-    final missingCount = _installItems(state).length;
+    final missingCount = state.plan.length;
+    final manual = mode == EnvironmentSetupMode.manual;
+    String? label;
+    VoidCallback? action;
+    IconData? icon;
+    switch (state.phase) {
+      case EnvironmentSetupPhase.review || EnvironmentSetupPhase.chooseMethod:
+        label = manual
+            ? 'Check again'
+            : missingCount == 0
+            ? 'Verify and continue'
+            : 'Install $missingCount ${missingCount == 1 ? 'tool' : 'tools'}';
+        icon = manual ? Icons.refresh : Icons.download_outlined;
+        action = manual
+            ? widget.notifier.retryEnvironmentSetup
+            : widget.notifier.startEnvironmentSetup;
+      case EnvironmentSetupPhase.failed:
+        label = 'Retry';
+        action = manual
+            ? widget.notifier.retryEnvironmentSetup
+            : widget.notifier.startEnvironmentSetup;
+      case EnvironmentSetupPhase.ready:
+        label = 'Continue to sign in';
+        action = widget.notifier.continueAfterEnvironmentSetup;
+      case EnvironmentSetupPhase.waitingForTerminal:
+        label = 'Recheck now';
+        icon = Icons.refresh;
+        action = () => widget.notifier.recheckEnvironmentStep(
+          state.steps[EnvironmentStep.clipboard] ==
+                  EnvironmentStepStatus.needsTerminal
+              ? EnvironmentStep.clipboard
+              : EnvironmentStep.tmux,
+        );
+      default:
+        break;
+    }
+    final actions = Wrap(
+      alignment: WrapAlignment.end,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        if (state.phase == EnvironmentSetupPhase.failed && !manual)
+          TextButton(
+            focusNode: _manualFocus,
+            onPressed: busy
+                ? null
+                : () {
+                    widget.notifier.selectEnvironmentSetupMode(
+                      EnvironmentSetupMode.manual,
+                    );
+                    widget.notifier.showEnvironmentMethodChoice();
+                  },
+            child: const Text('Switch to Manual'),
+          ),
+        if (label != null)
+          FilledButton.icon(
+            focusNode: _primaryFocus,
+            autofocus: true,
+            onPressed: busy ? null : action,
+            icon: icon == null ? null : Icon(icon, size: 16),
+            label: Text(label),
+          )
+        else if (busy)
+          const SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+      ],
+    );
+    final next = Text(
+      'Next: sign in and start a harness.',
+      style: TextStyle(color: AppColors.textSoft, fontSize: 11),
+    );
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 36, vertical: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
       decoration: BoxDecoration(
         color: AppColors.sidebar,
         border: Border(top: BorderSide(color: AppColors.border)),
       ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              'Next: sign in and start an agent.',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: AppColors.muted, fontSize: 11),
-            ),
-          ),
-          const SizedBox(width: 12),
-          if (state.phase == EnvironmentSetupPhase.review ||
-              state.phase == EnvironmentSetupPhase.chooseMethod) ...[
-            FilledButton.icon(
-              onPressed: busy
-                  ? null
-                  : mode == EnvironmentSetupMode.automatic
-                  ? widget.notifier.startEnvironmentSetup
-                  : widget.notifier.retryEnvironmentSetup,
-              icon: Icon(
-                mode == EnvironmentSetupMode.automatic
-                    ? Icons.play_arrow
-                    : Icons.refresh,
-                size: 16,
-              ),
-              label: Text(
-                mode == EnvironmentSetupMode.automatic
-                    ? missingCount == 0
-                          ? 'Verify and continue'
-                          : 'Install $missingCount ${missingCount == 1 ? 'tool' : 'tools'}'
-                    : 'I ran these · Recheck',
-              ),
-            ),
-          ] else if (state.phase == EnvironmentSetupPhase.ready)
-            FilledButton(
-              onPressed: widget.notifier.continueAfterEnvironmentSetup,
-              child: const Text('Continue to sign in'),
-            )
-          else if (state.phase == EnvironmentSetupPhase.failed) ...[
-            TextButton(
-              onPressed: () {
-                widget.notifier.selectEnvironmentSetupMode(
-                  EnvironmentSetupMode.manual,
-                );
-                widget.notifier.showEnvironmentMethodChoice();
-              },
-              child: const Text('Switch to Manual'),
-            ),
-            const SizedBox(width: 8),
-            FilledButton(
-              onPressed: busy ? null : widget.notifier.startEnvironmentSetup,
-              child: const Text('Retry'),
-            ),
-          ] else if (state.phase == EnvironmentSetupPhase.waitingForTerminal)
-            OutlinedButton.icon(
-              onPressed: busy
-                  ? null
-                  : () => widget.notifier.recheckEnvironmentStep(
-                      state.steps[EnvironmentStep.clipboard] ==
-                              EnvironmentStepStatus.needsTerminal
-                          ? EnvironmentStep.clipboard
-                          : EnvironmentStep.tmux,
-                    ),
-              icon: const Icon(Icons.refresh, size: 16),
-              label: const Text('Recheck now'),
-            )
-          else if (busy)
-            const SizedBox(
-              width: 18,
-              height: 18,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-        ],
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          if (constraints.maxWidth < 600 ||
+              MediaQuery.textScalerOf(context).scale(1) > 1.25) {
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [next, const SizedBox(height: 12), actions],
+            );
+          }
+          return Row(
+            children: [
+              Expanded(child: next),
+              const SizedBox(width: 12),
+              actions,
+            ],
+          );
+        },
       ),
     );
   }
-}
-
-class _InstallItem {
-  final String title;
-  final String detail;
-  final String command;
-  final bool requiresTerminal;
-
-  const _InstallItem({
-    required this.title,
-    required this.detail,
-    required this.command,
-    this.requiresTerminal = false,
-  });
 }
 
 class _Panel extends StatelessWidget {

@@ -31,8 +31,8 @@ import '../terminal/terminal_viewport.dart';
 import '../shared/theme/app_theme.dart' as grid;
 import '../theme/app_theme.dart';
 import 'engine_identity.dart';
-import 'pane_actions_menu.dart';
 import 'grid_model_picker.dart';
+import 'pane_header_actions.dart';
 
 /// The pane header's own horizontal inset.
 const double _stripPadding = 14;
@@ -46,12 +46,10 @@ class TerminalPanel extends StatefulWidget {
   /// Takes this tile off the grid. Null when the terminal is the whole window,
   /// where there is nothing to close it back to.
   final VoidCallback? onClose;
+  final VoidCallback? onRestart;
+  final VoidCallback? onDelete;
 
-  /// Whether this tile keeps its slot when the grid moves under it, and the
-  /// control that changes that. Null where there is no grid to hold a slot in.
-  final bool pinned;
-  final VoidCallback? onTogglePin;
-  final VoidCallback? onToggleZoom, onSplitRight, onSplitDown;
+  final VoidCallback? onToggleZoom;
   final bool zoomed;
 
   /// This native terminal took the keyboard, so its grid tile becomes focused.
@@ -60,6 +58,11 @@ class TerminalPanel extends StatefulWidget {
   /// Only the focused grid tile may claim keyboard focus on mount/rebuild.
   final bool focused;
   final bool visible;
+  final Size? viewportSize;
+
+  /// A shared terminal can move to another harness without being remounted.
+  final (String, int)? paneLocation;
+  final (int, int, int?)? layoutRequest;
   final bool compactHeader;
   final int focusRequest;
 
@@ -85,6 +88,9 @@ class TerminalPanel extends StatefulWidget {
     required this.session,
     required this.focused,
     this.visible = true,
+    this.viewportSize,
+    this.paneLocation,
+    this.layoutRequest,
     this.compactHeader = false,
     this.focusRequest = 0,
     this.composerVisible = false,
@@ -92,11 +98,9 @@ class TerminalPanel extends StatefulWidget {
     this.notice,
     this.onToggleComposer,
     this.onClose,
-    this.pinned = false,
-    this.onTogglePin,
+    this.onRestart,
+    this.onDelete,
     this.onToggleZoom,
-    this.onSplitRight,
-    this.onSplitDown,
     this.zoomed = false,
     this.onRendererFocus,
     this.paneDrag,
@@ -116,7 +120,9 @@ class _TerminalPanelState extends State<TerminalPanel>
   static const _dialDecayPerSecond = 0.002;
 
   final TerminalController _controller = TerminalController();
-  final ScrollController _scrollController = ScrollController();
+  final ScrollController _scrollController = ScrollController(
+    keepScrollOffset: false,
+  );
   final FocusNode _focusNode = FocusNode();
   final FocusNode _composerFocus = FocusNode();
   final _findBarKey = GlobalKey<TerminalFindBarState>();
@@ -148,6 +154,8 @@ class _TerminalPanelState extends State<TerminalPanel>
   String? _pressedLink;
   bool _openingLink = false;
   bool _linkRefreshPending = false;
+  bool _followTail = true;
+  TerminalStyle _terminalFont = terminalFontStore.value;
   bool _observingLinkModifiers = false;
   late final RemoteMediaDownloader _mediaDownloader;
   MediaDownloadCancellation? _previewCancellation;
@@ -160,7 +168,7 @@ class _TerminalPanelState extends State<TerminalPanel>
     super.initState();
     _viewTerminal = widget.session.terminal;
     _viewTerminal.addListener(_scheduleLinkRefresh);
-    _scrollController.addListener(_scheduleLinkRefresh);
+    _scrollController.addListener(_onScrollChanged);
     _terminalViewKey = GlobalKey<TerminalViewState>();
     _linkOpener = widget.linkOpener ?? TerminalLinkOpener();
     _mediaDownloader = widget.mediaDownloader ?? RemoteMediaDownloader();
@@ -232,11 +240,13 @@ class _TerminalPanelState extends State<TerminalPanel>
       _hoveredLink = null;
       _observeLinkModifiers(false);
       _terminalViewKey = GlobalKey<TerminalViewState>();
+      _followTail = true;
       _cursorBlinkVisible = true;
       widget.session.setCursorBlinkPhase(true);
       _afterTerminalMounted();
     }
     if (oldWidget.visible && !widget.visible) {
+      _rememberFollowTail();
       _focusNode.unfocus();
       _composerFocus.unfocus();
       _cancelDialInertia();
@@ -244,6 +254,16 @@ class _TerminalPanelState extends State<TerminalPanel>
       _hoveredLink = null;
       _pressedLink = null;
       _observeLinkModifiers(false);
+    }
+    if (widget.visible &&
+        (!oldWidget.visible || oldWidget.paneLocation != widget.paneLocation)) {
+      _afterTerminalMounted();
+    }
+    if (oldWidget.viewportSize != widget.viewportSize ||
+        oldWidget.layoutRequest != widget.layoutRequest) {
+      // Geometry can change while a resize handle or another control owns
+      // the keyboard. Refresh the viewport without claiming input ownership.
+      _afterTerminalMounted(claimFocus: false);
     }
     if (widget.focused &&
         (!oldWidget.focused || oldWidget.focusRequest != widget.focusRequest)) {
@@ -265,7 +285,7 @@ class _TerminalPanelState extends State<TerminalPanel>
     _tickerMode?.removeListener(_syncCursorBlink);
     _previewCancellation?.cancel();
     _viewTerminal.removeListener(_scheduleLinkRefresh);
-    _scrollController.removeListener(_scheduleLinkRefresh);
+    _scrollController.removeListener(_onScrollChanged);
     _observeLinkModifiers(false);
     widget.session.setCursorBlinkPhase(true);
     widget.session.removeListener(_onSessionChanged);
@@ -318,7 +338,7 @@ class _TerminalPanelState extends State<TerminalPanel>
     // built as disabled — and a disabled field REFUSES focus. Claiming after the frame the
     // composer rebuilds in is what makes the claim actually land.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !widget.focused || !_showsComposer) return;
+      if (!_canClaimInput || !widget.focused || !_showsComposer) return;
       if (widget.readOnly || !widget.session.acceptsInput) return;
       _composerFocus.requestFocus();
     });
@@ -328,11 +348,17 @@ class _TerminalPanelState extends State<TerminalPanel>
   /// `RenderTerminal.textStyle`'s setter — which recomputes cols/rows from the new cell size and
   /// resizes the remote session automatically. This just needs to get the new value into `build()`.
   void _onFontChanged() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    if (_terminalFont != terminalFontStore.value) {
+      _terminalFont = terminalFontStore.value;
+      _afterTerminalMounted(claimFocus: false);
+    }
+    setState(() {});
   }
 
   void _syncTerminal(Terminal terminal) {
     if (identical(_viewTerminal, terminal)) return;
+
     final previous = _viewTerminal.buffer;
     final next = terminal.buffer;
     final render = _laidOutTerminalView()?.renderTerminal;
@@ -346,8 +372,7 @@ class _TerminalPanelState extends State<TerminalPanel>
     final viewportFraction = position != null && lineHeight != null
         ? position.pixels / lineHeight - viewportRow!
         : 0.0;
-    final atEnd =
-        position == null || position.maxScrollExtent - position.pixels < 1;
+    final atEnd = _followTail || position == null;
     final originRow = _findOriginLine?.attached == true
         ? _findOriginLine!.y
         : null;
@@ -425,7 +450,8 @@ class _TerminalPanelState extends State<TerminalPanel>
       )..addListener(_onFindChanged);
       _find!.setQuery(_lastFindQuery, caseSensitive: _lastFindCaseSensitive);
     }
-    _afterTerminalMounted(scrollToEnd: false);
+    _followTail = atEnd;
+    _afterTerminalMounted(scrollToEnd: atEnd);
   }
 
   /// Typing in the composer focuses the tile, exactly like clicking into the terminal does.
@@ -440,7 +466,7 @@ class _TerminalPanelState extends State<TerminalPanel>
     }
   }
 
-  /// Re-establishes the native text-input connection after a rail selection.
+  /// Re-establishes the native text-input connection on pane activation.
   ///
   /// Replacing an agent remounts TerminalView but deliberately keeps this
   /// FocusNode. A plain requestFocus is a no-op when that node already owns
@@ -448,24 +474,48 @@ class _TerminalPanelState extends State<TerminalPanel>
   /// the terminal. TerminalView.requestKeyboard handles both cases: it moves
   /// focus when needed, or opens the connection immediately when focus stayed
   /// on this tile. That is essential for ordinary keys and IMEs alike.
-  void _claimFocus(TerminalViewState view) {
-    if (!mounted || !widget.focused || !widget.visible) return;
-    if (_find != null) {
-      _findBarKey.currentState?.focusSearch(selectAll: false);
-      return;
+  bool _claimFocus(TerminalViewState view, {bool navigating = false}) {
+    if (!_canClaimInput ||
+        (!navigating && (!widget.focused || !widget.visible))) {
+      return false;
     }
-    if (_composerFocus.hasFocus) return;
+    if (_find != null) {
+      final bar = _findBarKey.currentState;
+      if (bar == null) return false;
+      bar.focusSearch(selectAll: false);
+      return true;
+    }
+    if (_composerFocus.hasFocus) return true;
     // On a remote pane the box gets the caret, not the terminal. Landing in the terminal would
     // hand the user the per-keystroke path by default — the exact cost the box exists to avoid.
     if (_showsComposer && !widget.readOnly) {
-      if (widget.session.acceptsInput) {
+      if (widget.session.acceptsInput && _composerFocus.canRequestFocus) {
         _composerFocus.requestFocus();
-      } else {
-        _composerFocusPending = true;
+        return true;
       }
-      return;
+      _composerFocusPending = true;
+      return false;
     }
     view.requestKeyboard();
+    return true;
+  }
+
+  bool get _canClaimInput =>
+      mounted &&
+      _focusNode.canRequestFocus &&
+      ModalRoute.of(context)?.isCurrent != false;
+
+  @override
+  bool focusInput() {
+    // The model has already selected this retained view, but widget visibility
+    // and focus flags will not catch up until the canvas's next frame.
+    if (!_canClaimInput ||
+        !identical(widget.notifier.focusedPane?.session, widget.session)) {
+      return false;
+    }
+    final view = _laidOutTerminalView();
+    if (view == null) return false;
+    return _claimFocus(view, navigating: true);
   }
 
   void _claimFocusAfterFrame() {
@@ -553,12 +603,31 @@ class _TerminalPanelState extends State<TerminalPanel>
   void _afterTerminalMounted({
     bool clearSelection = false,
     bool scrollToEnd = true,
+    bool claimFocus = true,
+    int retries = 2,
   }) {
+    // Request alignment before this frame's layout, so even a retained pane's
+    // first visible paint uses its new size. Keep Find's explicit location.
+    if (scrollToEnd && _find == null) {
+      _cancelDialInertia();
+      _followTail = true;
+      _laidOutTerminalView()?.scrollToBottom();
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !widget.visible) return;
       if (clearSelection) _controller.clearSelection();
       final view = _laidOutTerminalView();
-      if (view == null) return;
+      if (view == null) {
+        if (retries > 0) {
+          _afterTerminalMounted(
+            clearSelection: clearSelection,
+            scrollToEnd: scrollToEnd,
+            claimFocus: claimFocus,
+            retries: retries - 1,
+          );
+        }
+        return;
+      }
       final renderTerminal = view.renderTerminal;
       final cellSize = renderTerminal.cellSize;
       final renderSize = renderTerminal.size;
@@ -568,12 +637,12 @@ class _TerminalPanelState extends State<TerminalPanel>
           renderSize.height ~/ cellSize.height,
         );
       }
-      if (scrollToEnd && _scrollController.hasClients) {
-        _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+      if (scrollToEnd && _followTail && _find == null) {
+        view.scrollToBottom();
       }
       // Never over the composer: a rebuild that re-focuses this tile while someone is typing into
       // the box would pull the caret out from under them mid-sentence.
-      _claimFocus(view);
+      if (claimFocus) _claimFocus(view);
       if (_find != null) _onFindChanged();
       if (_linkPointerPosition != null) _hoverLink(_linkPointerPosition);
     });
@@ -610,6 +679,7 @@ class _TerminalPanelState extends State<TerminalPanel>
         ..addListener(_onFindChanged);
       _findRevealPending = true;
       _find!.setQuery(_lastFindQuery, caseSensitive: _lastFindCaseSensitive);
+      _findBarKey.currentState?.focusSearch(search: _find);
       setState(() {});
     } else if (action == TerminalFindAction.open) {
       _findBarKey.currentState?.focusSearch();
@@ -704,6 +774,7 @@ class _TerminalPanelState extends State<TerminalPanel>
       _lastFindBuffer = _viewTerminal.buffer;
     }
     _find = null;
+    _findBarKey.currentState?.releaseSearchFocus();
     search.removeListener(_onFindChanged);
     search.dispose();
     _clearFindHighlight();
@@ -727,7 +798,16 @@ class _TerminalPanelState extends State<TerminalPanel>
     _findOriginLine = null;
     _findOriginBuffer = null;
     if (rebuild && mounted) setState(() {});
-    if (focus) _claimFocusAfterFrame();
+    if (focus) {
+      // The retained terminal is already mounted. Return its input connection
+      // now: the next key can arrive before Find's removal is painted.
+      final view = _laidOutTerminalView();
+      if (view != null) {
+        _claimFocus(view);
+      } else {
+        _claimFocusAfterFrame();
+      }
+    }
   }
 
   @override
@@ -932,6 +1012,17 @@ class _TerminalPanelState extends State<TerminalPanel>
     });
   }
 
+  void _rememberFollowTail() {
+    if (!_scrollController.hasClients) return;
+    final position = _scrollController.position;
+    _followTail = position.maxScrollExtent - position.pixels < 1;
+  }
+
+  void _onScrollChanged() {
+    _rememberFollowTail();
+    _scheduleLinkRefresh();
+  }
+
   String? _linkAtPointer(Offset globalPosition) {
     final view = _laidOutTerminalView();
     if (view == null) return null;
@@ -1048,52 +1139,59 @@ class _TerminalPanelState extends State<TerminalPanel>
                   maintainSize: true,
                   maintainAnimation: true,
                   maintainState: true,
-                  child: _buildHeader(context, remote: remote),
+                  child: _buildHeader(context),
                 ),
-                if (_find != null)
+                // Attach the focused pane's input before Find is requested.
+                // Hidden/unfocused panes need no dormant editor or index.
+                if (_find != null || (widget.visible && widget.focused))
                   Positioned.fill(
-                    child: LayoutBuilder(
-                      builder: (context, constraints) => Row(
-                        children: [
-                          if (constraints.maxWidth > 520)
-                            Expanded(
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: _stripPadding,
-                                ),
-                                child: Text(
-                                  session.agentName,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontSize: 13,
-                                    color: Colors.white70,
+                    child: Offstage(
+                      offstage: _find == null,
+                      child: LayoutBuilder(
+                        builder: (context, constraints) => Row(
+                          children: [
+                            if (constraints.maxWidth > 520)
+                              Expanded(
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: _stripPadding,
+                                  ),
+                                  child: Text(
+                                    session.agentName,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 13,
+                                      color: Colors.white70,
+                                    ),
                                   ),
                                 ),
-                              ),
-                            )
-                          else
-                            const Spacer(),
-                          SizedBox(
-                            width: math.min(constraints.maxWidth, 380),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 4,
-                              ),
-                              child: TerminalFindBar(
-                                key: _findBarKey,
-                                search: _find!,
-                                readOnly:
-                                    widget.readOnly || !session.acceptsInput,
-                                onQuery: _queryFind,
-                                onStep: _stepFind,
-                                onClose: _closeFind,
-                                onFocus: () => widget.onRendererFocus?.call(),
+                              )
+                            else
+                              const Spacer(),
+                            SizedBox(
+                              width: math.min(constraints.maxWidth, 380),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                  vertical: 4,
+                                ),
+                                child: TerminalFindBar(
+                                  key: _findBarKey,
+                                  search: _find,
+                                  initialQuery: _lastFindQuery,
+                                  initialCaseSensitive: _lastFindCaseSensitive,
+                                  readOnly:
+                                      widget.readOnly || !session.acceptsInput,
+                                  onQuery: _queryFind,
+                                  onStep: _stepFind,
+                                  onClose: _closeFind,
+                                  onFocus: () => widget.onRendererFocus?.call(),
+                                ),
                               ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
                   ),
@@ -1219,14 +1317,12 @@ class _TerminalPanelState extends State<TerminalPanel>
   /// Visibility and focus affect the renderer, not its title and controls.
   /// Retain that subtree until its presentation changes. Callback wrappers
   /// resolve the current widget so cached controls never retain an old action.
-  Widget _buildHeader(BuildContext context, {required bool remote}) {
+  Widget _buildHeader(BuildContext context) {
     final session = widget.session;
     final machine = widget.notifier.stateOf(session.machineId);
     final agent = machine?.agents
         .where((a) => a.id == session.agentId)
         .firstOrNull;
-    final canToggleComposer =
-        remote && !widget.readOnly && widget.onToggleComposer != null;
     final presentation = (
       theme: Theme.of(context),
       brightness: grid.AppTheme.brightness.value,
@@ -1240,18 +1336,17 @@ class _TerminalPanelState extends State<TerminalPanel>
       error: session.errorMessage ?? session.errorCode,
       link: session.linkMode,
       machine: machine?.machine,
+      local: machine?.isLocalMachine,
       agent: agent,
       project: agent == null ? null : machine?.projectOf(agent),
       compact: widget.compactHeader,
-      pinned: widget.pinned,
       close: widget.onClose != null,
-      pin: widget.onTogglePin != null,
+      restart: widget.onRestart != null,
+      delete: widget.onDelete != null,
+      composer: widget.composerVisible,
+      toggleComposer: widget.onToggleComposer != null,
       zoomed: widget.zoomed,
       zoom: widget.onToggleZoom != null,
-      splitRight: widget.onSplitRight != null,
-      splitDown: widget.onSplitDown != null,
-      composer: canToggleComposer,
-      composerVisible: widget.composerVisible,
       dragId: widget.paneDrag?.ref.paneId,
       dragSize: widget.paneDrag?.size,
     );
@@ -1264,18 +1359,20 @@ class _TerminalPanelState extends State<TerminalPanel>
         readOnly: widget.readOnly,
         compact: widget.compactHeader,
         zoomed: widget.zoomed,
-        onToggleZoom: widget.onToggleZoom,
-        onSplitRight: widget.onSplitRight,
-        onSplitDown: widget.onSplitDown,
-        onClose: widget.onClose == null ? null : () => widget.onClose?.call(),
-        pinned: widget.pinned,
-        onTogglePin: widget.onTogglePin == null
+        onToggleZoom: widget.onToggleZoom == null
             ? null
-            : () => widget.onTogglePin?.call(),
-        onToggleComposer: canToggleComposer
-            ? () => widget.onToggleComposer?.call()
-            : null,
+            : () => widget.onToggleZoom?.call(),
+        onClose: widget.onClose == null ? null : () => widget.onClose?.call(),
+        onRestart: widget.onRestart == null
+            ? null
+            : () => widget.onRestart?.call(),
+        onDelete: widget.onDelete == null
+            ? null
+            : () => widget.onDelete?.call(),
         composerVisible: widget.composerVisible,
+        onToggleComposer: widget.onToggleComposer == null
+            ? null
+            : () => widget.onToggleComposer?.call(),
         paneDrag: widget.paneDrag,
       );
     }
@@ -1289,10 +1386,13 @@ class _TerminalHeader extends StatelessWidget {
   final TerminalNotice? notice;
   final bool readOnly;
   final VoidCallback? onClose;
-  final bool pinned;
+  final VoidCallback? onRestart;
+
+  /// Ends the agent (with a confirmation), as the rail's row menu does. Null
+  /// where the pane cannot name a live agent to end.
+  final VoidCallback? onDelete;
   final bool compact;
-  final VoidCallback? onTogglePin;
-  final VoidCallback? onToggleZoom, onSplitRight, onSplitDown;
+  final VoidCallback? onToggleZoom;
   final bool zoomed;
   final VoidCallback? onToggleComposer;
   final bool composerVisible;
@@ -1313,16 +1413,14 @@ class _TerminalHeader extends StatelessWidget {
     this.notice,
     this.readOnly = false,
     this.onClose,
-    this.pinned = false,
+    this.onRestart,
+    this.onDelete,
     this.compact = false,
-    this.onTogglePin,
     this.onToggleZoom,
-    this.onSplitRight,
-    this.onSplitDown,
     this.zoomed = false,
+    this.paneDrag,
     this.onToggleComposer,
     this.composerVisible = false,
-    this.paneDrag,
   });
 
   @override
@@ -1390,232 +1488,223 @@ class _TerminalHeader extends StatelessWidget {
       if (profile != null) 'Codex profile: $profile',
       'Double-click to rename',
     ].join('\n');
-    final strip = SizedBox(
-      height: compact ? 38 : 46,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: _stripPadding),
-        child: LayoutBuilder(
-          builder: (context, constraints) => Row(
-            children: [
-              EngineMark(engine: session.engineId, size: 17),
-              const SizedBox(width: 10),
-              Expanded(
-                // Double click the NAME to rename — the same dialog the rail's
-                // row opens, so one name has one way to change wherever it is
-                // shown. Scoped to the text rather than the whole strip: the
-                // strip is the drag handle, and a double click that both renamed
-                // and looked like the start of a drag would be two answers to one
-                // gesture.
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onDoubleTap: () => unawaited(
-                    showAgentRenameDialog(
-                      context,
-                      notifier,
-                      session.machineId,
-                      session.agentId,
-                      session.agentName,
-                    ),
-                  ),
+    final remoteComposer = machine != null && !machine.isLocalMachine
+        ? onToggleComposer
+        : null;
+    final actionsWidth = remoteComposer == null ? 118.0 : 148.0;
+    final folder =
+        project?.cwd
+            .split(RegExp(r'[/\\]'))
+            .where((part) => part.isNotEmpty)
+            .lastOrNull ??
+        project?.name;
+    final details = [
+      if (folder?.isNotEmpty == true) folder!,
+      if (project?.branch?.trim().isNotEmpty == true) project!.branch!,
+      machineName,
+    ];
+    final branchIndex = project?.branch?.trim().isNotEmpty == true
+        ? (folder?.isNotEmpty == true ? 1 : 0)
+        : null;
+    final strip = PaneHeaderHover(
+      child: SizedBox(
+        height: compact ? 38 : 46,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: _stripPadding),
+          child: LayoutBuilder(
+            builder: (context, constraints) => Row(
+              children: [
+                EngineMark(engine: session.engineId, size: 17),
+                const SizedBox(width: 10),
+                Expanded(
                   child: Tooltip(
                     message: identityDetail,
                     waitDuration: const Duration(milliseconds: 700),
-                    child: Text(
-                      // The profile path's basename used to trail the name here, but for the
-                      // default profile that basename is literally the hidden `.codex` folder —
-                      // meaningless clutter on every ordinary codex agent. The tooltip above still
-                      // carries the full path for whoever actually needs it.
-                      session.agentName,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: AppColors.text,
-                        fontFamily: AppFonts.sans,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onDoubleTap: () => unawaited(
+                        showAgentRenameDialog(
+                          context,
+                          notifier,
+                          session.machineId,
+                          session.agentId,
+                          session.agentName,
+                        ),
+                      ),
+                      child: Text(
+                        session.agentName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: AppColors.text,
+                          fontFamily: AppFonts.sans,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
-              // The model picker sits next to the NAME, because that is the pair a person reads
-              // together: this agent, on that model. Hidden while a notice is showing — a header
-              // asking to reconnect is not the moment to offer a menu.
-              if (status == null && !readOnly) ...[
+                // The model picker sits next to the NAME, because that is the pair a person reads
+                // together: this agent, on that model. Hidden while a notice is showing — a header
+                // asking to reconnect is not the moment to offer a menu.
+                if (status == null && !readOnly) ...[
+                  const SizedBox(width: 8),
+                  GridModelPicker(
+                    notifier: notifier,
+                    machineId: session.machineId,
+                    currentModel: agent?.gridModel,
+                    engineLabel: session.engineId,
+                    onSelected: (model) => unawaited(
+                      notifier.retargetAgentToGridModel(
+                        session.machineId,
+                        session.agentId,
+                        model.id,
+                      ),
+                    ),
+                    onUseOwnLogin: () => unawaited(
+                      notifier.clearAgentGrid(session.machineId, session.agentId),
+                    ),
+                  ),
+                ],
                 const SizedBox(width: 8),
-                GridModelPicker(
-                  notifier: notifier,
-                  machineId: session.machineId,
-                  currentModel: agent?.gridModel,
-                  engineLabel: session.engineId,
-                  onSelected: (model) => unawaited(
-                    notifier.retargetAgentToGridModel(
-                      session.machineId,
-                      session.agentId,
-                      model.id,
+                if (status != null)
+                  ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxWidth: math.max(
+                        0,
+                        math.min(
+                          constraints.maxWidth * .3,
+                          constraints.maxWidth - actionsWidth - 110,
+                        ),
+                      ),
                     ),
-                  ),
-                  onUseOwnLogin: () => unawaited(
-                    notifier.clearAgentGrid(session.machineId, session.agentId),
-                  ),
-                ),
-              ],
-              if (compact && status == null && project?.branch != null) ...[
-                const SizedBox(width: 16),
-                Tooltip(
-                  message: '${project!.branch}\n${project.cwd}',
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        LucideIcons.gitBranch,
-                        size: 12,
-                        color: AppColors.mutedStrong,
-                      ),
-                      const SizedBox(width: 5),
-                      ConstrainedBox(
-                        constraints: BoxConstraints(
-                          maxWidth: math.min(112, constraints.maxWidth * .22),
-                        ),
-                        child: Text(
-                          project.branch!,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: AppColors.textSoft,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-              if (compact && status == null) ...[
-                const SizedBox(width: 16),
-                ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxWidth: math.min(156, constraints.maxWidth * .28),
-                  ),
-                  child: Tooltip(
-                    message: machineName,
-                    child: constraints.maxWidth < 380 && project?.branch != null
-                        ? Icon(
-                            machine?.isLocalMachine == true
-                                ? Icons.laptop_mac
-                                : Icons.desktop_mac,
-                            size: 14,
-                            color: AppColors.mutedStrong,
-                          )
-                        : Text(
-                            machineName,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: AppColors.mutedStrong,
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: Tooltip(
+                        message: status.detail,
+                        child: TextButton(
+                          onPressed: canReconnect
+                              ? () => notifier.selectAgent(
+                                  session.machineId,
+                                  session.agentId,
+                                )
+                              : null,
+                          style: TextButton.styleFrom(
+                            foregroundColor: color,
+                            disabledForegroundColor: AppColors.textSoft,
+                            minimumSize: Size.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 4,
                             ),
                           ),
-                  ),
-                ),
-              ],
-              const SizedBox(width: 8),
-              if (status != null)
-                ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxWidth: constraints.maxWidth * .42,
-                  ),
-                  child: Align(
-                    alignment: Alignment.centerRight,
-                    child: Tooltip(
-                      message: status.detail,
-                      child: TextButton(
-                        onPressed: canReconnect
-                            ? () => notifier.selectAgent(
-                                session.machineId,
-                                session.agentId,
-                              )
-                            : null,
-                        style: TextButton.styleFrom(
-                          foregroundColor: color,
-                          disabledForegroundColor: AppColors.textSoft,
-                          minimumSize: Size.zero,
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 4,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(status.icon, size: 14),
+                              const SizedBox(width: 6),
+                              Flexible(
+                                child: Text(
+                                  status.label,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(fontSize: 11),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(status.icon, size: 14),
-                            const SizedBox(width: 6),
+                      ),
+                    ),
+                  )
+                else if (!compact)
+                  Padding(
+                    padding: const EdgeInsets.all(4),
+                    child: Icon(Icons.circle, size: 8, color: color),
+                  ),
+                // Which of the three paths carries this pane's bytes. Absent for a local machine's own
+                // terminal, which has no such distinction and so gets no badge.
+                //
+                // The wire word and the word a person reads differ for the middle state, deliberately:
+                // the CLI sends 'turn' (it is a TURN allocation) but both middle and last are relays to
+                // a reader, so they read as "relay" and "ws". 'relay' on the wire kept its original
+                // meaning — the backend WebSocket — so an older CLI is never mislabelled.
+                if (!compact && session.linkMode != null)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 2),
+                    child: _LinkModeMark(mode: session.linkMode!),
+                  ),
+                ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: math.max(
+                      actionsWidth,
+                      constraints.maxWidth * (status == null ? .55 : .3),
+                    ),
+                  ),
+                  child: PaneHeaderActions(
+                    zoomed: zoomed,
+                    onZoom: onToggleZoom,
+                    onRestart: onRestart,
+                    onDelete: onDelete,
+                    onClose: onClose,
+                    onToggleComposer: remoteComposer,
+                    composerVisible: composerVisible,
+                    details: Tooltip(
+                      message: [
+                        if (project != null) project.cwd,
+                        if (project?.branch?.isNotEmpty == true)
+                          'Branch: ${project!.branch}',
+                        machineName,
+                      ].join('\n'),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          for (var i = 0; i < details.length; i++) ...[
+                            if (i > 0)
+                              Text(
+                                '  •  ',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  color: AppColors.mutedStrong,
+                                ),
+                              ),
                             Flexible(
-                              child: Text(
-                                status.label,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(fontSize: 11),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  if (i == branchIndex) ...[
+                                    Icon(
+                                      LucideIcons.gitBranch300,
+                                      size: 12,
+                                      color: AppColors.mutedStrong,
+                                    ),
+                                    const SizedBox(width: 4),
+                                  ],
+                                  Flexible(
+                                    child: Text(
+                                      details[i],
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontFamily: AppFonts.sans,
+                                        fontSize: 12,
+                                        color: AppColors.mutedStrong,
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
                           ],
-                        ),
+                        ],
                       ),
                     ),
                   ),
-                )
-              else if (!compact)
-                Padding(
-                  padding: const EdgeInsets.all(4),
-                  child: Icon(Icons.circle, size: 8, color: color),
                 ),
-              // Which of the three paths carries this pane's bytes. Absent for a local machine's own
-              // terminal, which has no such distinction and so gets no badge.
-              //
-              // The wire word and the word a person reads differ for the middle state, deliberately:
-              // the CLI sends 'turn' (it is a TURN allocation) but both middle and last are relays to
-              // a reader, so they read as "relay" and "ws". 'relay' on the wire kept its original
-              // meaning — the backend WebSocket — so an older CLI is never mislabelled.
-              if (!compact && session.linkMode != null)
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 2),
-                  child: _LinkModeMark(mode: session.linkMode!),
-                ),
-              // Before the close button: pinning is the rarer act, and a control
-              // that appears to the LEFT of the one people aim for by muscle
-              // memory cannot shift it under their pointer.
-              if (!compact && onTogglePin != null)
-                PanePinButton(pinned: pinned, onPressed: onTogglePin!),
-              if (compact) ...[
-                if (onToggleZoom != null)
-                  IconButton(
-                    tooltip: zoomed
-                        ? 'Restore agents'
-                        : 'Zoom ${session.agentName}',
-                    onPressed: onToggleZoom,
-                    icon: Icon(
-                      zoomed ? Icons.fullscreen_exit : Icons.fullscreen,
-                      size: 18,
-                    ),
-                    constraints: const BoxConstraints.tightFor(
-                      width: 28,
-                      height: 28,
-                    ),
-                    padding: EdgeInsets.zero,
-                  ),
-                PaneActionsMenu(
-                  name: session.agentName,
-                  onSplitRight: onSplitRight,
-                  onSplitDown: onSplitDown,
-                  onTogglePin: onTogglePin,
-                  pinned: pinned,
-                  onToggleComposer: onToggleComposer,
-                  composerVisible: composerVisible,
-                  onClose: onClose,
-                ),
-              ] else if (onClose != null)
-                PaneCloseButton(onPressed: onClose!),
-            ],
+              ],
+            ),
           ),
         ),
       ),

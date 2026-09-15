@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/core/models.dart';
@@ -58,6 +59,111 @@ TerminalSession terminal(String id, List<TerminalBinaryFrame> input) =>
       ..streamId = 'stream-$id';
 
 void main() {
+  testWidgets('tab close marks follow hover and keyboard focus', (
+    tester,
+  ) async {
+    final app = createApp();
+    final first = app.activeSwarm;
+    app.renameSwarm(first.id, 'First tab');
+    app.newSwarm();
+    final second = app.activeSwarm;
+    app.renameSwarm(second.id, 'Second tab');
+    await mount(tester, app);
+    Finder close(String id) => find.byKey(ValueKey('tab-close:$id'));
+    double opacity(String id) => tester.widget<Opacity>(close(id)).opacity;
+    expect(opacity(first.id), 0);
+    expect(opacity(second.id), 0);
+    final pointer = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await pointer.addPointer(location: const Offset(900, 500));
+    await pointer.moveTo(tester.getCenter(find.text('First tab')));
+    await tester.pump();
+    expect(opacity(first.id), 1);
+    expect(opacity(second.id), 0);
+    await pointer.moveTo(const Offset(900, 500));
+    await tester.pump();
+    expect(opacity(first.id), 0);
+    Focus.of(tester.element(find.text('First tab'))).requestFocus();
+    await tester.pumpAndSettle();
+    expect(opacity(first.id), 1);
+    final closeIcon = find.descendant(
+      of: close(first.id),
+      matching: find.byType(Icon),
+    );
+    Focus.of(tester.element(closeIcon)).requestFocus();
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.space);
+    await tester.pump();
+    expect(app.swarms.map((swarm) => swarm.id), [second.id]);
+    await pointer.removePointer();
+    await tester.pumpWidget(const SizedBox());
+    app.dispose();
+  });
+
+  for (final native in [false, true]) {
+    testWidgets('tab identity follows its agent count (native=$native)', (
+      tester,
+    ) async {
+      const channel = MethodChannel('harness/swarm_tabs');
+      final updates = <Map>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (
+        call,
+      ) async {
+        if (call.method == 'update') updates.add(call.arguments as Map);
+        return true;
+      });
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          channel,
+          null,
+        ),
+      );
+      final app = createApp();
+      final tab = app.activeSwarm;
+      await mount(tester, app, nativeTabs: native);
+      expect(tab.name, 'New Harness');
+      expect(
+        find.byKey(const ValueKey('harness-start-search')),
+        findsOneWidget,
+      );
+
+      await app.addAgentToSwarm('m', 'a0');
+      await tester.pump();
+      if (native) {
+        final row = (updates.last['tabs'] as List).single as Map;
+        expect(row['agentCount'], 1);
+        expect(row['engine'], 'codex');
+        expect(row['iconAsset'], 'assets/engine-icons/codex.png');
+      } else {
+        expect(find.byKey(ValueKey('tab-engine:${tab.id}')), findsOneWidget);
+      }
+
+      await app.addAgentToSwarm('m', 'a1');
+      await tester.pump();
+      if (native) {
+        final row = (updates.last['tabs'] as List).single as Map;
+        expect(row['agentCount'], 2);
+        expect(row['engine'], isNull);
+      } else {
+        expect(find.byKey(ValueKey('tab-group:${tab.id}')), findsOneWidget);
+      }
+
+      await app.closePane(app.panes.last.id);
+      await tester.pump();
+      if (native) {
+        expect(
+          ((updates.last['tabs'] as List).single as Map)['engine'],
+          'codex',
+        );
+      } else {
+        expect(find.byKey(ValueKey('tab-engine:${tab.id}')), findsOneWidget);
+        expect(find.byKey(ValueKey('tab-group:${tab.id}')), findsNothing);
+      }
+      expect(app.activeSwarm, same(tab));
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+    });
+  }
+
   testWidgets(
     'an older daemon working folder is searchable and seeds its real agents',
     (tester) async {
@@ -73,13 +179,11 @@ void main() {
         },
       );
       await mount(tester, app);
-      expect(find.text('Existing project'), findsOneWidget);
-      await tester.tap(
-        find.byKey(const ValueKey('swarm-welcome-search-input')),
-      );
+      expect(find.text('Existing project'), findsNothing);
+      await chord(tester, LogicalKeyboardKey.keyO);
       await tester.pump();
       await tester.enterText(
-        find.byKey(const ValueKey('swarm-welcome-search-input')),
+        find.byKey(const ValueKey('swarm-search-input')),
         '/work/existing',
       );
       await tester.pump();
@@ -92,9 +196,7 @@ void main() {
         findsOneWidget,
       );
       expect(find.byKey(ValueKey(agentDestinationId('m', 'a2'))), findsNothing);
-      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-      await tester.pump();
-      await tester.tap(find.text('Existing project'));
+      await tester.tap(find.widgetWithText(ListTile, 'Existing project'));
       await tester.pump(const Duration(milliseconds: 100));
       expect(app.activeSwarm.name, 'Existing project');
       expect(app.panes.map((p) => p.agentId), ['a0', 'a1']);
@@ -108,15 +210,16 @@ void main() {
     (tester) async {
       final app = createApp();
       await mount(tester, app);
-      expect(find.text('Start a swarm'), findsOneWidget);
-      expect(find.text('Models'), findsNothing);
-      expect(find.text('Machines'), findsOneWidget);
-      await tester.tap(
-        find.byKey(const ValueKey('swarm-welcome-search-input')),
+      expect(
+        find.byKey(const ValueKey('harness-start-search')),
+        findsOneWidget,
       );
+      expect(find.text('Models'), findsNothing);
+      expect(find.text('Machines'), findsNothing);
+      await chord(tester, LogicalKeyboardKey.keyO);
       await tester.pump();
       await tester.enterText(
-        find.byKey(const ValueKey('swarm-welcome-search-input')),
+        find.byKey(const ValueKey('swarm-search-input')),
         'Agent 1',
       );
       await tester.pump();
@@ -125,10 +228,11 @@ void main() {
       await tester.pump();
       await app.addAgentToSwarm('m', 'a2');
       app.toggleZoomPane();
-      await tester.pump();
+      // The Add button appears when the first agent replaces the welcome page.
+      await tester.pump(const Duration(milliseconds: 200));
       final zoom = app.zoomedPaneId;
       final before = tester.getSize(find.byType(PaneGrid));
-      await tester.tap(find.byKey(const ValueKey('swarm-search-button')));
+      await tester.tap(find.byKey(const ValueKey('swarm-open-harness-button')));
       await tester.pump(const Duration(milliseconds: 300));
       expect(
         find.byKey(const ValueKey('swarm-search-results')),
@@ -230,7 +334,7 @@ void main() {
   );
 
   testWidgets(
-    'parked terminals keep output, selection, scroll and fresh metadata on return',
+    'parked terminals keep output and selection and reveal the latest on return',
     (tester) async {
       final app = createApp();
       app.machineStates['m']!.nodeOnline = true;
@@ -277,7 +381,10 @@ void main() {
         session.terminal.buffer.getText(view.controller!.selection),
         selection,
       );
-      expect(view.scrollController!.offset, scroll);
+      expect(
+        view.scrollController!.offset,
+        view.scrollController!.position.maxScrollExtent,
+      );
       await tester.pumpWidget(const SizedBox());
       app.dispose();
     },
@@ -297,7 +404,7 @@ void main() {
       final replacement = terminal('a0', [])
         ..terminal.write('replacement stream');
       pane.session = replacement;
-      app.newSwarm();
+      app.notifyListeners();
       await tester.pump();
       final parked = tester.widget<TerminalPanel>(
         find.byType(TerminalPanel, skipOffstage: false),
@@ -351,7 +458,7 @@ void main() {
       });
       await chord(tester, LogicalKeyboardKey.keyI, shift: true);
       await tester.pump(const Duration(milliseconds: 300));
-      expect(find.text('No agents need your input'), findsOneWidget);
+      expect(find.text('No harnesses need your input'), findsOneWidget);
       await tester.pumpWidget(const SizedBox());
       app.dispose();
     },

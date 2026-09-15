@@ -8,13 +8,15 @@ import type { AutonomousDeviceService, AutonomousDeviceFrame } from './lib/auton
  *   - `down` { t:'down', connId, frame }  → web chat/control + data-plane RPC requests
  *
  * Mirrors the hosted runtime’s managerSocket: idempotent connect, exponential backoff (1s→30s),
- * WS ping/pong keep-alive + a 15s app-level `{t:'ping'}` that refreshes the backend presence
- * key, and a bounded FIFO queue for client-facing outbound frames.
+ * WS liveness (`lib/wsLiveness.ts`: ping every 20s, 60s deadline on silence) + a 15s app-level
+ * `{t:'ping'}` that refreshes the backend presence key, and a bounded FIFO queue for client-facing
+ * outbound frames.
  *
  * Auth: the SSO access token rides as the first WS subprotocol.
  */
 
 import { WebSocket } from 'ws'
+import { watchSocketLiveness, type LivenessWatch } from './lib/wsLiveness.js'
 import { stat, readFile } from 'fs/promises'
 import { isAbsolute, join } from 'path'
 import { hostname } from 'os'
@@ -29,6 +31,7 @@ import { parseGridLaunchOverride, type GridLaunchOverride } from './lib/gridLaun
 import { listGridModels, resolveGridTarget } from './lib/gridModels.js'
 import { readAccountUsage, type AccountUsageReading } from './lib/accountUsage.js'
 import { probeEngines } from './lib/engineProbe.js'
+import { AgentCreationReceipts, AgentCreationReceiptError, creationFingerprint, validCreationId, type AgentCreationStatus } from './lib/agentCreationReceipt.js'
 import { engineInstallRecipe } from './lib/engineInstall.js'
 import { agentFrame, type AgentFrame } from './lib/agentFrame.js'
 import { routeVoiceTask } from './lib/voiceRouter.js'
@@ -91,7 +94,6 @@ const HERMES_DB = join(env.HERMES_HOME, 'state.db')
 export type RecentProvider = (sessionId: string, n: number) => Array<{ kind: string; text: string; recap?: string }>
 
 
-const HEARTBEAT_MS = 20_000
 const APP_PING_MS = 15_000
 // How long the opening handshake may take before the attempt is abandoned and retried. `ws` waits
 // forever by default, and the heartbeat below only starts on 'open' — so a TCP connection that came
@@ -292,7 +294,7 @@ export class BackendSocket {
   private draining = false
   private nextQueueId = 1
   private droppedSinceLog = 0
-  private heartbeat: NodeJS.Timeout | null = null
+  private heartbeat: LivenessWatch | null = null
   private appPing: NodeJS.Timeout | null = null
   private readonly downChains = new Map<string, Promise<void>>()
   private readonly localClients = new Map<string, LocalClientSink>()
@@ -300,7 +302,6 @@ export class BackendSocket {
   private readonly terminalP2p: TerminalP2pResponderPool
   private readonly p2pPendingOpens = new Map<string, Set<string>>()
   private readonly p2pStreams = new Map<string, Set<string>>()
-  private isAlive = true
   private onStatus: (connected: boolean) => void
   /** Cross-instance commander (device) client count, from backend `__clients` frames. */
   private commanderCount = 0
@@ -330,6 +331,7 @@ export class BackendSocket {
     codexHome: string | null
   }) =>
     Promise<{ ok: true; session: RegisteredSession } | { ok: false; error: string; detail?: string }>) | null = null
+  private readonly agentCreations = new AgentCreationReceipts(join(env.ADAPTER_DATA_DIR, 'agent-creations'))
   /** Injectable for queue-isolation tests; production uses the machine-local probe. */
   engineProbeProvider: typeof probeEngines = probeEngines
   /**
@@ -578,20 +580,13 @@ export class BackendSocket {
 
     ws.on('open', () => {
       this.attempts = 0
-      this.isAlive = true
       console.log(`[backend] connected → ${this.url}`)
       this.onStatus(true)
       this.drainQueue()
 
-      this.heartbeat = setInterval(() => {
-        if (!this.isAlive) {
-          try { ws.terminate() } catch { /* ignore */ }
-          return
-        }
-        this.isAlive = false
-        try { ws.ping() } catch { /* ignore */ }
-      }, HEARTBEAT_MS)
-      ws.on('pong', () => { this.isAlive = true })
+      this.heartbeat = watchSocketLiveness(ws, {
+        onIdle: (idleMs) => console.log(`[backend] no traffic for ${Math.round(idleMs / 1000)}s — terminating the link`),
+      })
 
       // App-level ping refreshes the backend's presence key (TTL 30s).
       this.appPing = setInterval(() => this.sendBestEffort({ t: 'ping' }), APP_PING_MS)
@@ -616,7 +611,7 @@ export class BackendSocket {
     const onGone = (why: string): void => {
       if (this.ws !== ws) return
       this.ws = null
-      if (this.heartbeat) { clearInterval(this.heartbeat); this.heartbeat = null }
+      if (this.heartbeat) { this.heartbeat.stop(); this.heartbeat = null }
       if (this.appPing) { clearInterval(this.appPing); this.appPing = null }
       this.draining = false
       // While the backend link is down we can neither observe device presence nor deliver a card, so
@@ -668,7 +663,7 @@ export class BackendSocket {
 
   async stop(): Promise<void> {
     this.closed = true
-    if (this.heartbeat) clearInterval(this.heartbeat)
+    if (this.heartbeat) this.heartbeat.stop()
     if (this.appPing) clearInterval(this.appPing)
     await this.terminalStreams?.stop()
     await this.terminalP2p.stop()
@@ -1569,12 +1564,27 @@ export class BackendSocket {
           return
         }
 
+        case 'agent_create_status': {
+          const creationId = payload.creationId
+          if (!validCreationId(creationId)) { reply(type, requestId, { error: 'INVALID_CREATION_ID' }); return }
+          try {
+            reply(type, requestId, { creationId, ...await this.creationStatusPayload(this.agentCreations.status(creationId)) })
+          } catch (error) {
+            reply(type, requestId, { error: error instanceof AgentCreationReceiptError ? error.code : 'INTERNAL' })
+          }
+          return
+        }
+
         case 'agent_create': {
           const engine = payload.engine as AgentEngine | undefined
-          const cwd = payload.cwd as string | undefined
-          if (!engine || !ENGINES.includes(engine)) { reply(type, requestId, { error: 'INVALID_ENGINE' }); return }
-          if (!cwd || !isAbsolute(cwd)) { reply(type, requestId, { error: 'INVALID_CWD' }); return }
+          const cwd = payload.cwd
+          if (typeof engine !== 'string' || !ENGINES.includes(engine)) { reply(type, requestId, { error: 'INVALID_ENGINE' }); return }
+          if (typeof cwd !== 'string' || !isAbsolute(cwd)) { reply(type, requestId, { error: 'INVALID_CWD' }); return }
           if (!this.onCreateAgent) { reply(type, requestId, { error: 'UNSUPPORTED_ON_REMOTE' }); return }
+          const creationId = payload.creationId
+          if (creationId !== undefined && !validCreationId(creationId)) {
+            reply(type, requestId, { error: 'INVALID_CREATION_ID' }); return
+          }
           // Absent is the ordinary case and stays indistinguishable from a client that predates grids;
           // present-but-malformed is refused here rather than half-applied at launch, because an agent
           // that quietly ran on the engine's own login would look like it worked.
@@ -1592,13 +1602,36 @@ export class BackendSocket {
             reply(type, requestId, { error: 'INVALID_CODEX_HOME', detail: 'codexHome is only valid for codex, without a grid' })
             return
           }
-          const result = await this.onCreateAgent({
+          const input = {
             engine,
             cwd,
             bypassPermission: payload.bypassPermission === true,
             grid: grid.state === 'ok' ? grid.override : null,
             codexHome,
-          })
+          }
+          if (creationId !== undefined) {
+            // Reserve before spawning. A transport retry carries the SAME creationId; a deliberate
+            // New agent action carries a new one. Detach so a status check can pass a slow create
+            // on this connection, just as engines_probe is detached above.
+            const create = this.onCreateAgent
+            try {
+              void this.agentCreations.run(creationId, creationFingerprint(input), async () => {
+                const result = await create(input)
+                if (result.ok) return { state: 'created', agentId: result.session.agentId }
+                // tmux may have executed before a timeout; registration cleanup is best-effort.
+                // Neither can prove that no process started, so never encourage another launch.
+                if (result.error === 'SPAWN_FAILED' || result.error === 'REGISTRATION_FAILED') return { state: 'unconfirmed' }
+                return { state: 'failed', error: result.error, ...(result.detail ? { detail: result.detail.slice(0, 2000) } : {}) }
+              }).then(async (status) => {
+                reply(type, requestId, { creationId, ...await this.creationStatusPayload(status) })
+              }).catch(() => reply(type, requestId, { error: 'INTERNAL' }))
+            } catch (error) {
+              reply(type, requestId, { error: error instanceof AgentCreationReceiptError ? error.code : 'INTERNAL' })
+            }
+            return
+          }
+          // Clients predating receipts retain their existing response shape.
+          const result = await this.onCreateAgent(input)
           // `detail` carries the underlying cause (tmux's own message) so the person who clicked
           // Create can read it, rather than having to open a log on the machine that failed.
           if (!result.ok) {
@@ -1818,6 +1851,22 @@ export class BackendSocket {
       console.error(`[backend] dispatch ${type} failed:`, err)
       if (requestId !== undefined) reply(type, requestId, { error: 'INTERNAL' })
     }
+  }
+
+  /** Recover by stable runtime identity; a deleted agent must never become a fresh launch. */
+  private async creationStatusPayload(status: AgentCreationStatus): Promise<Record<string, unknown>> {
+    if (status.state === 'created') {
+      const session = registry.byAgent(status.agentId)
+      return session
+        ? { state: 'created', agent: await this.toProject(session) }
+        : { state: 'unavailable' }
+    }
+    // A recorded refusal is a completed outcome. Keep it separate from transport/dispatch errors
+    // so clients can distinguish "safe to correct the choices" from "outcome still unknown".
+    if (status.state === 'failed') {
+      return { state: 'failed', failure: { code: status.error, ...(status.detail ? { detail: status.detail } : {}) } }
+    }
+    return status
   }
 
   /** Map a registered tmux session onto the web's Project shape (tabs in ProjectTabs). */

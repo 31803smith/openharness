@@ -220,9 +220,9 @@ void main() {
     test('every declared shortcut gets a binding when a handler exists', () {
       final bindings = buildShortcutBindings(
         handlers: {for (final s in appShortcuts()) s.action: () {}},
-        onSelectPaneIndex: (_) {},
+        onSelectTabIndex: (_) {},
       );
-      expect(bindings.length, appShortcuts().length + kAgentDigitCount);
+      expect(bindings.length, appShortcuts().length + kTabDigitCount);
     });
 
     chordsFor(ShortcutAction a) => appShortcuts()
@@ -230,50 +230,20 @@ void main() {
         .map((s) => describeShortcut(s.activator))
         .toList();
 
-    test('every direction is spelled BOTH ways, with no mode to pick', () {
-      // The whole point of the scheme: a hand that reaches for hjkl and a hand
-      // that reaches for the arrows are not two populations to be asked about,
-      // they are two hands on the same keyboard. zellij binds both on Alt for
-      // the same reason.
-      expect(
-        chordsFor(ShortcutAction.focusPaneLeft),
-        containsAll(['⌘H', '⌘←']),
-      );
-      expect(
-        chordsFor(ShortcutAction.focusPaneBelow),
-        containsAll(['⌘J', '⌘↓']),
-      );
-      expect(
-        chordsFor(ShortcutAction.focusPaneAbove),
-        containsAll(['⌘K', '⌘↑']),
-      );
-      expect(
-        chordsFor(ShortcutAction.focusPaneRight),
-        containsAll(['⌘L', '⌘→']),
-      );
-    });
-
-    test('shift moves what the plain key walks to', () {
-      // vim's `Ctrl-w H/J/K/L`. Not a convention invented here — which is the
-      // argument for spending four more chords on it.
-      expect(
-        chordsFor(ShortcutAction.movePaneLeft),
-        containsAll(['⇧⌘H', '⇧⌘←']),
-      );
-      expect(
-        chordsFor(ShortcutAction.movePaneDown),
-        containsAll(['⇧⌘J', '⇧⌘↓']),
-      );
-      expect(chordsFor(ShortcutAction.movePaneUp), containsAll(['⇧⌘K', '⇧⌘↑']));
-      expect(
-        chordsFor(ShortcutAction.movePaneRight),
-        containsAll(['⇧⌘L', '⇧⌘→']),
-      );
+    test('Command-arrows focus panes and Shift moves them', () {
+      expect(chordsFor(ShortcutAction.focusPaneLeft), ['⌘H', '⌘←']);
+      expect(chordsFor(ShortcutAction.focusPaneBelow), ['⌘J', '⌘↓']);
+      expect(chordsFor(ShortcutAction.focusPaneAbove), ['⌘K', '⌘↑']);
+      expect(chordsFor(ShortcutAction.focusPaneRight), ['⌘L', '⌘→']);
+      expect(chordsFor(ShortcutAction.movePaneLeft), ['⇧⌘←']);
+      expect(chordsFor(ShortcutAction.movePaneDown), ['⇧⌘↓']);
+      expect(chordsFor(ShortcutAction.movePaneUp), ['⇧⌘↑']);
+      expect(chordsFor(ShortcutAction.movePaneRight), ['⇧⌘→']);
     });
 
     test('brackets walk agents, and Shift walks swarms', () {
       // They used to carry three verbs told apart only by modifiers: ⌘[ ] walked
-      // panes, ⇧⌘[ ] walked agents, ⌥⌘[ ] moved panes. Panes went to hjkl, so
+      // panes, ⇧⌘[ ] walked agents, ⌥⌘[ ] moved panes. Panes use arrows, so
       // the brackets keep the one job a bracket is good at.
       final bracketed = <ShortcutAction>{};
       for (final s in appShortcuts()) {
@@ -291,10 +261,14 @@ void main() {
     test('the terminal verbs tmux trained people on are all here', () {
       expect(chordsFor(ShortcutAction.zoomPane), contains('⌘⏎'));
       expect(chordsFor(ShortcutAction.lastPane), contains('⌘;'));
-      expect(chordsFor(ShortcutAction.switchAgent), contains('⌘P'));
-      expect(chordsFor(ShortcutAction.switchAgent), isNot(contains('⇧⌘F')));
-      expect(chordsFor(ShortcutAction.addAgent), ['⌘N']);
-      expect(chordsFor(ShortcutAction.newAgent), ['⇧⌘N']);
+      expect(chordsFor(ShortcutAction.newSwarm), ['⌘T']);
+      expect(chordsFor(ShortcutAction.showLayout), ['⌘S']);
+      expect(
+        appShortcuts().where((s) => describeShortcut(s.activator) == '⌘P'),
+        isEmpty,
+      );
+      expect(chordsFor(ShortcutAction.addAgent), ['⌘O']);
+      expect(chordsFor(ShortcutAction.newAgent), ['⌘N']);
       expect(chordsFor(ShortcutAction.showAttention), ['⇧⌘I']);
       expect(chordsFor(ShortcutAction.findTerminal), ['⌘F']);
       expect(chordsFor(ShortcutAction.findNext), ['⌘G']);
@@ -312,11 +286,7 @@ void main() {
 
   group('the rows the UI prints', () {
     test('two chords for one action are one row, not two', () {
-      // ⌘L, ⌘→ both focus the pane on the right, and ⌘], ⌃⇥ both step to the
-      // next agent. Printed as a row each — which is what the list did before it
-      // merged them — the screen reads as though it forgot to collapse a
-      // duplicate. That matters more now than it did: every direction is
-      // deliberately spelled twice, so the sheet would be half repetition.
+      // Alternate history keys share one help row.
       final rows = shortcutRows();
       final labels = rows.map((row) => row.label).toList();
       expect(labels.toSet().length, labels.length, reason: 'a label repeats');
@@ -329,7 +299,7 @@ void main() {
         ['⌘', '→'],
       ]);
 
-      final next = rows.firstWhere((row) => row.label == 'Next swarm');
+      final next = rows.firstWhere((row) => row.label == 'Next Harness');
       expect(next.chords, [
         ['⇧', '⌘', ']'],
         ['⌃', '⇥'],
@@ -350,19 +320,17 @@ void main() {
 
     test('the digits are one row, at the end of their own group', () {
       final rows = shortcutRows();
-      final digits = rows.indexWhere(
-        (row) => row.label == 'Focus the 1st–9th pane',
-      );
+      final digits = rows.indexWhere((row) => row.label == 'Select tabs 1–9');
       expect(digits, isNot(-1));
       expect(rows[digits].chords, [
         ['⌘', '1 – 9'],
       ]);
-      // Panes: the digits address tiles on the grid, not rows in the sidebar.
-      expect(rows[digits].group, ShortcutGroup.panes);
+      // Digits select tabs; directional shortcuts stay in the pane layout.
+      expect(rows[digits].group, ShortcutGroup.navigate);
       // Last of its group, so it does not split the group it belongs to.
       expect(
         digits == rows.length - 1 ||
-            rows[digits + 1].group != ShortcutGroup.panes,
+            rows[digits + 1].group != ShortcutGroup.navigate,
         isTrue,
       );
     });
@@ -389,7 +357,7 @@ void main() {
   });
 
   group('the developer shortcut', () {
-    // ⌘D opens Settings ▸ Debug. It is the one shortcut that is not always
+    // ⇧⌘D opens Settings ▸ Debug. It is the one shortcut that is not always
     // there — a release build has no Debug screen — so what is guarded is that
     // the list and the build agree, in both directions.
     test(
@@ -398,7 +366,7 @@ void main() {
         expect(kDebugSurfaceEnabled, isTrue, reason: 'tests run in debug mode');
         expect(appShortcuts(), contains(kDebugShortcut));
         expect(kAppShortcuts, isNot(contains(kDebugShortcut)));
-        expect(describeShortcut(kDebugShortcut.activator), '⌘D');
+        expect(describeShortcut(kDebugShortcut.activator), '⇧⌘D');
       },
     );
 
@@ -407,7 +375,7 @@ void main() {
         handlers: {ShortcutAction.showDebug: () {}},
       );
       expect(bindings.containsKey(kDebugShortcut.activator), isTrue);
-      expect(shortcutHintFor(ShortcutAction.showDebug), '⌘D');
+      expect(shortcutHintFor(ShortcutAction.showDebug), '⇧⌘D');
       expect(
         shortcutRows().map((row) => row.label),
         contains(kDebugShortcut.label),

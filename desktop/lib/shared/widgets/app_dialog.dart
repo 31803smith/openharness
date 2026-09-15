@@ -29,7 +29,7 @@ const double kDialogVeilBlur = 7;
 
 /// Shared dark backdrop for dialogs and centered pickers. Terminal output
 /// stays in the background while the active surface has the user's attention.
-const Color kDialogVeilTint = Color(0xC7000000);
+const Color kDialogVeilTint = Color(0xE6000000);
 
 /// The app's dialog barrier: a blur, then a tint, then whatever opened.
 ///

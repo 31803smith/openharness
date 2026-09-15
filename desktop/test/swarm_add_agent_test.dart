@@ -13,7 +13,7 @@ import 'swarm_state_test.dart' show createApp;
 
 void main() {
   testWidgets(
-    'floating Add agent keeps the destination and reuses the chosen session',
+    'Open Harness in the header reuses the chosen session in this workspace',
     (tester) async {
       final app = createApp();
       final input = <TerminalBinaryFrame>[];
@@ -25,20 +25,14 @@ void main() {
       await mount(tester, app);
       tester.view.physicalSize = const Size(880, 560);
       await tester.pump();
-      final add = find.byKey(const ValueKey('swarm-add-agent-button'));
-      expect(tester.getRect(add).left, greaterThan(780));
-      expect(tester.getRect(add).right, closeTo(880 - 28, 1));
-      expect(tester.getRect(add).bottom, closeTo(560 - 28, 1));
-      expect(
-        tester.getRect(find.byKey(existing.cellKey)).bottom,
-        closeTo(550, 1),
-      );
+      final add = find.byKey(const ValueKey('swarm-open-harness-button'));
+      expect(tester.getRect(add).top, lessThan(44));
+      expect(find.byType(FloatingActionButton), findsNothing);
       expect(
         tester
             .getRect(find.byKey(existing.cellKey))
             .overlaps(tester.getRect(add)),
-        isTrue,
-        reason: 'Add floats over the pane instead of reserving a footer',
+        isFalse,
       );
       await tester.tap(add);
       await tester.pump();
@@ -47,9 +41,15 @@ void main() {
         'Agent 0',
       );
       await tester.pump();
-      expect(find.text('Add to this swarm'), findsNWidgets(2));
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('swarm-row-action')),
+          matching: find.text('Open Harness'),
+        ),
+        findsOneWidget,
+      );
       expect(find.byKey(const ValueKey('swarm-row-action')), findsOneWidget);
-      expect(find.text('Go to agent'), findsNothing);
+
       expect(find.byType(AlertDialog), findsNothing);
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pump();
@@ -82,7 +82,7 @@ void main() {
         await tester.pump();
         final neighborRect = tester.getRect(find.byKey(neighbor.cellKey));
         final expected = app.preparePaneSplit(axis)!;
-        await chord(tester, LogicalKeyboardKey.keyP);
+        await chord(tester, LogicalKeyboardKey.keyP, shift: true);
         final inputField = find.byKey(const ValueKey('swarm-search-input'));
         await tester.enterText(
           inputField,

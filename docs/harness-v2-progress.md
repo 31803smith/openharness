@@ -6,6 +6,247 @@ Updated 2026-09-14 after integrating the continuation into main. This is a worki
 
 ## Continue directly on main
 
+- Built the combined New Harness/header/picker/menu and numbered-tab changes
+  from main `44d6540` in Release. Code-signature verification passed before and
+  after copying the bundle. Normally quit only workspace preview PID 18687,
+  replaced that workspace bundle and reopened it; PID 79285 was confirmed
+  active. The installed app remained PID 98999. The previous workspace bundle
+  is at `/private/tmp/harness-preview-before-new-harness-hz81dcel/Harness.app`.
+  Build log: `/private/tmp/harness-new-harness-release.log`. This checkpoint
+  completes the current UI requests. The broader goal and native latency work
+  remain deferred; review the current entry, header and tab interactions in
+  the reopened preview before choosing further product work.
+- Command-number now selects **tabs 1–9** in their current visible order.
+  Command-H/J/K/L and Command-arrows continue to move between panes. Switching
+  tabs restores their focused pane, reordered tabs use their new positions, and
+  an unavailable number does nothing. Custom pane-focus command IDs remain
+  available without conflicting default digit bindings. Shortcut help and the
+  native exported keymap agree. All 52 affected Flutter checks pass, including
+  native-command routing, tab order/focus and subsequent terminal input; the
+  native keyboard bridge passes 78 checks against the exported bindings.
+  Analysis has zero errors/warnings and the 14 existing infos. Logs:
+  `/private/tmp/harness-tab-shortcuts-{tests,analyze,titlebar}.log`.
+- Applied the latest simple-entry direction: **New Harness** replaces New Agent
+  on empty tabs. The centered start page has **Find a harness…**, a prominent
+  **Create harness** action, and up to six recent shortcuts, with responsive
+  layouts. Opening a recent or search result immediately reuses that runtime.
+  Removed multi-select checkboxes, selection count/tray and Shift-Enter staging
+  from shared Add; creation cancellation retains query/highlight/target.
+  **File** replaces Agent, with **Machines** after Models for computer status,
+  search, linking and refresh. The header now has icon/name left and
+  folder/branch/machine right; hover swaps the right side for muted Zoom,
+  Delete and Close, with Keyboard first remotely. The title and terminal stay
+  fixed during hover, and resize grips only appear on hover/focus/drag.
+  Focused Flutter workflow checks and 204 native menu/keyboard checks pass;
+  real-font renders cover the welcome page and 280/430/720px headers at normal
+  and large text. Analysis reports zero errors/warnings and 14 existing infos.
+  Logs: `/private/tmp/harness-new-harness-*.log` and
+  `/private/tmp/harness-header-render.log`. The following checkpoint moves
+  Command-number to tabs and rebuilds/reopens the combined preview.
+- Added hover split controls inside the right and bottom pane edges. Each **+**
+  opens shared Add Agent at that position; existing-agent reuse and Create Agent
+  both remain available. Headers retain only Zoom, Delete and Close. Hover is
+  local to the overlay, preserves terminal focus/geometry, and leaves resize
+  gaps untouched. The controls are suppressed for zoom/drag/capacity; minimum
+  pane sizes produce an explanatory disabled tooltip. Pulled the team's
+  agent-first main update (`16716d0`) and preserved its tabs, search and menu
+  changes. All 24 affected workflow checks pass, including mouse activation
+  on an unfocused pane in both directions, retained terminals, unchanged
+  neighbors, resize/cancel recovery and input routing. Analysis reports zero
+  errors/warnings and the 14 existing infos. Logs:
+  `/private/tmp/harness-split-edges-{tests,analyze}.log`. The arm64 Release build
+  succeeds (`/private/tmp/harness-split-edges-release.log`). At the user's request,
+  normally closed the exact workspace preview, replaced its bundle with the
+  verified build and reopened it. Confirmed PID 18687 active at
+  `desktop/build/macos/Build/Products/Release/Harness.app`; the installed app
+  remained running separately. These are process observations, not native
+  latency measurements. Benchmarking and the broader goal stay deferred.
+- Simplified the pane header to three direct outline icons: Zoom, Delete agent,
+  Close pane. Removed the overflow menu and its split/pin controls. Delete still
+  opens the shared confirmation; closing a pane preserves the agent and its
+  views in other swarms. Controls keep a consistent size/order and support
+  tooltips, keyboard focus and hover states. Narrow panes prioritize the agent
+  name over inline branch metadata. The retained header resolves the current
+  callback for all three actions, including Zoom. The broader goal remains
+  paused/blocked pending the user's breaking-change details; this is a bounded
+  follow-up request, not a resumption of the backlog or benchmarking.
+  Forty-two focused workflow checks and one real-font render check pass (43
+  total), including confirmation/cancellation, shared-session input after close,
+  current callbacks, existing keyboard splits and terminal interactions. The
+  rendered header fits 280/430/720px panes at normal and 2× text. Analysis has
+  zero errors/warnings and 14 existing infos. Logs:
+  `/private/tmp/harness-pane-controls-final-tests.log`,
+  `/private/tmp/harness-pane-controls-analyze.log` and
+  `/private/tmp/harness-pane-controls-render.log`.
+  The normal arm64 Release build succeeds at
+  `/private/tmp/harness-pane-controls-release/Build/Products/Release/Harness.app`
+  (log: `/private/tmp/harness-pane-controls-release.log`); it was not launched.
+  Main preserves the team's `f6b9849` welcome-background change.
+- Preserved Add while trying New agent. Cancel/Escape from centered Add or either
+  split returns to the same query, caret/selection, highlighted result and
+  checked agents. Find existing after an uncertain creation also retains those
+  choices. Successful creation opens the new agent without reopening Add.
+  Changed/closed targets do not redirect cancellation, and stale splits are
+  explained. Fresh catalog validation drops already-added memberships while
+  leaving missing checked agents visible for removal. The affected workflow
+  suite passes 76 checks plus one real-font render check at 880×560 and 2× text;
+  analysis has zero errors/warnings and 14 existing infos. Logs:
+  `/private/tmp/harness-add-return-final-{tests,analyze}.log`. Nine new checks
+  cover the return path and recovery boundaries; the first three reproduced
+  the lost-search behavior. A second Escape returns actual fixture keyboard
+  input to the original terminal. Native Shift-Enter and inline New swarm's
+  optional selection continuity remain to be verified/improved; benchmarking
+  stays deferred. The normal arm64 Release build succeeds at
+  `/private/tmp/harness-add-return-release/Build/Products/Release/Harness.app`;
+  log: `/private/tmp/harness-add-return-release.log`. It was not launched.
+- Fixed first-launch installation at minimum window size: Install/Retry/Check
+  again stay visible outside the scrollable tool list, and Enter can start or
+  retry the current step. Manual Retry now performs a read-only check instead of
+  calling the automatic path that returned without doing anything. Explicit
+  method/detail focus stays put. Shorter copy, denser required-tool rows and
+  optional **Setup details** keep the next action clear; expanded diagnostics
+  remain selectable and copyable. The affected suite passes 59 workflow checks
+  plus one real-font render check at 880×560 with normal/2× text. Analysis has
+  zero errors/warnings and 14 existing infos. The normal arm64 Release build
+  succeeds at `/private/tmp/harness-setup-release/Build/Products/Release/Harness.app`.
+  Logs: `/private/tmp/harness-setup-final-{tests,analyze}.log` and
+  `/private/tmp/harness-setup-release.log`. Verification uses fake provisioning;
+  no tools were installed and no real sign-in ran. First-install observation
+  remains open, and benchmarking stays deferred. Main preserves the team's
+  changes through `e14d0fb`; incoming release-script/dial work does not alter the
+  tested desktop application sources.
+- Fixed Clone repository cancellation and keyboard recovery. Escape now uses
+  Cancel and waits for cleanup; a late successful clone cannot advance a
+  cancelled flow. Outside clicks leave an active clone running. Failed clones
+  preserve the repository/destination and restore Enter on the retry action.
+  Large-text errors are brought into view beside the still-visible actions.
+  The 50 affected workflow/render checks pass, as do analysis (zero
+  errors/warnings, 14 existing infos) and the normal arm64 Release build at
+  `/private/tmp/harness-clone-release/Build/Products/Release/Harness.app`.
+  Logs: `/private/tmp/harness-clone-{final-tests,final-analyze,release}.log`.
+  A direct public GitHub clone also succeeded with isolated Git configuration
+  and complete temporary-folder cleanup (`harness-clone-public.log`). Private
+  repository access, native chooser and genuine first-install validation remain
+  open. The app was not launched and benchmarking stays deferred.
+- Added browser-sign-in recovery: **Open browser** reuses the current link,
+  **Copy link** offers a fallback, and **Cancel** immediately restores Sign in
+  with keyboard focus. Cancellation before CLI startup, late authorization URLs,
+  old results and delayed browser replies cannot disturb a replacement login.
+  Recovery controls disappear after authorization succeeds, while the workspace
+  restores. The compact layout keeps the normal-size actions visible at 880×560;
+  larger text wraps in the existing scrollable card. The affected workflow/render
+  suite passes 65 checks; analysis has zero errors/warnings and 14 existing infos.
+  Logs: `/private/tmp/harness-signin-final-{tests,analyze}.log`. The normal arm64
+  Release build succeeds at
+  `/private/tmp/harness-signin-release/Build/Products/Release/Harness.app`;
+  log: `/private/tmp/harness-signin-release.log`. It was not launched. The team's
+  `b45c156` main update changes CLI recap text and does not overlap this work.
+  Real first-install/provider sign-in and remote workflow checks remain open;
+  Archive/Resume remains a proposal and benchmarking remains deferred.
+- Added **Find existing agent…** to uncertain New agent forms. It opens shared
+  Add with the search query, original swarm and split preserved; a closed swarm
+  or stale split gets an explanation. The dialog releases keyboard ownership
+  before opening Add, and an empty tab created in the background cannot take
+  focus for its welcome input. Six new regressions cover both search entry
+  points, changed destinations and no duplicate launch/input. The affected
+  workflow suite passes 87 tests, plus one real-font render check at normal/2×
+  text; analysis has zero errors/warnings and 14 existing infos. Logs:
+  `/private/tmp/harness-find-created-{workflows,final-recovery,analyze}.log`.
+  The normal arm64 Release build succeeds at
+  `/private/tmp/harness-find-created-release/Build/Products/Release/Harness.app`;
+  log: `/private/tmp/harness-find-created-release.log`. It was not launched;
+  no running app or agent was replaced or restarted.
+  Main preserves the team's merged PR #38 (`fd02a15`, recap generation), whose
+  CLI files do not overlap this desktop change. Live remote qualification and
+  genuine first-install/provider flows remain outstanding; benchmarking stays
+  deferred. Archive/Resume remains a proposal.
+- Added [creation receipts and recovery](harness-agent-creation.md). A lost
+  creation reply now leaves the original choices visible and changes Create to
+  **Check status**, with keyboard focus on that action. Checking never launches
+  another agent, including on older/upgraded CLIs with no matching receipt.
+  Confirmed creation returns to the original swarm/position and counts once;
+  stale destinations leave it available in Add. The CLI retains completed and
+  uncertain outcomes across daemon restarts and rejects conflicting retries.
+  This does not implement Archive/Resume or restore closed desktop forms.
+  CLI typechecking, bundling and 150 affected checks pass; 127 desktop checks
+  pass, plus one real-font render check at 880×560 and normal/2× text. Analysis
+  has no errors/warnings and the same 14 existing infos. The normal arm64
+  Release build succeeds at
+  `/private/tmp/harness-creation-release/Build/Products/Release/Harness.app`.
+  Logs: `/private/tmp/harness-creation-{desktop-tests,final-recovery,analyze,release}.log`.
+  CLI code is saved in `3585051`; `7ae2cba` preserves the team's concurrent
+  Option-Enter fix from main (`012c171`). No real agent or running app was
+  started/stopped, and no benchmark ran. Live remote recovery remains unverified.
+- Made the shared remote folder chooser work by keyboard: enter a full path,
+  browse with arrows/Enter, go up with Alt-Up, and select the loaded folder with
+  Cmd-Enter (Ctrl-Enter elsewhere). It names the target machine and keeps Home
+  and Retry available. Failed navigation preserves the last usable listing;
+  pending navigation cannot accidentally select the previous folder. Older
+  replies cannot replace a newer path, text selection or composition. Selecting
+  a folder returns to the existing agent choices without starting a runtime.
+  The affected onboarding/project/profile/creation checks pass (57 tests), plus
+  a real-font render check at 880×560 with normal/2× text. Analysis has zero
+  errors/warnings and 14 existing infos. Logs:
+  `/private/tmp/harness-remote-folder-{final-tests,final-analyze}.log`.
+  The normal macOS Release build succeeds with the production `lib/main.dart`
+  entry point at `/private/tmp/harness-remote-folder-release/Build/Products/Release/Harness.app`;
+  log: `/private/tmp/harness-remote-folder-release.log`. It was not launched and
+  the user's running app was not replaced or restarted.
+  These are isolated UI/transport checks; live remote and first-install
+  qualification remain open. Benchmarking remains deferred.
+- Clarified **Remove from swarm** in the pane/native menus and keyboard help.
+  The action still removes only a view. Fixed History recovery that created a
+  second same-named swarm after one of its agents had already been reopened:
+  missing views now return to the same swarm, preserving newer names, focus,
+  pins, presets and shared live sessions. Recovery can fit at the tab limit and
+  keeps its history entry if the full missing membership cannot fit.
+- The integrated desktop suite exposed a viewport-focus regression after the
+  team's terminal-tail change: relayout reclaimed keyboard focus from a resize
+  handle, so Escape could not cancel a drag. Geometry refresh now preserves
+  keyboard ownership. Existing pointer cancellation and repeated keyboard
+  resizing pass, alongside a strengthened latest-output check that actually
+  switches to a valid four-pane layout. Archive/Resume is still a proposal;
+  current user runtimes were not started, stopped or used as test fixtures.
+  Verification: **1,317 desktop tests pass**, one existing skip; zero analyzer
+  errors/warnings, 14 existing infos; 335 isolated AppKit checks pass. The final
+  combined suite includes the team's `e68c893` local-machine default, preserved
+  in merge `eef17f6`; existing fixtures now use its explicit remote labels.
+  Logs: `/private/tmp/harness-reopen-existing-{final-full-tests,final-analyze,native}.log`.
+  The normal macOS Release build from `3a4ae22` subsequently succeeded at
+  `/private/tmp/harness-recovery-release/Build/Products/Release/Harness.app`
+  with the production `lib/main.dart` entry point; build log:
+  `/private/tmp/harness-recovery-release.log`. The running preview was not
+  replaced or restarted, and live native workflow verification remains
+  outstanding. Benchmarking remains deferred.
+- Added **Retry** to failed New agent availability checks. The same form keeps
+  the folder, explicit agent and permission choices while rechecking; recovered
+  Codex profile support loads in place. Late replies for a previous machine
+  cannot replace the current choices. The two new regressions and surrounding
+  first-use/Add/profile checks pass (47 tests); analysis has zero errors/warnings
+  and 14 existing infos. Minimum-window renders with normal/2× text were checked.
+  Logs: `/private/tmp/harness-agent-check-retry-{verified,analyze,render}.log`.
+  Preserved the team's `5f279e1` pane-menu Delete action by fast-forwarding main.
+  The combined suite passes **1,311 tests**, one existing skip, with no analyzer
+  errors/warnings. A separate arm64 Release output succeeds; the running preview
+  was not replaced or restarted. Logs:
+  `/private/tmp/harness-agent-check-retry-{full-tests,integrated-analyze,release}.log`.
+  Main then fast-forwarded through the team's independent changes at `87f8fcd`.
+  Those files do not overlap this Retry change; the recorded full-suite and
+  Release results remain measurements of the preceding `5f279e1` base.
+- The user raised accumulating live sessions after closing panes. Saved an
+  [Archive/Resume lifecycle proposal](harness-agent-lifecycle.md) for discussion.
+  It has not been implemented; no existing user agents were stopped or removed.
+- The user approved the native run and brief workspace-preview quit/reopen.
+  Rebuilt the isolated arm64 Release fixture from `a6fe4a4`, including the later
+  titlebar change, at `/private/tmp/harness-native-benchmark-v99tt1m2`.
+  The 229 compared production Dart/Swift sources match the copy; all nine
+  isolation tests pass. App control cannot access windows while this Mac is
+  locked, confirmed by the read-only console lock flag. Both Harness processes
+  remain running; no benchmark was launched and no samples were collected.
+  The user then explicitly deferred benchmarking/performance optimization and
+  asked for feature work. Keep measurement deferred; do not request another
+  desktop/preview interruption while that priority stands.
+  Build receipt: `/private/tmp/harness-native-approved-prepare.log`.
 - Preserved the team's native Settings-button removal (`51c0d27`) in merge
   `3a7fe57`, then its independent device updates through `22653fe` in `51f62e7`.
   The combined desktop passes **1,309 tests**, one existing skip, 51 native

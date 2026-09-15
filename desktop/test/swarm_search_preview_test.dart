@@ -1,161 +1,296 @@
+import 'dart:io';
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:harness/state/swarm_search.dart';
-import 'package:harness/terminal/search_output_preview.dart';
-import 'package:harness/terminal/terminal_binary.dart';
-import 'package:xterm/xterm.dart';
+import 'package:harness/core/models.dart';
+import 'package:harness/state/app_state.dart';
+import 'package:harness/widgets/swarm_switcher.dart';
 
 import 'swarm_interactions_test.dart' show chord;
 import 'swarm_screen_test.dart' show mount, terminal;
 import 'swarm_state_test.dart' show createApp;
+import 'support/real_fonts.dart';
+
+Future<void> seedPreviews(AppNotifier app) async {
+  final machine = app.machineStates['m']!;
+  machine.nodeOnline = true;
+  machine.connectionStatus = ConnectionStatus.connected;
+  machine.agents = [
+    for (final (id, name, engine) in [
+      ('a0', 'Checkout retries', 'codex'),
+      ('a1', 'Search experience', 'claude'),
+      ('a2', 'Workspace sync', 'codex'),
+    ])
+      Agent(
+        id: id,
+        sessionId: 'session-$id',
+        name: name,
+        engine: engine,
+        terminalAvailable: true,
+        project: AgentProject(
+          name: id == 'a0' ? 'storefront' : 'workbench',
+          cwd: '/work/${id == 'a0' ? 'storefront' : 'workbench'}',
+          branch: 'feat/${id == 'a0' ? 'safe-retries' : 'search'}',
+        ),
+      ),
+  ];
+  Future<void> event(String id, String type, Map<String, dynamic> payload) =>
+      app.handleEventForTest('m', {
+        'type': type,
+        'payload': {'agentId': id, 'sessionId': 'session-$id', ...payload},
+      });
+  await event('a0', 'turn_started', {
+    'userMessage':
+        'Prevent duplicate charges when a checkout request is retried.',
+  });
+  await event('a0', 'text_delta', {
+    'content': 'Payment retries now reuse the same idempotency key.\n\n**Verified**\n- A timed-out checkout can be retried safely.\n- The original receipt is preserved.\n- All 24 payment tests pass.',
+  });
+  await event('a0', 'turn_ended', {});
+  await event('a1', 'turn_started', {
+    'userMessage': 'Show the current task and latest result when selecting a workspace. Keep keyboard navigation fast.',
+  });
+  await event('a1', 'text_delta', {
+    'content': 'The cached preview is connected. I’m checking keyboard focus and resizing at narrow window widths.',
+  });
+  await event('a1', 'tool_start', {'tool': 'Read'});
+  await event('a2', 'turn_started', {
+    'userMessage': 'Keep shared workspaces in sync across both machines.',
+  });
+  await event('a2', 'commander_question', {
+    'requestId': 'q',
+    'questions': [
+      {
+        'q': 'Should a workspace reopen its last layout on another machine?',
+        'options': ['Restore the layout', 'Start with one pane'],
+      },
+    ],
+  });
+}
 
 void main() {
-  test('preview joins wrapped prose and omits terminal decorations', () {
-    final terminal = Terminal()..resize(42, 18);
-    terminal.write(
-      '> Simplify setup\r\n\r\n'
-      '  Keep the working folder and agent choice when creation fails.\r\n'
-      '  The retry can then start from the same place.\r\n\r\n'
-      '— Worked for 2m 05s ─────────────────────\r\n'
-      '— Conversation recap ───────────────────\r\n'
-      '  Setup now preserves your choices.\r\n'
-      '> ',
-    );
-    final before = terminal.buffer.getText();
-    expect(
-      SearchOutputPreview.capture(terminal).text,
-      '> Simplify setup\n\n'
-      'Keep the working folder and agent choice when creation fails. '
-      'The retry can then start from the same place.\n\n'
-      'Setup now preserves your choices.',
-    );
-    expect(terminal.buffer.getText(), before);
+  setUpAll(() async {
+    await loadRealFonts();
+    await (FontLoader(
+      'MaterialIcons',
+    )..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'))).load();
+    await (FontLoader('packages/lucide_icons_flutter/Lucide')..addFont(
+          rootBundle.load('packages/lucide_icons_flutter/assets/lucide.ttf'),
+        ))
+        .load();
+    await (FontLoader('packages/lucide_icons_flutter/Lucide300')..addFont(
+          rootBundle.load(
+            'packages/lucide_icons_flutter/assets/build_font/LucideVariable-w300.ttf',
+          ),
+        ))
+        .load();
   });
 
-  test(
-    'preview bounds scrollback, rows and columns without altering Unicode',
-    () {
-      final terminal = Terminal(maxLines: 10000)..resize(300, 120);
-      terminal.write('A short prompt in a tall pane');
-      expect(
-        SearchOutputPreview.capture(terminal).text,
-        'A short prompt in a tall pane',
-      );
-      terminal.write('\r\n');
-      for (var i = 0; i < 500; i++) {
-        terminal.write('Old line $i\r\n');
-      }
-      terminal.write('${'木' * 150}\r\nRecent result 😀\r\n> ');
-      final before = terminal.buffer.getText();
-      final position = (terminal.buffer.cursorX, terminal.buffer.cursorY);
-      final snapshot = SearchOutputPreview.capture(terminal).text;
-      expect(snapshot.split('\n\n').length, lessThanOrEqualTo(3));
-      expect(
-        snapshot.runes.length,
-        lessThanOrEqualTo(SearchOutputPreview.shownCharacters + 1),
-      );
-      expect(snapshot, contains('木' * 96));
-      expect(snapshot, isNot(contains('木' * 97)));
-      expect(snapshot, contains('Recent result 😀'));
-      expect(snapshot, isNot(contains('Old line 0\n')));
-      expect(snapshot, isNot(contains('\uFFFD')));
-      expect(terminal.buffer.getText(), before);
-      expect((terminal.buffer.cursorX, terminal.buffer.cursorY), position);
-      terminal.write('\r\n' * (SearchOutputPreview.scannedLines + 1));
-      expect(SearchOutputPreview.capture(terminal).text, isEmpty);
-      expect(SearchOutputPreview.capture(null).text, isEmpty);
-    },
-  );
-
-  test('preview is always on and cached until selection changes', () {
+  testWidgets('offline previews retain text without claiming to work or wait', (
+    tester,
+  ) async {
     final app = createApp();
-    addTearDown(app.dispose);
-    final output = terminal('a0', []);
-    output.terminal.write('Original context');
-    final pane = app.adoptSessionForTest(output);
-    final search = SwarmSearchController(app, []);
-    addTearDown(search.dispose);
-    search.setQuery('Agent 0');
-    expect(search.previewVisible, isTrue);
-    final first = search.preview;
-    expect(first!.text, contains('Original context'));
-    output.terminal.write('\r\nNew output');
-    for (final query in ['Agent', 'Agent 0', 'Test host Agent 0']) {
-      search.setQuery(query);
-      expect(search.preview, same(first));
-    }
-    search.setQuery('Agent 1');
-    search.setQuery('Agent 0');
-    expect(search.preview!.text, contains('New output'));
-    expect(pane.session, same(output));
-    search.setQuery('Agent 1');
-    expect(search.preview!.text, isEmpty);
-    expect(app.allPanes, [pane]);
-    search.setQuery('>');
-    expect(search.previewVisible, isFalse);
-    expect(search.preview, isNull);
+    await seedPreviews(app);
+    app.adoptSessionForTest(terminal('a69', []));
+    await mount(tester, app);
+    await chord(tester, LogicalKeyboardKey.keyO);
+    final field = find.byKey(const ValueKey('swarm-search-input'));
+    await tester.enterText(field, 'Workspace sync');
+    await tester.pump();
+    expect(find.text('Needs your input'), findsOneWidget);
+    app.machineStates['m']!.connectionStatus = ConnectionStatus.disconnected;
+    app.notifyListeners();
+    await tester.pump();
+    expect(find.text('Offline'), findsOneWidget);
+    expect(find.text('Needs your input'), findsNothing);
+    expect(
+      find.textContaining('Keep shared workspaces in sync'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Saved text'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    app.dispose();
   });
-
   for (final inline in [false, true]) {
     testWidgets(
-      'always-on preview keeps ${inline ? 'New swarm' : 'floating Add'} input and add action',
+      'existing content previews are immediate and preserve search focus (inline=$inline)',
       (tester) async {
         final app = createApp();
-        app.machineStates['m']!.nodeOnline = true;
-        final frames = <TerminalBinaryFrame>[];
-        final output = terminal('a0', frames);
-        output.terminal.write('Checking the build\r\nOne useful clue\r\n');
-        final original = app.adoptSessionForTest(output);
+        await seedPreviews(app);
+        app.adoptSessionForTest(
+          terminal('a69', [])..terminal.write('Raw terminal noise'),
+        );
         app.newSwarm();
-        final target = app.activeSwarm;
         await mount(tester, app);
-        final input = find.byKey(
-          ValueKey(
-            inline ? 'swarm-welcome-search-input' : 'swarm-search-input',
-          ),
+        final field = find.byKey(
+          ValueKey(inline ? 'harness-start-search' : 'swarm-search-input'),
         );
-        if (!inline) {
-          await tester.tap(
-            find.byKey(const ValueKey('swarm-add-agent-button')),
-          );
-          await tester.pump();
+        if (inline) {
+          await tester.tap(field);
+        } else {
+          await chord(tester, LogicalKeyboardKey.keyO);
         }
-        await tester.tap(input);
-        await tester.enterText(input, 'Agent 0');
+        await tester.enterText(field, 'Checkout retries');
         await tester.pump();
         expect(
           find.byKey(const ValueKey('swarm-search-preview')),
           findsOneWidget,
         );
         expect(
-          find.byKey(const ValueKey('swarm-search-preview-toggle')),
-          findsNothing,
-        );
-        final field = tester.widget<TextField>(input);
-        await chord(tester, LogicalKeyboardKey.keyI);
-        await tester.pump();
-        expect(
-          find.byKey(const ValueKey('swarm-search-preview')),
+          find.textContaining('Payment retries now reuse'),
           findsOneWidget,
         );
-        expect(find.textContaining('One useful clue'), findsOneWidget);
-        expect(field.controller!.text, 'Agent 0');
-        expect(field.focusNode!.hasFocus, isTrue);
-        expect(app.activeSwarm, same(target));
-        expect(frames, isEmpty);
+        expect(find.text('Latest response'), findsOneWidget);
+        expect(find.textContaining('Raw terminal noise'), findsNothing);
+        final editor = tester.widget<EditableText>(
+          find.descendant(of: field, matching: find.byType(EditableText)),
+        );
+        expect(editor.focusNode.hasFocus, isTrue);
+        final list = tester.getRect(
+          find.byKey(const ValueKey('swarm-search-result-list')),
+        );
+        final preview = tester.getRect(
+          find.byKey(const ValueKey('swarm-search-preview')),
+        );
+        expect(preview.left, greaterThanOrEqualTo(list.right));
+
+        await tester.enterText(field, 'Search experience');
+        await tester.pump();
+        expect(find.text('Current request'), findsOneWidget);
+        expect(
+          find.textContaining('The cached preview is connected'),
+          findsOneWidget,
+        );
+        expect(find.textContaining('Payment retries now reuse'), findsNothing);
+        expect(editor.focusNode.hasFocus, isTrue);
+        await app.handleEventForTest('m', {
+          'type': 'text_delta',
+          'payload': {
+            'agentId': 'a1',
+            'sessionId': 'session-a1',
+            'content': 'The current selection updates immediately.',
+          },
+        });
+        await tester.pump(const Duration(milliseconds: 80));
+        expect(
+          find.text('The current selection updates immediately.'),
+          findsOneWidget,
+        );
+        expect(editor.focusNode.hasFocus, isTrue);
+
+        await tester.enterText(field, 'Test host');
+        await tester.pump();
+        final search = tester
+            .widget<SwarmSearchResults>(find.byType(SwarmSearchResults))
+            .search;
+        expect(search.selected!.agentId, isNull);
+        final waiting = tester.getTopLeft(find.text('Workspace sync').last);
+        final working = tester.getTopLeft(find.text('Search experience').last);
+        expect(waiting.dy, lessThan(working.dy));
+        expect(
+          find.text(
+            'Should a workspace reopen its last layout on another machine?',
+          ),
+          findsOneWidget,
+        );
+
+        await tester.enterText(field, 'Checkout retries');
+        await tester.pump();
         await tester.sendKeyEvent(LogicalKeyboardKey.enter);
         await tester.pump();
-        expect(app.focusedPaneId, original.id);
-        expect(app.panes.single.session, same(output));
-        expect(frames, isEmpty);
-        await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
-        await tester.pump(const Duration(milliseconds: 10));
-        expect(frames.single.bytes, [27, 91, 68]);
-        expect(tester.takeException(), isNull);
+        expect(app.panes.any((pane) => pane.agentId == 'a0'), isTrue);
+        expect(
+          find.byKey(const ValueKey('swarm-search-preview')),
+          findsNothing,
+        );
         await tester.pumpWidget(const SizedBox());
         app.dispose();
       },
     );
+  }
+
+  testWidgets(
+    'existing earlier explanations stay visible after a commit receipt',
+    (tester) async {
+      final app = createApp();
+      await seedPreviews(app);
+      final agent = app.machineStates['m']!.agents.first;
+      final record = app.sessionPreviews.read(app.previewKey('m', agent))!;
+      record.completedText =
+          'I’ll commit the checkout changes.\n\nCommitted and pushed.';
+      record.earlierResponses.add(
+        'Retrying a checkout now reuses the original payment and receipt.',
+      );
+      app.adoptSessionForTest(terminal('a69', []));
+      await mount(tester, app);
+      await chord(tester, LogicalKeyboardKey.keyO);
+      await tester.enterText(
+        find.byKey(const ValueKey('swarm-search-input')),
+        'Checkout',
+      );
+      await tester.pump();
+      final explanation = find.text(
+        'Retrying a checkout now reuses the original payment and receipt.',
+      );
+      expect(explanation, findsOneWidget);
+      expect(find.text('Earlier in this session'), findsOneWidget);
+      final preview = tester.getRect(
+        find.byKey(const ValueKey('swarm-search-preview')),
+      );
+      expect(tester.getRect(explanation).bottom, lessThan(preview.bottom));
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+    },
+  );
+
+  for (final size in [
+    const Size(1280, 800),
+    const Size(760, 650),
+    const Size(400, 600),
+  ]) {
+    testWidgets('preview remains readable and scrollable at $size', (
+      tester,
+    ) async {
+      final app = createApp();
+      await seedPreviews(app);
+      app.adoptSessionForTest(terminal('a69', []));
+      await mount(tester, app);
+      tester.view.physicalSize = size;
+      await tester.pump();
+      await chord(tester, LogicalKeyboardKey.keyO);
+      await tester.enterText(
+        find.byKey(const ValueKey('swarm-search-input')),
+        'Checkout',
+      );
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(tester.takeException(), isNull);
+      final preview = tester.getRect(
+        find.byKey(const ValueKey('swarm-search-preview')),
+      );
+      final list = tester.getRect(
+        find.byKey(const ValueKey('swarm-search-result-list')),
+      );
+      if (size.width < 864) {
+        expect(preview.top, greaterThanOrEqualTo(list.bottom));
+      }
+      final directory = Platform.environment['HARNESS_PREVIEW_CAPTURE_DIR'];
+      if (directory != null) {
+        final renderView = tester.binding.renderViews.first;
+        final layer = renderView.debugLayer! as OffsetLayer;
+        await tester.runAsync(() async {
+          final image = await layer.toImage(Offset.zero & size);
+          final data = await image.toByteData(format: ui.ImageByteFormat.png);
+          await Directory(directory).create(recursive: true);
+          await File('$directory/preview-${size.width.toInt()}.png')
+              .writeAsBytes(data!.buffer.asUint8List());
+          image.dispose();
+        });
+      }
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+    });
   }
 }

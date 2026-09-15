@@ -5,7 +5,7 @@ tag: `.github/workflows/release.yml` bundles the CLI, publishes it to that bucke
 Release. **The tag IS the version — CI never bumps.**
 
 Tags are `vX.Y.Z_cli`, not plain `vX.Y.Z`: the backend now lives in this same repo under `backend/`
-and releases as `vX.Y.Z_api` (see `../backend/README.md`), so the suffix is what tells each tag-push
+and releases as `vX.Y.Z_backend` (see `../backend/README.md`), so the suffix is what tells each tag-push
 trigger which workflow to run. It's stripped before anything treats it as a version — the published
 version everywhere below (manifest, release title, `ADAPTER_VERSION`) is always a bare `X.Y.Z`.
 
@@ -59,6 +59,22 @@ the tag back in line.
    `metadata.json` in a single write, touching only the `cli` key.
 
 A failed build stops the release; nothing is uploaded and no version is consumed.
+
+## The `curl | bash` installer
+
+`cli/scripts/install.sh` is what `curl -fsSL https://cdn.autonomous.ai/harness/cli/install.sh | bash`
+runs: it installs the managed Node runtime and the CLI bundle from the same manifests the release
+publishes to. It is a static file, versioned by nothing, and does **not** ship with a release — publish
+it on its own whenever it changes:
+
+```bash
+make upload-cli-install-sh          # cli/scripts/install.sh -> harness/cli/install.sh in the bucket
+curl -fsSL https://cdn.autonomous.ai/harness/cli/install.sh | head -5   # confirm the CDN edge moved
+```
+
+Its command contract (flags, exit codes, what it refuses) is pinned by `cli/src/scripts/install.spec.ts`,
+which runs with the rest of `make cli-test`. Not to be confused with `cli/scripts/install-cli.sh`, the
+local dev loop below.
 
 ## Local install (no upload)
 

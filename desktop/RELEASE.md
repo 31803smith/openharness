@@ -6,7 +6,7 @@ Apple Silicon on Impeller — see "Two macOS builds" below) and both Linux archi
 to that bucket, and cuts the GitHub Release. **The tag IS the version — CI never bumps.**
 
 Tags are `vX.Y.Z_desktop`, not plain `vX.Y.Z`: the CLI (`cli/`, tags `vX.Y.Z_cli`) and the backend
-(`backend/`, tags `vX.Y.Z_api`) release from this same repo, so the suffix is what tells each
+(`backend/`, tags `vX.Y.Z_backend`) release from this same repo, so the suffix is what tells each
 tag-push trigger which workflow to run. It is stripped before anything treats it as a version — the
 manifest, `--build-name`, the release title and the updater's comparison all see a bare `X.Y.Z`.
 
@@ -58,7 +58,7 @@ Until that managed manifest covers a platform, the desktop build falls back to i
 official Node 22 archive for it. The fallback keeps first-run setup functional but is intentionally
 not a replacement for publishing the managed runtime channel before release.
 
-Homebrew and `apt` are still used for **tmux**, which is a separate step and unrelated to Node.
+Homebrew and `apt` are still used for **tmux**, which is a separate step and unrelated to Node — and only when tmux is missing; a computer that already runs it is never asked about either.
 
 ## Two macOS builds — Intel on Skia, Apple Silicon on Impeller
 

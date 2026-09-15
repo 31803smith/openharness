@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/shortcuts/keymap.dart';
 
-const commands = {'navigation.quick_open', 'pane.focus_left', 'picker.next'};
+const commands = {'swarm.new', 'pane.focus_left', 'picker.next'};
 KeyBinding bind(
   String keys,
   String? command, [
@@ -18,9 +18,10 @@ KeymapMatch match(
 ]) => map.match(context, keys.split(' ').map(KeyStroke.parse));
 
 void main() {
-  test('a retired preview binding does not break other custom shortcuts', () {
+  test('retired Navigate and preview bindings preserve other shortcuts', () {
     final config = KeymapConfig.parse('''{"bindings":[
       {"keys":"cmd+i","command":"picker.preview","when":"picker"},
+      {"keys":"cmd+o","command":"navigation.quick_open"},
       {"keys":"cmd+ctrl+h","command":"pane.focus_left"}
     ]}''', commands: commands);
     expect(config.bindings.single.command, 'pane.focus_left');
@@ -49,7 +50,7 @@ void main() {
   test('string escapes and comment-like strings retain their exact value', () {
     const command = 'url://a"/*b*/';
     final config = KeymapConfig.parse(
-      r'{"bindings":[{"keys":"cmd+p","command":"url://a\"/*b*/"}]}',
+      r'{"bindings":[{"keys":"cmd+t","command":"url://a\"/*b*/"}]}',
       commands: {command},
     );
     expect(config.bindings.single.command, command);
@@ -59,14 +60,14 @@ void main() {
     for (final source in [
       '{"version":2}',
       '{"binding":[]}',
-      '{"bindings":[{"keys":"cmd+p","command":"unknown"}]}',
-      '{"bindings":[{"keys":"cmd+p"}]}',
-      '{"bindings":[{"keys":"cmd+p","command":null,"when":"typo"}]}',
-      '{"bindings":[{"keys":"cmd+cmd+p","command":null}]}',
+      '{"bindings":[{"keys":"cmd+t","command":"unknown"}]}',
+      '{"bindings":[{"keys":"cmd+t"}]}',
+      '{"bindings":[{"keys":"cmd+t","command":null,"when":"typo"}]}',
+      '{"bindings":[{"keys":"cmd+cmd+t","command":null}]}',
       '{"bindings":[{"keys":"cmd","command":null}]}',
       '{"bindings":[{"keys":"made-up","command":null}]}',
       '{"bindings":[{"keys":"a b c d e","command":null}]}',
-      '{"bindings":[{"keys":"cmd+p","command":null},{"keys":"super+p","command":null}]}',
+      '{"bindings":[{"keys":"cmd+t","command":null},{"keys":"super+t","command":null}]}',
       '{"bindings":[,]}',
       '{,}',
       '/* unfinished',
@@ -91,46 +92,40 @@ void main() {
 
   test('terminal overrides do not change workspace or modal picker keys', () {
     final map = ResolvedKeymap([
-      bind('cmd+p', 'navigation.quick_open'),
+      bind('cmd+t', 'swarm.new'),
       bind('ctrl+n', 'picker.next', KeymapContext.picker),
-    ], KeymapConfig([bind('cmd+p', null, KeymapContext.terminal)]));
-    expect(match(map, 'cmd+p').matched, false);
-    expect(
-      match(map, 'cmd+p', KeymapContext.workspace).command,
-      'navigation.quick_open',
-    );
-    expect(
-      match(map, 'cmd+p', KeymapContext.picker).command,
-      'navigation.quick_open',
-    );
+    ], KeymapConfig([bind('cmd+t', null, KeymapContext.terminal)]));
+    expect(match(map, 'cmd+t').matched, false);
+    expect(match(map, 'cmd+t', KeymapContext.workspace).command, 'swarm.new');
+    expect(match(map, 'cmd+t', KeymapContext.picker).command, 'swarm.new');
     expect(match(map, 'ctrl+n', KeymapContext.picker).command, 'picker.next');
     expect(match(map, 'ctrl+n', KeymapContext.terminal).matched, false);
   });
 
   test('explicit workspace overrides also replace terminal defaults', () {
     final map = ResolvedKeymap([
-      bind('cmd+p', 'navigation.quick_open'),
-      bind('cmd+p', 'pane.focus_left', KeymapContext.terminal),
-    ], KeymapConfig([bind('cmd+p', null)]));
-    expect(match(map, 'cmd+p').matched, false);
+      bind('cmd+t', 'swarm.new'),
+      bind('cmd+t', 'pane.focus_left', KeymapContext.terminal),
+    ], KeymapConfig([bind('cmd+t', null)]));
+    expect(match(map, 'cmd+t').matched, false);
   });
 
   test('sequences need explicit removal of an ambiguous shorter binding', () {
-    final defaults = [bind('cmd+p', 'navigation.quick_open')];
-    final sequence = bind('cmd+p h', 'pane.focus_left');
+    final defaults = [bind('cmd+t', 'swarm.new')];
+    final sequence = bind('cmd+t h', 'pane.focus_left');
     expect(
       () => ResolvedKeymap(defaults, KeymapConfig([sequence])),
       throwsFormatException,
     );
     final map = ResolvedKeymap(
       defaults,
-      KeymapConfig([bind('cmd+p', null), sequence]),
+      KeymapConfig([bind('cmd+t', null), sequence]),
     );
-    expect(match(map, 'cmd+p').prefix, true);
-    expect(match(map, 'cmd+p').command, null);
-    expect(match(map, 'cmd+p h').command, 'pane.focus_left');
-    expect(match(map, 'cmd+p l').matched, false);
-    expect(match(map, 'cmd+p h j').matched, false);
+    expect(match(map, 'cmd+t').prefix, true);
+    expect(match(map, 'cmd+t').command, null);
+    expect(match(map, 'cmd+t h').command, 'pane.focus_left');
+    expect(match(map, 'cmd+t l').matched, false);
+    expect(match(map, 'cmd+t h j').matched, false);
   });
 
   test(
@@ -138,15 +133,15 @@ void main() {
     () {
       expect(
         () => ResolvedKeymap([
-          bind('cmd+p h', 'pane.focus_left'),
-          bind('cmd+p', 'navigation.quick_open'),
+          bind('cmd+t h', 'pane.focus_left'),
+          bind('cmd+t', 'swarm.new'),
         ], const KeymapConfig.empty()),
         throwsFormatException,
       );
       expect(
         () => ResolvedKeymap([
-          bind('cmd+p h', 'pane.focus_left', KeymapContext.terminal),
-        ], KeymapConfig([bind('cmd+p', 'navigation.quick_open')])),
+          bind('cmd+t h', 'pane.focus_left', KeymapContext.terminal),
+        ], KeymapConfig([bind('cmd+t', 'swarm.new')])),
         throwsFormatException,
       );
     },
@@ -154,11 +149,11 @@ void main() {
 
   test('unbinding a prefix releases its entire inherited sequence tree', () {
     final map = ResolvedKeymap([
-      bind('cmd+p h', 'pane.focus_left'),
-      bind('cmd+p p', 'navigation.quick_open'),
-    ], KeymapConfig([bind('cmd+p', null)]));
-    expect(match(map, 'cmd+p').matched, false);
-    expect(match(map, 'cmd+p h').matched, false);
+      bind('cmd+t h', 'pane.focus_left'),
+      bind('cmd+t p', 'swarm.new'),
+    ], KeymapConfig([bind('cmd+t', null)]));
+    expect(match(map, 'cmd+t').matched, false);
+    expect(match(map, 'cmd+t h').matched, false);
   });
 
   test(
@@ -173,7 +168,7 @@ void main() {
       );
       expect(
         () => KeymapConfig.parse(
-          '{"bindings":[{"keys":"cmd+p","command":null,"scope":"terminal"}]}',
+          '{"bindings":[{"keys":"cmd+t","command":null,"scope":"terminal"}]}',
           commands: commands,
         ),
         throwsFormatException,

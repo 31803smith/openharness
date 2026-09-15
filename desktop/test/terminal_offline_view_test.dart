@@ -50,7 +50,7 @@ void main() {
       expect(
         tester
             .widget<TerminalFindBar>(find.byType(TerminalFindBar))
-            .search
+            .search!
             .count,
         180,
       );

@@ -237,6 +237,53 @@ describe('CommanderMirror recap events', () => {
     expect(webFrames.map((f) => f.type)).toEqual(['turn_summary_pending', 'turn_summary'])
   })
 
+  it('with alwaysGenerate, persists a recap headless but streams NO cards to the absent device', async () => {
+    const deviceFrames: CommanderFrame[] = []
+    let summarizeCalls = 0
+    const mirror = new CommanderMirror({
+      send: (frame) => deviceFrames.push(frame),
+      sendWeb: () => {},
+      hasDevice: () => false,           // no device connected
+      alwaysGenerate: true,             // ...but generate + persist anyway
+      summarize: async () => { summarizeCalls++; return 'Scanned the LAN\n\nFound .143 root-equivalent.' },
+      dataDir,
+    })
+
+    mirror.ingest([
+      { type: 'turn_started', payload: { userMessage: 'scan the network' } },
+      { type: 'text_delta', payload: { content: 'Found .143 — orangepi/orangepi, passwordless sudo.' } },
+      { type: 'turn_ended', payload: {} },
+    ] as LiveEvent[], 'session-headless')
+
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+
+    // Generated + persisted → a programmatic client (agent.recent) sees it.
+    expect(summarizeCalls).toBe(1)
+    expect(mirror.recent('session-headless', 1)[0].recap).toBe('Scanned the LAN')
+    // But emit() stays device-gated: nothing rode the wire to a device that is not there.
+    expect(deviceFrames).toHaveLength(0)
+  })
+
+  it('without alwaysGenerate and no device, generates nothing (the original gate)', async () => {
+    let summarizeCalls = 0
+    const mirror = new CommanderMirror({
+      send: () => {}, sendWeb: () => {},
+      hasDevice: () => false,
+      summarize: async () => { summarizeCalls++; return 'x\n\ny' },
+      dataDir,
+    })
+    mirror.ingest([
+      { type: 'turn_started', payload: { userMessage: 'q' } },
+      { type: 'text_delta', payload: { content: 'a' } },
+      { type: 'turn_ended', payload: {} },
+    ] as LiveEvent[], 'session-off')
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    expect(summarizeCalls).toBe(0)
+    expect(mirror.recent('session-off', 1)).toHaveLength(0)
+  })
+
   it('runs the recap once when a turn closes twice (Stop hook + watcher race)', async () => {
     const deviceFrames: CommanderFrame[] = []
     let summarizeCalls = 0
@@ -261,6 +308,40 @@ describe('CommanderMirror recap events', () => {
 
     expect(summarizeCalls).toBe(1)
     expect(deviceFrames.filter((f) => f.payload.kind === 'summary')).toHaveLength(1)
+  })
+
+  it('hands the summariser the previous turn\'s recap, and nothing on the first turn', async () => {
+    // recap = llm(instruct, previous_recap, ask, answer). The previous recap is read from the store
+    // BEFORE this turn's lands there — otherwise "previous" is the turn being summarised.
+    const previous: Array<string | undefined> = []
+    let turn = 0
+    const mirror = new CommanderMirror({
+      send: () => {},
+      sendWeb: () => {},
+      hasDevice: () => true,
+      summarize: async (_text, _signal, _ask, _sessionId, previousRecap) => {
+        previous.push(previousRecap)
+        turn++
+        return `Recap ${turn}\n\nBody ${turn}`
+      },
+      dataDir,
+    })
+
+    const oneTurn = (ask: string, answer: string) => mirror.ingest([
+      { type: 'turn_started', payload: { userMessage: ask } },
+      { type: 'text_delta', payload: { content: answer } },
+      { type: 'turn_ended', payload: {} },
+    ] as LiveEvent[], 'session-prev')
+
+    oneTurn('fix the retry path', 'Fixed the retry path in client.ts.')
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    oneTurn('same fix in the other file', 'Done, applied the same change to server.ts.')
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+
+    expect(previous).toEqual([undefined, 'Recap 1\n\nBody 1'])
+    expect(mirror.recent('session-prev', 3).map((r) => r.recap)).toEqual(['Recap 2', 'Recap 1'])
   })
 
   it('renders normalized Codex Task and child tools through the same device cards as Claude', () => {

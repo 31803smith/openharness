@@ -50,7 +50,7 @@ void main() {
 
     await pumpDeck(tester, 900);
 
-    final navigate = tester.getTopLeft(find.text('NAVIGATE'));
+    final navigate = tester.getTopLeft(find.text('WORKSPACE'));
     final panes = tester.getTopLeft(find.text('PANES'));
     expect(panes.dx, greaterThan(navigate.dx), reason: 'a second lane');
     expect(panes.dy, navigate.dy, reason: 'and level with the first');
@@ -65,7 +65,7 @@ void main() {
 
     await pumpDeck(tester, 320);
 
-    final navigate = tester.getTopLeft(find.text('NAVIGATE'));
+    final navigate = tester.getTopLeft(find.text('WORKSPACE'));
     final panes = tester.getTopLeft(find.text('PANES'));
     expect(panes.dx, navigate.dx);
     expect(panes.dy, greaterThan(navigate.dy));

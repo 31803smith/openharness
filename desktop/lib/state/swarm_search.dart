@@ -1,12 +1,17 @@
 import 'package:flutter/foundation.dart';
-import 'package:xterm/xterm.dart';
-
-import '../terminal/search_output_preview.dart';
 
 import 'app_state.dart';
 import 'pane_arrangement.dart';
 import 'swarm_catalog.dart';
 import 'swarm_navigation.dart';
+
+/// Search text and selection retained while the start-page picker is dismissed.
+/// Membership and availability are revalidated against a fresh catalog on return.
+class SwarmSearchDraft {
+  const SwarmSearchDraft._(this.targetId, this.query, this.selectedId);
+  final String targetId, query;
+  final String? selectedId;
+}
 
 /// One search session, shared by the native/Flutter input and its results.
 /// Keystrokes only filter the cached catalog; they never query a machine.
@@ -19,6 +24,7 @@ class SwarmSearchController extends ChangeNotifier {
     this.commands,
     this.adding = false,
     this.navigating = false,
+    this.commandsOnly = false,
     this.split,
     SwarmSearchCatalog? catalog,
     SwarmLocationCatalog? locations,
@@ -41,30 +47,35 @@ class SwarmSearchController extends ChangeNotifier {
   final List<SwarmDestination> Function()? commands;
   final bool adding;
   final bool navigating;
+  final bool commandsOnly;
   final PaneSplitRequest? split;
   bool get allowsCommands => split == null && history == null;
-  bool get isCommandMode => allowsCommands && query.trimLeft().startsWith('>');
+  bool get isCommandMode =>
+      allowsCommands && (commandsOnly || query.trimLeft().startsWith('>'));
   final String targetId, targetName;
   // The workspace can retain normalized metadata across picker openings. Each
   // read still validates its snapshot; query, selection and output stay local.
   final SwarmSearchCatalog _cache;
   final SwarmLocationCatalog _locations;
   List<SwarmDestination> _catalog = const [];
-  Set<String> _catalogIds = const {};
   Set<String> _commandIds = const {};
   List<SwarmDestination> rows = const [];
   String query = '';
   String? _selectedId;
   int cursor = 0;
-  SearchOutputPreview? preview;
-  String? _previewId;
   bool? _splitCurrent;
   Set<String> _presentIds = const {};
-  final _checked = <String, SwarmDestination>{};
-  List<SwarmDestination> get checked => List.unmodifiable(_checked.values);
-  int get checkedCount => _checked.length;
-  bool get multiSelect => adding && split == null && !isCommandMode;
-  bool get hasSelection => multiSelect && _checked.isNotEmpty;
+  SwarmSearchDraft get draft =>
+      SwarmSearchDraft._(targetId, query, selected?.id);
+
+  void restoreDraft(SwarmSearchDraft draft) {
+    if (!adding || draft.targetId != targetId) return;
+    query = draft.query;
+    _selectedId = draft.selectedId;
+    cursor = 0;
+    _filter();
+    notifyListeners();
+  }
 
   int get capacity {
     final target = app.swarms
@@ -73,112 +84,14 @@ class SwarmSearchController extends ChangeNotifier {
     return target == null ? 0 : AppNotifier.maxPanes - target.panes.length;
   }
 
-  bool isChecked(SwarmDestination row) {
-    final ids = _missingIds(row);
-    return ids.isNotEmpty && ids.every(_checked.containsKey);
-  }
-
-  bool canToggle(SwarmDestination row) =>
-      multiSelect &&
-      !row.isCommand &&
-      (isChecked(row) ||
-          (canAdd(row) &&
-              _checked.length +
-                      _missingIds(row)
-                          .where((id) => !_checked.containsKey(id))
-                          .length <=
-                  capacity));
-
-  void toggle([SwarmDestination? row]) {
-    row ??= selected;
-    if (row == null || !canToggle(row)) return;
-    final ids = _missingIds(row);
-    if (isChecked(row)) {
-      _checked.removeWhere((id, _) => ids.contains(id));
-    } else {
-      for (final entry in _catalog) {
-        if (entry.agentId != null && ids.contains(entry.id)) {
-          _checked[entry.id] = entry;
-        }
-      }
-    }
-    notifyListeners();
-  }
-
-  void removeChecked(String id) {
-    if (_checked.remove(id) != null) notifyListeners();
-  }
-
-  void clearChecked() {
-    if (_checked.isEmpty) return;
-    _checked.clear();
-    notifyListeners();
-  }
-
-  bool get canSubmitSelection =>
-      hasSelection &&
-      _checked.length <= capacity &&
-      _checked.values.every((row) => canAdd(row)) &&
-      _checked.keys.every(_catalogIds.contains);
-  bool get canAccept => hasSelection ? canSubmitSelection : canSubmit(selected);
-
-  bool get canPreview =>
-      !navigating &&
-      !isCommandMode &&
-      history == null &&
-      selected != null &&
-      selected?.closedId == null;
-  bool get previewVisible => canPreview;
-
-  List<SwarmDestination> get previewMembers {
-    final row = selected;
-    if (row == null || row.agentId != null) return const [];
-    final memberIds = row.isGroup
-        ? row.members
-        : {
-            for (final swarm in app.swarms.where(
-              (swarm) => swarm.id == row.swarmId,
-            ))
-              for (final pane in swarm.panes)
-                if (pane.agentId != null)
-                  agentDestinationId(pane.machineId, pane.agentId!),
-          };
-    return _catalog.where((entry) => memberIds.contains(entry.id)).toList();
-  }
-
-  void _updatePreview() {
-    if (!previewVisible || selected?.agentId == null) {
-      preview = null;
-      _previewId = null;
-      return;
-    }
-    final row = selected!;
-    // Keep a snapshot while this selection stays put. Query edits and output
-    // traffic do not read the buffers again. Choosing another result
-    // captures fresh context, including any replacement session.
-    if (_previewId == row.id) return;
-    final terminal = app.allPanes
-        .where(
-          (pane) =>
-              pane.machineId == row.machineId && pane.agentId == row.agentId,
-        )
-        .map((pane) => pane.session?.terminal)
-        .whereType<Terminal>()
-        .firstOrNull;
-    _previewId = row.id;
-    preview = SearchOutputPreview.capture(terminal);
-  }
+  bool get canAccept => canSubmit(selected);
 
   SwarmDestination? get selected => rows.isEmpty ? null : rows[cursor];
   String get hint => isCommandMode
       ? 'Search commands…'
       : history != null
       ? 'Search history…'
-      : adding
-      ? 'Search agents to add…'
-      : navigating
-      ? 'Find an agent or swarm…'
-      : 'Search agents, swarms, machines, projects…';
+      : 'Find a harness';
 
   bool get canCreate =>
       history == null &&
@@ -188,22 +101,23 @@ class SwarmSearchController extends ChangeNotifier {
       ) &&
       (split == null || app.isPaneSplitCurrent(split!));
 
+  String get commandQuery =>
+      query.trimLeft().replaceFirst(RegExp(r'^>\s*'), '');
+
   String get primaryAction => switch (split?.axis) {
     PaneResizeAxis.x => 'Split right',
     PaneResizeAxis.y => 'Split down',
-    null => 'Add to this swarm',
+    null => 'Open Harness',
   };
 
   String actionLabel(SwarmDestination? row) => row?.isCommand == true
       ? action(row!)
-      : hasSelection
-      ? 'Add $checkedCount ${checkedCount == 1 ? 'agent' : 'agents'}'
       : adding
       ? row != null &&
                 row.agentId == null &&
                 split == null &&
                 _missingIds(row).length > 1
-            ? 'Add ${_missingIds(row).length} agents'
+            ? 'Open ${_missingIds(row).length} Harnesses'
             : primaryAction
       : row == null
       ? 'Go to'
@@ -211,14 +125,10 @@ class SwarmSearchController extends ChangeNotifier {
 
   String get unavailableMessage =>
       split != null && !app.isPaneSplitCurrent(split!)
-      ? 'The layout changed. Split the agent again.'
-      : hasSelection && checkedCount > capacity
-      ? 'This swarm has room for $capacity more agents.'
-      : hasSelection && !canSubmitSelection
-      ? 'A selected agent is unavailable. Remove it or search again.'
+      ? 'The layout changed. Split the pane again.'
       : selected != null && alreadyHere(selected!)
-      ? 'This agent is already in this swarm.'
-      : 'This swarm has no room for another agent.';
+      ? 'This harness is already open here.'
+      : 'No room for another harness.';
 
   void _refresh() {
     final next = navigating
@@ -233,7 +143,6 @@ class SwarmSearchController extends ChangeNotifier {
       return;
     }
     _catalog = next;
-    _catalogIds = {for (final row in next) row.id};
     _splitCurrent = splitCurrent;
     _presentIds = {
       for (final swarm in app.swarms.where((s) => s.id == targetId))
@@ -241,7 +150,6 @@ class SwarmSearchController extends ChangeNotifier {
           if (pane.agentId != null)
             agentDestinationId(pane.machineId, pane.agentId!),
     };
-    _checked.removeWhere((id, _) => _presentIds.contains(id));
     _filter();
     notifyListeners();
   }
@@ -258,10 +166,7 @@ class SwarmSearchController extends ChangeNotifier {
         : const <SwarmDestination>[];
     _commandIds = {for (final command in availableCommands) command.id};
     rows = isCommandMode
-        ? rankSwarmDestinations(
-            availableCommands,
-            query.trimLeft().substring(1).trimLeft(),
-          )
+        ? rankSwarmDestinations(availableCommands, commandQuery)
         : navigating
         ? rankSwarmLocations(_catalog, query, recent: recent)
         : rankSwarmDestinations(
@@ -292,7 +197,6 @@ class SwarmSearchController extends ChangeNotifier {
         ? index
         : cursor.clamp(0, rows.length - 1);
     _selectedId = selected?.id;
-    _updatePreview();
   }
 
   void setQuery(String value) {
@@ -308,14 +212,10 @@ class SwarmSearchController extends ChangeNotifier {
     if (rows.isEmpty) return;
     cursor = (cursor + delta) % rows.length;
     _selectedId = selected!.id;
-    _updatePreview();
     notifyListeners();
   }
 
   SwarmSearchSelection? submit([SwarmDestination? row]) {
-    if (row == null && hasSelection) {
-      return canSubmitSelection ? SwarmSearchSelection.multiple(checked) : null;
-    }
     final destination = row ?? selected;
     if (destination == null || !canSubmit(destination)) return null;
     if (destination.isCommand &&
@@ -376,9 +276,7 @@ class SwarmSearchController extends ChangeNotifier {
       ? 'Run command'
       : row.closedId != null
       ? 'Reopen'
-      : row.isGroup || row.isSwarm
-      ? 'Go to swarm'
-      : 'Go to agent';
+      : 'Open Harness';
 
   @override
   void dispose() {

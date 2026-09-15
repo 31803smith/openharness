@@ -31,6 +31,7 @@ class SwarmNavigationHistory {
   List<String> get recentLocations => List.unmodifiable(_recentLocations);
 
   void record(AppNotifier app) {
+    if (app.isDraftSwarm(app.activeSwarmId)) return;
     final location = (app.activeSwarmId, app.focusedPaneId);
     if (_location == location) return;
     if (!_traversing) {
@@ -110,7 +111,13 @@ class SwarmNavigationHistory {
         swarm.id,
         swarm.name,
         for (final pane in swarm.panes)
-          (pane.id, pane.machineId, pane.agentId, pane.session?.agentName),
+          (
+            pane.id,
+            pane.machineId,
+            pane.agentId,
+            pane.session?.agentName,
+            pane.session?.engineId,
+          ),
       ],
       for (final machine in app.machineStates.values)
         (
@@ -145,6 +152,7 @@ class SwarmDestination {
     required this.id,
     required this.title,
     required this.detail,
+    this.detailBranchOffset,
     required this.swarmId,
     required this.current,
     this.machineId,
@@ -165,6 +173,9 @@ class SwarmDestination {
        ];
 
   final String id, title, detail, machineLabel;
+
+  /// The branch's start in the readable metadata, for its decorative glyph.
+  final int? detailBranchOffset;
   final String? swarmId, machineId, agentId, engine;
   final String? closedId;
   final String? commandId, shortcut;
@@ -185,6 +196,26 @@ class SwarmDestination {
 }
 
 enum SwarmSearchAction { open, addHere }
+
+({String text, int? branchOffset}) _harnessDetail(
+  AgentProject? project,
+  String machine,
+  bool offline,
+) {
+  final name = project?.name;
+  final branch = project?.branch;
+  return (
+    text: [
+      name,
+      branch,
+      machine,
+      if (offline) 'Offline',
+    ].whereType<String>().where((part) => part.isNotEmpty).join(' · '),
+    branchOffset: branch?.isNotEmpty == true
+        ? (name?.isNotEmpty == true ? name!.length + 3 : 0)
+        : null,
+  );
+}
 
 class SwarmSearchSelection {
   const SwarmSearchSelection(
@@ -383,16 +414,16 @@ class SwarmLocationCatalog {
     final project = agent == null ? null : machine?.projectOf(agent);
     final machineLabel = machine?.machine.displayName ?? pane.machineId;
     final engine = agent?.engine ?? pane.session?.engineId;
-    final detail = [
+    final detail = _harnessDetail(
+      project,
       machineLabel,
-      project?.name,
-      project?.branch,
-      if (machine?.nodeOnline == false) 'Offline',
-    ].whereType<String>().where((s) => s.isNotEmpty).toSet().join(' · ');
+      machine?.nodeOnline == false,
+    );
     return SwarmDestination(
       id: agentLocationId(swarm.id, pane.id),
       title: agent?.name ?? pane.session?.agentName ?? pane.agentId!,
-      detail: detail,
+      detail: detail.text,
+      detailBranchOffset: detail.branchOffset,
       swarmId: swarm.id,
       swarmName: swarm.name,
       paneId: pane.id,
@@ -401,7 +432,7 @@ class SwarmLocationCatalog {
       agentId: pane.agentId,
       engine: engine,
       current: swarm.id == app.activeSwarmId && pane.id == app.focusedPaneId,
-      searchFields: [detail, project?.cwd, engine, swarm.name],
+      searchFields: [detail.text, project?.cwd, engine, swarm.name],
     );
   }
 }
@@ -524,7 +555,7 @@ Future<bool> activateSwarmSearchSelection(
           )) {
         return false;
       }
-      if (target.panes.isEmpty && target.name == 'New swarm') {
+      if (target.panes.isEmpty && target.name == 'New Harness') {
         app.renameSwarm(target.id, destination.title);
       }
       // Every membership is recorded before awaiting any attachment. A slow
@@ -650,7 +681,7 @@ Swarm? _matchingGroupSwarm(AppNotifier app, SwarmDestination destination) {
 
 String _agentCountLabel(Iterable<String?> ids) {
   final count = ids.whereType<String>().length;
-  return '$count ${count == 1 ? 'agent' : 'agents'}';
+  return '$count ${count == 1 ? 'harness' : 'harnesses'}';
 }
 
 String _swarmMachineLabel(AppNotifier app, Iterable<String> machineIds) {
@@ -668,6 +699,12 @@ List<SwarmDestination> closedWorkDestinations(AppNotifier app) => [
         id: entry.historyId,
         closedId: entry.historyId,
         title: entry.name,
+        engine: entry.engine,
+        members: {
+          for (final pane in entry.panes)
+            if (pane.agentId != null)
+              agentDestinationId(pane.machineId, pane.agentId!),
+        },
         machineLabel: _swarmMachineLabel(app, [
           for (final pane in entry.panes)
             if (pane.agentId != null) pane.machineId,
@@ -732,6 +769,15 @@ List<SwarmDestination> swarmDestinations(
       SwarmDestination(
         id: swarmDestinationId(swarm.id),
         title: swarm.name,
+        engine: swarm.panes.length == 1
+            ? agents[agentDestinationId(
+                        swarm.panes.single.machineId,
+                        swarm.panes.single.agentId ?? '',
+                      )]
+                      ?.$2
+                      .engine ??
+                  swarm.panes.single.session?.engineId
+            : null,
         machineLabel: _swarmMachineLabel(app, [
           for (final pane in swarm.panes)
             if (pane.agentId != null) pane.machineId,
@@ -779,17 +825,17 @@ List<SwarmDestination> swarmDestinations(
     final project = row?.$1.projectOf(row.$2);
     final machineName = machine?.machine.displayName ?? machineId;
     final engine = row?.$2.engine ?? pane?.session?.engineId;
+    final detail = _harnessDetail(
+      project,
+      machineName,
+      machine?.nodeOnline == false,
+    );
     result.add(
       SwarmDestination(
         id: id,
         title: row?.$2.name ?? pane?.session?.agentName ?? agentId,
-        detail: [
-          machineName,
-          project?.name,
-          project?.branch,
-          owner?.name,
-          if (machine?.nodeOnline == false) 'Offline',
-        ].whereType<String>().where((s) => s.isNotEmpty).toSet().join(' · '),
+        detail: detail.text,
+        detailBranchOffset: detail.branchOffset,
         swarmId: owner?.id,
         machineId: machineId,
         machineLabel: machineName,

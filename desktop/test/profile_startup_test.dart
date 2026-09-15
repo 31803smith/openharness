@@ -58,7 +58,6 @@ class _Environment extends EnvironmentProvisioner {
         for (final step in EnvironmentStep.values)
           step: EnvironmentStepStatus.ready,
       },
-      systemReady: true,
       phase: EnvironmentSetupPhase.ready,
     );
     onProgress(ready);

@@ -95,6 +95,10 @@ void main() {
         ),
       ];
       final catalog = swarmDestinations(app);
+      expect(
+        catalog.singleWhere((row) => row.agentId == 'auth').detail,
+        'Payments · fix-login · Test host · Offline',
+      );
       for (final query in [
         'HOST auth',
         'auth host',
@@ -120,6 +124,7 @@ void main() {
     final first = app.activeSwarmId;
     app.newSwarm();
     await app.addAgentToSwarm('m', 'a0');
+    app.renameSwarm(app.activeSwarmId, 'Agent 0');
     final rows = swarmDestinations(
       app,
       recent: [swarmDestinationId(first)],
@@ -127,6 +132,7 @@ void main() {
     expect(rows, hasLength(1));
     expect(rows.single.swarmId, app.activeSwarmId);
     expect(rows.single.current, isTrue);
+    expect(rows.single.detail, 'Test host · Offline');
   });
 
   for (final status in [
@@ -241,7 +247,7 @@ void main() {
     addTearDown(app.dispose);
     final target = app.activeSwarm;
     final row = swarmDestinations(app).firstWhere((r) => r.agentId == 'a0');
-    app.newSwarm();
+    app.newSwarm(name: 'Elsewhere');
     final elsewhere = app.activeSwarm;
     await activateSwarmDestination(app, row, destinationSwarmId: target.id);
     expect(target.panes.single.agentId, 'a0');
