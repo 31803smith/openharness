@@ -212,6 +212,40 @@ void main() {
     );
   }
 
+  testWidgets(
+    'existing earlier explanations stay visible after a commit receipt',
+    (tester) async {
+      final app = createApp();
+      await seedPreviews(app);
+      final agent = app.machineStates['m']!.agents.first;
+      final record = app.sessionPreviews.read(app.previewKey('m', agent))!;
+      record.completedText =
+          'I’ll commit the checkout changes.\n\nCommitted and pushed.';
+      record.earlierResponses.add(
+        'Retrying a checkout now reuses the original payment and receipt.',
+      );
+      app.adoptSessionForTest(terminal('a69', []));
+      await mount(tester, app);
+      await chord(tester, LogicalKeyboardKey.keyO);
+      await tester.enterText(
+        find.byKey(const ValueKey('swarm-search-input')),
+        'Checkout',
+      );
+      await tester.pump();
+      final explanation = find.text(
+        'Retrying a checkout now reuses the original payment and receipt.',
+      );
+      expect(explanation, findsOneWidget);
+      expect(find.text('Earlier in this session'), findsOneWidget);
+      final preview = tester.getRect(
+        find.byKey(const ValueKey('swarm-search-preview')),
+      );
+      expect(tester.getRect(explanation).bottom, lessThan(preview.bottom));
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+    },
+  );
+
   for (final size in [
     const Size(1280, 800),
     const Size(760, 650),

@@ -49,6 +49,46 @@ void main() {
     },
   );
 
+  test(
+    'a commit receipt retains the existing explanation for context',
+    () async {
+      final store = SessionPreviewStore(
+        canFetch: (_) => true,
+        fetchRecent: (_) async => {
+          'events': [
+            {
+              'kind': 'summary',
+              'fullText': 'I’ll commit the prototype.\n\nCommitted and pushed.',
+            },
+            {
+              'kind': 'summary',
+              'fullText':
+                  'Highlight any message to add a shared comment thread.',
+            },
+            {
+              'kind': 'summary',
+              'fullText':
+                  'Teammates can reply without sending a prompt to the agent.',
+            },
+          ],
+        },
+      );
+      addTearDown(store.dispose);
+      store.warm([a]);
+      await Future<void>.delayed(Duration.zero);
+      final preview = store.read(a)!;
+      expect(
+        preview.response,
+        'I’ll commit the prototype.\n\nCommitted and pushed.',
+      );
+      expect(
+        preview.contextResponse,
+        'Highlight any message to add a shared comment thread.',
+      );
+      expect(preview.earlierResponses, hasLength(2));
+    },
+  );
+
   test('background work is bounded and late replies cannot replace another session', () async {
     final pending = <SessionPreviewKey, Completer<Map<String, dynamic>>>{};
     final valid = {a, b, c};

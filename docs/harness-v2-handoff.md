@@ -46,8 +46,9 @@ are:
   precedence. Cmd-R splits right and Cmd-D splits down. Native menus, help and actual
   dispatch must agree; native menu and titlebar hover hints are removed.
 - New Tab uses the Google-like page with a **solid selected-tab background**,
-  lower centered controls and generous whitespace. Search is at most 640 logical
-  pixels wide, blank and focused initially. Typing, clicking, or pressing an arrow
+  lower centered controls and generous whitespace. Resting search is at most 640 logical
+  pixels wide, blank and focused initially. Its expanded preview can grow to 1120 pixels.
+  Typing, clicking, or pressing an arrow
   reveals the same results, selection, arrows and Enter behavior as Cmd-O.
   Focus alone leaves results hidden and builds no catalog. Open Harness and
   accented **+ New Harness** sit below it; a small official device image and
@@ -60,6 +61,13 @@ are:
   **Open Harness / Open N Harnesses**, or the explicit split action. The modal
   has a 90% black backdrop and no Commands footer, creation CTA or “or” divider.
   Commands remain available through Shift-Cmd-P or typing **>**.
+- Both search entry points show existing session excerpts. Working sessions lead
+  with the observed request and activity; idle sessions show an existing response.
+  Pending questions are prominent and group previews put waiting agents first.
+  No model calls or generated summaries: only `agent_recent` and ordinary live
+  events. No `session_get`, full-history read, or terminal attachment. Cached
+  selection is immediate; cold data fills asynchronously. Disconnected records
+  retain saved text without claiming a live working/waiting state.
 - Creation uses **New Harness** for its title and CTA, with no ordinary Cancel.
   Escape or one outside click dismisses it directly. A pending launch cannot be
   dismissed accidentally; an uncertain outcome retains Close and Check status.
@@ -90,25 +98,25 @@ Recent pushed checkpoints:
 
 | Checkpoint | Change |
 | --- | --- |
+| **76bdf6e** | Disconnected previews retain text with honest state; all preview and existing desktop checks verified together. |
+| **91cfb6a** | Shared responsive previews in Cmd-O and inline search, waiting-first groups, retained keyboard ownership and visible actions after expansion. |
+| **7da0c12** | Bounded existing-content cache, two background reads at a time, independent request/response records, stale-session guards and live event isolation. |
 | **300f04d** | Every New Tab entry reuses the existing unused page, including at capacity. Restore collapses old duplicates without changing named or populated tabs. Rebases cleanly on 051ea5b, the separate link-prompt revisit fix. |
 | **804eb93** | Clearer cropped official device image, hand cursors, pill buttons and transparent outlined Open buttons; consistent native/pane zoom and close icons; Rename Tab and Close Tab wording. |
 | **518977c** | Roomier unified titlebar, hover-only tab close marks, minimal plus/group/branch icons, split shortcuts, and unique useful layout choices through the supported pane limit. |
 | **f25e5a2** and preceding input checkpoints | Readable large-text entry choices, visible selected results after resize, retained renderer/input ownership, and immediate navigation/Find transitions. |
 
-The current follow-up focuses start-page search on entry and when reusing an
-unused page, while keeping results lazy. The surrounding shell no longer wins
-initial autofocus. Pane controls now say Zoom Pane, Stop Harness and Close Pane;
-the Stop confirmation accurately distinguishes stopping from deleting files or
-pausing a process. The legacy CLI protocol is unchanged.
+The current preview uses existing session data only. A read-only local audit
+found useful requests and full saved answers in several Codex sessions, and no
+meaningful text in one Claude session. It does not invent missing content or
+promise complete coverage for every engine. The protocol is unchanged.
 
-The final full run passed **1,540 desktop tests**, with one optional media
-placeholder skipped. Six assertions in the keymap fixture incorrectly expected
-autofocus after deliberate dismissal; after restoring those expectations, all
-**20 keymap runtime tests pass**, covering the remaining six cases. Logs:
-/private/tmp/harness-focus-stop-full-final.log and
-/private/tmp/harness-focus-stop-keymap-final.log. The earlier single-empty-tab
-checkpoint passed all 1,545 then-current tests in one run; main subsequently
-added the link-prompt revisit case. The latest native contract run passes
+The final full run passed **1,562 desktop tests**, with one optional media
+placeholder skipped: /private/tmp/harness-preview-context-verified.log. All **13 changed
+Dart files analyze cleanly**: /private/tmp/harness-preview-context-analyze.log.
+The focused regression pass also covers large-text resize, remapped keyboard
+actions, retained focus, first-use actions, caching and session identity.
+The last unchanged native contract run passes
 **373 AppKit checks**, including hidden window layout,
 in /private/tmp/harness-one-start-tab-native.log; the prior keyboard export
 passes **85 native keymap checks**. Native latency benchmarking remains deferred.
@@ -151,10 +159,11 @@ project would create its own folder, requiring no picker or typing. Do not infer
 the project from the current pane in a multiproject workspace. The user has been
 told candidly that entry/chrome polish is separate from this form redesign.
 
-The user has now explicitly approved **building a useful, beautiful, fast search
-preview** in Cmd-O and New Tab. Validate real excerpt content first, then build
-the shared UI and cache. The [preview proposal](harness-search-preview.md) records
-the acceptance criteria. The [Rex study](mitchellh-rex-study.md) is saved, pushed,
+The user approved **building a useful, beautiful, fast search preview** in Cmd-O
+and New Tab. The shared UI and cache are now implemented. The user explicitly
+forbids generating new summaries: display available data only. The
+[preview design](harness-search-preview.md) records the implementation and
+coverage limits. The [Rex study](mitchellh-rex-study.md) is saved, pushed,
 and open for the user in Chrome. The following audit remains relevant:
 The old implementation at f04f6d3 read only already-attached terminal buffers,
 showed at most twelve nonblank tail lines, provided no group preview, and froze
@@ -162,21 +171,23 @@ the snapshot while the selection stayed put. Terminal prompts/tool noise rarely
 answered which task this was or what happened. The failure was content selection
 and availability, not simply insufficient preview width.
 
-Current metadata is locally cached, but desktop Agent objects have no actual
-prompt/reply excerpts. CLI normalization already yields user messages and replies;
-`session_get` can read bounded registered-session windows. `agent_recent` exposes
+The app owns a separate bounded session-excerpt cache; Agent metadata itself
+still has no prompt/reply fields. CLI normalization yields user messages and replies.
+`session_get` can return small windows but still read the entire transcript,
+so it is intentionally excluded from the preview. `agent_recent` exposes
 asks and recaps, but recaps can be device-gated and absent. Do not treat nth ask
 and nth recap as paired turns or assume coverage for every engine/remote daemon.
 
-Proposed useful content: latest substantive request, latest meaningful answer or
-result, and any waiting question, with project/branch/machine context. Groups
-could show one useful line per member, waiting agents first. Precompute bounded
-records as events arrive, cache by machine/agent/session revision, and render
-cached content immediately on highlight. Refresh in the background, discarding
-stale replies. Do not read full transcripts, query remotes, or invoke a model
-on each arrow. Fresh uncached remote content cannot have literal zero latency;
-keep selection responsive and make stale/offline content honest. Inspect real
-examples across engines and cold/remote sessions before implementing this UI.
+The preview shows existing requests, responses and waiting questions with
+project/branch/machine context. Groups render visible members, waiting first.
+The live check found commit receipts hiding useful older explanations, so the
+preview now retains and displays the existing earlier response excerpts too.
+The latest and earlier answers remain separately labeled; none are generated.
+Bounded records update as events arrive and render from memory on highlight.
+Background refresh discards stale session replies. A settled cold selection may
+schedule the lightweight cache read; no arrow waits for it. Fresh uncached remote
+content cannot have literal zero latency. More engine/remote coverage remains
+useful; missing content must remain explicit.
 
 The three Rex posts and demo visuals/full captions have been reviewed, with no
 post-inspired implementation:

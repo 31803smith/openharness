@@ -63,6 +63,14 @@ For example, the useful distinction is between “app v2” as a name and an exc
 that explains it is working on keeping only one empty New Harness tab. The actual
 request and response can establish that without generating a new summary.
 
+The live UI check found a common exception: the newest answer can be only a
+commit receipt, while an earlier saved answer explains the feature. The preview
+therefore retains the three responses already returned by `agent_recent`,
+showing short, explicitly labeled earlier excerpts alongside the latest one.
+Compact group previews can use the earlier explanation when the latest answer
+starts with a commit/push receipt. This selects existing text without generating
+a task description or claiming an earlier answer belongs to the latest request.
+
 Selection rules matter:
 
 - Preserve the substantive request when the most recent message is only “ok” or

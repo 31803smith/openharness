@@ -249,7 +249,9 @@ class _AgentPreview extends StatelessWidget {
     final response = record?.response ?? (!working ? record?.liveText : null);
     final excerpt =
         waiting?.prompt ??
-        (working ? request ?? activity ?? response : response ?? request);
+        (working
+            ? request ?? activity ?? response
+            : record?.contextResponse ?? response ?? request);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -383,6 +385,32 @@ class _AgentPreview extends StatelessWidget {
                     ? 'Last response · interrupted'
                     : 'Latest response',
                 response,
+                maxLines: record?.earlierResponses.isNotEmpty == true
+                    ? 6
+                    : null,
+              ),
+            if (record?.earlierResponses.isNotEmpty == true)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Earlier in this session',
+                      style: _muted.copyWith(fontWeight: FontWeight.w500),
+                    ),
+                    for (final text in record!.earlierResponses)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 10),
+                        child: Text(
+                          _displayText(text),
+                          maxLines: 4,
+                          overflow: TextOverflow.ellipsis,
+                          style: _body,
+                        ),
+                      ),
+                  ],
+                ),
               ),
             if (request != null) _Section('Recent request', request),
             if (record?.earlierRequest case final earlier?)
@@ -426,8 +454,9 @@ class _AgentPreview extends StatelessWidget {
 }
 
 class _Section extends StatelessWidget {
-  const _Section(this.label, this.text);
+  const _Section(this.label, this.text, {this.maxLines});
   final String label, text;
+  final int? maxLines;
   @override
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.only(bottom: 24),
@@ -436,7 +465,12 @@ class _Section extends StatelessWidget {
       children: [
         Text(label, style: _muted.copyWith(fontWeight: FontWeight.w500)),
         const SizedBox(height: 7),
-        Text(_displayText(text), style: _body),
+        Text(
+          _displayText(text),
+          style: _body,
+          maxLines: maxLines,
+          overflow: maxLines == null ? null : TextOverflow.ellipsis,
+        ),
       ],
     ),
   );

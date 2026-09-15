@@ -12,6 +12,7 @@ typedef SessionPreviewKey = ({
 /// transcript, attaches a terminal, or sends input to an agent.
 class SessionPreview {
   final List<String> requests = [];
+  final List<String> earlierResponses = [];
   String? currentRequest, liveText, completedText, savedText, activity;
   String _streamText = '';
   bool turnOpen = false,
@@ -32,6 +33,18 @@ class SessionPreview {
       ? requests.skip(1).firstOrNull
       : null;
   String? get response => completedText ?? savedText;
+  // A commit receipt often follows the actual explanation. Reuse an earlier
+  // existing response for compact group context, keeping the receipt available
+  // as the latest response in the full preview. This is text selection only.
+  String? get contextResponse =>
+      response != null &&
+          RegExp(
+            r"^(?:(?:i['’]ll|i will|i['’]m)\s+)?(?:commit(?:ted|ting)?|push(?:ed|ing)?)\b",
+            caseSensitive: false,
+          ).hasMatch(response!.trimLeft()) &&
+          earlierResponses.isNotEmpty
+      ? earlierResponses.first
+      : response;
   bool get hasContent =>
       latestRequest != null || liveText != null || response != null;
 
@@ -139,16 +152,20 @@ class SessionPreviewStore extends ChangeNotifier {
         }
         final events = reply['events'];
         if (events is List) {
+          final responses = <String>[];
           for (final event in events.take(3)) {
             if (event is! Map || event['kind'] != 'summary') continue;
             final text =
                 previewText(event['fullText'], limit: 6000) ??
                 previewText(event['text'], limit: 6000) ??
                 previewText(event['recap'], limit: 6000);
-            if (text != null) {
-              entry.savedText = text;
-              break;
-            }
+            if (text != null && !responses.contains(text)) responses.add(text);
+          }
+          if (responses.isNotEmpty) {
+            entry.savedText = responses.first;
+            entry.earlierResponses
+              ..clear()
+              ..addAll(responses.skip(1));
           }
         }
         // Asks and summaries are independent lists, with no shared turn id.
