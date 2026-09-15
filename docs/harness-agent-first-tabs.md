@@ -1,20 +1,35 @@
 # Harness entry and pane controls
 
-Users start with one harness immediately and add panes when useful. A tab holds
-one or several harnesses without a selection basket or a separate group-creation step.
+Users start with one agent immediately and add panes when useful. A tab holds
+one or several agents without a selection basket or a separate group-creation step.
 This is the latest product direction; it supersedes earlier swarm and multi-select
 proposals in the progress log.
 
-## Open and New Harness
+**Agent** is the user-facing name for a session and its actions: Open Agent,
+New Agent, Add Agent, Stop Agent, Restart Agent, and Find an agent. Harness
+remains the application, CLI and device brand. Existing saved names and protocol
+identifiers are unchanged.
 
-**Cmd-T / New Tab** and the tab-bar plus open the Harness start page. Its solid
-background matches the selected tab. The centered title and search controls sit
-lower with generous empty space. The resting field is no wider than 640 logical pixels,
-with **Open Harness** and accented **+ New Harness** buttons underneath.
+## Open and New Agent
+
+**Cmd-T / New Tab** and the tab-bar plus open the Harness start page over its
+restored lake-at-dusk wallpaper. A long search field, capped at 1120 logical pixels,
+has a prominent 64-pixel minimum height and shows **Find an agent** in place of
+a large heading. **Open Agent** and accented
+**+ New Agent** sit underneath, aligned with the field's left edge. The pill
+buttons retain their smaller 48-pixel height and wrap at narrow widths or large
+text sizes. The device image and its caption share that same left edge in a footer
+32 pixels above the window bottom. The footer stays put when search opens or
+closes. Short windows use a small image beside the caption to preserve search space.
+
+Activating search keeps the field's position and width fixed and reveals results and preview
+side by side at widths of 700 logical pixels and above. The actions hide while
+searching. Results fit the available space above the footer and scroll independently.
+Escape restores both actions and retains the query.
 
 The field starts empty and focused so typing works immediately. Typing, clicking
-it or Open Harness, or pressing an arrow reveals the same input, results,
-highlight, action arrow and keyboard navigation as Cmd-O. Focus alone does not
+it or Open Agent, or pressing an arrow reveals the same input, results,
+highlight, action arrow and keyboard navigation as the Cmd-N picker. Focus alone does not
 build a search catalog or reveal results. New Tab refocuses an existing unused
 page too. Typing filters immediately; arrows select and Enter opens. Escape or clicking
 outside closes the dropdown and hides the caret. The recent-agent list is removed.
@@ -24,50 +39,76 @@ refreshes results against current app state. Command-mode shortcuts synchronize
 the field and results without adding editor rebuilds to arrow navigation.
 Opening the dropdown keeps its whole list viewport inside the window. Resizing
 or changing text size reveals the highlighted row without changing the selection.
-A small product image and introduction sit well below the controls and link to
+A small product image and caption stay in the footer and link to
 https://www.autonomous.ai/harness-device. The bundled image is the official
 device image from https://cdn.autonomous.ai/production/ecm/260731/2.webp,
-cropped in the viewport so the device is larger and centered. The short introduction is
-“The ultimate Harness setup” / “Scroll, switch panes, and give voice commands.”
+cropped in the viewport so the device is larger and centered. The caption is
+“Meet the Harness device”.
 The start-page actions use the same pill shape as the titlebar. The device link
-and both pairs of New/Open buttons show a hand cursor. Open Harness on the start
+and both pairs of New/Open buttons show a hand cursor. Open Agent on the start
 page is transparent with a subtle border; New
 Harness retains its accent fill.
 Unused default-name empty pages are excluded from Recently Closed.
 
 The titlebar places the bell beside the traffic lights, then the tabs and tab
-plus. Explicit **New Harness** and **Open Harness** buttons sit on the right.
-There is no floating +. Cmd-N opens creation directly; Cmd-O opens existing-work
-search. Each has its own popup, with no creation CTA or “or” divider in search,
-no Back to Search button in creation, and no stacked dialog on dismissal.
-The titlebar actions are 34-point-high pills with generous horizontal padding,
-12 points between them and at the right edge. AppKit uses one unified toolbar
-row; the Flutter titlebar is 52 points high and uses the same accent/secondary
-treatment and app font. Open Harness has a transparent fill and subtle border on both surfaces. Titlebar and native menu hover hints are
-removed. Accessible names remain, and menus and Keyboard Shortcuts show bindings.
-The creation dialog title and CTA are **New Harness**. Cancel is removed; Escape
+plus. A single accented **Add Agent** button sits on the right. It and
+**Cmd-N** open the results and preview immediately beneath a focused
+**Find an agent** field, with outlined **Open Agent** and accented
+**+ New Agent** below the panel. Enter immediately opens the highlighted result.
+This supersedes the compact-first modal; the New Tab page remains compact until
+search is activated. Both buttons remain available; Open activates
+the selected result and New replaces search with creation. There is no stacked
+picker behind creation. Escape dismisses the chooser and restores terminal focus.
+The titlebar button is a 34-point-high pill with generous padding and a 12-point
+right margin. Native menu and titlebar hover hints remain removed; accessible
+names and shortcut help identify the actions. Workspace modals preserve the
+button's normal colors while its actions remain blocked.
+
+The creation dialog title and CTA are **New Agent**. Cancel is removed; Escape
 and clicking outside dismiss it. Launch-in-progress and uncertain-outcome states
 retain their existing safeguards and recovery actions.
-Quick agent choices retain their compact row when labels fit, and wrap into
-additional rows at larger text sizes so their names remain readable.
+Machine and Agent use the same direct-choice layout: up to three buttons, with
+**…** only when more options exist. This computer comes first; machines show
+local/remote and offline/link status below their names. The first two agent slots
+are Codex and Claude Code; the third begins as Cursor. Choosing from **…** replaces
+the third slot, and that option stays available while switching between the first
+two. All options remain in **…**. Selection uses an accent-tinted fill and check;
+a separate outline shows keyboard focus. The form is 760 logical pixels wide.
+Machine choices stay on one row; narrow windows and larger text move excess
+choices into **…**, keeping the selected machine visible. Agent choices can wrap.
+Long custom names have their full text in a tooltip.
+Selecting the current machine again preserves the chosen folder. One healthy
+local machine still needs no machine selector.
 The folder control receives initial keyboard focus, so Enter opens its chooser.
-A successful keyboard folder choice focuses the enabled New Harness action;
+A successful keyboard folder choice focuses the enabled New Agent action;
 cancellation or failure returns focus to the folder control. If a required Codex
 account lookup is still pending, focus stays on the folder instead of a disabled
 submit action. Completing that lookup does not steal focus.
 
-Machine and agent menus support typing a name to highlight a choice. Enter
+Working folder has three visible choices: **New / Local / Remote**. Local is
+initially selected and browses the selected machine. New creates a unique folder
+under `~/Harness Projects` without a picker or name prompt. Remote accepts the
+existing GitHub HTTPS/SSH URL or `owner/repository` forms inline and clones under
+the same root on the selected machine. Nothing is created until New Agent is
+submitted. A prepared folder is reused after a refused launch. An uncertain
+launch keeps the original receipt and offers Check status instead of cloning or
+starting again. Remote folder preparation requires the accompanying CLI change;
+this computer prepares folders locally and keeps the existing create protocol.
+
+The **…** menus support typing a name to highlight a choice. Enter
 selects it; Escape returns to the field without changing the value. These keys
 also work immediately after opening the menu, before its first frame.
 
-The Open popup keeps its full-width **Find a harness** field, single-choice
-results and 90% black backdrop. Only the highlighted row shows **Open Harness**,
+The Open popup keeps its full-width **Find an agent** field, single-choice
+results and 90% black backdrop. Only the highlighted row shows **Open Agent**,
 **Open N Harnesses**, or **Split right/down**, depending on context.
-Both Open and inline start-page search show the same session preview. The open
+Both Open and inline start-page search show the same session preview. The Cmd-N
 surface can grow to 1120 logical pixels, placing the list and preview side by
 side. Narrow windows stack them with a compact preview heading. Both sections
-scroll independently; the start-page actions stay reachable. Hover selects a
+scroll independently; the expanded panel stays within view. Hover selects a
 preview without taking typing focus. Enter opens the highlighted result.
+Page Up/Down scrolls the preview while retaining the query, focus and selection.
+The bindings are configurable in the same Search keymap as result navigation.
 
 Working sessions lead with the current observed request and latest activity.
 Idle sessions lead with an existing saved response or the latest response seen
@@ -86,23 +127,30 @@ Secondary text is **project · branch · machine**, with one small muted Git bra
 mark immediately before the branch in search and pane headers. Missing metadata is omitted
 and the containing workspace name is not repeated.
 The Commands footer stays removed; Shift-Cmd-P and typing `>` expose commands.
-An explicit Cmd-N while choosing a split replaces search with creation in that
-split position; dismissing creation still returns directly to the terminal.
+The visible New Agent action or Shift-Cmd-N while choosing a split replaces
+search with creation in that split position; dismissing creation still returns directly to the terminal.
 The input and result rows share one picker shortcut scope. Tab focus highlights
 the row that Enter will open. Arrow navigation and command-mode entry return
 focus to the input for continued typing; remapped or unbound navigation/Enter
 keys keep their meaning on a focused row. Closing the inline picker releases
-focus from the entire surface, so dismissing New Harness cannot restore a caret.
-Native New Harness and Search Commands actions use the focused picker's
+focus from the entire surface, so dismissing New Agent cannot restore a caret.
+Native New Agent and Search Commands actions use the focused picker's
 actions too. Command search stays in its field, and creation closes its dropdown
 before opening the form. Native actions wait for the destination focus tree before
 handing keyboard ownership back to Flutter and preserve in-progress search composition.
 
+Rename Tab has one title and an unlabeled, accessible name field, with the
+current name selected for immediate typing. Muted focus colors and pill-shaped
+Cancel/Rename actions match the entry UI. Blank names stay in the dialog; the
+80-character count appears only near the limit. Its 60% veil covers the canvas.
+Native tabs consume the whole double-click sequence so opening Rename Tab does
+not also trigger the window's titlebar zoom behavior.
+
 ## Tabs and menus
 
-One harness shows its engine mark; multiple harnesses use four separate outlined
+One harness shows its engine mark; multiple agents use four separate outlined
 tiles, matching the native square.grid.2x2 symbol. An empty tab uses a plain plus.
-Only one unused New Harness tab is kept. New Tab from the plus, File menu,
+Only one unused **New Tab** is kept. New Tab from the plus, File menu,
 Cmd-T or command search selects that existing page, even at the tab limit.
 Restoration collapses duplicate unused pages from older builds, preferring the
 selected one; named tabs and saved layouts are retained.
@@ -111,22 +159,28 @@ and accessible actions while idle. Returning
 to one restores the engine mark. The same rule applies in search and History,
 including Recently Closed; a closure retains its engine identity even if the
 agent disappears from discovery. Tab names remain editable. Former default names
-`New swarm`, `New tab`, and `New Agent` restore as `New Harness` and still take
+`New swarm`, `New tab`, `New Agent`, and `New Harness` restore as `New Tab` and still take
 the first agent's name when opened.
 
 The macOS menus are **Harness, File, Edit, View, History, Models, Machines,
-Window, Help**. File groups **New Tab, New Harness, Open Harness, Rename Tab, Close Tab**;
+Window, Help**. File groups **New Tab, Add Agent…, Rename Tab, Close Tab**;
 then **Split Right, Split Down, Zoom Pane, Close Pane**. Pin/Unpin and Add Project
 are removed from this menu. File actions have native system icons, with the same
 four-corner Zoom and plain Close cross as the pane header. Machines starts with **Open Machines Manager**, then
-linked computers with their status, followed by Link Machine and Refresh Machines.
+linked computers with their status and cached agent count, followed by Link
+Machine and Refresh Machines. Each computer is a submenu of named agents with
+engine icons. Selecting an agent opens its exact machine/agent identity, reusing
+an existing pane when present. The submenu retains Find Agents for the full
+search. Empty/unavailable lists are explicit; unknown counts are not shown as
+zero. Menus use existing cached discovery, with no fetch on opening. A stale
+agent or unlinked machine cannot redirect a menu action.
 The manager has a visible **Rename** action on each computer and uses the existing
 machine rename API. It reports failures inline and refreshes names in the menu
 and pane headers immediately after success. Selecting a computer opens the shared search with its
 name filled in; no agent is opened until the user chooses a result.
 
-**Cmd-T** opens the start page, **Cmd-N** opens New Harness
-directly, and **Cmd-O** finds an existing harness. **Cmd-S** opens Layout.
+**Cmd-T** opens the start page and **Cmd-N** opens Add Agent.
+**Shift-Cmd-N** remains a direct creation shortcut; Cmd-O is unbound by default. **Cmd-S** opens Layout.
 **Cmd-R** splits right and **Cmd-D** splits down, opening the shared picker for
 that position. Refresh Machines stays in the Machines menu and command search,
 without a default chord. The developer-only Debug shortcut is Shift-Cmd-D.
@@ -147,8 +201,8 @@ duplicate cards. Their matching explicit card is highlighted when available.
 **Cmd-1…Cmd-9** select tabs in their visible order; missing numbers do nothing.
 Cmd-W closes the tab, Shift-Cmd-W closes the focused pane, and Shift-Cmd-T
 reopens the last closed view. Unused default-name empty pages are never recorded
-in Recently Closed, including pages restored from older builds. Shift-Cmd-N and
-shifted H/J/K/L are unbound by default. Configured user bindings retain precedence.
+in Recently Closed, including pages restored from older builds.
+Shifted H/J/K/L are unbound by default. Configured user bindings retain precedence.
 Each tab retains its focused
 pane when switching away and back. Closing views
 keeps agent runtimes alive. Stored layout formats and internal command IDs remain
@@ -171,9 +225,9 @@ shows **folder • branch • machine**, omitting unavailable folder/branch data
 Long details truncate, with full context in the session-name tooltip.
 
 Hovering anywhere on the header replaces the details with small, muted controls:
-**Zoom Pane, Restart Harness, Stop Harness, Close Pane**, with **Keyboard** first for remote sessions. Keyboard
+**Zoom Pane, Restart Agent, Stop Agent, Close Pane**, with **Keyboard** first for remote sessions. Keyboard
 focus also reveals the controls. The title keeps the same space during the swap,
-and hovering retains the terminal renderer. Stop uses a Lucide circle-stop icon
+and hovering retains the terminal renderer. Stop uses a plain filled square
 and an explicit confirmation: it ends the engine process and removes the active
 harness, preserving project files and saved conversation history. The existing
 `agent_delete` protocol remains unchanged. It is not Pause and promises no live

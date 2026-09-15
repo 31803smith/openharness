@@ -168,6 +168,11 @@ class SwarmSearchKeys extends StatelessWidget {
             'picker.add_here': () => choose(true),
             'picker.next': () => move(1),
             'picker.previous': () => move(-1),
+            if (search != null) ...{
+              'picker.preview_page_up': () => run(() => search.pagePreview(-1)),
+              'picker.preview_page_down': () =>
+                  run(() => search.pagePreview(1)),
+            },
             'picker.cancel': onClose,
             if (search == null || search.allowsCommands)
               'navigation.commands': () {
@@ -232,6 +237,12 @@ class SwarmSearchKeys extends StatelessWidget {
               const SingleActivator(LogicalKeyboardKey.arrowDown): () =>
                   move(1),
               const SingleActivator(LogicalKeyboardKey.arrowUp): () => move(-1),
+              if (search != null) ...{
+                const SingleActivator(LogicalKeyboardKey.pageUp): () =>
+                    run(() => search.pagePreview(-1)),
+                const SingleActivator(LogicalKeyboardKey.pageDown): () =>
+                    run(() => search.pagePreview(1)),
+              },
               const SingleActivator(
                 LogicalKeyboardKey.keyN,
                 control: true,
@@ -285,10 +296,12 @@ class SwarmSearchResults extends StatefulWidget {
     required this.search,
     required this.onChoose,
     required this.onRefocus,
+    this.sideBySideMinWidth = 800,
   });
   final SwarmSearchController search;
   final ValueChanged<SwarmSearchSelection> onChoose;
   final VoidCallback onRefocus;
+  final double sideBySideMinWidth;
   @override
   State<SwarmSearchResults> createState() => _SwarmSearchResultsState();
 }
@@ -375,10 +388,9 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
     );
     return LayoutBuilder(
       builder: (context, constraints) {
+        final sideBySide = constraints.maxWidth >= widget.sideBySideMinWidth;
         final compactAction =
-            (constraints.maxWidth >= 800
-                ? constraints.maxWidth / 2
-                : constraints.maxWidth) <
+            (sideBySide ? constraints.maxWidth / 2 : constraints.maxWidth) <
             380;
         final geometry = (constraints.biggest, _rowHeight);
         if (_geometry != geometry) {
@@ -397,9 +409,9 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                           search.isCommandMode
                               ? 'No matching commands'
                               : search.adding && search.query.isEmpty
-                              ? 'Create a new harness to start fresh.'
+                              ? 'Create a new agent to start fresh.'
                               : search.adding
-                              ? 'No matching harnesses'
+                              ? 'No matching agents'
                               : 'No matching results',
                           style: const TextStyle(
                             fontSize: 14,
@@ -572,8 +584,8 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                                 : selected!.isGroup &&
                                       selected.members.length >
                                           AppNotifier.maxPanes
-                                ? 'Open up to ${AppNotifier.maxPanes} harnesses at once'
-                                : 'No room to open this ${selected.isSwarm || selected.isGroup ? 'group' : 'harness'}',
+                                ? 'Open up to ${AppNotifier.maxPanes} agents at once'
+                                : 'No room to open this ${selected.isSwarm || selected.isGroup ? 'group' : 'agent'}',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
@@ -590,8 +602,7 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
             ],
           ),
         );
-        final preview =
-            !search.isCommandMode && search.history == null && selected != null
+        final preview = search.hasPreview
             ? SwarmSearchPreview(
                 key: const ValueKey('swarm-search-preview'),
                 search: search,
@@ -600,7 +611,7 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
             : null;
         final content = preview == null
             ? results
-            : constraints.maxWidth >= 800
+            : sideBySide
             ? Row(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [

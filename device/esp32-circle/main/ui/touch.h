@@ -19,6 +19,7 @@ typedef struct {
     uint32_t presses;
     uint32_t last_press_ms_ago;
     uint32_t read_failures;
+    uint32_t inferred_releases; // releases the chip never reported, declared from its silence
     bool     controller_ok;
     bool     held_now;         // a press has been down past the stuck threshold
 } touch_stats_t;

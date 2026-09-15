@@ -35,7 +35,7 @@ void main() {
     return state;
   }
 
-  testWidgets('renders a harness start command for this computer', (
+  testWidgets('renders an agent start command for this computer', (
     tester,
   ) async {
     final notifier = AppNotifier(
@@ -68,7 +68,7 @@ void main() {
     notifier.dispose();
   });
 
-  testWidgets('renders a harness start command for a remote machine', (
+  testWidgets('renders an agent start command for a remote machine', (
     tester,
   ) async {
     final notifier = AppNotifier(

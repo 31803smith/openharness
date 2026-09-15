@@ -4,6 +4,7 @@ import '../core/fuzzy_match.dart';
 import '../core/models.dart';
 import 'app_state.dart';
 import 'pane_arrangement.dart';
+import 'session_preview.dart';
 import 'swarm.dart';
 import 'swarm_catalog.dart';
 import 'terminal_pane.dart';
@@ -165,6 +166,7 @@ class SwarmDestination {
     this.paneId,
     this.swarmName = '',
     this.projectId,
+    this.previewKey,
     this.members = const {},
     Iterable<String?> searchFields = const [],
   }) : fields = [
@@ -185,6 +187,7 @@ class SwarmDestination {
   final String swarmName;
   bool get isCommand => commandId != null;
   final String? projectId;
+  final SessionPreviewKey? previewKey;
   final Set<String> members;
   final bool current;
   final List<String> fields;
@@ -430,6 +433,7 @@ class SwarmLocationCatalog {
       machineId: pane.machineId,
       machineLabel: machineLabel,
       agentId: pane.agentId,
+      previewKey: agent == null ? null : app.previewKey(pane.machineId, agent),
       engine: engine,
       current: swarm.id == app.activeSwarmId && pane.id == app.focusedPaneId,
       searchFields: [detail.text, project?.cwd, engine, swarm.name],
@@ -444,13 +448,19 @@ List<SwarmDestination> rankSwarmLocations(
   List<SwarmDestination> all,
   String query, {
   List<String> recent = const [],
+  SessionPreviewStore? previews,
 }) {
   final groups = <String, List<SwarmDestination>>{};
   final parents = {
     for (final row in all)
       if (row.agentId == null) row.swarmId!: row,
   };
-  for (final row in rankSwarmDestinations(all, query, recent: recent)) {
+  for (final row in rankSwarmDestinations(
+    all,
+    query,
+    recent: recent,
+    previews: previews,
+  )) {
     (groups[row.swarmId!] ??= []).add(row);
   }
   return [
@@ -555,7 +565,7 @@ Future<bool> activateSwarmSearchSelection(
           )) {
         return false;
       }
-      if (target.panes.isEmpty && target.name == 'New Harness') {
+      if (target.panes.isEmpty && target.name == Swarm.defaultName) {
         app.renameSwarm(target.id, destination.title);
       }
       // Every membership is recorded before awaiting any attachment. A slow
@@ -681,7 +691,7 @@ Swarm? _matchingGroupSwarm(AppNotifier app, SwarmDestination destination) {
 
 String _agentCountLabel(Iterable<String?> ids) {
   final count = ids.whereType<String>().length;
-  return '$count ${count == 1 ? 'harness' : 'harnesses'}';
+  return '$count ${count == 1 ? 'agent' : 'agents'}';
 }
 
 String _swarmMachineLabel(AppNotifier app, Iterable<String> machineIds) {
@@ -840,6 +850,7 @@ List<SwarmDestination> swarmDestinations(
         machineId: machineId,
         machineLabel: machineName,
         agentId: agentId,
+        previewKey: row == null ? null : app.previewKey(machineId, row.$2),
         engine: engine,
         current:
             owner?.id == app.activeSwarmId && pane?.id == app.focusedPaneId,
@@ -882,21 +893,27 @@ int? swarmFieldMatchScore(String field, String term, {required bool title}) {
 
 /// Each word may match a different field, in either order: "mini auth" and
 /// "auth mini" both find Auth on Mac mini. Names outrank incidental metadata.
+/// Existing preview text is a fallback, with literal word fragments rather
+/// than scattered-letter matches across long paragraphs. Reading it never
+/// warms the cache or contacts a machine.
 List<SwarmDestination> rankSwarmDestinations(
   List<SwarmDestination> all,
   String query, {
   List<String> recent = const [],
+  SessionPreviewStore? previews,
 }) {
   final needle = query.trim().toLowerCase();
   final terms = swarmQueryTerms(query);
   final recency = {for (var i = 0; i < recent.length; i++) recent[i]: i};
-  final ranked = <({SwarmDestination entry, int score})>[];
+  final ranked = <({SwarmDestination entry, int score, bool content})>[];
   for (final entry in all) {
     if (entry.fields.first == needle) {
-      ranked.add((entry: entry, score: -1));
+      ranked.add((entry: entry, score: -1, content: false));
       continue;
     }
     var total = 0;
+    var content = false;
+    String? excerpt;
     for (final term in terms) {
       int? best;
       for (var i = 0; i < entry.fields.length; i++) {
@@ -910,13 +927,20 @@ List<SwarmDestination> rankSwarmDestinations(
         if (best <= 64) break;
       }
       if (best == null) {
-        total = -1;
-        break;
+        excerpt ??= entry.previewKey == null
+            ? ''
+            : previews?.read(entry.previewKey!)?.searchText ?? '';
+        if (!excerpt.contains(term)) {
+          total = -1;
+          break;
+        }
+        content = true;
+        best = 256;
       }
       total += best;
     }
     if (total >= 0) {
-      ranked.add((entry: entry, score: total));
+      ranked.add((entry: entry, score: total, content: content));
     }
   }
   int tier(SwarmDestination e) => !e.hasView
@@ -927,7 +951,8 @@ List<SwarmDestination> rankSwarmDestinations(
       ? 0
       : 1;
   ranked.sort((a, b) {
-    var order = a.score.compareTo(b.score);
+    var order = (a.content ? 1 : 0).compareTo(b.content ? 1 : 0);
+    if (order == 0) order = a.score.compareTo(b.score);
     if (order == 0 && needle.isEmpty) {
       order = tier(a.entry).compareTo(tier(b.entry));
     }

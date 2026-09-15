@@ -23,10 +23,12 @@
 #
 # What the CLI RUNS is a short list — tmux (its only terminal backend), `ps`, and on a Linux desktop
 # the clipboard helper for the active display — and step 1 checks exactly that list. Everything else
-# here (Homebrew, the Apple developer tools, apt, curl/tar/sed/awk/sha256sum) is only a way of
-# obtaining one of those or of downloading the runtime, and is looked at only when the thing it
-# obtains is missing: a Mac with tmux never hears about Homebrew, a Mac with Homebrew never hears
-# about Xcode, and the download tools are checked only when a runtime is actually downloaded.
+# here (Homebrew, apt, curl/tar/sed/awk/sha256sum) is only a way of obtaining one of those or of
+# downloading a runtime, and is looked at only when the thing it obtains is missing: a Mac with tmux
+# never hears about Homebrew, and the download tools are checked only when something is downloaded.
+# On a Mac without tmux, Homebrew is used if it is already there; otherwise tmux comes the way Node
+# does — a checksum-verified MANAGED build from our manifest into ~/.harness/runtime, no compiler,
+# no package manager and no password (see cli/scripts/build-managed-tmux.sh).
 # Desktop mode (`--desktop`) trusts the app's own host pre-flight and skips step 1; host mode
 # (`--host`) is the app handing step 1 to a real terminal for its password prompts and stops after it.
 # The runtime's absolute path is baked into the launcher, so a Finder launch — where PATH is
@@ -65,12 +67,90 @@ METADATA_URL="${HARNESS_METADATA_URL:-https://storage.googleapis.com/s3-autonomo
 # Published by `make upload-node-runtime` in the desktop repo; the desktop app reads the same manifest
 # (its --dart-define is spelled the same) so both installers land on identical bytes.
 RUNTIME_METADATA_URL="${HARNESS_RUNTIME_METADATA_URL:-https://storage.googleapis.com/s3-autonomous-upgrade-3/harness/runtime/metadata.json}"
+# Published by release-tmux-runtime.yml (`make upload-tmux-runtime`): macOS tmux built against static
+# libevent/ncurses, its own manifest because the Node one already has a "darwin-arm64" key.
+TMUX_METADATA_URL="${HARNESS_TMUX_METADATA_URL:-https://storage.googleapis.com/s3-autonomous-upgrade-3/harness/runtime/tmux/metadata.json}"
 HARNESS_KEY="${HARNESS_KEY:-cli}"
 CLI_DIR="$HOME/.harness/cli"
 RUNTIME_DIR="$HOME/.harness/runtime"
 CURRENT_NODE_FILE="$RUNTIME_DIR/current-node"
+CURRENT_TMUX_FILE="$RUNTIME_DIR/current-tmux"
 BIN_DIR="$HOME/.local/bin"
 LAUNCHER="$BIN_DIR/harness"
+
+# Shared by every download in this file — tmux in step 1 and Node in step 2 — so both manifests are
+# read by one implementation. Everything here must run in plain POSIX sh: there is no Node yet.
+
+# sha256 is the one tool that genuinely differs between the two platforms; the pair smooths it over.
+sha256_of() {
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  elif command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    echo "✗ Need shasum or sha256sum to verify a download, and found neither." >&2
+    exit 11
+  fi
+}
+
+# Our manifests are published one key per line; pull just one platform's object out and read its
+# fields. No jq/python dependency, which a bare machine may equally not have.
+manifest_entry() { # <manifest json> <platform>
+  printf '%s\n' "$1" | sed -n "/\"$2\"[[:space:]]*:[[:space:]]*{/,/}/p"
+}
+entry_field() { # <entry> <key>
+  printf '%s\n' "$1" | sed -n "s/.*\"$2\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -1
+}
+
+# The platform key our manifests use for this computer, or nothing on one we publish nothing for.
+manifest_platform() {
+  case "$(uname -s)" in
+    Darwin) _os=darwin ;;
+    Linux)  _os=linux ;;
+    *)      return 0 ;;
+  esac
+  case "$(uname -m)" in
+    arm64|aarch64) _arch=arm64 ;;
+    x86_64|amd64)  _arch=x64 ;;
+    *)             return 0 ;;
+  esac
+  printf '%s-%s\n' "$_os" "$_arch"
+}
+
+# Ensure ~/.local/bin is on PATH (per shell), idempotently — step 4 below, and host mode too, which
+# may have just linked ~/.local/bin/tmux and stops before step 4.
+add_path_line='export PATH="$HOME/.local/bin:$PATH"'
+marker='# added by harness installer'
+ensure_rc() {
+  rc="$1"
+  [ -f "$rc" ] || : > "$rc"
+  if ! grep -qF "$marker" "$rc" 2>/dev/null; then
+    printf '\n%s\n%s\n' "$marker" "$add_path_line" >> "$rc"
+    echo "  ✓ added ~/.local/bin to PATH in $rc"
+  fi
+}
+ensure_path_rc() {
+case "$(basename "${SHELL:-/bin/sh}")" in
+  zsh)  ensure_rc "$HOME/.zshrc" ;;
+  # `.bashrc` alone is not enough. A LOGIN shell reads .bash_profile / .bash_login / .profile and never
+  # .bashrc — that is `bash -lc`, `ssh host cmd`, most CI, and every `docker exec … bash -l`. On a
+  # desktop or an ssh session the shell is interactive so .bashrc is read and the gap is invisible;
+  # inside a container it means `harness` is never on PATH no matter how many new shells you open.
+  # macOS already covered this by also writing .bash_profile (Terminal starts login shells); do the
+  # same on Linux, writing whichever login file bash will actually consult — it reads the FIRST that
+  # exists, so appending to a lower-priority one would be silently ignored.
+  bash) ensure_rc "$HOME/.bashrc"
+        if [ -f "$HOME/.bash_profile" ]; then ensure_rc "$HOME/.bash_profile"
+        elif [ -f "$HOME/.bash_login" ]; then ensure_rc "$HOME/.bash_login"
+        elif [ "$(uname)" = "Darwin" ]; then ensure_rc "$HOME/.bash_profile"
+        else ensure_rc "$HOME/.profile"
+        fi ;;
+  fish) mkdir -p "$HOME/.config/fish"
+        rc="$HOME/.config/fish/config.fish"; [ -f "$rc" ] || : > "$rc"
+        grep -qF "$marker" "$rc" 2>/dev/null || printf '\n%s\nfish_add_path %s\n' "$marker" "$HOME/.local/bin" >> "$rc" ;;
+  *)    ensure_rc "$HOME/.profile" ;;
+esac
+}
 
 # 1. Host requirements (standalone and --host). The CLI runs tmux, `ps`, and on a Linux desktop the
 #    clipboard helper — those are checked, and only what is missing is obtained. This installer
@@ -106,61 +186,100 @@ tmux_runs() {
   command -v tmux >/dev/null 2>&1 && tmux -V >/dev/null 2>&1
 }
 
+# The managed tmux for this Mac: download, verify, unpack under ~/.harness/runtime, record it in
+# current-tmux (what the daemon reads, like current-node) and link it as ~/.local/bin/tmux so every
+# shell that has ~/.local/bin — which step 4 arranges — resolves the same binary the daemon runs.
+install_managed_tmux() {
+  platform="$(manifest_platform)"
+  case "$platform" in
+    darwin-*) ;;
+    *)
+      echo "✗ No managed tmux is published for $(uname -s)/$(uname -m). Install tmux (brew install tmux), then retry." >&2
+      exit 22
+      ;;
+  esac
+  echo "▸ Installing the managed tmux into $RUNTIME_DIR"
+  tmux_manifest="$(curl -fsSL "$TMUX_METADATA_URL")" || {
+    echo "✗ Could not fetch the tmux manifest: $TMUX_METADATA_URL" >&2
+    echo "  Install tmux yourself (brew install tmux), then retry." >&2
+    exit 22
+  }
+  tmux_entry="$(manifest_entry "$tmux_manifest" "$platform")"
+  tmux_url="$(entry_field "$tmux_entry" url)"
+  tmux_sha="$(entry_field "$tmux_entry" sha256)"
+  tmux_root="$(entry_field "$tmux_entry" archiveRoot)"
+  tmux_version="$(entry_field "$tmux_entry" version)"
+  if [ -z "$tmux_url" ] || [ -z "$tmux_sha" ] || [ -z "$tmux_root" ] || [ -z "$tmux_version" ]; then
+    echo "✗ The tmux manifest has no usable '$platform' entry. Install tmux yourself (brew install tmux), then retry." >&2
+    exit 22
+  fi
+  tmux_target="$RUNTIME_DIR/$tmux_root"
+  if [ ! -x "$tmux_target/bin/tmux" ]; then
+    mkdir -p "$RUNTIME_DIR"
+    chmod 700 "$RUNTIME_DIR" 2>/dev/null || true
+    tmux_staging="$RUNTIME_DIR/.tmux-staging-$$"
+    rm -rf "$tmux_staging"
+    mkdir -p "$tmux_staging"
+    trap 'rm -rf "$tmux_staging"' EXIT INT TERM
+    echo "  ▸ downloading tmux $tmux_version ($platform)…"
+    curl -fsSL "$tmux_url" -o "$tmux_staging/tmux.tar.gz" || {
+      echo "✗ Could not download $tmux_url" >&2
+      exit 22
+    }
+    tmux_got="$(sha256_of "$tmux_staging/tmux.tar.gz")"
+    if [ "$tmux_got" != "$tmux_sha" ]; then
+      echo "✗ tmux download failed checksum verification (expected $tmux_sha, got $tmux_got)" >&2
+      exit 22
+    fi
+    tar -xzf "$tmux_staging/tmux.tar.gz" -C "$tmux_staging" || {
+      echo "✗ Could not unpack the tmux archive" >&2
+      exit 22
+    }
+    [ -x "$tmux_staging/$tmux_root/bin/tmux" ] || {
+      echo "✗ The tmux archive has no $tmux_root/bin/tmux" >&2
+      exit 22
+    }
+    rm -rf "$tmux_target"
+    mv "$tmux_staging/$tmux_root" "$tmux_target"
+    rm -rf "$tmux_staging"
+    trap - EXIT INT TERM
+  fi
+  "$tmux_target/bin/tmux" -V >/dev/null 2>&1 || {
+    echo "✗ The managed tmux does not run on this computer: $tmux_target/bin/tmux" >&2
+    exit 22
+  }
+  printf '%s\n' "$tmux_target/bin/tmux" > "$CURRENT_TMUX_FILE"
+  chmod 600 "$CURRENT_TMUX_FILE" 2>/dev/null || true
+  mkdir -p "$BIN_DIR"
+  ln -sfn "$tmux_target/bin/tmux" "$BIN_DIR/tmux"
+  export PATH="$BIN_DIR:$PATH"
+  echo "  ✓ installed tmux $tmux_version → $tmux_target"
+}
+
 if [ "$INSTALL_MODE" != "desktop" ]; then
 case "$(uname -s)" in
   Darwin)
     if tmux_runs; then
-      : # tmux runs. Homebrew and the Apple developer tools are how it would have been installed;
-        # with it here they are nobody's business, and neither is looked at.
+      : # tmux runs. How it got here is nobody's business, and nothing else is looked at.
     else
-      # A Homebrew installed for a different shell is still installed.
+      # A Homebrew installed for a different shell is still installed — and if it is here at all,
+      # its tmux is preferred: it is what the owner already maintains. The prefixes are overridable
+      # so a test (or an unusual install) can say where, or that there is none.
       if ! command -v brew >/dev/null 2>&1; then
-        eval "$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv 2>/dev/null || true)"
-      fi
-      if ! command -v brew >/dev/null 2>&1; then
-        # Homebrew's own installer needs the Apple developer tools; this is the only place they matter.
-        if ! /usr/bin/xcrun --find clang >/dev/null 2>&1; then
-          echo "▸ Apple developer tools are required by Homebrew (Xcode or Command Line Tools)."
-          if [ -x /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild ]; then
-            # xcrun answers "not ready" for two different reasons, and only one of them is the
-            # developer directory. An unaccepted Xcode licence exits 69 and no amount of
-            # xcode-select fixes it.
-            if ! /usr/bin/xcodebuild -license check >/dev/null 2>&1; then
-              echo "  Xcode is installed but its licence has not been accepted."
-              echo "  macOS may ask for your password to accept it."
-              sudo /usr/bin/xcodebuild -license accept
-            fi
-            if ! /usr/bin/xcrun --find clang >/dev/null 2>&1; then
-              echo "  Xcode is installed but is not the active developer directory."
-              echo "  macOS may ask for your password to select it."
-              sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
-            fi
-          else
-            echo "  macOS will open its installer now. Finish it, then run this Harness installer again."
-            xcode-select --install >/dev/null 2>&1 || true
-            exit 20
+        for brew_prefix in ${HARNESS_HOMEBREW_PREFIXES:-/opt/homebrew /usr/local}; do
+          if [ -x "$brew_prefix/bin/brew" ]; then
+            eval "$("$brew_prefix/bin/brew" shellenv 2>/dev/null || true)"
+            break
           fi
-          /usr/bin/xcrun --find clang >/dev/null 2>&1 || {
-            echo "✗ Apple developer tools are selected but are not usable." >&2
-            exit 20
-          }
-        fi
-        echo "▸ Installing Homebrew (macOS may ask for your password)"
-        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" || {
-          echo "✗ Homebrew installation failed. Review the output above, then retry." >&2
-          exit 21
-        }
-        eval "$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv 2>/dev/null)"
-        command -v brew >/dev/null 2>&1 || {
-          echo "✗ Homebrew was installed but is not available to this shell." >&2
-          exit 21
-        }
+        done
       fi
-      echo "▸ Installing tmux via Homebrew"
-      brew install tmux || {
-        echo "✗ Could not install tmux via Homebrew. Retry with: brew install tmux" >&2
-        exit 22
-      }
+      if command -v brew >/dev/null 2>&1; then
+        echo "▸ Installing tmux via Homebrew"
+        brew install tmux || echo "▸ Homebrew could not install tmux; using the managed build instead."
+      fi
+      # No Homebrew, or a Homebrew that could not: the managed build. Nothing to compile, nothing
+      # to ask a password for — the same checksum-verified download Node gets in step 2.
+      tmux_runs || install_managed_tmux
     fi
     ;;
   Linux)
@@ -225,6 +344,7 @@ tmux_runs || {
 }
 echo "✓ tmux ready ($(tmux -V))"
 if [ "$INSTALL_MODE" = "host" ]; then
+  ensure_path_rc
   echo "✓ Host requirements ready."
   exit 0
 fi
@@ -351,17 +471,6 @@ if [ -z "$NODE_BIN" ]; then
   require_command sed
   require_command awk
 
-  # sha256 is the one tool that genuinely differs between the two platforms, and it is needed
-  # BEFORE Node exists to smooth it over — hence this pair rather than step 2's single JS path.
-  if command -v shasum >/dev/null 2>&1; then
-    sha256_of() { shasum -a 256 "$1" | awk '{print $1}'; }
-  elif command -v sha256sum >/dev/null 2>&1; then
-    sha256_of() { sha256sum "$1" | awk '{print $1}'; }
-  else
-    echo "✗ Need shasum or sha256sum to verify the Node download, and found neither." >&2
-    exit 11
-  fi
-
   echo "▸ Installing the Harness Node runtime into $RUNTIME_DIR"
   echo "  The CLI runs on its own Node so it behaves the same from a terminal and from the app."
   echo "  Your system Node, nvm and Homebrew are not read or changed."
@@ -369,16 +478,11 @@ if [ -z "$NODE_BIN" ]; then
     echo "✗ Could not fetch the Node runtime manifest: $RUNTIME_METADATA_URL" >&2
     exit 1
   }
-  # The manifest is our own, published one key per line; pull just this platform's object out and
-  # read its fields. No jq/python dependency, which a bare machine may equally not have.
-  runtime_entry="$(printf '%s\n' "$runtime_manifest" | sed -n "/\"$node_platform\"[[:space:]]*:[[:space:]]*{/,/}/p")"
-  entry_field() {
-    printf '%s\n' "$runtime_entry" | sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -1
-  }
-  node_url="$(entry_field url)"
-  node_sha="$(entry_field sha256)"
-  node_root="$(entry_field archiveRoot)"
-  node_version="$(entry_field version)"
+  runtime_entry="$(manifest_entry "$runtime_manifest" "$node_platform")"
+  node_url="$(entry_field "$runtime_entry" url)"
+  node_sha="$(entry_field "$runtime_entry" sha256)"
+  node_root="$(entry_field "$runtime_entry" archiveRoot)"
+  node_version="$(entry_field "$runtime_entry" version)"
   if [ -z "$node_url" ] || [ -z "$node_sha" ] || [ -z "$node_root" ] || [ -z "$node_version" ]; then
     echo "✗ The Node runtime manifest has no usable '$node_platform' entry." >&2
     exit 1
@@ -461,37 +565,8 @@ const bin = path.join(os.homedir(), '.local', 'bin')
 })().catch((err) => { console.error('✗ install failed: ' + err.message); process.exit(1) })
 HARNESSJS
 
-# 4. Ensure ~/.local/bin is on PATH (per shell), idempotently.
-add_path_line='export PATH="$HOME/.local/bin:$PATH"'
-marker='# added by harness installer'
-ensure_rc() {
-  rc="$1"
-  [ -f "$rc" ] || : > "$rc"
-  if ! grep -qF "$marker" "$rc" 2>/dev/null; then
-    printf '\n%s\n%s\n' "$marker" "$add_path_line" >> "$rc"
-    echo "  ✓ added ~/.local/bin to PATH in $rc"
-  fi
-}
-case "$(basename "${SHELL:-/bin/sh}")" in
-  zsh)  ensure_rc "$HOME/.zshrc" ;;
-  # `.bashrc` alone is not enough. A LOGIN shell reads .bash_profile / .bash_login / .profile and never
-  # .bashrc — that is `bash -lc`, `ssh host cmd`, most CI, and every `docker exec … bash -l`. On a
-  # desktop or an ssh session the shell is interactive so .bashrc is read and the gap is invisible;
-  # inside a container it means `harness` is never on PATH no matter how many new shells you open.
-  # macOS already covered this by also writing .bash_profile (Terminal starts login shells); do the
-  # same on Linux, writing whichever login file bash will actually consult — it reads the FIRST that
-  # exists, so appending to a lower-priority one would be silently ignored.
-  bash) ensure_rc "$HOME/.bashrc"
-        if [ -f "$HOME/.bash_profile" ]; then ensure_rc "$HOME/.bash_profile"
-        elif [ -f "$HOME/.bash_login" ]; then ensure_rc "$HOME/.bash_login"
-        elif [ "$(uname)" = "Darwin" ]; then ensure_rc "$HOME/.bash_profile"
-        else ensure_rc "$HOME/.profile"
-        fi ;;
-  fish) mkdir -p "$HOME/.config/fish"
-        rc="$HOME/.config/fish/config.fish"; [ -f "$rc" ] || : > "$rc"
-        grep -qF "$marker" "$rc" 2>/dev/null || printf '\n%s\nfish_add_path %s\n' "$marker" "$HOME/.local/bin" >> "$rc" ;;
-  *)    ensure_rc "$HOME/.profile" ;;
-esac
+# 4. Ensure ~/.local/bin is on PATH (per shell), idempotently — defined up with the other helpers.
+ensure_path_rc
 
 # 5. Final verification. Use the launcher by absolute path because this process cannot update its
 #    parent shell's PATH. Installation never authenticates or starts the adapter implicitly.

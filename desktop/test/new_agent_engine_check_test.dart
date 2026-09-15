@@ -18,7 +18,9 @@ import 'package:harness/core/config.dart';
 import 'package:harness/core/engine_availability.dart';
 import 'package:harness/core/models.dart';
 import 'package:harness/state/app_state.dart';
+import 'package:harness/core/project_folder.dart';
 import 'package:harness/state/pane_arrangement.dart';
+import 'package:harness/shared/widgets/app_choice_picker.dart';
 import 'package:harness/shared/widgets/app_select_field.dart';
 import 'package:harness/widgets/new_agent_dialog.dart';
 
@@ -90,7 +92,7 @@ void main() {
     // be attempted and troubleshooting stays in the optional details.
     expect(find.textContaining('Couldn’t check whether'), findsOneWidget);
     expect(
-      find.textContaining('You can still try creating a harness.'),
+      find.textContaining('You can still try creating an agent.'),
       findsOneWidget,
     );
     expect(find.textContaining('uses an older Harness CLI'), findsNothing);
@@ -184,7 +186,7 @@ void main() {
       findsOneWidget,
     );
     expect(app.launches, isEmpty);
-    await tester.tap(find.widgetWithText(FilledButton, 'New Harness'));
+    await tester.tap(find.widgetWithText(FilledButton, 'New Agent'));
     await tester.pump();
     expect(app.launches.single, {
       'machine': 'machine-1',
@@ -214,9 +216,7 @@ void main() {
     final pending = app.pending['machine-1'] = Completer<void>();
     await tester.tap(find.byKey(const Key('new-agent-retry-check')));
     await tester.pump();
-    await tester.tap(find.byKey(const Key('new-agent-machine-field')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Other computer — Remote'));
+    await tester.tap(find.byKey(const ValueKey('new-agent-machine-machine-2')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('new-agent-quick-codex')));
     await tester.tap(find.byKey(const Key('new-agent-advanced')));
@@ -232,7 +232,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(
       tester
-          .widget<AppSelectField<String>>(
+          .widget<AppChoicePicker<String>>(
             find.byKey(const Key('new-agent-machine-field')),
           )
           .value,
@@ -295,6 +295,7 @@ class _RetryNotifier extends AppNotifier {
     String machineId, {
     required String engine,
     required String folder,
+    ProjectFolderRequest? projectFolder,
     bool bypassPermission = false,
     String? codexHome,
     String? swarmId,

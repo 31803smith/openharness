@@ -162,7 +162,7 @@ class _EnvironmentSetupScreenState extends State<EnvironmentSetupScreen> {
       _heading(
         'Getting started',
         'Checking this computer',
-        'Checking the tools Harness needs to run your harnesses.',
+        'Checking the tools Harness needs to run your agents.',
       ),
       _checkList(state, checking: true),
     ],
@@ -183,8 +183,8 @@ class _EnvironmentSetupScreenState extends State<EnvironmentSetupScreen> {
           count == 0
               ? 'Your tools are ready. Verify them to continue.'
               : count == 1
-              ? 'Install this tool, then sign in to start your first harness.'
-              : 'Install these $countLabel, then sign in to start your first harness.',
+              ? 'Install this tool, then sign in to start your first agent.'
+              : 'Install these $countLabel, then sign in to start your first agent.',
         ),
         Row(
           children: [
@@ -328,9 +328,9 @@ class _EnvironmentSetupScreenState extends State<EnvironmentSetupScreen> {
       return Platform.isLinux ? '$base · tmux, ps' : base;
     }
     if (Platform.isLinux) return '$base · installs with apt';
-    final titles = steps.map((item) => item.title).toList();
-    if (titles.length == 1) return '$base · installs with Homebrew';
-    return '$base · installs ${titles.join(', then ')}';
+    // macOS: one in-app step; the item's detail says whether Homebrew or the
+    // managed download does it.
+    return '$base · ${steps.first.detail.toLowerCase()}';
   }
 
   String? get _linuxClipboardPackage {
@@ -608,7 +608,7 @@ class _EnvironmentSetupScreenState extends State<EnvironmentSetupScreen> {
       ],
     );
     final next = Text(
-      'Next: sign in and start a harness.',
+      'Next: sign in and start an agent.',
       style: TextStyle(color: AppColors.textSoft, fontSize: 11),
     );
     return Container(

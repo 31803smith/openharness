@@ -117,17 +117,32 @@ void main() {
   // Turning the dial says where the eye is and a tile moves to match. Tapping a
   // notification is a different verb: the turn just FINISHED, so it is something
   // new to look at, not a replacement for what the person was already watching.
-  test('a notification opens a NEW tile, leaving the others alone', () async {
-    final app = await _withTiles(['a1', 'a2']);
-    await app.openAgentFromDial('m1', 'a3');
+  test(
+    'a notification for an agent in no tab opens a NEW tab for it',
+    () async {
+      // The window is tabs (owner, 2026-09-15): an agent nobody has open gets a
+      // tab of its own, and the tab it was tapped from is left as it was.
+      final app = await _withTiles(['a1', 'a2']);
+      final before = app.activeSwarmId;
+      await app.openAgentFromDial('m1', 'a3');
 
-    expect(_desk(app), ['a1', 'a2', 'a3']);
-    expect(app.focusedPane?.agentId, 'a3');
-    app.dispose();
-  });
+      expect(app.activeSwarmId, isNot(before));
+      expect(_desk(app), ['a3']);
+      expect(app.focusedPane?.agentId, 'a3');
+      expect(
+        app.swarms
+            .firstWhere((s) => s.id == before)
+            .panes
+            .map((p) => p.agentId),
+        ['a1', 'a2'],
+        reason: 'the tab it came from is untouched',
+      );
+      app.dispose();
+    },
+  );
 
   test(
-    'at capacity a notification reports the limit without evicting a view',
+    'a full tab is not a capacity error — the agent gets its own tab',
     () async {
       final app = _notifier();
       _machine(app, 'm1', [
@@ -136,15 +151,41 @@ void main() {
       for (var i = 0; i < AppNotifier.maxPanes; i++) {
         await app.assignAgentToPane(null, 'm1', 'a$i');
       }
+      final full = app.activeSwarmId;
       final before = List.of(app.panes);
-      final focus = app.focusedPaneId;
       await app.openAgentFromDial('m1', 'a${AppNotifier.maxPanes}');
-      expect(app.panes, before);
-      expect(app.focusedPaneId, focus);
-      expect(app.lastError, contains('Open another tab'));
+      expect(app.activeSwarmId, isNot(full));
+      expect(_desk(app), ['a${AppNotifier.maxPanes}']);
+      expect(app.swarms.firstWhere((s) => s.id == full).panes, before);
+      expect(app.lastError, isNull);
       app.dispose();
     },
   );
+
+  test('a notification for an agent open in ANOTHER tab switches to it', () async {
+    final app = await _withTiles(['a1', 'a2']);
+    final first = app.activeSwarmId;
+    app.newSwarm();
+    await app.addAgentToSwarm('m1', 'a3', swarmId: app.activeSwarmId);
+    final second = app.activeSwarmId;
+    expect(second, isNot(first));
+
+    // Back on the first tab, a tap for a3 goes to the second — no second tile.
+    app.selectSwarm(first);
+    await app.openAgentFromDial('m1', 'a3');
+    expect(app.activeSwarmId, second);
+    expect(app.focusedPane?.agentId, 'a3');
+    expect(app.allPanes.where((p) => p.agentId == 'a3').length, 1);
+
+    // And the CURRENT tab wins when both hold it.
+    app.selectSwarm(first);
+    await app.addAgentToSwarm('m1', 'a3', swarmId: first);
+    app.focusPane(app.panes.first.id);
+    await app.openAgentFromDial('m1', 'a3');
+    expect(app.activeSwarmId, first);
+    expect(app.focusedPane?.agentId, 'a3');
+    app.dispose();
+  });
 
   test('a notification for a tile already open only focuses it', () async {
     final app = await _withTiles(['a1', 'a2', 'a3']);
@@ -240,20 +281,21 @@ void main() {
     // The two verbs side by side, driven through the app's own handler: the same
     // agent, one frame each, and the grid ends up a different size.
     final app = await _withTiles(['a1', 'a2']);
+    final first = app.activeSwarmId;
     await app.handleEventForTest('m1', {
       'type': 'dial_open',
       'payload': {'machineId': 'm1', 'agentId': 'a4'},
     });
-    expect(_desk(app), ['a1', 'a2', 'a4']);
+    // dial_open: a tab of its own, the first tab intact.
+    expect(_desk(app), ['a4']);
+    expect(
+      app.swarms.firstWhere((s) => s.id == first).panes.map((p) => p.agentId),
+      ['a1', 'a2'],
+    );
 
-    app.focusPane(app.panes.last.id);
+    // dial_focus: a tile in the CURRENT tab.
     await dialFocus(app, 'a5');
-    expect(_desk(app), [
-      'a1',
-      'a2',
-      'a4',
-      'a5',
-    ], reason: 'neither event removes a view');
+    expect(_desk(app), ['a4', 'a5'], reason: 'neither event removes a view');
     app.dispose();
   });
 

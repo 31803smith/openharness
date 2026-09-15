@@ -58,12 +58,18 @@ class _SwarmSearchPreviewState extends State<SwarmSearchPreview> {
   Timer? _warm;
   String? _selectedId;
   final _scroll = ScrollController();
+  int _lastPage = 0;
+  int _pendingPages = 0;
+  String? _renderedId;
+  bool _pageScheduled = false;
   AppNotifier get app => widget.search.app;
 
   @override
   void initState() {
     super.initState();
     widget.search.addListener(_changed);
+    _lastPage = widget.search.previewPage.value;
+    widget.search.previewPage.addListener(_pageChanged);
     _changed();
   }
 
@@ -72,7 +78,10 @@ class _SwarmSearchPreviewState extends State<SwarmSearchPreview> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.search != widget.search) {
       oldWidget.search.removeListener(_changed);
+      oldWidget.search.previewPage.removeListener(_pageChanged);
       widget.search.addListener(_changed);
+      _lastPage = widget.search.previewPage.value;
+      widget.search.previewPage.addListener(_pageChanged);
       _selectedId = null;
       _changed();
     }
@@ -82,6 +91,7 @@ class _SwarmSearchPreviewState extends State<SwarmSearchPreview> {
     final row = widget.search.selected;
     if (_selectedId == row?.id) return;
     _selectedId = row?.id;
+    _pendingPages = 0;
     if (_scroll.hasClients) _scroll.jumpTo(0);
     setState(() {});
     _warm?.cancel();
@@ -101,10 +111,46 @@ class _SwarmSearchPreviewState extends State<SwarmSearchPreview> {
     });
   }
 
+  void _pageChanged() {
+    final page = widget.search.previewPage.value;
+    _pendingPages += page - _lastPage;
+    _lastPage = page;
+    if (_renderedId == _selectedId &&
+        _scroll.hasClients &&
+        _scroll.position.hasContentDimensions) {
+      _applyPage();
+    } else if (!_pageScheduled) {
+      // A new result can be selected and paged before its first layout. Apply
+      // against its own dimensions; a later selection clears the pending move.
+      _pageScheduled = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _pageScheduled = false;
+        _applyPage();
+      });
+    }
+  }
+
+  void _applyPage() {
+    if (_pendingPages == 0 || !_scroll.hasClients) return;
+    final position = _scroll.position;
+    if (!position.hasContentDimensions) return;
+    final pages = _pendingPages;
+    _pendingPages = 0;
+    // Keep a little overlap for reading, and respond directly to held keys.
+    _scroll.jumpTo(
+      (position.pixels + pages * position.viewportDimension * .8).clamp(
+        position.minScrollExtent,
+        position.maxScrollExtent,
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _warm?.cancel();
     widget.search.removeListener(_changed);
+    widget.search.previewPage.removeListener(_pageChanged);
     _scroll.dispose();
     super.dispose();
   }
@@ -115,10 +161,11 @@ class _SwarmSearchPreviewState extends State<SwarmSearchPreview> {
     builder: (context, _) {
       final row = widget.search.selected;
       if (row == null) return const SizedBox.shrink();
+      _renderedId = row.id;
       final agents = _agents(app, row);
       return Semantics(
         container: true,
-        label: 'Harness preview',
+        label: 'Agent preview',
         child: ColoredBox(
           color: Colors.black.withValues(alpha: .10),
           child: Scrollbar(

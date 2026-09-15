@@ -1359,7 +1359,7 @@ class TerminalSession extends ChangeNotifier {
   }
 
   void transportLost([
-    String message = 'Connection lost. Select the harness to reconnect.',
+    String message = 'Connection lost. Select the agent to reconnect.',
   ]) {
     // `takenOver` is a deliberate dead end (see `_paneNeedsAttach`): only the user's own retry
     // may reopen a stream someone else claimed. A WS hiccup must not quietly overwrite that into

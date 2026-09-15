@@ -7,6 +7,7 @@ import type { TerminalStreamManager } from './lib/terminalStreamManager.js'
 import { decodeTerminalLocal, TerminalBinaryKind } from './lib/terminalBinary.js'
 import { registry, type RegisteredSession } from './lib/registry.js'
 import * as mediaPreview from './lib/mediaPreview.js'
+import * as projectFolder from './lib/projectFolder.js'
 import { randomUUID } from 'node:crypto'
 
 const wsMock = vi.hoisted(() => {
@@ -602,6 +603,42 @@ describe('BackendSocket outbound queue', () => {
     } finally {
       finish?.()
       await socket.unregisterLocalClient('local:receipt')
+      await socket.stop()
+    }
+  })
+
+  it('prepares a remote project once under its creation receipt and retains its folder after a refused launch', async () => {
+    const socket = new BackendSocket('token')
+    const frames: Array<Record<string, unknown>> = []
+    socket.registerLocalClient('local:project', { sendFrame: frame => { frames.push(frame); return true }, sendBinary: () => true })
+    let finish!: (folder: string) => void
+    const prepare = vi.spyOn(projectFolder, 'prepareProjectFolder').mockImplementation(() => new Promise(resolve => { finish = resolve }))
+    const create = vi.fn(async () => ({ ok: false as const, error: 'TMUX_UNAVAILABLE' }))
+    socket.onCreateAgent = create
+    const creationId = randomUUID()
+    const payload = { creationId, engine: 'claude', projectSource: 'remote', repositoryUrl: 'owner/repo' }
+    const ask = (type: string, requestId: string, choices = payload) => socket.handleLocalFrame('local:project', { type, payload: { requestId, ...choices } })
+    try {
+      ask('agent_create', 'first')
+      await vi.waitFor(() => expect(prepare).toHaveBeenCalledTimes(1))
+      ask('agent_create', 'retry')
+      ask('agent_create_status', 'pending')
+      await vi.waitFor(() => expect(frames).toContainEqual(expect.objectContaining({ payload: expect.objectContaining({ requestId: 'pending', state: 'pending' }) })))
+      expect(create).not.toHaveBeenCalled()
+      finish('/remote/Harness Projects/repo')
+      for (const requestId of ['first', 'retry']) {
+        await vi.waitFor(() => expect(frames).toContainEqual(expect.objectContaining({ payload: expect.objectContaining({ requestId, state: 'failed', preparedFolder: '/remote/Harness Projects/repo', failure: { code: 'TMUX_UNAVAILABLE' } }) })))
+      }
+      expect(create).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ cwd: '/remote/Harness Projects/repo' }))
+      expect(prepare).toHaveBeenCalledTimes(1)
+      ask('agent_create', 'changed', { ...payload, repositoryUrl: 'owner/different' })
+      await vi.waitFor(() => expect(frames).toContainEqual(expect.objectContaining({ payload: expect.objectContaining({ requestId: 'changed', error: 'CREATION_CONFLICT' }) })))
+      expect(prepare).toHaveBeenCalledTimes(1)
+      ask('agent_create_status', 'saved')
+      await vi.waitFor(() => expect(frames).toContainEqual(expect.objectContaining({ payload: expect.objectContaining({ requestId: 'saved', preparedFolder: '/remote/Harness Projects/repo' }) })))
+    } finally {
+      finish?.('/remote/Harness Projects/repo')
+      await socket.unregisterLocalClient('local:project')
       await socket.stop()
     }
   })

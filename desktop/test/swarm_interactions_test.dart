@@ -11,6 +11,7 @@ import 'package:harness/core/config.dart';
 import 'package:harness/core/models.dart';
 import 'package:harness/screens/swarm_screen.dart';
 import 'package:harness/settings/settings_screen.dart';
+import 'package:harness/shared/widgets/app_choice_picker.dart';
 import 'package:harness/shared/widgets/app_select_field.dart';
 import 'package:harness/state/app_state.dart';
 import 'package:harness/state/swarm_catalog.dart';
@@ -169,7 +170,7 @@ void main() {
     (tester) async {
       final app = createApp();
       await mount(tester, app);
-      await chord(tester, LogicalKeyboardKey.keyO);
+      await chord(tester, LogicalKeyboardKey.keyN);
       await tester.pump();
       expect(app.panes, isEmpty);
       await tester.enterText(
@@ -239,7 +240,7 @@ void main() {
       find.descendant(of: controls, matching: find.byType(IconButton)),
       findsNWidgets(5),
     );
-    expect(find.byTooltip('Stop Harness').first.hitTestable(), findsNothing);
+    expect(find.byTooltip('Stop Agent').first.hitTestable(), findsNothing);
     final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
     await mouse.addPointer(location: const Offset(1, 1));
     Future<void> hover() async {
@@ -266,10 +267,10 @@ void main() {
     await hover();
 
     await tester.tap(
-      find.descendant(of: controls, matching: find.byTooltip('Stop Harness')),
+      find.descendant(of: controls, matching: find.byTooltip('Stop Agent')),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Stop Harness'), findsNWidgets(2));
+    expect(find.text('Stop Agent'), findsNWidgets(2));
     expect(app.panes, contains(pane));
     expect(original.panes.single.session, same(session));
     await tester.tap(find.text('Cancel'));
@@ -592,9 +593,9 @@ void main() {
       await tester.tap(find.text('Browse…'));
       await tester.pump();
       final field = find.byKey(const Key('new-agent-machine-field'));
-      tester.widget<AppSelectField<String>>(field).onChanged('b');
+      tester.widget<AppChoicePicker<String>>(field).onChanged('b');
       await tester.pump();
-      tester.widget<AppSelectField<String>>(field).onChanged('a');
+      tester.widget<AppChoicePicker<String>>(field).onChanged('a');
       await tester.pump();
       folder.answer.complete('/old-machine-folder');
       await tester.pump();

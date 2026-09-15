@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../shared/theme/app_theme.dart' as grid;
 import '../state/swarm_search.dart';
 
-/// The shared input for the start page, Open Harness and split searches.
+/// The shared input for the start page, Open Agent and split searches.
 /// Flutter owns the caret and result navigation; native chrome only opens it.
 class SwarmSearchInput extends StatelessWidget {
   const SwarmSearchInput({
@@ -21,6 +21,7 @@ class SwarmSearchInput extends StatelessWidget {
     this.autofocus = true,
     this.hintText,
     this.rounded = false,
+    this.prominent = false,
   });
 
   final Key inputKey;
@@ -35,6 +36,7 @@ class SwarmSearchInput extends StatelessWidget {
   final bool showClose, autofocus;
   final String? hintText;
   final bool rounded;
+  final bool prominent;
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
@@ -48,12 +50,12 @@ class SwarmSearchInput extends StatelessWidget {
     final open = search != null;
     final border = OutlineInputBorder(
       borderRadius: BorderRadius.vertical(
-        top: Radius.circular(rounded && !open ? 30 : 12),
+        top: Radius.circular(rounded && !open ? 999 : 12),
         bottom: Radius.circular(
           open
               ? 0
               : rounded
-              ? 30
+              ? 999
               : 12,
         ),
       ),
@@ -75,12 +77,12 @@ class SwarmSearchInput extends StatelessWidget {
       decoration: InputDecoration(
         hintText: search?.isCommandMode == true
             ? search!.hint
-            : hintText ?? search?.hint ?? 'Find a harness',
+            : hintText ?? search?.hint ?? 'Find an agent',
         hintStyle: const TextStyle(fontSize: 16, color: Colors.white60),
         prefixIcon: const Icon(Icons.search, size: 20, color: Colors.white60),
-        prefixIconConstraints: const BoxConstraints(
+        prefixIconConstraints: BoxConstraints(
           minWidth: 52,
-          minHeight: 56,
+          minHeight: prominent ? 64 : 56,
         ),
         suffixIcon: showClose
             ? Padding(
@@ -99,9 +101,9 @@ class SwarmSearchInput extends StatelessWidget {
         fillColor: open
             ? grid.AppPalette.swarmSearchSurface
             : const Color(0xa6111521),
-        contentPadding: const EdgeInsets.symmetric(
+        contentPadding: EdgeInsets.symmetric(
           horizontal: 18,
-          vertical: 18,
+          vertical: prominent ? 22 : 18,
         ),
         isDense: true,
         border: border,

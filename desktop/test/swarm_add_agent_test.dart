@@ -13,7 +13,7 @@ import 'swarm_state_test.dart' show createApp;
 
 void main() {
   testWidgets(
-    'Open Harness in the header reuses the chosen session in this workspace',
+    'Open Agent in the header reuses the chosen session in this workspace',
     (tester) async {
       final app = createApp();
       final input = <TerminalBinaryFrame>[];
@@ -25,7 +25,7 @@ void main() {
       await mount(tester, app);
       tester.view.physicalSize = const Size(880, 560);
       await tester.pump();
-      final add = find.byKey(const ValueKey('swarm-open-harness-button'));
+      final add = find.byKey(const ValueKey('swarm-add-harness-button'));
       expect(tester.getRect(add).top, lessThan(44));
       expect(find.byType(FloatingActionButton), findsNothing);
       expect(
@@ -44,7 +44,7 @@ void main() {
       expect(
         find.descendant(
           of: find.byKey(const ValueKey('swarm-row-action')),
-          matching: find.text('Open Harness'),
+          matching: find.text('Open Agent'),
         ),
         findsOneWidget,
       );

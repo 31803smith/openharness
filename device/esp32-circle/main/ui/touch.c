@@ -29,6 +29,10 @@ static esp_lcd_panel_io_handle_t s_tp_io;   // kept so a dead controller can be 
 // every recognizer in this file — holding a finger that is no longer there. Which is the reported shape.
 static uint32_t s_read_fail_total;
 static uint32_t s_read_fail_run;      // consecutive; reset by any good read
+// No-ACK reads in a row while the driver still reports a finger. See the INVALID_RESPONSE branch.
+static uint32_t s_noack_run;
+static uint32_t s_inferred_releases;  // lifetime, for the heartbeat: how often the fix above fired
+#define NOACK_RELEASE_READS 3
 #define READ_FAIL_REINIT   50         // ~1s of nothing but errors → tear the controller down and bring it back
 #define READ_FAIL_LOG_EVERY 100
 #define REINIT_RETRY_MS    5000       // a reinit that failed is tried again this often
@@ -41,8 +45,8 @@ static bool     s_stuck_warned;       // the ">held 5s" line for this press alre
 #define STUCK_PRESS_MS     5000
 #define STUCK_PRESS_EVERY_MS 30000
 
-// How far a finger may drift and still count as "held still". Shared by the near-still TAP test and the
-// GOAL hold — it outlived the create-project long-press that introduced it.
+// How far a finger may drift and still count as "held still" — the near-still TAP test. It outlived the
+// create-project long-press and the goal hold that used it.
 #define LONG_MOVE_PX  30
 
 #define DOUBLE_TAP_MS 500   // two taps within this window (and close in position) = a double-tap. Also the
@@ -111,12 +115,8 @@ static uint32_t s_tap_pending_ms;
 // Where the press landed. The tap is deferred past the double-tap window, by which time the finger has
 // gone, so the point has to be carried with it — ui_tap uses it to decide what was actually touched.
 static int16_t s_tap_x, s_tap_y;
-// GOAL gesture: a still hold ≥2s (awake, not already recording) starts a GOAL voice command.
-// It "consumes" the press: swallows the rest so it lands as no UI tap.
-#define GOAL_HOLD_MS 2000
-static bool s_goal_swallow;
-// Swallow all input until the finger lifts — set after a wake tap / double-tap-voice / goal-hold so the
-// consumed gesture doesn't also drive the UI. File-scope so swipe_track can be gated off while it's set
+// Swallow all input until the finger lifts — set after a wake tap so the consumed gesture doesn't also
+// drive the UI. File-scope so swipe_track can be gated off while it's set
 // (otherwise swipe_track starts mid-gesture on the read after wake and classifies the release as a tap →
 // stray "open detail" on the very tap that woke the screen).
 static bool s_swallow_until_release;
@@ -246,7 +246,6 @@ static void swipe_track(bool pressed, uint16_t x, uint16_t y)
         // The DETAIL READER has its own tight gesture set (the rest is native vertical scroll):
         //   • up-swipe from the bottom ~20px → Overview   • horizontal swipe → back to the agent screen
         // Everything else on the reader (mid-screen vertical drag, taps) is left to LVGL scroll / does nothing.
-        // (double-tap = voice and the ≥2s hold = goal are handled in touch_read, independent of this.)
         bool reader = ui_reader_is_open();
         int home_edge = reader ? READER_HOME_EDGE_PX : BOTTOM_EDGE_PX;
         // HOME gesture: an upward swipe that STARTED at the bottom edge → jump to Overview. (y grows downward;
@@ -314,18 +313,31 @@ static void touch_read(lv_indev_t *indev, lv_indev_data_t *data)
     static uint32_t ok_reads, stale_reads;   // per press, for the release line — see below
     if (rc == ESP_OK) {
         s_read_fail_run = 0;
+        s_noack_run = 0;
         pressed = esp_lcd_touch_get_coordinates(s_tp, &x, &y, &strength, &cnt, 1) && cnt > 0;
         if (pressed) ok_reads++;
     } else if (rc == ESP_ERR_INVALID_RESPONSE) {
-        // The chip's report has no ACK byte — measured on the desk, this is what EVERY idle read returns
-        // (~30/s with no finger near the glass), so it is not an error and never a reason to reinit. The
-        // driver leaves its point table untouched on this path, which is the part that matters: what
-        // LVGL sees is the LAST ACKED frame. Kept as such here, for now, and counted per press so the
-        // release line says how many stale reads a held finger produces — that number decides whether
-        // "no ACK" can be read as "no finger" (the fix for a release frame the chip showed once and this
-        // task missed, which leaves the glass held forever).
+        // The chip's report has no ACK byte. MEASURED, not assumed (2026-09-15, this log): every idle
+        // read answers this way (~30/s with no finger near the glass), and NOT ONE read does while a
+        // finger is down — a still 2.9s hold read `acked=84 stale=0`. So no ACK is no finger.
+        //
+        // The driver leaves its point table untouched on this path, and until now so did this file:
+        // what LVGL saw was the LAST ACKED frame. A release the chip showed once and this task read a
+        // beat late — a busy frame, an I2C reset — therefore left the glass held forever: no swipe, no
+        // Voice, the tile still following the app. That is the stuck-dial report, and this is its fix.
+        // Three misses in a row (~100ms) before the finger is declared gone, so one dropped sample
+        // mid-drag cannot split a stroke in two.
+        s_read_fail_run = 0;
         pressed = esp_lcd_touch_get_coordinates(s_tp, &x, &y, &strength, &cnt, 1) && cnt > 0;
-        if (pressed) stale_reads++;
+        if (pressed && ++s_noack_run >= NOACK_RELEASE_READS) {
+            ESP_LOGW(TAG, "release inferred: no ACK for %u reads while held at (%u,%u) — the chip's release frame was missed",
+                     (unsigned)s_noack_run, x, y);
+            pressed = false;
+            s_noack_run = 0;
+            s_inferred_releases++;
+        } else if (pressed) {
+            stale_reads++;
+        }
     } else {
         // A real I2C failure. The driver has already reset the chip (with 60ms of delays, on this task).
         // No answer is no finger: the point table is whatever it was, and trusting it is how a finger
@@ -364,9 +376,9 @@ static void touch_read(lv_indev_t *indev, lv_indev_data_t *data)
         if (!s_stuck_warned || lv_tick_elaps(warned_at) >= STUCK_PRESS_EVERY_MS) {
             s_stuck_warned = true;
             warned_at = lv_tick_get();
-            ESP_LOGW(TAG, "press held %us at (%u,%u): swallow=%d goal=%d action=%d band=%d voice=%d asleep=%d switch=%d notif=%d",
+            ESP_LOGW(TAG, "press held %us at (%u,%u): swallow=%d action=%d band=%d voice=%d asleep=%d switch=%d notif=%d",
                      (unsigned)(lv_tick_elaps(s_press_t0) / 1000), x, y,
-                     s_swallow_until_release, s_goal_swallow, s_action_capture, s_band_drag,
+                     s_swallow_until_release, s_action_capture, s_band_drag,
                      ui_voice_is_active(), display_is_asleep(), ui_switch_is_open(), ui_notif_is_open());
         }
     }
@@ -437,31 +449,17 @@ static void touch_read(lv_indev_t *indev, lv_indev_data_t *data)
         }
     }
 
-    // Swipes + tap-to-stop-voice. Skip while swallowing a consumed gesture (wake / voice / goal) so the
+    // Swipes + tap-to-stop-voice. Skip while swallowing a consumed gesture (the wake tap) so the
     // release of that gesture isn't misread as a fresh tap.
     // ...and not under the agent picker, whose rows are LVGL's to dispatch: swipe_track would read a row
     // tap as the tap that opens the detail reader, and a scroll of the list as a carousel swipe, both
     // happening to the tile UNDERNEATH the overlay.
-    if (!display_is_asleep() && !s_swallow_until_release && !s_goal_swallow && !ui_switch_is_open())
+    if (!display_is_asleep() && !s_swallow_until_release && !ui_switch_is_open())
         swipe_track(gesture_pressed, x, y);
 
-    // GOAL: a still hold ≥3s (awake, not already recording) → start a GOAL voice command. Consumes the press
-    // (swallow the rest so it doesn't land as a UI tap on release).
-    {
-        static bool gprev; static uint32_t gt0; static int16_t gsx, gsy; static bool gmoved, gfired;
-        if (gesture_pressed && !gprev) { gt0 = lv_tick_get(); gsx = x; gsy = y; gmoved = false; gfired = false; }
-        else if (gesture_pressed && !gfired) {
-            int dx = (int)x - gsx, dy = (int)y - gsy;
-            if (dx * dx + dy * dy > LONG_MOVE_PX * LONG_MOVE_PX) gmoved = true;
-            if (!gmoved && !display_is_asleep() && !ui_voice_is_active() && lv_tick_elaps(gt0) >= GOAL_HOLD_MS) {
-                gfired = true;
-                s_goal_swallow = true; // swallow until the finger lifts (no stray UI tap)
-                ESP_LOGI(TAG, "goal hold at (%u,%u) → voice goal, swallowing until release", x, y);
-                ui_voice_start_goal();
-            }
-        }
-        gprev = gesture_pressed;
-    }
+    // A still hold used to start a GOAL voice command here (owner, 2026-09-15: "remove luôn cái long
+    // hold ra goal voice"). Holding the glass now means nothing beyond what LVGL makes of it; Voice is
+    // the button, and only the button.
 
     // Resolve a deferred single tap. Anchored to the PRESS and only fires once the double-tap window has
     // passed — so a double-tap always cancels it first. Extra guard: skip if a turn just started (voice).
@@ -476,11 +474,10 @@ static void touch_read(lv_indev_t *indev, lv_indev_data_t *data)
 
     // After a double-tap starts voice, the finger is usually STILL down. Keep swallowing until it lifts,
     // so the two taps don't also land as UI presses (a stray tile/settings click).
-    if (s_swallow_until_release || s_goal_swallow) {
+    if (s_swallow_until_release) {
         if (pressed) { data->state = LV_INDEV_STATE_RELEASED; return; }
-        ESP_LOGI(TAG, "swallow cleared (wake=%d goal=%d)", s_swallow_until_release, s_goal_swallow);
+        ESP_LOGI(TAG, "swallow cleared (wake tap consumed)");
         s_swallow_until_release = false;
-        s_goal_swallow = false;   // finger lifted → goal-hold press fully consumed
     }
 
     if (display_is_asleep()) {
@@ -567,6 +564,7 @@ void touch_stats(touch_stats_t *out)
     out->presses = s_presses;
     out->last_press_ms_ago = s_presses ? lv_tick_elaps(s_last_press_tick) : 0;
     out->read_failures = s_read_fail_total;
+    out->inferred_releases = s_inferred_releases;
     out->controller_ok = s_tp != NULL;
     out->held_now = s_stuck_warned;
 }

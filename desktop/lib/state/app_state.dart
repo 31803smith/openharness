@@ -24,6 +24,8 @@ import '../core/local_hostname.dart';
 import '../core/local_git_projects.dart';
 import '../core/test_run.dart';
 import '../core/models.dart';
+import '../core/project_folder.dart';
+import '../core/repository_clone.dart';
 import '../core/retry.dart';
 import '../settings/config_store.dart';
 import '../stats/harness_stats.dart';
@@ -88,8 +90,13 @@ class AgentCreationAttempt {
   Future<String?>? _inFlight;
   bool _awaitingConfirmation = false, _finished = false;
   String? _outcome;
+  String? _preparedFolder;
 
   bool get awaitingConfirmation => _awaitingConfirmation;
+
+  /// A completed folder survives a refused agent launch, so correcting the
+  /// agent choice does not clone or create the same project again.
+  String? get preparedFolder => _preparedFolder;
 
   String? _complete(String? error) {
     _finished = true;
@@ -496,7 +503,7 @@ class AppNotifier extends ChangeNotifier {
     // An unused starter has no work to recover. This also covers empty pages
     // restored from builds that did not mark them as drafts.
     if (entry is ClosedSwarm &&
-        entry.name == 'New Harness' &&
+        Swarm.normalizeName(entry.name) == Swarm.defaultName &&
         entry.panes.isEmpty &&
         entry.presets.isEmpty) {
       return;
@@ -515,7 +522,7 @@ class AppNotifier extends ChangeNotifier {
   bool get canOpenNewTab =>
       swarms.length < maxSwarms || swarms.any((swarm) => swarm.isEmptyStarter);
 
-  // A New Harness remains temporary until it has content or a custom name.
+  // A New Tab remains temporary until it has content or a custom name.
   // The return destination is session-local; abandoned drafts are never saved.
   final _draftSwarmReturns = <String, String>{};
 
@@ -524,14 +531,15 @@ class AppNotifier extends ChangeNotifier {
     final swarm = swarms.where((swarm) => swarm.id == id).firstOrNull;
     return swarm != null &&
         swarm.panes.isEmpty &&
-        swarm.name == 'New Harness' &&
+        swarm.name == Swarm.defaultName &&
         swarm.presets.isEmpty;
   }
 
-  void newSwarm({String name = 'New Harness', bool draft = false}) {
+  void newSwarm({String name = Swarm.defaultName, bool draft = false}) {
+    name = Swarm.normalizeName(name);
     // Every New Tab entry point reuses the existing start page, including
     // when another tab is selected or the tab limit has been reached.
-    if (name == 'New Harness') {
+    if (name == Swarm.defaultName) {
       final starter = activeSwarm.isEmptyStarter
           ? activeSwarm
           : swarms.where((swarm) => swarm.isEmptyStarter).firstOrNull;
@@ -574,7 +582,7 @@ class AppNotifier extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Cancel an untouched New Harness without closing a session or recording
+  /// Cancel an untouched New Tab without closing a session or recording
   /// Recently Closed. A sole workspace remains the app's starting screen.
   bool cancelSwarmDraft(String id) {
     final returnId = _draftSwarmReturns[id];
@@ -582,7 +590,7 @@ class AppNotifier extends ChangeNotifier {
     if (returnId == null ||
         target == null ||
         target.panes.isNotEmpty ||
-        target.name != 'New Harness' ||
+        target.name != Swarm.defaultName ||
         target.presets.isNotEmpty ||
         swarms.length == 1) {
       return false;
@@ -681,7 +689,7 @@ class AppNotifier extends ChangeNotifier {
     // welcome tabs, evicting the real work from recently closed history.
     if (swarms.length == 1 &&
         swarms.single.panes.isEmpty &&
-        swarms.single.name == 'New Harness' &&
+        swarms.single.name == Swarm.defaultName &&
         swarms.single.presets.isEmpty) {
       return;
     }
@@ -3299,7 +3307,7 @@ class AppNotifier extends ChangeNotifier {
           unawaited(connection.forceReconnect());
         }
       } else {
-        machine.agentsLoadError = 'Could not load harnesses: $error';
+        machine.agentsLoadError = 'Could not load agents: $error';
       }
       // A NO_PEER_LINK close already set needsLink (via onLocalFailure) perhaps a microtask before
       // this catch runs — don't downgrade that specific, actionable state back to a generic error.
@@ -3836,9 +3844,9 @@ class AppNotifier extends ChangeNotifier {
         'MEDIA_CHANGED' => 'The file changed while downloading. Wait for it to finish generating and try again.',
         'MEDIA_UNSUPPORTED' => 'This file is not a supported image or video.',
         'MEDIA_INVALID_REQUEST' =>
-          'Use a full path or a path inside this harness’s working folder.',
+          'Use a full path or a path inside this agent’s working folder.',
         'AGENT_NOT_FOUND' =>
-          'This harness is no longer available. Reconnect and try again.',
+          'This agent is no longer available. Reconnect and try again.',
         'NOT_TEXT' || 'FILE_TOO_LARGE' => 'Update the Harness CLI on this remote machine to open media previews.',
         _ => 'The remote machine could not read this file. Check that it is accessible and try again.',
       });
@@ -3910,10 +3918,14 @@ class AppNotifier extends ChangeNotifier {
   /// Starts an agent, or recovers this form's earlier request after a lost reply.
   /// Returns null on success, or an inline message; [attempt] tells the form
   /// whether to offer Check status instead of inviting another creation.
+  Future<String> prepareLocalProjectFolder(ProjectFolderRequest request) =>
+      request.prepareLocal();
+
   Future<String?> createAgent(
     String machineId, {
     required String engine,
     required String folder,
+    ProjectFolderRequest? projectFolder,
     bool bypassPermission = false,
     String? codexHome,
     String? swarmId,
@@ -3923,7 +3935,8 @@ class AppNotifier extends ChangeNotifier {
     final creation = attempt ?? AgentCreationAttempt();
     final choices = <String, dynamic>{
       'engine': engine,
-      'cwd': folder,
+      if (projectFolder == null) 'cwd': folder,
+      ...?projectFolder?.payload,
       'bypassPermission': bypassPermission,
       'codexHome': ?codexHome,
     };
@@ -3954,22 +3967,30 @@ class AppNotifier extends ChangeNotifier {
     final target = swarms.where((s) => s.id == targetId).firstOrNull;
     if (target == null) return 'This tab was closed';
     if (target.panes.length >= maxPanes) {
-      return 'This tab is full. Open a new tab to create a harness.';
+      return 'This tab is full. Open a new tab to create an agent.';
     }
     return null;
   }
 
   String _creationFailureMessage(String code, String? detail, String machine) =>
       switch (code) {
+        'INVALID_PROJECT_SOURCE' ||
+        'INVALID_REPOSITORY' ||
+        'PROJECT_PREPARATION_FAILED' ||
+        'PROJECT_EXISTS' ||
+        'CLONE_FAILED' ||
+        'CLONE_TIMEOUT' ||
+        'GIT_UNAVAILABLE' =>
+          detail ?? 'Could not prepare the project folder on $machine.',
         'CWD_NOT_FOUND' || 'INVALID_CWD' =>
           'The project folder is unavailable on $machine. '
               'Choose another folder and try again.',
         'TMUX_UNAVAILABLE' =>
-          'Harness needs tmux to start harnesses on $machine. '
+          'Harness needs tmux to start agents on $machine. '
               'Install tmux there, then try again.',
         'UNSUPPORTED_ON_REMOTE' || 'UNSUPPORTED' =>
-          'Update the harness CLI on this machine to create a harness',
-        _ => 'Create harness failed: ${detail ?? code}',
+          'Update the harness CLI on this machine to create an agent',
+        _ => 'Create agent failed: ${detail ?? code}',
       };
 
   Future<String?> _createAgentWithReceipt(AgentCreationAttempt creation) async {
@@ -3995,11 +4016,44 @@ class AppNotifier extends ChangeNotifier {
       }
     }
     final connection = _conn(machineId);
+    var launchChoices = choices;
+    if (!creation.awaitingConfirmation &&
+        choices['projectSource'] != null &&
+        machine.isLocalMachine) {
+      try {
+        final repository = choices['repositoryUrl'];
+        final project = repository is String
+            ? ProjectFolderRequest.remote(GitHubRepository.parse(repository)!)
+            : const ProjectFolderRequest.newProject();
+        creation._preparedFolder ??= await prepareLocalProjectFolder(project);
+      } on RepositoryCloneException catch (error) {
+        return creation._complete(error.message);
+      } catch (_) {
+        return creation._complete(
+          'Could not prepare the project folder. Choose Local to select an existing folder.',
+        );
+      }
+      // Preparation may be slow. Revalidate before starting a process, using
+      // the original machine and split rather than the current selection.
+      final placementError = _creationPlacementError(targetId, split);
+      if (placementError != null) return creation._complete(placementError);
+      if (_disposed ||
+          machineStates[machineId] != machine ||
+          !machine.isLocalMachine) {
+        return creation._complete(
+          'The selected machine changed. Choose the machine again.',
+        );
+      }
+      launchChoices = Map.of(choices)
+        ..remove('projectSource')
+        ..remove('repositoryUrl')
+        ..['cwd'] = creation._preparedFolder;
+    }
     final operation = creation.awaitingConfirmation
         ? 'agent_create_status'
         : 'agent_create';
     final unconfirmed =
-        '$machineName has not confirmed the new harness yet. '
+        '$machineName has not confirmed the new agent yet. '
         'Check status before creating another.';
     Map<String, dynamic> result;
     creation._awaitingConfirmation = true;
@@ -4014,7 +4068,7 @@ class AppNotifier extends ChangeNotifier {
       } else {
         result = await connection.request(
           operation,
-          payload: {...choices, 'creationId': creation._id},
+          payload: {...launchChoices, 'creationId': creation._id},
           timeout: const Duration(seconds: 20),
         );
       }
@@ -4024,13 +4078,15 @@ class AppNotifier extends ChangeNotifier {
             failure.code == 'UNSUPPORTED_ON_REMOTE' ||
             failure.code == 'E2EE_REQUIRED') {
           return '$machineName cannot check this creation. '
-              'Use Find a harness to look for it before creating another.';
+              'Use Find an agent to look for it before creating another.';
         }
         return unconfirmed;
       }
       // Refusals that happen before a launch are safe to correct. INTERNAL,
       // spawn timeouts and connection failures cannot prove nothing started.
       const refusedBeforeLaunch = {
+        'INVALID_PROJECT_SOURCE',
+        'INVALID_REPOSITORY',
         'CWD_NOT_FOUND',
         'INVALID_CWD',
         'INVALID_ENGINE',
@@ -4043,6 +4099,11 @@ class AppNotifier extends ChangeNotifier {
         'UNSUPPORTED',
       };
       if (refusedBeforeLaunch.contains(failure.code)) {
+        if (failure.code == 'INVALID_CWD' && choices['projectSource'] != null) {
+          return creation._complete(
+            'Update Harness CLI on $machineName to create or clone project folders. Local can open an existing folder.',
+          );
+        }
         return creation._complete(
           _creationFailureMessage(failure.code, failure.detail, machineName),
         );
@@ -4063,20 +4124,24 @@ class AppNotifier extends ChangeNotifier {
         // receipt-aware version. Missing is not proof that nothing started.
         // Check status stays read-only, even across upgrades and reconnects.
         return '$machineName has no record of this request. '
-            'Use Find a harness to look for it before creating another.';
+            'Use Find an agent to look for it before creating another.';
       case 'pending':
-        return '$machineName is still starting your harness. Check again in a moment.';
+        return '$machineName is still starting your agent. Check again in a moment.';
       case 'unconfirmed':
-        return '$machineName could not confirm whether this harness started. '
-            'Use Open Harness to look for it before creating another.';
+        return '$machineName could not confirm whether this agent started. '
+            'Use Open Agent to look for it before creating another.';
       case 'unavailable':
         return creation._complete(
-          'This harness was created but is no longer available. '
+          'This agent was created but is no longer available. '
           'You can create a new one.',
         );
       case 'failed':
         final failure = result['failure'];
         if (failure is! Map || failure['code'] is! String) return unconfirmed;
+        if (result['preparedFolder'] case final String folder
+            when folder.isNotEmpty) {
+          creation._preparedFolder = folder;
+        }
         return creation._complete(
           _creationFailureMessage(
             failure['code'] as String,
@@ -4108,8 +4173,8 @@ class AppNotifier extends ChangeNotifier {
     notifyListeners();
     if (_creationPlacementError(targetId, split) != null) {
       _lastError =
-          'The harness was created, but its original tab or layout changed. '
-          'Use Open Harness to find it.';
+          'The agent was created, but its original tab or layout changed. '
+          'Use Open Agent to find it.';
       _lastErrorRetryable = false;
       notifyListeners();
       return null;
@@ -4364,24 +4429,29 @@ class AppNotifier extends ChangeNotifier {
     }
   }
 
-  /// Opens a dial notification in this swarm without changing other memberships.
+  /// A dial notification was tapped: bring that agent to the front.
   ///
-  /// Already on screen means FOCUS it, never open it twice: the daemon keeps a
-  /// single controller per agent, so a second open is a takeover — the window
-  /// would fight itself and the first tile would go dark with
-  /// `TERMINAL_TAKEN_OVER`.
+  /// The window is tabs now (owner, 2026-09-15): the tab that already holds
+  /// the agent wins — the current one first, then any other — and the tab
+  /// switches with the pane focused. No tab holds it: it gets a tab of its own
+  /// rather than a tile squeezed into whatever happened to be open, which is
+  /// also what keeps a full tab from turning a tap into a capacity error.
   ///
-  /// At capacity, the usual visible capacity error asks for another swarm.
+  /// Never opened twice: the daemon keeps a single controller per agent, so a
+  /// second open is a takeover — the window would fight itself and the first
+  /// tile would go dark with `TERMINAL_TAKEN_OVER`. [revealAgentView] is what
+  /// Open Harness uses for the same reason.
   Future<void> openAgentFromDial(String machineId, String agentId) async {
-    // Already on the desk: it has its tile, so this is only "look at it".
-    final existing = paneOfAgent(machineId, agentId);
-    if (existing != null) {
-      focusPane(existing.id);
+    if (revealAgentView(machineId, agentId)) {
       selectedMachineId = machineId;
       notifyListeners();
       return;
     }
-    await addAgentToSwarm(machineId, agentId);
+    // Its own tab. newSwarm reuses an unused start page when there is one, and
+    // at the tab limit leaves the current tab selected — the agent then lands
+    // there, with the usual capacity message if that tab is full.
+    newSwarm();
+    await addAgentToSwarm(machineId, agentId, swarmId: activeSwarmId);
   }
 
   /// Enable-time fallback: preserve the user's current choice and acknowledge it.
@@ -4546,7 +4616,7 @@ class AppNotifier extends ChangeNotifier {
         existing == null &&
         targetPanes.length >= maxPanes) {
       _lastError =
-          'This tab holds $maxPanes harnesses. Open another tab to add more.';
+          'This tab holds $maxPanes agents. Open another tab to add more.';
       _lastErrorRetryable = false;
       notifyListeners();
       return;
@@ -4572,7 +4642,7 @@ class AppNotifier extends ChangeNotifier {
       target.arranged = split.after;
       target.arrangedKey = key;
     }
-    if (firstAgent && target.name == 'New Harness') {
+    if (firstAgent && target.name == Swarm.defaultName) {
       final name = agent.name.trim();
       if (name.isNotEmpty) {
         target.name = name.length > 80 ? name.substring(0, 80) : name;
@@ -5065,7 +5135,7 @@ class AppNotifier extends ChangeNotifier {
       final swarm = swarms.where((swarm) => swarm.id == id).firstOrNull;
       return swarm == null ||
           swarm.panes.isNotEmpty ||
-          swarm.name != 'New Harness' ||
+          swarm.name != Swarm.defaultName ||
           swarm.presets.isNotEmpty;
     });
     _layoutRevision++;
@@ -5119,7 +5189,7 @@ class AppNotifier extends ChangeNotifier {
                   0,
                   (raw['name'] as String).length.clamp(0, 80),
                 )
-              : 'New Harness',
+              : Swarm.defaultName,
         );
         for (final item in (raw['panes'] as List).take(maxPanes)) {
           final entry = PaneLayoutEntry.fromJson(item);

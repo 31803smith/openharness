@@ -93,17 +93,17 @@ void main() {
     (
       'TMUX_UNAVAILABLE',
       null,
-      'Harness needs tmux to start harnesses on Test host. Install tmux there, then try again.',
+      'Harness needs tmux to start agents on Test host. Install tmux there, then try again.',
     ),
     (
       'UNSUPPORTED',
       null,
-      'Update the harness CLI on this machine to create a harness',
+      'Update the harness CLI on this machine to create an agent',
     ),
     (
       'SPAWN_FAILED',
       'The machine could not allocate an agent process.',
-      'Test host has not confirmed the new harness yet. Check status before creating another.',
+      'Test host has not confirmed the new agent yet. Check status before creating another.',
     ),
   ]) {
     test(
@@ -141,7 +141,7 @@ void main() {
       connection.reply.completeError(const WsRequestTimeout('agent_create'));
       expect(
         await creation,
-        'Test host has not confirmed the new harness yet. Check status before creating another.',
+        'Test host has not confirmed the new agent yet. Check status before creating another.',
       );
       expect(connection.calls, ['agent_create']);
       expect(app.panes, isEmpty);

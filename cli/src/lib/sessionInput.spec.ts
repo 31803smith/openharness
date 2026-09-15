@@ -17,10 +17,33 @@ function session(engine: 'claude' | 'codex' | 'cursor' | 'commandcode' = 'codex'
 describe('SessionInputController', () => {
   afterEach(() => vi.useRealTimers())
 
-  it('queues Codex prompts while busy and drains exactly one after turn end', async () => {
+  it('types into a busy Codex pane at once — the TUI queues the follow-up, not the daemon', async () => {
+    // A voice command spoken while a Codex task ran used to sit in this controller's queue, invisible,
+    // until the task ended. Codex queues composer input itself, so the daemon types straight away.
     const injected: string[] = []
     const controller = new SessionInputController({
-      getSession: () => session(), validateRuntime: async () => true,
+      getSession: () => session('codex'), validateRuntime: async () => true,
+      inject: async (_pane, content) => { injected.push(content); return true },
+      sendKey: async () => true, onError: vi.fn(),
+      // The prompt left the composer (Codex took it as a follow-up); no turn_started until the running
+      // turn ends.
+      capture: async () => '› working…\n',
+    })
+    controller.setTurnOpen('s1', true)
+    controller.submit('s1', 'second')
+    await vi.waitFor(() => expect(injected).toEqual(['second']))
+    controller.submit('s1', 'third')
+    await vi.waitFor(() => expect(injected).toEqual(['second', 'third']))
+    controller.onTurnEnded('s1')
+    controller.onTurnStarted('s1', 'second')
+    expect(injected).toEqual(['second', 'third'])
+    controller.forget('s1')
+  })
+
+  it('queues Command Code prompts while busy and drains exactly one after turn end', async () => {
+    const injected: string[] = []
+    const controller = new SessionInputController({
+      getSession: () => session('commandcode'), validateRuntime: async () => true,
       inject: async (_pane, content) => { injected.push(content); return true },
       sendKey: async () => true, onError: vi.fn(),
     })

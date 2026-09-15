@@ -7,8 +7,11 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/core/models.dart';
 import 'package:harness/state/app_state.dart';
+import 'package:harness/terminal/terminal_binary.dart';
 import 'package:harness/widgets/swarm_switcher.dart';
 
+import 'keymap_host_test.dart' show MemoryKeymap, key;
+import 'keymap_runtime_test.dart' as configured;
 import 'swarm_interactions_test.dart' show chord;
 import 'swarm_screen_test.dart' show mount, terminal;
 import 'swarm_state_test.dart' show createApp;
@@ -96,7 +99,7 @@ void main() {
     await seedPreviews(app);
     app.adoptSessionForTest(terminal('a69', []));
     await mount(tester, app);
-    await chord(tester, LogicalKeyboardKey.keyO);
+    await chord(tester, LogicalKeyboardKey.keyN);
     final field = find.byKey(const ValueKey('swarm-search-input'));
     await tester.enterText(field, 'Workspace sync');
     await tester.pump();
@@ -115,6 +118,148 @@ void main() {
     app.dispose();
   });
   for (final inline in [false, true]) {
+    for (final mapping in ['fallback', 'default', 'remapped']) {
+      testWidgets(
+        'preview paging retains search input and selection (inline=$inline, $mapping)',
+        (tester) async {
+          final app = createApp();
+          await seedPreviews(app);
+          await app.handleEventForTest('m', {
+            'type': 'text_delta',
+            'payload': {
+              'agentId': 'a0',
+              'sessionId': 'session-a0',
+              'content': List.generate(
+                60,
+                (i) => 'Existing result line $i: the saved session details.',
+              ).join('\n'),
+            },
+          });
+          await app.handleEventForTest('m', {
+            'type': 'turn_ended',
+            'payload': {'agentId': 'a0', 'sessionId': 'session-a0'},
+          });
+          final frames = <TerminalBinaryFrame>[];
+          app.adoptSessionForTest(terminal('a69', frames));
+          app.newSwarm();
+          final map = MemoryKeymap();
+          final remapped = mapping == 'remapped';
+          if (remapped) {
+            map.apply('''{"bindings":[
+              {"keys":"pageup","command":null,"when":"picker"},
+              {"keys":"pagedown","command":null,"when":"picker"},
+              {"keys":"alt+j","command":"picker.preview_page_down","when":"picker"},
+              {"keys":"alt+k","command":"picker.preview_page_up","when":"picker"}
+            ]}''');
+          }
+          if (mapping == 'fallback') {
+            await mount(tester, app);
+          } else {
+            await configured.mount(tester, app, map);
+          }
+          final field = find.byKey(
+            ValueKey(inline ? 'harness-start-search' : 'swarm-search-input'),
+          );
+          if (inline) {
+            await tester.tap(field);
+          } else {
+            await chord(tester, LogicalKeyboardKey.keyN);
+          }
+          await tester.enterText(field, 'Checkout retries');
+          await tester.pump();
+          final search = tester
+              .widget<SwarmSearchResults>(find.byType(SwarmSearchResults))
+              .search;
+          ScrollPosition previewPosition() => tester
+              .widget<Scrollbar>(
+                find.descendant(
+                  of: find.byKey(const ValueKey('swarm-search-preview')),
+                  matching: find.byType(Scrollbar),
+                ),
+              )
+              .controller!
+              .position;
+          final editor = tester.widget<EditableText>(
+            find.descendant(of: field, matching: find.byType(EditableText)),
+          );
+          final value = editor.controller.value;
+          final selected = search.selected!.id;
+          final listPosition = tester
+              .widget<ListView>(
+                find.byKey(const ValueKey('swarm-search-result-list')),
+              )
+              .controller!
+              .position;
+          final listOffset = listPosition.pixels;
+          var notifications = 0;
+          search.addListener(() => notifications++);
+          expect(previewPosition().maxScrollExtent, greaterThan(0));
+          if (remapped) {
+            await key(tester, LogicalKeyboardKey.pageDown);
+            expect(previewPosition().pixels, 0);
+          }
+          Future<void> page({bool up = false, bool pump = true}) async {
+            final trigger = remapped
+                ? up
+                      ? LogicalKeyboardKey.keyK
+                      : LogicalKeyboardKey.keyJ
+                : up
+                ? LogicalKeyboardKey.pageUp
+                : LogicalKeyboardKey.pageDown;
+            if (remapped) {
+              await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
+            }
+            await tester.sendKeyEvent(trigger);
+            if (remapped) {
+              await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
+            }
+            if (pump) await tester.pump();
+          }
+
+          await page(pump: false);
+          expect(previewPosition().pixels, greaterThan(0));
+          expect(search.selected!.id, selected);
+          expect(editor.controller.value, value);
+          expect(editor.focusNode.hasPrimaryFocus, isTrue);
+          expect(listPosition.pixels, listOffset);
+          expect(notifications, 0);
+          await tester.pump();
+          await page(up: true);
+          expect(previewPosition().pixels, 0);
+
+          // The IME owns navigation during composition; no page or accept leaks.
+          editor.controller.value = value.copyWith(
+            composing: TextRange(start: 0, end: value.text.length),
+          );
+          await page();
+          expect(previewPosition().pixels, 0);
+          expect(search.selected!.id, selected);
+          editor.controller.value = value;
+          await page();
+          expect(previewPosition().pixels, greaterThan(0));
+
+          // Switching to a group and paging before its frame uses the new
+          // viewport and never retains the previous session's reading position.
+          await tester.enterText(field, 'Test host');
+          await page();
+          expect(search.selected!.agentId, isNull);
+          expect(previewPosition().pixels, greaterThan(0));
+          await page(up: true);
+          expect(previewPosition().pixels, 0);
+          await tester.enterText(field, 'Checkout retries');
+          await tester.pump();
+          expect(previewPosition().pixels, 0);
+          expect(editor.focusNode.hasPrimaryFocus, isTrue);
+          await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+          await tester.pump();
+          expect(app.panes.any((pane) => pane.agentId == 'a0'), isTrue);
+          expect(frames, isEmpty);
+          await tester.pumpWidget(const SizedBox());
+          app.dispose();
+          map.dispose();
+        },
+      );
+    }
     testWidgets(
       'existing content previews are immediate and preserve search focus (inline=$inline)',
       (tester) async {
@@ -131,7 +276,7 @@ void main() {
         if (inline) {
           await tester.tap(field);
         } else {
-          await chord(tester, LogicalKeyboardKey.keyO);
+          await chord(tester, LogicalKeyboardKey.keyN);
         }
         await tester.enterText(field, 'Checkout retries');
         await tester.pump();
@@ -226,7 +371,7 @@ void main() {
       );
       app.adoptSessionForTest(terminal('a69', []));
       await mount(tester, app);
-      await chord(tester, LogicalKeyboardKey.keyO);
+      await chord(tester, LogicalKeyboardKey.keyN);
       await tester.enterText(
         find.byKey(const ValueKey('swarm-search-input')),
         'Checkout',
@@ -260,7 +405,7 @@ void main() {
       await mount(tester, app);
       tester.view.physicalSize = size;
       await tester.pump();
-      await chord(tester, LogicalKeyboardKey.keyO);
+      await chord(tester, LogicalKeyboardKey.keyN);
       await tester.enterText(
         find.byKey(const ValueKey('swarm-search-input')),
         'Checkout',

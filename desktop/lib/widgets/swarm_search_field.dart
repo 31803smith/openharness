@@ -8,7 +8,7 @@ class SwarmSearchField extends StatefulWidget {
     this.onSubmitted,
     this.onMove,
     this.autofocus = false,
-    this.hintText = 'Find a harness',
+    this.hintText = 'Find an agent',
     this.controller,
     this.focusNode,
   });
@@ -27,7 +27,7 @@ class _SwarmSearchFieldState extends State<SwarmSearchField> {
   FocusNode? _ownedFocus;
   FocusNode get _focus =>
       widget.focusNode ??
-      (_ownedFocus ??= FocusNode(debugLabel: 'Find harness'));
+      (_ownedFocus ??= FocusNode(debugLabel: 'Find agent'));
 
   @override
   void initState() {

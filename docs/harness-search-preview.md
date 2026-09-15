@@ -1,11 +1,43 @@
 # A useful Harness search preview
 
-Both Open Harness and inline start-page search now display existing session
+Both Add Harness and inline start-page search now display existing session
 content in a shared preview. This document records the content rules, data path,
 and remaining coverage limits.
 
+The start page uses a long field capped at 1120 logical pixels, with a prominent
+64-pixel minimum height and **Find a harness** as its hint. Open Harness and New Harness sit underneath, aligned left,
+and the device card shares that left edge over the restored lake wallpaper.
+The card stays 32 pixels above the window bottom with the caption **Meet the
+Harness device**. Search uses the remaining space above it. The field keeps its
+position and width when search opens; results and preview appear side by
+side from 700 pixels wide. The actions hide while searching. The pill buttons
+retain their compact 48-pixel height below the taller field. Cmd-N now opens
+the same compact search-and-buttons choice; its results appear on typing or
+explicit search activation, keeping the 64-pixel field position and width. Escape restores the actions and retains the query.
+Page Up/Down scrolls the preview with overlap while the query keeps keyboard focus.
+Arrow keys still choose results, and Enter opens the selection. The two preview
+paging commands can be remapped or unbound in the Search keymap. Paging only moves
+the local viewport; it never refreshes content or rebuilds the search results.
+
 **Content rule:** never generate a summary or start a model for previews. Display
 only text and metadata already available from the session.
+
+## Search the existing excerpts
+
+Search also matches the bounded requests, live activity and response excerpts
+already held in memory. A lazy lowercase field is retained with each preview
+record and invalidated when that record changes. There is no separate index,
+new dependency, daemon change, history read, or model call. Ranking reads the
+cache without warming it. Coverage ends where the existing cache ends.
+
+Each query word can match a different name, metadata or excerpt field. Names
+and metadata keep their fuzzy behavior and rank above content-only matches;
+long excerpts use literal fragments, avoiding scattered letters matching across
+paragraphs. Live updates add/remove matches using the preview's coalesced
+notifications while preserving the order and selection of remaining matches.
+An unchanged result set does not rebuild the editor. A new query reranks normally.
+Session keys include machine, agent and session identity, so a restart cannot
+inherit search matches from the previous session's text.
 
 ## Implemented content path
 
