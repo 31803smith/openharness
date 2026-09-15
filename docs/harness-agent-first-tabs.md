@@ -19,6 +19,8 @@ helps someone decide or recover from an error. Prefer whitespace and restrained
 surfaces over extra rules and nested cards. Apply this consistently without
 waiting for the user to request copy removal one control at a time.
 Tooltips must add information, never repeat a visible label.
+Each choice row has exactly one selected option. Only selection gets an outline;
+keyboard focus uses a quiet fill so it cannot look like a second selection.
 Icon buttons share a quiet rounded background on hover and keyboard focus.
 Apply this to native tab close, new-tab and notification icons as well as
 Flutter controls. Disabled icons do not highlight; decorative icons stay inert.

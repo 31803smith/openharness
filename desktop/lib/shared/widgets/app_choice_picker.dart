@@ -256,6 +256,7 @@ class _AppChoicePickerState<T> extends State<AppChoicePicker<T>> {
         if (ordered.length > 3)
           Semantics(
             selected: selectedExtra,
+            inMutuallyExclusiveGroup: true,
             child: AppSelectField<T>(
               key: widget.moreKey,
               value: widget.value,
@@ -417,7 +418,7 @@ class AppChoiceTile extends StatelessWidget {
             ).copyWith(
               side: WidgetStateProperty.resolveWith(
                 (states) => BorderSide(
-                  color: states.contains(WidgetState.focused) || selected
+                  color: selected
                       ? AppPalette.swarmAccent.withValues(alpha: .7)
                       : Colors.transparent,
                 ),

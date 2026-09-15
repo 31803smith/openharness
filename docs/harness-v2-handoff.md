@@ -78,6 +78,13 @@ The earlier inline searchable project/README preview UI is superseded by these
 four project tiles. Its bounded local/remote read-only preview services remain
 available; no live CLI daemon has been upgraded or restarted.
 
+Selection outlines now belong only to the one chosen option in each row. Keyboard
+focus uses a quiet fill, including the fourth dropdown, so it cannot look like a
+second selection. Ordinary select fields retain their focus outline. The 38
+focused picker, project, keyboard and responsive-layout checks pass in
+`/private/tmp/harness-single-choice-final-tests.log`; changed files analyze
+cleanly in `/private/tmp/harness-single-choice-analyze.log`.
+
 The user has renewed authorization to push each completed feature separately.
 The latest installed preview is **2b332f2**, at the supported checkout path.
 Release build: `/private/tmp/harness-project-picker-release-build.log`.

@@ -76,7 +76,7 @@ class AppSelectField<T> extends StatefulWidget {
     this.trigger,
     this.focusNode,
     this.fillColor,
-    this.selected = false,
+    this.selected,
     this.emptyLabel,
   });
 
@@ -94,7 +94,9 @@ class AppSelectField<T> extends StatefulWidget {
   final Widget? trigger;
   final FocusNode? focusNode;
   final Color? fillColor;
-  final bool selected;
+
+  /// A choice-tile selection. Null retains the ordinary field focus border.
+  final bool? selected;
   final String? emptyLabel;
 
   @override
@@ -435,7 +437,9 @@ class _AppSelectFieldState<T> extends State<AppSelectField<T>> {
                         : widget.fillColor ?? AppSurface.recess,
                     borderRadius: BorderRadius.circular(AppControl.radius),
                     border: Border.all(
-                      color: _focused || widget.selected
+                      color:
+                          widget.selected == true ||
+                              (_focused && widget.selected == null)
                           ? AppPalette.accentOnSurface
                           : Colors.transparent,
                     ),

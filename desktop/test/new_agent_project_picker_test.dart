@@ -10,6 +10,8 @@ import 'package:harness/core/project_folder.dart';
 import 'package:harness/state/app_state.dart';
 import 'package:harness/state/pane_arrangement.dart';
 import 'package:harness/widgets/new_agent_dialog.dart';
+import 'package:harness/shared/widgets/app_choice_picker.dart';
+import 'package:harness/shared/widgets/app_select_field.dart';
 
 class _App extends AppNotifier {
   _App() : super(config: AppConfig.dev, authSession: AuthSession()) {
@@ -227,6 +229,47 @@ void main() {
       expect(app.calls.single['project'], {'projectSource': 'new'});
     },
   );
+
+  testWidgets('keyboard focus never looks like a second project selection', (
+    tester,
+  ) async {
+    await mount(tester);
+    await recent(tester, 'alpha');
+    final newTile = find.byKey(const Key('new-agent-folder-newProject'));
+    final newButton = find.descendant(
+      of: newTile,
+      matching: find.byType(TextButton),
+    );
+    tester.widget<TextButton>(newButton).focusNode!.requestFocus();
+    await tester.pumpAndSettle();
+    expect(tester.widget<AppChoiceTile>(newTile).selected, isFalse);
+    expect(
+      tester.widget<TextButton>(newButton).style!.side!.resolve({
+        WidgetState.focused,
+      })!.color,
+      Colors.transparent,
+    );
+    final recentTile = find.byKey(const Key('new-agent-project-recent'));
+    expect(tester.widget<AppSelectField<String>>(recentTile).selected, isTrue);
+    await tester.tap(newTile);
+    await tester.pumpAndSettle();
+    expect(tester.widget<AppChoiceTile>(newTile).selected, isTrue);
+    expect(tester.widget<AppSelectField<String>>(recentTile).selected, isFalse);
+    final trigger = find
+        .descendant(of: recentTile, matching: find.byType(InkWell))
+        .first;
+    tester.widget<InkWell>(trigger).focusNode!.requestFocus();
+    await tester.pumpAndSettle();
+    final container = tester.widget<AnimatedContainer>(
+      find
+          .descendant(of: recentTile, matching: find.byType(AnimatedContainer))
+          .first,
+    );
+    expect(
+      ((container.decoration! as BoxDecoration).border! as Border).top.color,
+      Colors.transparent,
+    );
+  });
 
   testWidgets('empty Recent is clear and Escape returns to the form', (
     tester,

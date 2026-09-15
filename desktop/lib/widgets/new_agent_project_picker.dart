@@ -205,6 +205,7 @@ class _NewAgentProjectPickerState extends State<NewAgentProjectPicker> {
             ),
             Semantics(
               selected: selectedRecent,
+              inMutuallyExclusiveGroup: true,
               child: AppSelectField<String>(
                 key: const Key('new-agent-project-recent'),
                 value: selectedRecent ? _folder ?? '' : '',
