@@ -298,7 +298,7 @@ static void touch_read(lv_indev_t *indev, lv_indev_data_t *data)
             // that leaves the screen could never be pressed. A modal chooser also has no business
             // offering a pull-to-notifications on top of itself.
             ndrag = !display_is_asleep() && !ui_reader_is_open() && !ui_switch_is_open() &&
-                    !ui_picker_is_open() &&
+                    !ui_picker_is_open() && !ui_notif_pill_hit(x, y) &&
                     (ui_notif_is_open() || y < ui_notif_pull_zone_px());
             ndy0 = ndyl = y; ncap = ndrag;
         } else if (pressed && ndrag) {
@@ -306,13 +306,12 @@ static void touch_read(lv_indev_t *indev, lv_indev_data_t *data)
         } else if (!pressed && nprev && ndrag) {          // release of a captured gesture
             int d = ndyl - ndy0;
             if (ui_notif_is_open()) { if (d < -SWIPE_MIN_PX) ui_notif_swipe_up(); }  // up → close (only if list at top)
-            // Pull down from the top → the NOTIFICATIONS (owner, 2026-09-14). The gesture opened the
-            // agent switcher for a while; the switcher is retired from the glass now that the carousel
-            // walks the window's swarm and the swarm line above the name picks between swarms, so the
-            // pull-down goes back to the list it first opened. A TAP in the band opens the same list —
-            // the bell is a button, but this band swallows every press that starts inside it, and the
-            // bell sits INSIDE it.
-            else if (d > SWIPE_MIN_PX || (d > -SWIPE_MIN_PX && d < SWIPE_MIN_PX)) ui_notif_open();
+            // Pull down from the top → the AGENT LIST (owner, 2026-09-15: "vuốt xuống hiển thị danh
+            // sách agent như cũ"). The notifications are the bell's alone now: the bell is a button,
+            // and a press that starts ON it is handed to LVGL rather than captured by this band — see
+            // the capture test above — so a tap on the bell opens the drawer and a tap anywhere else
+            // in the band does nothing.
+            else if (d > SWIPE_MIN_PX) ui_switch_open();
             ndrag = false; ncap = true;
         }
         nprev = pressed;

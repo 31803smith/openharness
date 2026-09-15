@@ -161,6 +161,9 @@ bool ui_switch_is_open(void);
 void ui_switch_open(void);
 void ui_notif_close(void);
 bool ui_notif_is_open(void);
+// True when a press lands on the bell pill. touch.c asks before capturing the top band, so the one
+// button that lives inside that band can be pressed — the drawer opens from the bell and nowhere else.
+bool ui_notif_pill_hit(uint16_t x, uint16_t y);
 // A swipe-up inside the open drawer → close it, but only if the list is already scrolled to the top
 // (otherwise the gesture is just scrolling the list).
 void ui_notif_swipe_up(void);
