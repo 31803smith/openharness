@@ -120,6 +120,15 @@ function placeAt(id: string, from: { tmpDir: string } | { linkTo: string }): str
   return dir
 }
 
+/**
+ * How long a doctor may take. Five minutes, not one: the FIRST run after setup is the slow one — a
+ * check like Solid's `import cadgen, build123d` loads OCP and vtk from packages downloaded seconds
+ * ago, and macOS verifies every one of those dylibs on first load. Measured 2026-09-16: over two
+ * minutes cold, five seconds warm. At 60s the install reported "doctor failed" after two `ok` lines
+ * on a machine that was fine.
+ */
+export const DOCTOR_TIMEOUT_MS = 5 * 60_000
+
 export async function runDshDoctor(installed: InstalledDsh, onLine?: (line: string) => void): Promise<DshDoctorResult> {
   const doctor = installed.manifest.toolchain?.doctor
   if (!doctor) return { ok: true, lines: [] }
@@ -127,8 +136,15 @@ export async function runDshDoctor(installed: InstalledDsh, onLine?: (line: stri
     cwd: installed.realDir,
     env: { HARNESS_DSH: installed.id, HARNESS_DSH_DIR: installed.realDir },
     onLine,
-    timeoutMs: 60_000,
+    timeoutMs: DOCTOR_TIMEOUT_MS,
   })
+  if (result.timedOut) {
+    // Said as what it is. A timeout reported as "failed" with the last three (passing) lines under
+    // it reads as a machine with a fault nobody can find.
+    const line = `miss doctor still running after ${DOCTOR_TIMEOUT_MS / 60_000} min — stopped; run \`harness dsh doctor ${installed.id}\` again`
+    result.lines.push(line)
+    onLine?.(line)
+  }
   return { ok: result.code === 0 && !result.timedOut, lines: result.lines }
 }
 
