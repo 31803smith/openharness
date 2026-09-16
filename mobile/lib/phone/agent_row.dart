@@ -3,15 +3,17 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import 'package:harness_mobile/shared/theme/app_theme.dart';
 import 'package:harness_mobile/widgets/engine_identity.dart';
+
+import 'agent_context_line.dart';
 import 'agent_index.dart';
 import 'phone_card.dart';
 import 'status_pill.dart';
 
-/// One agent in the Agents tab.
+/// One agent in the Agents tab: who it is, what it is doing, and where it is.
 ///
-/// Differs from [AgentTile] — the row a single machine's page draws — in the one way the tab needs:
-/// it names the MACHINE, because this list mixes them and a name alone is ambiguous the moment two
-/// machines both have a `main` or a `docs` agent.
+/// The same three lines [AgentTile] draws on a machine's own page — the two rows differ now only in
+/// where they get their agent from, and both end in [AgentContextLine] so one agent reached two
+/// ways is not described two ways.
 class AgentRow extends StatelessWidget {
   const AgentRow({
     super.key,
@@ -33,6 +35,7 @@ class AgentRow extends StatelessWidget {
     AppTheme.watch(context);
     final agent = entry.agent;
     return PhoneCard(
+      height: kPhoneAgentCardHeight,
       onTap: agent.terminalAvailable ? onTap : null,
       onLongPress: onLongPress,
       // A rim in the attention colour, so a waiting agent is findable in a long list without
@@ -65,8 +68,13 @@ class AgentRow extends StatelessWidget {
                     fontWeight: FontWeight.w600,
                   ),
                 ),
-                const SizedBox(height: 5),
-                _StatusAndMachine(entry: entry),
+                const SizedBox(height: 3),
+                StatusPill(summary: entry.summary),
+                const SizedBox(height: 3),
+                AgentContextLine(
+                  project: entry.project,
+                  machineName: entry.machineName,
+                ),
               ],
             ),
           ),
@@ -79,37 +87,6 @@ class AgentRow extends StatelessWidget {
             ),
         ],
       ),
-    );
-  }
-}
-
-/// The status line, with the machine's name after it.
-///
-/// One line rather than two: a phone row is 70pt and a third line of type would either shrink the
-/// name above it or push the card taller than a thumb's reach for the list.
-class _StatusAndMachine extends StatelessWidget {
-  const _StatusAndMachine({required this.entry});
-
-  final AgentEntry entry;
-
-  @override
-  Widget build(BuildContext context) {
-    AppTheme.watch(context);
-    return Row(
-      children: [
-        Flexible(child: StatusPill(summary: entry.summary)),
-        const SizedBox(width: 6),
-        // The machine is context, not status, so it is drawn a step quieter than the pill it
-        // follows — and it yields its width first when both cannot fit.
-        Flexible(
-          child: Text(
-            '· ${entry.machineName}',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(color: AppPalette.textFaint, fontSize: 13),
-          ),
-        ),
-      ],
     );
   }
 }

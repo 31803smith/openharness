@@ -388,6 +388,23 @@ class AgentProject {
   String identity(String machineId) =>
       remote != null ? 'repo:$remote' : 'folder:$machineId:${root ?? cwd}';
 
+  /// The folder a person names this agent by: the last segment of [cwd], falling back to [name]
+  /// when the path has no segment to take (a root, or a bare drive).
+  ///
+  /// The tail rather than the whole path, because every row that shows it is width-starved — a
+  /// phone card, a pane header — and `/Users/…/WorkPlace/Grid/autonomous-harness` spends all of
+  /// that width on the prefix that is identical for every agent somebody owns.
+  String get folder {
+    final parts = cwd.split(RegExp(r'[/\\]')).where((part) => part.isNotEmpty);
+    return parts.isEmpty ? name : parts.last;
+  }
+
+  /// The branch, or null when the daemon reported none or reported it blank.
+  String? get branchLabel {
+    final trimmed = branch?.trim();
+    return trimmed == null || trimmed.isEmpty ? null : trimmed;
+  }
+
   @override
   bool operator ==(Object other) =>
       other is AgentProject &&

@@ -78,14 +78,21 @@ List<PhoneSearchResult> phoneSearchIndex(AppNotifier notifier) {
   for (final entry in visibleAgents(agentIndex(notifier))) {
     final agent = entry.agent;
     final engine = agent.engineDisplayName ?? agent.engine ?? '';
+    final folder = entry.project?.folder ?? '';
     results.add(
       PhoneSearchResult(
         kind: PhoneSearchKind.agent,
         id: 'agent:${entry.machineId}:${agent.id}',
         title: agent.name,
-        subtitle: engine.isEmpty
-            ? entry.machineName
-            : '$engine · ${entry.machineName}',
+        // The tabs' rows carry the folder too ([AgentContextLine]); a result row
+        // has one line for all of it, so the three land in the same order on it,
+        // and the machine — the longest and the least distinguishing — ellipses
+        // off the end first.
+        subtitle: [
+          if (engine.isNotEmpty) engine,
+          if (folder.isNotEmpty) folder,
+          entry.machineName,
+        ].join(' · '),
         fields: [
           agent.name.toLowerCase(),
           entry.machineName.toLowerCase(),
@@ -93,13 +100,14 @@ List<PhoneSearchResult> phoneSearchIndex(AppNotifier notifier) {
           // The raw engine id as well as its display name: somebody types
           // "codex", and the display name may well be "Codex CLI".
           (agent.engine ?? '').toLowerCase(),
-          // Neither the project nor its branch is drawn on a phone row — there
-          // is no third line for either — but they are how people describe the
-          // agent they are hunting for, so both stay searchable. [SearchResultText]
-          // checks that a matched field is present in the text it is about to
-          // emphasise, so matching here never bolds something unrelated.
-          (agent.project?.name ?? '').toLowerCase(),
-          (agent.project?.branch ?? '').toLowerCase(),
+          folder.toLowerCase(),
+          // The project's own name and its branch are not drawn on a result row,
+          // but they are how people describe the agent they are hunting for, so
+          // both stay searchable. [SearchResultText] checks that a matched field
+          // is present in the text it is about to emphasise, so matching here
+          // never bolds something unrelated.
+          (entry.project?.name ?? '').toLowerCase(),
+          (entry.project?.branchLabel ?? '').toLowerCase(),
         ].where((field) => field.isNotEmpty).toList(),
         summary: entry.summary,
         machineId: entry.machineId,
@@ -192,11 +200,7 @@ List<PhoneSearchResult> rankPhoneSearch(
     for (final term in terms) {
       int? best;
       for (final (fieldIndex, field) in row.fields.indexed) {
-        final score = phoneFieldMatchScore(
-          field,
-          term,
-          title: fieldIndex == 0,
-        );
+        final score = phoneFieldMatchScore(field, term, title: fieldIndex == 0);
         if (score == null) continue;
         if (best == null || score < best) best = score;
         // Every field after the first is metadata, whose best possible score is

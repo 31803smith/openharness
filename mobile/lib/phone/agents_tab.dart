@@ -184,7 +184,7 @@ class _Body extends StatelessWidget {
   Widget build(BuildContext context) {
     if (entries.isEmpty) {
       if (notifier.machines.isEmpty && notifier.machinesLoading) {
-        return const PhoneListSkeleton();
+        return const PhoneListSkeleton(height: kPhoneAgentCardHeight);
       }
       if (notifier.machines.isEmpty) {
         return const EmptyState(
@@ -195,7 +195,9 @@ class _Body extends StatelessWidget {
               'will appear here.',
         );
       }
-      if (_stillArriving) return const PhoneListSkeleton();
+      if (_stillArriving) {
+        return const PhoneListSkeleton(height: kPhoneAgentCardHeight);
+      }
       if (filtered) {
         return const EmptyState(
           icon: LucideIcons.squareTerminal300,
