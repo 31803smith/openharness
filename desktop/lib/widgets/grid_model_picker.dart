@@ -7,6 +7,7 @@ import '../state/app_state.dart';
 import '../theme/app_theme.dart';
 import '../usage/models_menu_controller.dart';
 import 'engine_identity.dart';
+import 'transient_menus.dart';
 
 /// The pane header's model picker, in two sections: **Subscription** and **Local**.
 ///
@@ -89,8 +90,14 @@ class _GridModelPickerState extends State<GridModelPicker> {
     if (mounted) _last = answer;
   }
 
+  /// Closes the menu this control has open, if any. Set while one is showing.
+  void Function()? _close;
+
   @override
   void dispose() {
+    // A pane can go away under an open menu — closed, moved, or its swarm switched — and an overlay
+    // entry outlives the State that inserted it.
+    _close?.call();
     _usage?.dispose();
     super.dispose();
   }
@@ -166,19 +173,12 @@ class _GridModelPickerState extends State<GridModelPicker> {
     );
 
     final subscription = _subscriptionRow();
-    final chosen = await showMenu<_Choice>(
-      context: context,
+    final chosen = await _showMenu(
       position: position,
-      color: AppColors.surface,
-      // Wide enough that a status can sit right-aligned against a model id without the two meeting.
-      // Wide enough for a full GGUF-style model id beside its node without either being cut.
-      constraints: const BoxConstraints(minWidth: 340, maxWidth: 540),
-      items: [
+      children: (close) => [
         _header('Subscription'),
-        PopupMenuItem<_Choice>(
-          value: const _Choice.ownLogin(),
-          height: 32,
-          padding: EdgeInsets.zero,
+        _item(
+          onTap: () => close(const _Choice.ownLogin()),
           child: _Row(
             selected: widget.currentModel == null,
             engine: widget.engineLabel,
@@ -189,47 +189,23 @@ class _GridModelPickerState extends State<GridModelPicker> {
             status: subscription?['status'] as String?,
           ),
         ),
-        const PopupMenuDivider(),
+        Divider(height: 9, thickness: 1, color: AppColors.border),
         _header('Local'),
         // An engine with no way onto a Local model (Cursor talks only to its own API; the daemon
         // refuses the move) is told so here, instead of being offered rows whose click would do
         // nothing. The daemon names the capable engines beside the list; an older daemon names
         // none, and then every row is offered as before.
         if (!answer.canRunLocally(widget.engineLabel))
-          PopupMenuItem<_Choice>(
-            enabled: false,
-            height: 30,
-            padding: const EdgeInsets.only(left: _menuInset + _rowPadding),
-            child: Text(
-              '${engineIdentity(widget.engineLabel).label} can only run on its own login.',
-              style: TextStyle(fontSize: 11, color: AppColors.textSoft),
-            ),
-          )
-        // An empty grid and no grid at all are different facts, and each gets its own sentence: one
-        // is "nobody is serving yet", the other "there is nothing to serve on". A single "no models"
-        // would send a person looking in the wrong place.
+          _empty('${engineIdentity(widget.engineLabel).label} can only run on its own login.')
+        // THREE different facts, three sentences. "We could not ask", "this account has no grid"
+        // and "the grid is serving nothing" send a person to three different places, and the one
+        // that used to cover two of them told a signed-in user to sign in again.
         else if (answer.models.isEmpty)
-          PopupMenuItem<_Choice>(
-            enabled: false,
-            height: 30,
-            padding: const EdgeInsets.only(left: _menuInset + _rowPadding),
-            child: Text(
-              // "Local models", in the user's own vocabulary: the grid is how a Local model is
-              // served, not a thing this menu asks anyone to know about.
-              answer.gridName == null
-                  ? 'No local models on this account yet — sign in again to set them up.'
-                  : 'Nothing is being served yet.',
-              style: TextStyle(fontSize: 11, color: AppColors.textSoft),
-            ),
-          ),
+          _empty(_emptySentence(answer)),
         if (answer.canRunLocally(widget.engineLabel))
           for (final model in answer.models)
-            PopupMenuItem<_Choice>(
-              value: _Choice.model(model),
-              // Taller only for the current row carrying a sentence; every other row keeps its
-              // height so the menu does not grow for a fact about one agent.
-              height: _subtitleFor(model) != null ? 46 : 32,
-              padding: EdgeInsets.zero,
+            _item(
+              onTap: () => close(_Choice.model(model)),
               child: _Row(
                 selected: widget.currentModel == model.id,
                 title: model.id,
@@ -250,12 +226,116 @@ class _GridModelPickerState extends State<GridModelPicker> {
     if (chosen.model!.id != widget.currentModel) widget.onSelected?.call(chosen.model!);
   }
 
+  /// What the Local section says when it lists nothing.
+  ///
+  /// Three states, because they are three different situations and only one of them is about the
+  /// account. Folding the first two together is what put "sign in again to set them up" in front of
+  /// a signed-in user whose daemon happened to be offline — advice that was wrong, and that would
+  /// not have helped even if the diagnosis had been right.
+  String _emptySentence(GridModels answer) {
+    if (!answer.reachable) return 'Could not reach this machine.';
+    if (answer.gridName == null) return 'No local models on this account yet.';
+    return 'Nothing is being served yet.';
+  }
+
+  /// Show the menu in an OVERLAY rather than as a modal route.
+  ///
+  /// `showMenu` puts a full-screen modal barrier under its menu, and that barrier EATS the click
+  /// that dismisses it: closing the menu and then clicking what you meant to click took two clicks,
+  /// with the first one going nowhere. A menu is not a decision you have to finish before the app
+  /// will listen again.
+  ///
+  /// So the dismisser is a translucent [Listener] instead. Translucent hit-test behaviour means it
+  /// receives the pointer AND reports no hit, so the overlay below it — the app — is hit-tested next
+  /// and gets the same event. One click closes the menu and lands where it was aimed.
+  Future<_Choice?> _showMenu({
+    required RelativeRect position,
+    required List<Widget> Function(void Function(_Choice?) close) children,
+  }) {
+    final overlayState = Overlay.of(context);
+    final completer = Completer<_Choice?>();
+    late final OverlayEntry entry;
+    late final void Function() deregister;
+    var closed = false;
+    void close(_Choice? choice) {
+      // Guarded: a pointer-down outside and a row tap can both arrive for one gesture, and removing
+      // an entry twice throws.
+      if (closed) return;
+      closed = true;
+      deregister();
+      entry.remove();
+      if (!completer.isCompleted) completer.complete(choice);
+    }
+    // A click on the window's NATIVE tab strip is not a pointer event Flutter ever sees, so the
+    // dismisser below cannot fire for it — the menu was left floating over a tab it no longer
+    // belonged to. The titlebar reports its own clicks instead; see [dismissTransientMenus].
+    deregister = registerTransientMenu(() => close(null));
+    _close = () => close(null);
+
+    entry = OverlayEntry(
+      builder: (context) => Stack(
+        children: [
+          Positioned.fill(
+            child: Listener(
+              behavior: HitTestBehavior.translucent,
+              onPointerDown: (_) => close(null),
+              child: const SizedBox.expand(),
+            ),
+          ),
+          Positioned(
+            // Right-aligned to the control, which sits at the right end of a pane header — anchoring
+            // the left edge would push a wide menu off-screen.
+            right: position.right,
+            top: position.top,
+            child: ConstrainedBox(
+              // Wide enough that a status can sit right-aligned against a model id without the two
+              // meeting, and for a full GGUF-style model id beside its node without either cut.
+              constraints: const BoxConstraints(minWidth: 340, maxWidth: 540),
+              // ⚠️ IntrinsicWidth, or the menu is ALWAYS 540 wide. `Positioned` hands down unbounded
+              // width, the ConstrainedBox turns that into "up to 540", and a stretching Column takes
+              // all of it — so a two-line menu wore the width of the longest model id it could ever
+              // hold. This measures the rows and the clamp then applies to what they actually need.
+              child: IntrinsicWidth(
+                  child: Material(
+                  color: AppColors.surface,
+                  elevation: 8,
+                  borderRadius: BorderRadius.circular(8),
+                  clipBehavior: Clip.antiAlias,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: children(close),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    overlayState.insert(entry);
+    return completer.future.whenComplete(() => _close = null);
+  }
+
+  /// One selectable row.
+  Widget _item({required VoidCallback onTap, required Widget child}) => InkWell(
+    onTap: onTap,
+    child: child,
+  );
+
+  /// A line that states something rather than offering it — no hover, no tap.
+  Widget _empty(String text) => Padding(
+    padding: const EdgeInsets.fromLTRB(_menuInset + _rowPadding, 5, _menuInset + _rowPadding, 6),
+    child: Text(text, style: TextStyle(fontSize: 11, color: AppColors.textSoft)),
+  );
+
   /// A section label. Non-interactive and short, so the two groups read as groups rather than as
   /// entries someone failed to make clickable.
-  PopupMenuItem<_Choice> _header(String label) => PopupMenuItem<_Choice>(
-    enabled: false,
-    height: 22,
-    padding: EdgeInsets.zero,
+  Widget _header(String label) => Padding(
+    padding: const EdgeInsets.only(top: 3, bottom: 3),
     child: Padding(
       // The row's margin plus its internal padding, so a header sits directly above the text it
       // heads rather than a few pixels to either side of it.
@@ -280,31 +360,41 @@ class _GridModelPickerState extends State<GridModelPicker> {
       // the agent has no web search without opening the menu at all.
       message: sentence == null ? 'Where this agent runs' : 'Where this agent runs\n$sentence',
       waitDuration: const Duration(milliseconds: 700),
-      child: InkWell(
-        onTap: _open,
-        borderRadius: BorderRadius.circular(4),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // No leading glyph: the word carries the control, and a header this dense reads better
-              // with one fewer mark in it. The spinner takes that space only while a read is in
-              // flight, so the label does not shift when nothing is happening.
-              if (_loading) ...[
-                const SizedBox(
-                  width: 11,
-                  height: 11,
-                  child: CircularProgressIndicator(strokeWidth: 1.5),
+      child: MouseRegion(
+        // Stated rather than inherited. The pane header sits over a terminal, and the cursor a
+        // person sees while hovering this was whatever the surface underneath asked for — so a
+        // control that opens a menu did not look like one until you clicked it.
+        cursor: SystemMouseCursors.click,
+        child: InkWell(
+          onTap: _open,
+          // Stated on the InkWell as well as on the MouseRegion above it. The cursor a person sees is
+          // the INNERMOST annotation under the pointer, and InkWell installs one of its own — so an
+          // ancestor asking for a hand is not, by itself, the thing that decides.
+          mouseCursor: SystemMouseCursors.click,
+          borderRadius: BorderRadius.circular(4),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // No leading glyph: the word carries the control, and a header this dense reads
+                // better with one fewer mark in it. The spinner takes that space only while a read
+                // is in flight, so the label does not shift when nothing is happening.
+                if (_loading) ...[
+                  const SizedBox(
+                    width: 11,
+                    height: 11,
+                    child: CircularProgressIndicator(strokeWidth: 1.5),
+                  ),
+                  const SizedBox(width: 5),
+                ],
+                Text(
+                  'Model',
+                  style: TextStyle(fontSize: 11, color: AppColors.textSoft),
                 ),
-                const SizedBox(width: 5),
+                Icon(Icons.arrow_drop_down, size: 14, color: AppColors.mutedStrong),
               ],
-              Text(
-                'Model',
-                style: TextStyle(fontSize: 11, color: AppColors.textSoft),
-              ),
-              Icon(Icons.arrow_drop_down, size: 14, color: AppColors.mutedStrong),
-            ],
+            ),
           ),
         ),
       ),
