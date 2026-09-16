@@ -54,8 +54,9 @@ icon size in thirty seconds instead of in an email twenty minutes later.
 | `1.0.0 (2)` | 2026-09-16 | TestFlight. Universal (iPhone + iPad) — superseded |
 | `1.0.0 (3)` | 2026-09-16 | TestFlight. **iPhone only** |
 | `1.0.0 (4)` | 2026-09-16 | TestFlight. Adds agent/machine search (`feat/mobile-search`) |
+| `1.0.0 (5)` | 2026-09-16 | TestFlight. Agent creation flow; Machines tab pairs/unpairs |
 
-`pubspec.yaml` is therefore at `1.0.0+5`: the repo always holds the NEXT build number, so a release
+`pubspec.yaml` is therefore at `1.0.0+6`: the repo always holds the NEXT build number, so a release
 runs clean without anyone having to remember the last one.
 
 ### Why the app is iPhone-only
