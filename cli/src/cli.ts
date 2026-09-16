@@ -1379,11 +1379,19 @@ async function runForeground(session: AuthSession): Promise<void> {
     }
   }
   dshFrameContextRef = dshFrameContext
+  // A companion's news (a viewer URL, a verdict) is pushed on the agent's frame — but only once
+  // the agent's terminal is attached. During a daemon start the viewer is often up before the
+  // pane is re-attached, and a frame with no terminal reads to the desktop as "agent gone": it
+  // closed the tiles of every harness agent on every restart (seen 2026-09-15, three times). The
+  // attach's own sync carries whatever arrived first.
+  const syncCompanion = (agentId: string): void => {
+    const session = registry.byAgent(agentId)
+    if (session && registry.terminalAvailable(agentId)) syncSession(session)
+  }
   const dshViewers = new DshViewerManager({
     onUrl: (agentId, url) => {
       dshFrameFor(agentId).viewerUrl = url
-      const session = registry.byAgent(agentId)
-      if (session) syncSession(session)
+      syncCompanion(agentId)
     },
     log: (line) => console.log(line),
   })
@@ -1392,8 +1400,7 @@ async function runForeground(session: AuthSession): Promise<void> {
       dshFrameFor(agentId).verdict = verdict
       // The verdict's artifact is what the viewer should show, when it names one.
       dshViewers.setVerdictArtifact(agentId, verdict?.artifact ?? null)
-      const session = registry.byAgent(agentId)
-      if (session) syncSession(session)
+      syncCompanion(agentId)
     },
     log: (line) => console.log(line),
   })
