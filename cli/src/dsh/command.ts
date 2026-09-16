@@ -12,7 +12,7 @@ export function dshUsage(): string {
   return `Domain-specific harnesses (a DSH turns Harness into a product for one domain — see dsh/README.md):
   harness dsh list                 what is installed on this computer, and what the registry offers
   harness dsh install <id|url|path> [--ref <ref>] [--link]
-                                   install by registry id (autonomous/circuit), git URL, or local path;
+                                   install by registry id (autonomous/copper), git URL, or local path;
                                    --link symlinks a local checkout instead of cloning it
   harness dsh doctor <id>          re-run the harness's own readiness check
   harness dsh remove <id>          uninstall (a --link install removes only the link)

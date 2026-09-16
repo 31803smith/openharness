@@ -28,7 +28,7 @@ class _RenderApp extends AppNotifier {
     for (final id in ['local', 'remote']) {
       final machine = Machine(
         machineId: id,
-        name: id == 'local' ? 'MacBook Pro' : 'Workshop',
+        name: id == 'local' ? 'MacBook Pro' : 'Solid',
         authMode: MachineAuthMode.remote,
       );
       machines.add(machine);

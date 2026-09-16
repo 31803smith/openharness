@@ -36,8 +36,8 @@ class _Connection extends WsConn {
 }
 
 const _circuit = {
-  'id': 'autonomous/circuit',
-  'name': 'Circuit',
+  'id': 'autonomous/copper',
+  'name': 'Copper',
   'description': 'Chat with AI → a board you can order',
   'engine': 'claude',
   'installed': false,
@@ -48,8 +48,8 @@ const _circuit = {
 void main() {
   test('an entry is read off the wire and refuses ids outside owner/name', () {
     final entry = DshEntry.fromJson(_circuit)!;
-    expect(entry.id, 'autonomous/circuit');
-    expect(entry.name, 'Circuit');
+    expect(entry.id, 'autonomous/copper');
+    expect(entry.name, 'Copper');
     expect(entry.engine, 'claude');
     expect(entry.installed, isFalse);
     expect(entry.viewer, isTrue);
@@ -61,7 +61,7 @@ void main() {
     );
     expect(DshEntry.fromJson({'id': 'circuit', 'engine': 'claude'}), isNull);
     expect(DshEntry.fromJson({'id': 'a/b', 'engine': ''}), isNull);
-    expect(DshEntry.fromJson('autonomous/circuit'), isNull);
+    expect(DshEntry.fromJson('autonomous/copper'), isNull);
   });
 
   test(
@@ -100,7 +100,7 @@ void main() {
       final catalog = app.stateOf('m')!.dsh;
       expect(catalog.loaded, isTrue);
       expect(catalog.error, isNull);
-      expect(catalog.entries.map((e) => e.id), ['autonomous/circuit']);
+      expect(catalog.entries.map((e) => e.id), ['autonomous/copper']);
       expect(connection.calls.map((c) => c.$1), ['dsh_list']);
       // A second ask is answered from memory unless forced.
       await app.probeDsh('m');
@@ -134,23 +134,23 @@ void main() {
                 {..._circuit, 'installed': true},
               ],
             });
-      final result = app.installDsh('m', 'autonomous/circuit');
+      final result = app.installDsh('m', 'autonomous/copper');
       final catalog = app.stateOf('m')!.dsh;
-      expect(catalog.installs['autonomous/circuit']!.phase, 'clone');
+      expect(catalog.installs['autonomous/copper']!.phase, 'clone');
       await app.handleEventForTest('m', {
         'type': 'dsh_install_status',
-        'payload': {'id': 'autonomous/circuit', 'phase': 'setup'},
+        'payload': {'id': 'autonomous/copper', 'phase': 'setup'},
       });
       expect(
-        catalog.installs['autonomous/circuit']!.label,
+        catalog.installs['autonomous/copper']!.label,
         'Setting up the toolchain…',
       );
       install.complete({'ok': true});
       expect(await result, isNull);
-      expect(catalog.installs['autonomous/circuit']!.done, isTrue);
-      expect(catalog['autonomous/circuit']!.installed, isTrue);
+      expect(catalog.installs['autonomous/copper']!.done, isTrue);
+      expect(catalog['autonomous/copper']!.installed, isTrue);
       expect(connection.calls.map((c) => c.$1), ['dsh_install', 'dsh_list']);
-      expect(connection.calls.first.$2, {'id': 'autonomous/circuit'});
+      expect(connection.calls.first.$2, {'id': 'autonomous/copper'});
     },
   );
 
@@ -164,10 +164,10 @@ void main() {
       );
     final app = createApp(connectionForTest: (_) => connection);
     addTearDown(app.dispose);
-    final error = await app.installDsh('m', 'autonomous/circuit');
+    final error = await app.installDsh('m', 'autonomous/copper');
     expect(error, 'Update the harness CLI on Test host to install harnesses');
     expect(
-      app.stateOf('m')!.dsh.installs['autonomous/circuit']!.failed,
+      app.stateOf('m')!.dsh.installs['autonomous/copper']!.failed,
       isTrue,
     );
   });

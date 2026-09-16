@@ -53,7 +53,7 @@ export type DshInstallResult =
   | { ok: true; installed: InstalledDsh; doctor: DshDoctorResult; setupLines: string[] }
   | { ok: false; error: string; detail: string }
 
-/** A registry id (`autonomous/circuit`) resolves to its repo and ref; anything else is a source. */
+/** A registry id (`autonomous/copper`) resolves to its repo and ref; anything else is a source. */
 export function resolveInstallSource(idOrSource: string): { source: string; ref?: string; id?: string } | null {
   const entry = registryEntry(idOrSource)
   if (entry) return { source: entry.repo, ref: entry.ref, id: entry.id }

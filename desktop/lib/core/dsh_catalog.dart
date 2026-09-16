@@ -15,6 +15,7 @@ class DshEntry {
     required this.name,
     required this.engine,
     this.description,
+    this.category,
     this.installed = false,
     this.viewer = false,
     this.tier = 0,
@@ -29,6 +30,9 @@ class DshEntry {
   /// The base engine the harness runs on: what `agent_create` must be sent.
   final String engine;
   final String? description;
+
+  /// The kind of thing it makes, in a word or two — the picker's second line.
+  final String? category;
   final bool installed;
 
   /// Whether it ships a viewer, i.e. whether a web pane will open beside it.
@@ -43,6 +47,7 @@ class DshEntry {
     if (engine is! String || engine.isEmpty || engine.length > 64) return null;
     final name = raw['name'];
     final description = raw['description'];
+    final category = raw['category'];
     final tier = raw['tier'];
     return DshEntry(
       id: id,
@@ -55,6 +60,9 @@ class DshEntry {
               0,
               description.trim().length.clamp(0, 300),
             )
+          : null,
+      category: category is String && category.trim().isNotEmpty
+          ? category.trim().substring(0, category.trim().length.clamp(0, 24))
           : null,
       installed: raw['installed'] == true,
       viewer: raw['viewer'] == true,

@@ -10,7 +10,7 @@ A DSH is a git repo. Harness reads `harness.json` at its root and nothing else a
 ```jsonc
 {
   "spec": 1,
-  "id": "autonomous/circuit",             // owner/name; the install dir and the wire id
+  "id": "autonomous/copper",             // owner/name; the install dir and the wire id
   "name": "Circuit",                      // the picker tile
   "description": "Chat with AI → a board you can order",
   "engine": "claude",                     // base engine, one of ENGINES
@@ -88,7 +88,7 @@ writes it beside the sidecar in `circuitpy.generation`; Workshop writes it from 
 - `AgentFrame` gains `dsh: string | null`, `dshName: string | null`, `viewerUrl: string | null`,
   `verdict: { ready, summary, errors, warnings, artifact, phases, updatedAt } | null`. Null is a real answer
   (see `agentFrame.ts`'s doc on erased fields).
-- `dsh_list` → `{ dsh: [{ id, name, description, engine, installed, viewer, tier }] }`: installed
+- `dsh_list` → `{ dsh: [{ id, name, description, category, engine, installed, viewer, tier }] }`: installed
   DSHs on this machine merged with the bundled registry (`dsh/registry/**/*.json`).
 - `dsh_install { id?, url?, ref? }` → runs clone → setup → doctor; pushes
   `dsh_install_status { id, phase: clone|setup|doctor|done|failed, detail? }`; replies `{ ok }` at
@@ -101,8 +101,8 @@ writes it beside the sidecar in `circuitpy.generation`; Workshop writes it from 
 ```
 ~/.harness/dsh/
   installed.json                # [{ id, dir, source, ref, commit, installedAt }]
-  autonomous/circuit/           # clone, or a symlink when installed with --link (dev loop)
-  autonomous/workshop/
+  autonomous/copper/           # clone, or a symlink when installed with --link (dev loop)
+  autonomous/solid/
 ```
 
 CLI: `harness dsh install <git-url|path> [--link] [--ref <ref>]`, `harness dsh list`,

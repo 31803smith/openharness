@@ -120,7 +120,7 @@ export interface RegisteredSession {
    */
   codexHome?: string | null
   /**
-   * The domain-specific harness this agent was created as (`autonomous/circuit`), or null for a plain
+   * The domain-specific harness this agent was created as (`autonomous/copper`), or null for a plain
    * engine. NOT a second engine: `engine` stays the base (`claude`, `codex`, …) and every normalizer,
    * probe and install path keys on that. Chosen at creation, carried forward, and re-read off the
    * live process's `HARNESS_DSH` by discovery so a pane the daemon did not create (or had to mint

@@ -41,11 +41,11 @@ Harness does at create time, and what it sets in the engine's environment. The J
 ## Installing
 
 ```bash
-harness dsh install autonomous/circuit                                    # by registry id
+harness dsh install autonomous/copper                                    # by registry id
 harness dsh install https://github.com/autonomous-ai/autonomous-circuit   # by git URL
 harness dsh install /path/to/checkout --link                              # symlink, for development
 harness dsh list
-harness dsh doctor autonomous/circuit
+harness dsh doctor autonomous/copper
 harness dsh check /path/to/checkout                                       # conformance, before publishing
 ```
 

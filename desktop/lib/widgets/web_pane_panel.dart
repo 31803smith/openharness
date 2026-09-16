@@ -178,31 +178,18 @@ class _WebPanePanelState extends State<WebPanePanel> {
                 size: 17,
               ),
               const SizedBox(width: 10),
-              // Title and phase strip share the flexible middle: the title
-              // yields first, the strip second, and whatever is left stays
-              // between them — never at the row's end, where it would push
-              // the actions off the right edge the terminal pane keeps.
+              // The name, and where the work is — the current phase, one
+              // word, in the place a "Viewer" label would only repeat what
+              // the pane shows. A status, not a history.
               Expanded(
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Flexible(
-                      child: Tooltip(
-                        message: widget.pane.url ?? '',
-                        waitDuration: const Duration(milliseconds: 700),
-                        child: Text.rich(
-                          TextSpan(
-                            children: [
-                              TextSpan(text: widget.ownerName),
-                              TextSpan(
-                                text: '  ·  Viewer',
-                                style: TextStyle(
-                                  color: AppColors.mutedStrong,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ],
-                          ),
+                child: Tooltip(
+                  message: widget.pane.url ?? '',
+                  waitDuration: const Duration(milliseconds: 700),
+                  child: Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          widget.ownerName,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
@@ -213,16 +200,19 @@ class _WebPanePanelState extends State<WebPanePanel> {
                           ),
                         ),
                       ),
-                    ),
-                    if (widget.verdict case final verdict?
-                        when verdict.phases.isNotEmpty)
-                      Flexible(
-                        child: Padding(
-                          padding: const EdgeInsets.only(left: 12),
-                          child: PhaseStrip(phases: verdict.phases),
+                      if (widget.verdict?.currentPhase case final phase?) ...[
+                        Text(
+                          '  ·  ',
+                          style: TextStyle(
+                            color: AppColors.mutedStrong,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                          ),
                         ),
-                      ),
-                  ],
+                        Flexible(child: PhaseMark(phase: phase)),
+                      ],
+                    ],
+                  ),
                 ),
               ),
               const SizedBox(width: 8),

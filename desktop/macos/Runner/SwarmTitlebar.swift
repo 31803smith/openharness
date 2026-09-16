@@ -1075,11 +1075,25 @@ private final class SwarmTabStrip: NSView {
   private var tabOrderChanged = false
   private var actionsEnabled = false
   private var lastBackgroundClick: (time: TimeInterval, point: NSPoint)?
+  // Hold ⌘ and each of the first nine tabs shows the digit that reaches it
+  // (⌘1…⌘9, the app's own bindings) — the same discoverability Safari and
+  // the terminals give their tabs. Off again the moment ⌘ is released or the
+  // app goes to the background.
+  private var commandHeld = false
+  private var flagsMonitor: Any?
+  private var resignObserver: NSObjectProtocol?
   override var mouseDownCanMoveWindow: Bool { true }
 
   override init(frame: NSRect) {
     super.init(frame: frame)
     wantsLayer = true
+    flagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+      self?.setCommandHeld(event.modifierFlags.contains(.command))
+      return event
+    }
+    resignObserver = NotificationCenter.default.addObserver(
+      forName: NSApplication.didResignActiveNotification, object: nil, queue: .main
+    ) { [weak self] _ in self?.setCommandHeld(false) }
     scroll.drawsBackground = false
     scroll.hasHorizontalScroller = false
     scroll.hasVerticalScroller = false
@@ -1142,6 +1156,23 @@ private final class SwarmTabStrip: NSView {
     openButton.borderColor = palette.accent.withAlphaComponent(0.3)
   }
 
+  deinit {
+    if let flagsMonitor { NSEvent.removeMonitor(flagsMonitor) }
+    if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
+  }
+
+  private func setCommandHeld(_ held: Bool) {
+    guard commandHeld != held else { return }
+    commandHeld = held
+    applyShortcutBadges()
+  }
+
+  fileprivate func applyShortcutBadges() {
+    for (index, tab) in tabs.enumerated() {
+      tab.shortcut = commandHeld && actionsEnabled && index < 9 ? index + 1 : nil
+    }
+  }
+
   func update(_ state: [String: Any]) {
     // Workspace teardown clears its controls without changing appearance.
     if let palette = state["palette"] as? [String: Any] { updatePalette(palette) }
@@ -1180,6 +1211,7 @@ private final class SwarmTabStrip: NSView {
       return tab
     }
     updateDividers()
+    applyShortcutBadges()
     // Moving frames alone leaves AppKit's child traversal in insertion order.
     document.setAccessibilityChildren(tabs)
     newButton.isEnabled = actionsEnabled && (state["canOpenNewTab"] as? Bool ?? (tabs.count < 24))
@@ -1305,6 +1337,8 @@ private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidati
   var selected = false { didSet { if selected != oldValue { invalidateLabel(); updateAccessibility() } } }
   var attention = false { didSet { if attention != oldValue { needsDisplay = true; updateAccessibility() } } }
   var showsDivider = false { didSet { if showsDivider != oldValue { needsDisplay = true } } }
+  /// The ⌘-digit that selects this tab, shown while ⌘ is held; nil otherwise.
+  var shortcut: Int? { didSet { if shortcut != oldValue { updateCloseVisibility(); needsDisplay = true } } }
   var contentCenterY: CGFloat = 20
   var emit: ((String, Any?) -> Void)?
   var hoverChanged: (() -> Void)?
@@ -1386,7 +1420,9 @@ private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidati
     hoverChanged?()
   }
   fileprivate func updateCloseVisibility() {
-    closeButton.showsGlyph = hovered || selectButton.hasKeyboardFocus || closeButton.hasKeyboardFocus
+    // The badge borrows the close glyph's slot; while ⌘ is held the digit wins.
+    closeButton.showsGlyph = shortcut == nil
+      && (hovered || selectButton.hasKeyboardFocus || closeButton.hasKeyboardFocus)
   }
   private func invalidateLabel() {
     cachedLabel = nil
@@ -1434,6 +1470,15 @@ private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidati
     if attention {
       NSColor.systemOrange.setFill()
       NSBezierPath(ovalIn: NSRect(x: 13, y: contentCenterY - 2, width: 4, height: 4)).fill()
+    }
+    if let shortcut {
+      let paragraph = NSMutableParagraphStyle()
+      paragraph.alignment = .right
+      let badge = NSAttributedString(string: "⌘\(shortcut)",
+        attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium),
+          .foregroundColor: NSColor(white: 1, alpha: selected ? 0.7 : 0.5), .paragraphStyle: paragraph])
+      let badgeHeight = badge.size().height
+      badge.draw(in: NSRect(x: bounds.width - 46, y: contentCenterY - badgeHeight / 2, width: 32, height: badgeHeight))
     }
   }
   // Overflowed tabs might not be drawn. Their names and selection still need

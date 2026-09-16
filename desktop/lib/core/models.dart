@@ -134,7 +134,7 @@ class Agent {
   final bool terminalAvailable;
   final String? terminalUnavailableReason;
 
-  /// The domain-specific harness this agent was created from (`autonomous/circuit`), or
+  /// The domain-specific harness this agent was created from (`autonomous/copper`), or
   /// null for a plain engine. [engine] stays the BASE engine the process actually runs —
   /// a DSH is a decoration on the session, never a second engine (see the DSH spec in
   /// `dsh/spec/README.md`). Everything a person sees keys off this when it is set.
@@ -374,6 +374,18 @@ class AgentVerdict {
   /// The phase under way, when one is.
   AgentPhase? get activePhase =>
       phases.where((p) => p.state == AgentPhaseState.active).firstOrNull;
+
+  /// The one phase the header shows: the one under way, else the last one
+  /// that has happened — done or failed — else nothing. A status, not a
+  /// history: each new one replaces the last.
+  AgentPhase? get currentPhase {
+    final active = activePhase;
+    if (active != null) return active;
+    for (final phase in phases.reversed) {
+      if (phase.state != AgentPhaseState.pending) return phase;
+    }
+    return null;
+  }
 
   static AgentVerdict? fromJson(Object? raw) {
     if (raw is! Map) return null;

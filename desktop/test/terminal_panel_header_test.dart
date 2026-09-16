@@ -246,8 +246,8 @@ void main() {
     id: 'agent-1',
     name: 'a',
     engine: 'claude',
-    dsh: 'autonomous/circuit',
-    dshName: 'Circuit',
+    dsh: 'autonomous/copper',
+    dshName: 'Copper',
     terminalAvailable: true,
     verdict: verdict,
   );
@@ -265,14 +265,15 @@ void main() {
           const AgentVerdict(ready: true, summary: 'Board is fab-ready'),
         ),
       );
-      // Its harness, with its base engine beside it.
+      // Its harness — icon and name, like every other pane; no second mark
+      // for the engine underneath (owner, 2026-09-15).
       expect(
-        find.byKey(const ValueKey('engine-icon-autonomous/circuit')),
+        find.byKey(const ValueKey('engine-icon-autonomous/copper')),
         findsOneWidget,
       );
       expect(
         find.byKey(const ValueKey('pane-header-base-engine')),
-        findsOneWidget,
+        findsNothing,
       );
       // The verdict is the viewer pane's to show (owner, 2026-09-15): the
       // terminal header carries none, before or after a verdict arrives.

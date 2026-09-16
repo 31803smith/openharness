@@ -862,7 +862,7 @@ void main() {
         await tester.pump();
         if (chooseExplicitly) {
           await tester.tap(
-            find.byKey(const ValueKey('new-agent-quick-autonomous/circuit')),
+            find.byKey(const ValueKey('new-agent-quick-autonomous/copper')),
           );
           await tester.pump();
         }
@@ -877,7 +877,7 @@ void main() {
         final engine = tester.widget<AppSelectField<String>>(
           find.byKey(const Key('new-agent-engine-field')),
         );
-        expect(engine.value, chooseExplicitly ? 'autonomous/circuit' : 'codex');
+        expect(engine.value, chooseExplicitly ? 'autonomous/copper' : 'codex');
         expect(app.launches, isEmpty);
         await tester.pumpWidget(const SizedBox());
         app.dispose();

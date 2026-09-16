@@ -386,15 +386,15 @@ cd cli && npm run test:tmux-real       # the real multiplexer discovery suite
 
 ### Add a domain harness
 
-A domain harness is an engine tile that comes with a domain: Circuit (PCBs, on Claude Code),
-Workshop (3D parts, on Codex), Marp (slide decks, on Claude Code). Pick one in New Agent and you get
+A domain harness is an engine tile that comes with a domain: Copper (PCBs, on Claude Code), Solid
+(3D parts, on Codex), Marp (slide decks, on Claude Code). Pick one in New Agent and you get
 a tab of its own — the domain's viewer on the left, the engine's terminal on the right — and the
 engine starts with the domain's skills loaded in a workspace the harness laid out. Nothing about the
 domain lives in Harness itself: a harness is a git repository, installed per machine on first use.
 
 | In the repo | What it is |
 |---|---|
-| `harness.json` | the manifest: id, base engine, template, skills, toolchain, viewer, verdict path |
+| `harness.json` | the manifest: id, name, category, base engine, template, skills, toolchain, viewer, verdict path |
 | `AGENTS.md` | what the engine is told — Claude Code gets a `CLAUDE.md` that includes it |
 | `skills/` | the domain's skills, linked into the workspace (`.claude/skills/` or `.agents/skills/`) |
 | `template/` | a fresh workspace, copied once, plus an `init` script |

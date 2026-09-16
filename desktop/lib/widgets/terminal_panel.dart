@@ -1521,24 +1521,9 @@ class _TerminalHeader extends StatelessWidget {
                   EngineMark.forAgent(agent, size: 17)
                 else
                   EngineMark(engine: session.engineId, size: 17),
-                // A harness agent is drawn as its harness, but the process in the pane is still
-                // Claude or Codex — and that is the account being spent, so it stays visible: a
-                // small base-engine mark tucked against the harness's own.
-                if (agent?.dsh != null) ...[
-                  const SizedBox(width: 3),
-                  Tooltip(
-                    message:
-                        'Runs on ${engineIdentity(session.engineId).label}',
-                    child: Opacity(
-                      opacity: .75,
-                      child: EngineMark(
-                        key: const ValueKey('pane-header-base-engine'),
-                        engine: session.engineId,
-                        size: 11,
-                      ),
-                    ),
-                  ),
-                ],
+                // Icon and name, the same as every other pane (owner,
+                // 2026-09-15): a harness agent is its harness here, and the
+                // engine it runs on is the dialog's and the tooltip's to say.
                 const SizedBox(width: 10),
                 Expanded(
                   child: Row(
@@ -1672,6 +1657,9 @@ class _TerminalHeader extends StatelessWidget {
                     viewerVisible:
                         agent != null &&
                         notifier.viewerPaneShown(session.machineId, agent.id),
+                    viewerColor: agent == null
+                        ? null
+                        : agentIdentity(agent).color,
                     details: Tooltip(
                       message: [
                         if (project != null) project.cwd,

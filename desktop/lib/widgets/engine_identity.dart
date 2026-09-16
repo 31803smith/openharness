@@ -11,11 +11,18 @@ class EngineIdentity {
   final Color color;
   final String? asset;
 
+  /// The kind of thing it makes, in a word or two — "Code" for every coding
+  /// engine, "PCB", "3D design", "Slides" for the harnesses. The picker's
+  /// second line under the name, so a name with some character never has to
+  /// explain itself.
+  final String? category;
+
   const EngineIdentity({
     required this.id,
     required this.label,
     required this.color,
     this.asset,
+    this.category,
   });
 }
 
@@ -23,83 +30,97 @@ const _engines = <String, EngineIdentity>{
   'claude': EngineIdentity(
     id: 'claude',
     label: 'Claude',
+    category: 'Code',
     color: Color(0xffcc7c5e),
   ),
   'codex': EngineIdentity(
     id: 'codex',
     label: 'Codex',
+    category: 'Code',
     color: Color(0xff64d2ff),
     asset: 'assets/engine-icons/codex.png',
   ),
   'cursor': EngineIdentity(
     id: 'cursor',
     label: 'Cursor',
+    category: 'Code',
     color: Color(0xffc6ff72),
     asset: 'assets/engine-icons/cursor.png',
   ),
   'opencode': EngineIdentity(
     id: 'opencode',
     label: 'OpenCode',
+    category: 'Code',
     color: Color(0xfff1ecec),
     asset: 'assets/engine-icons/opencode.png',
   ),
   'pi': EngineIdentity(
     id: 'pi',
     label: 'Pi',
+    category: 'Code',
     color: Colors.white,
     asset: 'assets/engine-icons/pi.png',
   ),
   'hermes': EngineIdentity(
     id: 'hermes',
     label: 'Hermes',
+    category: 'Code',
     color: Color(0xff9b8cff),
     asset: 'assets/engine-icons/hermes.png',
   ),
   'commandcode': EngineIdentity(
     id: 'commandcode',
     label: 'Command Code',
+    category: 'Code',
     color: Color(0xfff5f5f5),
     asset: 'assets/engine-icons/commandcode.png',
   ),
   'devin': EngineIdentity(
     id: 'devin',
     label: 'Devin',
+    category: 'Code',
     color: Color(0xff8fb8ff),
     asset: 'assets/engine-icons/devin.png',
   ),
   'muse': EngineIdentity(
     id: 'muse',
     label: 'Muse',
+    category: 'Code',
     color: Color(0xff0082fb),
     asset: 'assets/engine-icons/muse.png',
   ),
   'amp': EngineIdentity(
     id: 'amp',
     label: 'Amp',
+    category: 'Code',
     color: Color(0xfff34e3f),
     asset: 'assets/engine-icons/amp.png',
   ),
   'kilo': EngineIdentity(
     id: 'kilo',
     label: 'Kilo',
+    category: 'Code',
     color: Color(0xfff8f676),
     asset: 'assets/engine-icons/kilo.png',
   ),
   'grok': EngineIdentity(
     id: 'grok',
     label: 'Grok',
+    category: 'Code',
     color: Colors.white,
     asset: 'assets/engine-icons/grok.png',
   ),
   'copilot': EngineIdentity(
     id: 'copilot',
     label: 'Copilot',
+    category: 'Code',
     color: Color(0xff8957e5),
     asset: 'assets/engine-icons/copilot.png',
   ),
   'agy': EngineIdentity(
     id: 'agy',
     label: 'Antigravity',
+    category: 'Code',
     color: Color(0xff3287fb),
     asset: 'assets/engine-icons/agy.png',
   ),
@@ -114,21 +135,24 @@ const _engines = <String, EngineIdentity>{
 /// own. It is only a face. A harness absent here still draws — the daemon
 /// sends its name, and [engineIdentity] falls back to an initial.
 const _harnesses = <String, EngineIdentity>{
-  'autonomous/circuit': EngineIdentity(
-    id: 'autonomous/circuit',
-    label: 'Circuit',
-    color: Color(0xffd2643a),
-    asset: 'assets/engine-icons/circuit.png',
+  'autonomous/copper': EngineIdentity(
+    id: 'autonomous/copper',
+    label: 'Copper',
+    category: 'PCB',
+    color: Color(0xffd98a4a),
+    asset: 'assets/engine-icons/copper.png',
   ),
-  'autonomous/workshop': EngineIdentity(
-    id: 'autonomous/workshop',
-    label: 'Workshop',
-    color: Color(0xffe09a3c),
-    asset: 'assets/engine-icons/workshop.png',
+  'autonomous/solid': EngineIdentity(
+    id: 'autonomous/solid',
+    label: 'Solid',
+    category: '3D design',
+    color: Color(0xff5a52d8),
+    asset: 'assets/engine-icons/solid.png',
   ),
   'autonomous/marp': EngineIdentity(
     id: 'autonomous/marp',
     label: 'Marp',
+    category: 'Slides',
     color: Color(0xff218cdb),
     asset: 'assets/engine-icons/marp.png',
   ),
@@ -138,8 +162,8 @@ const _harnesses = <String, EngineIdentity>{
 /// say "Runs on Claude Code" — and send the right `engine` — before the machine
 /// has answered `dsh_list`. The daemon's catalog is authoritative when present.
 const knownHarnessBase = <String, String>{
-  'autonomous/circuit': 'claude',
-  'autonomous/workshop': 'codex',
+  'autonomous/copper': 'claude',
+  'autonomous/solid': 'codex',
   'autonomous/marp': 'claude',
 };
 

@@ -42,25 +42,55 @@ void main() {
     expect(many.phases, hasLength(12));
   });
 
-  testWidgets('the strip names every phase and says which is under way', (
-    tester,
-  ) async {
-    const phases = [
-      AgentPhase(id: 'outline', name: 'Outline', state: AgentPhaseState.done),
-      AgentPhase(id: 'draft', name: 'Draft', state: AgentPhaseState.active),
-      AgentPhase(id: 'polish', name: 'Polish'),
-    ];
+  test(
+    'the current phase is the one under way, else the last that happened',
+    () {
+      AgentVerdict v(List<AgentPhaseState> states) => AgentVerdict(
+        ready: false,
+        phases: [
+          for (final (i, s) in states.indexed)
+            AgentPhase(id: 'p$i', name: 'P$i', state: s),
+        ],
+      );
+      expect(
+        v([
+          AgentPhaseState.done,
+          AgentPhaseState.active,
+          AgentPhaseState.pending,
+        ]).currentPhase?.name,
+        'P1',
+      );
+      expect(
+        v([AgentPhaseState.done, AgentPhaseState.done, AgentPhaseState.pending])
+            .currentPhase
+            ?.name,
+        'P1',
+      );
+      expect(
+        v([AgentPhaseState.done, AgentPhaseState.failed]).currentPhase?.name,
+        'P1',
+      );
+      expect(v([AgentPhaseState.pending]).currentPhase, isNull);
+      expect(const AgentVerdict(ready: true).currentPhase, isNull);
+    },
+  );
+
+  testWidgets('the mark names the phase and its state', (tester) async {
     await tester.pumpWidget(
       const MaterialApp(
         home: Scaffold(
-          body: Center(child: PhaseStrip(phases: phases)),
+          body: PhaseMark(
+            phase: AgentPhase(
+              id: 'draft',
+              name: 'Draft',
+              state: AgentPhaseState.active,
+            ),
+          ),
         ),
       ),
     );
-    expect(find.byKey(const ValueKey('pane-phase-strip')), findsOneWidget);
-    expect(find.text('Outline'), findsOneWidget);
+    expect(find.byKey(const ValueKey('pane-phase-mark')), findsOneWidget);
     expect(find.text('Draft'), findsOneWidget);
-    expect(find.text('Polish'), findsOneWidget);
   });
 
   testWidgets('the chip says ready, or how far from it', (tester) async {

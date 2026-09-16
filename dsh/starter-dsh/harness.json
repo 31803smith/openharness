@@ -2,6 +2,7 @@
   "spec": 1,
   "id": "autonomous/starter",
   "name": "Starter",
+  "category": "Example",
   "description": "The smallest domain-specific harness: a manifest, an AGENTS.md, and one skill.",
   "engine": "claude",
   "workspace": {
@@ -11,8 +12,12 @@
   },
   "agent": {
     "instructions": "AGENTS.md",
-    "skills": ["skills"],
-    "env": { "STARTER_DSH_DIR": "${dsh}" }
+    "skills": [
+      "skills"
+    ],
+    "env": {
+      "STARTER_DSH_DIR": "${dsh}"
+    }
   },
   "toolchain": {
     "setup": "toolchain/setup.sh",

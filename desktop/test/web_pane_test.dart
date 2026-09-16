@@ -22,8 +22,8 @@ Map<String, dynamic> _frame(
   'id': id,
   'name': 'Agent $id',
   'engine': 'claude',
-  'dsh': 'autonomous/circuit',
-  'dshName': 'Circuit',
+  'dsh': 'autonomous/copper',
+  'dshName': 'Copper',
   'viewerUrl': ?viewerUrl,
   'verdict': ?verdict,
   'terminal': {
@@ -238,7 +238,6 @@ void main() {
     expect(find.byType(WebPanePanel), findsOneWidget);
     expect(find.byKey(const ValueKey('web-pane-placeholder')), findsOneWidget);
     expect(find.text('http://127.0.0.1:4179/'), findsOneWidget);
-    expect(find.textContaining('Viewer'), findsWidgets);
     // Its own close control, and no way to end an agent from it.
     expect(find.byTooltip('Close viewer'), findsOneWidget);
     expect(
@@ -276,8 +275,12 @@ void main() {
       findsOneWidget,
     );
     expect(find.byKey(const ValueKey('pane-verdict-chip')), findsOneWidget);
-    expect(find.byKey(const ValueKey('pane-phase-strip')), findsOneWidget);
+    // One phase, the current one, in the title — not the whole history.
+    expect(find.byKey(const ValueKey('pane-phase-mark')), findsOneWidget);
     expect(find.text('Checks'), findsOneWidget);
+    expect(find.text('Build'), findsNothing);
+    // No "Viewer" label in the title: the pane says what it is.
+    expect(find.textContaining('·  Viewer'), findsNothing);
     expect(find.byTooltip('Hide viewer'), findsOneWidget);
     await tester.tap(find.byTooltip('Close viewer'));
     await tester.pump();

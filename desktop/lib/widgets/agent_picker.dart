@@ -19,6 +19,7 @@ class AgentPicker extends StatelessWidget {
   final ValueChanged<String> onChanged;
   final bool compact;
   final Size? tileSize;
+
   /// The preferred order: the three engines the tiles show, then the two
   /// first-party domain harnesses, first in More; a chosen one is what the
   /// More tile then shows.
@@ -26,8 +27,8 @@ class AgentPicker extends StatelessWidget {
     'codex',
     'claude',
     'opencode',
-    'autonomous/circuit',
-    'autonomous/workshop',
+    'autonomous/copper',
+    'autonomous/solid',
     'autonomous/marp',
   ];
 

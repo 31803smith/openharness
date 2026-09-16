@@ -242,6 +242,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
         DshEntry(
           id: identity.id,
           name: identity.label,
+          category: identity.category,
           engine: knownHarnessBase[identity.id] ?? 'claude',
         ),
     ];
@@ -742,6 +743,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                 SelectOption(
                   value: identity.id,
                   label: identity.label,
+                  detail: identity.category,
                   leading: () => EngineMark(engine: identity.id, size: 14),
                 ),
               // The domain harnesses, after the engines they run on. What the
@@ -751,7 +753,12 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                   value: harness.id,
                   label: harness.name,
                   note: 'on ${_labelOf(harness.engine)}',
-                  detail: harness.description,
+                  // What it makes, in a word or two; the machine's word first,
+                  // this build's when the machine has not answered.
+                  detail:
+                      harness.category ??
+                      engineIdentity(harness.id).category ??
+                      harness.description,
                   leading: () => EngineMark(
                     engine: harness.id,
                     displayName: harness.name,
@@ -856,9 +863,8 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     key: const Key('new-agent-runs-on'),
     'Runs on ${_labelOf(_baseEngine(_engine))}. '
     'Skills, toolchain and viewer come from the harness.',
-    style: Theme.of(
-      context,
-    ).textTheme.bodySmall?.copyWith(color: grid.AppPalette.textSecondary),
+    style: Theme.of(context).textTheme.bodySmall
+        ?.copyWith(color: grid.AppPalette.textSecondary),
   );
 
   Widget _profileOptions() => Column(
