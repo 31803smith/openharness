@@ -15,6 +15,7 @@
 import { join } from 'node:path'
 import type { AgentEngine } from '../engines/types.js'
 import { subscriptionModelLaunch } from './subscriptionModel.js'
+import { namedAgentArgs, supportsNamedAgent } from './engineLaunch.js'
 import {
   buildGridEngineLaunch,
   gridConflictingEnvToClear,
@@ -78,6 +79,12 @@ export interface LaunchSource {
   dsh?: string | null
   /** The workspace, for the DSH's `${workspace}` — the registry row's `cwd`. */
   cwd?: string | null
+  /**
+   * The engine's named agent this pane was opened as (`agent_create`'s `agent`, opencode
+   * `--agent <name>`). Part of every relaunch, unlike a first prompt: a pane opened as `harness-compute`
+   * comes back as `harness-compute`, not as a general session with that agent's history.
+   */
+  agent?: string | null
 }
 
 /** Fresh each time: callers hand `env` to tmux and may extend it, and a shared object would carry
@@ -125,19 +132,28 @@ export async function buildLaunchOverrides(
   configKey: string,
 ): Promise<LaunchOverridesResult> {
   const base = await buildBaseLaunchOverrides(deps, engine, source, configKey)
-  if (!base.ok || !source.dsh || !source.cwd) return base
-  const dsh = deps.dshLaunch?.(source.dsh, source.cwd) ?? null
-  if (!dsh) return base
-  // The DSH's variables layer over the grid's or the profile's; `HARNESS_*` are the daemon's own and
-  // a manifest cannot set them (see `dshLaunch`), so nothing here can shadow a grid credential.
-  return {
-    ok: true,
-    overrides: {
-      env: { ...base.overrides.env, ...dsh.env },
-      extraArgs: [...base.overrides.extraArgs, ...dsh.args],
-      clearEnv: base.overrides.clearEnv,
-    },
+  if (!base.ok) return base
+  let overrides = base.overrides
+  if (source.dsh && source.cwd) {
+    const dsh = deps.dshLaunch?.(source.dsh, source.cwd) ?? null
+    // The DSH's variables layer over the grid's or the profile's; `HARNESS_*` are the daemon's own
+    // and a manifest cannot set them (see `dshLaunch`), so nothing here can shadow a grid credential.
+    if (dsh) {
+      overrides = {
+        ...overrides,
+        env: { ...overrides.env, ...dsh.env },
+        extraArgs: [...overrides.extraArgs, ...dsh.args],
+      }
+    }
   }
+  // The named agent rides every relaunch, in the same argv slot `agent_create` put it in. Only an
+  // engine with a contract could have had it recorded (create refuses the rest, AGENT_UNSUPPORTED),
+  // so the guard is for a row edited by hand — it relaunches as a general session rather than
+  // handing the engine a flag it does not know.
+  if (source.agent && supportsNamedAgent(engine)) {
+    overrides = { ...overrides, extraArgs: [...overrides.extraArgs, ...namedAgentArgs(engine, source.agent)] }
+  }
+  return { ok: true, overrides }
 }
 
 async function buildBaseLaunchOverrides(

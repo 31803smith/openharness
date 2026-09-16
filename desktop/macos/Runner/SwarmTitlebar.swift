@@ -434,11 +434,9 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     // section returns when there is a real source for it, not before.
     modelsMenu.addItem(.separator())
     section("Local")
-    if localModels.isEmpty {
-      // Says what is true rather than naming something plausible. An empty grid and an unreachable
-      // one read the same from here, and both mean "nothing to pick".
-      label("No models being served", in: modelsMenu)
-    } else {
+    // Nothing served is not said: the "Run a local model" row that ends this section is the
+    // answer, and an empty-list sentence above an empty list is noise.
+    do {
       for (id, node) in localModels {
         // Same row view as the subscriptions above: the model id reads at full strength where an
         // account name would, and the node — which of the user's own machines answers, the detail
@@ -456,8 +454,15 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
         modelsMenu.addItem(item)
       }
     }
-    // No `Add Model` either: it dispatched nothing. An action that looks available and does nothing
-    // is worse than its absence.
+    // The last row of Local, drawn as one of its models: the thing a person picks when the model
+    // they want is not there yet, so it sits in the same list rather than in a section of its own.
+    // It replaces the `Add Model` placeholder that dispatched nothing, and is wired like Link
+    // Machine…, through the guarded channel handler. Present whether or not anything is served.
+    let run = NSMenuItem(title: "Run a local model", action: #selector(menuAction(_:)), keyEquivalent: "")
+    run.target = self
+    run.representedObject = "runLocalModel"
+    run.identifier = NSUserInterfaceItemIdentifier(HarnessKeymapMenu.actionPrefix + "runLocalModel")
+    modelsMenu.addItem(run)
   }
 
   private func updateHistory(_ rows: [[String: Any]], closed: [[String: Any]] = []) {

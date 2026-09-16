@@ -1045,6 +1045,43 @@ describe('agent identity: the process owns the agent, the session is bound to it
     expect(reloaded.displayName(fourth)).toBe('agent-11')
   })
 
+  it('opens a pane under the name its creator asked for, keeps it through binding and reload, and does not spend a number on it', async () => {
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    const named = registry.openPendingAgent({ engine: 'opencode', runtimes: [{ backend: 'tmux', paneId: '%7' }], cwd: '/tmp/demo', defaultName: ' Local model ' })!
+    expect(named.defaultName).toBe('Local model')
+    expect(registry.displayName(named)).toBe('Local model')
+    // The engine reporting a session title does not retitle a pane that was named at creation.
+    const bound = registry.register({ engine: 'opencode', sessionId: 'session-named', tmuxPane: '%7', title: 'OC | Greeting' })!.entry
+    expect(registry.displayName(bound)).toBe('Local model')
+    // Blank means "number it", the same as absent — and the named agent took no number.
+    const numbered = registry.openPendingAgent({ engine: 'opencode', runtimes: [{ backend: 'tmux', paneId: '%8' }], cwd: '/tmp/demo', defaultName: '  ' })!
+    expect(registry.displayName(numbered)).toBe('agent-1')
+    const { registry: reloaded } = await loadRegistryModule()
+    reloaded.load()
+    expect(reloaded.displayName(reloaded.byAgent(named.agentId)!)).toBe('Local model')
+    expect(reloaded.displayName(reloaded.byAgent(numbered.agentId)!)).toBe('agent-1')
+  })
+
+  it('keeps the named agent a pane was opened as through binding and reload, and drops one that is not an identifier', async () => {
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    const named = registry.openPendingAgent({ engine: 'opencode', runtimes: [{ backend: 'tmux', paneId: '%7' }], cwd: '/tmp/demo', agent: 'harness-compute', defaultName: 'Local model' })!
+    expect(named.agent).toBe('harness-compute')
+    // A hook-triggered bind carries it forward, like `dsh` and `codexHome`.
+    const bound = registry.register({ engine: 'opencode', sessionId: 'session-agent', tmuxPane: '%7', title: 'OC | Greeting' })!.entry
+    expect(bound.agent).toBe('harness-compute')
+    // Absent is a general session; a shape the engine could not look a file up by is not kept.
+    const plain = registry.openPendingAgent({ engine: 'opencode', runtimes: [{ backend: 'tmux', paneId: '%8' }], cwd: '/tmp/demo' })!
+    expect(plain.agent).toBeNull()
+    const odd = registry.openPendingAgent({ engine: 'opencode', runtimes: [{ backend: 'tmux', paneId: '%9' }], cwd: '/tmp/demo', agent: '../etc' })!
+    expect(odd.agent).toBeNull()
+    const { registry: reloaded } = await loadRegistryModule()
+    reloaded.load()
+    expect(reloaded.byAgent(named.agentId)!.agent).toBe('harness-compute')
+    expect(reloaded.byAgent(plain.agentId)!.agent).toBeNull()
+  })
+
   it('persists a failed launch for reconnect while keeping its terminal route', async () => {
     const { registry } = await loadRegistryModule()
     registry.load()

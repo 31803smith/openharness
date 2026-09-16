@@ -118,6 +118,25 @@ describe('buildLaunchOverrides — coming back off a grid', () => {
   })
 })
 
+describe('buildLaunchOverrides — a pane opened as a named agent comes back as it', () => {
+  it('appends opencode\'s --agent after everything else, on its own login and on a grid', async () => {
+    const own = await buildLaunchOverrides(deps().d, 'opencode', { agent: 'harness-compute' }, 'a')
+    expect(own).toEqual({ ok: true, overrides: { env: {}, extraArgs: ['--agent', 'harness-compute'], clearEnv: [] } })
+    const home = await buildLaunchOverrides(deps().d, 'opencode', { agent: 'harness-compute', subscriptionModel: 'anthropic/claude' }, 'a')
+    expect(home).toMatchObject({ ok: true, overrides: { extraArgs: ['-m', 'anthropic/claude', '--agent', 'harness-compute'] } })
+    const grid = await buildLaunchOverrides(deps().d, 'opencode', { gridLaunch: GRID, agent: 'harness-compute' }, 'a')
+    expect(grid.ok).toBe(true)
+    if (!grid.ok) return
+    expect(grid.overrides.extraArgs.slice(-2)).toEqual(['--agent', 'harness-compute'])
+    expect(grid.overrides.gridLaunchRecord).toBeDefined()
+  })
+
+  it('adds nothing for a general session, or for an engine with no contract on a hand-edited row', async () => {
+    expect(await buildLaunchOverrides(deps().d, 'opencode', { agent: null }, 'a')).toMatchObject({ ok: true, overrides: { extraArgs: [] } })
+    expect(await buildLaunchOverrides(deps().d, 'claude', { agent: 'harness-compute' }, 'a')).toMatchObject({ ok: true, overrides: { extraArgs: [] } })
+  })
+})
+
 describe('buildLaunchOverrides — what the app is told about web search', () => {
   const WITH_MCP: GridLaunchOverride = { ...GRID, mcpUrl: 'https://api-grid.example/v1/grid/web-mcp/' }
 

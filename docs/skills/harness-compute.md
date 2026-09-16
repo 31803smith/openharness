@@ -3,22 +3,25 @@
 Harness Compute is models running on the user's own machines, under their Harness account,
 reachable by any coding agent Harness drives. This file is the same for every agent — Claude
 Code, Codex, Cursor, opencode — because they all read the same state through the same `grid`
-commands. The one thing that differs per agent, how it registers a custom provider, is the
-agent's own business; section 2 only hands it what to register.
+commands.
 
 The user does exactly one thing by hand: `harness login`, browser and SSO. That already signs
 them into Harness Compute — there is no second sign-in, no second credential, nothing else to set
 up first. Everything below, you do for them in conversation. Don't ask them to run something you
-can run yourself, and don't ask them for a base URL, an API key, or a model list — all three are
-discoverable from the commands here.
+can run yourself, and don't ask them for a base URL, an API key, or a model list — nothing here
+needs any of them.
 
-Three things the user asks for:
+Once a model is running, Harness itself puts it in every agent's **model picker** — the dropdown
+at the top of an agent's pane, and the Models menu in the window. Picking it there switches that
+agent to the model. You never edit an agent's config, never add a provider, never hand over a URL
+or a key: the picker is the whole hand-off.
 
-    1. Start a local model on this machine, so it joins Harness Compute
-    2. Add it to this agent as a custom provider, so they can chat with it here
-    3. Show what Harness Compute is doing right now
+Two things the user asks for:
 
-Read the section for what was asked. Don't do the others unprompted.
+    1. Start a local model on this machine, so it shows up in the model picker
+    2. Show what Harness Compute is doing right now
+
+Read the section for what was asked. Don't do the other unprompted.
 
 
 ## Ground rules — apply everywhere, in every agent
@@ -83,8 +86,8 @@ followed by the command that answers it.
 
 ## 1. Start a local model on this machine
 
-Goal: this computer serves a model that becomes available to Harness Compute, so any agent it
-is added to as a custom provider (section 2) can chat with it. Five steps, in order.
+Goal: this computer serves a model that becomes available to Harness Compute, so it appears in
+every agent's model picker and the user can switch to it there. Five steps, in order.
 
 **Steps 3 and 4 are a real stop, not a narrated one.** Each downloads or compiles something
 multi-gigabyte-to-multi-minute on the user's machine. Ask a direct question ("this will build
@@ -158,8 +161,8 @@ for "fast"). Offer 2–3, through a tool, each with size, context and speed. Pul
 What each flag means, because two of them are easy to confuse:
 
   - `--serve` is the **file** step 4 saved, exactly as saved.
-  - `--advertise-as` is the **model name the user picks** in whichever agent they connect. Without
-    it, the raw filename shows up instead, which nobody wants to type.
+  - `--advertise-as` is the **model name the user sees in the picker**. Without it, the raw
+    filename shows up instead, which nobody wants to read.
   - `--name` is **this machine's** display name. A different thing from `--advertise-as`: one
     names the model, the other names the computer.
   - `--max-concurrency` is how many requests this box takes at once. Keep it low (2) on a shared
@@ -180,9 +183,11 @@ The `-m` is the `--advertise-as` name. A reply means the whole path works. No re
 about context size, means it is not ready — fix it (see "When something fails") before telling
 the user anything succeeded.
 
-Once the chat check passes, say it's ready, then ask through a tool: "Add it to this agent as a
-custom provider now, so you can pick the model here?" — section 2 on a yes, nothing on a no.
-Never as a side effect of starting a model.
+Once the chat check passes, say it's ready and where to find it — the `--advertise-as` name is
+what the picker shows: "Qwen3.8-27B is running on this machine. Pick it from the model dropdown
+at the top of any agent's pane, or from the Models menu, and that agent switches to it." That's
+the end of this section. Don't offer to wire it into this agent, edit its config, or add a
+provider — Harness has already done the connecting, and the picker is the only step left.
 
 **To stop it, don't name the command — offer to do it.** Say something like "tell me when you
 want it stopped and I'll turn it off," never "stop it with `grid leave`." The user asking you to
@@ -191,40 +196,7 @@ is serving more than one model), and confirm in plain words that it's stopped. T
 something you run, never something you hand the user to type.
 
 
-## 2. Add it to this agent as a custom provider
-
-**Add a custom provider** to the agent the user is in — opencode, Claude Code, Codex, whichever —
-the way that agent itself adds one; every coding agent has its own flow for a custom
-OpenAI-compatible provider, and it knows its own config better than this file does. This file
-only supplies the values to put in:
-
-    eval "$(grid info <grid> --env)" && curl -s -H "Authorization: Bearer $OPENAI_API_KEY" \
-      "$OPENAI_BASE_URL/models"
-
-One invocation, never split: each shell command is its own process, so an export in one dies
-before the next. That gives the three inputs:
-
-  - **Base URL** — `$OPENAI_BASE_URL`, exactly as printed. It already ends in the versioned path;
-    don't append `/v1` or trim it — the client adds `/chat/completions` itself.
-  - **API key** — `$OPENAI_API_KEY`, as a literal. It goes in the agent's **global** config, never
-    a project file that lands in a repo. Never write it anywhere else, and never echo it back to
-    the user in chat.
-  - **Models** — the `/models` list. Skip any entry whose `owned_by` is a router (`Auto` and
-    friends); everything else is a real model, keyed by its exact `id`, case included.
-    `context_window`, when present, is the model's context limit; when absent, leave the limit
-    out rather than inventing one.
-
-Name the provider whatever the agent's flow asks for, so the user recognises it in the picker.
-
-Don't make it the agent's default model; leave whatever default was there. The agent needs a
-restart to load a new provider — say so, then which models are now available and how the agent
-picks one. Don't claim it's usable until after the restart.
-
-If the agent later answers `Unauthorized` and nothing else changed, the key went stale (a
-sign-in mints a new one): redo this section, which rewrites it.
-
-
-## 3. Show what's running
+## 2. Show what's running
 
 Read-only, safe to run any time. `<grid>` is the name derived in the ground rules.
 
@@ -258,8 +230,12 @@ repeat a raw line that names the underlying CLI.
     shows what each machine actually has loaded.
   - **`exceeds the available context size`** (an agent may show it as a garbled "expected array
     `choices`") → the model was served with too small a window, usually `--ctx-size` left off.
-    Stop it and join again with the context the user asked for; then redo section 2 so the
-    agent's context limit matches. The model is fine; only its window was too small.
+    Stop it and join again with the context the user asked for. The model is fine; only its
+    window was too small.
+  - **The user says it isn't in the picker** → it is only there while it is being served. Run
+    `grid stats <grid> --verbose`; if this machine no longer lists it, start it again (section 1,
+    step 5 — the weights are still on disk, nothing to pull). If it is listed, tell them to open
+    the picker again; it refreshes on open.
 
 
 ---
@@ -274,8 +250,10 @@ the account this runs against, no grid matches the name rule — this file tells
 stop and say so rather than inventing a network name, since names
 are globally unique and a guessed one can collide with another user's account.
 
-There is deliberately no per-agent page and no fixed provider name: section 2 says "add a custom
-provider" and hands over the base URL, key and model list, because every coding agent already
-knows how to add a custom OpenAI-compatible provider to itself — better than a page here could,
-and without drifting when its config format changes. The words "add a custom provider" are the
-hook those agents' own skills recognise; keep them, and don't decorate them.*
+There is deliberately no "add a custom provider" section any more. The Harness app lists what the
+account's grid is serving in every pane's model picker and the window's Models menu
+(`grid_models_list`), and picking one retargets that agent itself (`agent_retarget` — for
+opencode, by writing the model into its session and respawning). So the agent that started the
+model has nothing to wire up: no base URL, no key, no config edit. Reintroducing that section
+would put two paths to the same model in front of the user, and only one of them survives a
+sign-in that rotates the key.*

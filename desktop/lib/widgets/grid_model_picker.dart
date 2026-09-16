@@ -35,6 +35,12 @@ class GridModelPicker extends StatefulWidget {
   /// have to know a command for.
   final VoidCallback? onUseOwnLogin;
 
+  /// Called when the last row under Local — "Run a local model" — is chosen. An action, not a
+  /// destination: it opens the flow that puts a model on the user's own computer, which is the
+  /// answer to the empty section this menu otherwise stops at. Always offered, whether or not
+  /// anything is being served yet: a person with no Local models is exactly who needs the door.
+  final VoidCallback? onRunLocalModel;
+
   /// The grid model this agent is on right now, or null when it is on its own login. Drives the
   /// filled row, so the menu answers "where am I" as well as "where could I go".
   final String? currentModel;
@@ -55,6 +61,7 @@ class GridModelPicker extends StatefulWidget {
     required this.machineId,
     this.onSelected,
     this.onUseOwnLogin,
+    this.onRunLocalModel,
     this.currentModel,
     this.webSearch,
     this.engineLabel,
@@ -191,10 +198,10 @@ class _GridModelPickerState extends State<GridModelPicker> {
         ),
         const PopupMenuDivider(),
         _header('Local'),
-        // An empty grid and no grid at all are different facts, and each gets its own sentence: one
-        // is "nobody is serving yet", the other "there is nothing to serve on". A single "no models"
-        // would send a person looking in the wrong place.
-        if (answer.models.isEmpty)
+        // Nothing served is not a sentence here: the "Run a local model" row at the end of this
+        // section IS the answer, and a line saying the list is empty above an empty list is noise.
+        // No grid at all is a different fact the row cannot fix, so that one is said.
+        if (answer.models.isEmpty && answer.gridName == null)
           PopupMenuItem<_Choice>(
             enabled: false,
             height: 30,
@@ -202,9 +209,7 @@ class _GridModelPickerState extends State<GridModelPicker> {
             child: Text(
               // "Local models", in the user's own vocabulary: the grid is how a Local model is
               // served, not a thing this menu asks anyone to know about.
-              answer.gridName == null
-                  ? 'No local models on this account yet — sign in again to set them up.'
-                  : 'Nothing is being served yet.',
+              'No local models on this account yet — sign in again to set them up.',
               style: TextStyle(fontSize: 11, color: AppColors.textSoft),
             ),
           ),
@@ -224,9 +229,22 @@ class _GridModelPickerState extends State<GridModelPicker> {
               subtitle: _subtitleFor(model),
             ),
           ),
+        // The last row under Local, drawn as one of the models: it is what a person picks when the
+        // model they want is not there yet, so it belongs in the same list, not in a section of its
+        // own. Never filled — the fill means "the agent is here", and this row starts something.
+        PopupMenuItem<_Choice>(
+          value: const _Choice.runLocalModel(),
+          height: 32,
+          padding: EdgeInsets.zero,
+          child: const _Row(selected: false, title: 'Run a local model'),
+        ),
       ],
     );
     if (chosen == null) return;
+    if (chosen.runLocalModel) {
+      widget.onRunLocalModel?.call();
+      return;
+    }
     // Selecting what is already selected respawns the pane for no reason — do nothing instead.
     if (chosen.model == null) {
       if (widget.currentModel != null) widget.onUseOwnLogin?.call();
@@ -397,10 +415,14 @@ class _Row extends StatelessWidget {
 const double _menuInset = 6;
 const double _rowPadding = 8;
 
-/// One row's meaning: a grid model, or the engine's own login. A sealed pair rather than a nullable
-/// `GridModel`, because `null` already means "the menu was dismissed" in `showMenu`'s own result.
+/// One row's meaning: a grid model, the engine's own login, or the action that starts a local
+/// model. A sealed set rather than a nullable `GridModel`, because `null` already means "the menu
+/// was dismissed" in `showMenu`'s own result — and the action is neither a model nor a login, so
+/// it carries its own flag rather than borrowing `model == null` from the login row.
 class _Choice {
   final GridModel? model;
-  const _Choice.model(GridModel this.model);
-  const _Choice.ownLogin() : model = null;
+  final bool runLocalModel;
+  const _Choice.model(GridModel this.model) : runLocalModel = false;
+  const _Choice.ownLogin() : model = null, runLocalModel = false;
+  const _Choice.runLocalModel() : model = null, runLocalModel = true;
 }

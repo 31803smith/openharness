@@ -53,5 +53,7 @@ copyFileSync('hook/notify.mjs', 'dist/notify.mjs')
 // the source file documents.
 mkdirSync('dist/skills', { recursive: true })
 copyFileSync('../docs/skills/harness-compute.md', 'dist/skills/harness-compute.md')
+// The `harness-compute` agent definition the same module installs beside the skill (opencode `--agent`).
+copyFileSync('../docs/skills/harness-compute.agent.md', 'dist/skills/harness-compute.agent.md')
 
 console.log(`✓ Bundled dist/cli.js (v${version}) + dist/notify.mjs + dist/skills/`)

@@ -5,10 +5,8 @@ import { parseHermesPickerPage } from '../engines/hermes/runtimeProfile.js'
 import { parsePiFooterProfile, parsePiThinkingSelection, piThinkingSteps } from '../engines/pi/runtimeProfile.js'
 import {
   countOpencodePickers,
-  opencodeModelTarget,
   opencodeRowMatches,
   opencodeRowNamesModel,
-  parseOpencodeFooter,
   parseOpencodePickerRows,
   type OpencodeModelTarget,
   type OpencodePickerRow,
@@ -29,17 +27,6 @@ const PICKER_STEP_MS = 2_000
 const PI_LADDER_MAX_STEPS = 14
 /** Hermes' longest picker page is a provider's model list; twice its size still terminates. */
 const HERMES_PAGE_MAX_STEPS = 60
-/**
- * How long a freshly respawned OpenCode TUI gets to draw its composer before the model is selected.
- * Generous next to the picker steps because this one spans a process start, not a keystroke.
- */
-const OPENCODE_BOOT_MS = 20_000
-
-/** Compare model names the way OpenCode's own picker matcher does — punctuation and case are noise. */
-function squashModel(value: string): string {
-  return value.replace(/[^a-z0-9]+/gi, '').toLowerCase()
-}
-
 /** "Anthropic (13 models)" names provider key `anthropic`; "GitHub Copilot (17 models)" names `copilot`. */
 function hermesProviderMatches(row: string, provider: string): boolean {
   const name = row.replace(/\s*\([^)]*\)\s*$/, '').trim().toLowerCase()
@@ -918,55 +905,6 @@ export class RuntimeProfileController {
    * same model name) the switch is refused rather than guessed — picking the wrong model silently is worse
    * than not switching, and blind arrow-driving is what sank the Command Code attempt.
    */
-  /**
-   * Put a RESUMED OpenCode pane on an exact `provider/model`, through OpenCode's own picker.
-   *
-   * ## Why a pane that was just launched with `-m` needs this at all
-   *
-   * OpenCode's TUI honours `-m` only when it STARTS a session. Resuming one (`--session <id>`, which
-   * is how a retarget keeps the conversation) restores the model stored on that session and the flag
-   * is dropped. Measured on 1.18.31, outside the harness, against the same config file this daemon
-   * writes:
-   *
-   *   opencode -m <grid>/Qwen3.6-35B-A3B                 → `Build · Qwen3.6-35B-A3B <grid>`   ✅
-   *   opencode --session <id> -m <grid>/Qwen3.6-35B-A3B  → `Build · Big Pickle OpenCode Zen`  ❌
-   *   opencode run --session <id> -m <model>             → honoured  ✅ (a different command)
-   *
-   * A top-level `"model"` in the config file loses to the stored model the same way. So the move
-   * landed — right provider, right key, right argv — and the engine answered on the OLD model, which
-   * is the failure this whole module exists to prevent: it looks like it worked, and it bills the
-   * wrong account.
-   *
-   * The grid's models ARE in that pane's picker, because the provider block naming them is in the
-   * config the respawn points `OPENCODE_CONFIG` at. So the same `/models` drive [setOpencode] uses
-   * for a subscription model selects a grid one, and this is that drive with the catalogue check
-   * removed — the catalogue is `opencode models`, which cannot know about a provider written for one
-   * agent.
-   *
-   * ⚠️ The caller must ALREADY hold this pane's input. This types into the pane and does not take the
-   * lock itself, because the only caller is mid-retarget and is holding it for the respawn.
-   */
-  async selectOpencodeModel(session: RegisteredSession, id: string): Promise<void> {
-    const entry = opencodeModelTarget(id)
-    if (!entry) throw new RuntimeProfileControlError('MODEL_UNAVAILABLE')
-    // A pane that has just been respawned is still drawing. Typing `/models` into a TUI that has not
-    // put its composer up yet loses the keystrokes — or worse, lands them somewhere else — so wait
-    // for the footer, which is the first thing that proves the composer is live.
-    if (!await this.waitPane(session.agentId, (v) => parseOpencodeFooter(stripAnsi(v)) !== null, OPENCODE_BOOT_MS)) {
-      throw new RuntimeProfileControlError('CONFIRM_TIMEOUT')
-    }
-    await this.driveOpencodePicker(session, entry)
-    // Confirmed from the footer rather than from the manager's observed profile: the manager resolves
-    // what it sees against `opencode models`, and a grid model is not in it — so its answer would be
-    // null here for a switch that actually worked.
-    const leaf = entry.model.slice(entry.model.lastIndexOf('/') + 1)
-    const landed = await this.waitPane(session.agentId, (v) => {
-      const footer = parseOpencodeFooter(stripAnsi(v))
-      return !!footer && squashModel(footer.target).startsWith(squashModel(leaf))
-    }, COMMAND_CONFIRM_MS)
-    if (!landed) throw new RuntimeProfileControlError('CONFIRM_TIMEOUT')
-  }
-
   private async setOpencode(session: RegisteredSession, target: RuntimeProfile): Promise<void> {
     const entry = (await this.deps.manager.opencodeCatalog()).find((item) => item.id === target.model)
     if (!entry) throw new RuntimeProfileControlError('MODEL_UNAVAILABLE')
@@ -977,7 +915,7 @@ export class RuntimeProfileController {
   }
 
   /**
-   * `/models`, filter, act only once exactly one row is left. Shared by both OpenCode callers.
+   * `/models`, filter, act only once exactly one row is left.
    *
    * Two attempts, because one filter does not fit both renders. With several providers connected a
    * row carries its provider (`Big Pickle OpenCode Zen`) and the provider-qualified filter is what

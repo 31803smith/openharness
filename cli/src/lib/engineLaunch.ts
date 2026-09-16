@@ -31,10 +31,131 @@ export const BYPASS_PERMISSION_FLAGS: Readonly<Record<AgentEngine, string[] | nu
   copilot: null,
 }
 
+/**
+ * How each engine takes a FIRST prompt on launch: the interactive session opens with that message
+ * already submitted, so the pane's first visible thing is the agent's answer rather than an empty
+ * input waiting for one. `null` = no documented mechanism; the caller refuses (`PROMPT_UNSUPPORTED`)
+ * rather than guess, the way `gridLaunch.ts` refuses an engine with no endpoint contract.
+ *
+ * An entry is the argv placed BEFORE the text: a flag (`['--prompt']`) or nothing at all for an
+ * engine that reads a bare positional. Each entry cites where it was read from.
+ */
+export const FIRST_PROMPT_ARGS: Readonly<Record<AgentEngine, readonly string[] | null>> = {
+  // `opencode --help`: `--prompt  prompt to use`, a TUI flag — the interactive session starts with
+  // the message submitted. A flag rather than a positional because opencode's own positional is
+  // `[project]`, a directory: handed the text bare, it would try to open a folder by that name.
+  opencode: ['--prompt'],
+  // `claude --help`: `Usage: claude [options] [command] [prompt]`, "prompt: Your prompt".
+  claude: [],
+  // Per vendor CLI help: `codex [OPTIONS] [PROMPT]`, the optional positional the interactive TUI
+  // opens with. Not verified on a local install when this entry was written.
+  codex: [],
+  // No documented first-prompt argument for an interactive launch. Not guessed.
+  cursor: null,
+  pi: null,
+  hermes: null,
+  commandcode: null,
+  devin: null,
+  muse: null,
+  amp: null,
+  kilo: null,
+  grok: null,
+  agy: null,
+  copilot: null,
+}
+
+/** A first prompt is a message, not a document. Enforced at the wire (`agent_create`) before any pane
+ *  exists, so an over-long one is refused rather than truncated into something the agent was not asked. */
+export const MAX_FIRST_PROMPT_CHARS = 2000
+
+/** The refusal for an engine with no entry in [FIRST_PROMPT_ARGS]. `code` is the wire error. */
+export class FirstPromptUnsupportedError extends Error {
+  readonly code = 'PROMPT_UNSUPPORTED' as const
+  constructor(readonly engine: AgentEngine) {
+    super(`${engine} has no documented way to start with a first prompt, so the agent was not created.`)
+    this.name = 'FirstPromptUnsupportedError'
+  }
+}
+
+export function supportsFirstPrompt(engine: AgentEngine): boolean {
+  return FIRST_PROMPT_ARGS[engine] !== null
+}
+
+/** The argv that hands `prompt` to `engine` as its first message. Throws [FirstPromptUnsupportedError]
+ *  for an engine with no contract, so a caller cannot build an argv that silently drops the prompt. */
+export function firstPromptArgs(engine: AgentEngine, prompt: string): string[] {
+  const lead = FIRST_PROMPT_ARGS[engine]
+  if (lead === null) throw new FirstPromptUnsupportedError(engine)
+  return [...lead, prompt]
+}
+
+/**
+ * How each engine opens AS one of its named agents — its own name in the footer, its own system
+ * prompt — rather than as a general session. `null` = no documented mechanism; the caller refuses
+ * (`AGENT_UNSUPPORTED`) before a pane exists, the way [FIRST_PROMPT_ARGS] does for a prompt.
+ *
+ * An entry is the argv placed BEFORE the name. Unlike a first prompt, the agent IS part of the
+ * relaunch record (`RegisteredSession.agent`, carried by `launchOverrides.ts`): a pane opened as
+ * `harness-compute` comes back as `harness-compute`.
+ */
+export const NAMED_AGENT_ARGS: Readonly<Record<AgentEngine, readonly string[] | null>> = {
+  // `opencode --help`: `--agent  agent to use`. The name is one of opencode's own agents
+  // (`~/.config/opencode/agents/<name>.md`, `mode: primary`).
+  opencode: ['--agent'],
+  // No documented "open as this named agent" argument for an interactive launch. Not guessed.
+  claude: null,
+  codex: null,
+  cursor: null,
+  pi: null,
+  hermes: null,
+  commandcode: null,
+  devin: null,
+  muse: null,
+  amp: null,
+  kilo: null,
+  grok: null,
+  agy: null,
+  copilot: null,
+}
+
+/** An agent name is an identifier the engine looks a file up by — never a path, never prose. */
+export const AGENT_NAME_RE = /^[A-Za-z0-9_-]{1,64}$/
+
+/** The refusal for an engine with no entry in [NAMED_AGENT_ARGS]. `code` is the wire error. */
+export class NamedAgentUnsupportedError extends Error {
+  readonly code = 'AGENT_UNSUPPORTED' as const
+  constructor(readonly engine: AgentEngine) {
+    super(`${engine} has no documented way to open as a named agent, so the agent was not created.`)
+    this.name = 'NamedAgentUnsupportedError'
+  }
+}
+
+export function supportsNamedAgent(engine: AgentEngine): boolean {
+  return NAMED_AGENT_ARGS[engine] !== null
+}
+
+/** The argv that opens `engine` as its named agent `agent`. Throws [NamedAgentUnsupportedError] for
+ *  an engine with no contract, so a caller cannot build an argv that silently drops the name. */
+export function namedAgentArgs(engine: AgentEngine, agent: string): string[] {
+  const lead = NAMED_AGENT_ARGS[engine]
+  if (lead === null) throw new NamedAgentUnsupportedError(engine)
+  return [...lead, agent]
+}
+
 export interface LaunchCommandOptions {
   bypassPermission?: boolean
   /** Resume this engine session id on launch, when a launch-resume flag is known for the engine. */
   resumeSessionId?: string
+  /**
+   * The message the session opens with, already submitted — see [FIRST_PROMPT_ARGS]. Appended LAST,
+   * after every flag, because two of the three engines take it positionally and a positional is only
+   * unambiguous once the options are exhausted.
+   *
+   * A launch option and nothing more: it is never written to the registry row, so a relaunch (which
+   * resumes a session that already has its first turn) never repeats it. Never logged either — it is
+   * what the user typed.
+   */
+  firstPrompt?: string
   /**
    * Extra argv the caller has already composed, appended last.
    *
@@ -134,6 +255,7 @@ export function buildEngineCommandArgv(engine: AgentEngine, opts: LaunchCommandO
     argv.push(...resumeFlag, opts.resumeSessionId)
   }
   if (opts.extraArgs?.length) argv.push(...opts.extraArgs)
+  if (opts.firstPrompt) argv.push(...firstPromptArgs(engine, opts.firstPrompt))
   return argv
 }
 

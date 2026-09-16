@@ -30,6 +30,7 @@ private extension NSButton {
     NSGraphicsContext.restoreGraphicsState()
     return Data(bytes: bitmap.bitmapData!, count: count)
   }
+}
 
 private extension SwarmSubscriptionView {
   // `icon` is private to the row view; a same-file extension reads it without widening the app API.
@@ -780,14 +781,35 @@ private extension SwarmTitlebar {
     let models = main.item(withTitle: "Models")!.submenu!
     try checkTitlebar(models.items.filter { !$0.isSeparatorItem }.map(\.title) == [
       "Subscription", "Anthropic, aabbcc, 12% remaining", "OpenAI, Not signed in",
-      "Local", "No models being served"
-    ], "Models carries only the two sections with something behind them")
+      "Local", "Run a local model"
+    ], "Models carries the two sections with something behind them, ending on the row that starts a model")
     try checkTitlebar(models.items.filter(\.isSeparatorItem).count == 1,
-      "One native separator, between the two sections")
+      "One native separator, between the sections — the run row is a Local row, not a section")
     for gone in ["API", "OpenRouter", "fal.ai", "Add Model"] {
       try checkTitlebar(models.item(withTitle: gone) == nil,
         "\(gone) is gone — it named nothing this app can reach or do")
     }
+    // The row that took Add Model's place is the one item in this menu that does something: the
+    // last row of Local, in the same list as the models, enabled with nothing served, and dispatched
+    // through the same guarded handler as Link Machine… so a modal still swallows it.
+    let runLocal = models.items.last!
+    try checkTitlebar(runLocal.title == "Run a local model",
+      "the last item in Models is the row that runs a local model")
+    try checkTitlebar(!models.items[models.items.count - 2].isSeparatorItem,
+      "the run row sits directly under the Local rows, with no separator of its own")
+    try checkTitlebar(runLocal.isEnabled && runLocal.submenu == nil,
+      "Run a local model is enabled even when nothing is served, and opens no submenu")
+    try checkTitlebar(runLocal.target === self && runLocal.action == #selector(menuAction(_:))
+      && runLocal.representedObject as? String == "runLocalModel",
+      "Run a local model dispatches runLocalModel through the guarded channel handler")
+    try checkTitlebar(runLocal.identifier?.rawValue == HarnessKeymapMenu.actionPrefix + "runLocalModel",
+      "Run a local model is identified for the keymap like every other Harness command")
+    try checkTitlebar(validateMenuItem(runLocal), "Run a local model validates with the workspace live")
+    actionsEnabled = false
+    try checkTitlebar(!validateMenuItem(runLocal), "Run a local model cannot run behind a modal")
+    actionsEnabled = true
+    try checkTitlebar(!runLocal.title.lowercased().contains("grid") && !runLocal.title.contains("Mac"),
+      "the command names neither the plumbing nor one vendor's computer")
 
     // The Local section is DATA, not two hardcoded names. A menu naming a model nobody serves is
     // worse than one admitting it has none, which is what the empty case above asserts.
@@ -800,8 +822,10 @@ private extension SwarmTitlebar {
       "a served model names the machine answering it")
     try checkTitlebar(served.item(withTitle: "DeepSeek-V4-Flash") != nil,
       "a model with no node named is listed on its own")
-    try checkTitlebar(served.item(withTitle: "No models being served") == nil,
-      "the empty-state line is gone once something is served")
+    try checkTitlebar(served.items.last?.title == "Run a local model"
+      && !served.items[served.items.count - 2].isSeparatorItem
+      && served.items.filter(\.isSeparatorItem).count == 1,
+      "the run row stays last in Local, directly under the served models, once models are served")
 
     // A local row is built by the same view as a subscription row, which is what makes the two
     // sections read as one menu. A plain disabled NSMenuItem greys its whole title, so a served
@@ -821,11 +845,8 @@ private extension SwarmTitlebar {
     try checkTitlebar(localRows.allSatisfy { $0.identity.frame.minX == served.items.compactMap({ $0.view as? SwarmSubscriptionView }).first!.identity.frame.minX },
       "local and subscription titles start in the same column")
     updateModels(modelRows)
-    for title in ["No models being served"] {
-      let item = models.item(withTitle: title)!
-      try checkTitlebar(!item.isEnabled && item.action == nil && item.target == nil && item.submenu == nil,
-        "\(title) is greyed out and cannot dispatch or open anything")
-    }
+    try checkTitlebar(models.item(withTitle: "No models being served") == nil,
+      "an empty Local says nothing — the run row is the answer, not a sentence")
     let subscription = models.items.first(where: { $0.view is SwarmSubscriptionView })!
     let row = subscription.view as! SwarmSubscriptionView
     try checkTitlebar(subscription.submenu == nil && subscription.action == nil && !subscription.isEnabled,

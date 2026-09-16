@@ -645,12 +645,12 @@ describe('BackendSocket outbound queue', () => {
     })).toBe(true)
 
     socket.handleLocalFrame('local:test', {
-      type: 'models_list', payload: { requestId: 'local-models' },
+      type: 'models_list', payload: { requestId: 'harness-computes' },
     })
     await vi.waitFor(() => expect(frames).toContainEqual({
       type: 'models_list_result',
       payload: {
-        requestId: 'local-models',
+        requestId: 'harness-computes',
         models: [{ id: 'runtime-v1:s1:codex:gpt-5.6-sol@high', displayName: 'Sol / High' }],
       },
     }))
@@ -1377,6 +1377,99 @@ describe('agent_retarget onto a Local model resolves web tools', () => {
     expect(reply?.payload).not.toHaveProperty('error')
   })
 })
+
+/**
+ * `agent_create` carrying a first prompt, a name and a named agent — the fields the run-a-harness-compute
+ * entry can send (it sends `name` and `agent`). All are validated at the wire, before any pane
+ * exists; what reaches `onCreateAgent` is exactly what cli.ts hands to the launch and the registry.
+ */
+describe('agent_create with a prompt, a name and a named agent', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  const pending: RegisteredSession = {
+    schemaVersion: 2, active: true, launch: { state: 'starting' },
+    agentId: 'named-1', sessionId: '', boundAt: null, engine: 'opencode',
+    transcriptPath: null, projectDir: 'home', cwd: '/home/someone', defaultName: 'Local model',
+    runtimes: [{ backend: 'tmux', paneId: '%11' }], primaryRuntimeKey: 'tmux/%11', tmuxPane: '%11',
+    source: null, title: null, model: null, cliVersion: null, processIdentity: null,
+    registeredAt: 1, updatedAt: 1, lastHookAt: 1, lastTranscriptAt: 1,
+  }
+
+  async function create(choices: Record<string, unknown>) {
+    const socket = new BackendSocket('token')
+    const frames: Array<Record<string, unknown>> = []
+    socket.registerLocalClient('local:named', { sendFrame: (frame) => { frames.push(frame); return true }, sendBinary: () => true })
+    const seen: unknown[] = []
+    socket.onCreateAgent = async (input) => { seen.push(input); return { ok: true, session: pending } }
+    try {
+      socket.handleLocalFrame('local:named', { type: 'agent_create', payload: { requestId: 'r', engine: 'opencode', cwd: '/home/someone', ...choices } })
+      await vi.waitFor(() => expect(frames.some((frame) => frame.type === 'agent_create_result')).toBe(true))
+    } finally {
+      await socket.unregisterLocalClient('local:named')
+      await socket.stop()
+    }
+    const reply = frames.find((frame) => frame.type === 'agent_create_result')?.payload as Record<string, unknown>
+    return { seen, reply }
+  }
+
+  it('passes both through, trimmed, and the name becomes the row\'s defaultName', async () => {
+    const { seen, reply } = await create({ prompt: '  Start a local model on this machine ', name: ' Local model ' })
+    expect(seen).toEqual([expect.objectContaining({ engine: 'opencode', prompt: 'Start a local model on this machine', name: 'Local model' })])
+    expect(reply).toMatchObject({ agent: expect.objectContaining({ id: 'named-1', name: 'Local model' }) })
+  })
+
+  it('sends null for both when neither was given, or when they are blank', async () => {
+    expect((await create({})).seen).toEqual([expect.objectContaining({ prompt: null, name: null })])
+    expect((await create({ prompt: '   ', name: '' })).seen).toEqual([expect.objectContaining({ prompt: null, name: null })])
+  })
+
+  it('refuses an over-long prompt before any pane exists', async () => {
+    const { seen, reply } = await create({ prompt: 'x'.repeat(2001) })
+    expect(reply).toMatchObject({ error: 'PROMPT_TOO_LONG' })
+    expect(seen).toHaveLength(0)
+    expect((await create({ prompt: 'x'.repeat(2000) })).seen).toHaveLength(1)
+  })
+
+  it('refuses a prompt for an engine with no documented mechanism, naming the engine', async () => {
+    const { seen, reply } = await create({ engine: 'cursor', prompt: 'Start a local model on this machine' })
+    expect(reply).toMatchObject({ error: 'PROMPT_UNSUPPORTED', detail: expect.stringContaining('cursor') })
+    expect(seen).toHaveLength(0)
+  })
+
+  it('refuses a prompt that is not text', async () => {
+    const { seen, reply } = await create({ prompt: ['Start a local model'] })
+    expect(reply).toMatchObject({ error: 'INVALID_PROMPT' })
+    expect(seen).toHaveLength(0)
+  })
+
+  it('passes the named agent through for opencode, and null when none was given', async () => {
+    const { seen, reply } = await create({ agent: 'harness-compute', name: 'Local model' })
+    expect(seen).toEqual([expect.objectContaining({ engine: 'opencode', agent: 'harness-compute', name: 'Local model', prompt: null })])
+    expect(reply).toMatchObject({ agent: expect.objectContaining({ id: 'named-1' }) })
+    expect((await create({})).seen).toEqual([expect.objectContaining({ agent: null })])
+    expect((await create({ agent: null })).seen).toEqual([expect.objectContaining({ agent: null })])
+  })
+
+  it('refuses a named agent for an engine with no documented mechanism, naming the engine, before any pane exists', async () => {
+    for (const engine of ['claude', 'codex', 'cursor']) {
+      const { seen, reply } = await create({ engine, agent: 'harness-compute' })
+      expect(reply).toMatchObject({ error: 'AGENT_UNSUPPORTED', detail: expect.stringContaining(engine) })
+      expect(seen).toHaveLength(0)
+    }
+  })
+
+  it('refuses a named agent that is not an identifier — a path, prose, blank, over-long, or not text', async () => {
+    for (const agent of ['', '  ', 'local model', '../etc/passwd', 'a/b', 'x'.repeat(65), ['harness-compute'], 7]) {
+      const { seen, reply } = await create({ agent })
+      expect(reply).toMatchObject({ error: 'INVALID_AGENT' })
+      expect(seen).toHaveLength(0)
+    }
+  })
+})
+
+/** The read-only hardware line for the run-a-harness-compute dialog, answered next to `grid_models_list`. */
 
 describe('Autonomous direct isolation from existing relay/browser behavior', () => {
   it('permits offline PAKE only for the exact live direct pending connection', async () => {

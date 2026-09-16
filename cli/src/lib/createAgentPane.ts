@@ -32,11 +32,15 @@ export interface CreateAgentPaneDeps {
     gridLaunchRecord?: GridLaunchRecord | null
     codexHome?: string | null
     dsh?: string | null
+    agent?: string | null
     bypassPermission?: boolean
+    defaultName?: string | null
   }) => RegisteredSession | null }
   engine: AgentEngine
   cwd?: string | null
   bypassPermission?: boolean
+  /** The name the creator asked for (`agent_create`'s `name`); the registry numbers the agent without one. */
+  defaultName?: string | null
   /** Base tmux session name (`-s`). Retries append `-r<attempt>` — see module doc. */
   sessionLabel: string
   argv: string[]
@@ -49,6 +53,9 @@ export interface CreateAgentPaneDeps {
   codexHome?: string | null
   /** The domain-specific harness this agent is created as, if any. */
   dsh?: string | null
+  /** The engine's named agent the pane opens as (`agent_create`'s `agent`); kept on the row so a
+   *  relaunch opens as it again. Already in `argv` — this is the record, not the launch. */
+  agent?: string | null
   maxAttempts?: number
 }
 
@@ -83,7 +90,9 @@ export async function createAndRegisterPane(deps: CreateAgentPaneDeps): Promise<
       gridLaunchRecord: deps.gridLaunchRecord,
       codexHome: deps.codexHome,
       dsh: deps.dsh,
+      agent: deps.agent,
       bypassPermission: deps.bypassPermission,
+      defaultName: deps.defaultName,
     })
     if (pending) return { ok: true, spawned, pending }
     console.warn(`[agent] create ${deps.engine} registration failed · pane ${spawned.runtime.paneId} · `

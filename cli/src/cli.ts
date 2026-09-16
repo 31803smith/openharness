@@ -27,6 +27,7 @@ import { homedir, hostname } from 'os'
 import { env } from './config/env.js'
 import { VERSION } from './version.js'
 import { sqlitePreflightMessage } from './lib/sqliteAvailability.js'
+import { binaryOnPath } from './lib/binaryOnPath.js'
 import { warmLoginShellEnvironment } from './lib/loginShellEnv.js'
 import { ensureUtf8Locale } from './lib/childLocale.js'
 import { DialLog } from './cable/dialLog.js'
@@ -59,8 +60,8 @@ import { warnIfGridSignInRemains } from './lib/gridCredentials.js'
 import { ENGINE_CLI_COMMANDS, ENGINES, engineBin, enginePathOverride } from './lib/engineBin.js'
 import type { AgentEngine } from './engines/types.js'
 import { engineInstallRecipe } from './lib/engineInstall.js'
-import { buildEngineCommandArgv, buildEngineLaunchArgv, commandAvailableInInteractiveShell } from './lib/engineLaunch.js'
-import { buildGridEngineLaunch, describeGridLaunch, gridConflictingEnvToClear, gridEnvVarNames, gridProviderId, type GridLaunchMachine, type GridWebSearchStatus } from './lib/gridLaunch.js'
+import { buildEngineCommandArgv, buildEngineLaunchArgv, commandAvailableInInteractiveShell, namedAgentArgs } from './lib/engineLaunch.js'
+import { buildGridEngineLaunch, describeGridLaunch, gridConflictingEnvToClear, gridEnvVarNames, type GridLaunchMachine, type GridWebSearchStatus } from './lib/gridLaunch.js'
 import { HERMES_SYSTEM_MANAGED_DIR } from './lib/gridWebMcp.js'
 import { writeGridConfigDir } from './lib/gridConfigDir.js'
 import { tmuxSupportsSessionEnv, TMUX_SESSION_ENV_MIN } from './lib/tmuxVersion.js'
@@ -157,6 +158,7 @@ import { CursorSubagentManager } from './engines/cursor/subagent.js'
 import { CursorTaskHookQueue } from './engines/cursor/taskHookQueue.js'
 import { loadCursorPendingTasks, removeCursorPendingTasks } from './engines/cursor/pendingTasks.js'
 import { OpencodeReader, readOpencodeMessages } from './engines/opencode/reader.js'
+import { opencodeModelFromArgv, setOpencodeSessionModel } from './engines/opencode/sessionModel.js'
 import { lastOpencodeTurnText } from './engines/opencode/normalizer.js'
 import { KiloReader, readKiloMessages } from './engines/kilo/reader.js'
 import { lastKiloTurnText } from './engines/kilo/normalizer.js'
@@ -186,7 +188,7 @@ import { agentFrame, type AgentFrame } from './lib/agentFrame.js'
 import { SessionInputController } from './lib/sessionInput.js'
 import { adaptSlashCommand } from './lib/goalCommand.js'
 import { RuntimeProfileManager, parseRuntimeProfile } from './lib/runtimeProfile.js'
-import { RuntimeProfileControlError, RuntimeProfileController, inspectRuntimePane } from './lib/runtimeProfileController.js'
+import { RuntimeProfileController, inspectRuntimePane } from './lib/runtimeProfileController.js'
 import { deviceErrorText } from './lib/deviceErrors.js'
 import { correlateAgentEvent, turnHeartbeatFrame } from './lib/agentEvent.js'
 
@@ -3578,10 +3580,11 @@ async function runForeground(session: AuthSession): Promise<void> {
       return dshLaunch(installed, workspace)
     },
   }
-  // Whatever the source (the row itself, or a grid override the desktop just sent), the agent's DSH
-  // and workspace come from the row: a retarget must not silently drop the harness the agent is.
+  // Whatever the source (the row itself, or a grid override the desktop just sent), the agent's DSH,
+  // workspace and named agent come from the row: a retarget must not silently drop the harness the
+  // agent is, or bring a pane opened as `harness-compute` back as a general session.
   const relaunchOverrides = (session: RegisteredSession, source: LaunchSource = session): Promise<LaunchOverridesResult> =>
-    buildLaunchOverrides(launchOverridesDeps, session.engine, { dsh: session.dsh ?? null, cwd: session.cwd, ...source }, session.agentId)
+    buildLaunchOverrides(launchOverridesDeps, session.engine, { dsh: session.dsh ?? null, cwd: session.cwd, agent: session.agent ?? null, ...source }, session.agentId)
 
   /**
    * A restart or a post-reboot restore rebuilds the ROW's own launch, and the machine may decide
@@ -3814,7 +3817,7 @@ async function runForeground(session: AuthSession): Promise<void> {
    * pass can miss it — retry `triggerHint` a few times with backoff before giving up.
    */
 
-  backend.onCreateAgent = async ({ engine, cwd, bypassPermission, grid, codexHome, dsh }) => {
+  backend.onCreateAgent = async ({ engine, cwd, bypassPermission, grid, codexHome, dsh, prompt, name, agent }) => {
     if (!tmuxBackend) return { ok: false, error: 'TMUX_UNAVAILABLE' }
     try {
       if (!statSync(cwd).isDirectory()) return { ok: false, error: 'CWD_NOT_FOUND' }
@@ -3909,8 +3912,13 @@ async function runForeground(session: AuthSession): Promise<void> {
     // only `invalid x-api-key`. Nothing is cleared when no grid is in play: an agent on its own login
     // is supposed to use exactly these variables.
     const clearEnv = gridLaunch ? gridConflictingEnvToClear(gridLaunch) : undefined
-    const extraArgs = [...(gridLaunch?.args ?? []), ...dshArgs]
-    const launchOptions = { bypassPermission, extraArgs: extraArgs.length ? extraArgs : undefined, installIfMissing, clearEnv, cwd }
+    // The named agent takes the same argv slot on every relaunch (`buildLaunchOverrides` appends it
+    // from the row's `agent`, after the grid's and the DSH's argv, exactly as here). The engine was
+    // checked for a contract at the wire (AGENT_UNSUPPORTED), so this cannot throw.
+    const extraArgs = [...(gridLaunch?.args ?? []), ...dshArgs, ...(agent ? namedAgentArgs(engine, agent) : [])]
+    // The first prompt is a launch option only — never part of `extraArgs`, which the registry row
+    // carries into a relaunch (engineLaunch.ts, `firstPrompt`).
+    const launchOptions = { bypassPermission, extraArgs: extraArgs.length ? extraArgs : undefined, installIfMissing, clearEnv, cwd, ...(prompt ? { firstPrompt: prompt } : {}) }
     const command = buildEngineCommandArgv(engine, launchOptions)
     const argv = buildEngineLaunchArgv(engine, launchOptions)
     // A tmux route is enough to stream its screen. Register it before looking for a process so both
@@ -3935,7 +3943,9 @@ async function runForeground(session: AuthSession): Promise<void> {
       gridLaunchRecord: grid && gridLaunch ? { override: grid, webSearch: gridLaunch.webSearch } : null,
       codexHome,
       dsh,
+      agent,
       bypassPermission,
+      defaultName: name,
     })
     if (!result.ok) return { ok: false, error: result.error, detail: result.detail }
     const { spawned, pending } = result
@@ -4142,6 +4152,22 @@ async function runForeground(session: AuthSession): Promise<void> {
     }
     const valid = await validateLaunchOverrides(launchOverridesDeps, session.engine, target)
     if (!valid.ok) return { ok: false, error: valid.error, detail: valid.detail }
+    // A resumed opencode session takes its model from its own rows in opencode.db, not from `-m`
+    // (see below), and those rows are written through the `sqlite3` CLI. Without it the respawn
+    // would land the right provider, key and argv on a pane that then answers on the OLD model —
+    // the failure this handler exists to refuse — so it is refused here, before the pane is touched.
+    // Only when the launch will name a model: a grid launch always does; a move home does only when
+    // the remembered model carries its provider (`subscriptionModel.ts`), and otherwise the engine
+    // decides, as it always did.
+    const rewritesOpencodeSession = session.engine === 'opencode' && !!session.sessionId
+      && (!!grid || !!remembered?.includes('/'))
+    if (rewritesOpencodeSession && !binaryOnPath('sqlite3')) {
+      return {
+        ok: false,
+        error: 'OPENCODE_SQLITE_MISSING',
+        detail: 'the sqlite3 CLI is not on PATH, and a resumed opencode session keeps its model unless its store is rewritten — install sqlite3 and retry',
+      }
+    }
     // Mid-turn is the one state where restarting costs real work: the conversation comes back but
     // whatever the engine was doing does not. The app is told which agents these are so the user can
     // move them once they are done, rather than being asked to choose between losing a turn and losing
@@ -4186,6 +4212,26 @@ async function runForeground(session: AuthSession): Promise<void> {
       // already cleared but its live process untouched would leave that process still talking to the
       // grid while the retarget reports failed — the exact half-applied state this handler exists to
       // refuse.
+      //
+      // OpenCode's TUI drops `-m` when it RESUMES a session: it restores the model from the session's
+      // LAST USER MESSAGE (`data.model`), and its server falls back to the `session.model` column
+      // (measured on 1.18.31; upstream anomalyco/opencode #26901). Nothing else — config, model.json,
+      // `--fork` — changes a resumed session's model; the picker is the only writer opencode ships,
+      // and those two rows are what it writes. So they are written here, through SQL, before the
+      // respawn, with the exact `provider/model` the respawn's own `-m` names — and the TUI opens
+      // already on it, with nothing typed into the pane. Before the live process is touched, so a
+      // write that fails refuses the move with that process still on its old target. A session with
+      // no user message yet has nothing to restore from and takes `-m` on launch, so it is skipped.
+      if (rewritesOpencodeSession) {
+        const model = opencodeModelFromArgv(built.overrides.extraArgs)
+        if (model) {
+          const written = await setOpencodeSessionModel(OPENCODE_DB, session.sessionId, model)
+          if (!written.ok && written.code !== 'OPENCODE_SESSION_NOT_FOUND') {
+            console.warn(`[grid] retarget ${sid(session.agentId)} refused · ${written.code} · ${written.detail}`)
+            return { ok: false, error: written.code, detail: written.detail }
+          }
+        }
+      }
       if (!grid) {
         const cleared = await tmuxBackend.clearEnv(pane, gridEnvVarNames(session.engine))
         if (cleared.state !== 'succeeded') {
@@ -4227,41 +4273,9 @@ async function runForeground(session: AuthSession): Promise<void> {
         ? describeGridLaunch(session.engine, record.override, record.webSearch)
         : `${session.engine} on its own login`
       console.log(`${where} · retargeted ${sid(session.agentId)} · ${how}`)
-      // OpenCode's TUI drops `-m` when it RESUMES a session — it restores the model stored on that
-      // session instead — so the respawn above lands the right provider, key and argv on a pane that
-      // then answers on the OLD model. Nothing else here can tell: the process is correct, and only
-      // the engine's own footer says otherwise. Selecting through its `/models` picker is what makes
-      // the move real; see [RuntimeProfileController.selectOpencodeModel] for the measurements.
-      //
-      // Only on a RESUME, and only when a model was actually named: a fresh session takes `-m`, and
-      // with nothing named there is nothing to select — the engine's own default is the right answer.
-      //
-      // ⚠️ The picker needs a `provider/model` id, and a grid override carries the model BARE
-      // (`Qwen3.6-35B-A3B`) — the provider is derived from the network name, exactly as the `-m` this
-      // same launch passes derives it. Handing the bare id over refused instantly as MODEL_UNAVAILABLE,
-      // which read as "the grid is not serving it" for a grid that was serving it fine.
-      const selecting = session.engine === 'opencode' && outcome.resumed
-        ? (grid
-            ? (grid.model ? `${gridProviderId(grid.networkName)}/${grid.model}` : null)
-            : remembered)
-        : null
-      if (selecting) {
-        try {
-          await runtimeController.selectOpencodeModel(session, selecting)
-        } catch (err) {
-          // The move HAPPENED — the registry above records the process that is really running — so
-          // this reports what is true rather than pretending either way: the agent is where it was
-          // asked to go, on a model it was not asked to be on. Saying `ok` here is the failure this
-          // handler exists to refuse; it would read as a working switch and bill the wrong account.
-          const detail = err instanceof RuntimeProfileControlError ? err.code : String(err)
-          console.warn(`[grid] ${sid(session.agentId)} moved but could not select ${selecting} · ${detail}`)
-          return {
-            ok: false,
-            error: 'MODEL_SELECT_FAILED',
-            detail: `moved, but opencode stayed on its previous model (${detail}) — pick ${selecting} from /models in the pane`,
-          }
-        }
-      }
+      // Nothing is typed into the pane after the respawn. A resumed opencode session used to be put
+      // on its model through the `/models` picker here (MODEL_SELECT_FAILED); its store is rewritten
+      // before the respawn instead, see above.
       return { ok: true }
     } finally {
       release()

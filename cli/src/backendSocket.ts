@@ -29,6 +29,7 @@ import { listDir } from './lib/fsBrowse.js'
 import { linkCodexProfile, listCodexProfiles } from './lib/codexProfiles.js'
 import { parseGridLaunchOverride, type GridLaunchOverride } from './lib/gridLaunch.js'
 import { listGridModels, resolveGridTarget } from './lib/gridModels.js'
+import { AGENT_NAME_RE, FirstPromptUnsupportedError, MAX_FIRST_PROMPT_CHARS, NamedAgentUnsupportedError, supportsFirstPrompt, supportsNamedAgent } from './lib/engineLaunch.js'
 import { readAccountUsage, type AccountUsageReading } from './lib/accountUsage.js'
 import { probeEngines } from './lib/engineProbe.js'
 import { AgentCreationReceipts, AgentCreationReceiptError, creationFingerprint, validCreationId, type AgentCreationStatus } from './lib/agentCreationReceipt.js'
@@ -340,6 +341,16 @@ export class BackendSocket {
     codexHome: string | null
     /** The domain-specific harness to create this agent as (installed here, base engine = `engine`). */
     dsh: string | null
+    /** The message the session opens with, already submitted (`FIRST_PROMPT_ARGS` in engineLaunch.ts);
+     *  null when the pane opens on an empty input. Validated here — length, and that the engine has a
+     *  contract for it — so cli.ts never sees one it cannot hand over. Never logged. */
+    prompt: string | null
+    /** The name the pane opens under, instead of the next `agent-N`; null to number it. */
+    name: string | null
+    /** The engine's named agent the pane opens AS (`NAMED_AGENT_ARGS` in engineLaunch.ts; opencode
+     *  `--agent <name>`); null for a general session. Validated here — shape, and that the engine has
+     *  a contract for it. Unlike `prompt`, kept on the row so a relaunch opens as it again. */
+    agent: string | null
   }) =>
     Promise<{ ok: true; session: RegisteredSession } | { ok: false; error: string; detail?: string }>) | null = null
   /** Called on `dsh_install` — cli.ts clones/sets up/doctors the harness and reports each phase. */
@@ -1471,6 +1482,7 @@ export class BackendSocket {
           return
         }
 
+
         case 'models_list': {
           const sessionId = typeof payload.agentId === 'string' && payload.agentId
             ? payload.agentId
@@ -1723,6 +1735,37 @@ export class BackendSocket {
             }
             dsh = installed.id
           }
+          // A first prompt is refused BEFORE any pane exists: an engine with no way to take one would
+          // otherwise open on an empty input and look like the person's request had been heard. The
+          // length bound is a first message's, not a document's. The text itself is never logged.
+          let prompt: string | null = null
+          if (payload.prompt !== undefined && payload.prompt !== null) {
+            if (typeof payload.prompt !== 'string') { reply(type, requestId, { error: 'INVALID_PROMPT', detail: 'prompt must be a string' }); return }
+            const trimmed = payload.prompt.trim()
+            if (trimmed.length > MAX_FIRST_PROMPT_CHARS) {
+              reply(type, requestId, { error: 'PROMPT_TOO_LONG', detail: `prompt is longer than ${MAX_FIRST_PROMPT_CHARS} characters` }); return
+            }
+            if (trimmed && !supportsFirstPrompt(engine)) {
+              reply(type, requestId, { error: 'PROMPT_UNSUPPORTED', detail: new FirstPromptUnsupportedError(engine).message }); return
+            }
+            prompt = trimmed || null
+          }
+          // Blank is "number it", the same as absent — a client that sends an empty field is not
+          // asking for an agent with no name.
+          const name = typeof payload.name === 'string' && payload.name.trim() ? payload.name.trim() : null
+          // The engine's named agent is refused BEFORE any pane exists, like the prompt: an engine with
+          // no way to open as one would otherwise come up as a general session under that agent's
+          // name. The shape is an identifier the engine looks a file up by — never a path.
+          let agent: string | null = null
+          if (payload.agent !== undefined && payload.agent !== null) {
+            if (typeof payload.agent !== 'string' || !AGENT_NAME_RE.test(payload.agent)) {
+              reply(type, requestId, { error: 'INVALID_AGENT', detail: 'agent must be 1-64 letters, digits, `-` or `_`' }); return
+            }
+            if (!supportsNamedAgent(engine)) {
+              reply(type, requestId, { error: 'AGENT_UNSUPPORTED', detail: new NamedAgentUnsupportedError(engine).message }); return
+            }
+            agent = payload.agent
+          }
           const input = {
             engine,
             cwd: typeof cwd === 'string' ? cwd : '',
@@ -1730,6 +1773,9 @@ export class BackendSocket {
             grid: grid.state === 'ok' ? grid.override : null,
             codexHome,
             dsh,
+            prompt,
+            name,
+            agent,
           }
           if (creationId !== undefined) {
             // Reserve before spawning. A transport retry carries the SAME creationId; a deliberate

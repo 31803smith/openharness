@@ -55,6 +55,7 @@ void main() {
     GridWebSearch? webSearch,
     VoidCallback? onOwnLogin,
     ValueChanged<GridModel>? onSelected,
+    VoidCallback? onRunLocalModel,
   }) async {
     tester.view.physicalSize = const Size(1200, 900);
     tester.view.devicePixelRatio = 1;
@@ -70,6 +71,7 @@ void main() {
             webSearch: webSearch,
             onUseOwnLogin: onOwnLogin,
             onSelected: onSelected,
+            onRunLocalModel: onRunLocalModel,
           ),
         ),
       ),
@@ -97,10 +99,10 @@ void main() {
     expect(find.textContaining('usage'), findsOneWidget);
   });
 
-  testWidgets('an empty grid says nobody is serving, not that there is no grid', (tester) async {
-    // The daemon answers `{gridName: null, models: []}` when it cannot reach a grid at all, and
-    // these two facts need different sentences — one sends you to sign in, the other to serve a
-    // model. A single "no models" would send a person looking in the wrong place.
+  testWidgets('no grid at all says so; an empty grid says nothing — the run row is the answer', (tester) async {
+    // The daemon answers `{gridName: null, models: []}` when it cannot reach a grid at all: that
+    // sends you to sign in, which the run row cannot do for you. An empty grid gets no sentence —
+    // the "Run a local model" row under Local is what a person does about it.
     await open(tester);
     expect(find.textContaining('sign in again'), findsOneWidget);
     // The user's vocabulary is "Local models", never "grid" — the grid is how a Local model is
@@ -175,6 +177,69 @@ void main() {
     await tester.tap(find.text('Anthropic'));
     await tester.pumpAndSettle();
     expect(calls, 1);
+  });
+
+  group('the last row under Local starts a local model', () {
+    const served = [
+      {'id': 'Qwen-Test', 'node': 'macbook-m1max'},
+    ];
+
+    testWidgets('is there after the served models', (tester) async {
+      build(models: served);
+      await open(tester);
+      expect(find.text('Run a local model'), findsOneWidget);
+      // After the models, not among them: it is the way to get another one, and a row that
+      // started something sitting between two places the agent could go would read as a third.
+      final row = tester.getTopLeft(find.text('Run a local model'));
+      final model = tester.getTopLeft(find.text('Qwen-Test'));
+      expect(row.dy, greaterThan(model.dy));
+    });
+
+    testWidgets('is there when nothing is served, and when there is no grid at all', (tester) async {
+      // The empty-state sentence is the sentence this row answers, so the row is under it — and it
+      // is there even with no grid, because a person with no Local models is exactly who needs it.
+      await open(tester);
+      expect(find.text('Run a local model'), findsOneWidget);
+      final row = tester.getTopLeft(find.text('Run a local model'));
+      final sentence = tester.getTopLeft(find.textContaining('sign in again'));
+      expect(row.dy, greaterThan(sentence.dy));
+      // Never the plumbing's name, in this row as in the rest of the menu.
+      expect(find.textContaining('grid'), findsNothing);
+    });
+
+    testWidgets('is never filled: an action is nowhere, so it cannot be the current row', (tester) async {
+      build(models: served);
+      await open(tester, currentModel: 'Qwen-Test');
+      expect(find.byIcon(Icons.check), findsNothing);
+      Container rowFor(String text) => tester.widget<Container>(
+        find.ancestor(of: find.text(text), matching: find.byType(Container)).first,
+      );
+      expect((rowFor('Qwen-Test').decoration as BoxDecoration?)?.color, isNotNull);
+      expect(rowFor('Run a local model').decoration, isNull);
+    });
+
+    testWidgets('fires onRunLocalModel and nothing else', (tester) async {
+      build(models: served);
+      var runs = 0;
+      var logins = 0;
+      GridModel? picked;
+      await open(
+        tester,
+        currentModel: 'Qwen-Test',
+        onRunLocalModel: () => runs++,
+        onOwnLogin: () => logins++,
+        onSelected: (m) => picked = m,
+      );
+      await tester.tap(find.text('Run a local model'));
+      await tester.pumpAndSettle();
+      expect(runs, 1);
+      // Not a move: the agent stays where it was. `currentModel` is set so a stray own-login call
+      // would have fired — the case where it is silent for its own reason is not the one tested.
+      expect(logins, 0);
+      expect(picked, isNull);
+      // The menu closed on the choice, like any other row.
+      expect(find.text('Run a local model'), findsNothing);
+    });
   });
 
   group('web search on the current Local model', () {

@@ -3,11 +3,20 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  AGENT_NAME_RE,
   BYPASS_PERMISSION_FLAGS,
+  FIRST_PROMPT_ARGS,
+  FirstPromptUnsupportedError,
   LAUNCH_RESUME_FLAG,
+  NAMED_AGENT_ARGS,
+  NamedAgentUnsupportedError,
   buildEngineCommandArgv,
   buildEngineLaunchArgv,
   commandAvailableInInteractiveShell,
+  firstPromptArgs,
+  namedAgentArgs,
+  supportsFirstPrompt,
+  supportsNamedAgent,
   unreadableCwdGuard,
 } from './engineLaunch.js'
 import { ENGINES } from '../engines/types.js'
@@ -204,6 +213,104 @@ describe('buildEngineLaunchArgv', () => {
       expect(LAUNCH_RESUME_FLAG[engine]?.length).toBeGreaterThan(0)
     }
     expect(LAUNCH_RESUME_FLAG.devin).toBeUndefined()
+  })
+})
+
+describe('a first prompt on launch', () => {
+  const PROMPT = 'Start a local model on this machine'
+
+  it('hands opencode the text through its TUI flag', () => {
+    expect(buildEngineCommandArgv('opencode', { firstPrompt: PROMPT }))
+      .toEqual([engineBin('opencode'), '--prompt', PROMPT])
+  })
+
+  it('hands claude and codex the text positionally', () => {
+    expect(buildEngineCommandArgv('claude', { firstPrompt: PROMPT })).toEqual([engineBin('claude'), PROMPT])
+    expect(buildEngineCommandArgv('codex', { firstPrompt: PROMPT })).toEqual([engineBin('codex'), PROMPT])
+  })
+
+  it('puts the text LAST, after every flag, so a positional is never read as an option value', () => {
+    expect(buildEngineCommandArgv('claude', { firstPrompt: PROMPT, bypassPermission: true, extraArgs: ['--allowedTools=WebSearch'] }))
+      .toEqual([engineBin('claude'), '--dangerously-skip-permissions', '--allowedTools=WebSearch', PROMPT])
+    expect(buildEngineCommandArgv('opencode', { firstPrompt: PROMPT, bypassPermission: true, extraArgs: ['-m', 'local/qwen'] }))
+      .toEqual([engineBin('opencode'), '--auto', '-m', 'local/qwen', '--prompt', PROMPT])
+  })
+
+  it('refuses an engine with no documented mechanism, naming the engine, rather than dropping the text', () => {
+    expect(supportsFirstPrompt('cursor')).toBe(false)
+    expect(() => firstPromptArgs('cursor', PROMPT)).toThrow(FirstPromptUnsupportedError)
+    let refusal: unknown
+    try { buildEngineCommandArgv('cursor', { firstPrompt: PROMPT }) } catch (error) { refusal = error }
+    expect(refusal).toBeInstanceOf(FirstPromptUnsupportedError)
+    expect((refusal as FirstPromptUnsupportedError).code).toBe('PROMPT_UNSUPPORTED')
+    expect((refusal as FirstPromptUnsupportedError).message).toContain('cursor')
+  })
+
+  it('leaves the argv unchanged with no prompt, or an empty one', () => {
+    expect(buildEngineCommandArgv('opencode', {})).toEqual([engineBin('opencode')])
+    expect(buildEngineCommandArgv('opencode', { firstPrompt: '' })).toEqual([engineBin('opencode')])
+    expect(buildEngineCommandArgv('cursor', { firstPrompt: '' })).toEqual([engineBin('cursor')])
+  })
+
+  it('reaches the engine as ONE positional argument through the pane shell, however it is spelled', async () => {
+    // The pane script execs "$@": the prompt must arrive as a single argv entry, spaces, quotes and
+    // all, rather than being re-split by the shell.
+    const spelled = `Start a local model on "this" machine; it's $HOME`
+    const [, , paneScript, marker, ...command] = buildEngineLaunchArgv('claude', { firstPrompt: spelled }, '/bin/sh')
+    expect(marker).toBe('harness-engine')
+    expect(command).toEqual([engineBin('claude'), spelled])
+    const { execFile } = await import('node:child_process')
+    const seen = await new Promise<string>((resolve, reject) => {
+      execFile('/bin/sh', ['-c', paneScript, 'harness-engine', '/bin/sh', '-c', 'printf "%s" "$1"', 'engine', spelled],
+        { timeout: 10_000 }, (error, stdout) => (error ? reject(error) : resolve(stdout)))
+    })
+    expect(seen).toBe(spelled)
+  })
+
+  it('has an entry (possibly null) for every known engine — no engine silently falls through', () => {
+    for (const engine of ENGINES) {
+      expect(Object.prototype.hasOwnProperty.call(FIRST_PROMPT_ARGS, engine)).toBe(true)
+    }
+    expect(supportsFirstPrompt('opencode')).toBe(true)
+    expect(supportsFirstPrompt('claude')).toBe(true)
+    expect(supportsFirstPrompt('codex')).toBe(true)
+  })
+})
+
+describe('opening as a named agent', () => {
+  it('hands opencode the name through --agent, in the extraArgs slot a relaunch also uses', () => {
+    expect(namedAgentArgs('opencode', 'harness-compute')).toEqual(['--agent', 'harness-compute'])
+    expect(buildEngineCommandArgv('opencode', { bypassPermission: true, extraArgs: ['-m', 'local/qwen', ...namedAgentArgs('opencode', 'harness-compute')] }))
+      .toEqual([engineBin('opencode'), '--auto', '-m', 'local/qwen', '--agent', 'harness-compute'])
+    // Resume keeps it too — the flag rides `extraArgs`, which every relaunch rebuilds from the row.
+    expect(buildEngineCommandArgv('opencode', { resumeSessionId: 'ses_1', extraArgs: namedAgentArgs('opencode', 'harness-compute') }))
+      .toEqual([engineBin('opencode'), '--session', 'ses_1', '--agent', 'harness-compute'])
+  })
+
+  it('refuses every other engine, naming it, rather than dropping the name', () => {
+    for (const engine of ENGINES) {
+      if (engine === 'opencode') continue
+      expect(supportsNamedAgent(engine)).toBe(false)
+      let refusal: unknown
+      try { namedAgentArgs(engine, 'harness-compute') } catch (error) { refusal = error }
+      expect(refusal).toBeInstanceOf(NamedAgentUnsupportedError)
+      expect((refusal as NamedAgentUnsupportedError).code).toBe('AGENT_UNSUPPORTED')
+      expect((refusal as NamedAgentUnsupportedError).message).toContain(engine)
+    }
+  })
+
+  it('has an entry (possibly null) for every known engine — no engine silently falls through', () => {
+    for (const engine of ENGINES) {
+      expect(Object.prototype.hasOwnProperty.call(NAMED_AGENT_ARGS, engine)).toBe(true)
+    }
+    expect(supportsNamedAgent('opencode')).toBe(true)
+  })
+
+  it('accepts an identifier and nothing that could be a path or prose', () => {
+    for (const ok of ['harness-compute', 'build', 'A_b-1', 'x'.repeat(64)]) expect(AGENT_NAME_RE.test(ok)).toBe(true)
+    for (const bad of ['', ' harness-compute', 'local model', '../etc', 'a/b', 'name.md', 'x'.repeat(65), 'nämn']) {
+      expect(AGENT_NAME_RE.test(bad)).toBe(false)
+    }
   })
 })
 

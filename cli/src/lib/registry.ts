@@ -14,6 +14,7 @@
  */
 
 import { DSH_ID_RE } from '../dsh/manifest.js'
+import { AGENT_NAME_RE } from './engineLaunch.js'
 import {
   closeSync,
   constants,
@@ -146,6 +147,13 @@ export interface RegisteredSession {
    */
   dsh?: string | null
   /**
+   * The engine's own named agent this pane was opened as (`agent_create`'s `agent`; opencode
+   * `--agent <name>`), or null for a general session. Chosen at creation and carried into every
+   * relaunch (`launchOverrides.ts`), so a pane opened as `harness-compute` comes back as `harness-compute`.
+   * Like `codexHome`, never re-derived from the live process.
+   */
+  agent?: string | null
+  /**
    * Whether the engine was launched with its permission prompts bypassed (`--dangerously-skip-permissions`
    * and friends, `BYPASS_PERMISSION_FLAGS`). Recorded at launch because it is otherwise only readable
    * off a LIVE process's argv — and a pane that has to be recreated after a reboot has no live process
@@ -156,7 +164,8 @@ export interface RegisteredSession {
   launcherId?: string
   transcriptPath: string | null
   projectDir: string
-  /** Stable default for agents created by Harness; discovered agents keep their existing names. */
+  /** Stable default for agents created by Harness — the next `agent-N`, or the name the creator asked
+   *  for (`agent_create`'s `name`). Discovered agents keep their existing names. */
   defaultName?: string
   cwd: string | null
   /** Authoritative backend-neutral terminal placements for this one process-owned agent. */
@@ -214,9 +223,30 @@ const PANE_RE = /^%\d+$/
 const GROK_SESSION_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const AGENT_ENGINES: ReadonlySet<string> = new Set(ENGINES)
 
+/**
+ * A persisted `defaultName`, or undefined for anything that is not one.
+ *
+ * Used to be `agent-N` only. A creator can now name the agent (`agent_create`'s `name`), and a row
+ * validated against the numbered shape alone dropped that name on the next load — the pane came
+ * back titled `agent-3` after a daemon restart. Trimmed and bounded, so a row cannot carry a name
+ * the header would draw as nothing, or one long enough to be a document.
+ */
+const MAX_DEFAULT_NAME_CHARS = 200
+function normalizedDefaultName(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const name = value.trim()
+  return name && name.length <= MAX_DEFAULT_NAME_CHARS ? name : undefined
+}
+
 /** A persisted DSH id, or null for anything that is not one (older rows have no field at all). */
 function normalizedDshId(value: unknown): string | null {
   return typeof value === 'string' && DSH_ID_RE.test(value) ? value : null
+}
+
+/** A persisted named agent, or null for anything that is not one — the same shape `agent_create`
+ *  accepts, so a hand-edited row cannot put a path or prose into the relaunch argv. */
+function normalizedAgentName(value: unknown): string | null {
+  return typeof value === 'string' && AGENT_NAME_RE.test(value) ? value : null
 }
 
 function normalizedAgentEngine(value: unknown): AgentEngine {
@@ -404,8 +434,8 @@ function strictPersistedRow(value: unknown): RegisteredSession | null {
     engine: row.engine as AgentEngine,
     transcriptPath: typeof row.transcriptPath === 'string' ? row.transcriptPath : null,
     projectDir: row.projectDir,
-    defaultName: typeof row.defaultName === 'string' && /^agent-[1-9]\d*$/.test(row.defaultName)
-      ? row.defaultName : undefined,
+    defaultName: normalizedDefaultName(row.defaultName),
+    agent: normalizedAgentName((row as { agent?: unknown }).agent),
     cwd: typeof row.cwd === 'string' ? row.cwd : null,
     runtimes,
     primaryRuntimeKey: normalizedPrimary,
@@ -784,6 +814,7 @@ class Registry {
           grid: normalizedGridAssignment(raw.grid),
           codexHome: typeof rawCodexHome === 'string' && rawCodexHome ? rawCodexHome : null,
           dsh: normalizedDshId((raw as { dsh?: unknown }).dsh),
+          agent: normalizedAgentName((raw as { agent?: unknown }).agent),
           ...(rawGridLaunch !== undefined ? { gridLaunch: rawGridLaunch } : {}),
           ...(rawGridLaunch ? { gridWebSearch: normalizedGridWebSearch(raw?.gridWebSearch) } : {}),
           // ⚠️ Rehydrated EXPLICITLY, like every field above it. A row is rebuilt from this list on
@@ -795,8 +826,7 @@ class Registry {
             : {}),
           ...(raw.bypassPermission === true ? { bypassPermission: true } : {}),
           transcriptPath,
-          defaultName: typeof raw.defaultName === 'string' && /^agent-[1-9]\d*$/.test(raw.defaultName)
-            ? raw.defaultName : undefined,
+          defaultName: normalizedDefaultName(raw.defaultName),
           title: titleDisplayName(typeof raw.title === 'string' ? raw.title : null),
           sessionId: bound ? rawSessionId : '',
           projectDir: !repairedCodexTranscript && typeof raw.projectDir === 'string' && raw.projectDir
@@ -983,6 +1013,9 @@ class Registry {
       gridWebSearch: null,
       codexHome: input.codexHome ?? null,
       dsh: input.dsh ?? null,
+      // A discovered pane's named agent is only visible in its argv; nothing here reads it, so the
+      // row cannot relaunch it as one. Fill-only, like `dsh`.
+      agent: null,
       transcriptPath: null,
       projectDir: basename(input.cwd ?? '') || agentId,
       cwd: input.cwd ?? null,
@@ -1016,7 +1049,11 @@ class Registry {
     gridLaunchRecord?: GridLaunchRecord | null
     codexHome?: string | null
     dsh?: string | null
+    /** The engine's named agent the pane was opened as (`agent_create`'s `agent`), validated upstream. */
+    agent?: string | null
     bypassPermission?: boolean
+    /** The name the creator asked for, instead of the next `agent-N`. Blank means "number it". */
+    defaultName?: string | null
   }): RegisteredSession | null {
     if (this.writeBlocked) return null
     const runtimes = normalizedRuntimes(input.runtimes)
@@ -1028,7 +1065,7 @@ class Registry {
       schemaVersion: 2,
       active: true,
       launch: { state: 'starting' },
-      defaultName: this.nextAgentName(),
+      defaultName: normalizedDefaultName(input.defaultName) ?? this.nextAgentName(),
       agentId,
       sessionId: '',
       boundAt: null,
@@ -1039,6 +1076,7 @@ class Registry {
       gridWebSearch: input.gridLaunchRecord?.webSearch ?? null,
       codexHome: input.codexHome ?? null,
       dsh: input.dsh ?? null,
+      agent: normalizedAgentName(input.agent),
       ...(input.bypassPermission ? { bypassPermission: true } : {}),
       transcriptPath: null,
       projectDir: basename(input.cwd ?? '') || agentId,
@@ -1225,6 +1263,7 @@ class Registry {
       // forward or the very first SessionStart hook would silently wipe the agent's chosen profile.
       codexHome: existing?.codexHome ?? null,
       dsh: existing?.dsh ?? null,
+      agent: existing?.agent ?? null,
       ...(existing?.bypassPermission ? { bypassPermission: true } : {}),
       processIdentity: validProcessIdentity(input.processIdentity) ? input.processIdentity : existing?.processIdentity ?? null,
       registeredAt: existing?.registeredAt ?? now,

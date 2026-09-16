@@ -609,6 +609,11 @@ class _SwarmScreenState extends State<SwarmScreen> {
         await _addAgent();
       case 'newAgent':
         unawaited(_newAgent(swarmId: app.activeSwarmId));
+      case 'runLocalModel':
+        // The native Models menu's one command. Wrapped like Link Machine…
+        // because the notifier may open its dialog here, and the pane it then
+        // creates takes focus the same way a New Agent does.
+        await _dialog(() => app.runLocalModel(context));
       case 'splitRight':
         unawaited(_splitAgent(PaneResizeAxis.x));
       case 'splitDown':
