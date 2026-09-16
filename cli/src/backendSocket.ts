@@ -123,7 +123,8 @@ export interface LocalClientSink {
   sendBinary: (frame: Uint8Array) => boolean
 }
 
-function isLocalClientId(connId: string): boolean {
+/** A loopback desktop connection (localWsServer.ts), as opposed to a cloud/relay one. */
+export function isLocalClientId(connId: string): boolean {
   return connId.startsWith('local:')
 }
 

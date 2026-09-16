@@ -112,7 +112,7 @@ import {
 import { readTerminalConfigSnapshot, writeTerminalConfigSnapshot } from './lib/terminalConfigSnapshot.js'
 import { Watcher, type LineEvent } from './watcher/watcher.js'
 import { chooseHookAgent, startHookServer } from './hookServer.js'
-import { BackendSocket } from './backendSocket.js'
+import { BackendSocket, isLocalClientId } from './backendSocket.js'
 import { AutonomousDeviceService } from './lib/autonomous-device/service.js'
 import { autonomousDeviceLocalRequest } from './lib/autonomous-device/localApi.js'
 import { runAutonomousDeviceCommand } from './lib/autonomous-device/command.js'
@@ -1489,6 +1489,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     resolveAgent: (agentId) => registry.resolve(agentId),
     sendTarget: (connId, type, payload) => backend.sendTerminalTo(connId, type, payload),
     sendBinaryTarget: (connId, frame) => backend.sendTerminalBinaryTo(connId, frame),
+    isLoopback: isLocalClientId,
     streamingAvailable: tmuxBackend != null,
     diagnostic: (event, fields) => console.log(`[terminal-stream] ${event}`, fields),
   })

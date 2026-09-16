@@ -102,6 +102,8 @@ export interface TerminalStreamManagerDeps {
   resolveAgent: (agentId: string) => RegisteredSession | undefined
   sendTarget: (connId: string, type: string, payload: FramePayload) => boolean
   sendBinaryTarget: (connId: string, frame: TerminalBinaryClear) => boolean
+  /** Whether this connection is the desktop app on THIS computer's loopback (never the cloud). */
+  isLoopback?: (connId: string) => boolean
   streamingAvailable: boolean
   now?: () => number
   diagnostic?: (event: string, fields: Record<string, unknown>) => void
@@ -364,6 +366,12 @@ export class TerminalStreamManager {
       this.controllerByPlacement.set(placementKey, connId)
 
       const requestedCompression = Array.isArray(payload.compression) ? payload.compression : []
+      // Never compress for the loopback desktop, whatever it asks for: the bytes cross 127.0.0.1,
+      // and the deflate here plus the inflate on the app's UI thread were a per-frame tax paid on
+      // every TUI redraw for nothing. Decided here rather than in the app because the app cannot
+      // tell this daemon's own machine from one it reaches through the relay — where the same
+      // frames DO cross the internet and zlib still earns its keep.
+      const wantsZlib = requestedCompression.includes('zlib') && !this.deps.isLoopback?.(connId)
       state = {
         connId,
         streamId,
@@ -371,7 +379,7 @@ export class TerminalStreamManager {
         engineId: session.engine,
         placementKey,
         handle: opened.value,
-        compression: requestedCompression.includes('zlib') ? 'zlib' : 'none',
+        compression: wantsZlib ? 'zlib' : 'none',
         expiresAt: this.now() + HEARTBEAT_TIMEOUT_MS,
         lastSyncAt: this.now(),
         nextSeq: 0,
@@ -473,11 +481,30 @@ export class TerminalStreamManager {
     }
     state.lastInputSeq = inputSeq
     state.expiresAt = this.now() + HEARTBEAT_TIMEOUT_MS
-    const result = await state.handle.writeRaw(bytes)
-    if (result.state !== 'succeeded') {
-      this.sendError(state.connId, 'TERMINAL_INPUT_FAILED', { streamId: state.streamId, message: result.reason })
-      if (result.dispatch === 'possibly_executed') await this.sendKeyframe(state)
-    }
+    // Not awaited. `writeRaw` hands its `send-keys` to the control client's FIFO synchronously, so
+    // keystroke order is already fixed by the time it returns its promise — and the seq above is
+    // spent, so the next frame cannot race this one. Awaiting the reply held the whole local
+    // socket (localWsServer.ts serialises every message behind this call) for one tmux round-trip
+    // per keystroke; now the round-trips overlap, which is what ControlCommandQueue pipelines for.
+    // The result still matters, only later: a failure is reported when tmux says so.
+    void state.handle.writeRaw(bytes).then(
+      (result) => {
+        if (state.closing || result.state === 'succeeded') return
+        this.sendError(state.connId, 'TERMINAL_INPUT_FAILED', { streamId: state.streamId, message: result.reason })
+        if (result.dispatch === 'possibly_executed') void this.sendKeyframe(state)
+      },
+      (error: unknown) => {
+        if (state.closing) return
+        this.sendError(state.connId, 'TERMINAL_INPUT_FAILED', {
+          streamId: state.streamId,
+          message: error instanceof Error ? error.message : String(error),
+        })
+      },
+    ).catch((error: unknown) => {
+      // Nothing above is awaited by anyone, so a throw from the reporting itself would otherwise
+      // surface only as a process-level unhandledRejection.
+      this.diagnostic(state, 'input_report_failed', { reason: error instanceof Error ? error.message : String(error) })
+    })
   }
 
   private async resize(connId: string, payload: FramePayload): Promise<void> {
