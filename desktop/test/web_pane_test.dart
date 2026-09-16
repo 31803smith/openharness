@@ -78,7 +78,7 @@ void main() {
     expect(app.panes.map((p) => p.id), [first.id, second.id]);
   });
 
-  test('alone with its terminal, the viewer takes three quarters', () async {
+  test('alone with its terminal, the viewer takes two thirds', () async {
     final app = createApp();
     addTearDown(app.dispose);
     final input = <TerminalBinaryFrame>[];
@@ -88,8 +88,8 @@ void main() {
     expect(app.panes.map((p) => p.id), [viewer.id, terminalPane.id]);
     final split = app.activeSwarm.paneSizes['2:manual'];
     expect(split, isNotNull);
-    expect(split!.tiles.map((t) => t.left), [0, 0.75]);
-    expect(split.tiles.map((t) => t.right), [0.75, 1]);
+    expect(split!.tiles.map((t) => t.left), [0, 2 / 3]);
+    expect(split.tiles.map((t) => t.right), [2 / 3, 1]);
     expect(split.tiles.map((t) => t.height), [1, 1]);
     // The viewer going away takes the pair's layout with it, the way any
     // removal does; a new viewer starts the split afresh.
@@ -111,6 +111,64 @@ void main() {
     await _synced(app, 'a0', viewerUrl: 'http://127.0.0.1:4179/');
     expect(_viewers(app), hasLength(1));
     expect(app.activeSwarm.paneSizes['2:manual'], same(theirs));
+  });
+
+  test(
+    'the viewer is beside the terminal in every tab that shows it',
+    () async {
+      final app = createApp();
+      addTearDown(app.dispose);
+      final input = <TerminalBinaryFrame>[];
+      final first = app.adoptSessionForTest(terminal('a0', input));
+      final one = app.activeSwarm;
+      app.newSwarm(name: 'Second');
+      final second = app.adoptSessionForTest(terminal('a0', input));
+      final two = app.activeSwarm;
+      await _synced(app, 'a0', viewerUrl: 'http://127.0.0.1:4179/');
+      expect(app.allPanes.where((p) => p.isWeb), hasLength(2));
+      expect(one.panes.map((p) => p.isWeb), [true, false]);
+      expect(two.panes.map((p) => p.isWeb), [true, false]);
+      expect(one.panes.last, same(first));
+      expect(two.panes.last, same(second));
+      // A tab that loses the terminal loses the viewer on the next frame; the
+      // other tab keeps its pair.
+      two.remove(second);
+      await _synced(app, 'a0', viewerUrl: 'http://127.0.0.1:4179/');
+      expect(two.panes, isEmpty);
+      expect(one.panes.map((p) => p.isWeb), [true, false]);
+    },
+  );
+
+  test('closing the terminal by hand takes its viewer with it', () async {
+    final app = createApp();
+    addTearDown(app.dispose);
+    final input = <TerminalBinaryFrame>[];
+    final terminalPane = app.adoptSessionForTest(terminal('a0', input));
+    await _synced(app, 'a0', viewerUrl: 'http://127.0.0.1:4179/');
+    expect(_viewers(app), hasLength(1));
+    await app.closePane(terminalPane.id);
+    expect(app.panes, isEmpty);
+    // Not a dismissal: the next open of the agent brings the viewer back.
+    app.adoptSessionForTest(terminal('a0', input));
+    await _synced(app, 'a0', viewerUrl: 'http://127.0.0.1:4179/');
+    expect(_viewers(app), hasLength(1));
+  });
+
+  test('the header control hides the viewer and brings it back', () async {
+    final app = createApp();
+    addTearDown(app.dispose);
+    final input = <TerminalBinaryFrame>[];
+    app.adoptSessionForTest(terminal('a0', input));
+    await _synced(app, 'a0', viewerUrl: 'http://127.0.0.1:4179/');
+    expect(app.viewerPaneShown('m', 'a0'), isTrue);
+    await app.toggleViewerPane('m', 'a0');
+    expect(app.viewerPaneShown('m', 'a0'), isFalse);
+    // Hidden is a dismissal: the same page does not creep back on a frame.
+    await _synced(app, 'a0', viewerUrl: 'http://127.0.0.1:4179/');
+    expect(app.viewerPaneShown('m', 'a0'), isFalse);
+    await app.toggleViewerPane('m', 'a0');
+    expect(app.viewerPaneShown('m', 'a0'), isTrue);
+    expect(app.panes.map((p) => p.isWeb), [true, false]);
   });
 
   test('a viewer closed by hand stays closed until the URL changes', () async {

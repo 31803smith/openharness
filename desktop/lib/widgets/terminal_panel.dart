@@ -1670,6 +1670,17 @@ class _TerminalHeader extends StatelessWidget {
                     onClose: onClose,
                     onToggleComposer: remoteComposer,
                     composerVisible: composerVisible,
+                    // A harness agent's viewer, shown or hidden from the
+                    // pane it belongs to.
+                    onToggleViewer: agent?.viewerUrl == null
+                        ? null
+                        : () => notifier.toggleViewerPane(
+                            session.machineId,
+                            agent!.id,
+                          ),
+                    viewerVisible:
+                        agent != null &&
+                        notifier.viewerPaneShown(session.machineId, agent.id),
                     details: Tooltip(
                       message: [
                         if (project != null) project.cwd,

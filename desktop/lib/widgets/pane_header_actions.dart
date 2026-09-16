@@ -15,11 +15,18 @@ class PaneHeaderActions extends StatelessWidget {
     this.onClose,
     this.onToggleComposer,
     this.composerVisible = false,
+    this.onToggleViewer,
+    this.viewerVisible = false,
     this.details,
   });
 
   final bool zoomed, composerVisible;
   final VoidCallback? onZoom, onRestart, onDelete, onClose, onToggleComposer;
+
+  /// A harness agent's viewer: show it beside this terminal, or hide it.
+  /// Absent for an agent that has no viewer.
+  final VoidCallback? onToggleViewer;
+  final bool viewerVisible;
 
   /// Folder, branch and machine share the controls' space while idle. Both
   /// layers keep their size so hovering never changes the title's width.
@@ -69,6 +76,19 @@ class PaneHeaderActions extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (onToggleViewer != null) ...[
+              KeyedSubtree(
+                key: const ValueKey('pane-viewer-toggle'),
+                child: action(
+                  viewerVisible ? 'Hide viewer' : 'Show viewer',
+                  viewerVisible
+                      ? LucideIcons.panelLeftClose
+                      : LucideIcons.panelLeftOpen,
+                  onToggleViewer,
+                ),
+              ),
+              const SizedBox(width: 2),
+            ],
             if (onToggleComposer != null) ...[
               action(
                 composerVisible

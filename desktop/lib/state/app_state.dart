@@ -3877,47 +3877,50 @@ class AppNotifier extends ChangeNotifier {
   ///
   /// The daemon says where the harness's viewer is (`viewerUrl`); this puts a
   /// web tile immediately to the RIGHT of the agent's terminal in whichever
-  /// swarm shows that terminal (the active one first), navigates an open tile
-  /// when the URL changes, and takes the tile down when the viewer goes away.
+  /// tab that shows that terminal, navigates an open tile when the URL
+  /// changes, and takes the tile down when the viewer or the terminal goes.
   /// It never steals focus: the person is typing in the terminal the viewer
   /// belongs to. Nothing is persisted — see [PaneKind.web].
   void _syncViewerPane(MachineState machine, Agent agent) {
     final machineId = machine.machine.machineId;
     final url = agent.viewerUrl;
-    final open = <(Swarm, TerminalPane)>[
-      for (final swarm in swarms)
-        for (final pane in swarm.panes)
-          if (pane.isWeb &&
-              pane.machineId == machineId &&
-              pane.ownerAgentId == agent.id)
-            (swarm, pane),
-    ];
-    if (url == null) {
-      for (final (swarm, pane) in open) {
-        swarm.remove(pane);
-      }
-      if (open.isNotEmpty) _persistLayout();
-      return;
-    }
-    if (open.isNotEmpty) {
-      for (final (_, pane) in open) {
-        pane.url = url;
-      }
-      return;
-    }
-    if (_dismissedViewers[_viewerKey(machineId, agent.id)] == url) return;
-    // The swarm holding the agent's terminal — the active one when it does,
-    // else the first that does. No terminal on any desk, no viewer.
-    final ordered = [activeSwarm, ...swarms.where((s) => s != activeSwarm)];
-    for (final swarm in ordered) {
+    final dismissed =
+        url != null &&
+        _dismissedViewers[_viewerKey(machineId, agent.id)] == url;
+    var changed = false;
+    // Tab by tab: wherever this agent's terminal is, its viewer is beside it,
+    // and nowhere else. A terminal opened in a second tab gets a second
+    // viewer; a tab whose terminal went loses its viewer.
+    for (final swarm in swarms) {
       final at = swarm.panes.indexWhere(
         (pane) =>
             !pane.isWeb &&
             pane.machineId == machineId &&
             pane.agentId == agent.id,
       );
-      if (at < 0) continue;
-      if (swarm.panes.length >= maxPanes) return;
+      final viewers = [
+        for (final pane in swarm.panes)
+          if (pane.isWeb &&
+              pane.machineId == machineId &&
+              pane.ownerAgentId == agent.id)
+            pane,
+      ];
+      if (url == null || at < 0) {
+        for (final pane in viewers) {
+          swarm.remove(pane);
+          changed = true;
+        }
+        continue;
+      }
+      if (viewers.isNotEmpty) {
+        // The same page again is nothing new; a different one navigates in
+        // place rather than reopening a tile.
+        for (final pane in viewers) {
+          pane.url = url;
+        }
+        continue;
+      }
+      if (dismissed || swarm.panes.length >= maxPanes) continue;
       // The viewer goes LEFT of the terminal: it is what the user watches, the
       // terminal is where they type, and reading order puts the product first.
       final insertion = at;
@@ -3936,15 +3939,49 @@ class AppNotifier extends ChangeNotifier {
       );
       swarm.arranged = null;
       swarm.arrangedKey = null;
-      // Alone with its terminal, the viewer takes three quarters of the tab —
-      // a board or a part wants the width, a chat column does not. Only when
-      // nobody has sized this pair by hand: a manual layout is the user's.
+      // Alone with its terminal, the viewer takes two thirds of the tab — a
+      // board or a part wants the width, and a third is the least a coding
+      // agent's interface reads well at. Only when nobody has sized this pair
+      // by hand: a manual layout is the user's.
       if (swarm.panes.length == 2 && swarm.paneSizes['2:manual'] == null) {
         swarm.savePaneSizes('2:manual', PaneArrangement.viewerBesideTerminal);
       }
-      _persistLayout();
+      changed = true;
+    }
+    if (changed) _persistLayout();
+  }
+
+  /// Whether the active tab shows this agent's viewer beside its terminal.
+  bool viewerPaneShown(String machineId, String agentId) =>
+      activeSwarm.panes.any(
+        (pane) =>
+            pane.isWeb &&
+            pane.machineId == machineId &&
+            pane.ownerAgentId == agentId,
+      );
+
+  /// The header's viewer control: hide the viewer in this tab, or bring it
+  /// back beside the terminal. Bringing it back also lifts a dismissal, so a
+  /// page closed by hand earlier opens again on request.
+  Future<void> toggleViewerPane(String machineId, String agentId) async {
+    final viewer = activeSwarm.panes
+        .where(
+          (pane) =>
+              pane.isWeb &&
+              pane.machineId == machineId &&
+              pane.ownerAgentId == agentId,
+        )
+        .firstOrNull;
+    if (viewer != null) {
+      await closePane(viewer.id);
       return;
     }
+    final machine = machineStates[machineId];
+    final agent = machine?.agents.where((a) => a.id == agentId).firstOrNull;
+    if (machine == null || agent == null || agent.viewerUrl == null) return;
+    _dismissedViewers.remove(_viewerKey(machineId, agentId));
+    _syncViewerPane(machine, agent);
+    notifyListeners();
   }
 
   String? _eventAgentId(
@@ -5531,6 +5568,18 @@ class AppNotifier extends ChangeNotifier {
     // background tile going away changes nothing the dial can see.
     final wasFocused = focusedPaneId == paneId;
     activeSwarm.remove(pane);
+    // A harness's viewer lives beside its terminal and nowhere else: closing
+    // the terminal in this tab takes the viewer in this tab with it. The
+    // viewer's own close above is different — it is a choice about the page.
+    if (!pane.isWeb && pane.agentId != null) {
+      for (final viewer in activeSwarm.panes.toList()) {
+        if (viewer.isWeb &&
+            viewer.machineId == pane.machineId &&
+            viewer.ownerAgentId == pane.agentId) {
+          activeSwarm.remove(viewer);
+        }
+      }
+    }
     _settlePins();
     if (persist) _persistLayout();
     selectedMachineId = focusedPane?.machineId;
