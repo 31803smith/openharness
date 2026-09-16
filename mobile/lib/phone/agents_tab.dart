@@ -12,6 +12,7 @@ import 'machine_filter_bar.dart';
 import 'phone_card.dart';
 import 'phone_fab.dart';
 import 'phone_header.dart';
+import 'phone_search_button.dart';
 import 'phone_sheet.dart';
 import 'phone_navigation.dart';
 import 'phone_status.dart';
@@ -83,7 +84,20 @@ class _AgentsTabState extends State<AgentsTab> {
               // No account avatar here. Settings ▸ Account carries the address
               // and the sign-out, and a second copy in the corner of the home
               // screen bought nothing but a place for them to disagree.
-              const PhoneHeader(large: true, title: 'Agents'),
+              //
+              // The one control the title line does carry is search, because
+              // what it searches is not this list: it spans agents AND machines,
+              // which is the half of the question this tab cannot answer. It
+              // appears only once there is something to find — a glyph that
+              // opens an empty screen is worse than no glyph.
+              PhoneHeader(
+                large: true,
+                title: 'Agents',
+                trailing: [
+                  if (machines.isNotEmpty)
+                    PhoneSearchButton(notifier: widget.notifier),
+                ],
+              ),
               if (error != null)
                 _ErrorStrip(message: error, notifier: widget.notifier),
               if (machines.isNotEmpty)
