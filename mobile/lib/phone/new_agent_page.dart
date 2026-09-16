@@ -10,8 +10,10 @@ import 'package:harness_mobile/widgets/engine_identity.dart';
 import 'package:harness_mobile/core/project_folder.dart';
 import 'package:harness_mobile/widgets/remote_folder_picker.dart';
 
+import 'agent_index.dart';
 import 'phone_header.dart';
 import 'phone_navigation.dart';
+import 'phone_status.dart';
 import 'settings_row.dart';
 
 /// Starting an agent from the phone: a folder on that machine, and an engine to
@@ -40,6 +42,16 @@ class NewAgentPage extends StatefulWidget {
 }
 
 class _NewAgentPageState extends State<NewAgentPage> {
+  /// The machine the agent is created on. Starts on the one the page was opened with, and the
+  /// MACHINE rows change it.
+  late String _machineId = widget.machineId;
+
+  /// Whether the MACHINE row is folded open onto the other machines.
+  bool _machinesOpen = false;
+
+  /// Whether the engines past [_primaryEngines] are shown.
+  bool _moreEnginesOpen = false;
+
   String? _folder;
 
   /// Set when the MACHINE is to produce the folder — a fresh project, or a clone — instead of one
@@ -54,7 +66,8 @@ class _NewAgentPageState extends State<NewAgentPage> {
   /// "New project", or the repository's name.
   String? _projectLabel;
 
-  String? _engine;
+  /// Claude until somebody picks another — the engine most agents are started with.
+  String? _engine = 'claude';
   String? _error;
   bool _creating = false;
 
@@ -74,11 +87,12 @@ class _NewAgentPageState extends State<NewAgentPage> {
   @override
   void initState() {
     super.initState();
-    // Which engines this machine actually has. Best effort: an unanswered probe
-    // leaves the list to the engines its own agents are already running, and a
-    // machine with neither still gets the browse-and-create path.
-    unawaited(widget.notifier.probeEngines(widget.machineId));
-    unawaited(_loadCodexProfiles());
+    // After the first frame, not during it: `probeEngines` can notify synchronously, and a notify
+    // while this page is still being mounted marks the listeners above it dirty mid-build — the
+    // "setState() called during build" assertion.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _askMachine();
+    });
     // Read from disk once. `recent` answers from memory after this, so the rows below need no
     // await — but the first build happens before it lands, hence the rebuild.
     unawaited(
@@ -88,11 +102,58 @@ class _NewAgentPageState extends State<NewAgentPage> {
     );
   }
 
+  /// What this form needs to hear from [_machineId]: its engines and its Codex profiles.
+  void _askMachine() {
+    // Which engines this machine actually has. Best effort: an unanswered probe
+    // leaves the list to the engines its own agents are already running, and a
+    // machine with neither still gets the browse-and-create path.
+    unawaited(widget.notifier.probeEngines(_machineId));
+    unawaited(_loadCodexProfiles());
+  }
+
+  /// Moves the form to another machine.
+  ///
+  /// ⚠️ Every folder choice goes with the old machine — a path, a Recent entry and a Codex profile
+  /// all name something on THAT computer, and carried over they would point at nothing, or at a
+  /// different folder that happens to share the path. The engine stays: it names a program, not a
+  /// place.
+  void _selectMachine(String machineId) {
+    if (machineId == _machineId) {
+      setState(() => _machinesOpen = false);
+      return;
+    }
+    setState(() {
+      _machineId = machineId;
+      _machinesOpen = false;
+      _folder = null;
+      _project = null;
+      _projectLabel = null;
+      _recentOpen = false;
+      _codexProfiles = const [];
+      _codexProfile = null;
+      _codexProfilesLoaded = false;
+      _error = null;
+    });
+    _askMachine();
+  }
+
+  /// Machines an agent can be created on right now, in the order the Agents tab's chips draw them —
+  /// so "the first one" is the same machine in both places. The chosen one is kept even if it stops
+  /// answering, so the row never goes blank under the person.
+  List<MachineState> get _machines => [
+    for (final machine in filterableMachines(widget.notifier))
+      if (phoneMachineStatusOf(machine) == PhoneMachineStatus.ready ||
+          machine.machine.machineId == _machineId)
+        machine,
+  ];
+
   /// Discovery runs on the MACHINE, never on this device — the phone has no
   /// Codex config of its own and the agent will not run here anyway.
   Future<void> _loadCodexProfiles() async {
-    final result = await widget.notifier.listCodexProfiles(widget.machineId);
-    if (!mounted) return;
+    final machineId = _machineId;
+    final result = await widget.notifier.listCodexProfiles(machineId);
+    // A late answer from a machine the form has since moved off belongs to nobody.
+    if (!mounted || machineId != _machineId) return;
     final raw = result['profiles'] as List<dynamic>? ?? const [];
     final loaded = raw.map(
       (entry) =>
@@ -115,7 +176,7 @@ class _NewAgentPageState extends State<NewAgentPage> {
       _engine == 'codex' &&
       _machine?.engines['codex']?.supportsCodexHome == true;
 
-  MachineState? get _machine => widget.notifier.stateOf(widget.machineId);
+  MachineState? get _machine => widget.notifier.stateOf(_machineId);
 
   /// Whether this machine can make a folder of its own — a fresh project, or a clone.
   ///
@@ -148,8 +209,7 @@ class _NewAgentPageState extends State<NewAgentPage> {
   /// itself when an agent was deleted, and called that "recent" too.
   ///
   /// Scoped per machine because the paths are: a folder on one computer means nothing on another.
-  List<String> get _recent =>
-      widget.notifier.projectHistory.recent(widget.machineId);
+  List<String> get _recent => widget.notifier.projectHistory.recent(_machineId);
 
   /// Whether the chosen folder came from the browser rather than from Recent.
   bool get _browsed => _folder != null && !_recent.contains(_folder);
@@ -180,6 +240,22 @@ class _NewAgentPageState extends State<NewAgentPage> {
   /// not answered the probe yet look like it runs one engine. The row carries
   /// the caveat instead — see [_engineNote].
   List<EngineIdentity> get _engines => allEngines;
+
+  /// The engines shown before "More". The rest fold behind it: fourteen rows put the Create button's
+  /// neighbours out of reach, and most people start with one of these.
+  static const _primaryEngines = {'claude', 'codex', 'opencode', 'hermes'};
+
+  /// The engine rows on screen: the primary ones, then the rest once unfolded. A chosen engine from
+  /// the folded part stays visible, so the tick is never hidden behind "More".
+  List<EngineIdentity> get _shownEngines => [
+    for (final identity in _engines)
+      if (_primaryEngines.contains(identity.id) ||
+          _moreEnginesOpen ||
+          identity.id == _engine)
+        identity,
+  ];
+
+  int get _hiddenEngineCount => _engines.length - _shownEngines.length;
 
   /// The one caveat worth printing beside an engine's name, or none.
   ///
@@ -224,7 +300,7 @@ class _NewAgentPageState extends State<NewAgentPage> {
     final chosen = await showRemoteFolderPicker(
       context,
       notifier: widget.notifier,
-      machineId: widget.machineId,
+      machineId: _machineId,
       initialPath: _folder,
     );
     if (chosen == null || !mounted) return;
@@ -250,7 +326,7 @@ class _NewAgentPageState extends State<NewAgentPage> {
     // call made on its own before: a retry after a refusal is a new request.
     final creation = AgentCreationAttempt();
     final error = await widget.notifier.createAgent(
-      widget.machineId,
+      _machineId,
       engine: engine,
       // Empty only in the branch that drops `cwd` from the payload entirely — `createAgent` keeps
       // this required so the ordinary case cannot be left out by accident.
@@ -290,7 +366,7 @@ class _NewAgentPageState extends State<NewAgentPage> {
     openAgent(
       context,
       widget.notifier,
-      widget.machineId,
+      _machineId,
       agentId,
       replacingCurrentPage: true,
     );
@@ -302,6 +378,15 @@ class _NewAgentPageState extends State<NewAgentPage> {
     builder: (context, _) {
       AppTheme.watch(context);
       final machine = _machine;
+      final machines = _machines;
+      // "New project" is the folder until one is chosen. Applied here rather than in `initState`
+      // because it can only be offered once the machine has said it can make one, and that answer
+      // lands after the page opens. Nothing but a machine switch leaves both unset again, so this
+      // never overrides a choice — and a switch re-applies it on the new machine.
+      if (_folder == null && _project == null && _canMakeProject) {
+        _project = const ProjectFolderRequest.newProject();
+        _projectLabel = 'New project';
+      }
       final ready =
           (_folder != null || _project != null) &&
           _engine != null &&
@@ -311,20 +396,53 @@ class _NewAgentPageState extends State<NewAgentPage> {
         body: SafeArea(
           child: Column(
             children: [
-              PhoneHeader(
-                title: 'New agent',
-                subtitle: Text(
-                  machine?.machine.displayName ?? '',
-                  style: TextStyle(
-                    color: AppPalette.textSecondary,
-                    fontSize: 13,
-                  ),
-                ),
-              ),
+              // No machine under the title any more: the MACHINE rows below say it, and are where it
+              // is changed.
+              const PhoneHeader(title: 'New agent'),
               Expanded(
                 child: ListView(
                   padding: const EdgeInsets.only(bottom: 16),
                   children: [
+                    const SettingsCaption('MACHINE'),
+                    SettingsGroup(
+                      children: [
+                        // Folded like Recent: the chosen machine is the answer most of the time,
+                        // and the others only matter to somebody about to change it.
+                        SettingsRow(
+                          title: machine?.machine.displayName ?? 'Machine',
+                          leading: Icon(
+                            LucideIcons.laptopMinimal300,
+                            size: 18,
+                            color: AppPalette.textSecondary,
+                          ),
+                          trailing: machines.length < 2
+                              ? null
+                              : Icon(
+                                  _machinesOpen
+                                      ? LucideIcons.chevronUp300
+                                      : LucideIcons.chevronDown300,
+                                  size: 18,
+                                  color: AppPalette.textFaint,
+                                ),
+                          onTap: machines.length < 2
+                              ? null
+                              : () => setState(
+                                  () => _machinesOpen = !_machinesOpen,
+                                ),
+                        ),
+                        if (_machinesOpen)
+                          for (final other in machines)
+                            SettingsRow(
+                              title: other.machine.displayName,
+                              nested: true,
+                              trailing: _check(
+                                other.machine.machineId == _machineId,
+                              ),
+                              onTap: () =>
+                                  _selectMachine(other.machine.machineId),
+                            ),
+                      ],
+                    ),
                     const SettingsCaption('FOLDER'),
                     SettingsGroup(
                       children: [
@@ -433,7 +551,7 @@ class _NewAgentPageState extends State<NewAgentPage> {
                     const SettingsCaption('ENGINE'),
                     SettingsGroup(
                       children: [
-                        for (final identity in _engines) ...[
+                        for (final identity in _shownEngines) ...[
                           SettingsRow(
                             title: identity.label,
                             detail: _engineNote(identity.id),
@@ -474,6 +592,20 @@ class _NewAgentPageState extends State<NewAgentPage> {
                               ),
                           ],
                         ],
+                        // The rest of the engines, behind one row. It stays once opened: there is
+                        // nothing to fold back to that the person would want.
+                        if (!_moreEnginesOpen && _hiddenEngineCount > 0)
+                          SettingsRow(
+                            title: '…',
+                            detail: '$_hiddenEngineCount more',
+                            leading: Icon(
+                              LucideIcons.ellipsis300,
+                              size: 18,
+                              color: AppPalette.textSecondary,
+                            ),
+                            onTap: () =>
+                                setState(() => _moreEnginesOpen = true),
+                          ),
                       ],
                     ),
                   ],

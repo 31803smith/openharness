@@ -14,7 +14,6 @@ import 'phone_card.dart';
 import 'phone_fab.dart';
 import 'phone_header.dart';
 import 'phone_search_button.dart';
-import 'phone_sheet.dart';
 import 'phone_navigation.dart';
 import 'phone_status.dart';
 
@@ -76,7 +75,13 @@ class _AgentsTabState extends State<AgentsTab> {
             : PhoneFab(
                 icon: LucideIcons.plus300,
                 tooltip: 'New agent',
-                onPressed: () => _pickMachine(context, ready),
+                // Straight to the form, on the first machine that can host an agent. Which machine
+                // is the form's first question, and it is changed there.
+                onPressed: () => openNewAgent(
+                  context,
+                  widget.notifier,
+                  ready.first.machine.machineId,
+                ),
               ),
         body: SafeArea(
           bottom: false,
@@ -129,33 +134,6 @@ class _AgentsTabState extends State<AgentsTab> {
       );
     },
   );
-
-  /// Which machine the new agent runs on, asked before anything else.
-  ///
-  /// This list is the one screen that does NOT already know: it is every agent on the account, and
-  /// the machine is a filter above it rather than the thing navigated through. So the `+` cannot
-  /// carry a machine the way [AgentsPage]'s does, and guessing one — the first, the filtered one —
-  /// would put an agent on a computer nobody named.
-  ///
-  /// ⚠️ Shown even when only one machine qualifies. A sheet of one still says WHERE the agent is
-  /// about to be created, and that is the question this step exists to answer.
-  void _pickMachine(BuildContext context, List<MachineState> ready) =>
-      showPhoneSheet(
-        context,
-        title: 'New agent on…',
-        actions: [
-          for (final machine in ready)
-            PhoneSheetAction(
-              icon: LucideIcons.laptopMinimal300,
-              label: machine.machine.displayName,
-              onTap: () => openNewAgent(
-                context,
-                widget.notifier,
-                machine.machine.machineId,
-              ),
-            ),
-        ],
-      );
 }
 
 class _Body extends StatelessWidget {
