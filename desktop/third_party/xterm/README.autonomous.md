@@ -170,3 +170,20 @@ it if one is dropped.
     never swallowed, and Android performs its editor action without the second
     insert so nothing there matches. Regression:
     `mobile/test/terminal_ime_input_test.dart`.
+11. **Block Elements (U+2580–U+259F) are painted as rectangles, not font
+    glyphs** (`lib/src/ui/block_glyphs.dart`, `lib/src/ui/painter.dart`,
+    `lib/src/ui/render.dart`, `lib/src/terminal_view.dart`). A cell is
+    `TerminalStyle.height` (1.2) times the font size, rounded to whole pixels
+    by SkParagraph (13 pt → 16 px), but a font's block glyphs only cover the
+    face's own ascent and descent — and SF Mono's don't reach the cell's edges
+    horizontally either — so anything drawn with blocks (Claude Code's mascot,
+    progress bars, TUI borders) showed a dark band under every row and seams
+    between columns. `paintCellForeground` now hands those code points to
+    `paintBlockGlyph`, which fills the cell's own rectangle(s) with every edge
+    snapped to a device pixel (the view feeds the painter
+    `MediaQuery.devicePixelRatioOf`) and anti-aliasing off; the snapping is
+    what makes neighbours tile on Impeller, which ignores the flag. The three
+    shade characters are a full cell at 25/50/75 % coverage, and inverse/faint
+    follow the text path. Box drawing (U+2500–U+257F) still comes from the
+    font. Regression: `test/terminal_block_glyph_test.dart`, which also
+    rasterises through the real painter.
