@@ -1,4 +1,4 @@
-// The WHOLE chain, across both repositories:
+// The WHOLE chain, across the backend and provider packages:
 //
 //   client frame → providerLink → HTTP/SSE → the real reference-provider → frames back
 //
@@ -16,8 +16,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 
 const ENABLED = process.env.PROVIDER_E2E === '1'
 const HERE = dirname(fileURLToPath(import.meta.url))
-/** The published contract lives in a sibling checkout. */
-const PROVIDER_DIR = resolve(HERE, '../../../../../autonomous-harness/provider/reference-provider')
+/** Exercise the reference implementation shipped in this monorepo. */
+const PROVIDER_DIR = resolve(HERE, '../../../provider/reference-provider')
 
 const published = vi.hoisted(() => [] as Array<{ machineId: string; frame: { type?: string; payload?: Record<string, unknown> } }>)
 const binding = vi.hoisted(() => ({ current: null as Record<string, unknown> | null }))
@@ -81,7 +81,7 @@ describeIf('the real chain, against the published reference-provider', () => {
     if (!existsSync(PROVIDER_DIR)) {
       throw new Error(
         `PROVIDER_E2E=1 but the published provider is not at ${PROVIDER_DIR}. `
-        + 'Check out autonomous-ai/autonomous-harness beside this repository, or unset PROVIDER_E2E.',
+        + 'Install dependencies in provider/reference-provider before running this suite.',
       )
     }
     baseUrl = await bootPublishedProvider()
