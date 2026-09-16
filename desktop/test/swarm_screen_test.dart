@@ -120,7 +120,7 @@ void main() {
       final app = createApp();
       final tab = app.activeSwarm;
       await mount(tester, app, nativeTabs: native);
-      expect(tab.name, 'New Harness');
+      expect(tab.name, 'New Tab');
       expect(
         find.byKey(const ValueKey('harness-start-search')),
         findsOneWidget,

@@ -17,7 +17,7 @@ Finder get selectedRow =>
 void main() {
   for (final nativeTabs in [false, true]) {
     testWidgets(
-      'New Harness offers Open Agent and preserves the selected runtime (native=$nativeTabs)',
+      'New Tab offers Open Agent and preserves the selected runtime (native=$nativeTabs)',
       (tester) async {
         const channel = MethodChannel('harness/swarm_tabs');
         tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
@@ -56,7 +56,7 @@ void main() {
         }
         final opened = app.activeSwarm;
         expect(opened, isNot(same(original)));
-        expect(opened.name, 'New Harness');
+        expect(opened.name, 'New Tab');
         expect(opened.panes, isEmpty);
         expect(find.byType(AlertDialog), findsNothing);
         await chord(tester, LogicalKeyboardKey.keyO);
@@ -107,7 +107,7 @@ void main() {
     expect(harnessCommandById['agent.new']!.label, 'New Agent');
     await tester.tap(find.byKey(const ValueKey('command:swarm.new')));
     await tester.pump();
-    expect(app.activeSwarm.name, 'New Harness');
+    expect(app.activeSwarm.name, 'New Tab');
     expect(app.panes, isEmpty);
     expect(app.allPanes, contains(pane));
     expect(find.byKey(const ValueKey('harness-start-search')), findsOneWidget);

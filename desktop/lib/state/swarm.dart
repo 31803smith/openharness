@@ -11,9 +11,17 @@ class Swarm {
   Swarm({required this.id, String name = defaultName})
     : name = normalizeName(name);
 
-  static const defaultName = 'New Harness';
+  static const defaultName = 'New Tab';
+  // 'New Harness' was the default until 2026-09-15; a layout saved before then
+  // still carries it, and it must read as the same fresh tab.
   static String normalizeName(String name) =>
-      const {'New swarm', 'New tab', 'New Tab', 'New Agent'}.contains(name)
+      const {
+        'New swarm',
+        'New tab',
+        'New Tab',
+        'New Harness',
+        'New Agent',
+      }.contains(name)
       ? defaultName
       : name;
 

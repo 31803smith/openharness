@@ -1,5 +1,5 @@
 // A harness created from the dialog gets a tab of its own, named after the
-// harness — the viewer is the product and needs the width. A New Harness start
+// harness — the viewer is the product and needs the width. A New Tab start
 // page the user is already on is that tab; a tab with work in it is left alone.
 import 'dart:async';
 

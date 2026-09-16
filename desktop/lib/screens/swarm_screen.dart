@@ -1570,7 +1570,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
         IconButton(
           key: const ValueKey('swarm-new-tab-button'),
           onPressed: app.canOpenNewTab ? _newTab : null,
-          icon: const Icon(Icons.add, size: 18, semanticLabel: 'New Harness'),
+          icon: const Icon(Icons.add, size: 18, semanticLabel: 'New Tab'),
         ),
         _harnessButton(create: true),
         const SizedBox(width: 10),

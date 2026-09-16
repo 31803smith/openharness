@@ -733,7 +733,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _sectionLabel('Choose an engine'),
+          _sectionLabel('Choose a harness'),
           AgentPicker(
             compact: true,
             tileSize: tileSize,
