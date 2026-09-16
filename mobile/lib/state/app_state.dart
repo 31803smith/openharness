@@ -22,6 +22,7 @@ import '../core/agent_preference.dart';
 import '../core/engine_availability.dart';
 import '../core/local_hostname.dart';
 import '../core/local_git_projects.dart';
+import '../core/last_opened_agent.dart';
 import '../core/test_run.dart';
 import '../core/models.dart';
 import '../core/project_folder.dart';
@@ -1069,6 +1070,7 @@ class AppNotifier extends ChangeNotifier {
        dial = DialState(paneLayoutStore?.storage),
        agentPreference = AgentPreference(paneLayoutStore?.storage),
        projectHistory = ProjectHistory(paneLayoutStore?.storage),
+       lastOpenedAgent = LastOpenedAgent(paneLayoutStore?.storage),
        session = authSession,
        _store = configStore,
        cliLink = cliLink ?? CliLink(),
@@ -1133,6 +1135,9 @@ class AppNotifier extends ChangeNotifier {
   /// from `machine.agents` and a deleted agent takes its folder off it; this one is a HISTORY and
   /// outlives the agent — which is what "recent" has to mean for the word to be true.
   final ProjectHistory projectHistory;
+
+  /// The agent the phone's terminal had open, kept across launches — see [LastOpenedAgent].
+  final LastOpenedAgent lastOpenedAgent;
 
   TerminalPane? get focusedPane {
     final id = focusedPaneId;

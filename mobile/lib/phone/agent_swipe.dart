@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'package:harness_mobile/state/app_state.dart';
+
 import 'agent_index.dart';
 import 'terminal_page.dart';
 import 'voice_input_controller.dart';
@@ -136,6 +137,8 @@ class _AgentSwipeHostState extends State<AgentSwipeHost> {
     // See [resetKeyboardSession].
     resetKeyboardSession();
     _attached.add(_current);
+    // What a relaunch reopens — kept up to date on every swipe, and cleared only by leaving.
+    widget.notifier.lastOpenedAgent.remember(_current);
     final neighbours = widget.neighbours;
     if (neighbours == null || neighbours.isEmpty) return;
     // The snapshot is fixed for as long as this pager lives, so the opening page is the only index
@@ -158,6 +161,9 @@ class _AgentSwipeHostState extends State<AgentSwipeHost> {
     _voice.dispose();
     _controller?.dispose();
     _detachAll();
+    // Leaving the terminal means the next launch starts on the list. A process the OS kills never
+    // gets here, which is what leaves the record behind for the reopen.
+    widget.notifier.lastOpenedAgent.forget(_current);
     super.dispose();
   }
 
@@ -175,7 +181,9 @@ class _AgentSwipeHostState extends State<AgentSwipeHost> {
     for (final agent in _attached) {
       if (agent == keep) continue;
       final pane = notifier.panes
-          .where((p) => p.machineId == agent.machineId && p.agentId == agent.agentId)
+          .where(
+            (p) => p.machineId == agent.machineId && p.agentId == agent.agentId,
+          )
           .firstOrNull;
       if (pane != null) unawaited(notifier.closePane(pane.id));
     }
@@ -239,6 +247,7 @@ class _AgentSwipeHostState extends State<AgentSwipeHost> {
     // agent added here that never finishes attaching costs nothing: [_detachAll] looks for its pane
     // and finds none.
     _attached.add(arrived);
+    widget.notifier.lastOpenedAgent.remember(arrived);
     setState(() {
       _page = index;
       _current = arrived;
