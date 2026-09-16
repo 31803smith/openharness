@@ -258,6 +258,15 @@ export class TerminalStreamManager {
         pasteFile: true,
         // Bounded media reads through the already encrypted agent_read_file RPC.
         mediaPreview: true,
+        // `agent_create` understands `projectSource` — a folder this machine makes or clones for
+        // itself — rather than only a `cwd` the client already knows. A client old enough to
+        // predate `lib/projectFolder.ts` never sends it, and one NEWER than the machine has no way
+        // to tell without this: the keys are simply ignored, `cwd` comes up missing, and the
+        // refusal arrives as INVALID_CWD — "the project folder is unavailable", about a folder
+        // nobody named. Advertised here, beside the other "what this CLI can do" answers, even
+        // though creating an agent is not terminal streaming; this is the message a client already
+        // asks every machine.
+        projectFolder: true,
       },
       engines: terminalEngineCapabilities(this.deps.streamingAvailable),
     })
