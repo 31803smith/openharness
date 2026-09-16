@@ -125,6 +125,10 @@ class _AgentSwipeHostState extends State<AgentSwipeHost> {
   @override
   void initState() {
     super.initState();
+    // A fresh pager is a fresh session: whatever the person did to the keyboard
+    // the last time they were in a terminal does not decide what this one does.
+    // See [resetKeyboardSession].
+    resetKeyboardSession();
     _attached.add(_current);
     final neighbours = widget.neighbours;
     if (neighbours == null || neighbours.isEmpty) return;

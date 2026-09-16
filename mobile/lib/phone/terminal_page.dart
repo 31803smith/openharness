@@ -58,6 +58,47 @@ class TerminalPage extends StatefulWidget {
   State<TerminalPage> createState() => _TerminalPageState();
 }
 
+/// Whether the software keyboard is up, as one fact rather than as a flag each
+/// page keeps for itself.
+///
+/// ⚠️ Per-page state cannot answer the question the pager asks. A page keeps
+/// [_TerminalPageState._claimSpent] to stop itself re-summoning a keyboard the
+/// person dismissed — but that flag is only ever armed by a keyboard this page
+/// WATCHED rise. Swiping A → B → C and hiding the keyboard at C leaves B
+/// having mounted while it was already down: its claim was never spent, so on
+/// the way back it looked exactly like a page arriving fresh and pulled the
+/// keyboard up again. Whether the keyboard is up is a property of the SCREEN,
+/// not of any one page, so it is kept once here.
+///
+/// Written by every mounted page's `didChangeMetrics` — they all see the same
+/// inset, so they all write the same value.
+bool _keyboardIsUp = false;
+
+/// Whether the keyboard has been PUT AWAY while the pager was open, as opposed
+/// to never having been raised.
+///
+/// ⚠️ The pager's second half, and per-page state cannot hold it either. A page
+/// raises the keyboard on arrival because that is what opening an agent should
+/// do — but once somebody has dismissed it, every page reached by swiping after
+/// that must leave it down, including pages that have never been on screen and
+/// so have nothing of their own to remember. It is the PERSON's choice, made
+/// once, and it outlives any one page.
+///
+/// Set when the inset falls to zero with the pager open; cleared when it rises
+/// again, so tapping a pane to type re-arms the ordinary behaviour.
+bool _keyboardDismissed = false;
+
+/// Forgets what the keyboard did during the last run of terminal pages.
+///
+/// Called when a pager opens. The dismissal above is deliberately sticky ACROSS
+/// pages so a swipe cannot undo it, which makes it sticky across whole visits
+/// too unless something clears it — and "I put the keyboard away on that agent
+/// an hour ago" should not decide what opening a different agent does now.
+void resetKeyboardSession() {
+  _keyboardIsUp = false;
+  _keyboardDismissed = false;
+}
+
 class _TerminalPageState extends State<TerminalPage>
     with WidgetsBindingObserver {
   /// Whether this page's pane ever existed.
@@ -100,6 +141,16 @@ class _TerminalPageState extends State<TerminalPage>
   /// Arming on the way up removes the race: by the time any Back arrives,
   /// claiming has been off for as long as the keyboard has been visible.
   bool _claimSpent = false;
+
+  /// Whether this page has already had a turn on screen and been swiped away.
+  ///
+  /// ⚠️ What separates "arriving" from "coming back", which [_claimSpent]
+  /// cannot. A page the pager built while the keyboard was down never spent its
+  /// claim, so on its second turn it looked exactly like one opened fresh — and
+  /// summoned the keyboard again after the person had dismissed it two agents
+  /// away. A page raises the keyboard on its FIRST turn only; after that it
+  /// holds whatever is there and summons nothing.
+  bool _hasHadATurn = false;
 
   /// Whether the software keyboard is up, and with it [TerminalKeyBar].
   ///
@@ -147,6 +198,10 @@ class _TerminalPageState extends State<TerminalPage>
   void didUpdateWidget(TerminalPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.isActive && !widget.isActive) {
+      // Marked on the way OUT, not on the way in: the flag means "has had its
+      // turn", and a page still on its first one must keep the summon it has
+      // not used yet.
+      _hasHadATurn = true;
       _cancelSettle();
       if (_keyboardSettling) setState(() => _keyboardSettling = false);
     }
@@ -178,6 +233,14 @@ class _TerminalPageState extends State<TerminalPage>
     // Spending the claim this early is the point: it is off long before any
     // Back press can arrive.
     final up = inset > 0;
+    // Every mounted page writes it, and they all see the same inset — so a page
+    // that was parked while the keyboard came and went still reads the truth.
+    if (up != _keyboardIsUp) {
+      _keyboardIsUp = up;
+      // Falling to zero is a dismissal; rising again is somebody asking for it
+      // back, which restores what a freshly opened agent does.
+      _keyboardDismissed = !up;
+    }
     final claim = _claimSpent || up;
 
     // Every tick that MOVES the inset is the animation still running; the run
@@ -211,6 +274,29 @@ class _TerminalPageState extends State<TerminalPage>
       _keyboardSettling = settling;
     });
   }
+
+  /// Whether [TerminalPanel] should hold the input connection.
+  ///
+  /// Two different questions, and [_claimSpent] alone can only answer one:
+  ///
+  ///  - **Raise a keyboard that is down.** One chance per page, spent the
+  ///    moment the keyboard appears, so Back can put it away without the claim
+  ///    fetching it straight back — see [_claimSpent].
+  ///  - **Hold a keyboard that is already up.** What swiping between agents
+  ///    needs: the outgoing page releases focus, and unless the incoming one
+  ///    takes it in the same frame the platform closes the keyboard.
+  ///
+  /// ⚠️ The second case reads [_keyboardIsUp], the one screen-wide fact, rather
+  /// than anything this page remembers. Per-page flags get the pager wrong in
+  /// both directions: [_claimSpent] is armed by a parked neighbour merely
+  /// WATCHING the keyboard rise, and it is never armed at all on a page built
+  /// while the keyboard was down — so a page coming back for its second turn
+  /// was indistinguishable from one opened fresh, and summoned a keyboard the
+  /// person had dismissed two agents away. [_hasHadATurn] closes that: the
+  /// summon belongs to a page's first turn only.
+  bool get _shouldFocus =>
+      widget.isActive &&
+      (_keyboardIsUp || (!_claimSpent && !_hasHadATurn && !_keyboardDismissed));
 
   /// Puts the keyboard away without leaving the page — the `⌄` key on
   /// [TerminalKeyBar]. Dropping focus is what closes the input connection;
@@ -397,12 +483,10 @@ class _TerminalPageState extends State<TerminalPage>
                                 // panel's other half: a page parked beside this one releases
                                 // focus, stops rendering and stops resizing its remote shell.
                                 //
-                                // AND only until the keyboard is actually up —
-                                // see [_claimSpent]. Both gates, not either:
-                                // `isActive` keeps a parked page from stealing
-                                // the keyboard, `_claimSpent` keeps this one
-                                // from taking it back after Back.
-                                focused: widget.isActive && !_claimSpent,
+                                // Whether it also HOLDS one that is already
+                                // up is a separate question, and the pager asks
+                                // it on every swipe — see [_shouldFocus].
+                                focused: _shouldFocus,
                                 visible: widget.isActive,
                                 // Hold the renderer still while the keyboard
                                 // slides. Separate from `visible` because this
