@@ -43,7 +43,12 @@
  * authentication with nothing naming why.
  */
 
-import { HARNESS_MCP_SERVER_NAME, HARNESS_MCP_TOOL_NAMES } from './harnessWebTools.js'
+import {
+  HARNESS_MCP_SERVER_NAME,
+  HARNESS_MCP_TOOL_NAMES,
+  HARNESS_WEB_READ_TOOL_NAME,
+  HARNESS_WEB_SEARCH_TOOL_NAME,
+} from './harnessWebTools.js'
 
 /**
  * The variable Codex reads its header out of.
@@ -147,6 +152,72 @@ export const CLAUDE_DISALLOW_WEB_TOOLS_ARG = '--disallowedTools=WebSearch,WebFet
  * [CLAUDE_DISALLOW_WEB_TOOLS_ARG], for the same variadic reason.
  */
 export const CLAUDE_ALLOW_WEB_TOOLS_ARG = `--allowedTools=${HARNESS_MCP_TOOL_NAMES.join(',')}`
+
+/**
+ * What a Claude Code agent on a grid is told about the web in its system prompt, and the flag that
+ * makes Claude Code deliver it to a conversation already under way.
+ *
+ * [CLAUDE_DISALLOW_WEB_TOOLS_ARG] takes `WebSearch` and `WebFetch` out of the tool LIST, and the list
+ * is not the only place a model reads tool names from. An agent is moved onto a grid mid-conversation
+ * far more often than launched onto one, and the conversation it resumes carries every turn it had
+ * on the Subscription model — `WebSearch` calls that SUCCEEDED, results and all. A model imitates
+ * those ahead of reading the list. Seen on a real pane (2026-09-16, Claude Code 2.1.273,
+ * `deepseek/deepseek-v4-flash-0731` resumed after three `WebSearch` turns on Sonnet 5): the first
+ * response carried three `WebSearch` calls, each refused "No such tool available: WebSearch", and
+ * only the next turn reached for `mcp__harness__web_search`. That request's tool list had no
+ * `WebSearch` in it — read off the transcript's own `prompt_snapshot` record; the history did.
+ *
+ * So the prompt says it in words: which tools are gone, that earlier turns are no evidence they are
+ * back, and what to call instead. Words lower the odds; they cannot make them zero, because the
+ * history is exactly what `--resume` exists to keep. The only zero is a history that never held
+ * `WebSearch` — routing the Subscription model's web through this server too — and that is a product
+ * decision, not this module's.
+ *
+ * ⚠️ **`--append-system-prompt` alone never reaches a resumed conversation.** Claude Code records
+ * the system prompt on a conversation's first request and replays that record on every later request
+ * and resume, "even when a later launch passes different text" (`--system-prompt-snapshot`, default
+ * `on`, `claude --help` 2.1.273). Measured 2026-09-16 on a session resumed with
+ * `--append-system-prompt` carrying a marker: the model answered that no marker was present and no
+ * new record was written; with `--system-prompt-snapshot off` on the same launch it answered with
+ * the marker. A later launch WITHOUT the flag — the move back to the Subscription model — replayed
+ * the original record, so nothing said here follows the agent off the grid. `off` gives up the
+ * prompt's cache stability, which a grid relay does not offer anyway: `cache_read_input_tokens` was
+ * 0 on every grid response in that transcript.
+ *
+ * Two texts, because a degraded launch (no MCP url) has nothing to point at: naming a tool the model
+ * was not given would send it down the same road as the dead one. Neither says "grid" — a model
+ * narrates its system prompt back to the user ("WebSearch got disabled mid-session. I'll use the
+ * harness web search tool instead."), and the user's vocabulary is "Subscription" and "Local".
+ *
+ * Two tokens each, unlike the tool-list flags above: `<prompt>` and `<on|off>` take exactly one
+ * value, so nothing after them can be swallowed — and the two-token form is the one measured. Argv is
+ * positional all the way to `exec "$@"` (`engineLaunch.ts`), so the spaces and backticks in the text
+ * never meet a shell.
+ */
+export const CLAUDE_SYSTEM_PROMPT_SNAPSHOT_OFF_ARGS: readonly string[] = ['--system-prompt-snapshot', 'off']
+
+/** The sentence both texts share: the tools, the history, and the instruction. */
+const CLAUDE_WEB_TOOLS_GONE = 'The built-in `WebSearch` and `WebFetch` tools are not available in this session, '
+  + 'even where earlier turns of this conversation used them — do not call them'
+
+function claudeGridSystemPrompt(webToolsWired: boolean): string {
+  if (!webToolsWired) {
+    return `This session has no web tools. ${CLAUDE_WEB_TOOLS_GONE}; `
+      + 'tell the user the web cannot be searched or read from here instead.'
+  }
+  return `Web tools in this session come from the \`${HARNESS_MCP_SERVER_NAME}\` MCP server only: `
+    + `\`${HARNESS_WEB_SEARCH_TOOL_NAME}\` searches the web and \`${HARNESS_WEB_READ_TOOL_NAME}\` reads pages. `
+    + `${CLAUDE_WEB_TOOLS_GONE}; call the \`${HARNESS_MCP_SERVER_NAME}\` tools instead.`
+}
+
+/**
+ * The prompt for a Claude Code grid launch, and the flag that lets it through — see
+ * [CLAUDE_SYSTEM_PROMPT_SNAPSHOT_OFF_ARGS]. [webToolsWired] is whether the launch carries the server
+ * (`webSearch: 'on'`), so the text and the status the app shows cannot disagree.
+ */
+export function claudeGridPromptArgs(webToolsWired: boolean): string[] {
+  return [...CLAUDE_SYSTEM_PROMPT_SNAPSHOT_OFF_ARGS, '--append-system-prompt', claudeGridSystemPrompt(webToolsWired)]
+}
 
 /**
  * Codex's native `web_search`, turned off on every Codex agent launched onto a grid.

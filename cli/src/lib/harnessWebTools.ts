@@ -32,12 +32,18 @@ const WEB_READ_TOOL = 'web_read'
  */
 const mcpToolName = (tool: string): string => `mcp__${HARNESS_MCP_SERVER_NAME}__${tool}`
 
+/** `mcp__harness__web_search` — the name a Claude Code or Codex agent calls, and is told to call. */
+export const HARNESS_WEB_SEARCH_TOOL_NAME = mcpToolName(WEB_SEARCH_TOOL)
+
+/** `mcp__harness__web_read`, likewise. */
+export const HARNESS_WEB_READ_TOOL_NAME = mcpToolName(WEB_READ_TOOL)
+
 /**
  * The server's tools as an engine names them — the list a launch pre-approves. Exactly the two the
  * control plane serves, by name rather than as a server-wide `mcp__harness` rule: a tool the server
  * grows later is one nobody here has looked at, and it should prompt like any other.
  */
-export const HARNESS_MCP_TOOL_NAMES: readonly string[] = [mcpToolName(WEB_SEARCH_TOOL), mcpToolName(WEB_READ_TOOL)]
+export const HARNESS_MCP_TOOL_NAMES: readonly string[] = [HARNESS_WEB_SEARCH_TOOL_NAME, HARNESS_WEB_READ_TOOL_NAME]
 
 /** The canonical card the desktop and web already render, and the input shape it reads. */
 export interface HarnessWebToolCard {
@@ -47,8 +53,8 @@ export interface HarnessWebToolCard {
 
 /** Which native card a tool name from this server maps to, or null for any other tool. */
 export function harnessWebToolKind(name: string | undefined): HarnessWebToolCard['tool'] | null {
-  if (name === mcpToolName(WEB_SEARCH_TOOL)) return 'WebSearch'
-  if (name === mcpToolName(WEB_READ_TOOL)) return 'WebFetch'
+  if (name === HARNESS_WEB_SEARCH_TOOL_NAME) return 'WebSearch'
+  if (name === HARNESS_WEB_READ_TOOL_NAME) return 'WebFetch'
   return null
 }
 

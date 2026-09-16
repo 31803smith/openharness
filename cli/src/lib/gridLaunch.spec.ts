@@ -103,8 +103,14 @@ describe('the launch each engine gets', () => {
         ANTHROPIC_AUTH_TOKEN: WIRE.apiKey,
         ANTHROPIC_MODEL: 'GLM-4.7-Flash',
       },
-      // The built-in web tools no grid can run — see "takes Claude Code's built-in web tools away".
-      args: ['--disallowedTools=WebSearch,WebFetch'],
+      args: [
+        // The built-in web tools no grid can run — see "takes Claude Code's built-in web tools away".
+        '--disallowedTools=WebSearch,WebFetch',
+        // …and the words that tell the model so, delivered to a resumed conversation too — see "tells
+        // Claude Code in its system prompt".
+        '--system-prompt-snapshot', 'off',
+        '--append-system-prompt', expect.stringContaining('WebSearch'),
+      ],
       // No MCP url in this override, so no web tools — and the app is told so.
       webSearch: 'unavailable',
     })
@@ -657,6 +663,61 @@ describe('web tools (grid ADR 0041)', () => {
     expect(launchOf('claude', WITH_MCP).args).not.toContain('--disallowedTools=WebSearch')
   })
 
+  it('tells Claude Code in its system prompt that the built-in web tools are gone — on every grid launch', () => {
+    // `--disallowedTools` empties the tool LIST of them, and the list is not the only place a model
+    // reads tool names from. A conversation moved onto a grid mid-way still carries the `WebSearch`
+    // turns it had on the Subscription model, and a model imitates those ahead of reading the list —
+    // seen on a real pane (2026-09-16, Claude Code 2.1.273, a DeepSeek model resumed after three
+    // `WebSearch` turns on Sonnet 5): one response carrying three `WebSearch` calls, each refused "No
+    // such tool available", before the next turn found `mcp__harness__web_search`. The list of that
+    // request had no `WebSearch` in it; the history did. So the prompt says so in words.
+    for (const override of [OVERRIDE, WITH_MODEL, WITH_MCP]) {
+      const args = launchOf('claude', override).args
+      const at = args.indexOf('--append-system-prompt')
+      expect(at, 'claude was not given --append-system-prompt').toBeGreaterThanOrEqual(0)
+      const prompt = args[at + 1] as string
+      expect(prompt).toContain('WebSearch')
+      expect(prompt).toContain('WebFetch')
+      // Earlier turns are the whole problem, so the text names them rather than leaving the model to
+      // weigh a tool list against a history that contradicts it.
+      expect(prompt).toMatch(/earlier turns/)
+      // Principle 4 of the plan: a model narrates its system prompt back to the user ("WebSearch got
+      // disabled mid-session. I'll use the harness web search tool instead."), so "grid" is not in it.
+      expect(prompt.toLowerCase()).not.toContain('grid')
+    }
+  })
+
+  it('makes that prompt reach a conversation the agent was already in the middle of', () => {
+    // Claude Code records the system prompt on a conversation's first request and replays the record
+    // on every later request and resume, "even when a later launch passes different text"
+    // (`--system-prompt-snapshot`, default `on`, 2.1.273). Measured 2026-09-16 on a resumed session:
+    // with `--append-system-prompt` alone the model never saw the text and no new record was written;
+    // with `--system-prompt-snapshot off` on the same launch it did — and a later launch WITHOUT the
+    // flag (the move back to the Subscription model) replayed the original record, so nothing said
+    // on the grid follows the agent off it. A move onto a grid is nearly always such a resume.
+    for (const override of [OVERRIDE, WITH_MODEL, WITH_MCP]) {
+      const args = launchOf('claude', override).args
+      const at = args.indexOf('--system-prompt-snapshot')
+      expect(at, 'claude was not given --system-prompt-snapshot').toBeGreaterThanOrEqual(0)
+      expect(args[at + 1]).toBe('off')
+    }
+  })
+
+  it('points the prompt at the harness tools only when they were wired', () => {
+    const promptOf = (override: GridLaunchOverride): string => {
+      const args = launchOf('claude', override).args
+      return args[args.indexOf('--append-system-prompt') + 1] as string
+    }
+    // With a server: name the replacements, so the model has somewhere to go.
+    expect(promptOf(WITH_MCP)).toContain('mcp__harness__web_search')
+    expect(promptOf(WITH_MCP)).toContain('mcp__harness__web_read')
+    // Without one — a degraded launch, or an older desktop — naming a tool the model was not given
+    // would send it down the same road as the dead one, so the prompt says there are no web tools.
+    expect(promptOf(WITH_MODEL)).not.toContain('mcp__harness__')
+    expect(promptOf(WITH_MODEL)).toMatch(/no web tools/)
+
+  })
+
   it("pre-approves the harness web tools for Claude Code, so a permission mode cannot take them away", () => {
     // The tools are the daemon's own gift to the agent, and Claude Code's permission system does not
     // know that: in `default` mode every call prompts, and in `auto` mode the classifier DENIED
@@ -682,9 +743,14 @@ describe('web tools (grid ADR 0041)', () => {
   })
 
   it('adds no web tools when the desktop sends no mcpUrl', () => {
-    // An older desktop, and the no-regression promise: no server it did not ask for. Claude's one flag
-    // is not a web tool but the removal of one no grid can run — see the test above.
-    expect(launchOf('claude', WITH_MODEL).args).toEqual(['--disallowedTools=WebSearch,WebFetch'])
+    // An older desktop, and the no-regression promise: no server it did not ask for. Claude's flags
+    // are not web tools but the removal of two no grid can run, and the words that say so — with no
+    // replacement named, since none was wired. See the tests above.
+    expect(launchOf('claude', WITH_MODEL).args).toEqual([
+      '--disallowedTools=WebSearch,WebFetch',
+      '--system-prompt-snapshot', 'off',
+      '--append-system-prompt', expect.not.stringContaining('mcp__harness__'),
+    ])
     expect(launchOf('claude', WITH_MODEL).env.GRID_API_KEY).toBeUndefined()
     expect(launchOf('grok', WITH_MODEL).configDir!.files[0]!.content).not.toContain('mcp_servers')
     expect(launchOf('copilot', WITH_MODEL).args).toEqual([])
