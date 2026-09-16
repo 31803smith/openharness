@@ -3141,7 +3141,10 @@ class AppNotifier extends ChangeNotifier {
             : null,
       );
     } catch (_) {
-      return const GridModels(gridName: null, models: []);
+      // NOT `gridName: null` with an empty list — that is the shape of "this account has no grid",
+      // and a caller cannot tell it from "the machine did not answer". A signed-in user whose daemon
+      // was offline was told to sign in again, which was both wrong and unactionable.
+      return const GridModels.unreachable();
     }
   }
 

@@ -13,7 +13,7 @@ import 'package:harness/ws/ws_conn.dart';
 /// request's own 12-second timeout, and a spinner that never stops means `pumpAndSettle` never
 /// returns — the test would be measuring the timeout rather than the menu.
 class _Conn extends WsConn {
-  _Conn(this.models, {this.localModelEngines})
+  _Conn(this.models, {this.localModelEngines, this.gridName, this.fails = false})
     : super(
         wsBaseUrl: 'ws://fixture.invalid',
         autonomousEnv: 'test',
@@ -30,16 +30,26 @@ class _Conn extends WsConn {
   /// sends no such field.
   final List<String>? localModelEngines;
 
+  /// The grid this account has, independent of what it is serving — so "a grid serving nothing" can
+  /// be told apart from "no grid".
+  final String? gridName;
+
+  /// Make the request FAIL, the way an offline machine or a daemon too old for the call does.
+  final bool fails;
+
   @override
   Future<Map<String, dynamic>> request(
     String type, {
     Map<String, dynamic> payload = const {},
     Duration timeout = const Duration(seconds: 20),
-  }) async => {
-    'gridName': models.isEmpty ? null : 'someone-7f3a91c4',
-    'models': models,
-    if (localModelEngines != null) 'localModelEngines': localModelEngines,
-  };
+  }) async {
+    if (fails) throw StateError('grid_models_list_result: UNSUPPORTED');
+    return {
+      'gridName': gridName ?? (models.isEmpty ? null : 'someone-7f3a91c4'),
+      'models': models,
+      if (localModelEngines != null) 'localModelEngines': localModelEngines,
+    };
+  }
 }
 
 void main() {
@@ -48,13 +58,19 @@ void main() {
   void build({
     List<Map<String, Object?>> models = const [],
     List<String>? localModelEngines,
+    String? gridName,
+    bool fails = false,
   }) {
     notifier = AppNotifier(
       config: AppConfig.dev,
       authSession: AuthSession(),
       configStore: null,
-      connectionForTest: (_) =>
-          _Conn(models, localModelEngines: localModelEngines),
+      connectionForTest: (_) => _Conn(
+        models,
+        localModelEngines: localModelEngines,
+        gridName: gridName,
+        fails: fails,
+      ),
     );
   }
 
@@ -110,16 +126,124 @@ void main() {
     expect(find.textContaining('usage'), findsOneWidget);
   });
 
-  testWidgets('an empty grid says nobody is serving, not that there is no grid', (tester) async {
-    // The daemon answers `{gridName: null, models: []}` when it cannot reach a grid at all, and
-    // these two facts need different sentences — one sends you to sign in, the other to serve a
-    // model. A single "no models" would send a person looking in the wrong place.
+  // THREE situations, three sentences, one test each — a single test cannot cover them, because
+  // re-pumping the same widget reuses the State and the picker answers from the memo it already has.
+  // Only the middle one is about the ACCOUNT, and folding the first two together is what told a
+  // signed-in user to "sign in again" when the real problem was a daemon that had not answered:
+  // advice that was wrong, and useless even if the diagnosis had been right.
+  testWidgets('a machine that did not answer says so, and does not blame the account', (tester) async {
+    build(fails: true);
     await open(tester);
-    expect(find.textContaining('sign in again'), findsOneWidget);
+    expect(find.text('Could not reach this machine.'), findsOneWidget);
+    expect(find.textContaining('sign in'), findsNothing);
+  });
+
+  testWidgets('an account with no grid says there are no local models yet', (tester) async {
+    await open(tester);
+    expect(find.text('No local models on this account yet.'), findsOneWidget);
     // The user's vocabulary is "Local models", never "grid" — the grid is how a Local model is
     // served, not a thing the picker asks anyone to know about.
-    expect(find.text('No local models on this account yet — sign in again to set them up.'), findsOneWidget);
     expect(find.textContaining('grid'), findsNothing);
+  });
+
+  testWidgets('a grid serving nothing is the one state that asks for a model', (tester) async {
+    build(gridName: 'someone-7f3a91c4');
+    await open(tester);
+    expect(find.text('Nothing is being served yet.'), findsOneWidget);
+  });
+
+  // `Positioned` hands down unbounded width, so a stretching Column takes every pixel its constraints
+  // allow — a two-line menu wore the width of the longest model id it could ever hold. The minimum is
+  // what keeps a status off a model id; the maximum is a CEILING, not a target. One test each, because
+  // re-pumping reuses the State and the second open would answer from the first one's memo.
+  testWidgets('a short menu is not as wide as the widest menu could be', (tester) async {
+    await open(tester);
+    final width = tester.getSize(find.byType(Material).last).width;
+    expect(width, greaterThanOrEqualTo(340), reason: 'a status still clears a model id');
+    expect(width, lessThan(540), reason: 'and nothing is padded out to the ceiling');
+  });
+
+  testWidgets('a long model id is given room, up to the ceiling', (tester) async {
+    build(models: [
+      {'id': 'Qwen3.6-35B-A3B-UD-Q5_K_XL-with-a-deliberately-long-tail', 'node': 'macbook-m1max'},
+    ]);
+    await open(tester);
+    final width = tester.getSize(find.byType(Material).last).width;
+    expect(width, greaterThan(340), reason: 'a row longer than the minimum asks for more');
+    expect(width, lessThanOrEqualTo(540), reason: 'and never more than the ceiling');
+  });
+
+  testWidgets('a click outside closes the menu AND reaches what it was aimed at', (tester) async {
+    // `showMenu` puts a modal barrier under the menu and that barrier EATS the dismissing click, so
+    // closing the menu and then pressing a button took two clicks with the first going nowhere.
+    var pressed = 0;
+    tester.view.physicalSize = const Size(1200, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: Stack(
+          children: [
+            Positioned(
+              left: 20,
+              top: 400,
+              child: ElevatedButton(
+                onPressed: () => pressed += 1,
+                child: const Text('underneath'),
+              ),
+            ),
+            Align(
+              alignment: Alignment.topRight,
+              child: GridModelPicker(
+                notifier: notifier,
+                machineId: 'local',
+                engineLabel: 'claude',
+              ),
+            ),
+          ],
+        ),
+      ),
+    ));
+    await tester.tap(find.text('Model'));
+    await tester.pumpAndSettle();
+    expect(find.text('Subscription'), findsOneWidget);
+
+    await tester.tap(find.text('underneath'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Subscription'), findsNothing, reason: 'the menu closes');
+    expect(pressed, 1, reason: 'and the same click lands on the button under it');
+  });
+
+  testWidgets('the control says it is clickable before it is clicked', (tester) async {
+    // The pane header sits over a terminal, and without this the cursor over the control was
+    // whatever the surface underneath asked for — so a menu control did not look like one.
+    tester.view.physicalSize = const Size(1200, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: Center(
+          child: GridModelPicker(notifier: notifier, machineId: 'local', engineLabel: 'claude'),
+        ),
+      ),
+    ));
+    // The control prefetches on mount; settle so the test is not measuring that work's timers.
+    await tester.pumpAndSettle();
+
+    // BOTH annotations, because the innermost one under the pointer is what a person actually sees:
+    // InkWell installs its own MouseRegion, so an ancestor asking for a hand does not decide alone.
+    //
+    // ⚠️ This asserts the widgets' contract, NOT the cursor the OS ends up drawing. Reading that back
+    // through `MouseTracker.debugDeviceActiveCursor` does not work in this harness — a bare
+    // `MouseRegion(cursor: click)` over a plain box resolves to `basic` there — so a test written
+    // that way would have been measuring the harness rather than the app.
+    final region = tester.widget<MouseRegion>(find.ancestor(
+      of: find.byType(InkWell),
+      matching: find.byType(MouseRegion),
+    ).first);
+    expect(region.cursor, SystemMouseCursors.click);
+    expect(tester.widget<InkWell>(find.byType(InkWell)).mouseCursor, SystemMouseCursors.click);
   });
 
   testWidgets('a served model shows under Local with the machine answering it', (tester) async {
