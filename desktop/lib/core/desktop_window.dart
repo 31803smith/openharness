@@ -29,6 +29,10 @@ Future<void> configureDesktopWindow({
     await const MethodChannel('harness/swarm_tabs')
         .invokeMethod('configure', {'palette': palette.nativeColors});
   }
+  // Always open filling the screen (owner, 2026-09-15): the tabs, a viewer
+  // beside its terminal and the rail all want the width. The options above
+  // stay the frame the green button returns to.
+  await windowManager.maximize();
   await windowManager.show();
   await windowManager.focus();
 }

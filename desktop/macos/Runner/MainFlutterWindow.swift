@@ -24,14 +24,6 @@ class MainFlutterWindow: NSWindow {
     let windowFrame = self.frame
     self.contentViewController = flutterViewController
     self.setFrame(windowFrame, display: true)
-    // Always open filling the screen (owner, 2026-09-15): the tabs, the
-    // viewer beside its terminal and the rail all want the width, and a
-    // window that remembers a smaller frame is a window someone shrinks
-    // again every morning. The visible frame, so the menu bar and Dock keep
-    // their space; zoom and full screen stay the user's from there.
-    if let screen = self.screen ?? NSScreen.main {
-      self.setFrame(screen.visibleFrame, display: true)
-    }
 
     RegisterGeneratedPlugins(registry: flutterViewController)
 
