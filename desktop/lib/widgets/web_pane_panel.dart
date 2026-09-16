@@ -178,50 +178,59 @@ class _WebPanePanelState extends State<WebPanePanel> {
                 size: 17,
               ),
               const SizedBox(width: 10),
+              // Title and phase strip share the flexible middle: the title
+              // yields first, the strip second, and whatever is left stays
+              // between them — never at the row's end, where it would push
+              // the actions off the right edge the terminal pane keeps.
               Expanded(
-                child: Tooltip(
-                  message: widget.pane.url ?? '',
-                  waitDuration: const Duration(milliseconds: 700),
-                  child: Text.rich(
-                    TextSpan(
-                      children: [
-                        TextSpan(text: widget.ownerName),
-                        TextSpan(
-                          text: '  ·  Viewer',
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Flexible(
+                      child: Tooltip(
+                        message: widget.pane.url ?? '',
+                        waitDuration: const Duration(milliseconds: 700),
+                        child: Text.rich(
+                          TextSpan(
+                            children: [
+                              TextSpan(text: widget.ownerName),
+                              TextSpan(
+                                text: '  ·  Viewer',
+                                style: TextStyle(
+                                  color: AppColors.mutedStrong,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ],
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            color: AppColors.mutedStrong,
-                            fontWeight: FontWeight.w500,
+                            color: AppColors.text,
+                            fontFamily: AppFonts.sans,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
-                      ],
+                      ),
                     ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: AppColors.text,
-                      fontFamily: AppFonts.sans,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
+                    if (widget.verdict case final verdict?
+                        when verdict.phases.isNotEmpty)
+                      Flexible(
+                        child: Padding(
+                          padding: const EdgeInsets.only(left: 12),
+                          child: PhaseStrip(phases: verdict.phases),
+                        ),
+                      ),
+                  ],
                 ),
               ),
               const SizedBox(width: 8),
-              if (widget.verdict case final verdict?) ...[
-                // Flexible: the strip yields to the title and the chip when
-                // the pane is narrow; at three quarters of a tab it has room.
-                if (verdict.phases.isNotEmpty)
-                  Flexible(
-                    child: Padding(
-                      padding: const EdgeInsets.only(right: 10),
-                      child: PhaseStrip(phases: verdict.phases),
-                    ),
-                  ),
+              if (widget.verdict case final verdict?)
                 Padding(
                   padding: const EdgeInsets.only(right: 6),
                   child: VerdictChip(verdict: verdict),
                 ),
-              ],
               if (_loading)
                 const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 6),

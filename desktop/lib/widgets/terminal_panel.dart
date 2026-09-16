@@ -32,7 +32,6 @@ import '../shared/theme/app_theme.dart' as grid;
 import '../theme/app_theme.dart';
 import 'engine_identity.dart';
 import 'pane_header_actions.dart';
-import 'verdict_marks.dart';
 
 /// The pane header's own horizontal inset.
 const double _stripPadding = 14;
@@ -1635,14 +1634,6 @@ class _TerminalHeader extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 8),
-                // The harness's verdict on this workspace, when it has one:
-                // ready, or how far from it. Beside the connection status, not
-                // instead of it — the two answer different questions.
-                if (agent?.verdict != null)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 6),
-                    child: VerdictChip(verdict: agent!.verdict!),
-                  ),
                 // Which of the three paths carries this pane's bytes. Absent for a local machine's own
                 // terminal, which has no such distinction and so gets no badge.
                 //

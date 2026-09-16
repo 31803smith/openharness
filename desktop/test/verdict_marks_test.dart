@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/core/models.dart';
+import 'package:harness/theme/app_theme.dart';
 import 'package:harness/widgets/verdict_marks.dart';
 
 void main() {
@@ -62,15 +63,47 @@ void main() {
     expect(find.text('Polish'), findsOneWidget);
   });
 
-  testWidgets('the chip reads the verdict in one word', (tester) async {
-    await tester.pumpWidget(
-      const MaterialApp(
-        home: Scaffold(
-          body: VerdictChip(verdict: AgentVerdict(ready: true, summary: 'ok')),
-        ),
+  testWidgets('the chip says ready, or how far from it', (tester) async {
+    final chip = find.byKey(const ValueKey('pane-verdict-chip'));
+    final cases = <(AgentVerdict, String, Color)>[
+      (
+        const AgentVerdict(ready: true, summary: 'Board is fab-ready'),
+        'Ready',
+        AppColors.success,
       ),
-    );
-    expect(find.text('Ready'), findsOneWidget);
-    expect(find.byKey(const ValueKey('pane-verdict-chip')), findsOneWidget);
+      (
+        const AgentVerdict(ready: false, errors: 3, warnings: 2),
+        '3 errors',
+        AppColors.danger,
+      ),
+      (
+        const AgentVerdict(ready: false, errors: 0, warnings: 1),
+        '1 warning',
+        AppColors.warning,
+      ),
+      (const AgentVerdict(ready: false), 'Checked', AppColors.mutedStrong),
+    ];
+    for (final (verdict, label, color) in cases) {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: VerdictChip(verdict: verdict)),
+        ),
+      );
+      expect(chip, findsOneWidget, reason: label);
+      expect(
+        find.descendant(of: chip, matching: find.text(label)),
+        findsOneWidget,
+      );
+      expect(
+        tester
+            .widget<Text>(find.descendant(of: chip, matching: find.text(label)))
+            .style
+            ?.color,
+        color,
+      );
+      if (verdict.summary != null) {
+        expect(find.byTooltip(verdict.summary!), findsOneWidget);
+      }
+    }
   });
 }

@@ -252,76 +252,39 @@ void main() {
     verdict: verdict,
   );
 
-  testWidgets('the verdict chip says ready, or how far from it', (
-    tester,
-  ) async {
-    final chip = find.byKey(const ValueKey('pane-verdict-chip'));
-    final cases = <(AgentVerdict, String, Color)>[
-      (
-        const AgentVerdict(ready: true, summary: 'Board is fab-ready'),
-        'Ready',
-        AppColors.success,
-      ),
-      (
-        const AgentVerdict(ready: false, errors: 3, warnings: 2),
-        '3 errors',
-        AppColors.danger,
-      ),
-      (
-        const AgentVerdict(ready: false, errors: 0, warnings: 1),
-        '1 warning',
-        AppColors.warning,
-      ),
-      (const AgentVerdict(ready: false), 'Checked', AppColors.mutedStrong),
-    ];
-    for (final (verdict, label, color) in cases) {
+  testWidgets(
+    'a harness agent is drawn as its harness, with no chip of its own',
+    (tester) async {
+      final chip = find.byKey(const ValueKey('pane-verdict-chip'));
       final session = sessionNamed('a');
       addTearDown(session.dispose);
-      await pumpWithAgent(tester, session, agentWith(verdict));
-      expect(chip, findsOneWidget, reason: label);
+      final notifier = await pumpWithAgent(
+        tester,
+        session,
+        agentWith(
+          const AgentVerdict(ready: true, summary: 'Board is fab-ready'),
+        ),
+      );
+      // Its harness, with its base engine beside it.
       expect(
-        find.descendant(of: chip, matching: find.text(label)),
+        find.byKey(const ValueKey('engine-icon-autonomous/circuit')),
         findsOneWidget,
       );
       expect(
-        tester
-            .widget<Text>(find.descendant(of: chip, matching: find.text(label)))
-            .style
-            ?.color,
-        color,
+        find.byKey(const ValueKey('pane-header-base-engine')),
+        findsOneWidget,
       );
-      if (verdict.summary != null) {
-        expect(find.byTooltip(verdict.summary!), findsOneWidget);
-      }
-    }
-    // A harness agent is drawn as its harness, with its base engine beside it.
-    expect(
-      find.byKey(const ValueKey('engine-icon-autonomous/circuit')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const ValueKey('pane-header-base-engine')),
-      findsOneWidget,
-    );
-  });
-
-  testWidgets('no verdict, no chip — and a verdict arriving later is drawn', (
-    tester,
-  ) async {
-    final chip = find.byKey(const ValueKey('pane-verdict-chip'));
-    final session = sessionNamed('a');
-    addTearDown(session.dispose);
-    final notifier = await pumpWithAgent(tester, session, agentWith(null));
-    expect(chip, findsNothing);
-    // The same panel rebuilt over a frame that changed nothing but the
-    // verdict: the header is memoized on its inputs, and this is one of them.
-    await pumpWithAgent(
-      tester,
-      session,
-      agentWith(const AgentVerdict(ready: false, errors: 2)),
-      app: notifier,
-    );
-    expect(chip, findsOneWidget, reason: 'the verdict is a header input');
-    expect(find.text('2 errors'), findsOneWidget);
-  });
+      // The verdict is the viewer pane's to show (owner, 2026-09-15): the
+      // terminal header carries none, before or after a verdict arrives.
+      expect(chip, findsNothing);
+      await pumpWithAgent(
+        tester,
+        session,
+        agentWith(const AgentVerdict(ready: false, errors: 2)),
+        app: notifier,
+      );
+      expect(chip, findsNothing);
+      expect(find.text('2 errors'), findsNothing);
+    },
+  );
 }

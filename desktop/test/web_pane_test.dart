@@ -14,13 +14,18 @@ import 'package:harness/widgets/web_pane_panel.dart';
 import 'swarm_screen_test.dart' show mount, terminal;
 import 'swarm_state_test.dart' show createApp;
 
-Map<String, dynamic> _frame(String id, {String? viewerUrl}) => {
+Map<String, dynamic> _frame(
+  String id, {
+  String? viewerUrl,
+  Map<String, dynamic>? verdict,
+}) => {
   'id': id,
   'name': 'Agent $id',
   'engine': 'claude',
   'dsh': 'autonomous/circuit',
   'dshName': 'Circuit',
   'viewerUrl': ?viewerUrl,
+  'verdict': ?verdict,
   'terminal': {
     'available': true,
     'runtimes': [
@@ -29,11 +34,15 @@ Map<String, dynamic> _frame(String id, {String? viewerUrl}) => {
   },
 };
 
-Future<void> _synced(AppNotifier app, String id, {String? viewerUrl}) =>
-    app.handleEventForTest('m', {
-      'type': 'agent_synced',
-      'payload': {'agent': _frame(id, viewerUrl: viewerUrl)},
-    });
+Future<void> _synced(
+  AppNotifier app,
+  String id, {
+  String? viewerUrl,
+  Map<String, dynamic>? verdict,
+}) => app.handleEventForTest('m', {
+  'type': 'agent_synced',
+  'payload': {'agent': _frame(id, viewerUrl: viewerUrl, verdict: verdict)},
+});
 
 List<TerminalPane> _viewers(AppNotifier app) =>
     app.panes.where((pane) => pane.isWeb).toList();
@@ -237,6 +246,39 @@ void main() {
       findsOneWidget,
       reason: 'the terminal keeps its own',
     );
+    // The verdict is the viewer's to show — chip and strip in its header,
+    // nothing on the terminal's — and the terminal's header carries the
+    // control that hides and shows the viewer.
+    expect(find.byKey(const ValueKey('pane-verdict-chip')), findsNothing);
+    await _synced(
+      app,
+      'a0',
+      viewerUrl: 'http://127.0.0.1:4179/',
+      verdict: {
+        'ready': false,
+        'warnings': 1,
+        'phases': [
+          {'name': 'Build', 'state': 'done'},
+          {'name': 'Checks', 'state': 'active'},
+        ],
+      },
+    );
+    await tester.pump();
+    final viewerHeader = find.ancestor(
+      of: find.byTooltip('Close viewer'),
+      matching: find.byType(WebPanePanel),
+    );
+    expect(
+      find.descendant(
+        of: viewerHeader,
+        matching: find.byKey(const ValueKey('pane-verdict-chip')),
+      ),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('pane-verdict-chip')), findsOneWidget);
+    expect(find.byKey(const ValueKey('pane-phase-strip')), findsOneWidget);
+    expect(find.text('Checks'), findsOneWidget);
+    expect(find.byTooltip('Hide viewer'), findsOneWidget);
     await tester.tap(find.byTooltip('Close viewer'));
     await tester.pump();
     expect(_viewers(app), isEmpty);
