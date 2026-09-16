@@ -24,6 +24,8 @@ import '../core/local_hostname.dart';
 import '../core/local_git_projects.dart';
 import '../core/test_run.dart';
 import '../core/models.dart';
+import '../core/project_folder.dart';
+import '../core/project_history.dart';
 import '../core/retry.dart';
 import '../settings/config_store.dart';
 import '../stats/harness_stats.dart';
@@ -178,6 +180,14 @@ class MachineState {
   // Only consulted for a REMOTE pane; a local one pastes its own path directly and never needs this.
   bool terminalPasteFileAvailable = false;
   bool mediaPreviewAvailable = false;
+  // Whether this machine's CLI understands `projectSource` on agent_create — a folder it makes or
+  // clones for itself, rather than one the client names with `cwd`.
+  //
+  // ⚠️ False is not "the feature is off", it is "this machine would MISREPORT the failure". An
+  // older CLI ignores the keys, finds no `cwd`, and refuses with INVALID_CWD — which reaches the
+  // person as "the project folder is unavailable, choose another folder", advice about a folder
+  // they never chose and that has nothing to do with what went wrong.
+  bool projectFolderAvailable = false;
   // Which engines this machine actually has, as this machine answered it. Kept
   // on MachineState rather than globally because that is the whole point: two
   // machines on one account hold different engines, and the Docker rig holds
@@ -1058,6 +1068,7 @@ class AppNotifier extends ChangeNotifier {
        // without one (the tests) nothing is written anywhere.
        dial = DialState(paneLayoutStore?.storage),
        agentPreference = AgentPreference(paneLayoutStore?.storage),
+       projectHistory = ProjectHistory(paneLayoutStore?.storage),
        session = authSession,
        _store = configStore,
        cliLink = cliLink ?? CliLink(),
@@ -1115,6 +1126,13 @@ class AppNotifier extends ChangeNotifier {
   /// without dragging the whole rail through a machine-list rebuild.
   final DialState dial;
   final AgentPreference agentPreference;
+
+  /// Folders agents have been started in, per machine, kept across launches.
+  ///
+  /// ⚠️ Not the same list as the folders this machine's agents are using right now. That one comes
+  /// from `machine.agents` and a deleted agent takes its folder off it; this one is a HISTORY and
+  /// outlives the agent — which is what "recent" has to mean for the word to be true.
+  final ProjectHistory projectHistory;
 
   TerminalPane? get focusedPane {
     final id = focusedPaneId;
@@ -3456,6 +3474,8 @@ class AppNotifier extends ChangeNotifier {
           features is Map && features['pasteFile'] == true;
       machine.mediaPreviewAvailable =
           features is Map && features['mediaPreview'] == true;
+      machine.projectFolderAvailable =
+          features is Map && features['projectFolder'] == true;
     } catch (_) {
       if (!_machineWorkCurrent(machine, revision)) return;
       machine.terminalCapabilityLoaded = true;
@@ -3465,6 +3485,7 @@ class AppNotifier extends ChangeNotifier {
       machine.terminalImagePasteAvailable = false;
       machine.terminalPasteFileAvailable = false;
       machine.mediaPreviewAvailable = false;
+      machine.projectFolderAvailable = false;
     }
     if (!_machineWorkCurrent(machine, revision)) return;
     if (machine.agentLoadStatus != AgentLoadStatus.loading &&
@@ -3893,10 +3914,19 @@ class AppNotifier extends ChangeNotifier {
   /// Starts an agent, or recovers this form's earlier request after a lost reply.
   /// Returns null on success, or an inline message; [attempt] tells the form
   /// whether to offer Check status instead of inviting another creation.
+  /// [projectFolder] asks the MACHINE to produce the folder — a fresh project of its own, or a
+  /// clone of a repository — instead of being handed one that already exists.
+  ///
+  /// ⚠️ It replaces [folder] rather than joining it: `cwd` leaves the payload entirely when a
+  /// request is present. Both answer "which directory", and a machine given a path AND an
+  /// instruction to make one would have to guess which was meant. `cli/src/lib/projectFolder.ts`
+  /// reads the pair, and `[folder]` stays required so the ordinary case — a folder the person
+  /// picked — cannot be forgotten.
   Future<String?> createAgent(
     String machineId, {
     required String engine,
     required String folder,
+    ProjectFolderRequest? projectFolder,
     bool bypassPermission = false,
     String? codexHome,
     String? swarmId,
@@ -3906,7 +3936,8 @@ class AppNotifier extends ChangeNotifier {
     final creation = attempt ?? AgentCreationAttempt();
     final choices = <String, dynamic>{
       'engine': engine,
-      'cwd': folder,
+      if (projectFolder == null) 'cwd': folder,
+      ...?projectFolder?.payload,
       'bypassPermission': bypassPermission,
       'codexHome': ?codexHome,
     };
@@ -4087,6 +4118,14 @@ class AppNotifier extends ChangeNotifier {
     creation._complete(null);
     if (_disposed || machineStates[machineId] != machine) return null;
     _upsertAgent(machine, agent);
+    // ⚠️ Read from the AGENT the machine answered with, not from what was asked for. "New project"
+    // and a clone send no `cwd` at all — the folder is whatever the machine made — so taking it
+    // from the request would record nothing for exactly the two sources that produce a folder
+    // worth remembering.
+    final projectPath = agent.project?.cwd ?? choices['cwd'];
+    if (projectPath is String && projectPath.isNotEmpty) {
+      unawaited(projectHistory.select(machineId, projectPath));
+    }
     // Apply each creation receipt once, even if its transport result is replayed.
     harnessStats.onAgentSpawned();
     notifyListeners();

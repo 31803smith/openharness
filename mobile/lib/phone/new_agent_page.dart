@@ -4,10 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import 'package:harness_mobile/core/codex_profiles.dart';
-import 'package:harness_mobile/core/models.dart';
 import 'package:harness_mobile/shared/theme/app_theme.dart';
 import 'package:harness_mobile/state/app_state.dart';
 import 'package:harness_mobile/widgets/engine_identity.dart';
+import 'package:harness_mobile/core/project_folder.dart';
 import 'package:harness_mobile/widgets/remote_folder_picker.dart';
 
 import 'phone_header.dart';
@@ -41,6 +41,19 @@ class NewAgentPage extends StatefulWidget {
 
 class _NewAgentPageState extends State<NewAgentPage> {
   String? _folder;
+
+  /// Set when the MACHINE is to produce the folder — a fresh project, or a clone — instead of one
+  /// being picked here.
+  ///
+  /// ⚠️ Exclusive with [_folder], and the two are cleared against each other everywhere they are
+  /// set. They answer the same question, and both being live would leave the button's `ready` true
+  /// with no way to tell which answer it meant.
+  ProjectFolderRequest? _project;
+
+  /// What the FOLDER rows show as chosen for [_project], since a request carries no path to show:
+  /// "New project", or the repository's name.
+  String? _projectLabel;
+
   String? _engine;
   String? _error;
   bool _creating = false;
@@ -52,6 +65,12 @@ class _NewAgentPageState extends State<NewAgentPage> {
   LocalCodexProfile? _codexProfile;
   bool _codexProfilesLoaded = false;
 
+  /// Whether the Recent row is folded open.
+  ///
+  /// Starts shut every time, and closes again on a pick: what it lists are answers, and once one is
+  /// taken the list has nothing left to say.
+  bool _recentOpen = false;
+
   @override
   void initState() {
     super.initState();
@@ -60,6 +79,13 @@ class _NewAgentPageState extends State<NewAgentPage> {
     // machine with neither still gets the browse-and-create path.
     unawaited(widget.notifier.probeEngines(widget.machineId));
     unawaited(_loadCodexProfiles());
+    // Read from disk once. `recent` answers from memory after this, so the rows below need no
+    // await — but the first build happens before it lands, hence the rebuild.
+    unawaited(
+      widget.notifier.projectHistory.load().then((_) {
+        if (mounted) setState(() {});
+      }),
+    );
   }
 
   /// Discovery runs on the MACHINE, never on this device — the phone has no
@@ -91,17 +117,60 @@ class _NewAgentPageState extends State<NewAgentPage> {
 
   MachineState? get _machine => widget.notifier.stateOf(widget.machineId);
 
-  /// The folders this machine's agents already work in, most recently seen
-  /// first — on a machine with agents, the answer is nearly always one of them.
-  List<AgentProject> get _knownProjects {
+  /// Whether this machine can make a folder of its own — a fresh project, or a clone.
+  ///
+  /// ⚠️ Gated because an older CLI fails in a way that BLAMES THE PERSON. It ignores
+  /// `projectSource`, finds no `cwd`, and refuses with INVALID_CWD, which the app renders as "the
+  /// project folder is unavailable on this machine, choose another folder and try again" — advice
+  /// about a folder they never chose, for a problem that is not theirs to fix.
+  ///
+  /// ⚠️ The desktop offers both unconditionally and has the same hole. Worth carrying over there.
+  bool get _canMakeProject => _machine?.projectFolderAvailable ?? false;
+
+  /// Why the two rows are unavailable, or null while they are not.
+  ///
+  /// Printed rather than left to a disabled row: "Update Harness on that machine" is something the
+  /// person can act on, and a row that simply does nothing teaches them nothing.
+  String? get _projectSourceNote {
     final machine = _machine;
-    if (machine == null) return const [];
-    final byPath = <String, AgentProject>{};
-    for (final agent in machine.agents) {
-      final project = machine.projectOf(agent);
-      if (project != null) byPath.putIfAbsent(project.cwd, () => project);
-    }
-    return byPath.values.toList();
+    if (machine == null || _canMakeProject) return null;
+    // Said only once the machine has actually answered. Before that, silence — a row must not call
+    // a machine out of date on the strength of an answer that has not arrived.
+    if (!machine.terminalCapabilityLoaded) return null;
+    return 'Update Harness on ${machine.machine.displayName} to create a '
+        'project or clone one there.';
+  }
+
+  /// Folders agents have been started in on THIS machine, newest first.
+  ///
+  /// ⚠️ A stored history, not a reading of what exists now. It survives the agent that put it
+  /// there, which is what makes "recent" honest — the list that came from `machine.agents` emptied
+  /// itself when an agent was deleted, and called that "recent" too.
+  ///
+  /// Scoped per machine because the paths are: a folder on one computer means nothing on another.
+  List<String> get _recent =>
+      widget.notifier.projectHistory.recent(widget.machineId);
+
+  /// Whether the chosen folder came from the browser rather than from Recent.
+  bool get _browsed => _folder != null && !_recent.contains(_folder);
+
+  /// The recent folder currently chosen, for the folded row to show, or null.
+  String? get _pickedRecent =>
+      _folder != null && _recent.contains(_folder) ? _folder : null;
+
+  String get _recentCount =>
+      _recent.length == 1 ? '1 folder' : '${_recent.length} folders';
+
+  /// The last segment of a path, for the row's title. No `package:path` here — these are the remote
+  /// machine's paths, and its separator is not this device's to assume.
+  String _basename(String path) {
+    final trimmed = path.endsWith('/') && path.length > 1
+        ? path.substring(0, path.length - 1)
+        : path;
+    final cut = trimmed.lastIndexOf('/');
+    return cut < 0 || cut == trimmed.length - 1
+        ? trimmed
+        : trimmed.substring(cut + 1);
   }
 
   /// Every engine Harness knows, the way the desktop dialog offers them.
@@ -126,6 +195,31 @@ class _NewAgentPageState extends State<NewAgentPage> {
     return 'not installed';
   }
 
+  /// Asks for a GitHub repository by URL — the desktop's "Git" button, which is also just a field
+  /// to paste into. Neither end lists repositories or talks to GitHub.
+  ///
+  /// ⚠️ Refuses in the dialog rather than on submit. `cli/src/lib/projectFolder.ts` parses the URL
+  /// again at its end and would refuse too, but that answer arrives after a round trip and lands as
+  /// a failed creation; [GitHubRepository.parse] is the same rule applied where it was typed.
+  Future<void> _pickRepository() async {
+    final repository = await showDialog<GitHubRepository>(
+      context: context,
+      useRootNavigator: true,
+      // ⚠️ The dialog owns its controller. Holding one out here and disposing it when `showDialog`
+      // returns disposes it while the route is still animating OUT, with the field still attached —
+      // "A TextEditingController was used after being disposed", and the frame after it takes the
+      // whole screen down.
+      builder: (_) => _RepositoryDialog(initialUrl: _project?.repository?.url),
+    );
+    if (repository == null || !mounted) return;
+    setState(() {
+      _project = ProjectFolderRequest.remote(repository);
+      _projectLabel = repository.name;
+      _folder = null;
+      _error = null;
+    });
+  }
+
   Future<void> _browse() async {
     final chosen = await showRemoteFolderPicker(
       context,
@@ -136,13 +230,17 @@ class _NewAgentPageState extends State<NewAgentPage> {
     if (chosen == null || !mounted) return;
     setState(() {
       _folder = chosen;
+      _project = null;
+      _projectLabel = null;
       _error = null;
     });
   }
 
   Future<void> _create() async {
-    final folder = _folder, engine = _engine;
-    if (folder == null || engine == null || _creating) return;
+    final folder = _folder, engine = _engine, project = _project;
+    if ((folder == null && project == null) || engine == null || _creating) {
+      return;
+    }
     setState(() {
       _creating = true;
       _error = null;
@@ -154,7 +252,10 @@ class _NewAgentPageState extends State<NewAgentPage> {
     final error = await widget.notifier.createAgent(
       widget.machineId,
       engine: engine,
-      folder: folder,
+      // Empty only in the branch that drops `cwd` from the payload entirely — `createAgent` keeps
+      // this required so the ordinary case cannot be left out by accident.
+      folder: folder ?? '',
+      projectFolder: project,
       // Only for Codex, and only when chosen: omitted, the machine launches
       // with its own default CODEX_HOME.
       codexHome: _showsCodexProfile ? _codexProfile?.path : null,
@@ -201,7 +302,10 @@ class _NewAgentPageState extends State<NewAgentPage> {
     builder: (context, _) {
       AppTheme.watch(context);
       final machine = _machine;
-      final ready = _folder != null && _engine != null && !_creating;
+      final ready =
+          (_folder != null || _project != null) &&
+          _engine != null &&
+          !_creating;
       return Scaffold(
         backgroundColor: AppPalette.windowBg,
         body: SafeArea(
@@ -224,39 +328,112 @@ class _NewAgentPageState extends State<NewAgentPage> {
                     const SettingsCaption('FOLDER'),
                     SettingsGroup(
                       children: [
-                        for (final project in _knownProjects)
-                          SettingsRow(
-                            title: project.name,
-                            detail: project.cwd,
-                            leading: Icon(
-                              LucideIcons.folder300,
-                              size: 18,
-                              color: AppPalette.textSecondary,
-                            ),
-                            trailing: _check(_folder == project.cwd),
-                            onTap: () => setState(() {
-                              _folder = project.cwd;
-                              _error = null;
-                            }),
+                        SettingsRow(
+                          title: 'New project',
+                          detail:
+                              _projectSourceNote ??
+                              'A fresh folder, made on the machine',
+                          leading: Icon(
+                            LucideIcons.folderPlus300,
+                            size: 18,
+                            color: AppPalette.textSecondary,
                           ),
+                          trailing: _check(
+                            _project != null && _project!.repository == null,
+                          ),
+                          onTap: !_canMakeProject
+                              ? null
+                              : () => setState(() {
+                                  _project =
+                                      const ProjectFolderRequest.newProject();
+                                  _projectLabel = 'New project';
+                                  _folder = null;
+                                  _error = null;
+                                }),
+                        ),
+                        // Shows its path only when the choice is this row's own. A folder picked
+                        // from RECENT below is already named there, and printing it here too would
+                        // put one answer under two ticks.
                         SettingsRow(
                           title: 'Browse…',
-                          detail: _knownProjects.any((p) => p.cwd == _folder)
-                              ? null
-                              : _folder,
+                          detail: _browsed ? _folder : null,
                           leading: Icon(
                             LucideIcons.folderSearch300,
                             size: 18,
                             color: AppPalette.textSecondary,
                           ),
+                          trailing: _check(_browsed),
                           onTap: () => unawaited(_browse()),
                         ),
+                        SettingsRow(
+                          title: 'Git…',
+                          detail:
+                              _projectSourceNote ??
+                              (_project?.repository == null
+                                  ? 'Clone a GitHub repository'
+                                  : _projectLabel),
+                          leading: Icon(
+                            LucideIcons.gitBranch300,
+                            size: 18,
+                            color: AppPalette.textSecondary,
+                          ),
+                          trailing: _check(_project?.repository != null),
+                          onTap: !_canMakeProject
+                              ? null
+                              : () => unawaited(_pickRepository()),
+                        ),
+                        // The fourth source, folded shut. Its entries are answers already given
+                        // rather than a way of choosing, so they stay out of sight until asked
+                        // for — a machine used for months would otherwise bury the three rows
+                        // above under its own history.
+                        //
+                        // ⚠️ Absent entirely when there is no history, rather than opening onto
+                        // nothing. Nobody's first agent has a recent folder.
+                        if (_recent.isNotEmpty)
+                          SettingsRow(
+                            title: 'Recent',
+                            detail: _recentOpen
+                                ? null
+                                : (_pickedRecent ?? _recentCount),
+                            leading: Icon(
+                              LucideIcons.history300,
+                              size: 18,
+                              color: AppPalette.textSecondary,
+                            ),
+                            trailing: Icon(
+                              _recentOpen
+                                  ? LucideIcons.chevronUp300
+                                  : LucideIcons.chevronDown300,
+                              size: 18,
+                              color: AppPalette.textFaint,
+                            ),
+                            onTap: () =>
+                                setState(() => _recentOpen = !_recentOpen),
+                          ),
+                        if (_recentOpen)
+                          for (final path in _recent)
+                            SettingsRow(
+                              title: _basename(path),
+                              detail: path,
+                              nested: true,
+                              // No leading glyph: the indent under an open Recent is what says
+                              // these belong to it, and a second icon column would put them back
+                              // level with the sources above.
+                              trailing: _check(_folder == path),
+                              onTap: () => setState(() {
+                                _folder = path;
+                                _project = null;
+                                _projectLabel = null;
+                                _recentOpen = false;
+                                _error = null;
+                              }),
+                            ),
                       ],
                     ),
                     const SettingsCaption('ENGINE'),
                     SettingsGroup(
                       children: [
-                        for (final identity in _engines)
+                        for (final identity in _engines) ...[
                           SettingsRow(
                             title: identity.label,
                             detail: _engineNote(identity.id),
@@ -267,45 +444,54 @@ class _NewAgentPageState extends State<NewAgentPage> {
                               _error = null;
                             }),
                           ),
+                          // Codex's profiles belong UNDER Codex, not in a section of their own at
+                          // the foot of the page. They are a detail of one engine — a section
+                          // separated from the row that summons it reads as a second question,
+                          // and appearing at the bottom of a long list is how it went unnoticed.
+                          //
+                          // ⚠️ Only for the engine that has them, and only once the machine has
+                          // said it understands CODEX_HOME. Every other engine shows nothing here,
+                          // which is why this is a list inside the loop rather than a block after
+                          // it.
+                          if (identity.id == 'codex' && _showsCodexProfile) ...[
+                            SettingsRow(
+                              title: 'Default profile',
+                              nested: true,
+                              detail: _codexProfilesLoaded
+                                  ? null
+                                  : 'Looking for others…',
+                              trailing: _check(_codexProfile == null),
+                              onTap: () => setState(() => _codexProfile = null),
+                            ),
+                            for (final profile in _codexProfiles)
+                              SettingsRow(
+                                title: profile.label,
+                                detail: profile.path,
+                                nested: true,
+                                trailing: _check(_codexProfile == profile),
+                                onTap: () =>
+                                    setState(() => _codexProfile = profile),
+                              ),
+                          ],
+                        ],
                       ],
                     ),
-                    if (_showsCodexProfile) ...[
-                      const SettingsCaption('CODEX PROFILE'),
-                      SettingsGroup(
-                        children: [
-                          SettingsRow(
-                            title: 'Default profile',
-                            detail: _codexProfilesLoaded
-                                ? null
-                                : 'Looking for others…',
-                            trailing: _check(_codexProfile == null),
-                            onTap: () => setState(() => _codexProfile = null),
-                          ),
-                          for (final profile in _codexProfiles)
-                            SettingsRow(
-                              title: profile.label,
-                              detail: profile.path,
-                              trailing: _check(_codexProfile == profile),
-                              onTap: () =>
-                                  setState(() => _codexProfile = profile),
-                            ),
-                        ],
-                      ),
-                    ],
-                    if (_error != null)
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
-                        child: Text(
-                          _error!,
-                          style: TextStyle(
-                            color: AppPalette.offline,
-                            fontSize: 13,
-                          ),
-                        ),
-                      ),
                   ],
                 ),
               ),
+              // ⚠️ The refusal belongs BESIDE the button, not at the end of the list above it.
+              // It used to sit after the engines and the Codex profile — past nine rows and well
+              // below the fold — while the button is pinned here. Pressing Create and being
+              // refused looked exactly like pressing Create and nothing happening, because the
+              // answer rendered somewhere nobody was looking.
+              if (_error != null)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+                  child: Text(
+                    _error!,
+                    style: TextStyle(color: AppPalette.offline, fontSize: 13),
+                  ),
+                ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
                 child: SizedBox(
@@ -326,4 +512,71 @@ class _NewAgentPageState extends State<NewAgentPage> {
   Widget? _check(bool selected) => selected
       ? Icon(LucideIcons.check300, size: 18, color: AppPalette.accent)
       : null;
+}
+
+/// The Git field, as its own widget so the text it holds survives the parent's rebuilds — a
+/// `StatefulBuilder` inside the dialog would lose the error the moment anything above repainted.
+class _RepositoryDialog extends StatefulWidget {
+  const _RepositoryDialog({this.initialUrl});
+
+  final String? initialUrl;
+
+  @override
+  State<_RepositoryDialog> createState() => _RepositoryDialogState();
+}
+
+class _RepositoryDialogState extends State<_RepositoryDialog> {
+  late final _controller = TextEditingController(text: widget.initialUrl ?? '');
+  String? _error;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final repository = GitHubRepository.parse(_controller.text);
+    if (repository == null) {
+      setState(() => _error = 'That is not a GitHub repository.');
+      return;
+    }
+    Navigator.of(context).pop(repository);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    AppTheme.watch(context);
+    return AlertDialog(
+      backgroundColor: AppPalette.panelBg,
+      title: Text(
+        'Git repository',
+        style: TextStyle(color: AppPalette.textPrimary, fontSize: 18),
+      ),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        autocorrect: false,
+        enableSuggestions: false,
+        keyboardType: TextInputType.url,
+        textInputAction: TextInputAction.go,
+        style: TextStyle(color: AppPalette.textPrimary, fontSize: 15),
+        decoration: InputDecoration(
+          hintText: 'owner/repo, or a GitHub URL',
+          errorText: _error,
+        ),
+        onChanged: (_) {
+          if (_error != null) setState(() => _error = null);
+        },
+        onSubmitted: (_) => _submit(),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('Select')),
+      ],
+    );
+  }
 }
