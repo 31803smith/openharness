@@ -53,7 +53,6 @@ https://github.com/user-attachments/assets/97848065-61c6-40df-be66-a8247f69aa4c
 ## Install
 
 1. **The app**, macOS 12+ or Ubuntu 22.04+: [harness.autonomous.ai/desktop](https://harness.autonomous.ai/desktop).
-   First launch installs the daemon and signs you in. This computer is your first machine.
 2. **Another machine**, a server, a Mac mini, a container, with Node ≥ 20 and tmux:
 
    ```bash
@@ -63,15 +62,19 @@ https://github.com/user-attachments/assets/97848065-61c6-40df-be66-a8247f69aa4c
    ```
 
    It shows up in the app within a minute.
-3. **⌘N**: a harness, a machine, a folder, Create.
 
 ## First five minutes
 
-**⌘N** New Agent: a harness, a machine, a folder, Create. **⌘O** finds any agent, tab, project or
-machine, and `>` runs a command. **⌘B** takes a task in plain words and routes it to the agent
-already on it. **⌘R** and **⌘D** split, **⌘S** picks a layout, **⌘⏎** zooms a pane, **⇧⌘I** lists
-the agents waiting on you. The full keymap, and how to remap it: [docs/keyboard.md](docs/keyboard.md).
-The window in detail: [docs/app.md](docs/app.md).
+- **⌘N** New Agent: a harness, a machine, a folder, Create.
+- **⌘O** finds any agent, tab, project or machine; `>` runs a command.
+- **⌘B** takes a task in plain words and routes it to the agent already on it.
+- **⌘R** and **⌘D** split right and down.
+- **⌘S** picks a layout.
+- **⌘⏎** zooms a pane.
+- **⇧⌘I** lists the agents waiting on you.
+
+The full keymap, and how to remap it: [docs/keyboard.md](docs/keyboard.md). The window in detail:
+[docs/app.md](docs/app.md).
 
 ## Extend and contribute
 
