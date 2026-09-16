@@ -48,6 +48,7 @@ import type { AgentEngine } from '../engines/types.js'
 import {
   CLAUDE_ALLOW_WEB_TOOLS_ARG,
   CLAUDE_DISALLOW_WEB_TOOLS_ARG,
+  claudeGridPromptArgs,
   CODEX_DISABLE_WEB_SEARCH_ARGS,
   mcpServersConfig,
   codexMcpArgs,
@@ -559,35 +560,43 @@ const GRID_ENGINE_CONTRACTS: Partial<Record<AgentEngine, GridEngineContract>> = 
   // The grid CLI's own launch target (`autonomous-grid/shared/launch/claude.py`), so these are the
   // vendor's names as that team verified them rather than this repo's reading of them.
   claude: {
-    build: (override) => ({
-      env: {
-        ANTHROPIC_BASE_URL: anthropicBaseUrl(override.baseUrl),
-        // The bearer variable, and ONLY it. Claude Code warns when ANTHROPIC_AUTH_TOKEN and
-        // ANTHROPIC_API_KEY are both set, and the relay prefers the Bearer header anyway — so
-        // ANTHROPIC_API_KEY would decide nothing, while colliding with the variable a user's own
-        // Anthropic key lives in.
-        ANTHROPIC_AUTH_TOKEN: override.apiKey,
-        // `grid launch claude` deliberately sets no model variable, on the grounds that a launcher
-        // has no standing to choose a user's model. That reasoning does not carry here: the desktop
-        // app ASKED, and this is the answer. Left unset when the user picked no model.
-        ...(override.model ? { ANTHROPIC_MODEL: override.model } : {}),
-        // Only when there are web tools to reach: the variable exists to be referenced by the config
-        // below, and setting it otherwise would leave a key in the pane that nothing reads.
-        ...(override.mcpUrl ? { [GRID_KEY_VAR]: override.apiKey } : {}),
-      },
-      args: [
-        // On every grid launch, web tools or not: the built-in search is an Anthropic server tool
-        // that no grid runs, and the built-in fetch summarises through a model the grid does not
-        // serve. See `CLAUDE_DISALLOW_WEB_TOOLS_ARG`.
-        CLAUDE_DISALLOW_WEB_TOOLS_ARG,
-        // With the server comes its approval: a tool the daemon wired in and a permission mode then
-        // refuses is worse than no tool at all. See `CLAUDE_ALLOW_WEB_TOOLS_ARG`.
-        ...(override.mcpUrl
-          ? ['--mcp-config', mcpServersConfig(override.mcpUrl, GRID_KEY_VAR), CLAUDE_ALLOW_WEB_TOOLS_ARG]
-          : []),
-      ],
-      webSearch: webSearchWhenWired(override),
-    }),
+    build: (override) => {
+      const webSearch = webSearchWhenWired(override)
+      return {
+        env: {
+          ANTHROPIC_BASE_URL: anthropicBaseUrl(override.baseUrl),
+          // The bearer variable, and ONLY it. Claude Code warns when ANTHROPIC_AUTH_TOKEN and
+          // ANTHROPIC_API_KEY are both set, and the relay prefers the Bearer header anyway — so
+          // ANTHROPIC_API_KEY would decide nothing, while colliding with the variable a user's own
+          // Anthropic key lives in.
+          ANTHROPIC_AUTH_TOKEN: override.apiKey,
+          // `grid launch claude` deliberately sets no model variable, on the grounds that a launcher
+          // has no standing to choose a user's model. That reasoning does not carry here: the desktop
+          // app ASKED, and this is the answer. Left unset when the user picked no model.
+          ...(override.model ? { ANTHROPIC_MODEL: override.model } : {}),
+          // Only when there are web tools to reach: the variable exists to be referenced by the config
+          // below, and setting it otherwise would leave a key in the pane that nothing reads.
+          ...(override.mcpUrl ? { [GRID_KEY_VAR]: override.apiKey } : {}),
+        },
+        args: [
+          // On every grid launch, web tools or not: the built-in search is an Anthropic server tool
+          // that no grid runs, and the built-in fetch summarises through a model the grid does not
+          // serve. See `CLAUDE_DISALLOW_WEB_TOOLS_ARG`.
+          CLAUDE_DISALLOW_WEB_TOOLS_ARG,
+          // With the server comes its approval: a tool the daemon wired in and a permission mode then
+          // refuses is worse than no tool at all. See `CLAUDE_ALLOW_WEB_TOOLS_ARG`.
+          ...(override.mcpUrl
+            ? ['--mcp-config', mcpServersConfig(override.mcpUrl, GRID_KEY_VAR), CLAUDE_ALLOW_WEB_TOOLS_ARG]
+            : []),
+          // And the words. An agent moved here mid-conversation reads `WebSearch` off its own history
+          // before it reads the list, so the prompt names what is gone and — when one was wired — what
+          // replaces it, delivered past the recorded prompt a resume would otherwise replay. See
+          // `claudeGridPromptArgs`.
+          ...claudeGridPromptArgs(webSearch === 'on'),
+        ],
+        webSearch,
+      }
+    },
   },
 
   // Codex configures its provider entirely on the command line — `-c key=value` overrides anything

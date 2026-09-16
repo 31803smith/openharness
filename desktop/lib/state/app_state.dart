@@ -48,6 +48,7 @@ import '../terminal/terminal_binary.dart';
 import '../update/desktop_updater.dart';
 import '../update/manual_update_check.dart';
 import '../ws/ws_conn.dart';
+import 'retarget_refusal.dart';
 import '../ws/local_cli_discovery.dart';
 import '../ws/ws_pool.dart';
 import 'pane_preset.dart';
@@ -3307,10 +3308,26 @@ class AppNotifier extends ChangeNotifier {
         payload: {'agentId': agentId, 'clearGrid': true},
         timeout: const Duration(seconds: 30),
       );
+    } on WsRequestFailure catch (failure) {
+      _reportRetargetRefusal(machineId, agentId, failure.code);
     } catch (_) {
-      // The daemon owns the refusal (a busy pane, a launch that would not start) and the pane shows
-      // it; a second error surface here would tell one story twice.
+      // A transport failure or a timeout: the daemon may well have done the move, and the frame
+      // that follows says where the agent is. A guess here would tell a story the pane contradicts.
     }
+  }
+
+  /// A refusal happens BEFORE the daemon touches the pane — an engine with no way onto a Local
+  /// model, a busy agent, a machine that cannot resolve its Local models — so nothing in the
+  /// terminal ever says why, and until this existed the click simply did nothing. One sentence, in
+  /// the app's own words (`retargetRefusalMessage`); the daemon's detail names the grid.
+  void _reportRetargetRefusal(String machineId, String agentId, String code) {
+    final agent = machineStates[machineId]?.agents
+        .where((a) => a.id == agentId)
+        .firstOrNull;
+    final label = engineIdentity(agent?.engine).label;
+    _lastError = retargetRefusalMessage(code, engineLabel: label);
+    _lastErrorRetryable = false;
+    notifyListeners();
   }
 
   /// Point one agent at a model on the account's private grid.
@@ -3330,9 +3347,10 @@ class AppNotifier extends ChangeNotifier {
         payload: {'agentId': agentId, 'gridModel': modelId},
         timeout: const Duration(seconds: 30),
       );
+    } on WsRequestFailure catch (failure) {
+      _reportRetargetRefusal(machineId, agentId, failure.code);
     } catch (_) {
-      // The daemon answers its own refusals (a busy pane, an unreachable grid) and the pane shows
-      // what actually happened; a second error surface here would be a second story about one act.
+      // See `clearAgentGrid`: a transport failure is not a refusal, and the next frame is the truth.
     }
   }
 
@@ -3358,12 +3376,19 @@ class AppNotifier extends ChangeNotifier {
           )
           .where((m) => m.id.isNotEmpty)
           .toList();
+      final capable = response['localModelEngines'];
       return GridModels(
         gridName: response['gridName'] as String?,
         models: models,
+        localModelEngines: capable is List
+            ? capable.whereType<String>().map((e) => e.toLowerCase()).toSet()
+            : null,
       );
     } catch (_) {
-      return const GridModels(gridName: null, models: []);
+      // NOT `gridName: null` with an empty list — that is the shape of "this account has no grid",
+      // and a caller cannot tell it from "the machine did not answer". A signed-in user whose daemon
+      // was offline was told to sign in again, which was both wrong and unactionable.
+      return const GridModels.unreachable();
     }
   }
 

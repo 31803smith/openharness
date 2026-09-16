@@ -233,6 +233,50 @@ harness cannot intercept. No client detection, no per-client text.
 
 ---
 
+## Change 7 — the words (added 2026-09-16, after the first end-to-end run)
+
+`cli/src/lib/gridWebMcp.ts`, `cli/src/lib/gridLaunch.ts`, `gridLaunch.spec.ts`; grid-apis
+`web_mcp.py`, `tests/test_web_mcp.py`.
+
+**What the run showed.** Change 2 removes `WebSearch`/`WebFetch` from the tool *list*, and the list
+is not the only place a model reads tool names from. An agent moved to a Local model mid-conversation
+resumes with every turn it had on the Subscription model, `WebSearch` calls that succeeded included,
+and a model imitates those ahead of reading the list. Session `1768dbeb…` (Claude Code 2.1.273,
+`deepseek/deepseek-v4-flash-0731` resumed after three `WebSearch` turns on Sonnet 5): the request's
+tool list had no `WebSearch` — read off the transcript's `prompt_snapshot` — and the first response
+still carried three `WebSearch` calls, each refused "No such tool available", before the next turn
+found `mcp__harness__web_search`. One wasted turn; Claude Code's refusal is local and costs no
+request.
+
+**Two mitigations, neither a guarantee.** The history is what `--resume` exists to keep, so words can
+lower the odds and not zero them. Zero would need a history that never held `WebSearch` — routing the
+Subscription model's web through `harness` too — which is a product decision this plan does not take.
+
+1. **Claude Code's system prompt, on every Local launch** (`claudeGridPromptArgs`): which tools are
+   gone, that earlier turns are no evidence they are back, and — only when the server was wired —
+   what to call instead. No "grid" in it: a model narrates its prompt back to the user.
+   ⚠️ **`--append-system-prompt` alone does not reach a resumed conversation.** Claude Code records
+   the system prompt on a conversation's first request and replays the record on every later request
+   and resume, "even when a later launch passes different text" (`--system-prompt-snapshot`, default
+   `on`). Measured 2026-09-16 on a resumed session: without `--system-prompt-snapshot off` the model
+   never saw the text and no new record was written; with it, it did; and a later launch without the
+   flag — the move back to Subscription — replayed the original record, so nothing said on the Local
+   model follows the agent off it. `off` gives up prompt-cache stability the relay does not offer
+   anyway (`cache_read_input_tokens: 0` on every Local response in that transcript).
+2. **The tool descriptions on the control plane** name the built-in tools they stand in for —
+   Claude Code's `WebSearch`/`WebFetch`, the `web_search` built into Codex — and say opencode's
+   `websearch`/`webfetch` keep working (they never go through the model vendor). A description rides
+   in the `tools` array of every request, so unlike a system prompt it survives a resume; it is the
+   only text that reaches Codex too. Still no product name (the Change 6 test holds).
+
+| Q | Decision |
+|---|---|
+| Q21 | Words on every Claude Local launch, both variants; `--system-prompt-snapshot off` alongside |
+| Q22 | Descriptions name the dead built-ins precisely, per harness, and name opencode's as alive |
+| Q23 | Not taken: routing Subscription web through `harness` (the only zero); rewriting the transcript before `--resume`; a `PreToolUse` hook (cannot fire for a tool that is not offered) |
+
+---
+
 ## Failure modes
 
 | Condition | Where | What happens |

@@ -684,5 +684,40 @@ class GridModels {
   final String? gridName;
   final List<GridModel> models;
 
-  const GridModels({required this.gridName, required this.models});
+  /// The engines a Local model can be offered to at all, as the daemon on that machine names them
+  /// (`localModelEngines`; the set of launch contracts in its `gridLaunch.ts`). Null when the
+  /// daemon is older and sends no such list — read as "offer everything", the behaviour before.
+  final Set<String>? localModelEngines;
+
+  /// Did the machine ANSWER? False when the request failed — offline, timed out, or a daemon too
+  /// old to know the call.
+  ///
+  /// Kept apart from `gridName == null` because the two mean opposite things to a person. "This
+  /// account has no grid" is a fact worth acting on; "we could not ask" is not a fact about the
+  /// account at all, and a UI that folds them together tells a signed-in user to sign in again.
+  final bool reachable;
+
+  const GridModels({
+    required this.gridName,
+    required this.models,
+    this.localModelEngines,
+    this.reachable = true,
+  });
+
+  /// The machine could not be asked. Says nothing about the account, because nothing is known —
+  /// including which engines it would have offered.
+  const GridModels.unreachable()
+    : gridName = null,
+      models = const [],
+      localModelEngines = null,
+      reachable = false;
+
+  /// Whether [engine] may be pointed at one of [models]: unknown engines are refused only when the
+  /// daemon gave a list — a picker that guessed would refuse the wrong ones on an older daemon.
+  bool canRunLocally(String? engine) {
+    final capable = localModelEngines;
+    if (capable == null) return true;
+    final id = engine?.trim().toLowerCase();
+    return id != null && capable.contains(id);
+  }
 }

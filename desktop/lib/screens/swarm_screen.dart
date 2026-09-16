@@ -30,6 +30,7 @@ import '../state/swarm_attention.dart';
 import '../state/swarm_navigation.dart';
 import '../state/swarm_search.dart';
 import '../state/swarm.dart';
+import '../widgets/transient_menus.dart';
 import '../widgets/layout_palette.dart';
 import '../widgets/engine_identity.dart';
 import '../widgets/harness_start_page.dart';
@@ -572,6 +573,9 @@ class _SwarmScreenState extends State<SwarmScreen> {
       return;
     }
     _closeSearch(restoreFocus: false);
+    // Same reason the search field closes: the titlebar is native, so a click on it is not a pointer
+    // event any Flutter overlay can see itself.
+    dismissTransientMenus();
     switch (call.method) {
       case 'new':
         _newTab();
