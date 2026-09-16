@@ -55,12 +55,19 @@ class _PhoneShellState extends State<PhoneShell> with WidgetsBindingObserver {
     super.dispose();
   }
 
-  /// Back in the foreground: a p2p retry waiting out its delay fires now. Going to
-  /// the background needs nothing — the OS suspends the socket, and its redial
-  /// tears the old wire down and negotiates a fresh one.
+  /// Back in the foreground: a p2p retry waiting out its delay fires now, and so does every machine
+  /// socket the phone lost while it was away. Going to the background needs nothing — the OS
+  /// suspends the socket, and the redial tears the old wire down and negotiates a fresh one.
+  ///
+  /// ⚠️ The two used to be one line, and the missing half showed. P2P was kicked here from the
+  /// start; the WebSocket underneath it was not, so a phone coming back sat through a backoff that
+  /// had already climbed to its 30s ceiling — the machine list saying "Connecting…" at somebody
+  /// who was looking straight at it, with a network that would have answered at once.
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) phoneTerminalP2p.kickRetry();
+    if (state != AppLifecycleState.resumed) return;
+    phoneTerminalP2p.kickRetry();
+    widget.notifier.handleAppResumed();
   }
 
   NavigatorState? get _currentNavigator => _navigators[_tab]?.currentState;

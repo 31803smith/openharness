@@ -725,6 +725,26 @@ class WsConn {
     _reconnectTimer = Timer(delay, connect);
   }
 
+  /// Stops waiting out the backoff and dials now — the app has just come back to the foreground,
+  /// and the delay that made sense while it was away is pure dead time in front of somebody.
+  ///
+  /// ⚠️ A no-op when a channel is already open. A phone loses this socket by being backgrounded,
+  /// and the OS does not always tell us: coming back to a connection that is in fact alive must not
+  /// tear it down to prove it, or every tab switch would cost a fresh handshake.
+  ///
+  /// ⚠️ A no-op when [_closing]. That flag means somebody decided this connection should stop —
+  /// signed out, machine unlinked, 4403 — and resuming the app is not a reason to revive it.
+  void reconnectNow() {
+    if (_closing || _channel != null) return;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    // The clock restarts too. Failures from BEFORE the app went away say nothing about the network
+    // it is on now, and without this a phone that had backed off to its 30s ceiling keeps that
+    // ceiling against a connection that would succeed immediately.
+    _attempt = 0;
+    unawaited(connect());
+  }
+
   void _rejectPending(String reason) {
     _settleReadiness(reason);
     for (final pending in _pending.values) {

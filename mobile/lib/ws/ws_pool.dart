@@ -86,6 +86,17 @@ class WsPool {
   WsConn? operator [](String machineId) => _conns[machineId];
   bool has(String machineId) => _conns.containsKey(machineId);
 
+  /// Dials every machine that is not currently connected, without waiting out its backoff — see
+  /// [WsConn.reconnectNow], which decides per connection whether there is anything to do.
+  ///
+  /// The whole pool, not just the machine on screen: a phone comes back to a list of machines, and
+  /// one that reconnects only when tapped reads as broken until it is.
+  void reconnectAll() {
+    for (final conn in _conns.values) {
+      conn.reconnectNow();
+    }
+  }
+
   Future<void> closeMachine(String machineId) async {
     final conn = _conns.remove(machineId);
     if (conn != null) await conn.close();

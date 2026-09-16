@@ -5578,6 +5578,18 @@ class AppNotifier extends ChangeNotifier {
     Map<String, dynamic> event,
   ) => _handleEvent(machineId, event);
 
+  /// The app is back in front of somebody: every machine socket the phone lost while it was away
+  /// dials again now instead of waiting out a backoff nobody is watching.
+  ///
+  /// ⚠️ The phone loses these sockets by being BACKGROUNDED — the OS stops the process, and it is
+  /// not obliged to say so. Nothing here detects that at the time, and nothing can: a suspended
+  /// process runs no code to notice with. Resuming is the first moment the app is able to look, so
+  /// it is the moment it must.
+  ///
+  /// Safe to call on every resume. [WsPool.reconnectAll] skips connections that are already open
+  /// and connections somebody closed on purpose, so a tab switch that cost nothing costs nothing.
+  void handleAppResumed() => _pool?.reconnectAll();
+
   /// What the local CLI closing this machine's socket with [code] does to the
   /// model — the `WsPool.onLocalFailure` path, without a socket.
   @visibleForTesting
