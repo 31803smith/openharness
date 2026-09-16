@@ -108,26 +108,35 @@ void openMachinePager(
 ///
 /// [swipeNeighbours] turns the page into a pager over that list — see [AgentSwipeList] and
 /// [openAgentPager], which is how the Agents tab calls this.
+///
+/// [replacingCurrentPage] puts the agent in the place of the page it was opened FROM instead of on
+/// top of it. That is what the new-agent form wants: the agent it just started opens straight away,
+/// and going back from it lands on the list rather than on a form asking to create one again.
 void openAgent(
   BuildContext context,
   AppNotifier notifier,
   String machineId,
   String agentId, {
   AgentSwipeList? swipeNeighbours,
+  bool replacingCurrentPage = false,
 }) {
-  Navigator.of(context).push(
-    phoneRoute(
-      (_) => AgentSwipeHost(
-        notifier: notifier,
-        machineId: machineId,
-        agentId: agentId,
-        neighbours: swipeNeighbours,
-      ),
-      // The horizontal axis belongs to the pager here — see [_NoSwipeBackRoute]. The way out is the
-      // header's back band, and on Android the back button as well.
-      swipeToGoBack: false,
+  final route = phoneRoute(
+    (_) => AgentSwipeHost(
+      notifier: notifier,
+      machineId: machineId,
+      agentId: agentId,
+      neighbours: swipeNeighbours,
     ),
+    // The horizontal axis belongs to the pager here — see [_NoSwipeBackRoute]. The way out is the
+    // header's back band, and on Android the back button as well.
+    swipeToGoBack: false,
   );
+  final navigator = Navigator.of(context);
+  if (replacingCurrentPage) {
+    navigator.pushReplacement(route);
+  } else {
+    navigator.push(route);
+  }
   unawaited(_openPane(notifier, machineId, agentId, keepOthers: swipeNeighbours != null));
 }
 

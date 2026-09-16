@@ -87,8 +87,17 @@ class AgentCreationAttempt {
   Future<String?>? _inFlight;
   bool _awaitingConfirmation = false, _finished = false;
   String? _outcome;
+  String? _agentId;
 
   bool get awaitingConfirmation => _awaitingConfirmation;
+
+  /// The agent this attempt started, once the machine has confirmed it.
+  ///
+  /// The form that asked for an agent is the one screen that knows it was just
+  /// asked for, so it is the one that can open it. Without this the id is known
+  /// only inside the notifier, and the new agent has to be found again in the
+  /// list — a step nobody wants after naming a folder and an engine.
+  String? get agentId => _agentId;
 
   String? _complete(String? error) {
     _finished = true;
@@ -4051,6 +4060,7 @@ class AppNotifier extends ChangeNotifier {
     } catch (_) {
       return unconfirmed;
     }
+    creation._agentId = agent.id;
     creation._complete(null);
     if (_disposed || machineStates[machineId] != machine) return null;
     _upsertAgent(machine, agent);

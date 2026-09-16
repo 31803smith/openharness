@@ -11,6 +11,7 @@ import 'package:harness_mobile/widgets/engine_identity.dart';
 import 'package:harness_mobile/widgets/remote_folder_picker.dart';
 
 import 'phone_header.dart';
+import 'phone_navigation.dart';
 import 'settings_row.dart';
 
 /// Starting an agent from the phone: a folder on that machine, and an engine to
@@ -146,6 +147,10 @@ class _NewAgentPageState extends State<NewAgentPage> {
       _creating = true;
       _error = null;
     });
+    // Held so the id of what it starts comes back here — see
+    // [AgentCreationAttempt.agentId]. A fresh one per submit, which is what the
+    // call made on its own before: a retry after a refusal is a new request.
+    final creation = AgentCreationAttempt();
     final error = await widget.notifier.createAgent(
       widget.machineId,
       engine: engine,
@@ -153,18 +158,41 @@ class _NewAgentPageState extends State<NewAgentPage> {
       // Only for Codex, and only when chosen: omitted, the machine launches
       // with its own default CODEX_HOME.
       codexHome: _showsCodexProfile ? _codexProfile?.path : null,
+      attempt: creation,
     );
     if (!mounted) return;
     if (error == null) {
-      // The new agent reaches the list behind this page on its own, the way
-      // every other agent does — there is nothing here to hand it.
-      Navigator.of(context).pop();
+      _open(creation.agentId);
       return;
     }
     setState(() {
       _creating = false;
       _error = error;
     });
+  }
+
+  /// Where a finished creation lands: inside the agent it just started.
+  ///
+  /// Asking for an agent and being handed back the list to find it in is a step
+  /// nobody wants — the answer to "create this" is the thing created. It
+  /// REPLACES this page rather than stacking on it, so back from the terminal
+  /// is the list this was opened from, not a form for an agent that now exists.
+  ///
+  /// A machine can still confirm a creation without naming the agent — an older
+  /// CLI's reply carries no record. Then there is nothing to open, and the list
+  /// behind this page picks the new agent up the way it picks up every other.
+  void _open(String? agentId) {
+    if (agentId == null) {
+      Navigator.of(context).pop();
+      return;
+    }
+    openAgent(
+      context,
+      widget.notifier,
+      widget.machineId,
+      agentId,
+      replacingCurrentPage: true,
+    );
   }
 
   @override
