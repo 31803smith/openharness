@@ -126,7 +126,7 @@ void main() {
       expect(
         tester
             .getSemantics(
-              find.bySemanticsLabel('Forest palette. Quiet evergreen'),
+              find.bySemanticsLabel('Forest palette'),
             )
             .getSemanticsData()
             .hasAction(SemanticsAction.tap),

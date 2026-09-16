@@ -13,6 +13,7 @@
  * Module singleton (like the ws `clients` set) — imported by routes + reaper.
  */
 
+import { DSH_ID_RE } from '../dsh/manifest.js'
 import {
   closeSync,
   constants,
@@ -137,6 +138,14 @@ export interface RegisteredSession {
    */
   codexHome?: string | null
   /**
+   * The domain-specific harness this agent was created as (`autonomous/copper`), or null for a plain
+   * engine. NOT a second engine: `engine` stays the base (`claude`, `codex`, …) and every normalizer,
+   * probe and install path keys on that. Chosen at creation, carried forward, and re-read off the
+   * live process's `HARNESS_DSH` by discovery so a pane the daemon did not create (or had to mint
+   * again after a restart) is still labelled. Fill-only, like `codexHome`. See `src/dsh/`.
+   */
+  dsh?: string | null
+  /**
    * Whether the engine was launched with its permission prompts bypassed (`--dangerously-skip-permissions`
    * and friends, `BYPASS_PERMISSION_FLAGS`). Recorded at launch because it is otherwise only readable
    * off a LIVE process's argv — and a pane that has to be recreated after a reboot has no live process
@@ -147,6 +156,8 @@ export interface RegisteredSession {
   launcherId?: string
   transcriptPath: string | null
   projectDir: string
+  /** Stable default for agents created by Harness; discovered agents keep their existing names. */
+  defaultName?: string
   cwd: string | null
   /** Authoritative backend-neutral terminal placements for this one process-owned agent. */
   runtimes: TerminalRuntimeRef[]
@@ -186,11 +197,10 @@ export interface RegisterInput {
 }
 
 /** Display name for a session's "project" tab/tile. A user rename (persisted override) is
- *  authoritative and FIXED — it must NOT drift back to the tmux pane title, which Claude keeps
- *  rewriting to the latest convo topic. Only a session the user never renamed auto-follows the title,
- *  then falls back to "<folder> · <id4>". */
+ *  authoritative and FIXED. Harness-created agents start with a numbered name;
+ *  discovered sessions retain their title/folder fallback. */
 export function projectDisplayName(s: RegisteredSession): string {
-  return NAME_OVERRIDES.get(s.sessionId) || NAME_OVERRIDES.get(s.agentId) || titleDisplayName(s.title) || defaultProjectDisplayName(s)
+  return NAME_OVERRIDES.get(s.sessionId) || NAME_OVERRIDES.get(s.agentId) || s.defaultName || titleDisplayName(s.title) || defaultProjectDisplayName(s)
 }
 
 const FILE = join(env.ADAPTER_DATA_DIR, 'registry.json')
@@ -203,6 +213,11 @@ const NAME_OVERRIDES = new Map<string, string>()
 const PANE_RE = /^%\d+$/
 const GROK_SESSION_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const AGENT_ENGINES: ReadonlySet<string> = new Set(ENGINES)
+
+/** A persisted DSH id, or null for anything that is not one (older rows have no field at all). */
+function normalizedDshId(value: unknown): string | null {
+  return typeof value === 'string' && DSH_ID_RE.test(value) ? value : null
+}
 
 function normalizedAgentEngine(value: unknown): AgentEngine {
   return typeof value === 'string' && AGENT_ENGINES.has(value)
@@ -389,6 +404,8 @@ function strictPersistedRow(value: unknown): RegisteredSession | null {
     engine: row.engine as AgentEngine,
     transcriptPath: typeof row.transcriptPath === 'string' ? row.transcriptPath : null,
     projectDir: row.projectDir,
+    defaultName: typeof row.defaultName === 'string' && /^agent-[1-9]\d*$/.test(row.defaultName)
+      ? row.defaultName : undefined,
     cwd: typeof row.cwd === 'string' ? row.cwd : null,
     runtimes,
     primaryRuntimeKey: normalizedPrimary,
@@ -766,6 +783,7 @@ class Registry {
           gateway: raw.gateway === 'ori' ? 'ori' : null,
           grid: normalizedGridAssignment(raw.grid),
           codexHome: typeof rawCodexHome === 'string' && rawCodexHome ? rawCodexHome : null,
+          dsh: normalizedDshId((raw as { dsh?: unknown }).dsh),
           ...(rawGridLaunch !== undefined ? { gridLaunch: rawGridLaunch } : {}),
           ...(rawGridLaunch ? { gridWebSearch: normalizedGridWebSearch(raw?.gridWebSearch) } : {}),
           // ⚠️ Rehydrated EXPLICITLY, like every field above it. A row is rebuilt from this list on
@@ -777,6 +795,8 @@ class Registry {
             : {}),
           ...(raw.bypassPermission === true ? { bypassPermission: true } : {}),
           transcriptPath,
+          defaultName: typeof raw.defaultName === 'string' && /^agent-[1-9]\d*$/.test(raw.defaultName)
+            ? raw.defaultName : undefined,
           title: titleDisplayName(typeof raw.title === 'string' ? raw.title : null),
           sessionId: bound ? rawSessionId : '',
           projectDir: !repairedCodexTranscript && typeof raw.projectDir === 'string' && raw.projectDir
@@ -866,6 +886,8 @@ class Registry {
     /** Codex only: the CODEX_HOME the process was launched under, read off its environment. Fills a
      *  row that does not know its profile yet; never overwrites one that does (see `codexHome`). */
     codexHome?: string | null
+    /** The DSH read off the process's `HARNESS_DSH`, if any. Fill-only, like `codexHome`. */
+    dsh?: string | null
   }):
     {
       entry: RegisteredSession
@@ -917,6 +939,7 @@ class Registry {
       if (input.gateway !== undefined) existing.gateway = input.gateway
       if (input.grid !== undefined) existing.grid = input.grid
       if (input.codexHome && !existing.codexHome) existing.codexHome = input.codexHome
+      if (input.dsh && !existing.dsh) existing.dsh = input.dsh
       existing.updatedAt = Date.now()
       this.index(existing)
       this.terminalAvailableAgents.add(existing.agentId)
@@ -959,6 +982,7 @@ class Registry {
       gridLaunch: null,
       gridWebSearch: null,
       codexHome: input.codexHome ?? null,
+      dsh: input.dsh ?? null,
       transcriptPath: null,
       projectDir: basename(input.cwd ?? '') || agentId,
       cwd: input.cwd ?? null,
@@ -991,6 +1015,7 @@ class Registry {
     /** The grid launch this pane was opened with and what it decided — the pair `setGridLaunch` keeps. */
     gridLaunchRecord?: GridLaunchRecord | null
     codexHome?: string | null
+    dsh?: string | null
     bypassPermission?: boolean
   }): RegisteredSession | null {
     if (this.writeBlocked) return null
@@ -1003,6 +1028,7 @@ class Registry {
       schemaVersion: 2,
       active: true,
       launch: { state: 'starting' },
+      defaultName: this.nextAgentName(),
       agentId,
       sessionId: '',
       boundAt: null,
@@ -1012,6 +1038,7 @@ class Registry {
       gridLaunch: input.gridLaunchRecord?.override ?? null,
       gridWebSearch: input.gridLaunchRecord?.webSearch ?? null,
       codexHome: input.codexHome ?? null,
+      dsh: input.dsh ?? null,
       ...(input.bypassPermission ? { bypassPermission: true } : {}),
       transcriptPath: null,
       projectDir: basename(input.cwd ?? '') || agentId,
@@ -1033,6 +1060,19 @@ class Registry {
     this.terminalAvailableAgents.add(entry.agentId)
     this.save()
     return entry
+  }
+
+  private nextAgentName(): string {
+    let next = 1n
+    const names = [
+      ...this.list().flatMap(agent => [agent.defaultName, projectDisplayName(agent)]),
+      ...NAME_OVERRIDES.values(),
+    ]
+    for (const name of names) {
+      const match = name && /^agent-([1-9]\d*)$/.exec(name)
+      if (match && BigInt(match[1]!) >= next) next = BigInt(match[1]!) + 1n
+    }
+    return `agent-${next}`
   }
 
   /** Discovered process agents that have no engine session bound yet. */
@@ -1165,6 +1205,7 @@ class Registry {
       // memory the moment the engine reports in. The symptom is a move back to the engine's own
       // login landing on a house default — the remembered model was there, then a hook bind ate it.
       ...(existing?.subscriptionModel ? { subscriptionModel: existing.subscriptionModel } : {}),
+      defaultName: existing?.defaultName,
       transcriptPath: effectiveTranscriptPath,
       projectDir: engine === 'grok' || engine === 'agy' || engine === 'copilot'
         ? basename(input.cwd ?? existing?.cwd ?? '') || sessionId
@@ -1183,6 +1224,7 @@ class Registry {
       // re-reads off the live process on every discovery) — a hook-triggered bind must carry it
       // forward or the very first SessionStart hook would silently wipe the agent's chosen profile.
       codexHome: existing?.codexHome ?? null,
+      dsh: existing?.dsh ?? null,
       ...(existing?.bypassPermission ? { bypassPermission: true } : {}),
       processIdentity: validProcessIdentity(input.processIdentity) ? input.processIdentity : existing?.processIdentity ?? null,
       registeredAt: existing?.registeredAt ?? now,
@@ -1364,6 +1406,17 @@ class Registry {
     const session = this.agents.get(agentId)
     if (!session || session.engine !== 'codex' || session.codexHome) return false
     session.codexHome = codexHome
+    session.updatedAt = Date.now()
+    this.save()
+    return true
+  }
+
+  /** Fill in the DSH a row did not know (discovery read `HARNESS_DSH` off the live process). Never
+   *  replaces one it already has — the harness is chosen once, at creation. */
+  setDsh(agentId: string, dsh: string): boolean {
+    const session = this.agents.get(agentId)
+    if (!session || session.dsh || !DSH_ID_RE.test(dsh)) return false
+    session.dsh = dsh
     session.updatedAt = Date.now()
     this.save()
     return true

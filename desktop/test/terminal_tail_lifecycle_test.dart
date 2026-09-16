@@ -246,7 +246,7 @@ void main() {
   }
 
   testWidgets(
-    'adding a retained pane to a new harness reveals the latest output',
+    'adding a retained pane to a new agent reveals the latest output',
     (tester) async {
       final app = createApp();
       final session = terminal('a0', []);
@@ -268,7 +268,7 @@ void main() {
       expect(terminalView(tester, session), same(view));
       atBottom(tester, session);
       // Shared panes can remain visible with exactly the same geometry while
-      // switching harnesses, so visibility/size alone cannot detect a reveal.
+      // switching agents, so visibility/size alone cannot detect a reveal.
       view.widget.scrollController!.jumpTo(100);
       await tester.pump();
       app.selectSwarm(app.swarms.first.id);

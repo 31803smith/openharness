@@ -12,8 +12,16 @@ class Swarm {
     : name = normalizeName(name);
 
   static const defaultName = 'New Tab';
+  // 'New Harness' was the default until 2026-09-15; a layout saved before then
+  // still carries it, and it must read as the same fresh tab.
   static String normalizeName(String name) =>
-      const {'New swarm', 'New tab', 'New Agent', 'New Harness'}.contains(name)
+      const {
+        'New swarm',
+        'New tab',
+        'New Tab',
+        'New Harness',
+        'New Agent',
+      }.contains(name)
       ? defaultName
       : name;
 
@@ -48,6 +56,13 @@ class Swarm {
     if (index < 0) return;
     final manual = manualLayout;
     panes.removeAt(index);
+    // Layouts are kept per pane count, so the harness split for a viewer and
+    // its terminal would otherwise wait for the next two tiles of any kind.
+    // Only the split Harness itself made goes; one the user dragged is theirs.
+    if (panes.length == 1 &&
+        identical(manual, PaneArrangement.viewerBesideTerminal)) {
+      paneSizes.remove('2:manual');
+    }
     if (manual != null && panes.length > 1) {
       final next = manual.remove(index);
       if (next == null) {

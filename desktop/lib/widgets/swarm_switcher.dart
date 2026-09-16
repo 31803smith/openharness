@@ -391,7 +391,7 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
         final sideBySide = constraints.maxWidth >= widget.sideBySideMinWidth;
         final compactAction =
             (sideBySide ? constraints.maxWidth / 2 : constraints.maxWidth) <
-            380;
+            380 * scale.scale(14) / 14;
         final geometry = (constraints.biggest, _rowHeight);
         if (_geometry != geometry) {
           _geometry = geometry;
@@ -409,9 +409,9 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                           search.isCommandMode
                               ? 'No matching commands'
                               : search.adding && search.query.isEmpty
-                              ? 'Create a new harness to start fresh.'
+                              ? 'Create a new agent to start fresh.'
                               : search.adding
-                              ? 'No matching harnesses'
+                              ? 'No matching agents'
                               : 'No matching results',
                           style: const TextStyle(
                             fontSize: 14,
@@ -461,10 +461,10 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                             selectedColor: Colors.white,
                             hoverColor: Colors.transparent,
                             selectedTileColor: Colors.white.withValues(
-                              alpha: .075,
+                              alpha: .055,
                             ),
                             shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(6),
+                              borderRadius: BorderRadius.circular(12),
                             ),
                             contentPadding: const EdgeInsets.symmetric(
                               horizontal: 12,
@@ -570,7 +570,6 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                       ),
               ),
               if (unavailable) ...[
-                const Divider(height: 1, color: Colors.white12),
                 SizedBox(
                   height: 48,
                   child: Padding(
@@ -584,8 +583,8 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                                 : selected!.isGroup &&
                                       selected.members.length >
                                           AppNotifier.maxPanes
-                                ? 'Open up to ${AppNotifier.maxPanes} harnesses at once'
-                                : 'No room to open this ${selected.isSwarm || selected.isGroup ? 'group' : 'harness'}',
+                                ? 'Open up to ${AppNotifier.maxPanes} agents at once'
+                                : 'No room to open this ${selected.isSwarm || selected.isGroup ? 'group' : 'agent'}',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
@@ -616,14 +615,14 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Expanded(flex: 5, child: results),
-                  const VerticalDivider(width: 1, color: Colors.white12),
+                  const SizedBox(width: 8),
                   Expanded(flex: 5, child: preview),
                 ],
               )
             : Column(
                 children: [
                   Expanded(flex: 5, child: results),
-                  const Divider(height: 1, color: Colors.white12),
+                  const SizedBox(height: 8),
                   Expanded(flex: 6, child: preview),
                 ],
               );
@@ -687,16 +686,13 @@ class SwarmSearchActionLabel extends StatelessWidget {
                 ),
               const Icon(Icons.keyboard_return, size: 14),
             ] else
-              Tooltip(
-                message: hint,
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 96),
-                  child: Text(
-                    hint.replaceAll('↵', 'Return').replaceAll('⇥', 'Tab'),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 11),
-                  ),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 96),
+                child: Text(
+                  hint.replaceAll('↵', 'Return').replaceAll('⇥', 'Tab'),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 11),
                 ),
               ),
           ],

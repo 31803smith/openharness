@@ -1,6 +1,7 @@
 #include "power.h"
 #include "board_pins.h"
 #include "board_i2c.h"
+#include "board.h"
 #include "driver/i2c_master.h"
 #include "freertos/FreeRTOS.h"
 #include "esp_log.h"
@@ -40,6 +41,10 @@ static void axp_pwrkey_setup(void)
 bool power_init(void)
 {
     if (s_dev) return true;
+    // No PMIC on this dial (board.h): nothing to attach, and — the part that matters — nothing to poll.
+    // Attaching anyway cost a failed I2C transaction with a 50ms timeout on every read, ten times a
+    // second, for the whole life of the device.
+    if (!board()->has_pmic) return false;
     i2c_master_bus_handle_t bus = board_i2c_get();
     if (!bus) { ESP_LOGW(TAG, "shared i2c bus unavailable"); return false; }
     i2c_device_config_t cfg = {

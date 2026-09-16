@@ -13,6 +13,7 @@
 #include "esp_timer.h"
 #include "fw_update.h"
 #include "last_words.h"
+#include "board/board.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -105,6 +106,9 @@ static void send_hello(void)
     // Named before anything else about this dial is believed. See CABLE_PRODUCT.
     cJSON_AddStringToObject(root, "product", CABLE_PRODUCT);
     cJSON_AddNumberToObject(root, "proto", CABLE_PROTO_VERSION);
+    // Which of the two dials this is (board.h) — informational, so a log or a bug report can say. A
+    // daemon that predates the field ignores it.
+    cJSON_AddStringToObject(root, "hw", board()->name);
     // Also the device's USB serial number, so the daemon can tell one dial from another before a byte is
     // exchanged — and can tell a keepalive greeting from a new board.
     char mac[24] = "";

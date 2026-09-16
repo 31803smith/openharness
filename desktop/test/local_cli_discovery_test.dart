@@ -478,6 +478,53 @@ void main() {
     await runHarnessStart(fine);
   });
 
+  test('inSpawnSlot is :10–:20 of every minute, clear of the CLI update slot at :45', () {
+    DateTime at(int second) => DateTime(2026, 9, 15, 10, 0, second);
+    expect(inSpawnSlot(at(9)), isFalse);
+    expect(inSpawnSlot(at(10)), isTrue);
+    expect(inSpawnSlot(at(15)), isTrue);
+    expect(inSpawnSlot(at(19)), isTrue);
+    expect(inSpawnSlot(at(20)), isFalse);
+    expect(inSpawnSlot(at(45)), isFalse);
+    expect(inSpawnSlot(at(0), second: 5, window: 10), isTrue);
+  });
+
+  test('startSupervising holds a spawn outside the slot and takes it on the first tick inside', () async {
+    const computerId = '0123456789abcdef0123456789abcdef';
+    final identityFile = File('${scratch.path}/computer-id')
+      ..writeAsStringSync(computerId);
+    final port = await freePort();
+    var spawnCount = 0;
+    var slotOpen = false;
+    final discovery = discoveryFor(
+      port,
+      identityFile,
+      spawnCommand: () async {
+        spawnCount++;
+        server = await serveStatus(port, () => readyStatus(computerId));
+      },
+    );
+
+    final timer = discovery.startSupervising(
+      checkInterval: const Duration(milliseconds: 20),
+      graceStep: const Duration(milliseconds: 10),
+      graceWindow: const Duration(milliseconds: 100),
+      initialBackoff: const Duration(milliseconds: 200),
+      maxBackoff: const Duration(milliseconds: 200),
+      spawnAllowedAt: (_) => slotOpen,
+    );
+    addTearDown(timer.cancel);
+
+    // Down for many ticks, but the slot is shut: nothing is spawned, and nothing is backed off
+    // either — the moment the slot opens the spawn is immediate.
+    await Future.delayed(const Duration(milliseconds: 200));
+    expect(spawnCount, 0);
+    slotOpen = true;
+    await Future.delayed(const Duration(milliseconds: 60));
+    expect(spawnCount, 1);
+    expect(server, isNotNull);
+  });
+
   test('startSupervising spawns harness start while down, and stops once discovery succeeds', () async {
     const computerId = '0123456789abcdef0123456789abcdef';
     final identityFile = File('${scratch.path}/computer-id')

@@ -650,6 +650,11 @@ export class TmuxControlStream implements TerminalStreamHandle<TmuxRuntimeRef> {
    * Deliberately NOT wrapped in `serializeOperation`: input must not queue behind a `snapshot()`
    * or a `resize()`. Ordering against those still holds because tmux runs control commands in the
    * order they were written, which is also what keeps the snapshot's `%end` cut correct.
+   *
+   * ⚠️ Every `runControlCommand` below MUST stay before the first `await`. The caller
+   * (TerminalStreamManager.input) no longer waits for this promise before handing over the next
+   * keystroke, so the order keystrokes reach tmux is the order these calls run synchronously — an
+   * `await` slipped in ahead of them would let a later keystroke overtake an earlier one.
    */
   async writeRaw(bytes: Uint8Array): Promise<TerminalActionResult> {
     if (this.closed) return terminalActionNotStarted('terminal stream is closed')

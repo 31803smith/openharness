@@ -93,6 +93,14 @@ Future<void> runHarnessStart(HarnessCliRunner runner) async {
 
 Future<void> _defaultSpawnCommand() => runHarnessStart(HarnessCliRunner());
 
+/// The wall-clock window in which the supervisor may spawn `harness start`: seconds :10–:20 of
+/// every minute. The CLI's own updater ticks at :45 (`ADAPTER_UPDATE_SLOT_SEC` in the harness CLI's
+/// `config/env.ts`), so a spawn and an update handoff — both of which take the daemon's spawn lock —
+/// never land in the same second, and neither burns its lock wait on the other. The window is wide
+/// enough that a 5s probe cadence always gets a tick inside it, and ends 25s before the update slot.
+bool inSpawnSlot(DateTime now, {int second = 15, int window = 10}) =>
+    now.second >= second - window ~/ 2 && now.second < second + window ~/ 2;
+
 /// What one look at the daemon's control port found.
 ///
 /// THREE answers, not two, and the middle one is the point. A port that
@@ -256,6 +264,10 @@ class LocalCliDiscovery {
   /// state a daemon sits in for the length of every self-update's backend handshake, and it is what
   /// this loop used to spawn into every few seconds.
   ///
+  /// [spawnAllowedAt] gates the spawn — not the probe — to a moment: production passes [inSpawnSlot]
+  /// so the spawn keeps clear of the CLI's update slot. Outside the window a down daemon stays down
+  /// for a few more ticks and is spawned on the first tick inside it.
+  ///
   /// Spawning waits for [spawnAfter] consecutive quiet ticks rather than one: a self-update leaves
   /// the port unowned for a second or two between the old daemon closing it and the new one binding,
   /// and a spawn into that gap is a wasted process (the CLI's own lock refuses it), not a fix.
@@ -278,6 +290,7 @@ class LocalCliDiscovery {
     Duration initialBackoff = const Duration(seconds: 2),
     Duration maxBackoff = const Duration(seconds: 30),
     int spawnAfter = 2,
+    bool Function(DateTime now)? spawnAllowedAt,
     Future<bool> Function()? stillSignedIn,
     void Function()? onSignedOut,
     void Function(LocalCliEndpoint endpoint)? onReady,
@@ -329,6 +342,7 @@ class LocalCliDiscovery {
           quietTicks += 1;
           if (quietTicks < spawnAfter) return;
           if (DateTime.now().isBefore(nextSpawnAllowedAt)) return;
+          if (!(spawnAllowedAt?.call(DateTime.now()) ?? true)) return;
           // A daemon that signed itself OUT — its machine was deleted from another machine, or its
           // session expired — deletes its session file and exits. Respawning it is the one failure
           // this loop cannot fix: every replacement starts without a session and exits again,

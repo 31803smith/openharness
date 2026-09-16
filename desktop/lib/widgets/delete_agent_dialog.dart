@@ -4,7 +4,7 @@ import '../shared/theme/app_theme.dart' as grid;
 import '../shared/widgets/app_dialog.dart';
 import '../state/app_state.dart';
 
-/// Shared Stop Harness confirmation. The legacy agent_delete request stops the
+/// Shared Stop Agent confirmation. The legacy agent_delete request stops the
 /// engine and removes its active entry, preserving files and saved history.
 Future<void> confirmDeleteAgent(
   BuildContext context,
@@ -16,12 +16,12 @@ Future<void> confirmDeleteAgent(
   final confirmed = await showAppDialog<bool>(
     context: context,
     builder: (dialogContext) => AlertDialog(
-      title: const Text('Stop Harness'),
+      title: const Text('Stop Agent'),
       content: SizedBox(
         width: 360,
         child: Text(
           'Stop “$name”? This ends the running agent and removes it from your '
-          'active harnesses. Project files and saved conversation history are kept.',
+          'active agents. Project files and saved conversation history are kept.',
           style: TextStyle(fontFamily: grid.AppFont.sans, fontSize: 13.5),
         ),
       ),
@@ -35,7 +35,7 @@ Future<void> confirmDeleteAgent(
             backgroundColor: grid.AppPalette.dangerFill,
           ),
           onPressed: () => Navigator.of(dialogContext).pop(true),
-          child: const Text('Stop Harness'),
+          child: const Text('Stop Agent'),
         ),
       ],
     ),

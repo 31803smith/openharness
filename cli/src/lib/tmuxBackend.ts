@@ -28,7 +28,9 @@ import {
   sendLiteralToTmux,
   sendToTmux,
   setPaneMouseOn,
+  setPaneWindowStyle,
 } from './tmux.js'
+import { DEFAULT_HOST_THEME, windowStyleOf, type HostTheme } from './hostTheme.js'
 import { listTmuxPanes } from './tmuxAgentDiscovery.js'
 import { terminalRouteKey } from './terminalRuntime.js'
 
@@ -89,6 +91,15 @@ export class TmuxBackend implements TerminalBackend<TmuxRuntimeRef> {
   readonly name = 'tmux' as const
   readonly instanceId = 'tmux:default'
 
+  /** What each Harness pane's `window-style` was last set to, so a scan re-applies only changes. */
+  private readonly styledPanes = new Map<string, string>()
+
+  /**
+   * [hostTheme] answers with the desktop's current pane colours (see `hostTheme.ts`); read at every
+   * use rather than captured, so a theme the app sends later reaches sessions created after it.
+   */
+  constructor(private readonly hostTheme: () => HostTheme = () => DEFAULT_HOST_THEME) {}
+
   async create(request: TerminalCreateRequest): Promise<TerminalCreateResult<TmuxRuntimeRef>> {
     const args = ['new-session', '-d', '-P', '-F', '#{pane_id}']
     if (request.cwd) args.push('-c', request.cwd)
@@ -107,6 +118,10 @@ export class TmuxBackend implements TerminalBackend<TmuxRuntimeRef> {
     // already gone before the follow-up command could reach the server.
     // Whoever created the pane owns turning this back off; see `clearPaneRemainOnExit`.
     args.push(';', 'set-option', '-w', 'remain-on-exit', 'on')
+    // Same invocation, same reason: an engine asks its terminal for its colours (OSC 10/11) in its
+    // first milliseconds and never again, so the style has to be there before the engine is.
+    const style = windowStyleOf(this.hostTheme())
+    args.push(';', 'set-option', '-w', 'window-style', style)
     // `killed`/`signal` come from execFile's own error shape, which ErrnoException alone does not declare.
     type ExecError = NodeJS.ErrnoException & { killed?: boolean; signal?: NodeJS.Signals | null }
     const result = await new Promise<{ error: ExecError | null; stdout: string; stderr: string }>((resolve) => {
@@ -133,6 +148,7 @@ export class TmuxBackend implements TerminalBackend<TmuxRuntimeRef> {
       return terminalActionPossiblyExecuted('tmux created a session without returning its root pane')
     }
     await setPaneMouseOn(paneId)
+    this.styledPanes.set(paneId, style)
     return { state: 'succeeded', dispatch: 'executed', runtime: { backend: 'tmux', paneId } }
   }
 
@@ -227,6 +243,7 @@ export class TmuxBackend implements TerminalBackend<TmuxRuntimeRef> {
   async inventory(): Promise<TerminalInventoryResult> {
     const result = await listTmuxPanes()
     if (!result.ok) return { state: 'unavailable', reason: result.error }
+    this.restyle(result.panes.map((pane) => pane.tmuxPane))
     return {
       state: 'available',
       roots: result.panes.map((pane) => ({
@@ -234,6 +251,28 @@ export class TmuxBackend implements TerminalBackend<TmuxRuntimeRef> {
         rootPid: pane.rootPid,
         cwd: pane.cwd,
       })),
+    }
+  }
+
+  /**
+   * Retroactive, on every scan: a pane from before this build, one that outlived a daemon restart,
+   * or every pane after the app changed its palette. Fire-and-forget — a scan that misses one
+   * because tmux was briefly slow catches it on the next pass. Panes that are gone are forgotten
+   * so a reused pane id is styled afresh.
+   */
+  private restyle(panes: readonly string[]): void {
+    const style = windowStyleOf(this.hostTheme())
+    const live = new Set(panes)
+    for (const pane of panes) {
+      if (this.styledPanes.get(pane) === style) continue
+      // Recorded only once tmux has taken it: a pane recorded on the attempt would never be
+      // retried after a timeout, until the theme happened to change again.
+      void setPaneWindowStyle(pane, style).then((applied) => {
+        if (applied && live.has(pane)) this.styledPanes.set(pane, style)
+      })
+    }
+    for (const pane of [...this.styledPanes.keys()]) {
+      if (!live.has(pane)) this.styledPanes.delete(pane)
     }
   }
 

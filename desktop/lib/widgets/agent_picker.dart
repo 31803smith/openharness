@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../shared/widgets/app_choice_picker.dart';
 import '../shared/widgets/app_select_field.dart';
@@ -10,15 +11,32 @@ class AgentPicker extends StatelessWidget {
     required this.value,
     required this.options,
     required this.onChanged,
+    this.compact = false,
+    this.tileSize,
   });
   final String value;
   final List<SelectOption<String>> options;
   final ValueChanged<String> onChanged;
-  static const quickAgents = ['codex', 'claude', 'cursor'];
+  final bool compact;
+  final Size? tileSize;
+
+  /// The preferred order: the three engines the tiles show, then the two
+  /// first-party domain harnesses, first in More; a chosen one is what the
+  /// More tile then shows.
+  static const quickAgents = [
+    'codex',
+    'claude',
+    'opencode',
+    'autonomous/copper',
+    'autonomous/solid',
+    'autonomous/marp',
+  ];
 
   @override
   Widget build(BuildContext context) => AppChoicePicker<String>(
     value: value,
+    compact: compact,
+    tileSize: tileSize,
     options: [
       for (final option in options)
         SelectOption(
@@ -35,5 +53,6 @@ class AgentPicker extends StatelessWidget {
     optionKey: (id) => ValueKey('new-agent-quick-$id'),
     moreKey: const Key('new-agent-engine-field'),
     moreLabel: 'More agents',
+    moreLeading: const Icon(LucideIcons.layoutGrid, size: 18),
   );
 }

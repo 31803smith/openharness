@@ -285,6 +285,9 @@ class _DeviceStatusCard extends StatelessWidget {
                                       ),
                                     ),
                                   ],
+                                  if (status.hw != null) ...[
+                                    TextSpan(text: ' · ${status.hw}'),
+                                  ],
                                   if (updating != null) ...[
                                     const TextSpan(text: ' · '),
                                     TextSpan(

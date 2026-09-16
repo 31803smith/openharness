@@ -298,6 +298,9 @@ export interface CableHost {
 export interface DialStatus {
   attached: boolean
   fw?: string
+  /** Which of the two dials this is — `cst9217+axp2101`, `cst816s`, … — as the firmware detected itself
+   *  at boot (device: board.h). Absent from a firmware that predates the field. Informational. */
+  hw?: string
   updating?: string
 }
 
@@ -706,12 +709,14 @@ export class CableSession {
         // "it came back, and on which version". Losing it left a successful 0.0.37 install unverifiable
         // from the log on 2026-08-24.
         const fw = str('fw') ?? '?'
+        const hw = str('hw')
         if (mac !== this.greetedMac || fw !== this.greetedFw) {
           const returning = mac === this.greetedMac
           this.greetedMac = mac
           this.greetedFw = fw
-          this.log(`cable: dial ${mac} ${returning ? 'back ' : ''}on fw ${fw} proto ${msg.proto}`)
-          this.host.onDialStatus?.({ attached: true, fw })
+          this.log(`cable: dial ${mac} ${returning ? 'back ' : ''}on fw ${fw} proto ${msg.proto}${hw ? ` hw ${hw}` : ''}`)
+          this.dialLog.greeted()
+          this.host.onDialStatus?.({ attached: true, fw, ...(hw ? { hw } : {}) })
           // BEFORE the state push, not after: the push reads the selected machine, and for a remote one
           // that means an RPC over a lane this is what re-opens.
           this.host.onDialAttached?.()

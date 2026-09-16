@@ -136,7 +136,12 @@ function unavailableMessage(said?: string): string {
     + 'like here — if it keeps happening, run `harness login` to sign in again.'
 }
 
-async function refreshRequest(baseUrl: string, current: AuthSession): Promise<RefreshResult> {
+// A refresh that never answers must fail, not hang: the daemon's backend reconnect waits on it, and
+// the desktop app never restarts a daemon that is alive — so an unbounded fetch here was a machine
+// that stayed "connected" in status and disconnected in fact until someone ran `harness stop`.
+const REFRESH_TIMEOUT_MS = 15_000
+
+async function refreshRequest(baseUrl: string, current: AuthSession, timeoutMs = REFRESH_TIMEOUT_MS): Promise<RefreshResult> {
   if (!current.refreshToken) throw new AuthSessionError('No SSO refresh token. Run `harness login`.', 'MISSING')
   let response: Response
   try {
@@ -144,6 +149,7 @@ async function refreshRequest(baseUrl: string, current: AuthSession): Promise<Re
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ refreshToken: current.refreshToken, autonomousEnv: current.autonomousEnv }),
+      signal: AbortSignal.timeout(timeoutMs),
     })
   } catch {
     throw new AuthSessionError(unavailableMessage(), 'UNAVAILABLE')
@@ -170,7 +176,10 @@ async function refreshRequest(baseUrl: string, current: AuthSession): Promise<Re
 /** One in-process refresh plus a file lock for daemon/command races. */
 export class AuthSessionManager {
   private refreshInFlight: Promise<string> | null = null
-  constructor(private readonly backendBaseUrl: string) {}
+  constructor(
+    private readonly backendBaseUrl: string,
+    private readonly opts: { refreshTimeoutMs?: number } = {},
+  ) {}
 
   session(): AuthSession | null { return readAuthSession() }
 
@@ -188,7 +197,7 @@ export class AuthSessionManager {
       const stillNeedsRefresh = opts.force === true || (latest.expiresAt != null && latest.expiresAt <= Date.now() + REFRESH_SKEW_MS)
       if (!stillNeedsRefresh) return latest.accessToken
       try {
-        const refreshed = await refreshRequest(this.backendBaseUrl, latest)
+        const refreshed = await refreshRequest(this.backendBaseUrl, latest, this.opts.refreshTimeoutMs)
         const next: AuthSession = {
           ...latest,
           accessToken: refreshed.token,

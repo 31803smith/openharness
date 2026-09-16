@@ -1,6 +1,8 @@
 /// Data models mirroring the backend/web types.
 library;
 
+import 'package:flutter/foundation.dart' show immutable;
+
 enum MachineAuthMode { managed, remote, self, provider }
 
 enum ConnectionStatus { disconnected, connecting, connected, reconnecting }
@@ -174,6 +176,23 @@ class Agent {
   final bool terminalAvailable;
   final String? terminalUnavailableReason;
 
+  /// The domain-specific harness this agent was created from (`autonomous/copper`), or
+  /// null for a plain engine. [engine] stays the BASE engine the process actually runs —
+  /// a DSH is a decoration on the session, never a second engine (see the DSH spec in
+  /// `dsh/spec/README.md`). Everything a person sees keys off this when it is set.
+  final String? dsh;
+
+  /// The harness's display name as the daemon read it off the manifest. Lets a DSH this
+  /// build has never heard of still show its own name rather than its id.
+  final String? dshName;
+
+  /// The URL of the harness's viewer for this agent, served on the agent's machine, or null
+  /// when there is none (yet). A change means the viewer pane must navigate.
+  final String? viewerUrl;
+
+  /// The harness's last verdict on this workspace, or null when it has not written one.
+  final AgentVerdict? verdict;
+
   const Agent({
     required this.id,
     this.sessionId,
@@ -192,7 +211,17 @@ class Agent {
     this.launchDetail,
     this.terminalAvailable = false,
     this.terminalUnavailableReason,
+    this.dsh,
+    this.dshName,
+    this.viewerUrl,
+    this.verdict,
   });
+
+  /// What to draw this agent AS: its harness when it has one, else its engine.
+  String? get identityEngine => dsh ?? engine;
+
+  /// The name that goes with [identityEngine], for an id this build has no picture of.
+  String? get identityDisplayName => dsh != null ? dshName : engineDisplayName;
 
   factory Agent.fromJson(Map<String, dynamic> j) {
     final terminal = j['terminal'];
@@ -242,6 +271,10 @@ class Agent {
           ? null
           : _safeLabel(terminalMap['reason']) ??
                 'terminal unavailable (no verified terminal pane)',
+      dsh: _safeDsh(j['dsh']),
+      dshName: _safeLabel(j['dshName']),
+      viewerUrl: _safeViewerUrl(j['viewerUrl']),
+      verdict: AgentVerdict.fromJson(j['verdict']),
     );
   }
 
@@ -263,7 +296,33 @@ class Agent {
     launchDetail: launchDetail,
     terminalAvailable: terminalAvailable,
     terminalUnavailableReason: terminalUnavailableReason,
+    dsh: dsh,
+    dshName: dshName,
+    viewerUrl: viewerUrl,
+    verdict: verdict,
   );
+
+  /// `owner/name`, exactly the shape the DSH manifest schema allows and nothing else — the
+  /// id names an install directory on the far machine and a picker tile here.
+  static String? _safeDsh(Object? raw) {
+    if (raw is! String || raw.isEmpty || raw.length > 129) return null;
+    return RegExp(r'^[a-z0-9][a-z0-9-]{0,63}/[a-z0-9][a-z0-9-]{0,63}$')
+            .hasMatch(raw)
+        ? raw
+        : null;
+  }
+
+  /// A loopback or plain http(s) URL the viewer pane may load. Anything else — a `file:`,
+  /// a `javascript:`, a string with control characters — is dropped rather than navigated
+  /// to, since this lands straight in a webview.
+  static String? _safeViewerUrl(Object? raw) {
+    if (raw is! String || raw.isEmpty || raw.length > 2048) return null;
+    if (RegExp(r'[\x00-\x1f\x7f\s]').hasMatch(raw)) return null;
+    final uri = Uri.tryParse(raw);
+    if (uri == null || !uri.hasAuthority) return null;
+    if (uri.scheme != 'http' && uri.scheme != 'https') return null;
+    return raw;
+  }
 
   static String? _safeEngine(Object? raw) {
     if (raw is! String || raw.isEmpty || raw.length > 64) return null;
@@ -291,6 +350,138 @@ class Agent {
     if (clean.isEmpty) return null;
     return clean.length <= 500 ? clean : clean.substring(0, 500);
   }
+}
+
+/// A domain-specific harness's verdict on an agent's workspace, as the daemon read it off
+/// `.harness/verdict.json` (see `dsh/spec/README.md`). Counts rather than the findings
+/// themselves: the pane header has room for "3 errors", and the findings live in the
+/// harness's own viewer.
+enum AgentPhaseState { done, active, pending, failed }
+
+/// One phase of a harness's work, as its verdict names it: where the agent is.
+class AgentPhase {
+  const AgentPhase({
+    required this.id,
+    required this.name,
+    this.state = AgentPhaseState.pending,
+    this.artifact,
+  });
+
+  final String id;
+  final String name;
+  final AgentPhaseState state;
+  final String? artifact;
+
+  static AgentPhase? fromJson(Object? raw) {
+    if (raw is! Map) return null;
+    final name = AgentVerdict._safeText(raw['name'], 40);
+    if (name == null || name.isEmpty) return null;
+    final id = AgentVerdict._safeText(raw['id'], 40);
+    final state = switch (raw['state']) {
+      'done' => AgentPhaseState.done,
+      'active' => AgentPhaseState.active,
+      'failed' => AgentPhaseState.failed,
+      _ => AgentPhaseState.pending,
+    };
+    return AgentPhase(
+      id: id == null || id.isEmpty ? name.toLowerCase() : id,
+      name: name,
+      state: state,
+      artifact: AgentVerdict._safeText(raw['artifact'], 1024),
+    );
+  }
+}
+
+@immutable
+class AgentVerdict {
+  const AgentVerdict({
+    required this.ready,
+    this.summary,
+    this.errors = 0,
+    this.warnings = 0,
+    this.artifact,
+    this.phases = const [],
+    this.updatedAt,
+  });
+
+  /// The one machine fact: fab-ready, all gates passed, exam passed.
+  final bool ready;
+
+  /// One line for the header's tooltip.
+  final String? summary;
+  final int errors;
+  final int warnings;
+
+  /// Workspace-relative path of the primary thing to look at, when the harness named one.
+  final String? artifact;
+
+  /// Where the work is, in order — at most twelve; empty when the harness
+  /// names no phases, and then the header draws no strip.
+  final List<AgentPhase> phases;
+  final DateTime? updatedAt;
+
+  /// The phase under way, when one is.
+  AgentPhase? get activePhase =>
+      phases.where((p) => p.state == AgentPhaseState.active).firstOrNull;
+
+  /// The one phase the header shows: the one under way, else the last one
+  /// that has happened — done or failed — else nothing. A status, not a
+  /// history: each new one replaces the last.
+  AgentPhase? get currentPhase {
+    final active = activePhase;
+    if (active != null) return active;
+    for (final phase in phases.reversed) {
+      if (phase.state != AgentPhaseState.pending) return phase;
+    }
+    return null;
+  }
+
+  static AgentVerdict? fromJson(Object? raw) {
+    if (raw is! Map) return null;
+    final ready = raw['ready'];
+    if (ready is! bool) return null;
+    final updated = raw['updatedAt'];
+    return AgentVerdict(
+      ready: ready,
+      summary: _safeText(raw['summary'], 200),
+      errors: _safeCount(raw['errors']),
+      warnings: _safeCount(raw['warnings']),
+      artifact: _safeText(raw['artifact'], 1024),
+      phases: _phases(raw['phases']),
+      updatedAt: updated is String ? DateTime.tryParse(updated) : null,
+    );
+  }
+
+  static List<AgentPhase> _phases(Object? raw) {
+    if (raw is! List) return const [];
+    return [for (final item in raw.take(12)) ?AgentPhase.fromJson(item)];
+  }
+
+  static int _safeCount(Object? raw) {
+    if (raw is! num || raw.isNaN || raw < 0) return 0;
+    return raw > 9999 ? 9999 : raw.toInt();
+  }
+
+  static String? _safeText(Object? raw, int max) {
+    if (raw is! String) return null;
+    final clean = raw.replaceAll(RegExp(r'[\u0000-\u001f\u007f]'), ' ').trim();
+    if (clean.isEmpty) return null;
+    return clean.length <= max ? clean : clean.substring(0, max);
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is AgentVerdict &&
+      other.ready == ready &&
+      other.summary == summary &&
+      other.errors == errors &&
+      other.warnings == warnings &&
+      other.artifact == artifact &&
+      other.updatedAt == updatedAt;
+
+  @override
+  int get hashCode =>
+      Object.hash(ready, summary, errors, warnings, artifact, updatedAt);
 }
 
 /// What the daemon answered when asked where a typed task belongs (⌘B).

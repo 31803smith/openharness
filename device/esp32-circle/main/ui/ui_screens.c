@@ -1241,6 +1241,13 @@ static void busy_dots_tick(lv_timer_t *t)
         // Sending: march the green highlight across the 3 sparkles (~3 Hz ≈ Figma's 0.8s/3 sweep).
         if (s_vic_state == VIC_SEND) { s_send_idx = (s_send_idx + 1) % 3; voice_send_apply_idx(); }
         notif_badge_apply();            // keep the unread pill in sync (screen/settings/asleep)
+        // The Voice cluster too. Its show/hide used to run only on a swipe, a turn edge and the end of a
+        // voice overlay — and its condition includes "awake" and "drawer closed". A turn that ended while
+        // the dial slept (or the drawer was open) hid it, and nothing re-showed it on wake: the tile came
+        // back without Voice until the next swipe (owner, 2026-09-15: "lâu lâu tao thấy màn hình agent
+        // mất icon voice, swipe qua lại thì xuất hiện lại"). LVGL ignores a flag that does not change,
+        // so this costs nothing when it agrees.
+        agent_actions_apply();
     }
     // Keep the screen awake through a voice turn: voice uses the PWR key (not the touchscreen), so
     // recording + upload + the agent working produces NO touch and the idle timer would auto-off the
@@ -5568,7 +5575,20 @@ static void notif_row_tap(lv_event_t *e)
     // EVERY machine's agents share one carousel, so the notified tile is almost always already on it —
     // whichever machine sent the notification. Go straight there: switching machines first would land on
     // that machine's FIRST agent, which is rarely the one the notification is about.
-    if (id[0] && ui_project_known(id)) { open_agent_detail(id); ui_report_active_agent(); return; }
+    //
+    // THE OPEN NAMES THE NOTIFICATION'S AGENT, NOT THE TILE. It used to land the carousel first and then
+    // report whatever was active. The ring is the window's CURRENT TAB, so an agent open in another tab
+    // is known but not on the ring: the landing was held for a list that never came, and the report
+    // named the tile the dial happened to be on — the window then opened the wrong agent (owner,
+    // 2026-09-15: "bấm noti vào agent Kinh Te, nó không focus qua tab chứa Kinh Te"). Now the id goes
+    // up as-is; the window finds the tab that holds it (or opens one), pushes the ring, and the held
+    // landing below lands then.
+    if (id[0] && ui_project_known(id)) {
+        s_notif_open_pending = false;
+        cable_client_send_open(id);
+        open_agent_detail(id);
+        return;
+    }
 
     // It is not on the carousel yet — a notification that arrived ahead of the list it belongs to. Select
     // its machine and defer the focus to ui_land_after_reload, which is the one path that runs once the
@@ -5708,13 +5728,16 @@ static void switch_row_tap(lv_event_t *e)
     snprintf(id, sizeof id, "%s", s_switch_ids[idx]);   // copy: closing rebuilds nothing, but a pick might
     switch_close();
     if (!id[0]) return;
+    // A PERSON picked this row, so the window is told — as an OPEN, the same as a notification tap (owner,
+    // 2026-09-15: "chọn agent từ list … cùng rule với noti"): the window lands on the tab that holds the
+    // agent, the current one first, or opens a tab for it. The id goes up as-is, before the local
+    // centring below: an agent in another tab is known but not on the ring, so that centring is held
+    // for the list the window pushes back — and reporting the tile afterwards would name the wrong one.
+    cable_client_send_open(id);
     ui_focus_project(id);
     display_lock();
     apply_active_from_col();
     display_unlock();
-    // A PERSON picked this row, so the window is told — the centring above went through code and is muted
-    // like every other programmatic move.
-    ui_report_active_agent();
 }
 
 // Fill the picker from the FIRST tiles in the list.
@@ -6888,6 +6911,25 @@ static void q_render(void)
 {
     lv_obj_clean(scr_question);
     qitem_t *q = &s_q.q[s_q.idx];
+    // WHO is asking, above the question (owner, 2026-09-15: "noti cần thêm tên của agent ở phía trên …
+    // để user có thêm context ra quyết định"). The same question — "switch to the cheaper model?" —
+    // means different things from a scratch agent and from the one mid-deploy. Muted, small, one line:
+    // an eyebrow, not a second title.
+    {
+        int ai = find_proj(s_q.project);
+        if (ai >= 0 && s_proj[ai].name[0]) {
+            static char who[64];
+            utf8_filter(s_proj[ai].name, who, sizeof(who));
+            lv_obj_t *l = lv_label_create(scr_question);
+            lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
+            lv_obj_set_width(l, lv_pct(100));
+            lv_obj_set_style_text_font(l, &geist_sem_24, 0);
+            lv_obj_set_style_text_color(l, COL_MUTED, 0);
+            lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
+            lv_obj_set_style_pad_bottom(l, 2, 0);
+            lv_label_set_text(l, who);
+        }
+    }
     static char tmp[256];
     utf8_filter(q->text, tmp, sizeof(tmp));
     q_add_text(tmp[0] ? tmp : "?", COL_FG, &geist_med_32);                       // prompt = title
@@ -7064,6 +7106,10 @@ void ui_question_show(const char *project_id, const char *session_id, const char
     lv_screen_load(scr_question);
     display_unlock();
     audio_notify_done();   // audible alert so the user notices a question is waiting
+    // …and bring the window to the same agent, so the question can be judged against what it is doing.
+    // The same `open` a notification tap sends: the window finds the tab that holds the agent — the
+    // current one first — or opens one for it (owner, 2026-09-15, "rule vẫn như cũ").
+    if (s_q.project[0]) cable_client_send_open(s_q.project);
 }
 
 // ── Machine picker (Settings → Machines) ──────────────────────────────────────────────────────────────

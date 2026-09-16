@@ -3,14 +3,17 @@
 // `local` is derived, not declared, and getting it wrong is invisible: every machine — including this
 // computer's own — silently reads as remote, so the dial's own row goes missing and the daemon opens a
 // cloud socket to reach agents that are in this very process.
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
-import { MachineListCache, sameComputer } from './machineList.js'
+import { MachineListCache, sameComputer, withStaleMarker } from './machineList.js'
 
 const DIR = (): string => mkdtempSync(join(tmpdir(), 'machines-'))
+
+/** The machine row a session belongs to — per (user, computer), so it is what tells two accounts apart. */
+const OWNER = 'machine-of-user-a'
 
 /** The shape `GET /api/machines` actually answers with (MachineService.toOwner). */
 function row(over: Record<string, unknown> = {}): Record<string, unknown> {
@@ -114,5 +117,139 @@ describe('MachineListCache', () => {
     const cache = new MachineListCache(async () => ({ status: 200, body: { nope: true } }), () => 'z', log, DIR())
     await expect(cache.refresh()).resolves.toBeUndefined()
     expect(cache.list().source).toBe('local')
+  })
+})
+
+// The desktop app reads this same endpoint through the daemon, so an outage must leave it with the last
+// known list rather than nothing — see `machinesListWithFallback` in cli.ts.
+describe('MachineListCache last-known-good body', () => {
+  it('keeps the successful response verbatim, so a fallback cannot change the wire shape', async () => {
+    const dir = DIR()
+    // A row carries fields the dial's ListedMachine projection drops (computerId, hostname) but the
+    // desktop reads. Serving the projection back would silently break it.
+    const body = { success: true, data: { machines: [row({ hostname: 'imac-office' })] } } as Record<string, unknown>
+    const cache = new MachineListCache(async () => ({ status: 200, body }), () => 'aabbccdd', () => {}, dir, () => OWNER)
+    await cache.refresh()
+
+    const kept = cache.lastResponse()
+    expect(kept?.body).toEqual(body)
+    expect(kept!.fetchedAt).toBeGreaterThan(0)
+    // And it survives a restart: the body is on disk beside the rows.
+    const onDisk = JSON.parse(readFileSync(join(dir, 'machines.json'), 'utf8')) as Record<string, unknown>
+    expect(onDisk.body).toEqual(body)
+  })
+
+  it('has nothing to serve until a read succeeds', async () => {
+    const cache = new MachineListCache(async () => ({ status: 502, body: {} }), () => 'z', () => {}, DIR())
+    await cache.refresh()
+    expect(cache.lastResponse()).toBeNull()
+  })
+
+  it('reads a cache file written before this field existed, without throwing', () => {
+    const dir = DIR()
+    // The shape an older daemon wrote: rows only.
+    writeFileSync(join(dir, 'machines.json'), JSON.stringify({ machines: [{ machineId: 'm1', name: 'old', state: 'ready', authMode: 'remote', local: false }] }))
+    const cache = new MachineListCache(ok([]), () => 'z', () => {}, dir)
+    expect(cache.find('m1')?.name).toBe('old')   // the wheel still draws
+    expect(cache.lastResponse()).toBeNull()       // but there is no body to answer with yet
+  })
+
+  it('restores the body from disk so a daemon that starts offline can still answer', async () => {
+    const dir = DIR()
+    const body = { success: true, data: { machines: [row()] } } as Record<string, unknown>
+    await new MachineListCache(async () => ({ status: 200, body }), () => 'aabbccdd', () => {}, dir, () => OWNER).refresh()
+
+    const restarted = new MachineListCache(async () => ({ status: 502, body: {} }), () => 'aabbccdd', () => {}, dir, () => OWNER)
+    expect(restarted.lastResponse()?.body).toEqual(body)
+  })
+
+  it('forgets the body when the session ends, so no list outlives its owner', async () => {
+    const dir = DIR()
+    const body = { success: true, data: { machines: [row()] } } as Record<string, unknown>
+    let status = 200
+    const cache = new MachineListCache(async () => ({ status, body }), () => 'aabbccdd', () => {}, dir, () => OWNER)
+    await cache.refresh()
+    expect(cache.lastResponse()).not.toBeNull()
+
+    status = 401
+    await cache.refresh()
+    expect(cache.lastResponse()).toBeNull()
+    expect(cache.list().machines).toHaveLength(0)
+    // Cleared on disk too — a restart must not resurrect it.
+    expect(JSON.parse(readFileSync(join(dir, 'machines.json'), 'utf8')).body).toBeNull()
+  })
+
+  it('adopt() takes a body the caller already has, and refuses one with no machines', () => {
+    const cache = new MachineListCache(ok([]), () => 'aabbccdd', () => {}, DIR())
+    expect(cache.adopt({ machines: [row()] })).toBe(true)
+    expect(cache.find('m1')?.local).toBe(true)
+    expect(cache.adopt({ nope: true })).toBe(false)
+  })
+})
+
+describe('withStaleMarker', () => {
+  it('marks inside `data`, which is where a local client unwraps to', () => {
+    const at = Date.parse('2026-09-15T12:00:00.000Z')
+    const out = withStaleMarker({ success: true, data: { machines: [row()] } }, at)
+    const data = out.data as Record<string, unknown>
+    expect(data.stale).toBe(true)
+    expect(data.staleSince).toBe('2026-09-15T12:00:00.000Z')
+    expect(out.stale).toBeUndefined()            // not at the top level, where nobody looks
+    expect((data.machines as unknown[])).toHaveLength(1)   // the payload itself is untouched
+  })
+
+  it('falls back to the top level for a body that has no `data`', () => {
+    const out = withStaleMarker({ machines: [row()] }, Date.parse('2026-09-15T12:00:00.000Z'))
+    expect(out.stale).toBe(true)
+    expect(out.staleSince).toBe('2026-09-15T12:00:00.000Z')
+  })
+})
+
+// `harness logout` deletes this file, but a session can also be replaced in place — signing in as someone
+// else without logging out first. Answering that with the previous account's machines would disclose them.
+describe('MachineListCache account guard', () => {
+  const body = { success: true, data: { machines: [row()] } } as Record<string, unknown>
+
+  it('will not answer a different account from the list it cached for the previous one', async () => {
+    const dir = DIR()
+    let owner = 'machine-of-user-a';
+    const cache = new MachineListCache(async () => ({ status: 200, body }), () => 'aabbccdd', () => {}, dir, () => owner)
+    await cache.refresh()
+    expect(cache.lastResponse()).not.toBeNull()
+
+    owner = 'machine-of-user-b'   // same computer, different account
+    expect(cache.lastResponse()).toBeNull()
+  })
+
+  it('will not answer when this session has no machine of its own to compare', async () => {
+    const dir = DIR()
+    const cache = new MachineListCache(async () => ({ status: 200, body }), () => 'aabbccdd', () => {}, dir, () => null)
+    await cache.refresh()
+    // Nothing to prove ownership with is not the same as proving it: stay quiet.
+    expect(cache.lastResponse()).toBeNull()
+  })
+
+  it('will not answer from a cache written before the stamp existed', () => {
+    const dir = DIR()
+    writeFileSync(join(dir, 'machines.json'), JSON.stringify({ machines: [], body, fetchedAt: 1 }))
+    const cache = new MachineListCache(ok([]), () => 'aabbccdd', () => {}, dir, () => OWNER)
+    expect(cache.lastResponse()).toBeNull()
+  })
+})
+
+describe('MachineListCache disk writes', () => {
+  it('does not rewrite the file when the list has not changed', async () => {
+    const dir = DIR()
+    const path = join(dir, 'machines.json')
+    const cache = new MachineListCache(ok([row()]), () => 'aabbccdd', () => {}, dir, () => OWNER)
+    await cache.refresh()
+    const first = statSync(path).mtimeMs
+
+    // The desktop asking again is the common case; an unchanged answer must cost no synchronous write.
+    for (let i = 0; i < 5; i++) cache.adopt({ machines: [row()] })
+    expect(statSync(path).mtimeMs).toBe(first)
+
+    cache.adopt({ machines: [row({ machineId: 'm2' })] })   // a real change still lands
+    expect(statSync(path).mtimeMs).not.toBe(first)
   })
 })

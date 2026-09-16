@@ -17,7 +17,7 @@ for (key, command) in [
   ("cmd+s", "pane.layout"), ("cmd+r", "pane.split_right"),
   ("cmd+d", "pane.split_down"),
   ("cmd+b", "task.route"), ("cmd+t", "swarm.new"),
-  ("cmd+n", "agent.new"), ("cmd+o", "agent.add"),
+  ("cmd+o", "agent.add"), ("cmd+n", "agent.new"),
   ("cmd+h", "pane.focus_left"), ("cmd+j", "pane.focus_below"),
   ("cmd+k", "pane.focus_above"), ("cmd+l", "pane.focus_right"),
 ] {
@@ -25,6 +25,8 @@ for (key, command) in [
     "Preserve the current default for \(key)")
 }
 for context in ["workspace", "terminal", "picker"] {
+  try checkKeymap(defaults.match([stroke("cmd+shift+n")], context: context).binding == nil,
+    "Shift-Command-N is unbound by default in \(context)")
   for number in 1...9 {
     try checkKeymap(defaults.match([stroke("cmd+\(number)")], context: context).binding?.command == "swarm.select_\(number)",
       "Command-number selects the corresponding tab from \(context)")

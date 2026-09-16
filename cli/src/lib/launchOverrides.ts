@@ -24,6 +24,7 @@ import {
   type GridLaunchRecord,
 } from './gridLaunch.js'
 import { TMUX_SESSION_ENV_MIN } from './tmuxVersion.js'
+import type { DshLaunch } from '../dsh/launch.js'
 
 export interface LaunchOverrides {
   /** Layered over the pane's inherited environment. The grid key lives here, and only here. */
@@ -57,6 +58,9 @@ export interface LaunchOverridesDeps {
   /** Install the daemon's hooks into a non-default Codex profile. The caller decides whether hook
    *  installation is enabled at all. */
   installCodexHooks: (codexHome: string) => void
+  /** What a DSH adds to the launch (its env and argv), or null when it is not installed here any
+   *  more — in which case the agent relaunches as its plain base engine and says so in the log. */
+  dshLaunch?: (dsh: string, workspace: string) => DshLaunch | null
 }
 
 /** Where the agent should come back: the registry row, or an override the desktop just sent. */
@@ -70,6 +74,10 @@ export interface LaunchSource {
    * engine decide", which is what happens for an engine with no cited mechanism.
    */
   subscriptionModel?: string | null
+  /** The DSH the agent was created as; its env rides on every relaunch (`HARNESS_DSH` included). */
+  dsh?: string | null
+  /** The workspace, for the DSH's `${workspace}` — the registry row's `cwd`. */
+  cwd?: string | null
 }
 
 /** Fresh each time: callers hand `env` to tmux and may extend it, and a shared object would carry
@@ -111,6 +119,28 @@ export async function validateLaunchOverrides(
 }
 
 export async function buildLaunchOverrides(
+  deps: LaunchOverridesDeps,
+  engine: AgentEngine,
+  source: LaunchSource,
+  configKey: string,
+): Promise<LaunchOverridesResult> {
+  const base = await buildBaseLaunchOverrides(deps, engine, source, configKey)
+  if (!base.ok || !source.dsh || !source.cwd) return base
+  const dsh = deps.dshLaunch?.(source.dsh, source.cwd) ?? null
+  if (!dsh) return base
+  // The DSH's variables layer over the grid's or the profile's; `HARNESS_*` are the daemon's own and
+  // a manifest cannot set them (see `dshLaunch`), so nothing here can shadow a grid credential.
+  return {
+    ok: true,
+    overrides: {
+      env: { ...base.overrides.env, ...dsh.env },
+      extraArgs: [...base.overrides.extraArgs, ...dsh.args],
+      clearEnv: base.overrides.clearEnv,
+    },
+  }
+}
+
+async function buildBaseLaunchOverrides(
   deps: LaunchOverridesDeps,
   engine: AgentEngine,
   source: LaunchSource,

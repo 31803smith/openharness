@@ -72,8 +72,13 @@ class AppSelectField<T> extends StatefulWidget {
     required this.options,
     required this.onChanged,
     this.width,
+    this.menuWidth,
     this.height = AppControl.height,
     this.trigger,
+    this.focusNode,
+    this.fillColor,
+    this.selected,
+    this.emptyLabel,
   });
 
   final T value;
@@ -83,11 +88,22 @@ class AppSelectField<T> extends StatefulWidget {
   /// Fixed width, so a column of these lines up on one right edge. Null lets it
   /// take whatever its parent gives.
   final double? width;
+
+  /// A floor for the menu's width, when the rows carry more than the field
+  /// does — a name, a second line and a mark want room to be read at a
+  /// glance. Never narrower than the field itself.
+  final double? menuWidth;
   final double height;
 
   /// An alternate compact trigger, such as the agent picker's More button.
   /// Selection, keyboard navigation and menu rows remain shared.
   final Widget? trigger;
+  final FocusNode? focusNode;
+  final Color? fillColor;
+
+  /// A choice-tile selection. Null retains the ordinary field focus border.
+  final bool? selected;
+  final String? emptyLabel;
 
   @override
   State<AppSelectField<T>> createState() => _AppSelectFieldState<T>();
@@ -95,7 +111,8 @@ class AppSelectField<T> extends StatefulWidget {
 
 class _AppSelectFieldState<T> extends State<AppSelectField<T>> {
   final _controller = MenuController();
-  final _fieldFocus = FocusNode(debugLabel: 'Select field');
+  final _ownedFocus = FocusNode(debugLabel: 'Select field');
+  FocusNode get _fieldFocus => widget.focusNode ?? _ownedFocus;
   final _optionFocus = <T, FocusNode>{};
   ({T value})? _pendingFocus;
   String _prefix = '';
@@ -139,7 +156,7 @@ class _AppSelectFieldState<T> extends State<AppSelectField<T>> {
 
   @override
   void dispose() {
-    _fieldFocus.dispose();
+    _ownedFocus.dispose();
     for (final node in _optionFocus.values) {
       node.dispose();
     }
@@ -147,14 +164,19 @@ class _AppSelectFieldState<T> extends State<AppSelectField<T>> {
   }
 
   void _open() {
-    if (widget.options.isEmpty || _controller.isOpen) return;
+    if ((widget.options.isEmpty && widget.emptyLabel == null) ||
+        _controller.isOpen) {
+      return;
+    }
     _prefix = '';
     _lastTyped = null;
     _controller.open();
     // Unopened controls need no per-option focus nodes. Mount them with the
     // menu, including any match typed before its first frame.
     setState(() {});
-    _focusOption(_currentOption!, afterLayout: true);
+    if (_currentOption != null) {
+      _focusOption(_currentOption!, afterLayout: true);
+    }
   }
 
   void _focusOption(SelectOption<T> option, {bool afterLayout = false}) {
@@ -285,7 +307,10 @@ class _AppSelectFieldState<T> extends State<AppSelectField<T>> {
                   ? AppMenuRowMetrics.roomy.extent
                   : AppMenuRowMetrics.roomy.detailExtent),
         ) +
-        AppMenu.panelPadding.vertical,
+        AppMenu.panelPadding.vertical +
+        (widget.options.isEmpty && widget.emptyLabel != null
+            ? AppMenuRowMetrics.roomy.extent
+            : 0),
     _maxPanelHeight,
   );
 
@@ -341,10 +366,31 @@ class _AppSelectFieldState<T> extends State<AppSelectField<T>> {
       // at.
       style: AppMenu.style(maxHeight: _panelHeight),
       menuChildren: [
+        if (widget.options.isEmpty && widget.emptyLabel != null)
+          SizedBox(
+            width: math.max(
+              math.max(panelWidth ?? 0, widget.menuWidth ?? 0),
+              _minPanelWidth,
+            ),
+            height: AppMenuRowMetrics.roomy.extent,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  widget.emptyLabel!,
+                  style: TextStyle(color: AppPalette.textSecondary),
+                ),
+              ),
+            ),
+          ),
         for (final option in widget.options)
           _typingRegion(
             SizedBox(
-              width: math.max(panelWidth ?? 0, _minPanelWidth),
+              width: math.max(
+                math.max(panelWidth ?? 0, widget.menuWidth ?? 0),
+                _minPanelWidth,
+              ),
               child: AppMenuItem(
                 // No glyph of its own: the leading slot belongs to the tick,
                 // and stays empty (not a blank checkbox) on rows without it.
@@ -385,80 +431,90 @@ class _AppSelectFieldState<T> extends State<AppSelectField<T>> {
               hoverColor: Colors.transparent,
               focusColor: Colors.transparent,
               borderRadius: BorderRadius.circular(AppControl.radius),
-              child: AnimatedContainer(
-                duration: AppMotion.hover,
-                curve: AppMotion.curve,
+              child: SizedBox(
                 width: widget.width,
                 height: widget.height,
-                padding: const EdgeInsets.only(left: 10, right: 8),
-                decoration: BoxDecoration(
-                  color: _hovered || _focused || controller.isOpen
-                      ? AppSurface.recessHover
-                      : AppSurface.recess,
-                  borderRadius: BorderRadius.circular(AppControl.radius),
-                  border: Border.all(
-                    color: _focused
-                        ? AppPalette.accentOnSurface
-                        : Colors.transparent,
+                child: AnimatedContainer(
+                  duration: AppMotion.hover,
+                  curve: AppMotion.curve,
+                  padding: const EdgeInsets.only(left: 10, right: 8),
+                  decoration: BoxDecoration(
+                    color: _hovered || _focused || controller.isOpen
+                        ? widget.fillColor == null
+                              ? AppSurface.recessHover
+                              : Color.alphaBlend(
+                                  Colors.white.withValues(alpha: .05),
+                                  widget.fillColor!,
+                                )
+                        : widget.fillColor ?? AppSurface.recess,
+                    borderRadius: BorderRadius.circular(AppControl.radius),
+                    border: Border.all(
+                      color:
+                          widget.selected == true ||
+                              (_focused && widget.selected == null)
+                          ? AppPalette.accentOnSurface
+                          : Colors.transparent,
+                    ),
                   ),
-                ),
-                child:
-                    widget.trigger ??
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Row(
-                            children: [
-                              if (current?.leading != null) ...[
-                                current!.leading!(),
-                                const SizedBox(width: 8),
-                              ],
-                              Flexible(
-                                child: Text(
-                                  current?.label ?? '—',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontFamily: AppFont.sans,
-                                    fontFamilyFallback: AppFont.sansFallback,
-                                    fontSize: AppControl.fontSize,
-                                    fontWeight: AppControl.fontWeight,
-                                    letterSpacing: AppFont.trackingFor(
-                                      AppControl.fontSize,
-                                    ),
-                                    color: AppPalette.textPrimary,
-                                  ),
-                                ),
-                              ),
-                              if (current?.note != null) ...[
-                                const SizedBox(width: 8),
+                  child:
+                      widget.trigger ??
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Row(
+                              children: [
+                                if (current?.leading != null) ...[
+                                  current!.leading!(),
+                                  const SizedBox(width: 8),
+                                ],
                                 Flexible(
                                   child: Text(
-                                    current!.note!,
+                                    current?.label ?? '—',
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                     style: TextStyle(
                                       fontFamily: AppFont.sans,
                                       fontFamilyFallback: AppFont.sansFallback,
-                                      fontSize: 11.5,
-                                      color: AppPalette.textFaint,
+                                      fontSize: AppControl.fontSize,
+                                      fontWeight: AppControl.fontWeight,
+                                      letterSpacing: AppFont.trackingFor(
+                                        AppControl.fontSize,
+                                      ),
+                                      color: AppPalette.textPrimary,
                                     ),
                                   ),
                                 ),
+                                if (current?.note != null) ...[
+                                  const SizedBox(width: 8),
+                                  Flexible(
+                                    child: Text(
+                                      current!.note!,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontFamily: AppFont.sans,
+                                        fontFamilyFallback:
+                                            AppFont.sansFallback,
+                                        fontSize: 11.5,
+                                        color: AppPalette.textFaint,
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ],
-                            ],
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 6),
-                        Icon(
-                          Icons.expand_more_rounded,
-                          size: AppControl.iconSize,
-                          color: _hovered || controller.isOpen
-                              ? AppPalette.textPrimary
-                              : AppPalette.textSecondary,
-                        ),
-                      ],
-                    ),
+                          const SizedBox(width: 6),
+                          Icon(
+                            Icons.expand_more_rounded,
+                            size: AppControl.iconSize,
+                            color: _hovered || controller.isOpen
+                                ? AppPalette.textPrimary
+                                : AppPalette.textSecondary,
+                          ),
+                        ],
+                      ),
+                ),
               ),
             ),
           ),

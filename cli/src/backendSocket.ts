@@ -33,7 +33,13 @@ import { readAccountUsage, type AccountUsageReading } from './lib/accountUsage.j
 import { probeEngines } from './lib/engineProbe.js'
 import { AgentCreationReceipts, AgentCreationReceiptError, creationFingerprint, validCreationId, type AgentCreationStatus } from './lib/agentCreationReceipt.js'
 import { engineInstallRecipe } from './lib/engineInstall.js'
-import { agentFrame, type AgentFrame } from './lib/agentFrame.js'
+import { parseProjectFolder, prepareProjectFolder, ProjectFolderError } from './lib/projectFolder.js'
+import { projectPreview } from './lib/projectPreview.js'
+import { agentFrame, type AgentDshContext, type AgentFrame } from './lib/agentFrame.js'
+import { installedDsh, listInstalledDsh } from './dsh/installed.js'
+import { DSH_ID_RE, dshTier } from './dsh/manifest.js'
+import { bundledDshRegistry } from './dsh/registry.js'
+import type { DshInstallProgress } from './dsh/install.js'
 import { routeVoiceTask } from './lib/voiceRouter.js'
 import { tailFile } from './lib/sessions.js'
 import { messagesToEvents, windowRawLines, subagentStatsFromRawLines, type SessionEvent } from './lib/normalize.js'
@@ -41,6 +47,7 @@ import { listFileTree, readProjectFile } from './lib/files.js'
 import { MediaPreviewError, readMediaPreviewChunk } from './lib/mediaPreview.js'
 import { codexMessagesToEvents, windowCodexLines } from './engines/codex/normalizer.js'
 import { codexSubagentResolverFor } from './engines/codex/subagent.js'
+import { parseHostTheme, type HostTheme } from './lib/hostTheme.js'
 import { cursorMessagesToEvents, windowCursorLines } from './engines/cursor/normalizer.js'
 import { loadCursorReplayTaskLinks } from './engines/cursor/subagent.js'
 import { opencodeMessagesToEvents, windowOpencodeMessages } from './engines/opencode/normalizer.js'
@@ -117,7 +124,8 @@ export interface LocalClientSink {
   sendBinary: (frame: Uint8Array) => boolean
 }
 
-function isLocalClientId(connId: string): boolean {
+/** A loopback desktop connection (localWsServer.ts), as opposed to a cloud/relay one. */
+export function isLocalClientId(connId: string): boolean {
   return connId.startsWith('local:')
 }
 
@@ -283,6 +291,7 @@ async function enrichSubagentStats(events: SessionEvent[], transcriptPath: strin
 export class BackendSocket {
   private ws: WebSocket | null = null
   private connecting = false
+  /** A 401 on the upgrade is being answered with a token refresh; that refresh owns the next connect. */
   private retryingAuth = false
   private readonly auth: AuthSessionManager
   /** Constructor-without-auth is retained for isolated unit tests only. */
@@ -329,8 +338,15 @@ export class BackendSocket {
     grid: GridLaunchOverride | null
     /** A Codex CODEX_HOME folder to launch this agent against instead of `~/.codex`; codex only. */
     codexHome: string | null
+    /** The domain-specific harness to create this agent as (installed here, base engine = `engine`). */
+    dsh: string | null
   }) =>
     Promise<{ ok: true; session: RegisteredSession } | { ok: false; error: string; detail?: string }>) | null = null
+  /** Called on `dsh_install` — cli.ts clones/sets up/doctors the harness and reports each phase. */
+  onDshInstall: ((input: { id?: string; url?: string; ref?: string }, progress: (p: DshInstallProgress) => void) =>
+    Promise<{ ok: true; id: string } | { ok: false; error: string; detail: string }>) | null = null
+  /** What the daemon knows about an agent's DSH companions (viewer URL, verdict); null when nothing. */
+  dshFrameProvider: ((session: RegisteredSession) => AgentDshContext | null) | null = null
   private readonly agentCreations = new AgentCreationReceipts(join(env.ADAPTER_DATA_DIR, 'agent-creations'))
   /** Injectable for queue-isolation tests; production uses the machine-local probe. */
   engineProbeProvider: typeof probeEngines = probeEngines
@@ -382,6 +398,9 @@ export class BackendSocket {
   /** Answers `usage_read` — this machine's own agent-account usage (lib/accountUsage.ts). A field
    *  rather than a direct call so a spec answers it without a real home, Keychain or network. */
   accountUsageReader: () => Promise<AccountUsageReading[]> = readAccountUsage
+  /** Receives `theme_set` — the desktop's pane colours, to become this machine's tmux
+   *  `window-style` (lib/hostTheme.ts). Wired by cli.ts; null answers with UNSUPPORTED. */
+  hostThemeSink: ((theme: HostTheme) => void) | null = null
   runtimeProfileProvider: ((session: RegisteredSession) => string | null) | null = null
   onRuntimeProfileUpdate: ((sessionId: string, selectedModel: string) => Promise<void>) | null = null
   /** Web↔adapter E2EE: group-encrypts user events, runs the CPace pairing, holds per-conn sessions. */
@@ -630,6 +649,9 @@ export class BackendSocket {
       this.replayCommanderOnNextSnapshot = true
       this.onStatus(false)
       if (this.closed) return
+      // A 401 refresh owns the next connect (see the error handler below): no competing backoff timer,
+      // or two sockets would race for the one machine claim.
+      if (this.retryingAuth) { console.log(`[backend] disconnected (${why}) — refreshing the token before reconnecting`); return }
       const delay = Math.min(MAX_DELAY_MS, BASE_DELAY_MS * 2 ** Math.min(this.attempts++, 5))
       console.log(`[backend] disconnected (${why}) — retrying in ${Math.round(delay / 1000)}s (attempt ${this.attempts})`)
       setTimeout(() => this.connect(), delay)
@@ -639,14 +661,36 @@ export class BackendSocket {
       const e = err as Error & { code?: string }
       const msg = e.message || e.code || String(err)
       console.error('[backend] socket error:', msg)
-      // 401/403 on the upgrade = this machine is gone/invalid (deleted while we were offline, or a bad
-      // token). Retrying cannot help → stop for good and let CLI clear the saved SSO session.
+      // 401 on the upgrade = the access token was refused. Refresh it and come back; the socket is
+      // torn down the ordinary way below (`ws.close()` → onGone: timers, status, streams), which is
+      // what the previous shape skipped — it nulled `this.ws` first, so onGone returned at its first
+      // line, status kept saying connected, and a refresh that failed for ANY reason (a network blip
+      // included) wiped the SSO session. Only a refresh token the backend itself rejects means the
+      // session is over; everything else is a transient and re-enters the backoff.
       if (/Unexpected server response: 401\b/.test(msg) && !this.retryingAuth) {
         this.retryingAuth = true
-        this.ws = null
         void this.auth.accessToken({ force: true, failedToken: token })
-          .then(() => { this.retryingAuth = false; this.connect() })
-          .catch(() => { this.retryingAuth = false; this.closed = true; this.onRevoked?.() })
+          .then(() => {
+            this.retryingAuth = false
+            // onGone has normally run by now (the close lands long before a network round trip
+            // returns); if this socket is somehow still ours, let go of it before dialing again.
+            if (this.ws === ws) { this.ws = null; try { ws.terminate() } catch { /* ignore */ } }
+            this.connect()
+          })
+          .catch((error: unknown) => {
+            this.retryingAuth = false
+            // No session to refresh, or a refresh token the backend rejects: the session is over.
+            if (error instanceof AuthSessionError && (error.code === 'INVALID_REFRESH' || error.code === 'MISSING')) {
+              this.closed = true
+              this.onRevoked?.()
+              return
+            }
+            if (this.closed) return
+            if (this.ws === ws) { this.ws = null; try { ws.terminate() } catch { /* ignore */ } }
+            const delay = Math.min(MAX_DELAY_MS, BASE_DELAY_MS * 2 ** Math.min(this.attempts++, 5))
+            console.log(`[backend] token refresh failed (${error instanceof Error ? error.message : String(error)}) — retrying in ${Math.round(delay / 1000)}s (attempt ${this.attempts})`)
+            setTimeout(() => this.connect(), delay)
+          })
       } else if (/Unexpected server response: 40[13]\b/.test(msg)) {
         this.closed = true
         this.onRevoked?.()
@@ -985,7 +1029,7 @@ export class BackendSocket {
   private emitReply(connId: string, type: string, requestId: unknown, payload: Record<string, unknown>): void {
     const resultType = `${type}_result`
     // Before the E2EE wrap: an RPC reply is only readable here.
-    if (env.LOG_FRAMES && type !== 'agent_read_file') logFrame('→', connId ? `conn:${sid(connId)}` : 'backend', { type: resultType, payload: { requestId, ...payload } })
+    if (env.LOG_FRAMES && type !== 'agent_read_file' && type !== 'project_preview') logFrame('→', connId ? `conn:${sid(connId)}` : 'backend', { type: resultType, payload: { requestId, ...payload } })
     if (this.localClients.has(connId)) {
       this.sendTo(connId, { type: resultType, payload: { requestId, ...payload } })
       return
@@ -1059,7 +1103,7 @@ export class BackendSocket {
     // than as an opaque __e2e envelope.
     // Terminal frames contain raw keystrokes, paste text and screen bytes after
     // unwrap. Never pass them to the frame logger, even in diagnostic mode.
-    if (env.LOG_FRAMES && !type.startsWith('terminal_') && type !== 'agent_read_file') {
+    if (env.LOG_FRAMES && !type.startsWith('terminal_') && type !== 'agent_read_file' && type !== 'project_preview') {
       logFrame('←', connId ? `conn:${sid(connId)}` : 'backend', frame)
     }
     const reply = (t: string, rid: unknown, p: Record<string, unknown>): void => this.emitReply(connId, t, rid, p)
@@ -1444,6 +1488,59 @@ export class BackendSocket {
           return
         }
 
+        case 'dsh_list': {
+          // Which domain-specific harnesses this machine has, plus what the bundled registry offers —
+          // answered here, on the machine in question, for the same reason `engines_probe` is.
+          const installed = listInstalledDsh()
+          const seen = new Set<string>()
+          const rows: Record<string, unknown>[] = []
+          for (const entry of installed) {
+            seen.add(entry.id)
+            rows.push({
+              id: entry.id,
+              name: entry.manifest.name,
+              description: entry.manifest.description ?? null,
+              category: entry.manifest.category ?? null,
+              engine: entry.manifest.engine,
+              installed: true,
+              viewer: !!entry.manifest.viewer,
+              tier: dshTier(entry.manifest),
+              verified: bundledDshRegistry().some((known) => known.id === entry.id && known.verified === true),
+            })
+          }
+          for (const entry of bundledDshRegistry()) {
+            if (seen.has(entry.id)) continue
+            rows.push({
+              id: entry.id,
+              name: entry.name,
+              description: entry.description ?? null,
+              category: entry.category ?? null,
+              engine: entry.engine,
+              installed: false,
+              viewer: (entry.tier ?? 0) >= 2,
+              tier: entry.tier ?? 0,
+              verified: entry.verified === true,
+            })
+          }
+          reply(type, requestId, { dsh: rows })
+          return
+        }
+
+        case 'dsh_install': {
+          // Clone, set up and doctor a harness on THIS machine. Long — minutes, for a toolchain — so
+          // it is detached from the ordered RPC chain like `engines_probe`, and progress travels as
+          // `dsh_install_status` pushes the app renders in the create dialog.
+          if (!this.onDshInstall) { reply(type, requestId, { error: 'UNSUPPORTED_ON_REMOTE' }); return }
+          const id = typeof payload.id === 'string' && DSH_ID_RE.test(payload.id) ? payload.id : undefined
+          const url = typeof payload.url === 'string' && payload.url.length <= 2048 && !/[\x00-\x1f\x7f]/.test(payload.url) ? payload.url : undefined
+          const ref = typeof payload.ref === 'string' && payload.ref.length <= 200 ? payload.ref : undefined
+          if (!id && !url) { reply(type, requestId, { error: 'INVALID_DSH', detail: 'dsh_install needs an id or a url' }); return }
+          void this.onDshInstall({ id, url, ref }, (p) => this.send({ type: 'dsh_install_status', payload: { ...p, id: p.id ?? id ?? null } }))
+            .then((result) => reply(type, requestId, result.ok ? { ok: true, id: result.id } : { error: result.error, detail: result.detail }))
+            .catch((error) => reply(type, requestId, { error: 'INTERNAL', detail: error instanceof Error ? error.message : String(error) }))
+          return
+        }
+
         case 'engines_probe': {
           // Which engines this machine has, asked BEFORE a create rather than discovered by one
           // failing. Answered here — on the machine in question — because a Mac and the Docker rig
@@ -1579,11 +1676,19 @@ export class BackendSocket {
           const engine = payload.engine as AgentEngine | undefined
           const cwd = payload.cwd
           if (typeof engine !== 'string' || !ENGINES.includes(engine)) { reply(type, requestId, { error: 'INVALID_ENGINE' }); return }
-          if (typeof cwd !== 'string' || !isAbsolute(cwd)) { reply(type, requestId, { error: 'INVALID_CWD' }); return }
+          let projectFolder
+          try { projectFolder = parseProjectFolder(payload) }
+          catch (error) {
+            reply(type, requestId, { error: error instanceof ProjectFolderError ? error.code : 'INVALID_PROJECT_SOURCE' }); return
+          }
+          if (!projectFolder && (typeof cwd !== 'string' || !isAbsolute(cwd))) { reply(type, requestId, { error: 'INVALID_CWD' }); return }
           if (!this.onCreateAgent) { reply(type, requestId, { error: 'UNSUPPORTED_ON_REMOTE' }); return }
           const creationId = payload.creationId
           if (creationId !== undefined && !validCreationId(creationId)) {
             reply(type, requestId, { error: 'INVALID_CREATION_ID' }); return
+          }
+          if (projectFolder && (!validCreationId(creationId) || cwd !== undefined)) {
+            reply(type, requestId, { error: 'INVALID_PROJECT_SOURCE' }); return
           }
           // Absent is the ordinary case and stays indistinguishable from a client that predates grids;
           // present-but-malformed is refused here rather than half-applied at launch, because an agent
@@ -1602,12 +1707,29 @@ export class BackendSocket {
             reply(type, requestId, { error: 'INVALID_CODEX_HOME', detail: 'codexHome is only valid for codex, without a grid' })
             return
           }
+          // A DSH is refused, never approximated: an agent created as its plain base engine would look
+          // like it worked and have none of the skills the user picked the tile for.
+          let dsh: string | null = null
+          if (payload.dsh !== undefined && payload.dsh !== null) {
+            if (typeof payload.dsh !== 'string' || !DSH_ID_RE.test(payload.dsh)) {
+              reply(type, requestId, { error: 'INVALID_DSH', detail: 'dsh must be an owner/name id' }); return
+            }
+            const installed = installedDsh(payload.dsh)
+            if (!installed) {
+              reply(type, requestId, { error: 'INVALID_DSH', detail: `${payload.dsh} is not installed on this machine` }); return
+            }
+            if (installed.manifest.engine !== engine) {
+              reply(type, requestId, { error: 'INVALID_DSH', detail: `${payload.dsh} runs on ${installed.manifest.engine}, not ${engine}` }); return
+            }
+            dsh = installed.id
+          }
           const input = {
             engine,
-            cwd,
+            cwd: typeof cwd === 'string' ? cwd : '',
             bypassPermission: payload.bypassPermission === true,
             grid: grid.state === 'ok' ? grid.override : null,
             codexHome,
+            dsh,
           }
           if (creationId !== undefined) {
             // Reserve before spawning. A transport retry carries the SAME creationId; a deliberate
@@ -1615,13 +1737,21 @@ export class BackendSocket {
             // on this connection, just as engines_probe is detached above.
             const create = this.onCreateAgent
             try {
-              void this.agentCreations.run(creationId, creationFingerprint(input), async () => {
-                const result = await create(input)
+              void this.agentCreations.run(creationId, creationFingerprint(projectFolder ? { ...input, projectFolder } : input), async () => {
+                let preparedFolder: string | undefined
+                if (projectFolder) {
+                  try { preparedFolder = await prepareProjectFolder(projectFolder) }
+                  catch (error) {
+                    return { state: 'failed', error: error instanceof ProjectFolderError ? error.code : 'PROJECT_PREPARATION_FAILED',
+                      detail: error instanceof ProjectFolderError ? error.message : 'Could not prepare the project folder.' }
+                  }
+                }
+                const result = await create(preparedFolder ? { ...input, cwd: preparedFolder } : input)
                 if (result.ok) return { state: 'created', agentId: result.session.agentId }
                 // tmux may have executed before a timeout; registration cleanup is best-effort.
                 // Neither can prove that no process started, so never encourage another launch.
                 if (result.error === 'SPAWN_FAILED' || result.error === 'REGISTRATION_FAILED') return { state: 'unconfirmed' }
-                return { state: 'failed', error: result.error, ...(result.detail ? { detail: result.detail.slice(0, 2000) } : {}) }
+                return { state: 'failed', error: result.error, ...(preparedFolder ? { preparedFolder } : {}), ...(result.detail ? { detail: result.detail.slice(0, 2000) } : {}) }
               }).then(async (status) => {
                 reply(type, requestId, { creationId, ...await this.creationStatusPayload(status) })
               }).catch(() => reply(type, requestId, { error: 'INTERNAL' }))
@@ -1721,6 +1851,15 @@ export class BackendSocket {
           if (!s?.cwd) { reply(type, requestId, { error: 'AGENT_NOT_FOUND' }); return }
           try { reply(type, requestId, { files: listFileTree(s.cwd) }) }
           catch (e) { reply(type, requestId, { error: e instanceof Error ? e.message : 'FILE_TREE_ERROR' }) }
+          return
+        }
+
+        case 'project_preview': {
+          const path = typeof payload.path === 'string' ? payload.path : ''
+          // Preview work is detached so typing and other RPCs stay responsive.
+          void projectPreview(path, registry.list().flatMap(agent => agent.cwd ? [agent.cwd] : []))
+            .then(result => reply(type, requestId, result))
+            .catch(() => reply(type, requestId, { error: 'UNAVAILABLE' }))
           return
         }
 
@@ -1836,6 +1975,17 @@ export class BackendSocket {
           return
         }
 
+        // The colours the desktop paints its panes with, so tmux answers a TUI's OSC 10/11 with
+        // them instead of with whatever terminal happened to attach first (lib/hostTheme.ts).
+        case 'theme_set': {
+          if (!this.hostThemeSink) { reply(type, requestId, { error: 'UNSUPPORTED' }); return }
+          const theme = parseHostTheme(payload)
+          if (!theme) { reply(type, requestId, { error: 'BAD_THEME' }); return }
+          this.hostThemeSink(theme)
+          reply(type, requestId, { applied: true })
+          return
+        }
+
         // v1 no-ops: no programmatic session control over an interactive tmux claude.
         case 'new_chat':
         case 'compact':
@@ -1864,7 +2014,7 @@ export class BackendSocket {
     // A recorded refusal is a completed outcome. Keep it separate from transport/dispatch errors
     // so clients can distinguish "safe to correct the choices" from "outcome still unknown".
     if (status.state === 'failed') {
-      return { state: 'failed', failure: { code: status.error, ...(status.detail ? { detail: status.detail } : {}) } }
+      return { state: 'failed', ...(status.preparedFolder ? { preparedFolder: status.preparedFolder } : {}), failure: { code: status.error, ...(status.detail ? { detail: status.detail } : {}) } }
     }
     return status
   }
@@ -1874,6 +2024,7 @@ export class BackendSocket {
     return agentFrame(s, {
       selectedModel: this.runtimeProfileProvider?.(s) ?? null,
       terminalAvailable: registry.terminalAvailable(s.agentId),
+      dsh: this.dshFrameProvider?.(s) ?? null,
     })
   }
 }

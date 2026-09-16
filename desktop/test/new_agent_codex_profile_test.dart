@@ -1,15 +1,19 @@
+import 'support/new_agent_project.dart';
+
 import 'dart:async';
 
 import 'package:file_selector_platform_interface/file_selector_platform_interface.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/auth/auth_session.dart';
 import 'package:harness/core/config.dart';
 import 'package:harness/core/engine_availability.dart';
 import 'package:harness/core/models.dart';
+import 'package:harness/core/local_key_value_store.dart';
 import 'package:harness/state/app_state.dart';
+import 'package:harness/core/project_folder.dart';
 import 'package:harness/state/pane_arrangement.dart';
+import 'package:harness/state/pane_layout_store.dart';
 import 'package:harness/widgets/new_agent_dialog.dart';
 import 'package:harness/shared/widgets/app_choice_picker.dart';
 import 'package:harness/shared/widgets/app_select_field.dart';
@@ -22,6 +26,17 @@ class _Folders extends FileSelectorPlatform {
   }) async => '/work';
 }
 
+class _DelayedPreferenceStore implements LocalKeyValueStore {
+  final preference = Completer<String?>();
+  @override
+  Future<String?> read(String key) async =>
+      key == 'new_agent_engine' ? await preference.future : null;
+  @override
+  Future<void> write(String key, String value) async {}
+  @override
+  Future<void> delete(String key) async {}
+}
+
 /// The visible profile field reports the account used for the next launch.
 void expectProfile(WidgetTester tester, String label) {
   final field = tester.widget<AppSelectField<String>>(
@@ -31,6 +46,15 @@ void expectProfile(WidgetTester tester, String label) {
     field.options.firstWhere((option) => option.value == field.value).label,
     contains(label),
   );
+}
+
+Future<void> refreshProfiles(WidgetTester tester) async {
+  final field = find.byKey(const Key('new-agent-codex-profile-field'));
+  await tester.ensureVisible(field);
+  await tester.tap(field);
+  await tester.pumpAndSettle();
+  await tester.ensureVisible(find.text('Refresh profiles'));
+  await tester.tap(find.text('Refresh profiles'));
 }
 
 String _labelFor(String path) =>
@@ -45,11 +69,15 @@ class _Notifier extends AppNotifier {
       '/accounts/codex1',
       '/accounts/codex2',
     ],
+    LocalKeyValueStore? storage,
   ]) : paths = {...initialPaths},
        super(
          config: AppConfig.dev,
          authSession: AuthSession(),
          configStore: null,
+         paneLayoutStore: storage == null
+             ? null
+             : PaneLayoutStore(storage: storage),
        );
 
   final Set<String> paths;
@@ -97,8 +125,10 @@ class _Notifier extends AppNotifier {
     String machineId, {
     required String engine,
     required String folder,
+    ProjectFolderRequest? projectFolder,
     bool bypassPermission = false,
     String? codexHome,
+    String? dsh,
     String? swarmId,
     PaneSplitRequest? split,
     AgentCreationAttempt? attempt,
@@ -123,6 +153,7 @@ void main() {
     WidgetTester tester, {
     bool local = true,
     bool supported = true,
+    bool revealOptions = true,
     Iterable<String>? initialPaths,
     _Notifier? notifier,
   }) async {
@@ -158,6 +189,7 @@ void main() {
                 n,
                 'machine',
                 source: 'machine_row',
+                initialFolder: revealOptions ? null : '/work',
               ),
               child: const Text('open'),
             ),
@@ -167,25 +199,61 @@ void main() {
     );
     await tester.tap(find.text('open'));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('new-agent-engine-field')));
+    if (!revealOptions) return n;
+    final codex = find.byKey(const ValueKey('new-agent-quick-codex'));
+    await tester.ensureVisible(codex);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Codex').last);
+    await tester.tap(codex);
     await tester.pumpAndSettle();
     // The profile lives behind the fold now: it and the bypass flag are the two
     // settings most people never touch, so they are off the path of somebody who
     // wants neither. Every test below is about the profile, so every one of them
     // opens it.
+    await tester.ensureVisible(find.byKey(const Key('new-agent-advanced')));
     await tester.tap(find.byKey(const Key('new-agent-advanced')));
     await tester.pumpAndSettle();
     return n;
   }
 
   Future<void> selectSecond(WidgetTester tester) async {
+    await tester.ensureVisible(
+      find.byKey(const Key('new-agent-codex-profile-field')),
+    );
     await tester.tap(find.byKey(const Key('new-agent-codex-profile-field')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('codex2').last);
     await tester.pumpAndSettle();
   }
+
+  testWidgets(
+    'late identical agent preference keeps Create usable and its loaded profile',
+    (tester) async {
+      final storage = _DelayedPreferenceStore();
+      final notifier = _Notifier(const ['/custom/work-login'], storage);
+      await open(tester, notifier: notifier, revealOptions: false);
+      final create = find.byKey(const ValueKey('create-agent-submit'));
+      expect(tester.widget<FilledButton>(create).onPressed, isNotNull);
+      storage.preference.complete('codex');
+      await tester.pumpAndSettle();
+      expect(tester.widget<FilledButton>(create).onPressed, isNotNull);
+      await tester.tap(create);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(notifier.calls.single['codexHome'], '/custom/work-login');
+      await tester.pumpWidget(const SizedBox());
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('creation waits for its selected Codex profile', (tester) async {
+    final pending = Completer<void>();
+    final notifier = _Notifier()..pending = pending;
+    await open(tester, notifier: notifier, revealOptions: false);
+    final create = find.byKey(const ValueKey('create-agent-submit'));
+    expect(tester.widget<FilledButton>(create).onPressed, isNull);
+    pending.complete();
+    await tester.pumpAndSettle();
+    expect(tester.widget<FilledButton>(create).onPressed, isNotNull);
+  });
 
   testWidgets('no profiles shows the default launch explicitly', (
     tester,
@@ -195,11 +263,11 @@ void main() {
       find.byKey(const Key('new-agent-codex-profile-field')),
       findsOneWidget,
     );
-    expect(find.text('Codex profile'), findsOneWidget);
-    expect(find.text('Link a profile folder…'), findsOneWidget);
-    await tester.tap(find.text('Browse…'));
+    expect(find.textContaining('Codex profile:'), findsOneWidget);
+    expect(find.text('Add'), findsOneWidget);
+    await browseNewAgentProject(tester);
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'New Harness'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Create'));
     await tester.pumpAndSettle();
     expect(notifier.calls.single['codexHome'], isNull);
   });
@@ -215,12 +283,12 @@ void main() {
       find.byKey(const Key('new-agent-codex-profile-field')),
       findsOneWidget,
     );
-    expect(find.text('Codex profile'), findsOneWidget);
+    expect(find.textContaining('Codex profile:'), findsOneWidget);
     expectProfile(tester, 'work-login');
-    expect(find.text('Link a profile folder…'), findsOneWidget);
-    await tester.tap(find.text('Browse…'));
+    expect(find.text('Add'), findsOneWidget);
+    await browseNewAgentProject(tester);
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'New Harness'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Create'));
     await tester.pumpAndSettle();
     expect(notifier.calls.single['codexHome'], '/custom/work-login');
     expect(tester.takeException(), isNull);
@@ -234,25 +302,20 @@ void main() {
         local: false,
         initialPaths: const ['/custom/work-login'],
       );
+      await tester.pump();
       final machineField = tester.widget<AppChoicePicker<String>>(
         find.byKey(const Key('new-agent-machine-field')),
       );
       expect(machineField.options.single.label, 'This Mac');
-      expect(machineField.options.single.detail, 'Remote');
-      expect(find.widgetWithText(FilledButton, 'New Harness'), findsOneWidget);
-      expect(
-        find.text(
-          'This harness will run on This Mac. Its folders are browsed through '
-          'the remote CLI.',
-        ),
-        findsOneWidget,
-      );
+      expect(machineField.options.single.detail, isNull);
+      expect(find.widgetWithText(FilledButton, 'Create'), findsOneWidget);
+      expect(find.byKey(const Key('new-agent-project-recent')), findsOneWidget);
       expect(
         find.byKey(const Key('new-agent-codex-profile-field')),
         findsOneWidget,
       );
       expectProfile(tester, 'work-login');
-      expect(find.text('Link a profile folder…'), findsOneWidget);
+      expect(find.text('Add'), findsOneWidget);
     },
   );
 
@@ -268,7 +331,7 @@ void main() {
       findsOneWidget,
     );
     notifier.paths.add('/accounts/codex2');
-    await tester.tap(find.byTooltip('Refresh profiles'));
+    await refreshProfiles(tester);
     await tester.pumpAndSettle();
     expect(
       find.byKey(const Key('new-agent-codex-profile-field')),
@@ -277,7 +340,7 @@ void main() {
     expectProfile(tester, 'codex1');
     await selectSecond(tester);
     notifier.paths.remove('/accounts/codex1');
-    await tester.tap(find.byTooltip('Refresh profiles'));
+    await refreshProfiles(tester);
     await tester.pumpAndSettle();
     expect(
       find.byKey(const Key('new-agent-codex-profile-field')),
@@ -292,22 +355,22 @@ void main() {
     final notifier = _Notifier(const ['/custom/work-login'])
       ..pending = Completer<void>();
     await open(tester, notifier: notifier);
-    final folderFocus = tester
-        .widget<InkWell>(find.byKey(const Key('new-agent-folder')))
-        .focusNode!;
-    folderFocus.requestFocus();
+    final newProject = find.descendant(
+      of: find.byKey(const Key('new-agent-folder-newProject')),
+      matching: find.byType(TextButton),
+    );
+    final searchFocus = tester.widget<TextButton>(newProject).focusNode!;
+    searchFocus.requestFocus();
     await tester.pump();
-    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-    await tester.pumpAndSettle();
-    final createButton = find.widgetWithText(FilledButton, 'New Harness');
+    final createButton = find.widgetWithText(FilledButton, 'Create');
     expect(tester.widget<FilledButton>(createButton).onPressed, isNull);
-    expect(folderFocus.hasPrimaryFocus, isTrue);
+    expect(searchFocus.hasPrimaryFocus, isTrue);
     expect(notifier.calls, isEmpty);
     notifier.pending!.complete();
     await tester.pumpAndSettle();
     expect(tester.widget<FilledButton>(createButton).onPressed, isNotNull);
     expect(
-      folderFocus.hasPrimaryFocus,
+      searchFocus.hasPrimaryFocus,
       isTrue,
       reason: 'A late account lookup must not steal keyboard focus',
     );
@@ -323,65 +386,81 @@ void main() {
     final notifier = await open(tester);
     await selectSecond(tester);
     notifier.paths.remove('/accounts/codex2');
-    await tester.tap(find.byTooltip('Refresh profiles'));
+    await refreshProfiles(tester);
     await tester.pumpAndSettle();
     expect(
       find.byKey(const Key('new-agent-codex-profile-field')),
       findsOneWidget,
     );
     expectProfile(tester, 'codex2');
+    await tester.ensureVisible(
+      find.byKey(const Key('new-agent-codex-profile-field')),
+    );
     await tester.tap(find.byKey(const Key('new-agent-codex-profile-field')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('codex1').last);
     await tester.pumpAndSettle();
     expectProfile(tester, 'codex1');
-    await tester.tap(find.text('Browse…'));
+    await browseNewAgentProject(tester);
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'New Harness'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Create'));
     await tester.pumpAndSettle();
     expect(notifier.calls.single['codexHome'], '/accounts/codex1');
   });
 
-  testWidgets('refresh preserves an explicitly chosen default launch', (
+  testWidgets(
+    'refresh and hiding settings preserve an explicit default launch',
+    (tester) async {
+      final notifier = await open(tester);
+      await selectSecond(tester);
+      await tester.ensureVisible(
+        find.byKey(const Key('new-agent-codex-profile-field')),
+      );
+      await tester.tap(find.byKey(const Key('new-agent-codex-profile-field')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Default profile').last);
+      await tester.pumpAndSettle();
+      final settings = find.byKey(const Key('new-agent-advanced'));
+      await tester.tap(settings);
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('new-agent-codex-profile-field')),
+        findsNothing,
+      );
+      await tester.tap(settings);
+      await tester.pumpAndSettle();
+      expectProfile(tester, 'Default profile');
+      notifier.paths.remove('/accounts/codex2');
+      await refreshProfiles(tester);
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('new-agent-codex-profile-field')),
+        findsOneWidget,
+      );
+      expectProfile(tester, 'Default profile');
+      await browseNewAgentProject(tester);
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+      await tester.pumpAndSettle();
+      expect(notifier.calls.single['codexHome'], isNull);
+    },
+  );
+
+  testWidgets('creates with the account selected in the profile menu', (
     tester,
   ) async {
     final notifier = await open(tester);
     await selectSecond(tester);
-    await tester.tap(find.byKey(const Key('new-agent-codex-profile-field')));
+    expectProfile(tester, 'codex2');
+    await browseNewAgentProject(tester);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Default profile').last);
+    await tester.tap(find.widgetWithText(FilledButton, 'Create'));
     await tester.pumpAndSettle();
-    notifier.paths.remove('/accounts/codex2');
-    await tester.tap(find.byTooltip('Refresh profiles'));
-    await tester.pumpAndSettle();
-    expect(
-      find.byKey(const Key('new-agent-codex-profile-field')),
-      findsOneWidget,
-    );
-    expectProfile(tester, 'Default profile');
-    await tester.tap(find.text('Browse…'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'New Harness'));
-    await tester.pumpAndSettle();
-    expect(notifier.calls.single['codexHome'], isNull);
+    expect(notifier.calls, [
+      {'engine': 'codex', 'codexHome': '/accounts/codex2', 'folder': '/work'},
+    ]);
+    expect(tester.takeException(), isNull);
   });
-
-  testWidgets(
-    'creates with the selected account and shows its full path before the click',
-    (tester) async {
-      final notifier = await open(tester);
-      await selectSecond(tester);
-      expectProfile(tester, 'codex2');
-      await tester.tap(find.text('Browse…'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(FilledButton, 'New Harness'));
-      await tester.pumpAndSettle();
-      expect(notifier.calls, [
-        {'engine': 'codex', 'codexHome': '/accounts/codex2', 'folder': '/work'},
-      ]);
-      expect(tester.takeException(), isNull);
-    },
-  );
 
   testWidgets(
     'discovers newly observed local profiles while ignoring remote machine paths',
@@ -412,6 +491,9 @@ void main() {
       await tester.ensureVisible(
         find.byKey(const Key('new-agent-codex-profile-field')),
       );
+      await tester.ensureVisible(
+        find.byKey(const Key('new-agent-codex-profile-field')),
+      );
       await tester.tap(find.byKey(const Key('new-agent-codex-profile-field')));
       await tester.pumpAndSettle();
       expect(find.text('work-login'), findsOneWidget);
@@ -428,9 +510,12 @@ void main() {
       final notifier = await open(tester);
       await selectSecond(tester);
       notifier.extraPaths.add('/elsewhere/new-profile');
-      await tester.tap(find.byTooltip('Refresh profiles'));
+      await refreshProfiles(tester);
       await tester.pumpAndSettle();
       expectProfile(tester, 'codex2');
+      await tester.ensureVisible(
+        find.byKey(const Key('new-agent-codex-profile-field')),
+      );
       await tester.tap(find.byKey(const Key('new-agent-codex-profile-field')));
       await tester.pumpAndSettle();
       await tester.tap(find.text('new-profile'));
@@ -442,19 +527,18 @@ void main() {
   testWidgets('changing engines clears the selected account', (tester) async {
     final notifier = await open(tester);
     await selectSecond(tester);
-    await tester.tap(find.byKey(const Key('new-agent-engine-field')));
+    final claude = find.byKey(const ValueKey('new-agent-quick-claude'));
+    await tester.ensureVisible(claude);
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('Claude Code').last);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Claude Code').last);
+    await tester.tap(claude);
     await tester.pumpAndSettle();
     expect(
       find.byKey(const Key('new-agent-codex-profile-field')),
       findsNothing,
     );
-    await tester.tap(find.text('Browse…'));
+    await browseNewAgentProject(tester);
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'New Harness'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Create'));
     await tester.pumpAndSettle();
     expect(notifier.calls.single['codexHome'], isNull);
     expect(notifier.calls.single['engine'], 'claude');
@@ -472,9 +556,9 @@ void main() {
         find.text('Update Harness CLI on This Mac to choose a Codex profile.'),
         findsOneWidget,
       );
-      await tester.tap(find.text('Browse…'));
+      await browseNewAgentProject(tester);
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(FilledButton, 'New Harness'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Create'));
       await tester.pumpAndSettle();
       expect(notifier.calls.single['codexHome'], isNull);
     },

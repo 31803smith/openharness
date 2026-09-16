@@ -58,8 +58,8 @@ void main() {
       ('cmd+1', 'swarm.select_1'),
       ('cmd+9', 'swarm.select_9'),
       ('cmd+t', 'swarm.new'),
-      ('cmd+shift+n', 'agent.new'),
-      ('cmd+n', 'agent.add'),
+      ('cmd+n', 'agent.new'),
+      ('cmd+o', 'agent.add'),
       ('cmd+h', 'pane.focus_left'),
       ('cmd+j', 'pane.focus_below'),
       ('cmd+k', 'pane.focus_above'),
@@ -94,7 +94,7 @@ void main() {
       expect(harnessCommandById[id]?.action, shortcut.action);
     }
     for (final retired in [
-      'cmd+o',
+      'cmd+shift+n',
       'cmd+shift+h',
       'cmd+shift+j',
       'cmd+shift+k',

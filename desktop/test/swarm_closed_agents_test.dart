@@ -90,7 +90,7 @@ void main() {
     () async {
       final app = createApp();
       addTearDown(app.dispose);
-      app.renameSwarm(app.activeSwarmId, 'Workshop');
+      app.renameSwarm(app.activeSwarmId, 'Solid');
       final origin = app.activeSwarmId;
       await app.addAgentToSwarm('m', 'a0');
       await app.addAgentToSwarm('m', 'a1');
@@ -99,7 +99,7 @@ void main() {
       await app.closeSwarm(origin);
       expect(app.reopenClosed(historyId: closure), isTrue);
       expect(app.activeSwarmId, origin);
-      expect(app.activeSwarm.name, 'Workshop');
+      expect(app.activeSwarm.name, 'Solid');
       expect(app.panes.single.agentId, 'a0');
       expect(app.closedHistory.single, isA<ClosedSwarm>());
       expect(app.reopenClosed(historyId: closure), isFalse);
@@ -109,7 +109,7 @@ void main() {
       expect(app.activeSwarm, same(restored));
       expect(app.panes.map((pane) => pane.agentId), ['a0', 'a1']);
       expect(
-        app.swarms.where((swarm) => swarm.name == 'Workshop'),
+        app.swarms.where((swarm) => swarm.name == 'Solid'),
         hasLength(1),
       );
       expect(app.swarms.map((s) => s.id).toSet().length, app.swarms.length);
@@ -124,7 +124,7 @@ void main() {
     final first = app.adoptSessionForTest(terminal('a0', input));
     final second = app.adoptSessionForTest(terminal('a1', input));
     final origin = app.activeSwarmId;
-    app.renameSwarm(origin, 'Workshop');
+    app.renameSwarm(origin, 'Solid');
     app.newSwarm(name: 'Live work');
     final peer = app.activeSwarm;
     await app.addAgentToSwarm('m', 'a0');

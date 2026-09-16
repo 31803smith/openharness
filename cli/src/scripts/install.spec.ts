@@ -234,6 +234,12 @@ describe("scripts/install.sh command contract", () => {
       },
     }, null, 2);
     writeFileSync(join(scratch, "manifest.json"), manifest);
+    // The ladder's first rung is `command -v tmux && tmux -V`, and PATH below still includes /usr/bin
+    // — where ubuntu-latest (CI) ships a real tmux 3.4, so on that runner the script found it, said
+    // "tmux ready (tmux 3.4)" and never took the managed path these tests exist for. A broken tmux
+    // in the fixture dir (first on PATH) fails that rung everywhere; once the managed build is
+    // linked, the script puts BIN_DIR ahead of PATH, so the 9.9 fake wins from then on.
+    writeCommand(scratch, "tmux", ["exit 127"]);
     writeCommand(scratch, "curl", [
       `printf '%s\\n' "$*" >> '${join(scratch, "curl-invocations")}'`,
       `case "$*" in *"-o "*) cp '${archive}' "$4" ;; *) cat '${join(scratch, "manifest.json")}' ;; esac`,
@@ -273,7 +279,7 @@ describe("scripts/install.sh command contract", () => {
     } finally {
       rmSync(scratch, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 
   it("refuses a managed tmux whose checksum does not match, and links nothing", () => {
     const source = readFileSync(installer, "utf8");
@@ -301,7 +307,7 @@ describe("scripts/install.sh command contract", () => {
     } finally {
       rmSync(scratch, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 
   it("falls back to the managed build when Homebrew cannot install tmux", () => {
     const source = readFileSync(installer, "utf8");
@@ -329,7 +335,7 @@ describe("scripts/install.sh command contract", () => {
     } finally {
       rmSync(scratch, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 
   it("host mode puts ~/.local/bin on PATH for new shells", () => {
     const source = readFileSync(installer, "utf8");
@@ -357,7 +363,7 @@ describe("scripts/install.sh command contract", () => {
     } finally {
       rmSync(scratch, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 
   it("host mode stops after the host requirements", () => {
     const source = readFileSync(installer, "utf8");

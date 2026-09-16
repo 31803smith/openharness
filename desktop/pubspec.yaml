@@ -62,6 +62,13 @@ dependencies:
   sqlite3: ^2.4.0
   desktop_drop: ^0.8.4
   path: ^1.9.1
+  # The web pane: a domain harness's viewer (Circuit's board, Workshop's part)
+  # drawn beside its agent's terminal. THE one native plugin this feature adds
+  # — WKWebView via the endorsed `webview_flutter_wkwebview`, which lands in
+  # the macOS SPM package list and GeneratedPluginRegistrant. macOS only for
+  # now; the pane shows the URL as text where no implementation is registered
+  # (Linux, and every `flutter test`). See CLAUDE.md on what a plugin costs.
+  webview_flutter: ^4.14.1
 
 dev_dependencies:
   flutter_test:
@@ -96,8 +103,9 @@ flutter:
     # loaded from the bundle: Flutter can't read an .icns, and About should show
     # the mark the Dock shows, not a stand-in drawn in Dart.
     - assets/app_icon.png
-    - assets/harness_device.webp
-    - assets/swarm-wallpapers/swarm-welcome-dusk.jpg
+    - assets/harness_device.png
+    - assets/harness_device_studio.png
+    - assets/swarm-wallpapers/
 
   # To add assets to your application, add an assets section, like this:
   # assets:

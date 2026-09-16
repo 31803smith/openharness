@@ -41,6 +41,14 @@ export function sameComputer(a: string | null | undefined, b: string | null | un
 
 export type MachineSource = 'backend' | 'local' | 'signed-out'
 
+/** How long an UNCHANGED list may go without a rewrite — see `saveCache`. Matches the refresh poll. */
+const REWRITE_UNCHANGED_AFTER_MS = 60_000
+
+/** Where the cache lives. Exported so sign-out can delete exactly the file this class writes. */
+export function machineListCachePath(dataDir = env.ADAPTER_DATA_DIR): string {
+  return join(dataDir, 'machines.json')
+}
+
 function stateOf(status: string): FleetMachine['state'] {
   // `toOwner.status` is resolved live for computer-backed machines (`applyRemoteStatus`), so it is a real
   // presence signal for exactly the machines where presence is a question.
@@ -49,18 +57,47 @@ function stateOf(status: string): FleetMachine['state'] {
   return 'unknown'
 }
 
+/**
+ * Tag a cached machine-list body as stale, where the client actually reads it.
+ *
+ * The backend answers `{success:true,data:{…}}` and this daemon forwards that verbatim, so the flag has
+ * to go INSIDE `data` — a local client unwraps to `data` and would never see a top-level field. Older
+ * shapes that return the machines at the top level get it there instead.
+ */
+export function withStaleMarker(body: Record<string, unknown>, fetchedAt: number): Record<string, unknown> {
+  const marker = { stale: true, staleSince: new Date(fetchedAt).toISOString() }
+  const data = body.data
+  if (data && typeof data === 'object' && !Array.isArray(data)) {
+    return { ...body, data: { ...(data as Record<string, unknown>), ...marker } }
+  }
+  return { ...body, ...marker }
+}
+
 export class MachineListCache {
   private machines: ListedMachine[] = []
   private source: MachineSource = 'local'
   private readonly path: string
+  // The last SUCCESSFUL `GET /api/machines` body, kept verbatim. The dial only needs `ListedMachine`, but
+  // the desktop app reads the raw backend row (computerId, hostname, …) straight off this endpoint, so a
+  // fallback that served the lossy projection would silently change the wire shape. Keeping the original
+  // is what lets `onMachinesList` answer from cache during an outage without the app noticing a difference.
+  private lastBody: Record<string, unknown> | null = null
+  private fetchedAt = 0
+  private bodyOwner: string | null = null
+  /** The CONTENT `saveCache` last wrote (timestamp excluded), so an unchanged list costs no disk write. */
+  private lastWrittenContent = ''
+  private lastWrittenAt = 0
 
   constructor(
     private readonly fetchMachines: () => Promise<{ status: number; body: Record<string, unknown> }>,
     private readonly localComputerId: () => string,
     private readonly log: (line: string) => void,
     dataDir = env.ADAPTER_DATA_DIR,
+    /** The machine row this session belongs to. A machine row is per (user, computer), so it is the one
+     *  local fact that tells two ACCOUNTS on this computer apart — see `lastResponse`. */
+    private readonly owner: () => string | null = () => null,
   ) {
-    this.path = join(dataDir, 'machines.json')
+    this.path = machineListCachePath(dataDir)
     this.loadCache()
   }
 
@@ -71,6 +108,21 @@ export class MachineListCache {
 
   find(machineId: string): ListedMachine | undefined {
     return this.machines.find((m) => m.machineId === machineId)
+  }
+
+  /**
+   * The last known-good response body and when it was read, or null if there is none to serve.
+   *
+   * Withheld unless it provably belongs to the session asking for it. `harness logout` deletes this file,
+   * but a session can also be replaced in place (sign in as someone else without logging out), and
+   * answering THAT with the previous account's machines would be a straight disclosure. Both ids must be
+   * present and equal: a cache with no stamp — written by a daemon older than this check — is not served.
+   */
+  lastResponse(): { body: Record<string, unknown>; fetchedAt: number } | null {
+    if (!this.lastBody) return null
+    const mine = this.owner()
+    if (!mine || !this.bodyOwner || this.bodyOwner !== mine) return null
+    return { body: this.lastBody, fetchedAt: this.fetchedAt }
   }
 
   /**
@@ -90,14 +142,30 @@ export class MachineListCache {
     }
     if (res.status === 401 || res.status === 403) { this.signedOut(); return }
     if (res.status >= 400) { this.degrade(`HTTP ${res.status}`); return }
+    if (!this.adopt(res.body)) this.degrade('no machines in the response')
+  }
 
-    const raw = (res.body?.machines ?? (res.body?.data as Record<string, unknown> | undefined)?.machines) as unknown
-    if (!Array.isArray(raw)) { this.degrade('no machines in the response'); return }
+  /**
+   * Take a body that a `GET /api/machines` just returned as the new known-good list.
+   *
+   * Split out of `refresh()` so the proxy handler can hand over the response it already has instead of
+   * spending a second round trip to tell this cache the same thing.
+   *
+   * Returns false when the body carries no machine array — the caller decides whether that is a degrade
+   * (a real read that came back wrong) or simply not its business.
+   */
+  adopt(body: Record<string, unknown>): boolean {
+    const raw = (body?.machines ?? (body?.data as Record<string, unknown> | undefined)?.machines) as unknown
+    if (!Array.isArray(raw)) return false
 
     const mine = this.localComputerId()
     this.machines = raw.map((r) => this.toListed(r as OwnerMachine, mine)).filter((m) => m.machineId)
     this.source = 'backend'
+    this.lastBody = body
+    this.bodyOwner = this.owner()
+    this.fetchedAt = Date.now()
     this.saveCache()
+    return true
   }
 
   private toListed(r: OwnerMachine, mine: string): ListedMachine {
@@ -155,19 +223,54 @@ export class MachineListCache {
     if (this.source !== 'signed-out') this.log('machines: not signed in')
     this.source = 'signed-out'
     this.machines = []
+    // Drop the body as well: a signed-out session must never be answered from a previous user's list.
+    this.lastBody = null
+    this.bodyOwner = null
+    this.fetchedAt = 0
+    this.saveCache()
   }
 
   /** So a daemon that starts offline still draws the list the user saw last time. */
   private loadCache(): void {
     try {
-      const parsed = JSON.parse(readFileSync(this.path, 'utf8')) as { machines?: ListedMachine[] }
+      const parsed = JSON.parse(readFileSync(this.path, 'utf8')) as {
+        machines?: ListedMachine[]
+        body?: Record<string, unknown>
+        fetchedAt?: number
+        bodyOwner?: string
+      }
       if (Array.isArray(parsed.machines)) {
         this.machines = parsed.machines.map((m) => ({ ...m, state: 'unknown' as const }))
+      }
+      // `body`/`fetchedAt` arrived after this file already existed in the wild, so a cache written by an
+      // older daemon has rows but no body. Rows still draw the wheel; the proxy fallback simply has
+      // nothing to serve until the next successful read fills it in.
+      if (parsed.body && typeof parsed.body === 'object') {
+        this.lastBody = parsed.body
+        this.fetchedAt = typeof parsed.fetchedAt === 'number' ? parsed.fetchedAt : 0
+        this.bodyOwner = typeof parsed.bodyOwner === 'string' ? parsed.bodyOwner : null
       }
     } catch { /* no cache yet, or unreadable — an empty wheel plus the local row is correct */ }
   }
 
   private saveCache(): void {
-    try { writeFileSync(this.path, JSON.stringify({ machines: this.machines }), { mode: 0o600 }) } catch { /* best effort */ }
+    // `adopt` now runs on every local `/api/machines` too, not just the 60s poll, and this is a
+    // synchronous write on the event loop of a daemon that is streaming terminals. An unchanged list is
+    // the common case, so skip those. `fetchedAt` is deliberately NOT part of the comparison — it moves
+    // on every read and would defeat the check entirely — but it must not drift arbitrarily either,
+    // since it is what `staleSince` reports after a restart, so an unchanged list is still rewritten
+    // once a minute (the poll's own cadence).
+    const content = JSON.stringify({
+      machines: this.machines,
+      body: this.lastBody,
+      bodyOwner: this.bodyOwner,
+    })
+    const now = Date.now()
+    if (content === this.lastWrittenContent && now - this.lastWrittenAt < REWRITE_UNCHANGED_AFTER_MS) return
+    try {
+      writeFileSync(this.path, JSON.stringify({ ...JSON.parse(content), fetchedAt: this.fetchedAt }), { mode: 0o600 })
+      this.lastWrittenContent = content
+      this.lastWrittenAt = now
+    } catch { /* best effort */ }
   }
 }

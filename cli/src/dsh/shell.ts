@@ -1,0 +1,121 @@
+/**
+ * Run a DSH's own commands — setup, doctor, workspace init, the viewer — the way the user's terminal
+ * would: through their interactive shell, so `uv`, `npm`, `node` and `kicad-cli` resolve from the
+ * PATH their rc files build, not from the detached daemon's. This is the same reasoning (and the
+ * same shell selection) `engineLaunch.ts` uses to exec an engine in a pane.
+ */
+import { spawn, type ChildProcess } from 'node:child_process'
+import { interactiveEngineShell } from '../lib/engineLaunch.js'
+
+export interface DshCommandOptions {
+  cwd: string
+  env?: Record<string, string>
+  /** Each line of combined stdout+stderr, as it arrives. */
+  onLine?: (line: string) => void
+  timeoutMs?: number
+}
+
+export interface DshCommandResult {
+  code: number | null
+  signal: NodeJS.Signals | null
+  lines: string[]
+  timedOut: boolean
+}
+
+/**
+ * What the shell itself says about being interactive without a terminal — not the DSH's output.
+ * `zsh -lic` with no tty cannot enable the line editor, and an rc file that sets `zle` makes zsh
+ * complain once per option; the engine never sees this because its pane HAS a tty. Dropped so a
+ * doctor's lines, which the desktop shows verbatim, are the doctor's.
+ */
+export function isShellNoise(line: string): boolean {
+  return /can't change option: zle$/.test(line) || /^\(eval\):\d+: can't change option: zle$/.test(line)
+}
+
+/** `[path, ...args]` that runs `script` through the user's shell, or `/bin/sh -c` when none is known. */
+export function dshShellArgv(script: string): { path: string; args: string[] } {
+  const shell = interactiveEngineShell()
+  if (shell) return { path: shell.path, args: [...shell.args, script] }
+  return { path: '/bin/sh', args: ['-c', script] }
+}
+
+export function spawnDshCommand(script: string, opts: { cwd: string; env?: Record<string, string> }): ChildProcess {
+  const { path, args } = dshShellArgv(script)
+  return spawn(path, args, {
+    cwd: opts.cwd,
+    env: { ...process.env, ...(opts.env ?? {}) },
+    stdio: ['ignore', 'pipe', 'pipe'],
+    // Its own process group, so stopping it stops what it started (`sh -c node …`).
+    detached: true,
+  })
+}
+
+/** Run to completion, collecting output lines. Never rejects: a spawn failure is a non-zero exit. */
+export function runDshCommand(script: string, opts: DshCommandOptions): Promise<DshCommandResult> {
+  return new Promise((resolve) => {
+    const lines: string[] = []
+    let timedOut = false
+    let settled = false
+    let child: ChildProcess
+    try {
+      child = spawnDshCommand(script, { cwd: opts.cwd, env: opts.env })
+    } catch (error) {
+      const line = `could not start: ${error instanceof Error ? error.message : String(error)}`
+      opts.onLine?.(line)
+      resolve({ code: 127, signal: null, lines: [line], timedOut: false })
+      return
+    }
+    const feed = (chunk: Buffer, carry: { rest: string }): void => {
+      carry.rest += chunk.toString('utf8')
+      let at: number
+      while ((at = carry.rest.indexOf('\n')) >= 0) {
+        const line = carry.rest.slice(0, at).replace(/\r$/, '')
+        carry.rest = carry.rest.slice(at + 1)
+        if (isShellNoise(line)) continue
+        lines.push(line)
+        opts.onLine?.(line)
+      }
+    }
+    const out = { rest: '' }
+    const err = { rest: '' }
+    child.stdout?.on('data', (chunk: Buffer) => feed(chunk, out))
+    child.stderr?.on('data', (chunk: Buffer) => feed(chunk, err))
+    const finish = (code: number | null, signal: NodeJS.Signals | null): void => {
+      if (settled) return
+      settled = true
+      if (timer) clearTimeout(timer)
+      for (const carry of [out, err]) {
+        if (carry.rest) { lines.push(carry.rest); opts.onLine?.(carry.rest) }
+      }
+      resolve({ code, signal, lines, timedOut })
+    }
+    const timer = opts.timeoutMs
+      ? setTimeout(() => {
+        timedOut = true
+        killProcessGroup(child)
+      }, opts.timeoutMs)
+      : null
+    timer?.unref?.()
+    child.on('error', (error) => {
+      const line = `could not start: ${error.message}`
+      lines.push(line)
+      opts.onLine?.(line)
+      finish(127, null)
+    })
+    child.on('exit', (code, signal) => finish(code, signal))
+  })
+}
+
+/** SIGTERM the child's whole group, then SIGKILL what is left a moment later. */
+export function killProcessGroup(child: ChildProcess, graceMs = 3_000): void {
+  const pid = child.pid
+  if (!pid) return
+  const signalGroup = (signal: NodeJS.Signals): void => {
+    try { process.kill(-pid, signal) } catch { /* already gone */ }
+    try { process.kill(pid, signal) } catch { /* already gone */ }
+  }
+  signalGroup('SIGTERM')
+  const timer = setTimeout(() => signalGroup('SIGKILL'), graceMs)
+  timer.unref?.()
+  child.once('exit', () => clearTimeout(timer))
+}

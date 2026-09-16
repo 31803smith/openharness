@@ -130,9 +130,15 @@ void main() {
     );
   }
 
-  for (final legacy in ['New swarm', 'New tab', 'New Agent', 'New Harness']) {
+  for (final legacy in [
+    'New swarm',
+    'New tab',
+    'New Tab',
+    'New Agent',
+    'New Tab',
+  ]) {
     test(
-      '$legacy empty tabs restore as New Tab and still name the first agent',
+      '$legacy empty tabs restore as New Tab and number the first occupied tab',
       () async {
         final store = MemoryStore();
         final original = createApp(store: store);
@@ -149,7 +155,7 @@ void main() {
         await restored.restorePaneLayoutForTest();
         expect(restored.activeSwarm.name, 'New Tab');
         await restored.addAgentToSwarm('m', 'a0');
-        expect(restored.activeSwarm.name, 'Agent 0');
+        expect(restored.activeSwarm.name, 'harness-1');
       },
     );
   }
@@ -160,13 +166,13 @@ void main() {
       final app = createApp();
       addTearDown(app.dispose);
       await app.addAgentToSwarm('m', 'a0');
-      expect(app.activeSwarm.name, 'Agent 0');
+      expect(app.activeSwarm.name, 'harness-1');
       await app.addAgentToSwarm('m', 'a1');
-      expect(app.activeSwarm.name, 'Agent 0');
-      expect(app.activeSwarm.toJson()['name'], 'Agent 0');
+      expect(app.activeSwarm.name, 'harness-1');
+      expect(app.activeSwarm.toJson()['name'], 'harness-1');
       await app.closeSwarm(app.activeSwarmId);
       app.reopenClosedSwarm();
-      expect(app.activeSwarm.name, 'Agent 0');
+      expect(app.activeSwarm.name, 'harness-1');
     },
   );
 
@@ -182,10 +188,32 @@ void main() {
       final target = app.activeSwarm;
       app.newSwarm(name: 'Elsewhere');
       await app.addAgentToSwarm('m', 'a1', swarmId: target.id);
-      expect(target.name, 'Agent 1');
+      expect(target.name, 'harness-1');
       expect(app.activeSwarm.name, 'Elsewhere');
     },
   );
+
+  test('tab numbering skips saved and recently closed names', () async {
+    final store = MemoryStore();
+    final app = createApp(store: store);
+    await app.addAgentToSwarm('m', 'a0');
+    app.newSwarm();
+    await app.addAgentToSwarm('m', 'a1');
+    expect(app.activeSwarm.name, 'harness-2');
+    await app.closeSwarm(app.activeSwarmId);
+    app.newSwarm();
+    await app.addAgentToSwarm('m', 'a2');
+    expect(app.activeSwarm.name, 'harness-3');
+    app.renameSwarm(app.activeSwarmId, 'harness-10');
+    await app.flushPaneLayout();
+    app.dispose();
+    final restored = createApp(store: store);
+    addTearDown(restored.dispose);
+    await restored.restorePaneLayoutForTest();
+    restored.newSwarm();
+    await restored.addAgentToSwarm('m', 'a3');
+    expect(restored.activeSwarm.name, 'harness-11');
+  });
 
   test(
     'shared memberships own one controller and close only the final stream',

@@ -27,7 +27,7 @@ void main() {
       await mount(tester, app);
       final input = find.byKey(const ValueKey('swarm-search-input'));
       expect(input, findsNothing);
-      await chord(tester, LogicalKeyboardKey.keyN);
+      await chord(tester, LogicalKeyboardKey.keyO);
       await tester.pump();
       final originalController = tester.widget<TextField>(input).controller;
       await tester.enterText(input, 'a query only');
@@ -65,7 +65,7 @@ void main() {
         name: 'Design',
         terminalAvailable: true,
         project: AgentProject(
-          name: 'Workshop',
+          name: 'Solid',
           cwd: '/work/workshop',
           branch: 'feature/wood',
         ),
@@ -84,7 +84,7 @@ void main() {
       SavedSwarmProject(
         machineId: 'm',
         path: '/work/workshop',
-        name: 'Workshop',
+        name: 'Solid',
         members: [(machineId: 'remote', agentId: 'chess')],
       ),
     ];
@@ -96,11 +96,11 @@ void main() {
       isTrue,
     );
     expect(
-      rankSwarmDestinations(entries, 'Workshop').any((e) => e.isProject),
+      rankSwarmDestinations(entries, 'Solid').any((e) => e.isProject),
       isTrue,
     );
     expect(
-      rankSwarmDestinations(entries, 'Workshop chess').single.agentId,
+      rankSwarmDestinations(entries, 'Solid chess').single.agentId,
       'chess',
     );
     expect(rankSwarmDestinations(entries, 'wood Design').single.agentId, 'a0');
@@ -174,7 +174,7 @@ void main() {
       search.setQuery('Test host');
       final choice = search.submit();
       expect(choice?.destination.isMachine, isTrue);
-      expect(SwarmSearchController.action(choice!.destination), 'Open Harness');
+      expect(SwarmSearchController.action(choice!.destination), 'Open Agent');
       expect(
         await activateSwarmSearchSelection(
           app,
@@ -275,7 +275,7 @@ void main() {
         .take(3)
         .toList();
     await mount(tester, app);
-    await chord(tester, LogicalKeyboardKey.keyN);
+    await chord(tester, LogicalKeyboardKey.keyO);
     await tester.pump();
     await tester.enterText(jumpField, 'Test host');
     await tester.pump();
@@ -304,7 +304,7 @@ void main() {
     app.adoptSessionForTest(terminal('a1', secondInputs));
     final target = app.activeSwarm;
     await mount(tester, app);
-    await chord(tester, LogicalKeyboardKey.keyN);
+    await chord(tester, LogicalKeyboardKey.keyO);
     await tester.pump();
     await tester.enterText(jumpField, 'Agent 0');
     await tester.pump();
@@ -312,7 +312,7 @@ void main() {
     expect(
       find.descendant(
         of: find.byKey(const ValueKey('swarm-row-action')),
-        matching: find.text('Open Harness'),
+        matching: find.text('Open Agent'),
       ),
       findsOneWidget,
     );
@@ -338,7 +338,7 @@ void main() {
 
   for (final adding in [false, true]) {
     testWidgets(
-      'Return waits for composing text in ${adding ? 'Add' : 'New Harness'}',
+      'Return waits for composing text in ${adding ? 'Add' : 'New Agent'}',
       (tester) async {
         final app = createApp();
         app.adoptSessionForTest(terminal('a0', []));
@@ -350,7 +350,7 @@ void main() {
           ValueKey(adding ? 'swarm-search-input' : 'harness-start-search'),
         );
         if (adding) {
-          await chord(tester, LogicalKeyboardKey.keyN);
+          await chord(tester, LogicalKeyboardKey.keyO);
           await tester.pump();
         } else {
           await tester.tap(field);

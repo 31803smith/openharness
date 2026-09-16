@@ -517,15 +517,10 @@ class _RemoteFolderPickerDialogState extends State<_RemoteFolderPickerDialog> {
               onPressed: () => Navigator.of(context).pop(),
               child: const Text('Cancel'),
             ),
-            Tooltip(
-              message: mac
-                  ? 'Select this folder (⌘↩)'
-                  : 'Select this folder (Ctrl+Enter)',
-              child: FilledButton(
-                style: actionStyle,
-                onPressed: _canSelect ? _select : null,
-                child: const Text('Select this folder'),
-              ),
+            FilledButton(
+              style: actionStyle,
+              onPressed: _canSelect ? _select : null,
+              child: const Text('Select this folder'),
             ),
           ],
         ),

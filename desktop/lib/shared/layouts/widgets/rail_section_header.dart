@@ -54,8 +54,12 @@ class RailSectionHeader extends StatelessWidget {
           Expanded(
             child: onTap == null
                 ? text
+                : tooltip == null ||
+                      tooltip!.trim().isEmpty ||
+                      tooltip!.trim() == label.trim()
+                ? InkWell(onTap: onTap, child: text)
                 : Tooltip(
-                    message: tooltip ?? '',
+                    message: tooltip!,
                     child: InkWell(onTap: onTap, child: text),
                   ),
           ),

@@ -224,6 +224,9 @@ export function deriveTurnSummary(text: string): string | null {
   const stripped = stripMarkdown(text)
   const body = stripped.replace(/\s+/g, ' ').trim()
   if (!body) return null
+  // The answer's OPENING is the headline. The engine-specific turn readers hand this the answer alone —
+  // Codex's `commentary` messages ("I'll check the page", "I'm about to ask") are dropped there, since
+  // a headline taken from those announced the work instead of stating the result.
   const recap = clip(firstProseLine(stripped) || body, RECAP_MAX_CHARS)
   return `${recap}\n\n${deriveTurnBody(text)}`
 }

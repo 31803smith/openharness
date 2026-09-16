@@ -13,10 +13,11 @@ import 'package:harness/shared/widgets/app_select_field.dart';
 import 'package:harness/terminal/terminal_font_store.dart';
 import 'package:harness/terminal/terminal_theme_store.dart';
 
-/// The sample line inside the preview — the row of `m`s the renderer measures
-/// its cell with.
+/// The terminal sample remains independent of the app's text scale.
 final _sample = find.byWidgetPredicate(
-  (w) => w is Text && (w.textSpan?.toPlainText().startsWith('┌─') ?? false),
+  (w) =>
+      w is Text &&
+      (w.textSpan?.toPlainText().startsWith('agent@harness') ?? false),
 );
 
 Widget _host({double textScale = 1.0}) => MaterialApp(
@@ -52,7 +53,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(tester.takeException(), isNull);
-    expect(find.text('Colours'), findsOneWidget);
+    expect(find.text('Colors'), findsOneWidget);
     expect(find.text('Font'), findsOneWidget);
     expect(find.text('Size'), findsOneWidget);
     expect(find.text('Preview'), findsOneWidget);

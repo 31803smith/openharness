@@ -6,11 +6,9 @@ import '../state/app_state.dart';
 import '../widgets/window_chrome.dart';
 import 'sections/about_section.dart';
 import 'sections/account_section.dart';
-import 'sections/appearance_section.dart';
 import 'sections/debug_section.dart';
 import 'sections/devices_section.dart';
 import 'sections/shortcuts_section.dart';
-import 'sections/terminal_section.dart';
 import 'sections/tracking_section.dart';
 import 'sections/usage_section.dart';
 import 'settings_nav.dart';
@@ -155,8 +153,6 @@ class _SettingsBody extends StatelessWidget {
   Widget build(BuildContext context) {
     final screen = switch (section) {
       SettingsSection.account => AccountSection(notifier: notifier),
-      SettingsSection.appearance => const AppearanceSection(),
-      SettingsSection.terminal => const TerminalSection(),
       SettingsSection.usage => const UsageSection(),
       SettingsSection.devices => const DevicesSection(),
       SettingsSection.shortcuts => const ShortcutsSection(),

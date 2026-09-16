@@ -1024,6 +1024,27 @@ describe('agent identity: the process owns the agent, the session is bound to it
     expect(registry.list()).toHaveLength(1)
   })
 
+  it('gives new agents stable numbered names across binding and reload without changing custom names', async () => {
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    const first = registry.openPendingAgent({ engine: 'opencode', runtimes: [{ backend: 'tmux', paneId: '%7' }], cwd: '/tmp/demo' })!
+    const second = registry.openPendingAgent({ engine: 'opencode', runtimes: [{ backend: 'tmux', paneId: '%8' }], cwd: '/tmp/demo' })!
+    expect(registry.displayName(first)).toBe('agent-1')
+    expect(registry.displayName(second)).toBe('agent-2')
+    const bound = registry.register({ engine: 'opencode', sessionId: 'session-numbered', tmuxPane: '%7', title: 'OC | Greeting' })!.entry
+    expect(registry.displayName(bound)).toBe('agent-1')
+    registry.rename(second.agentId, 'My project')
+    const { registry: reloaded } = await loadRegistryModule()
+    reloaded.load()
+    expect(reloaded.displayName(reloaded.byAgent(first.agentId)!)).toBe('agent-1')
+    expect(reloaded.displayName(reloaded.byAgent(second.agentId)!)).toBe('My project')
+    const third = reloaded.openPendingAgent({ engine: 'codex', runtimes: [{ backend: 'tmux', paneId: '%9' }], cwd: '/tmp/demo' })!
+    expect(reloaded.displayName(third)).toBe('agent-3')
+    reloaded.rename(third.agentId, 'agent-10')
+    const fourth = reloaded.openPendingAgent({ engine: 'claude', runtimes: [{ backend: 'tmux', paneId: '%10' }], cwd: '/tmp/demo' })!
+    expect(reloaded.displayName(fourth)).toBe('agent-11')
+  })
+
   it('persists a failed launch for reconnect while keeping its terminal route', async () => {
     const { registry } = await loadRegistryModule()
     registry.load()

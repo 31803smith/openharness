@@ -41,10 +41,49 @@ esac
       // `remain-on-exit` is chained into the SAME invocation, not sent after it: an engine that
       // exits immediately would otherwise take its session down before a follow-up call landed,
       // and its error text with it.
-      'new-session -d -P -F #{pane_id} -c /tmp/work -s harness-test ; set-option -w remain-on-exit on',
+      // `window-style` rides the same invocation for the same reason: the engine asks its
+      // terminal for its colours (OSC 10/11) once, at startup, and never again.
+      'new-session -d -P -F #{pane_id} -c /tmp/work -s harness-test ; set-option -w remain-on-exit on ; set-option -w window-style bg=#181818,fg=#f5f5f5',
       'set-option -t %42 mouse on',
       'display-message -p -t %42 #{session_id}',
       'kill-session -t $7',
+    ])
+  })
+
+  it('styles panes with the theme the app last sent, and re-styles existing ones on a scan', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tmux-backend-theme-'))
+    dirs.push(dir)
+    const calls = join(dir, 'calls')
+    const tmux = join(dir, 'tmux')
+    writeFileSync(tmux, `#!/bin/sh
+printf '%s\\n' "$*" >> "$TMUX_BACKEND_CALLS"
+case "$1" in
+  new-session) printf '%%7\\n' ;;
+  list-panes) printf '%%7|100|harness-codex-1|/tmp/work\\n%%9|101|harness-claude-2|/tmp/other\\n' ;;
+esac
+`)
+    chmodSync(tmux, 0o700)
+    process.env.PATH = `${dir}${delimiter}${originalPath ?? ''}`
+    process.env.TMUX_BACKEND_CALLS = calls
+    let theme = { background: '#171b29', foreground: '#f5f5f5' }
+    const backend = new TmuxBackend(() => theme)
+
+    await backend.create({ cwd: '/tmp/work', label: 'harness-codex-1' })
+    await backend.inventory()
+    // Nothing changed: the scan touches only the pane it has not styled yet.
+    await backend.inventory()
+    theme = { background: '#300a24', foreground: '#ffffff' }
+    await backend.inventory()
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    const styleCalls = readFileSync(calls, 'utf8').trim().split('\n').filter((line) => line.includes('window-style'))
+    expect(styleCalls).toEqual([
+      'new-session -d -P -F #{pane_id} -c /tmp/work -s harness-codex-1 ; set-option -w remain-on-exit on ; set-option -w window-style bg=#171b29,fg=#f5f5f5',
+      // The pane this daemon did not create is styled on the first scan; %7 already was.
+      'set-option -w -t %9 window-style bg=#171b29,fg=#f5f5f5',
+      // The app changed its palette: every live pane, once.
+      'set-option -w -t %7 window-style bg=#300a24,fg=#ffffff',
+      'set-option -w -t %9 window-style bg=#300a24,fg=#ffffff',
     ])
   })
 
@@ -202,7 +241,8 @@ printf '%%42\\n'
     expect(readFileSync(calls, 'utf8').trim().split('\n')[0]).toBe(
       'new-session -d -P -F #{pane_id} -c /tmp/work -s harness-test'
       + ' -e ANTHROPIC_BASE_URL=https://relay.example/relay -e ANTHROPIC_AUTH_TOKEN=gridkey-abc123'
-      + ' /bin/zsh -lic exec "$@" harness-engine claude ; set-option -w remain-on-exit on',
+      + ' /bin/zsh -lic exec "$@" harness-engine claude ; set-option -w remain-on-exit on'
+      + ' ; set-option -w window-style bg=#181818,fg=#f5f5f5',
     )
   })
   it('respawns a pane in place with a new environment, keeping the pane id', async () => {

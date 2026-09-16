@@ -60,7 +60,7 @@ class TerminalPanel extends StatefulWidget {
   final bool visible;
   final Size? viewportSize;
 
-  /// A shared terminal can move to another harness without being remounted.
+  /// A shared terminal can move to another tab without being remounted.
   final (String, int)? paneLocation;
   final (int, int, int?)? layoutRequest;
   final bool compactHeader;
@@ -1338,6 +1338,10 @@ class _TerminalPanelState extends State<TerminalPanel>
       machine: machine?.machine,
       local: machine?.isLocalMachine,
       agent: agent,
+      // Named on its own even though `agent` is already here: an Agent has no
+      // equality, so a frame that changed nothing but the verdict must still
+      // be seen as a change by the one field that can say so.
+      verdict: agent?.verdict,
       project: agent == null ? null : machine?.projectOf(agent),
       compact: widget.compactHeader,
       close: widget.onClose != null,
@@ -1514,35 +1518,105 @@ class _TerminalHeader extends StatelessWidget {
           child: LayoutBuilder(
             builder: (context, constraints) => Row(
               children: [
-                EngineMark(engine: session.engineId, size: 17),
+                if (agent != null)
+                  EngineMark.forAgent(agent, size: 17)
+                else
+                  EngineMark(engine: session.engineId, size: 17),
+                // Icon and name, the same as every other pane (owner,
+                // 2026-09-15): a harness agent is its harness here, and the
+                // engine it runs on is the dialog's and the tooltip's to say.
                 const SizedBox(width: 10),
                 Expanded(
-                  child: Tooltip(
-                    message: identityDetail,
-                    waitDuration: const Duration(milliseconds: 700),
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onDoubleTap: () => unawaited(
-                        showAgentRenameDialog(
-                          context,
-                          notifier,
-                          session.machineId,
-                          session.agentId,
-                          session.agentName,
+                  child: Row(
+                    children: [
+                      Flexible(
+                        child: Tooltip(
+                          message: identityDetail,
+                          waitDuration: const Duration(milliseconds: 700),
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onDoubleTap: () => unawaited(
+                              showAgentRenameDialog(
+                                context,
+                                notifier,
+                                session.machineId,
+                                session.agentId,
+                                session.agentName,
+                              ),
+                            ),
+                            child: Text(
+                              session.agentName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: AppColors.text,
+                                fontFamily: AppFonts.sans,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
                         ),
                       ),
-                      child: Text(
-                        session.agentName,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: AppColors.text,
-                          fontFamily: AppFonts.sans,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
+                      const SizedBox(width: 8),
+                      if (status != null)
+                        ConstrainedBox(
+                          constraints: BoxConstraints(
+                            maxWidth: math.max(
+                              0,
+                              math.min(
+                                constraints.maxWidth * .22,
+                                constraints.maxWidth - actionsWidth - 110,
+                              ),
+                            ),
+                          ),
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: Tooltip(
+                              message: status.detail,
+                              child: TextButton(
+                                onPressed: canReconnect
+                                    ? () => notifier.selectAgent(
+                                        session.machineId,
+                                        session.agentId,
+                                      )
+                                    : null,
+                                style: TextButton.styleFrom(
+                                  foregroundColor: color,
+                                  disabledForegroundColor: AppColors.textSoft,
+                                  minimumSize: Size.zero,
+                                  tapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 4,
+                                  ),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(status.icon, size: 14),
+                                    const SizedBox(width: 6),
+                                    Flexible(
+                                      child: Text(
+                                        status.label,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(fontSize: 11),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        )
+                      else if (!compact)
+                        Padding(
+                          padding: const EdgeInsets.all(4),
+                          child: Icon(Icons.circle, size: 8, color: color),
                         ),
-                      ),
-                    ),
+                    ],
                   ),
                 ),
                 // The model picker sits next to the NAME, because that is the pair a person reads
@@ -1569,62 +1643,6 @@ class _TerminalHeader extends StatelessWidget {
                   ),
                 ],
                 const SizedBox(width: 8),
-                if (status != null)
-                  ConstrainedBox(
-                    constraints: BoxConstraints(
-                      maxWidth: math.max(
-                        0,
-                        math.min(
-                          constraints.maxWidth * .3,
-                          constraints.maxWidth - actionsWidth - 110,
-                        ),
-                      ),
-                    ),
-                    child: Align(
-                      alignment: Alignment.centerRight,
-                      child: Tooltip(
-                        message: status.detail,
-                        child: TextButton(
-                          onPressed: canReconnect
-                              ? () => notifier.selectAgent(
-                                  session.machineId,
-                                  session.agentId,
-                                )
-                              : null,
-                          style: TextButton.styleFrom(
-                            foregroundColor: color,
-                            disabledForegroundColor: AppColors.textSoft,
-                            minimumSize: Size.zero,
-                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 4,
-                            ),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(status.icon, size: 14),
-                              const SizedBox(width: 6),
-                              Flexible(
-                                child: Text(
-                                  status.label,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(fontSize: 11),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  )
-                else if (!compact)
-                  Padding(
-                    padding: const EdgeInsets.all(4),
-                    child: Icon(Icons.circle, size: 8, color: color),
-                  ),
                 // Which of the three paths carries this pane's bytes. Absent for a local machine's own
                 // terminal, which has no such distinction and so gets no badge.
                 //
@@ -1641,7 +1659,7 @@ class _TerminalHeader extends StatelessWidget {
                   constraints: BoxConstraints(
                     maxWidth: math.max(
                       actionsWidth,
-                      constraints.maxWidth * (status == null ? .55 : .3),
+                      constraints.maxWidth * .55,
                     ),
                   ),
                   child: PaneHeaderActions(
@@ -1652,6 +1670,20 @@ class _TerminalHeader extends StatelessWidget {
                     onClose: onClose,
                     onToggleComposer: remoteComposer,
                     composerVisible: composerVisible,
+                    // A harness agent's viewer, shown or hidden from the
+                    // pane it belongs to.
+                    onToggleViewer: agent?.viewerUrl == null
+                        ? null
+                        : () => notifier.toggleViewerPane(
+                            session.machineId,
+                            agent!.id,
+                          ),
+                    viewerVisible:
+                        agent != null &&
+                        notifier.viewerPaneShown(session.machineId, agent.id),
+                    viewerColor: agent == null
+                        ? null
+                        : agentIdentity(agent).color,
                     details: Tooltip(
                       message: [
                         if (project != null) project.cwd,
@@ -1731,6 +1763,12 @@ class _TerminalHeader extends StatelessWidget {
   }
 }
 
+/// A domain harness's verdict on the agent's workspace, in one word or one count.
+///
+/// Green "Ready" is the harness's one machine fact — fab-ready, every gate passed. Red carries the
+/// error count, amber the warning count when nothing blocks, grey "Checked" a clean run that the
+/// harness still would not call ready. The summary rides in the tooltip; the findings themselves
+/// live in the harness's own viewer, which is the pane beside this one.
 /// The pane header's transport badge: a compact topology for the path carrying terminal bytes.
 ///
 /// The three shapes describe one hop, an intermediate hop, and a central server respectively. That

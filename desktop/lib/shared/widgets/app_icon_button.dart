@@ -1,28 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../theme/app_theme.dart';
 
-/// A small icon affordance that lifts under the pointer.
-///
-/// Material's [IconButton] is unusable raw here for the same reason
-/// `MenuItemButton` is: the app defines no `iconButtonTheme`, so a bare one
-/// takes Material's defaults — a 48px tap target padded around a 40px circle,
-/// an ink ripple the app disables everywhere else, and, worst, **no hover
-/// treatment at all** beyond a faint circular overlay. Its glyph keeps its
-/// resting ink while the pointer sits on it, which reads as decoration rather
-/// than something you can press.
-///
-/// This is the formula the rest of the app uses (`_MenuTrigger` in
-/// `project_menu.dart`, `_ChatMenuItem` in `chat_header.dart`): the glyph climbs
-/// to [AppPalette.textPrimary] and [AppSurface.hoverFill] lays in behind it.
-///
-/// ### Owning its own hover matters
-///
-/// A row that already lightens on hover (an `ExtensionTileSurface`) does **not**
-/// tell the button inside it where the pointer is. Without its own
-/// [MouseRegion] the button stays at rest for the whole time it's hovered, and
-/// without its own [fill] the user can't tell "on the row" from "on the button".
-/// Both halves were live bugs before this widget existed.
+/// A compact icon button with the same rounded hover and focus well as the
+/// standard icon-button theme, plus optional progress and destructive states.
 class AppIconButton extends StatefulWidget {
   const AppIconButton({
     super.key,
@@ -119,6 +101,7 @@ class AppIconButton extends StatefulWidget {
 class _AppIconButtonState extends State<AppIconButton>
     with SingleTickerProviderStateMixin {
   bool _hovered = false;
+  bool _focused = false;
 
   /// One turn. Slow enough to read as deliberate rather than as a busy
   /// indicator thrashing, fast enough that a reload finishing inside a single
@@ -179,32 +162,49 @@ class _AppIconButtonState extends State<AppIconButton>
         ? danger
         : (widget.hoverColor ?? AppPalette.textPrimary);
 
+    final emphasized = enabled && (_hovered || _focused);
     final button = MouseRegion(
       cursor: enabled ? SystemMouseCursors.click : MouseCursor.defer,
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
-      child: GestureDetector(
-        onTap: enabled ? widget.onPressed : null,
-        child: AnimatedContainer(
-          duration: AppMotion.hover,
-          curve: AppMotion.curve,
-          width: AppIconButton._box,
-          height: AppIconButton._box,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: _hovered && enabled
-                ? (widget.hoverFill ?? AppSurface.hoverFill)
-                : Colors.transparent,
-            borderRadius: BorderRadius.circular(AppIconButton._radius),
+      child: FocusableActionDetector(
+        enabled: enabled,
+        onFocusChange: (value) => setState(() => _focused = value),
+        shortcuts: const {
+          SingleActivator(LogicalKeyboardKey.enter): ActivateIntent(),
+          SingleActivator(LogicalKeyboardKey.space): ActivateIntent(),
+        },
+        actions: {
+          ActivateIntent: CallbackAction<ActivateIntent>(
+            onInvoke: (_) {
+              if (enabled) widget.onPressed?.call();
+              return null;
+            },
           ),
-          child: RotationTransition(
-            turns: _spin,
-            child: Icon(
-              widget.icon,
-              size: widget.size,
-              color: pressable
-                  ? (_hovered && enabled ? active : resting)
-                  : AppPalette.textFaint,
+        },
+        child: GestureDetector(
+          onTap: enabled ? widget.onPressed : null,
+          child: AnimatedContainer(
+            duration: AppMotion.hover,
+            curve: AppMotion.curve,
+            width: AppIconButton._box,
+            height: AppIconButton._box,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: emphasized
+                  ? (widget.hoverFill ?? AppSurface.hoverFill)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(AppIconButton._radius),
+            ),
+            child: RotationTransition(
+              turns: _spin,
+              child: Icon(
+                widget.icon,
+                size: widget.size,
+                color: pressable
+                    ? (emphasized ? active : resting)
+                    : AppPalette.textFaint,
+              ),
             ),
           ),
         ),
@@ -212,6 +212,12 @@ class _AppIconButtonState extends State<AppIconButton>
     );
 
     final tooltip = widget.tooltip;
-    return tooltip == null ? button : Tooltip(message: tooltip, child: button);
+    return Semantics(
+      button: true,
+      enabled: enabled,
+      child: tooltip == null
+          ? button
+          : Tooltip(message: tooltip, child: button),
+    );
   }
 }

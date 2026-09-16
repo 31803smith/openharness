@@ -17,7 +17,7 @@
 #define BSP_LCD_QSPI_D1      5
 #define BSP_LCD_QSPI_D2      6
 #define BSP_LCD_QSPI_D3      7
-#define BSP_LCD_RST          39
+// LCD reset: per board — board()->lcd_rst (board.h). GPIO39 on the CST9217 dial, GPIO1 on the CST816S one.
 
 // ---- I2C bus (touch + PMIC share it) ----
 #define BSP_I2C_SDA          15
@@ -25,12 +25,11 @@
 #define BSP_I2C_FREQ_HZ      400000
 
 // ---- Capacitive touch: CST9217 (I2C) — wired for future use, not required in v1 ----
-#define BSP_TOUCH_I2C_ADDR   0x5A
+// Touch controller address and reset: per board — board()->touch / ->touch_rst (board.h).
 #define BSP_TOUCH_INT        11
-#define BSP_TOUCH_RST        40
 
 // ---- Power management: AXP2101 (I2C) ----
-#define BSP_AXP2101_I2C_ADDR 0x34
+#define BSP_AXP2101_I2C_ADDR 0x34         // present only when board()->has_pmic
 
 // ---- Audio: dual-mic → ES7210 ADC (capture) + ES8311 codec, on the shared I2C; I2S bus ----
 // Pins from the Waveshare BSP (bsp/esp32_s3_touch_amoled_1_75). Mic capture (ES7210) only in v1.

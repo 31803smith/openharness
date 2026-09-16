@@ -240,6 +240,9 @@ const envSchema = z.object({
   // `app-*.log`/`cli-*.log`, so one directory holds everything a bug report needs. Not the data dir:
   // `harness.log` there is the daemon's console, and `harness reset` wipes it.
   HARNESS_LOGS_DIR: z.string().default(join(adapterRootDir, 'logs')),
+  // Where domain-specific harnesses are installed (`harness dsh install`): one directory per
+  // `<owner>/<name>` plus `installed.json`. Product-root state like the SSO session, not daemon data.
+  DSH_DIR: z.string().default(join(adapterRootDir, 'dsh')),
   // This computer's stable id, minted once and never regenerated (see computerIdFile above). Pin it
   // explicitly on a box with no durable home — a container or CI job that gets a fresh ~/.harness on
   // every boot would otherwise look like a NEW computer each time and collect a machine per start.
@@ -336,11 +339,13 @@ const envSchema = z.object({
   AMP_SUMMARY_MODE: z.string().default('medium'),
   // Shared recap reasoning level for Claude and Codex. Cursor effort is part of its model identifier.
   SUMMARY_EFFORT: z.enum(['low', 'medium', 'high']).default('low'),
-  // How the device recap is written. `model`: a disposable one-shot of the session's own engine, fed the
-  // PREVIOUS recap, the user's ask and the answer — so a turn that says "same fix, other file" recaps as
-  // what it did, not as a fragment; costs the one-shot's latency per turn. `local`: no model in the loop,
-  // the answer's first sentence is excerpted — instant, but every recap stands alone.
-  SUMMARY_MODE: z.enum(['model', 'local']).default('model'),
+  // Who writes the device recap's headline. `local` (default since 2026-09-15): no model in the loop —
+  // the answer's first sentence is excerpted, instantly; the dial shows what the terminal shows, as it
+  // shows it. `model`: a disposable one-shot of the session's own engine, fed the previous recap, the
+  // user's ask and the answer — reads better across turns, but measured at ~9s of the user's turn to
+  // rephrase "Blue selected." as "Blue selected as the colour choice" (owner: the dial is cabled to the
+  // window already showing the answer in full; the recap is a glance, not prose).
+  SUMMARY_MODE: z.enum(['model', 'local']).default('local'),
   RECAP_WITHOUT_DEVICE: z.string().default('true').transform((v) => v !== 'false'),
   // Model for the voice router one-shot classifier (Overview voice → pick the agent). Small/fast by default.
   VOICE_ROUTE_MODEL: z.string().default('haiku'),
@@ -377,6 +382,11 @@ const envSchema = z.object({
   // How often the daemon checks for a newer build (ms). The poll is a tiny no-cache metadata fetch;
   // the artifact is downloaded only when the manifest version is strictly newer.
   ADAPTER_UPDATE_CHECK_MS: z.string().default('60000').transform(Number),
+  // The wall-clock second each check lands on, when the interval divides a minute. The desktop app
+  // spawns `harness start` only around :15 (see desktop/lib/ws/local_cli_discovery.dart `inSpawnSlot`);
+  // keeping the update handoff 30s away from that is what stops the two from fighting over the spawn
+  // lock. Set to a negative number to keep the plain interval.
+  ADAPTER_UPDATE_SLOT_SEC: z.string().default('45').transform(Number),
   // Set 'true' to disable self-update entirely.
   ADAPTER_UPDATE_DISABLE: z.string().default('false').transform((v) => v === 'true'),
   // Install dir holding the packaged cli.js + notify.mjs that the self-updater swaps in place.

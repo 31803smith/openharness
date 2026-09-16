@@ -1,25 +1,29 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../analytics/analytics.dart';
 import '../state/pane_arrangement.dart';
 import '../core/engine_availability.dart';
 import '../core/codex_profiles.dart';
+import '../core/dsh_catalog.dart';
+import '../core/project_folder.dart';
+import '../core/repository_clone.dart';
 import '../shared/theme/app_theme.dart' as grid;
 import '../shared/widgets/app_checkbox.dart';
 import '../shared/widgets/app_choice_picker.dart';
 import '../shared/widgets/app_dialog.dart';
 import '../shared/widgets/app_select_field.dart';
-import '../shared/widgets/labeled_field.dart';
 import '../state/app_state.dart';
 import 'engine_identity.dart';
 import 'codex_profile_field.dart';
-import 'clone_repository_dialog.dart';
 import 'agent_picker.dart';
 import 'remote_folder_picker.dart';
+import 'new_agent_project_picker.dart';
 
 /// Mirrors the harness CLI's `BYPASS_PERMISSION_FLAGS`
 /// (autonomous-harness/cli/src/lib/engineLaunch.ts) 1:1 — this is UI-only display + gating, the CLI
@@ -34,7 +38,9 @@ const Map<String, String> kEngineBypassPermissionFlag = {
 
 enum NewAgentDialogResult { created, findExisting, backToSearch }
 
-/// Opens the Create Harness dialog for [machineId].
+enum _FolderSource { newProject, local, remote }
+
+/// Opens the Create Agent dialog for [machineId].
 ///
 /// [source] names the door it was opened by — `machine_row`, `rail_empty`,
 /// `pane_empty` or `shortcut` — and is required rather than defaulted, so a
@@ -104,6 +110,13 @@ class _NewAgentDialog extends StatefulWidget {
 class _NewAgentDialogState extends State<_NewAgentDialog> {
   final _folderFocus = FocusNode(debugLabel: 'Working folder');
   final _actionFocus = FocusNode(debugLabel: 'Create or check agent');
+  GitHubRepository? _repository;
+  final _choicesScroll = ScrollController();
+  final _projectChoices = PageStorageBucket();
+  late _FolderSource _folderSource = widget.initialFolder == null
+      ? _FolderSource.newProject
+      : _FolderSource.local;
+  String? _preparedFolder;
   AgentCreationAttempt? _creation;
   bool _checkingCreation = false;
   bool get _confirmationPending => _creation?.awaitingConfirmation == true;
@@ -123,10 +136,16 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   bool _advancedOpen = false;
   bool _submitting = false;
 
+  /// A harness install is running ahead of the create. Its progress line is
+  /// read off the machine's catalog on every rebuild; this only decides what
+  /// the button says.
+  bool _installing = false;
+
   @override
   void dispose() {
     _folderFocus.dispose();
     _actionFocus.dispose();
+    _choicesScroll.dispose();
     super.dispose();
   }
 
@@ -134,7 +153,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   void initState() {
     super.initState();
     final remembered = widget.notifier.agentPreference.value;
-    if (allEngines.any((identity) => identity.id == remembered)) {
+    if (_knownChoice(remembered)) {
       _engine = remembered!;
       _engineChosenByUser = true;
     } else {
@@ -163,21 +182,100 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     });
   }
 
+  /// Whether [id] is something this dialog can offer: an engine, or a harness
+  /// this build ships a face for, or one the machine has named.
+  bool _knownChoice(String? id) =>
+      id != null &&
+      (allEngines.any((identity) => identity.id == id) ||
+          knownHarnesses.any((identity) => identity.id == id) ||
+          _harness(id) != null);
+
+  /// Which harnesses this machine has or could install — asked when a harness
+  /// is chosen, not on open: most creates never involve one, and the answer
+  /// costs the machine a request. Forced, for the reason `_probeEngines`
+  /// gives: an install this very dialog starts is what makes a stored answer
+  /// stale.
+  Future<void> _probeHarnesses() =>
+      widget.notifier.probeDsh(_machineId, force: true);
+
+  /// The machine's row for harness [id], or null while it has not answered
+  /// (or does not know the request). Null is "unknown", never "absent".
+  DshEntry? _harness(String id) {
+    final machine = widget.notifier.stateOf(_machineId);
+    if (machine == null || !machine.dsh.loaded) return null;
+    return machine.dsh[id];
+  }
+
+  bool get _engineIsHarness => isHarnessId(_engine);
+
+  /// The engine a choice actually launches: a harness runs ON one of them, and
+  /// that is what travels as `engine` beside the harness id.
+  String _baseEngine(String id) => isHarnessId(id)
+      ? _harness(id)?.engine ?? knownHarnessBase[id] ?? 'claude'
+      : id;
+
+  /// What to call [id] on screen: the machine's name for a harness when it has
+  /// answered, else this build's.
+  String _labelOf(String id) =>
+      _harness(id)?.name ??
+      (id == 'claude' ? 'Claude Code' : engineIdentity(id).label);
+
+  /// The harness is absent from this machine and Harness would install it
+  /// before launching. False until the machine has answered: a harness cannot
+  /// be called missing on the strength of a request that has not come back.
+  bool _willInstallHarness(String id) {
+    final entry = _harness(id);
+    return entry != null && !entry.installed;
+  }
+
+  /// The harnesses to list after the engines: what the machine named when it
+  /// has answered, else the ones this build ships a face for.
+  List<DshEntry> get _harnessOptions {
+    final machine = widget.notifier.stateOf(_machineId);
+    if (machine != null &&
+        machine.dsh.loaded &&
+        machine.dsh.entries.isNotEmpty) {
+      return machine.dsh.entries;
+    }
+    return [
+      for (final identity in knownHarnesses)
+        DshEntry(
+          id: identity.id,
+          name: identity.label,
+          category: identity.category,
+          engine: knownHarnessBase[identity.id] ?? 'claude',
+        ),
+    ];
+  }
+
+  /// The one-line install status while a harness install is running, read off
+  /// the machine's own narration (`dsh_install_status`), or null.
+  String? get _installStatus {
+    if (!_installing) return null;
+    final progress = widget.notifier.stateOf(_machineId)?.dsh.installs[_engine];
+    return progress?.label ?? 'Installing…';
+  }
+
   Future<void> _loadAgentPreference() async {
     await widget.notifier.agentPreference.load();
     if (!mounted || _choicesLocked || _engineChosenByUser) return;
     final remembered = widget.notifier.agentPreference.value;
-    if (allEngines.any((identity) => identity.id == remembered)) {
+    if (_knownChoice(remembered)) {
       setState(() {
-        _engine = remembered!;
         _engineChosenByUser = true;
-        _codexProfile = null;
-        _codexProfilesBusy = true;
+        if (_engine != remembered) {
+          _engine = remembered!;
+          _codexProfile = null;
+          _codexProfilesBusy = true;
+        }
       });
     }
   }
 
   String _preferredInstalledEngine() {
+    // A harness is not in the engine probe at all; its own install state is
+    // the machine's catalog, and a remembered harness stays chosen.
+    if (_engineIsHarness) return _engine;
     final engines = widget.notifier.stateOf(_machineId)?.engines;
     if (engines?.loaded != true || engines?[_engine]?.installed == true) {
       return _engine;
@@ -222,49 +320,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     return machine.engines[engine];
   }
 
-  /// The row's note about installation, or null when there is nothing to say —
-  /// which covers both "it is here" and "the machine has not answered yet".
-  ///
-  /// Those two produce the same absent note on purpose. A row cannot say
-  /// "not installed" on the strength of a probe that has not returned; the
-  /// dialog's own preflight panel is where the settled answer is stated, and it
-  /// arrives a moment later without moving anything.
-  String? _engineInstallNote(String engine) {
-    final entry = _availability(engine);
-    if (entry == null || entry.installed) return null;
-    // Only the state Harness cannot fix keeps words. It is rare, it is the one
-    // the reader has to act on themselves, and a glyph for "we cannot help you
-    // here" would be a glyph nobody decodes in time.
-    return entry.installable ? null : 'not installed';
-  }
-
-  /// The one caveat worth printing beside an engine's name, or none.
-  ///
-  /// Stated in the row rather than discovered after picking: each of these
-  /// changes what the engine can do, and finding out by watching the checkbox
-  /// vanish — or by reading `command not found` out of a pane — is a worse way
-  /// to learn it. One note per row, so the row stays a name with a caveat
-  /// rather than a sentence.
-  String? _engineNote(String engine) {
-    return _engineInstallNote(engine) ??
-        (kEngineBypassPermissionFlag.containsKey(engine)
-            ? null
-            : 'no bypass flag');
-  }
-
-  /// This engine is absent and Harness would install it before launching.
-  bool _willInstallEngine(String engine) {
-    final entry = _availability(engine);
-    return entry != null && !entry.installed && entry.installable;
-  }
-
-  /// The system panel is modal and slow enough to notice. Without this the
-  /// button stays live and a second click stacks a second panel behind the
-  /// first — on macOS that leaves one the user cannot reach until they dismiss
-  /// the one on top.
-  /// refuse it either, it simply never replies, so this arrives 30s later —
-  /// and until it is rendered the panel says "Ready to launch" over an engine
-  /// nobody checked for, which the create then fails on at the far end.
+  /// A failed availability check can be retried without changing the choices.
   bool get _engineCheckFailed {
     final machine = widget.notifier.stateOf(_machineId);
     if (machine == null) return false;
@@ -279,36 +335,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     unawaited(_probeEngines());
   }
 
-  /// The engine is missing but this machine cannot safely auto-install it — for
-  /// example, an explicit ENGINE_PATH override points at a missing file, or an
-  /// older CLI has no recipe. Stated rather than silently offered, because the
-  /// create WILL fail and the person needs to fix that machine first.
-
-  /// What the fold says about itself while it is shut.
-  ///
-  /// Two facts in the order they matter: which Codex home, and whether the
-  /// prompts are on. It is the ONLY thing on screen reporting either once the
-  /// drawer is closed, which is why it is built here rather than left to a
-  /// string in the widget — the two have to stay in step.
-  String _advancedState() {
-    // THE PROFILE ONLY. It also carried "prompts on" / "prompts OFF", and that
-    // was cut on the owner's call for the reason that decides most copy here:
-    // it did not say what it meant. "Prompts" names a thing the sentence inside
-    // the fold explains and the row outside it does not, so the row was asking
-    // people to already know.
-    if (_engine != 'codex') return '';
-    return _codexProfile?.label ?? 'default profile';
-  }
-
-  /// This engine is absent and Harness would install it before launching.
-  bool get _willInstall {
-    final entry = _availability(_engine);
-    return entry != null && !entry.installed && entry.installable;
-  }
-
   bool _picking = false;
-  bool _folderHovered = false;
-  bool _folderFocused = false;
   bool _bypassHovered = false;
   String? _error;
 
@@ -323,46 +350,20 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   /// Create waits while the Codex profile list is still loading on a machine
   /// that can launch into one, so a click cannot land before the choice does.
   bool get _waitingForCodexProfile =>
-      _engine == 'codex' &&
+      _baseEngine(_engine) == 'codex' &&
       _availability('codex')?.supportsCodexHome == true &&
       _codexProfilesBusy;
 
   /// [Machine.displayName], not `name` — the latter is nullable and a machine
-  /// that never got one would title the dialog "Create Harness on null".
+  /// that never got one would title the dialog "Create Agent on null".
   String get _machineName =>
       widget.notifier.stateOf(_machineId)?.machine.displayName ??
       'this machine';
 
-  String _machineDetail(MachineState machine) => [
-    machine.isLocalMachine ? 'This computer' : 'Remote',
-    if (machine.nodeOnline == false)
-      'Offline'
-    else if (machine.needsLink)
-      'Link required',
-  ].join(' · ');
-
-  Future<void> _browse() async {
-    if (_picking || _choicesLocked) return;
-    final restoreFocus = _folderFocus.hasFocus;
-    // The agent runs on the MACHINE, so the folder has to exist on the machine
-    // — which is the whole reason this branches.
-    //
-    // On this computer that is the OS's own panel (`getDirectoryPath` is
-    // NSOpenPanel on macOS, IFileDialog on Windows, the desktop's file-chooser
-    // portal on Linux): it is the picker the user already knows, it can reach
-    // sidebar favourites, iCloud and network mounts that `fs_list_dir` never
-    // enumerates, and the app is not sandboxed (`macos/Runner/*.entitlements`
-    // declares no `com.apple.security.app-sandbox`) so the path it returns is
-    // one the CLI can actually open — no security-scoped bookmark to hand over.
-    //
-    // On any other machine a native panel is not merely wrong but actively
-    // misleading: it browses THIS Mac and hands back a path that does not exist
-    // over there, so the agent would fail to start in a folder the user watched
-    // themselves select. That case keeps the in-app browser, which walks the
-    // remote filesystem over the `fs_list_dir` RPC.
-    var acceptedFolder = false;
+  Future<String?> _browse() async {
+    if (_picking || _choicesLocked) return null;
     setState(() => _picking = true);
-    final pickingRevision = _machineRevision;
+    final revision = _machineRevision;
     try {
       final picked = _machineIsThisComputer
           ? await getDirectoryPath(initialDirectory: _folder)
@@ -372,54 +373,32 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
               machineId: _machineId,
               initialPath: _folder,
             );
-      if (!mounted) return;
-      setState(() {
-        _picking = false;
-        if (picked != null &&
-            !_choicesLocked &&
-            pickingRevision == _machineRevision) {
-          _folder = picked;
-          _error = null;
-          acceptedFolder = true;
-        }
-      });
-    } catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _picking = false;
-        if (pickingRevision == _machineRevision) {
-          _error = 'Could not open the folder picker: $error';
-        }
-      });
-    } finally {
-      if (mounted && restoreFocus) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted &&
-              !_choicesLocked &&
-              !_picking &&
-              pickingRevision == _machineRevision) {
-            // A confirmed folder makes the primary action the next step.
-            // Cancellation/failure keeps Enter on browsing, and a pending
-            // account choice must not focus a disabled submit button.
-            if (acceptedFolder && !_waitingForCodexProfile) {
-              _actionFocus.requestFocus();
-            } else {
-              _folderFocus.requestFocus();
-            }
-          }
-        });
+      return mounted && !_choicesLocked && revision == _machineRevision
+          ? picked
+          : null;
+    } catch (_) {
+      if (mounted && revision == _machineRevision) {
+        setState(() => _error = 'Could not open the folder picker. Try again.');
       }
+      return null;
+    } finally {
+      if (mounted) setState(() => _picking = false);
     }
   }
 
   Future<void> _submit() async {
-    final folder = _folder;
-    if (folder == null ||
+    final project = _preparedFolder == null ? _projectFolder : null;
+    final folder =
+        _preparedFolder ??
+        (_folderSource == _FolderSource.local ? _folder : null);
+    if ((folder == null && project == null) ||
         _submitting ||
         (!_confirmationPending && _waitingForCodexProfile)) {
       return;
     }
-    final engine = _engine;
+    final choice = _engine;
+    final harness = _engineIsHarness ? choice : null;
+    final engine = _baseEngine(choice);
     final profile = _codexProfile;
     final bypassPermission =
         _bypassPermission && kEngineBypassPermissionFlag.containsKey(engine);
@@ -429,21 +408,69 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
       _submitting = true;
       _error = null;
     });
+    // A harness the machine does not have yet is installed FIRST, as its own
+    // step with its own words: minutes of clone and toolchain under a button
+    // that said "Creating agent…" would read as a create that hung. The
+    // machine's catalog decides "has it"; wait for its answer if it is out.
+    if (harness != null && !_confirmationPending && _harness(harness) == null) {
+      await _probeHarnesses();
+      if (!mounted) return;
+      // A machine whose Harness CLI predates harnesses refuses `dsh_list`
+      // and would take `dsh` on `agent_create` in silence — creating a plain
+      // Claude Code where Copper was picked. Say so and stop here instead.
+      final catalog = widget.notifier.stateOf(_machineId)?.dsh;
+      if (catalog != null && !catalog.loaded && catalog.error != null) {
+        setState(() {
+          _error =
+              'Update Harness CLI on $_machineName to create a '
+              '${_labelOf(harness)} agent.';
+        });
+        return;
+      }
+    }
+    if (harness != null &&
+        !_confirmationPending &&
+        _willInstallHarness(harness)) {
+      setState(() => _installing = true);
+      final failure = await widget.notifier.installDsh(_machineId, harness);
+      if (!mounted) return;
+      setState(() => _installing = false);
+      if (failure != null) {
+        setState(() {
+          _submitting = false;
+          _error = failure;
+        });
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _actionFocus.requestFocus();
+        });
+        return;
+      }
+    }
     final error = await widget.notifier.createAgent(
       _machineId,
       engine: engine,
-      folder: folder,
+      folder: folder ?? '',
+      projectFolder: project,
       swarmId: widget.swarmId,
       split: widget.split,
       bypassPermission: bypassPermission,
       // Keep the explicit choice even if machine discovery changes mid-submit.
       // The notifier must reject a now-remote target, never use its default login.
       codexHome: engine == 'codex' ? profile?.path : null,
+      dsh: harness,
       attempt: _creation,
     );
     if (!mounted) return;
     if (error != null) {
       setState(() {
+        if (!_confirmationPending) {
+          _preparedFolder = _creation?.preparedFolder;
+          if (_preparedFolder != null) {
+            _folder = _preparedFolder;
+            _repository = null;
+            _folderSource = _FolderSource.local;
+          }
+        }
         _submitting = false;
         _error = error;
       });
@@ -452,27 +479,20 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
       });
       return;
     }
-    analytics.agentCreated(engine: engine, bypassPermission: bypassPermission);
+    analytics.agentCreated(engine: choice, bypassPermission: bypassPermission);
     Navigator.of(context).pop(NewAgentDialogResult.created);
   }
 
-  Future<void> _cloneRepository() async {
-    if (_picking || _choicesLocked || !_machineIsThisComputer) return;
-    final revision = _machineRevision;
-    setState(() => _picking = true);
-    final folder = await showCloneRepositoryDialog(
-      context,
-      initialFolder: _folder,
-    );
-    if (!mounted) return;
-    setState(() {
-      _picking = false;
-      if (folder != null && !_choicesLocked && revision == _machineRevision) {
-        _folder = folder;
-        _error = null;
-      }
-    });
-  }
+  ProjectFolderRequest? get _projectFolder => switch (_folderSource) {
+    _FolderSource.newProject => const ProjectFolderRequest.newProject(),
+    _FolderSource.local => null,
+    _FolderSource.remote => switch (_repository) {
+      final repository? => ProjectFolderRequest.remote(repository),
+      null => null,
+    },
+  };
+
+  void _toggleAdvanced() => setState(() => _advancedOpen = !_advancedOpen);
 
   @override
   Widget build(BuildContext context) {
@@ -492,269 +512,317 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   }
 
   Widget _buildDialog(BuildContext context) {
-    final bypassFlag = kEngineBypassPermissionFlag[_engine];
+    final bypassFlag = kEngineBypassPermissionFlag[_baseEngine(_engine)];
     final canCreate =
-        _folder != null &&
+        (_preparedFolder != null ||
+            (_folderSource == _FolderSource.local
+                ? _folder != null
+                : _projectFolder != null)) &&
         !_picking &&
         !_submitting &&
         (_confirmationPending || !_waitingForCodexProfile);
 
-    return AlertDialog(
-      title: Text(switch (widget.split?.axis) {
-        PaneResizeAxis.x => 'New Harness to the right',
-        PaneResizeAxis.y => 'New Harness below',
-        null => 'New Harness',
-      }),
-      titleTextStyle: Theme.of(context).textTheme.titleMedium,
-      content: SizedBox(
-        width: _dialogWidth,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // ONE COLUMN, and no summary card beside it.
-              //
-              // The card held three facts and every one of them was already on
-              // screen: the folder a field above it, the machine in the title,
-              // and the command a restatement of the engine that had just been
-              // picked. Only the bypass FLAG was its own — and that has moved to
-              // the Advanced row, which is the one thing still reporting what is
-              // folded away.
-              //
-              // Dropping it takes the dialog from 712px to 520. The old width
-              // was not chosen for the content: it was measured against
-              // `--dangerously-bypass-approvals-and-sandbox`, so the rarest
-              // thing on the screen was setting the size of the window for
-              // everybody who never turns it on.
-              AbsorbPointer(
-                absorbing: _choicesLocked,
-                child: ExcludeFocus(
-                  excluding: _choicesLocked,
-                  child: _choices(bypassFlag),
-                ),
-              ),
-              if (_error != null) ...[
-                const SizedBox(height: _gapBlock),
-                Semantics(
-                  liveRegion: true,
-                  child: Text(
-                    _error!,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: _confirmationPending
-                          ? grid.AppPalette.textSecondary
-                          : Theme.of(context).colorScheme.error,
-                    ),
-                  ),
-                ),
-              ],
-            ],
-          ),
+    return CallbackShortcuts(
+      bindings: {
+        const SingleActivator(LogicalKeyboardKey.enter, meta: true): () {
+          if (canCreate) _submit();
+        },
+        const SingleActivator(LogicalKeyboardKey.enter, control: true): () {
+          if (canCreate) _submit();
+        },
+      },
+      child: AlertDialog(
+        constraints: const BoxConstraints.tightFor(width: _dialogWidth + 56),
+        backgroundColor: grid.AppPalette.swarmField,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+        title: Text(switch (widget.split?.axis) {
+          PaneResizeAxis.x => 'New Agent to the right',
+          PaneResizeAxis.y => 'New Agent below',
+          null => 'New Agent',
+        }),
+        titleTextStyle: Theme.of(context).textTheme.headlineSmall?.copyWith(
+          fontSize: 24,
+          fontWeight: grid.AppFont.semibold,
+          color: grid.AppPalette.textPrimary,
         ),
-      ),
-      actions: [
-        if (_confirmationPending || widget.offerBackToSearch)
-          TextButton(
-            onPressed: _submitting
-                ? null
-                : () => Navigator.of(context).pop(
-                    widget.offerBackToSearch && !_confirmationPending
-                        ? NewAgentDialogResult.backToSearch
-                        : null,
-                  ),
-            style: TextButton.styleFrom(
-              foregroundColor: grid.AppPalette.textSecondary,
+        titlePadding: const EdgeInsets.fromLTRB(28, 28, 28, 0),
+        contentPadding: const EdgeInsets.fromLTRB(28, 24, 28, 16),
+        actionsPadding: const EdgeInsets.fromLTRB(28, 0, 28, 24),
+        actionsOverflowButtonSpacing: 8,
+        content: SizedBox(
+          width: _dialogWidth,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: math.min(
+                650,
+                math.max(220, MediaQuery.sizeOf(context).height - 230),
+              ),
             ),
-            child: Text(_confirmationPending ? 'Close' : 'Back to Search'),
-          ),
-        if (widget.offerFindExisting &&
-            _confirmationPending &&
-            (!_submitting || _checkingCreation))
-          TextButton.icon(
-            onPressed: _submitting
-                ? null
-                : () =>
-                      Navigator.of(context)
-                          .pop(NewAgentDialogResult.findExisting),
-            icon: const Icon(LucideIcons.search, size: 16),
-            label: const Text('Find a harness'),
-          ),
-        FilledButton(
-          key: const ValueKey('create-agent-submit'),
-          focusNode: _actionFocus,
-          onPressed: canCreate ? _submit : null,
-          style: FilledButton.styleFrom(
-            disabledForegroundColor: _submitting
-                ? grid.AppPalette.textPrimary
-                : null,
-          ),
-          child: _submitting
-              ? Semantics(
-                  liveRegion: true,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(strokeWidth: 2),
+            child: Scrollbar(
+              controller: _choicesScroll,
+              thickness: 4,
+              radius: const Radius.circular(2),
+              child: SingleChildScrollView(
+                controller: _choicesScroll,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    AbsorbPointer(
+                      absorbing: _choicesLocked,
+                      child: ExcludeFocus(
+                        excluding: _choicesLocked,
+                        child: _choices(),
                       ),
-                      const SizedBox(width: 8),
-                      Text(
-                        _checkingCreation
-                            ? 'Checking status…'
-                            : 'Creating harness…',
+                    ),
+                    if (_error != null) ...[
+                      const SizedBox(height: _gapBlock),
+                      Semantics(
+                        liveRegion: true,
+                        child: Text(
+                          _error!,
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(
+                                color: _confirmationPending
+                                    ? grid.AppPalette.textSecondary
+                                    : Theme.of(context).colorScheme.error,
+                              ),
+                        ),
                       ),
                     ],
-                  ),
-                )
-              : Text(_confirmationPending ? 'Check status' : 'New Harness'),
+                  ],
+                ),
+              ),
+            ),
+          ),
         ),
-      ],
+        actions: [
+          SizedBox(
+            width: _dialogWidth,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final actions = Wrap(
+                  alignment: WrapAlignment.end,
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    if (_confirmationPending)
+                      TextButton(
+                        onPressed: _submitting
+                            ? null
+                            : () => Navigator.of(context).pop(),
+                        style: TextButton.styleFrom(
+                          foregroundColor: grid.AppPalette.textSecondary,
+                        ),
+                        child: const Text('Close'),
+                      ),
+                    if (widget.offerFindExisting &&
+                        _confirmationPending &&
+                        (!_submitting || _checkingCreation))
+                      TextButton.icon(
+                        onPressed: _submitting
+                            ? null
+                            : () =>
+                                  Navigator.of(context)
+                                      .pop(NewAgentDialogResult.findExisting),
+                        icon: const Icon(LucideIcons.search, size: 16),
+                        label: const Text('Find an agent'),
+                      ),
+                    FilledButton(
+                      key: const ValueKey('create-agent-submit'),
+                      focusNode: _actionFocus,
+                      onPressed: canCreate ? _submit : null,
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size(192, 56),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 32,
+                          vertical: 16,
+                        ),
+                        backgroundColor: grid.AppPalette.accent,
+                        foregroundColor: Colors.white,
+                        textStyle: TextStyle(
+                          fontFamily: grid.AppFont.sans,
+                          fontFamilyFallback: grid.AppFont.sansFallback,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        shape: const StadiumBorder(),
+                        disabledForegroundColor: _submitting
+                            ? grid.AppPalette.textPrimary
+                            : null,
+                      ),
+                      child: _submitting
+                          ? Semantics(
+                              liveRegion: true,
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const SizedBox(
+                                    width: 14,
+                                    height: 14,
+                                    child: CircularProgressIndicator(
+                                      color: Colors.white,
+                                      strokeWidth: 2,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    _checkingCreation
+                                        ? 'Checking status…'
+                                        : _folderSource ==
+                                                  _FolderSource.remote &&
+                                              _preparedFolder == null
+                                        ? 'Cloning and starting…'
+                                        : _installing
+                                        ? 'Installing ${_labelOf(_engine)}…'
+                                        : 'Creating agent…',
+                                  ),
+                                ],
+                              ),
+                            )
+                          : Text(
+                              _confirmationPending ? 'Check status' : 'Create',
+                            ),
+                    ),
+                  ],
+                );
+                final scale = MediaQuery.textScalerOf(context).scale(13) / 13;
+                final stacked =
+                    (_advancedOpen || _confirmationPending) &&
+                    constraints.maxWidth < 740 * math.min(1.4, scale);
+                // Keep the controls mounted when the footer wraps or hides.
+                // In particular, an explicit Default profile must stay chosen.
+                return Flex(
+                  direction: stacked ? Axis.vertical : Axis.horizontal,
+                  mainAxisSize: stacked ? MainAxisSize.min : MainAxisSize.max,
+                  crossAxisAlignment: stacked
+                      ? CrossAxisAlignment.start
+                      : CrossAxisAlignment.center,
+                  children: [
+                    Flexible(
+                      fit: stacked ? FlexFit.loose : FlexFit.tight,
+                      child: _settingsRow(bypassFlag),
+                    ),
+                    SizedBox(width: stacked ? 0 : 16, height: stacked ? 12 : 0),
+                    Align(alignment: Alignment.centerRight, child: actions),
+                  ],
+                );
+              },
+            ),
+          ),
+        ],
+      ),
     );
   }
 
-  /// The left column: what the user actually decides.
-  Widget _choices(String? bypassFlag) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        if (widget.notifier.machineStates.length != 1 ||
-            !_machineIsThisComputer ||
-            widget.notifier.machineStates[_machineId]?.nodeOnline == false ||
-            widget.notifier.machineStates[_machineId]?.needsLink == true) ...[
-          const FieldLabel('Machine'),
-          AppChoicePicker<String>(
-            key: const Key('new-agent-machine-field'),
-            value: _machineId,
-            moreKey: const Key('new-agent-machine-more'),
-            moreLabel: 'More machines',
-            optionKey: (id) => ValueKey('new-agent-machine-$id'),
-            showDetails: true,
-            preferredValues: [
-              for (final machine in widget.notifier.machineStates.values)
-                if (machine.isLocalMachine) machine.machine.machineId,
-            ],
+  Widget _sectionLabel(String label) => Padding(
+    padding: const EdgeInsets.only(bottom: 10),
+    child: Text(
+      label,
+      style: TextStyle(
+        fontSize: 14,
+        fontWeight: FontWeight.w500,
+        color: grid.AppPalette.textSecondary,
+      ),
+    ),
+  );
+
+  Widget _choices() => LayoutBuilder(
+    builder: (context, constraints) {
+      final scaler = MediaQuery.textScalerOf(context);
+      final minimumTileWidth = 180 * math.min(1.3, scaler.scale(14) / 14);
+      final columns = constraints.maxWidth >= minimumTileWidth * 4 + 30
+          ? 4
+          : constraints.maxWidth >= minimumTileWidth * 2 + 10
+          ? 2
+          : 1;
+      final tileSize = Size(
+        (constraints.maxWidth - 10 * (columns - 1)) / columns,
+        math.max(76, scaler.scale(14) * 2.5 + scaler.scale(12) * 1.25 + 24),
+      );
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _sectionLabel('Choose a harness'),
+          AgentPicker(
+            compact: true,
+            tileSize: tileSize,
+            value: _engine,
             options: [
-              for (final machine in widget.notifier.machineStates.values)
+              for (final identity in allEngines)
                 SelectOption(
-                  value: machine.machine.machineId,
-                  label: machine.machine.displayName,
-                  detail: _machineDetail(machine),
-                  leading: () => Icon(
-                    machine.isLocalMachine
-                        ? LucideIcons.laptop
-                        : LucideIcons.monitor,
-                    size: 18,
+                  value: identity.id,
+                  label: identity.label,
+                  detail: identity.category,
+                  leading: () => EngineMark(engine: identity.id, size: 14),
+                ),
+              // The domain harnesses, after the engines they run on. What the
+              // machine named when it has answered, else this build's own two.
+              for (final harness in _harnessOptions)
+                SelectOption(
+                  value: harness.id,
+                  label: harness.name,
+                  // No "on Codex" here: the engine underneath is a backend
+                  // detail (owner, 2026-09-15) — the settings row says it.
+                  // What it makes, in a word or two; the machine's word first,
+                  // this build's when the machine has not answered.
+                  detail:
+                      harness.category ??
+                      engineIdentity(harness.id).category ??
+                      harness.description,
+                  leading: () => EngineMark(
+                    engine: harness.id,
+                    displayName: harness.name,
+                    size: 14,
                   ),
                 ),
             ],
-            onChanged: (id) {
-              if (id == _machineId || _choicesLocked) return;
+            onChanged: (value) {
+              if (_choicesLocked) return;
               setState(() {
-                _machineRevision++;
-                _machineId = id;
-                _folder = null;
+                unawaited(widget.notifier.agentPreference.select(value));
+                _engineChosenByUser = true;
+                _engine = value;
+                _error = null;
                 _codexProfile = null;
                 _codexProfilesBusy = true;
-                _error = null;
+                if (!kEngineBypassPermissionFlag.containsKey(
+                  _baseEngine(value),
+                )) {
+                  _bypassPermission = false;
+                }
               });
-              unawaited(_probeEngines());
+              if (isHarnessId(value)) unawaited(_probeHarnesses());
             },
           ),
-          const SizedBox(height: _gapField),
-        ],
-        Row(
-          children: [
-            const Expanded(child: FieldLabel('Working folder')),
-            if (_machineIsThisComputer)
-              TextButton(
-                onPressed: _picking ? null : _cloneRepository,
-                style: TextButton.styleFrom(
-                  foregroundColor: grid.AppPalette.textSecondary,
-                  padding: const EdgeInsets.only(bottom: 6),
-                  minimumSize: Size.zero,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-                child: const Text('Clone repository'),
+          if (!_confirmationPending && _installStatus != null) ...[
+            const SizedBox(height: 6),
+            Semantics(
+              liveRegion: true,
+              child: Text(
+                key: const Key('new-agent-install-status'),
+                'Installing ${_labelOf(_engine)} on $_machineName… '
+                '$_installStatus',
+                style: Theme.of(context).textTheme.bodySmall
+                    ?.copyWith(color: grid.AppPalette.textSecondary),
               ),
+            ),
           ],
-        ),
-        _FolderControl(
-          folder: _folder,
-          machineName: _machineName,
-          machineIsThisComputer: _machineIsThisComputer,
-          picking: _picking,
-          focusNode: _folderFocus,
-          hovered: _folderHovered,
-          focused: _folderFocused,
-          onHover: (value) => setState(() => _folderHovered = value),
-          onFocusChange: (value) => setState(() => _folderFocused = value),
-          onPressed: _browse,
-        ),
-        const SizedBox(height: _gapField),
-        const FieldLabel('Agent'),
-        AgentPicker(
-          value: _engine,
-          options: [
-            for (final identity in allEngines)
-              SelectOption(
-                value: identity.id,
-                label: identity.label,
-                note: _engineNote(identity.id),
-                leading: () => EngineMark(engine: identity.id, size: 14),
-                // "will install" said in words repeated down a third of the
-                // list, and a column of the same two words is a column the eye
-                // has to read to discover it says nothing new. The glyph is
-                // scanned once; the sentence moves to its tooltip and to the
-                // preflight panel, which names the exact command anyway.
-                trailing: _willInstallEngine(identity.id)
-                    ? () => _InstallMark(engine: identity.id)
-                    : null,
-              ),
-          ],
-          onChanged: (value) => setState(() {
-            unawaited(widget.notifier.agentPreference.select(value));
-            _engineChosenByUser = true;
-            _engine = value;
-            _error = null;
-            _codexProfile = null;
-            _codexProfilesBusy = true;
-            if (!kEngineBypassPermissionFlag.containsKey(value)) {
-              _bypassPermission = false;
-            }
-          }),
-        ),
-        // Unconditional now: Codex here is always on its own login, so the
-        // profile it runs under is always a live question.
-        // WHAT THE SUMMARY'S HEADING USED TO SAY, minus the half that had
-        // somewhere else to live.
-        //
-        // Four states were printed on that card. Two of them already have a
-        // home: "not installed" is a note on the engine's own row, and "pick a
-        // folder" is the Create button being disabled. These two had nowhere
-        // else, and losing them would have made a machine that Harness has not
-        // managed to reach look exactly like one it has.
-        if (!_confirmationPending && (_willInstall || _engineCheckFailed)) ...[
-          const SizedBox(height: 6),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Text(
-                  _willInstall
-                      ? 'Harness will install ${engineIdentity(_engine).label} before starting.'
-                      : 'Couldn’t check whether ${engineIdentity(_engine).label} is installed. '
-                            'You can still try creating a harness.',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: _willInstall
-                        ? grid.AppPalette.accentOnSurface
-                        : grid.AppPalette.textSecondary,
+          if (!_confirmationPending && _engineCheckFailed) ...[
+            const SizedBox(height: 6),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Text(
+                    'Couldn’t check whether ${_labelOf(_baseEngine(_engine))} is installed. '
+                    'You can still try creating an agent.',
+                    style: Theme.of(context).textTheme.bodySmall
+                        ?.copyWith(color: grid.AppPalette.textSecondary),
                   ),
                 ),
-              ),
-              if (_engineCheckFailed) ...[
                 const SizedBox(width: 12),
                 TextButton(
                   key: const Key('new-agent-retry-check'),
@@ -762,595 +830,257 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                   child: Text(_checkingEngines ? 'Checking…' : 'Retry'),
                 ),
               ],
-            ],
+            ),
+          ],
+          const SizedBox(height: _gapField),
+          _sectionLabel('Where will this agent run?'),
+          _machineOptions(tileSize),
+          const SizedBox(height: _gapField),
+          _sectionLabel('Which project will this agent work in?'),
+          PageStorage(
+            bucket: _projectChoices,
+            child: NewAgentProjectPicker(
+              key: ValueKey('new-agent-projects-$_machineId'),
+              notifier: widget.notifier,
+              machineId: _machineId,
+              initialFolder: _folder,
+              focusNode: _folderFocus,
+              tileSize: tileSize,
+              locked: _choicesLocked,
+              onBrowse: _browse,
+              onSelected: (folder, repository) {
+                if (_choicesLocked) return;
+                setState(() {
+                  _folder = folder;
+                  _repository = repository;
+                  _folderSource = repository != null
+                      ? _FolderSource.remote
+                      : folder != null
+                      ? _FolderSource.local
+                      : _FolderSource.newProject;
+                  _preparedFolder = null;
+                  _error = null;
+                });
+              },
+            ),
           ),
         ],
-        // THE FOLD. What is behind it is what most people never touch: a Codex
-        // home to run under, and the flag that turns the approvals off. Leaving
-        // them in the main column made this a four-question dialog to do a
-        // two-question job.
-        //
-        // The row REPORTS ITS OWN STATE on the right, and that is what makes
-        // folding them away safe rather than merely tidy. A drawer that hides
-        // what it is set to is a drawer people open every time to check.
-        const SizedBox(height: _gapBlock),
-        _Advanced(
-          open: _advancedOpen,
-          state: _advancedState(),
-          onToggle: () => setState(() => _advancedOpen = !_advancedOpen),
-          children: [
-            if (_engineCheckFailed) ...[
-              Text(
-                'If $_machineName uses an older Harness CLI, update it to enable engine checks.',
-                style: Theme.of(context).textTheme.bodySmall
-                    ?.copyWith(color: grid.AppPalette.textSecondary),
-              ),
-              const SizedBox(height: 10),
-            ],
-            if (_engine == 'codex') ...[
-              if (_availability('codex')?.supportsCodexHome == true)
-                CodexProfileField(
-                  notifier: widget.notifier,
-                  machineId: _machineId,
-                  machineIsThisComputer: _machineIsThisComputer,
-                  value: _codexProfile,
-                  observedPaths: {
-                    for (final agent
-                        in widget.notifier.stateOf(_machineId)!.agents)
-                      if (agent.engine == 'codex' && agent.codexHome != null)
-                        agent.codexHome!,
-                  },
-                  onChanged: (profile) {
-                    if (!_choicesLocked) {
-                      setState(() => _codexProfile = profile);
-                    }
-                  },
-                  onBusyChanged: (busy) {
-                    if (_codexProfilesBusy != busy) {
-                      setState(() => _codexProfilesBusy = busy);
-                    }
-                  },
-                )
-              else
-                Text(
-                  _availability('codex') == null
-                      ? _engineCheckFailed && !_checkingEngines
-                            ? 'Retry the agent check above to load Codex profiles.'
-                            : 'Checking whether $_machineName supports Codex profiles…'
-                      : 'Update Harness CLI on $_machineName to choose a Codex profile.',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-            ],
-            if (_engine == 'codex') ...[
-              const SizedBox(height: 12),
-              Divider(height: 1, color: grid.AppGlass.hair),
-              const SizedBox(height: 16),
-            ],
-            const FieldLabel('Permissions'),
-            if (bypassFlag != null)
-              _BypassCheck(
-                value: _bypassPermission,
-                flag: bypassFlag,
-                hovered: _bypassHovered,
-                onHover: (value) => setState(() => _bypassHovered = value),
-                onChanged: (value) => setState(() => _bypassPermission = value),
-              )
-            else
-              // Not silence: an engine with no checkbox looks identical to one whose
-              // checkbox the user simply missed.
-              Text(
-                'Managed by ${engineIdentity(_engine).label}.',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-          ],
+      );
+    },
+  );
+
+  Widget _profileOptions() => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      if (_availability('codex')?.supportsCodexHome == true)
+        CodexProfileField(
+          notifier: widget.notifier,
+          machineId: _machineId,
+          machineIsThisComputer: _machineIsThisComputer,
+          value: _codexProfile,
+          observedPaths: {
+            for (final agent in widget.notifier.stateOf(_machineId)!.agents)
+              if (agent.engine == 'codex' && agent.codexHome != null)
+                agent.codexHome!,
+          },
+          onChanged: (profile) {
+            if (!_choicesLocked) {
+              setState(() => _codexProfile = profile);
+            }
+          },
+          onBusyChanged: (busy) {
+            if (_codexProfilesBusy != busy) {
+              setState(() => _codexProfilesBusy = busy);
+            }
+          },
+        )
+      else
+        Text(
+          _availability('codex') == null
+              ? _engineCheckFailed && !_checkingEngines
+                    ? 'Retry the agent check above to load Codex profiles.'
+                    : 'Checking whether $_machineName supports Codex profiles…'
+              : 'Update Harness CLI on $_machineName to choose a Codex profile.',
+          style: Theme.of(context).textTheme.bodySmall,
         ),
-      ],
-    );
+    ],
+  );
+
+  Widget _settingsRow(String? bypassFlag) => Wrap(
+    spacing: 12,
+    runSpacing: 8,
+    crossAxisAlignment: WrapCrossAlignment.center,
+    children: [
+      Semantics(
+        label: 'Advanced settings',
+        button: true,
+        toggled: _advancedOpen,
+        child: IconButton(
+          key: const Key('new-agent-advanced'),
+          onPressed: _choicesLocked ? null : _toggleAdvanced,
+          icon: const Icon(LucideIcons.settings, size: 16),
+          color: grid.AppPalette.textFaint,
+          style: IconButton.styleFrom(
+            minimumSize: const Size(28, 28),
+            padding: const EdgeInsets.all(6),
+          ),
+        ),
+      ),
+      _setting(
+        _BypassCheck(
+          value: bypassFlag != null && _bypassPermission,
+          hovered: _bypassHovered,
+          onHover: (value) => setState(() => _bypassHovered = value),
+          onChanged: bypassFlag == null
+              ? null
+              : (value) => setState(() => _bypassPermission = value),
+        ),
+      ),
+      if (_baseEngine(_engine) == 'codex') _setting(_profileOptions()),
+    ],
+  );
+
+  Widget _setting(Widget child) => Offstage(
+    offstage: !_advancedOpen,
+    child: ExcludeFocus(
+      excluding: !_advancedOpen || _choicesLocked,
+      child: IgnorePointer(ignoring: _choicesLocked, child: child),
+    ),
+  );
+
+  bool _machineOnline(MachineState machine) =>
+      machine.isLocalMachine ||
+      (machine.nodeOnline == true && !machine.needsLink);
+
+  List<MachineState> get _orderedMachines {
+    final machines = widget.notifier.machineStates.values.toList();
+    int priority(MachineState machine) => machine.isLocalMachine
+        ? 0
+        : _machineOnline(machine)
+        ? 1
+        : 2;
+    final originalOrder = {
+      for (var i = 0; i < machines.length; i++)
+        machines[i].machine.machineId: i,
+    };
+    machines.sort((a, b) {
+      final order = priority(a).compareTo(priority(b));
+      return order != 0
+          ? order
+          : originalOrder[a.machine.machineId]!.compareTo(
+              originalOrder[b.machine.machineId]!,
+            );
+    });
+    return machines;
   }
+
+  Widget _machineOptions(Size tileSize) => AppChoicePicker<String>(
+    key: const Key('new-agent-machine-field'),
+    value: _machineId,
+    moreKey: const Key('new-agent-machine-more'),
+    moreLabel: 'More machines',
+    moreLeading: const Icon(LucideIcons.monitor, size: 18),
+    optionKey: (id) => ValueKey('new-agent-machine-$id'),
+    showDetails: true,
+    compact: true,
+    wrap: true,
+    tileSize: tileSize,
+    preferredValues: _orderedMachines
+        .map((machine) => machine.machine.machineId)
+        .toList(),
+    options: [
+      for (final machine in widget.notifier.machineStates.values)
+        SelectOption(
+          value: machine.machine.machineId,
+          label: machine.machine.displayName,
+          detail: machine.isLocalMachine ? 'This machine' : null,
+          leading: () => Icon(
+            _machineOnline(machine)
+                ? (machine.isLocalMachine
+                      ? LucideIcons.laptop
+                      : LucideIcons.monitor)
+                : LucideIcons.monitorOff,
+            size: 18,
+            color: _machineOnline(machine)
+                ? grid.AppPalette.textPrimary
+                : grid.AppPalette.textFaint,
+            semanticLabel: _machineOnline(machine) ? 'Online' : 'Offline',
+          ),
+        ),
+    ],
+    onChanged: (id) {
+      if (id == _machineId || _choicesLocked) return;
+      setState(() {
+        _machineRevision++;
+        _engineChosenByUser = true;
+        _machineId = id;
+        _folder = null;
+        _repository = null;
+        _folderSource = _FolderSource.newProject;
+        _preparedFolder = null;
+        _codexProfile = null;
+        _codexProfilesBusy = true;
+        _error = null;
+      });
+      unawaited(_probeEngines());
+      if (_engineIsHarness) unawaited(_probeHarnesses());
+    },
+  );
 }
 
-/// Wide enough for two columns that both hold a path without wrapping every
-/// line; the summary takes [_summaryWidth] and the choices take the rest.
-///
-/// The summary is the wider of the two, and deliberately: the choices column
-/// holds controls that ellipsize cleanly, while the summary holds three strings
-/// that must be read whole — a flag as long as
-/// `--dangerously-bypass-approvals-and-sandbox`, a hostname, and a path. At an
-/// even split the longest flag broke across two lines mid-word.
-///
-/// ⚠️ THAT REASONING IS GONE WITH THE SUMMARY, and it is worth keeping the
-/// record of it: 712 was 360 for the controls plus 352 for a card, and the 352
-/// was measured against `--dangerously-bypass-approvals-and-sandbox` — 42
-/// characters of a flag most people never turn on. The width of the dialog was
-/// being set by the rarest thing that could appear in it.
-///
-/// 520 is what two fields and a fold need. A path still ellipsizes from its
-/// HEAD (see `_ellipsizeHead`), which is what keeps the leaf readable.
-const double _dialogWidth = 520;
-
-/// A path shortened from its HEAD, so the leaf survives.
-///
-/// `/Users/macbookpro/Desktop/A` truncated the ordinary way keeps the part
-/// every path on the machine shares and drops the only part that identifies it.
-/// This drops whole leading segments instead and marks the cut with `…/`, the
-/// same shorthand a shell prompt uses:
-///
-/// ```
-/// /Users/macbookpro/work/harness/autonomous-harness-desktop
-/// …/harness/autonomous-harness-desktop
-/// ```
-///
-/// Segment-wise rather than character-wise: cutting mid-name reads as a typo,
-/// while a dropped segment reads as a path someone abbreviated. Windows paths
-/// come back untouched — they are separated by `\`, and a wrong guess about the
-/// separator would mangle the string rather than shorten it.
-/// The advance of one character at the 12pt mono the path control sets — the
-/// face is 0.6em wide, like every monospaced face in this family.
-///
-/// Arithmetic rather than a `TextPainter`: this runs on every rebuild, and a
-/// layout pass to answer a question this cheap is a poor trade.
-const double _monoAdvance = 12 * 0.6;
-
-String _ellipsizeHead(String path, double maxWidth) {
-  final fits = path.length * _monoAdvance <= maxWidth;
-  if (fits || !path.contains('/')) return path;
-  final segments = path.split('/').where((s) => s.isNotEmpty).toList();
-  // Never below the leaf: a control too narrow for even that shows the leaf and
-  // lets the Text's own ellipsis take the rest.
-  for (var drop = 1; drop < segments.length; drop++) {
-    final candidate = '…/${segments.skip(drop).join('/')}';
-    if (candidate.length * _monoAdvance <= maxWidth) return candidate;
-  }
-  return '…/${segments.last}';
-}
-
-/// A path or a flag, in the face the user chose for code.
-///
-/// Built from [grid.AppFont] rather than a literal family so it follows Settings
-/// ▸ Terminal, and carries `monoFallback` — without it a user whose chosen face
-/// lacks a glyph gets Roboto for that one character.
-///
-/// One size for every mono string here, taken off the ramp rather than picked
-/// per call: the path, the flag under the checkbox and the flag in the command
-/// are the same kind of text, and three hand-set sizes is how they stop looking
-/// like it. `labelSmall`'s 12 is a step under the 13 of the controls around
-/// them, which is where a monospaced face has to sit to read at the same size.
-TextStyle _mono({required Color color}) => TextStyle(
-  fontFamily: grid.AppFont.mono,
-  fontFamilyFallback: grid.AppFont.monoFallback,
-  fontSize: 12,
-  color: color,
-);
-
-// The dialog's spacing scale. Four steps, named, rather than the run of
-// 3/6/7/8/10/12/14/16/18 this file grew — a column whose gaps are all slightly
-// different is what "the padding feels off" actually is.
-//
-// `FieldLabel` already carries its own 6px gap to the control it names, so a
-// caption never takes a step from here; these are the gaps BETWEEN things.
-
-/// A label and the line it belongs to — the flag under its title.
-const double _gapTight = 4;
+/// The project picker shares Open Agent’s generous reading space.
+const double _dialogWidth = 1080;
 
 /// Blocks inside one card: the command, the facts, the reason.
 const double _gapBlock = 12;
 
 /// One field and the next, down the choices column.
-const double _gapField = 16;
+const double _gapField = 24;
 
-/// The folder control: one target, not a text box with a button beside it.
-///
-/// The old shape put a read-only `InputDecorator` next to a `Browse…` button,
-/// which read as a field you could type in and as the loudest control in the
-/// dialog. Here the whole row is the button — the path is what it displays, and
-/// the trailing word says what clicking does.
-/// The fold that holds what most people never touch.
-///
-/// A ROW THAT REPORTS ITSELF. Everything about this is ordinary — a twisty, a
-/// label, some children — except the state printed on the right, and that is the
-/// part doing the work. Two settings were moved out of sight here; a drawer that
-/// hides what it is set to is one people open every time to check, which costs
-/// more than leaving the controls where they were.
-///
-/// AMBER, NOT RED, when the prompts are off. Red on this desktop means destroy,
-/// and it was tried: a red "Create without prompts" button read as though the
-/// button itself were dangerous rather than the setting behind it. Amber is
-/// already what this app gives that flag wherever else it appears.
-class _Advanced extends StatelessWidget {
-  const _Advanced({
-    required this.open,
-    required this.state,
-    required this.onToggle,
-    required this.children,
-  });
-
-  final bool open;
-
-  /// What is set, in a few words — see `_advancedState`. Empty says nothing.
-  final String state;
-
-  final VoidCallback onToggle;
-  final List<Widget> children;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Divider(height: 1, color: grid.AppGlass.hair),
-        InkWell(
-          key: const Key('new-agent-advanced'),
-          onTap: onToggle,
-          borderRadius: BorderRadius.circular(6),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 9),
-            child: Row(
-              children: [
-                // Rotated rather than swapped for a second glyph: one shape
-                // turning reads as the same control in two positions, which is
-                // what it is.
-                AnimatedRotation(
-                  turns: open ? 0 : -0.25,
-                  duration: const Duration(milliseconds: 120),
-                  child: Icon(
-                    Icons.expand_more,
-                    size: 16,
-                    color: grid.AppPalette.textFaint,
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Text(
-                  'Advanced',
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: grid.AppPalette.textSecondary,
-                  ),
-                ),
-                const Spacer(),
-                if (!open)
-                  Flexible(
-                    child: Text(
-                      key: const Key('new-agent-advanced-state'),
-                      state,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.right,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: grid.AppPalette.textSecondary,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ),
-        // HIDDEN, NOT UNMOUNTED, and that is not a preference — it is what the
-        // dialog needs to work at all.
-        //
-        // It was `if (open)` first, on the reasoning that a shut drawer should
-        // not pay for a question nobody asked. The Codex profile field is the
-        // thing that asks the machine for its profiles, and TWO things downstream
-        // depend on its having asked: it clears `_codexProfilesBusy`, which gates
-        // the Create button, and it auto-selects when there is exactly one
-        // profile. Unmounted, neither ever happens — so Create stayed disabled
-        // forever on Codex, with nothing on screen saying why.
-        //
-        // Offstage builds and runs it, and merely declines to paint it.
-        Offstage(
-          offstage: !open,
-          child: ExcludeFocus(
-            excluding: !open,
-            child: Container(
-              margin: const EdgeInsets.only(top: 4),
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: grid.AppSurface.hoverFill,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                mainAxisSize: MainAxisSize.min,
-                children: children,
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _FolderControl extends StatelessWidget {
-  const _FolderControl({
-    required this.folder,
-    required this.machineName,
-    required this.machineIsThisComputer,
-    required this.picking,
-    required this.focusNode,
-    required this.hovered,
-    required this.focused,
-    required this.onHover,
-    required this.onFocusChange,
-    required this.onPressed,
-  });
-
-  final String? folder;
-  final String machineName;
-  final bool machineIsThisComputer;
-  final bool picking;
-  final FocusNode focusNode;
-  final bool hovered;
-  final bool focused;
-  final ValueChanged<bool> onHover;
-  final ValueChanged<bool> onFocusChange;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    grid.AppTheme.watch(context);
-    final theme = Theme.of(context);
-    final chosen = folder;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        MouseRegion(
-          cursor: picking
-              ? SystemMouseCursors.progress
-              : SystemMouseCursors.click,
-          onEnter: (_) => onHover(true),
-          onExit: (_) => onHover(false),
-          child: InkWell(
-            key: const Key('new-agent-folder'),
-            focusNode: focusNode,
-            onTap: picking ? null : onPressed,
-            canRequestFocus: !picking,
-            onFocusChange: onFocusChange,
-            splashFactory: NoSplash.splashFactory,
-            hoverColor: Colors.transparent,
-            focusColor: Colors.transparent,
-            borderRadius: BorderRadius.circular(grid.AppControl.radius),
-            child: AnimatedContainer(
-              duration: grid.AppMotion.hover,
-              curve: grid.AppMotion.curve,
-              constraints: BoxConstraints(
-                minHeight: grid.AppControl.heightFieldScaled,
-              ),
-              // The select field's own padding, so the two controls stacked in
-              // this column share one left edge and one right edge.
-              padding: const EdgeInsets.only(left: 10, right: 8),
-              decoration: BoxDecoration(
-                color: (hovered || focused) && !picking
-                    ? grid.AppSurface.recessHover
-                    : grid.AppSurface.recess,
-                borderRadius: BorderRadius.circular(grid.AppControl.radius),
-                border: Border.all(
-                  color: focused
-                      ? grid.AppPalette.accentOnSurface
-                      : Colors.transparent,
-                ),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.folder_outlined,
-                    size: grid.AppControl.iconSize,
-                    color: grid.AppPalette.textFaint,
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    key: const Key('new-agent-folder-text'),
-                    // Aligned left like every other control's content.
-                    //
-                    // This used to set `TextDirection.rtl` to make a long path
-                    // ellipsize from its head, keeping the leaf visible. But
-                    // direction drives ALIGNMENT too, so the whole string was
-                    // shoved to the trailing edge and left a hole after the
-                    // folder glyph — wider the shorter the path, which is why a
-                    // remote `/home/node/work` looked worst of all.
-                    //
-                    // Truncation is a job for the string, not the layout, so the
-                    // head is now trimmed in [_ellipsizeHead] and the Text stays
-                    // plain LTR.
-                    child: LayoutBuilder(
-                      builder: (context, constraints) => Align(
-                        alignment: AlignmentDirectional.centerStart,
-                        child: Text(
-                          picking
-                              ? 'Waiting for the folder picker…'
-                              // Not "on $machineName": the title says which
-                              // machine and so does the summary, and a hostname
-                              // like `MacBooks-MacBook-Pro.local` spent the
-                              // whole control repeating it, then truncated.
-                              : chosen == null
-                              ? 'Choose a folder…'
-                              : _ellipsizeHead(chosen, constraints.maxWidth),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: chosen != null && !picking
-                              ? _mono(color: grid.AppPalette.textPrimary)
-                              : theme.textTheme.labelMedium?.copyWith(
-                                  color: grid.AppPalette.textFaint,
-                                ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  if (!picking) ...[
-                    const SizedBox(width: 8),
-                    Text(
-                      chosen == null ? 'Browse…' : 'Change',
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        color: grid.AppPalette.accentOnSurface,
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ),
-        ),
-        // Only the case that needs explaining gets a line. On this computer the
-        // OS panel is what everyone expects and saying so is noise; on another
-        // machine the in-app browser is the surprising half, so that is the half
-        // that speaks.
-        if (!machineIsThisComputer) ...[
-          const SizedBox(height: _gapTight),
-          Text(
-            'This harness will run on $machineName. Its folders are browsed '
-            'through the remote CLI.',
-            style: theme.textTheme.bodySmall,
-          ),
-        ],
-      ],
-    );
-  }
-}
-
-/// The bypass checkbox, in the app's own row shape.
-///
-/// Not `CheckboxListTile`: that was the only Material list tile left in the app,
-/// and its `dense`/`contentPadding` combination left the box floating well clear
-/// of the text it labels and out of line with the fields above it.
 class _BypassCheck extends StatelessWidget {
   const _BypassCheck({
     required this.value,
-    required this.flag,
     required this.hovered,
     required this.onHover,
     required this.onChanged,
   });
-
   final bool value;
-  final String flag;
   final bool hovered;
   final ValueChanged<bool> onHover;
-  final ValueChanged<bool> onChanged;
+  final ValueChanged<bool>? onChanged;
 
   @override
   Widget build(BuildContext context) {
     grid.AppTheme.watch(context);
-    final theme = Theme.of(context);
     return MouseRegion(
-      cursor: SystemMouseCursors.click,
+      cursor: onChanged == null
+          ? SystemMouseCursors.basic
+          : SystemMouseCursors.click,
       onEnter: (_) => onHover(true),
       onExit: (_) => onHover(false),
       child: GestureDetector(
-        onTap: () => onChanged(!value),
+        onTap: onChanged == null ? null : () => onChanged!(!value),
         behavior: HitTestBehavior.opaque,
-        child: AnimatedContainer(
-          duration: grid.AppMotion.hover,
-          curve: grid.AppMotion.curve,
-          // Bled out to the left so the row's fill lines up with the fields
-          // above it, and the text still starts on their left edge once the
-          // box and its gap are counted.
-          // NO SIDE PADDING. Ten pixels of it pushed the box in from the
-          // margin every other control on this dialog starts at, so the one row
-          // that is not a labelled field was also the one row that did not line
-          // up with them. The hover fill simply spans the row instead.
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          decoration: BoxDecoration(
-            color: hovered ? grid.AppSurface.hoverFill : Colors.transparent,
-            borderRadius: BorderRadius.circular(grid.AppControl.radius),
-          ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 10),
           child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
             children: [
-              // Nudged down onto the label's own line: the row is top-aligned
-              // so the two-line block reads from its title, and a 16px box
-              // centred on a 13pt cap sits a hair proud of it.
-              Padding(
-                padding: const EdgeInsets.only(top: 1),
-                child: AppCheckbox(
-                  value: value,
-                  hovered: hovered,
-                  onChanged: onChanged,
-                ),
-              ),
+              AppCheckbox(value: value, hovered: hovered, onChanged: onChanged),
               const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            'Bypass permission prompts',
-                            style: theme.textTheme.labelMedium?.copyWith(
-                              color: grid.AppPalette.textPrimary,
-                            ),
-                          ),
-                        ),
-                        Tooltip(
-                          message: flag,
-                          child: Icon(
-                            LucideIcons.info,
-                            size: 14,
-                            color: grid.AppPalette.textSecondary,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: _gapTight),
-                    Text(
-                      'Allow this agent to act without asking for approval.',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: grid.AppPalette.textSecondary,
-                      ),
-                    ),
-                  ],
+              Text(
+                'Bypass approvals',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: onChanged == null
+                      ? grid.AppPalette.textFaint
+                      : grid.AppPalette.textPrimary,
                 ),
               ),
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-/// What this launch actually is, stated before it happens.
-///
-/// The dialog's inputs each answer a different question, and the one they add
-/// up to — *what will be running, where, on whose account* — was the one thing
-/// the old dialog never said. It matters most for the setting that reaches
-/// outside this window: a bypass flag turns off an engine's own guardrails on a
-/// machine that may not be this one.
-///
-/// Read-only on purpose, and shaped so: it takes the recessed inset fill, never
-/// a field's, so nothing here invites a click.
-/// "Not here yet — Harness will fetch it first."
-///
-/// A download arrow rather than the words, because this state recurs down the
-/// engine list and a repeated two-word phrase stops being read. The tooltip
-/// carries the meaning for a first encounter; the preflight panel carries the
-/// actual command, which is the thing worth reading.
-///
-/// Drawn in [AppPalette.textFaint] — the ink the row's own qualifiers use. This
-/// is a fact about the engine, not a warning about the choice: installing is a
-/// normal outcome of picking it, and an amber glyph would say otherwise.
-class _InstallMark extends StatelessWidget {
-  const _InstallMark({required this.engine});
-
-  final String engine;
-
-  @override
-  Widget build(BuildContext context) {
-    grid.AppTheme.watch(context);
-    return Tooltip(
-      message:
-          '${engineIdentity(engine).label} is not on this machine — '
-          'Harness installs it before launching',
-      child: Icon(
-        LucideIcons.download300,
-        // A shade under the note text beside it: the glyph reads heavier than
-        // type at the same nominal size, and matching the number makes it
-        // louder than the words it replaced.
-        size: 12,
-        color: grid.AppPalette.textFaint,
       ),
     );
   }

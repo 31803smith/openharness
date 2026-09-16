@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../shared/theme/app_theme.dart' as grid;
 import '../shortcuts/app_keymap.dart';
 import '../shortcuts/keymap.dart';
+import 'agent_action_icons.dart';
 
-/// The same search-or-create choice on New Tab and in the Add Harness picker.
+/// Separate Open Agent and New Agent actions on the Harness start page.
 class HarnessEntryActions extends StatelessWidget {
   const HarnessEntryActions({
     super.key,
@@ -14,9 +14,11 @@ class HarnessEntryActions extends StatelessWidget {
     required this.onNew,
     required this.openKey,
     required this.newKey,
+    this.filledOpen = false,
   });
   final VoidCallback? onOpen, onNew;
   final Key openKey, newKey;
+  final bool filledOpen;
 
   Widget _keyboardAction(
     BuildContext context,
@@ -58,19 +60,24 @@ class HarnessEntryActions extends StatelessWidget {
         _keyboardAction(
           context,
           onOpen,
-          OutlinedButton(
+          OutlinedButton.icon(
             key: openKey,
             onPressed: onOpen,
             style: OutlinedButton.styleFrom(
               enabledMouseCursor: SystemMouseCursors.click,
               minimumSize: size,
               padding: padding,
-              backgroundColor: Colors.transparent,
+              backgroundColor: filledOpen
+                  ? grid.AppPalette.swarmSearchSurface
+                  : Colors.transparent,
               foregroundColor: Colors.white,
-              side: const BorderSide(color: Colors.white24),
+              side: filledOpen
+                  ? BorderSide.none
+                  : const BorderSide(color: Colors.white24),
               shape: const StadiumBorder(),
             ),
-            child: const Text('Open Harness'),
+            icon: const Icon(AgentActionIcons.open, size: 18),
+            label: const Text('Open Agent'),
           ),
         ),
         _keyboardAction(
@@ -79,8 +86,8 @@ class HarnessEntryActions extends StatelessWidget {
           FilledButton.icon(
             key: newKey,
             onPressed: onNew,
-            icon: const Icon(LucideIcons.plus300, size: 18),
-            label: const Text('New Harness'),
+            icon: const Icon(AgentActionIcons.create, size: 18),
+            label: const Text('New Agent'),
             style: FilledButton.styleFrom(
               enabledMouseCursor: SystemMouseCursors.click,
               minimumSize: size,

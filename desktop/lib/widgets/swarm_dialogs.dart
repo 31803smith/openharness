@@ -73,7 +73,7 @@ class _RenameSwarmDialogState extends State<_RenameSwarmDialog> {
         content: SizedBox(
           width: 360,
           child: Semantics(
-            label: 'Tab name',
+            label: 'Harness name',
             child: TextSelectionTheme(
               data: TextSelectionTheme.of(context)
                   .copyWith(selectionColor: accent.withValues(alpha: .3)),

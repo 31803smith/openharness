@@ -416,7 +416,7 @@ class SwarmLocationCatalog {
     final machine = app.machineStates[pane.machineId];
     final project = agent == null ? null : machine?.projectOf(agent);
     final machineLabel = machine?.machine.displayName ?? pane.machineId;
-    final engine = agent?.engine ?? pane.session?.engineId;
+    final engine = agent?.identityEngine ?? pane.session?.engineId;
     final detail = _harnessDetail(
       project,
       machineLabel,
@@ -691,7 +691,7 @@ Swarm? _matchingGroupSwarm(AppNotifier app, SwarmDestination destination) {
 
 String _agentCountLabel(Iterable<String?> ids) {
   final count = ids.whereType<String>().length;
-  return '$count ${count == 1 ? 'harness' : 'harnesses'}';
+  return '$count ${count == 1 ? 'agent' : 'agents'}';
 }
 
 String _swarmMachineLabel(AppNotifier app, Iterable<String> machineIds) {
@@ -834,7 +834,7 @@ List<SwarmDestination> swarmDestinations(
     final machine = app.machineStates[machineId];
     final project = row?.$1.projectOf(row.$2);
     final machineName = machine?.machine.displayName ?? machineId;
-    final engine = row?.$2.engine ?? pane?.session?.engineId;
+    final engine = row?.$2.identityEngine ?? pane?.session?.engineId;
     final detail = _harnessDetail(
       project,
       machineName,

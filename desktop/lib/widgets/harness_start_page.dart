@@ -2,13 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../shared/theme/app_theme.dart' as grid;
+import '../shared/theme/appearance_prefs_store.dart';
+import '../shared/theme/harness_background.dart';
 import '../state/swarm_navigation.dart';
 import '../state/swarm_search.dart';
 import 'harness_entry_actions.dart';
+import 'harness_customize_pane.dart';
 import 'swarm_search_input.dart';
 import 'swarm_switcher.dart';
 
-/// The Open Harness input, results and navigation, revealed on the start page
+/// The Open Agent input, results and navigation, revealed on the start page
 /// only when the user chooses to search.
 class HarnessStartPage extends StatefulWidget {
   const HarnessStartPage({
@@ -34,9 +37,21 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
     canRequestFocus: false,
   );
   final _searchGroup = Object();
+  final _customizeButtonFocus = FocusNode(debugLabel: 'Customize Harness');
+  bool _customizing = false;
   SwarmSearchController? _search;
   SwarmSearchDraft? _draft;
   bool get _showResults => _search != null;
+
+  void _customize() {
+    _close();
+    setState(() => _customizing = true);
+  }
+
+  void _closeCustomization() {
+    setState(() => _customizing = false);
+    _customizeButtonFocus.requestFocus();
+  }
 
   void _open() {
     // Commands can replace the editor value without a TextField onChanged.
@@ -77,16 +92,13 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
     child: Focus(
       focusNode: _pickerFocus,
       child: Material(
-        color: _showResults
-            ? grid.AppPalette.swarmSearchSurface
-            : Colors.transparent,
-        elevation: _showResults ? 12 : 0,
-        shadowColor: Colors.black54,
+        color: grid.AppPalette.swarmSearchSurface,
+        surfaceTintColor: Colors.transparent,
+        elevation: _showResults ? 10 : 2,
+        shadowColor: Colors.black38,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(_showResults ? 12 : 999),
-          side: _showResults
-              ? const BorderSide(color: Colors.white24)
-              : BorderSide.none,
+          borderRadius: BorderRadius.circular(32),
+          side: BorderSide(color: Colors.white.withValues(alpha: .10)),
         ),
         clipBehavior: Clip.antiAlias,
         child: SwarmSearchKeys(
@@ -101,7 +113,7 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
             mainAxisSize: MainAxisSize.min,
             children: [
               Semantics(
-                label: 'Find a harness',
+                label: 'Find an agent',
                 child: SwarmSearchInput(
                   inputKey: const ValueKey('harness-start-search'),
                   controller: _query,
@@ -114,22 +126,24 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
                   groupId: _searchGroup,
                   autofocus: true,
                   showClose: _showResults,
-                  hintText: 'Find a harness',
+                  hintText: 'Find an agent',
                   rounded: true,
                   prominent: true,
                 ),
               ),
               if (_showResults) ...[
-                const Divider(height: 1, color: Colors.white12),
                 Flexible(
-                  child: SizedBox(
-                    height: 480,
-                    child: SwarmSearchResults(
-                      key: const ValueKey('harness-start-results'),
-                      search: _search!,
-                      sideBySideMinWidth: 700,
-                      onChoose: _choose,
-                      onRefocus: _focus.requestFocus,
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: SizedBox(
+                      height: 480,
+                      child: SwarmSearchResults(
+                        key: const ValueKey('harness-start-results'),
+                        search: _search!,
+                        sideBySideMinWidth: 700,
+                        onChoose: _choose,
+                        onRefocus: _focus.requestFocus,
+                      ),
                     ),
                   ),
                 ),
@@ -141,70 +155,72 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
     ),
   );
 
+  /// A compact product photograph below the agent controls.
   Widget _device({required bool compact}) {
-    final photo = ClipRRect(
-      borderRadius: BorderRadius.circular(10),
-      child: Transform.scale(
-        // Frame the device, which sits left of center in the original photo.
-        scale: 1.7,
-        alignment: const Alignment(-0.5, 0.08),
-        child: Image.asset(
-          'assets/harness_device.webp',
-          width: compact ? 96 : 256,
-          height: compact ? 54 : 144,
-          fit: BoxFit.cover,
-          semanticLabel: 'Harness Device',
-        ),
-      ),
-    );
-    const caption = Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Flexible(
-          child: Text(
-            'Meet the Harness device',
-            style: TextStyle(fontSize: 13, color: Colors.white70),
-          ),
-        ),
-        SizedBox(width: 4),
-        Icon(Icons.arrow_outward, size: 12, color: Colors.white70),
-      ],
-    );
     return Semantics(
       link: true,
-      child: InkWell(
-        key: const ValueKey('harness-device-link'),
-        mouseCursor: SystemMouseCursors.click,
-        onTap: () => launchUrl(
-          Uri.parse('https://www.autonomous.ai/harness-device'),
-          mode: LaunchMode.externalApplication,
-        ),
-        borderRadius: BorderRadius.circular(12),
-        child: SizedBox(
-          width: compact ? 320 : 256,
-          child: compact
-              ? Row(
-                  children: [
-                    photo,
-                    const SizedBox(width: 12),
-                    const Expanded(child: caption),
-                  ],
-                )
-              : Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [photo, const SizedBox(height: 12), caption],
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: compact ? 300 : 360),
+        child: AspectRatio(
+          aspectRatio: 2,
+          child: Material(
+            color: const Color(0xFF101112),
+            borderRadius: BorderRadius.circular(16),
+            clipBehavior: Clip.antiAlias,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                Image.asset(
+                  'assets/harness_device_studio.png',
+                  fit: BoxFit.cover,
+                  excludeFromSemantics: true,
                 ),
+                Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    key: const ValueKey('harness-device-link'),
+                    mouseCursor: SystemMouseCursors.click,
+                    onTap: _openDevicePage,
+                    hoverColor: Colors.white.withValues(alpha: .04),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: FractionallySizedBox(
+                        widthFactor: .48,
+                        child: Padding(
+                          padding: const EdgeInsets.only(left: 18, right: 8),
+                          child: Text(
+                            'Meet the\nHarness device',
+                            style: TextStyle(
+                              fontSize: 16,
+                              height: 1.3,
+                              fontWeight: FontWeight.w500,
+                              color: Colors.white.withValues(alpha: .94),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );
   }
+
+  void _openDevicePage() => launchUrl(
+    Uri.parse('https://www.autonomous.ai/harness-device'),
+    mode: LaunchMode.externalApplication,
+  );
 
   @override
   void dispose() {
     _search?.dispose();
     _query.dispose();
     _pickerFocus.dispose();
+    _customizeButtonFocus.dispose();
     super.dispose();
   }
 
@@ -213,8 +229,82 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
     grid.AppTheme.watch(context);
     return LayoutBuilder(
       builder: (context, constraints) {
+        final paneWidth = constraints.maxWidth.clamp(0.0, 420.0);
+        final sideBySide = constraints.maxWidth >= 1000;
+        return Row(
+          children: [
+            Expanded(
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  _page(),
+                  Positioned(
+                    right: 20,
+                    bottom: 16,
+                    child: ValueListenableBuilder<AppearancePrefs>(
+                      valueListenable: appearancePrefsStore,
+                      builder: (context, prefs, _) {
+                        final onPressed = _customizing
+                            ? _closeCustomization
+                            : _customize;
+                        if (prefs.background != HarnessBackground.plain) {
+                          return IconButton.filled(
+                            key: const ValueKey('harness-customize-button'),
+                            focusNode: _customizeButtonFocus,
+                            onPressed: onPressed,
+                            tooltip: 'Customize Harness',
+                            icon: const Icon(Icons.edit_outlined, size: 18),
+                            style: IconButton.styleFrom(
+                              backgroundColor: grid.AppPalette.swarmAccent,
+                              foregroundColor: grid.AppPalette.swarmTabBar,
+                              fixedSize: const Size.square(40),
+                              shape: const CircleBorder(),
+                            ),
+                          );
+                        }
+                        return FilledButton.icon(
+                          key: const ValueKey('harness-customize-button'),
+                          focusNode: _customizeButtonFocus,
+                          onPressed: onPressed,
+                          icon: const Icon(Icons.edit_outlined, size: 16),
+                          label: const Text('Customize Harness'),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: grid.AppPalette.swarmAccent,
+                            foregroundColor: grid.AppPalette.swarmTabBar,
+                            minimumSize: const Size(0, 36),
+                            shape: const StadiumBorder(),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  if (_customizing && !sideBySide)
+                    Positioned(
+                      top: 0,
+                      bottom: 0,
+                      right: 0,
+                      width: paneWidth,
+                      child: HarnessCustomizePane(onClose: _closeCustomization),
+                    ),
+                ],
+              ),
+            ),
+            if (_customizing && sideBySide)
+              SizedBox(
+                width: paneWidth,
+                child: HarnessCustomizePane(onClose: _closeCustomization),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _page() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
         return Padding(
-          padding: const EdgeInsets.fromLTRB(24, 0, 24, 32),
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 80),
           child: Center(
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 1120),

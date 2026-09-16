@@ -4,12 +4,13 @@ import '../../core/harness_file_store.dart';
 import '../../core/local_key_value_store.dart';
 import 'app_theme.dart';
 import 'color_palette.dart';
+import 'harness_background.dart';
 
 /// The app's coordinated palette and UI typography on this computer.
 ///
 /// This does not change the terminal's type. The terminal renders a grid a remote
 /// program draws into, so it keeps its own face and its own size in
-/// [TerminalFontStore], reached from Settings ▸ Terminal — and the app's UI
+/// [TerminalFontStore], reached from Customize Harness ▸ Terminal — and the app's UI
 /// scale is fenced out of it at five seams (see the notes in
 /// `terminal_panel.dart` and `terminal_composer.dart`, and the regression test
 /// in `test/terminal_ui_scale_isolation_test.dart`).
@@ -19,9 +20,11 @@ class AppearancePrefs {
     this.uiFamily,
     this.uiSize = uiSizeDefault,
     this.palette = HarnessPalette.graphite,
+    this.background = HarnessBackground.plain,
   });
 
   final HarnessPalette palette;
+  final HarnessBackground background;
 
   /// The face the app's chrome is set in. `null` means the system font, which is
   /// what [AppFont.sans] falls back to.
@@ -52,11 +55,13 @@ class AppearancePrefs {
     String? uiFamily,
     double? uiSize,
     HarnessPalette? palette,
+    HarnessBackground? background,
     bool clearUiFamily = false,
   }) => AppearancePrefs(
     uiFamily: clearUiFamily ? null : (uiFamily ?? this.uiFamily),
     uiSize: uiSize ?? this.uiSize,
     palette: palette ?? this.palette,
+    background: background ?? this.background,
   );
 
   @override
@@ -64,10 +69,11 @@ class AppearancePrefs {
       other is AppearancePrefs &&
       other.uiFamily == uiFamily &&
       other.uiSize == uiSize &&
-      other.palette == palette;
+      other.palette == palette &&
+      other.background == background;
 
   @override
-  int get hashCode => Object.hash(uiFamily, uiSize, palette);
+  int get hashCode => Object.hash(uiFamily, uiSize, palette, background);
 }
 
 /// The user's appearance choices, remembered across launches.
@@ -85,7 +91,9 @@ class AppearancePrefsStore extends ValueNotifier<AppearancePrefs> {
   static const _familyKey = 'app_ui_font_family';
   static const _sizeKey = 'app_ui_font_size';
   static const _paletteKey = 'app_color_palette';
+  static const _backgroundKey = 'harness_start_background';
   Future<void>? _paletteSave;
+  Future<void>? _backgroundSave;
 
   final LocalKeyValueStore _storage;
 
@@ -100,11 +108,13 @@ class AppearancePrefsStore extends ValueNotifier<AppearancePrefs> {
         _familyKey,
         _sizeKey,
         _paletteKey,
+        _backgroundKey,
       ]);
       value = AppearancePrefs(
         uiFamily: _familyFrom(saved[_familyKey]),
         uiSize: _sizeFrom(saved[_sizeKey]),
         palette: HarnessPalette.fromId(saved[_paletteKey]),
+        background: HarnessBackground.fromId(saved[_backgroundKey]),
       );
     } catch (_) {
       value = const AppearancePrefs();
@@ -130,6 +140,28 @@ class AppearancePrefsStore extends ValueNotifier<AppearancePrefs> {
       // The chosen palette remains usable for this run if storage fails.
     } finally {
       _paletteSave = null;
+    }
+  }
+
+  Future<void> setBackground(HarnessBackground background) {
+    if (value.background == background) {
+      return _backgroundSave ?? Future.value();
+    }
+    value = value.copyWith(background: background);
+    return _backgroundSave ??= _saveBackground();
+  }
+
+  Future<void> _saveBackground() async {
+    try {
+      while (true) {
+        final id = value.background.name;
+        await _storage.write(_backgroundKey, id);
+        if (value.background.name == id) break;
+      }
+    } catch (_) {
+      // Keep the selected background for this run if storage is unavailable.
+    } finally {
+      _backgroundSave = null;
     }
   }
 
@@ -169,10 +201,12 @@ class AppearancePrefsStore extends ValueNotifier<AppearancePrefs> {
   Future<void> reset() async {
     value = const AppearancePrefs();
     await _paletteSave;
+    await _backgroundSave;
     try {
       await _storage.delete(_familyKey);
       await _storage.delete(_sizeKey);
       await _storage.delete(_paletteKey);
+      await _storage.delete(_backgroundKey);
     } catch (_) {
       // See above.
     }

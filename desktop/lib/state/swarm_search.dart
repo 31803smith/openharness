@@ -101,7 +101,7 @@ class SwarmSearchController extends ChangeNotifier {
       ? 'Search commands…'
       : history != null
       ? 'Search history…'
-      : 'Find a harness';
+      : 'Find an agent';
 
   bool get canCreate =>
       history == null &&
@@ -117,7 +117,7 @@ class SwarmSearchController extends ChangeNotifier {
   String get primaryAction => switch (split?.axis) {
     PaneResizeAxis.x => 'Split right',
     PaneResizeAxis.y => 'Split down',
-    null => 'Open Harness',
+    null => 'Open Agent',
   };
 
   String actionLabel(SwarmDestination? row) => row?.isCommand == true
@@ -127,7 +127,7 @@ class SwarmSearchController extends ChangeNotifier {
                 row.agentId == null &&
                 split == null &&
                 _missingIds(row).length > 1
-            ? 'Open ${_missingIds(row).length} Harnesses'
+            ? 'Open ${_missingIds(row).length} Agents'
             : primaryAction
       : row == null
       ? 'Go to'
@@ -137,8 +137,8 @@ class SwarmSearchController extends ChangeNotifier {
       split != null && !app.isPaneSplitCurrent(split!)
       ? 'The layout changed. Split the pane again.'
       : selected != null && alreadyHere(selected!)
-      ? 'This harness is already open here.'
-      : 'No room for another harness.';
+      ? 'This agent is already open here.'
+      : 'No room for another agent.';
 
   void _refresh() {
     final next = navigating
@@ -317,7 +317,7 @@ class SwarmSearchController extends ChangeNotifier {
       ? 'Run command'
       : row.closedId != null
       ? 'Reopen'
-      : 'Open Harness';
+      : 'Open Agent';
 
   @override
   void dispose() {

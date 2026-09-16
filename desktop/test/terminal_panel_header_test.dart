@@ -5,13 +5,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/auth/auth_session.dart';
 import 'package:harness/core/config.dart';
+import 'package:harness/core/models.dart';
 import 'package:harness/state/app_state.dart';
 import 'package:harness/terminal/terminal_session.dart';
 import 'package:harness/theme/app_theme.dart';
 import 'package:harness/widgets/terminal_panel.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import 'support/real_fonts.dart';
+
 void main() {
+  setUpAll(loadRealFonts);
   TerminalSession sessionNamed(String name) {
     final session = TerminalSession(
       machineId: 'local',
@@ -37,6 +41,26 @@ void main() {
       authSession: AuthSession(),
       configStore: null,
     );
+    notifier.machineStates['local'] =
+        MachineState(
+            const Machine(
+              machineId: 'local',
+              name: 'Office',
+              authMode: MachineAuthMode.remote,
+            ),
+          )
+          ..agents = const [
+            Agent(
+              id: 'agent-1',
+              name: 'Desktop',
+              engine: 'codex',
+              project: AgentProject(
+                name: 'autonomous-harness',
+                branch: 'main',
+                cwd: '/work/autonomous-harness',
+              ),
+            ),
+          ];
     addTearDown(notifier.dispose);
     await tester.pumpWidget(
       MaterialApp(
@@ -58,6 +82,32 @@ void main() {
 
   // Each shape describes the path topology, not an assumed speed: direct link, intermediate hop,
   // backend server. Tooltip and semantics use the protocol names people will diagnose with.
+  testWidgets(
+    'connection status follows the session name without moving project details',
+    (tester) async {
+      final session = sessionNamed('Desktop');
+      addTearDown(session.dispose);
+      await pump(tester, session);
+      final project = find.text('autonomous-harness');
+      final projectRect = tester.getRect(project);
+      for (final (status, label) in [
+        (TerminalSessionStatus.opening, 'Connecting'),
+        (TerminalSessionStatus.resyncing, 'Restoring'),
+        (TerminalSessionStatus.closed, 'Reconnect'),
+        (TerminalSessionStatus.error, 'Reconnect'),
+      ]) {
+        session.status = status;
+        await pump(tester, session);
+        final nameRect = tester.getRect(find.text('Desktop'));
+        final statusRect = tester.getRect(find.text(label));
+        expect(statusRect.left, greaterThan(nameRect.right));
+        expect(statusRect.right, lessThan(projectRect.left));
+        expect(tester.getRect(project), projectRect);
+        expect(tester.takeException(), isNull);
+      }
+    },
+  );
+
   testWidgets(
     'the transport badge describes each link mode by shape, colour, and label',
     (tester) async {
@@ -146,4 +196,96 @@ void main() {
     expect(find.byIcon(LucideIcons.server), findsOneWidget);
     expect(tester.getCenter(find.byIcon(LucideIcons.server)), position);
   });
+
+  // ── the harness verdict chip ─────────────────────────────────────────────
+
+  Future<AppNotifier> pumpWithAgent(
+    WidgetTester tester,
+    TerminalSession session,
+    Agent agent, {
+    AppNotifier? app,
+  }) async {
+    tester.view.physicalSize = const Size(1200, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final notifier =
+        app ??
+        AppNotifier(
+          config: AppConfig.dev,
+          authSession: AuthSession(),
+          configStore: null,
+        );
+    if (app == null) addTearDown(notifier.dispose);
+    notifier.machineStates['local'] = MachineState(
+      const Machine(
+        machineId: 'local',
+        authMode: MachineAuthMode.remote,
+        name: 'This Mac',
+      ),
+    )..agents = [agent];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 900,
+            height: 320,
+            child: TerminalPanel(
+              notifier: notifier,
+              session: session,
+              focused: true,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    return notifier;
+  }
+
+  Agent agentWith(AgentVerdict? verdict) => Agent(
+    id: 'agent-1',
+    name: 'a',
+    engine: 'claude',
+    dsh: 'autonomous/copper',
+    dshName: 'Copper',
+    terminalAvailable: true,
+    verdict: verdict,
+  );
+
+  testWidgets(
+    'a harness agent is drawn as its harness, with no chip of its own',
+    (tester) async {
+      final chip = find.byKey(const ValueKey('pane-verdict-chip'));
+      final session = sessionNamed('a');
+      addTearDown(session.dispose);
+      final notifier = await pumpWithAgent(
+        tester,
+        session,
+        agentWith(
+          const AgentVerdict(ready: true, summary: 'Board is fab-ready'),
+        ),
+      );
+      // Its harness — icon and name, like every other pane; no second mark
+      // for the engine underneath (owner, 2026-09-15).
+      expect(
+        find.byKey(const ValueKey('engine-icon-autonomous/copper')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('pane-header-base-engine')),
+        findsNothing,
+      );
+      // The verdict is the viewer pane's to show (owner, 2026-09-15): the
+      // terminal header carries none, before or after a verdict arrives.
+      expect(chip, findsNothing);
+      await pumpWithAgent(
+        tester,
+        session,
+        agentWith(const AgentVerdict(ready: false, errors: 2)),
+        app: notifier,
+      );
+      expect(chip, findsNothing);
+      expect(find.text('2 errors'), findsNothing);
+    },
+  );
 }

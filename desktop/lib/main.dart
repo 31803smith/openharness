@@ -84,7 +84,15 @@ class DesktopApp extends StatelessWidget {
     );
     return MaterialApp(
       title: 'Harness',
-      debugShowCheckedModeBanner: false,
+      // Flutter's DEBUG ribbon stays on a debug build: it is how a locally built
+      // app is told apart from the installed release at a glance (owner,
+      // 2026-09-16). It never appears in a release build whatever this says.
+      // A preview capture that wants a clean corner passes
+      // `--dart-define=HARNESS_CLEAN_PREVIEW=true` instead of turning it off
+      // for everyone.
+      debugShowCheckedModeBanner: !const bool.fromEnvironment(
+        'HARNESS_CLEAN_PREVIEW',
+      ),
       // The design system's own `buildAppTheme` — see the note where a second,
       // hand-written `ThemeData` used to shadow it, in `lib/theme/app_theme.dart`.
       // Harness Desktop is dark-only: one theme, no `darkTheme`/`themeMode` to

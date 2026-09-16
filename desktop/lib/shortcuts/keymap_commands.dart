@@ -70,7 +70,7 @@ final harnessCommands = <HarnessCommand>[
   ),
   const HarnessCommand(
     'swarm.reopen',
-    'Reopen last closed harness',
+    'Reopen last closed agent',
     ShortcutGroup.navigate,
     action: ShortcutAction.reopenClosedSwarm,
     nativeAction: 'reopen',
@@ -123,7 +123,7 @@ final harnessCommands = <HarnessCommand>[
   ),
   const HarnessCommand(
     'navigation.needs_input',
-    'Show harnesses needing input',
+    'Show agents needing input',
     ShortcutGroup.navigate,
     action: ShortcutAction.showAttention,
     nativeAction: 'notifications',
@@ -131,7 +131,7 @@ final harnessCommands = <HarnessCommand>[
   for (var i = 1; i <= 9; i++)
     HarnessCommand(
       'swarm.select_$i',
-      'Select tab $i',
+      'Select harness $i',
       ShortcutGroup.navigate,
       extraKeys: ['cmd+$i'],
     ),
@@ -272,14 +272,14 @@ final harnessCommands = <HarnessCommand>[
   ),
   const HarnessCommand(
     'agent.add',
-    'Add Harness',
+    'Open Agent',
     ShortcutGroup.actions,
     action: ShortcutAction.addAgent,
     nativeAction: 'addAgent',
   ),
   const HarnessCommand(
     'agent.new',
-    'New Harness',
+    'New Agent',
     ShortcutGroup.actions,
     action: ShortcutAction.newAgent,
     nativeAction: 'newAgent',
@@ -304,7 +304,7 @@ final harnessCommands = <HarnessCommand>[
   ),
   const HarnessCommand(
     'machines.refresh',
-    'Refresh machines and harnesses',
+    'Refresh machines and agents',
     ShortcutGroup.actions,
     action: ShortcutAction.reload,
     nativeAction: 'reload',
@@ -383,7 +383,7 @@ final harnessCommands = <HarnessCommand>[
   ),
   const HarnessCommand(
     'picker.add_here',
-    'Add the selected harness',
+    'Add the selected agent',
     ShortcutGroup.actions,
     extraKeys: ['cmd+enter'],
     context: KeymapContext.picker,
