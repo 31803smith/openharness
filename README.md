@@ -6,7 +6,7 @@ any machine you own, and the domains beyond code get a viewer beside it that sho
 is made.
 
 <p align="center">
-  <img src=".github/assets/screenshots/harness.gif" width="960" alt="One window: a Solid tab with a 3D case beside the agent that made it, a Marp keynote taking shape, then one tab with five panes across three machines moving through layouts, a zoomed board viewer, and a Copper board ready to order">
+  <img src=".github/assets/screenshots/harness.gif" width="960" alt="One window, nine moments: two coding agents side by side, three in columns, a Solid tab with the 3D case beside the Codex agent that made it, a Copper board as schematic, as routed PCB and in 3D beside its Claude Code agent, four panes of Solid and Copper together, and a Marp keynote beside its agent">
 </p>
 
 ## One app, many harnesses
@@ -37,7 +37,7 @@ with the engine's own `--resume` and the same id. Start an agent on another mach
 folders from New Agent, or clone a repository there first.
 
 <p align="center">
-  <img src=".github/assets/screenshots/machines.png" width="960" alt="One tab, five panes, three machines: two agents on the iMac at home, one on the iMac at the office, and a Copper board with its agent on this Mac, each pane header naming its machine">
+  <img src=".github/assets/screenshots/machines-menu.png" width="960" alt="The Machines menu: a MacBook, this Mac with 27 agents, a ThinkPad, an iMac at home with 4 agents and an iMac at the office with 6, and the agents on the iMac at home listed in a submenu">
 </p>
 
 ## A device for the desk
