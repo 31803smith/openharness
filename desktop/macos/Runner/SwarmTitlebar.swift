@@ -235,8 +235,8 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     if let file = main.item(withTitle: "File") { main.removeItem(file) }
     let file = NSMenu(title: "File")
     add(file, "New Tab", "t", "new")
-    add(file, "New Agent…", "n", "newAgent")
-    add(file, "Open Agent…", "o", "addAgent")
+    add(file, "New Harness…", "n", "newAgent")
+    add(file, "Open Harness…", "o", "addAgent")
     add(file, "Rename Tab…", "r", "renameActive", [.command, .shift])
     add(file, "Close Tab", "w", "closeActive")
     file.addItem(.separator())
@@ -300,7 +300,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
        // independent of the link state on the trailing edge.
        presence: machine.presence,
        status: machine.status,
-       count: machine.agentCount.map { "\($0) \($0 == 1 ? "agent" : "agents")" } ?? "")
+       count: machine.agentCount.map { "\($0) \($0 == 1 ? "harness" : "harnesses")" } ?? "")
     }
     // Preserve the compact menu's proportions, with the requested extra room.
     // Leading text = name + presence; trailing column = the agent count, or the
@@ -349,20 +349,20 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
         // reachable-or-connecting node is still fetching.
         let title: String
         if machine.agentCount == 0 {
-          title = "No agents yet"
+          title = "No harnesses yet"
         } else if machine.linkRequired {
           title = "Link required"
         } else if machine.presence == "Offline" {
           title = "Offline"
         } else {
-          title = "Loading agents…"
+          title = "Loading harnesses…"
         }
         let empty = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         empty.isEnabled = false
         submenu.addItem(empty)
       }
       submenu.addItem(.separator())
-      let find = NSMenuItem(title: "Find Agents…", action: #selector(machineAction(_:)), keyEquivalent: "")
+      let find = NSMenuItem(title: "Find Harnesses…", action: #selector(machineAction(_:)), keyEquivalent: "")
       find.target = self
       find.representedObject = machine.id
       submenu.addItem(find)
@@ -513,7 +513,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
       historyMenu.addItem(item)
     }
     if entries.isEmpty {
-      let item = NSMenuItem(title: closed ? "No Recently Closed Agents" : "No Recent Visits", action: nil, keyEquivalent: "")
+      let item = NSMenuItem(title: closed ? "No Recently Closed Harnesses" : "No Recent Visits", action: nil, keyEquivalent: "")
       item.isEnabled = false
       historyMenu.addItem(item)
     }
@@ -1154,8 +1154,8 @@ private final class SwarmTabStrip: NSView {
       button.isEnabled = false
       addSubview(button)
     }
-    textButton(createButton, "New Agent", #selector(createAgent))
-    textButton(openButton, "Open Agent", #selector(openHarness))
+    textButton(createButton, "New Harness", #selector(createAgent))
+    textButton(openButton, "Open Harness", #selector(openHarness))
     createButton.image = NSImage(systemSymbolName: "plus", accessibilityDescription: nil)
     openButton.image = NSImage(systemSymbolName: "arrow.up.right", accessibilityDescription: nil)
     updateActionColors()

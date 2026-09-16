@@ -817,7 +817,7 @@ class _AgentTree extends StatelessWidget {
           return _AgentStatusRow(
             icon: Icons.sync,
             label: state.connectionStatus == ConnectionStatus.connected
-                ? 'preparing agent list…'
+                ? 'preparing harness list…'
                 : 'connecting…',
           );
         case AgentLoadStatus.needsLink:
@@ -1204,7 +1204,7 @@ class _AgentRowState extends State<_AgentRow> {
                 const AppMenuDivider(),
                 AppMenuItem(
                   icon: LucideIcons.refreshCw300,
-                  label: 'Restart Agent',
+                  label: 'Restart Harness',
                   onPressed: () {
                     _agentMenu.close();
                     _restartAgent();
@@ -1213,7 +1213,7 @@ class _AgentRowState extends State<_AgentRow> {
                 const AppMenuDivider(),
                 AppMenuItem(
                   icon: Icons.stop_rounded,
-                  label: 'Stop Agent',
+                  label: 'Stop Harness',
                   danger: true,
                   onPressed: () {
                     _agentMenu.close();

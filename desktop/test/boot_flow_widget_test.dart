@@ -837,7 +837,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.text('New Agent'), findsWidgets);
+      expect(find.text('New Harness'), findsWidgets);
       expect(
         tester
             .widget<TextField>(

@@ -17,7 +17,7 @@ Finder get selectedRow =>
 void main() {
   for (final nativeTabs in [false, true]) {
     testWidgets(
-      'New Tab offers Open Agent and preserves the selected runtime (native=$nativeTabs)',
+      'New Tab offers Open Harness and preserves the selected runtime (native=$nativeTabs)',
       (tester) async {
         const channel = MethodChannel('harness/swarm_tabs');
         tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
@@ -80,7 +80,7 @@ void main() {
     );
   }
 
-  testWidgets('command search stays commands-only and can open New Agent', (
+  testWidgets('command search stays commands-only and can open New Harness', (
     tester,
   ) async {
     final app = createApp();
@@ -104,7 +104,7 @@ void main() {
       );
       expect(find.byKey(const ValueKey('swarm-search-preview')), findsNothing);
     }
-    expect(harnessCommandById['agent.new']!.label, 'New Agent');
+    expect(harnessCommandById['agent.new']!.label, 'New Harness');
     await tester.tap(find.byKey(const ValueKey('command:swarm.new')));
     await tester.pump();
     expect(app.activeSwarm.name, 'New Tab');

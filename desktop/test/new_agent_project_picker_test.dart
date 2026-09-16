@@ -331,7 +331,7 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pumpAndSettle();
     expect(find.text('No recent projects'), findsNothing);
-    expect(find.text('New Agent'), findsOneWidget);
+    expect(find.text('New Harness'), findsOneWidget);
     expect(app.calls, isEmpty);
   });
 }

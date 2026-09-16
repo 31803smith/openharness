@@ -441,7 +441,7 @@ void main() {
 
   for (final native in [false, true]) {
     testWidgets(
-      'New Agent ${native ? 'native menu' : 'header'} defaults to this computer',
+      'New Harness ${native ? 'native menu' : 'header'} defaults to this computer',
       (tester) async {
         tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
           const MethodChannel('harness/swarm_tabs'),
@@ -685,7 +685,7 @@ void main() {
     addTearDown(() => FileSelectorPlatform.instance = oldPicker);
     await mount(tester, app);
 
-    expect(find.text('New Agent'), findsWidgets);
+    expect(find.text('New Harness'), findsWidgets);
     expect(find.text('Machines'), findsNothing);
     expect(find.text('Projects'), findsNothing);
     expect(app.launches, isEmpty);
@@ -699,7 +699,7 @@ void main() {
     expect(engine.value, 'codex');
     expect(find.byKey(const Key('new-agent-machine-field')), findsOneWidget);
     expect(
-      tester.getTopLeft(find.text('Choose a harness')).dy,
+      tester.getTopLeft(find.text('Choose an agent')).dy,
       lessThan(
         tester
             .getTopLeft(find.text('Which project will this agent work in?'))

@@ -70,7 +70,7 @@ void main() {
       findsOneWidget,
     );
     expect(
-      find.descendant(of: selected, matching: find.text('Open Agent')),
+      find.descendant(of: selected, matching: find.text('Open Harness')),
       findsOneWidget,
     );
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
@@ -82,7 +82,7 @@ void main() {
   });
 
   for (final native in [false, true]) {
-    testWidgets('start page separates Open and New Agent (native=$native)', (
+    testWidgets('start page separates Open and New Harness (native=$native)', (
       tester,
     ) async {
       const channel = MethodChannel('harness/swarm_tabs');
@@ -110,7 +110,7 @@ void main() {
       );
       expect(
         tester.widget<TextField>(_startInput).decoration!.hintText,
-        'Find an agent',
+        'Find a harness',
       );
       expect(tester.widget<TextField>(_startInput).focusNode!.hasFocus, isTrue);
       expect(find.byKey(const ValueKey('harness-device-link')), findsOneWidget);

@@ -68,7 +68,7 @@ void main() {
       expect(
         find.descendant(
           of: find.byKey(const ValueKey('swarm-row-action')),
-          matching: find.text('Open Agent'),
+          matching: find.text('Open Harness'),
         ),
         findsOneWidget,
       );

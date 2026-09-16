@@ -216,9 +216,9 @@ void main() {
         expect(find.byType(SwarmSearchResults), findsNothing);
         expect(
           find.text(switch (entry) {
-            'Split right' => 'New Agent to the right',
-            'Split down' => 'New Agent below',
-            _ => 'New Agent',
+            'Split right' => 'New Harness to the right',
+            'Split down' => 'New Harness below',
+            _ => 'New Harness',
           }),
           findsWidgets,
         );
@@ -281,7 +281,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Close'), findsOneWidget);
       expect(find.text('Back to Search'), findsNothing);
-      expect(find.widgetWithText(TextButton, 'Find an agent'), findsNothing);
+      expect(find.widgetWithText(TextButton, 'Find a harness'), findsNothing);
       if (change == 'switch' || change == 'closed') app.newSwarm();
       if (change == 'closed') await app.closeSwarm(original.id);
       if (change == 'stale split') {
@@ -318,7 +318,7 @@ void main() {
       expect(app.activeSwarmId, current);
       if (change == 'closed' || change == 'stale split') {
         expect(app.allPanes.any((p) => p.agentId == 'created'), isFalse);
-        expect(app.lastError, contains('Open Agent'));
+        expect(app.lastError, contains('Open Harness'));
       } else {
         expect(original.panes.first, same(originalPane));
         expect(original.panes.last.agentId, 'created');
@@ -591,7 +591,7 @@ void main() {
       app.stateOf('m')!.agents.any((agent) => agent.id == 'created'),
       isTrue,
     );
-    expect(app.lastError, contains('Open Agent'));
+    expect(app.lastError, contains('Open Harness'));
   });
 
   testWidgets(

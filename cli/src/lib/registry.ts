@@ -386,7 +386,7 @@ function strictPersistedRow(value: unknown): RegisteredSession | null {
     engine: row.engine as AgentEngine,
     transcriptPath: typeof row.transcriptPath === 'string' ? row.transcriptPath : null,
     projectDir: row.projectDir,
-    defaultName: typeof row.defaultName === 'string' && /^agent-[1-9]\d*$/.test(row.defaultName)
+    defaultName: typeof row.defaultName === 'string' && /^(?:harness|agent)-[1-9]\d*$/.test(row.defaultName)
       ? row.defaultName : undefined,
     cwd: typeof row.cwd === 'string' ? row.cwd : null,
     runtimes,
@@ -769,7 +769,7 @@ class Registry {
           ...(rawGridLaunch !== undefined ? { gridLaunch: rawGridLaunch } : {}),
           ...(raw.bypassPermission === true ? { bypassPermission: true } : {}),
           transcriptPath,
-          defaultName: typeof raw.defaultName === 'string' && /^agent-[1-9]\d*$/.test(raw.defaultName)
+          defaultName: typeof raw.defaultName === 'string' && /^(?:harness|agent)-[1-9]\d*$/.test(raw.defaultName)
             ? raw.defaultName : undefined,
           title: titleDisplayName(typeof raw.title === 'string' ? raw.title : null),
           sessionId: bound ? rawSessionId : '',
@@ -1040,10 +1040,11 @@ class Registry {
       ...NAME_OVERRIDES.values(),
     ]
     for (const name of names) {
-      const match = name && /^agent-([1-9]\d*)$/.exec(name)
+      // `agent-N` is the name this daemon gave sessions before the rename; the count carries on
+      const match = name && /^(?:harness|agent)-([1-9]\d*)$/.exec(name)
       if (match && BigInt(match[1]!) >= next) next = BigInt(match[1]!) + 1n
     }
-    return `agent-${next}`
+    return `harness-${next}`
   }
 
   /** Discovered process agents that have no engine session bound yet. */

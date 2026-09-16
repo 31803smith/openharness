@@ -280,7 +280,7 @@ const List<AppShortcut> kAppShortcuts = [
   AppShortcut(
     action: ShortcutAction.newAgent,
     activator: SingleActivator(LogicalKeyboardKey.keyN, meta: true),
-    label: 'New Agent',
+    label: 'New Harness',
     group: ShortcutGroup.actions,
   ),
   AppShortcut(
@@ -342,7 +342,7 @@ const kSwarmShortcuts = [
   AppShortcut(
     action: ShortcutAction.addAgent,
     activator: SingleActivator(LogicalKeyboardKey.keyO, meta: true),
-    label: 'Open Agent',
+    label: 'Open Harness',
     group: ShortcutGroup.actions,
   ),
   AppShortcut(
@@ -364,7 +364,7 @@ const kSwarmShortcuts = [
       meta: true,
       shift: true,
     ),
-    label: 'Reopen last closed agent',
+    label: 'Reopen last closed harness',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(

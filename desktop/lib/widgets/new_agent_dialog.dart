@@ -549,9 +549,9 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
         title: Text(switch (widget.split?.axis) {
-          PaneResizeAxis.x => 'New Agent to the right',
-          PaneResizeAxis.y => 'New Agent below',
-          null => 'New Agent',
+          PaneResizeAxis.x => 'New Harness to the right',
+          PaneResizeAxis.y => 'New Harness below',
+          null => 'New Harness',
         }),
         titleTextStyle: Theme.of(context).textTheme.headlineSmall?.copyWith(
           fontSize: 24,
@@ -664,7 +664,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                                   Navigator.of(context)
                                       .pop(NewAgentDialogResult.findExisting),
                         icon: const Icon(LucideIcons.search, size: 16),
-                        label: const Text('Find an agent'),
+                        label: const Text('Find a harness'),
                       ),
                     FilledButton(
                       key: const ValueKey('create-agent-submit'),
@@ -786,7 +786,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _sectionLabel('Choose a harness'),
+          _sectionLabel('Choose an agent'),
           AgentPicker(
             compact: true,
             tileSize: tileSize,

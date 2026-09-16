@@ -70,7 +70,7 @@ final harnessCommands = <HarnessCommand>[
   ),
   const HarnessCommand(
     'swarm.reopen',
-    'Reopen last closed agent',
+    'Reopen last closed harness',
     ShortcutGroup.navigate,
     action: ShortcutAction.reopenClosedSwarm,
     nativeAction: 'reopen',
@@ -272,14 +272,14 @@ final harnessCommands = <HarnessCommand>[
   ),
   const HarnessCommand(
     'agent.add',
-    'Open Agent',
+    'Open Harness',
     ShortcutGroup.actions,
     action: ShortcutAction.addAgent,
     nativeAction: 'addAgent',
   ),
   const HarnessCommand(
     'agent.new',
-    'New Agent',
+    'New Harness',
     ShortcutGroup.actions,
     action: ShortcutAction.newAgent,
     nativeAction: 'newAgent',

@@ -9,16 +9,16 @@ is made.
   <img src=".github/assets/screenshots/harness.gif" width="960" alt="One window, nine moments: two coding agents side by side, three in columns, a Solid tab with the 3D case beside the Codex agent that made it, a Copper board as schematic, as routed PCB and in 3D beside its Claude Code agent, four panes of Solid and Copper together, and a Marp keynote beside its agent">
 </p>
 
-## One app, many harnesses
+## One app, every agent
 
-A harness is an agent plus a domain. For code, the agent is the whole harness: fourteen engines,
-unwrapped. Harness reads the transcript each one already writes and installs the vendor's own hooks;
-your credentials stay in your `~/.claude`, `~/.codex`, and so on. For everything else, a harness
-brings the domain with it: its skills in the agent, its toolchain on the machine, its viewer beside
-the terminal, and a header that says where the work is. Three ship today, each on one of the coding
-agents, and yours is a git repository away.
+An agent is the who: Claude Code, Codex, Cursor and eleven more for code, and the specialized ones,
+Solid, Copper and Marp, each an agent plus the skills, toolchain and viewer of its domain. Harness
+never wraps an agent; it reads the transcript each one already writes and installs the vendor's own
+hooks, so your credentials stay in your `~/.claude`, `~/.codex`, and so on. A harness is one
+session of an agent running somewhere: a machine, a project, a pane, and for the domains beyond
+code, the viewer beside it. Pick an agent, and yours is a git repository away.
 
-| Category | Apps |
+| Category | Agents |
 |---|---|
 | **Code** | <img src=".github/assets/engines/claude.png" height="28" alt="Claude Code"> Claude Code &nbsp;&nbsp; <img src=".github/assets/engines/codex.png" height="28" alt="Codex"> Codex &nbsp;&nbsp; <img src=".github/assets/engines/cursor.png" height="28" alt="Cursor"> Cursor &nbsp;&nbsp; <img src=".github/assets/engines/opencode.png" height="28" alt="OpenCode"> OpenCode &nbsp;&nbsp; <img src=".github/assets/engines/pi.png" height="28" alt="Pi"> Pi &nbsp;&nbsp; <img src=".github/assets/engines/hermes.png" height="28" alt="Hermes"> Hermes &nbsp;&nbsp; <img src=".github/assets/engines/commandcode.png" height="28" alt="Command Code"> Command Code &nbsp;&nbsp; <img src=".github/assets/engines/devin.png" height="28" alt="Devin"> Devin &nbsp;&nbsp; <img src=".github/assets/engines/muse.png" height="28" alt="Muse Code"> Muse Code &nbsp;&nbsp; <img src=".github/assets/engines/amp.png" height="28" alt="Amp"> Amp &nbsp;&nbsp; <img src=".github/assets/engines/kilo.png" height="28" alt="Kilo"> Kilo &nbsp;&nbsp; <img src=".github/assets/engines/grok.png" height="28" alt="Grok"> Grok &nbsp;&nbsp; <img src=".github/assets/engines/agy.png" height="28" alt="Antigravity"> Antigravity &nbsp;&nbsp; <img src=".github/assets/engines/copilot.png" height="28" alt="GitHub Copilot"> GitHub Copilot |
 | **3D design** | <img src=".github/assets/engines/solid.png" height="28" alt="Solid"> Solid |
@@ -34,7 +34,7 @@ ciphertext and holds no keys, and terminal traffic goes machine to machine over 
 Sessions live on the machine, not in the window. Every agent is a tmux pane there. Close the laptop,
 open it on the train: same pane, same scrollback. After a reboot the daemon brings each agent back
 with the engine's own `--resume` and the same id. Start an agent on another machine by browsing its
-folders from New Agent, or clone a repository there first.
+folders from New Harness, or clone a repository there first.
 
 <p align="center">
   <img src=".github/assets/screenshots/machines-menu.png" width="960" alt="The Machines menu: a MacBook, this Mac with 27 agents, a ThinkPad, an iMac at home with 4 agents and an iMac at the office with 6, and the agents on the iMac at home listed in a submenu">
@@ -65,8 +65,8 @@ https://github.com/user-attachments/assets/97848065-61c6-40df-be66-a8247f69aa4c
 
 ## First five minutes
 
-- **⌘N** New Agent: a harness, a machine, a folder, Create.
-- **⌘O** finds any agent, tab, project or machine; `>` runs a command.
+- **⌘N** New Harness: an agent, a machine, a folder, Create.
+- **⌘O** Open Harness: find any session, tab, project or machine; `>` runs a command.
 - **⌘B** takes a task in plain words and routes it to the agent already on it.
 - **⌘R** and **⌘D** split right and down.
 - **⌘S** picks a layout.
@@ -95,7 +95,7 @@ Every layer has a contract, a starter and a check, and most ways in never touch 
 A domain harness is a git repository: a manifest, an `AGENTS.md`, skills, a workspace template, a
 toolchain that installs itself, and for the pane a viewer server and a verdict file. Harness reads
 the manifest and nothing else. Copy the starter, `harness dsh check .`, `harness dsh install . --link`,
-and your tile is in New Agent. [Marp](https://github.com/autonomous-ai/autonomous-marp) is the
+and your tile is in New Harness. [Marp](https://github.com/autonomous-ai/autonomous-marp) is the
 smallest complete one and the place to start.
 
 [CONTRIBUTING.md](CONTRIBUTING.md) has the workflow, [SECURITY.md](SECURITY.md) takes security
