@@ -35,7 +35,7 @@ jobs:
     with:
       DOCKER_IMAGE_NAME: autonomous-code-be
       DOCKER_CONTEXT: backend
-      DOCKERFILE_NAME: Dockerfile.k8s
+      DOCKERFILE_NAME: backend/Dockerfile.k8s
       CONCURRENCY_GROUP: docker_build_web_production
       RUNNER_TAG: ubuntu-latest
     secrets:
