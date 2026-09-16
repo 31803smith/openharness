@@ -45,18 +45,19 @@ void main() {
     await tester.pump();
   }
 
-  testWidgets('the keys a software keyboard has no room for reach the pty', (
+  testWidgets('the keys a software keyboard cannot produce reach the pty', (
     tester,
   ) async {
     await pumpBar(tester);
 
     await tapKey(tester, 'esc');
     await tapKey(tester, 'tab');
+    // CSI Z, built from the modifier — there is no `TerminalKey.shiftTab`.
+    await tapKey(tester, '\u21e7tab');
     await tapKey(tester, 'Up');
-    await tapKey(tester, '~');
     await tapKey(tester, '7');
 
-    expect(outbound, ['\x1b', '\t', '\x1b[A', '~', '7']);
+    expect(outbound, ['\x1b', '\t', '\x1b[Z', '\x1b[A', '7']);
   });
 
   testWidgets('ctrl is handed to the session, which owns the modifier', (

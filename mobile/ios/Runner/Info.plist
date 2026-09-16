@@ -24,6 +24,15 @@
 	<string>????</string>
 	<key>CFBundleVersion</key>
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
+	<!-- ⚠️ DECISION, NOT A DEFAULT — and it is currently the OPTIMISTIC one.
+	     `false` auto-answers App Store Connect's export-compliance question and
+	     is right only for an app whose encryption is the OS's own (an HTTPS
+	     call). This app is not that: it terminates its own end-to-end
+	     encryption — X25519, ChaCha20-Poly1305 and a CPace PAKE, in `lib/e2ee/`
+	     — so the honest answer is very likely `true` plus a self-classification
+	     report, or an exemption confirmed with whoever owns export compliance.
+	     Getting it wrong is not a build error: review asks, and the version
+	     sits still until someone answers. -->
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>LSRequiresIPhoneOS</key>
