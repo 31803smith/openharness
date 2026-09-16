@@ -4862,11 +4862,14 @@ class AppNotifier extends ChangeNotifier {
             agent.terminalAvailable &&
             machine.terminalCapabilityAvailable) {
           machine.pendingOfflineAgentId = null;
-          // Only reattach the terminal if the user is still on THIS machine — recovery can finish
-          // well after the user has moved on to a different machine/agent, and forcing selectAgent
-          // here would yank their focus back to what they were looking at before, mid-navigation.
-          // The recovered agent still shows normally in the rail; they can click it themselves.
-          if (selectedMachineId == machineId) {
+          // Loading already reattaches retained panes across every tab. Selecting that agent
+          // again would insert it into the current tab and steal focus from the user's work.
+          // Only fulfill a pending selection when it has no pane yet and the user is still on
+          // this machine; a reconnect must preserve the layout and selection they left open.
+          final hasPane = allPanes.any(
+            (pane) => pane.machineId == machineId && pane.agentId == agentId,
+          );
+          if (!hasPane && selectedMachineId == machineId) {
             await selectAgent(machineId, agentId);
           } else {
             notifyListeners();
