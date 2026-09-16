@@ -179,3 +179,16 @@ it if one is dropped.
     never swallowed, and Android performs its editor action without the second
     insert so nothing there matches. Regression:
     `mobile/test/terminal_ime_input_test.dart`.
+
+12. **Backspace sent as a key keeps the keyboard's buffer in step**
+    (`lib/src/ui/custom_text_edit.dart`). Gboard delivers Backspace as a
+    `KeyDownEvent`, not as an edit to its buffer, and the terminal consumed the
+    key — deleting on the pty while the buffer the keyboard edits kept the
+    letter. After "xin chào" and four Backspaces the keyboard still held
+    "xin chào" and appended the next word to it; when Telex re-marked that run,
+    the diff deleted and retyped characters already gone ("chào" came out as
+    "xiaochaof"). On a phone, a plain Backspace over a non-empty buffer is now
+    applied to the buffer itself and handed back to the keyboard, and the pty
+    gets the same single delete through the usual sync. An empty buffer still
+    sends it straight on; Ctrl/Alt/Meta+Backspace and desktop platforms are
+    untouched.
