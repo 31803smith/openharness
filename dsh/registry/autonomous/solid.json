@@ -4,7 +4,7 @@
   "category": "3D design",
   "description": "Describe a part; get a validated, printable STEP with a live 3D view.",
   "repo": "https://github.com/autonomous-ai/autonomous-workshop",
-  "ref": "harness-dsh",
+  "ref": "main",
   "engine": "codex",
   "tier": 2,
   "verified": true
