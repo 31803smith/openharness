@@ -24,6 +24,7 @@ import 'codex_profile_field.dart';
 import 'agent_picker.dart';
 import 'remote_folder_picker.dart';
 import 'new_agent_project_picker.dart';
+import 'new_harness_help.dart';
 import 'dsh_install_panel.dart';
 
 /// Mirrors the harness CLI's `BYPASS_PERMISSION_FLAGS`
@@ -524,6 +525,8 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   }
 
   Widget _buildDialog(BuildContext context) {
+    final edgePadding = MediaQuery.sizeOf(context).width < 700 ? 24.0 : 36.0;
+    final compactHeight = MediaQuery.sizeOf(context).height < 800;
     final bypassFlag = kEngineBypassPermissionFlag[_baseEngine(_engine)];
     final canCreate =
         (_preparedFolder != null ||
@@ -544,7 +547,9 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
         },
       },
       child: AlertDialog(
-        constraints: const BoxConstraints.tightFor(width: _dialogWidth + 56),
+        constraints: BoxConstraints.tightFor(
+          width: _dialogWidth + edgePadding * 2,
+        ),
         backgroundColor: grid.AppPalette.swarmField,
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
@@ -554,23 +559,36 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
           null => 'New Harness',
         }),
         titleTextStyle: Theme.of(context).textTheme.headlineSmall?.copyWith(
-          fontSize: 24,
+          fontSize: 28,
+          height: 1.2,
           fontWeight: grid.AppFont.semibold,
           color: grid.AppPalette.textPrimary,
         ),
-        titlePadding: const EdgeInsets.fromLTRB(28, 28, 28, 0),
-        contentPadding: const EdgeInsets.fromLTRB(28, 24, 28, 16),
-        actionsPadding: const EdgeInsets.fromLTRB(28, 0, 28, 24),
+        titlePadding: EdgeInsets.fromLTRB(
+          edgePadding,
+          compactHeight ? 24 : 32,
+          edgePadding,
+          0,
+        ),
+        contentPadding: EdgeInsets.fromLTRB(
+          edgePadding,
+          compactHeight ? 24 : 32,
+          edgePadding,
+          40,
+        ),
+        actionsPadding: EdgeInsets.fromLTRB(
+          edgePadding,
+          0,
+          edgePadding,
+          compactHeight ? 24 : 28,
+        ),
         actionsOverflowButtonSpacing: 8,
         content: SizedBox(
           width: _dialogWidth,
           child: ConstrainedBox(
-            constraints: BoxConstraints(
-              maxHeight: math.min(
-                650,
-                math.max(220, MediaQuery.sizeOf(context).height - 230),
-              ),
-            ),
+            // AlertDialog gives the form the space left by its title and
+            // footer, including when the footer wraps or text is enlarged.
+            constraints: const BoxConstraints(maxHeight: 840),
             child: Scrollbar(
               controller: _choicesScroll,
               thickness: 4,
@@ -585,7 +603,12 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                       absorbing: _choicesLocked,
                       child: ExcludeFocus(
                         excluding: _choicesLocked,
-                        child: _choices(),
+                        // Clipped choices can overlap the fixed footer in
+                        // screen coordinates. Keep Tab in the form's order.
+                        child: FocusTraversalGroup(
+                          policy: WidgetOrderTraversalPolicy(),
+                          child: _choices(),
+                        ),
                       ),
                     ),
                     // Under everything chosen, and OUTSIDE the AbsorbPointer
@@ -757,36 +780,76 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     );
   }
 
-  Widget _sectionLabel(String label) => Padding(
-    padding: const EdgeInsets.only(bottom: 10),
-    child: Text(
-      label,
-      style: TextStyle(
-        fontSize: 14,
-        fontWeight: FontWeight.w500,
-        color: grid.AppPalette.textSecondary,
-      ),
+  Widget _sectionHeader(
+    String label,
+    String prompt,
+    HarnessHelpTopic helpTopic, {
+    required bool compactHeight,
+  }) => Padding(
+    padding: EdgeInsets.only(bottom: compactHeight ? 12 : 16),
+    child: OverflowBar(
+      alignment: MainAxisAlignment.spaceBetween,
+      overflowAlignment: OverflowBarAlignment.end,
+      spacing: 20,
+      overflowSpacing: 4,
+      children: [
+        Semantics(
+          header: true,
+          child: Text.rich(
+            TextSpan(
+              children: [
+                TextSpan(
+                  text: '$label.',
+                  style: TextStyle(
+                    fontWeight: grid.AppFont.semibold,
+                    color: grid.AppPalette.textPrimary,
+                  ),
+                ),
+                TextSpan(text: ' $prompt'),
+              ],
+            ),
+            style: TextStyle(
+              fontSize: 20,
+              height: 1.35,
+              fontWeight: grid.AppFont.regular,
+              color: grid.AppPalette.textSecondary,
+            ),
+          ),
+        ),
+        HarnessHelpLink(topic: helpTopic),
+      ],
     ),
   );
 
   Widget _choices() => LayoutBuilder(
     builder: (context, constraints) {
       final scaler = MediaQuery.textScalerOf(context);
-      final minimumTileWidth = 180 * math.min(1.3, scaler.scale(14) / 14);
-      final columns = constraints.maxWidth >= minimumTileWidth * 4 + 30
+      final compactHeight = MediaQuery.sizeOf(context).height < 800;
+      final sectionGap = compactHeight ? 24.0 : 32.0;
+      final minimumTileWidth = 172 * math.min(1.3, scaler.scale(16) / 16);
+      final columns =
+          constraints.maxWidth >= minimumTileWidth * 4 + AppChoiceTile.gap * 3
           ? 4
-          : constraints.maxWidth >= minimumTileWidth * 2 + 10
+          : constraints.maxWidth >= minimumTileWidth * 2 + AppChoiceTile.gap
           ? 2
           : 1;
       final tileSize = Size(
-        (constraints.maxWidth - 10 * (columns - 1)) / columns,
-        math.max(76, scaler.scale(14) * 2.5 + scaler.scale(12) * 1.25 + 24),
+        (constraints.maxWidth - AppChoiceTile.gap * (columns - 1)) / columns,
+        math.max(
+          compactHeight ? 96 : 100,
+          scaler.scale(16) * 2.5 + scaler.scale(14) * 1.25 + 38,
+        ),
       );
       return Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _sectionLabel('Choose an agent'),
+          _sectionHeader(
+            'Agent',
+            'Choose who you’ll work with.',
+            HarnessHelpTopic.agent,
+            compactHeight: compactHeight,
+          ),
           AgentPicker(
             compact: true,
             tileSize: tileSize,
@@ -862,11 +925,21 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
               ],
             ),
           ],
-          const SizedBox(height: _gapField),
-          _sectionLabel('Where will this agent run?'),
+          SizedBox(height: sectionGap),
+          _sectionHeader(
+            'Machine',
+            'Where would you like your agent to run?',
+            HarnessHelpTopic.machine,
+            compactHeight: compactHeight,
+          ),
           _machineOptions(tileSize),
-          const SizedBox(height: _gapField),
-          _sectionLabel('Which project will this agent work in?'),
+          SizedBox(height: sectionGap),
+          _sectionHeader(
+            'Project',
+            'Start something new or choose an existing project.',
+            HarnessHelpTopic.project,
+            compactHeight: compactHeight,
+          ),
           PageStorage(
             bucket: _projectChoices,
             child: NewAgentProjectPicker(
@@ -1010,7 +1083,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     value: _machineId,
     moreKey: const Key('new-agent-machine-more'),
     moreLabel: 'More machines',
-    moreLeading: const Icon(LucideIcons.monitor, size: 18),
+    moreLeading: const Icon(LucideIcons.monitor, size: 22),
     optionKey: (id) => ValueKey('new-agent-machine-$id'),
     showDetails: true,
     compact: true,
@@ -1024,14 +1097,14 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
         SelectOption(
           value: machine.machine.machineId,
           label: machine.machine.displayName,
-          detail: machine.isLocalMachine ? 'This machine' : null,
+          detail: machine.isLocalMachine ? 'This computer' : 'Remote',
           leading: () => Icon(
             _machineOnline(machine)
                 ? (machine.isLocalMachine
                       ? LucideIcons.laptop
                       : LucideIcons.monitor)
                 : LucideIcons.monitorOff,
-            size: 18,
+            size: 22,
             color: _machineOnline(machine)
                 ? grid.AppPalette.textPrimary
                 : grid.AppPalette.textFaint,
@@ -1064,9 +1137,6 @@ const double _dialogWidth = 1080;
 
 /// Blocks inside one card: the command, the facts, the reason.
 const double _gapBlock = 12;
-
-/// One field and the next, down the choices column.
-const double _gapField = 24;
 
 class _BypassCheck extends StatelessWidget {
   const _BypassCheck({

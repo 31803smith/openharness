@@ -172,7 +172,11 @@ void main() {
     await tester.pumpAndSettle();
     // A new project needs no folder: the daemon prepares one. That keeps the
     // native folder panel out of these tests, which are about the harness.
-    await tester.tap(find.byKey(const ValueKey('new-agent-folder-newProject')));
+    final newProject = find.byKey(
+      const ValueKey('new-agent-folder-newProject'),
+    );
+    await tester.ensureVisible(newProject);
+    await tester.tap(newProject);
     await tester.pumpAndSettle();
     return notifier;
   }

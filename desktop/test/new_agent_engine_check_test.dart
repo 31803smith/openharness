@@ -222,10 +222,15 @@ void main() {
       app: app,
     );
     final pending = app.pending['machine-1'] = Completer<void>();
+    await tester.ensureVisible(find.byKey(const Key('new-agent-retry-check')));
     await tester.tap(find.byKey(const Key('new-agent-retry-check')));
     await tester.pump();
     await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('new-agent-machine-machine-2')));
+    final otherMachine = find.byKey(
+      const ValueKey('new-agent-machine-machine-2'),
+    );
+    await tester.ensureVisible(otherMachine);
+    await tester.tap(otherMachine);
     await tester.pumpAndSettle();
     await tester.ensureVisible(
       find.byKey(const ValueKey('new-agent-quick-codex')),

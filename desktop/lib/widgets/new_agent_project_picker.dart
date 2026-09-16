@@ -202,15 +202,15 @@ class _NewAgentProjectPickerState extends State<NewAgentProjectPicker> {
       mainAxisSize: MainAxisSize.min,
       children: [
         Wrap(
-          spacing: 10,
-          runSpacing: 10,
+          spacing: AppChoiceTile.gap,
+          runSpacing: AppChoiceTile.gap,
           children: [
             AppChoiceTile(
               key: const Key('new-agent-folder-newProject'),
               size: widget.tileSize,
               focusNode: widget.focusNode,
               label: 'New project',
-              leading: const Icon(LucideIcons.folderPlus, size: 18),
+              leading: const Icon(LucideIcons.folderPlus, size: 22),
               selected: _source == _ProjectSource.newProject,
               onPressed: widget.locked
                   ? null
@@ -220,11 +220,11 @@ class _NewAgentProjectPickerState extends State<NewAgentProjectPicker> {
               key: const Key('new-agent-project-browse'),
               size: widget.tileSize,
               focusNode: _localFocus,
-              label: 'Local',
+              label: 'Existing folder',
               detail: _source == _ProjectSource.local && _folder != null
                   ? p.basename(_folder!)
                   : null,
-              leading: const Icon(LucideIcons.folderOpen, size: 18),
+              leading: const Icon(LucideIcons.folderOpen, size: 22),
               selected: _source == _ProjectSource.local,
               onPressed: widget.locked || _browsing ? null : _browse,
             ),
@@ -233,7 +233,7 @@ class _NewAgentProjectPickerState extends State<NewAgentProjectPicker> {
               size: widget.tileSize,
               label: 'Git',
               detail: _repository?.name,
-              leading: const Icon(LucideIcons.gitBranch, size: 18),
+              leading: const Icon(LucideIcons.gitBranch, size: 22),
               selected: _source == _ProjectSource.git,
               onPressed: widget.locked ? null : _git,
             ),
@@ -246,6 +246,7 @@ class _NewAgentProjectPickerState extends State<NewAgentProjectPicker> {
                 options: recent,
                 width: widget.tileSize.width,
                 height: widget.tileSize.height,
+                padding: AppChoiceTile.padding,
                 selected: selectedRecent,
                 fillColor: selectedRecent
                     ? grid.AppPalette.swarmAccent.withValues(alpha: .16)
@@ -258,7 +259,7 @@ class _NewAgentProjectPickerState extends State<NewAgentProjectPicker> {
                   detail: selectedRecent && _folder != null
                       ? p.basename(_folder!)
                       : null,
-                  leading: const Icon(LucideIcons.history, size: 18),
+                  leading: const Icon(LucideIcons.history, size: 22),
                   trailing: const Icon(Icons.keyboard_arrow_down, size: 18),
                 ),
               ),
