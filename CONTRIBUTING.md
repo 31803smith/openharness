@@ -44,13 +44,15 @@ not code at all.
    you ran them against** — "`npm test` plus `test:tmux-real` on tmux 3.5a, macOS" is worth more than
    a green checkbox.
 
-   That last part is not politeness. CI now runs `npm run typecheck` and `npm test` on every pull
-   request (Ubuntu, on the same pinned Node the released bundle is built with), so a green check
-   means those two passed — and **nothing more**. The suites that need real software are gated
-   behind `RUN_*` env vars precisely because a hosted runner has no tmux server, no Herdr and no
-   Cursor, so `test:tmux-real`, `test:herdr-real` and `test:cursor-e2e` are still only ever run by
-   you and by the maintainer reviewing you. For an engine or a multiplexer, that is the half of the
-   verdict that matters, and it starts from what you report.
+   That last part is not politeness. Nothing runs automatically on a pull request: the CI workflow
+   (`npm run typecheck` and `npm test` on Ubuntu, on the same pinned Node the released bundle is
+   built with) is started by hand — Actions -> CI -> Run workflow — when a maintainer wants a
+   second opinion on your branch, and even then a green run means those two passed and **nothing
+   more**. The suites that need real software are gated behind `RUN_*` env vars precisely because a
+   hosted runner has no tmux server, no Herdr and no Cursor, so `test:tmux-real`, `test:herdr-real`
+   and `test:cursor-e2e` are only ever run by you and by the maintainer reviewing you. For an engine
+   or a multiplexer, that is the half of the verdict that matters, and it starts from what you
+   report.
 5. **Review is manual, and hands-on.** A maintainer pulls the branch and runs the suites locally. For
    an engine or a multiplexer that also means installing the real software, so tell us exactly what to
    install and how you exercised it — a change nobody can reproduce cannot be merged, however good it

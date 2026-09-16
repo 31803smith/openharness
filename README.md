@@ -470,8 +470,9 @@ Each product releases on its own tag and the suffix routes the workflow: `vX.Y.Z
 publishes the daemon (running daemons pick it up within a minute), `vX.Y.Z_backend` builds the image,
 `vX.Y.Z_desktop` builds, signs and publishes both macOS bundles and both Linux architectures.
 `make release-cli|release-backend|release-desktop` cut them; `make upload-circle` publishes device
-firmware over the air. `ci.yml` runs the CLI suite on every pull request and holds no secrets, which
-is what lets it run on a fork's code; see [`docs/cicd.md`](docs/cicd.md). `make remote-machine`
+firmware over the air. `ci.yml` runs the CLI suite on demand (Actions -> CI -> Run workflow) and holds
+no secrets, which is what lets it run on a fork's branch; see [`docs/cicd.md`](docs/cicd.md).
+`make remote-machine`
 brings up a second machine in Docker so the remote path can be exercised from one laptop.
 
 ## Docs
