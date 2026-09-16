@@ -4512,25 +4512,35 @@ static void create_tile(proj_t *p)
 // colors from the same vendored assets used by the web app.
 // Engine badge = product mark. Claude is a recolored monochrome mask; other marks retain the exact
 // colors from the same vendored assets used by the web app.
+// The product mark for an engine id, or NULL. `recolor` says the mark is a monochrome mask drawn in
+// COL_CLAUDE (only Claude's is); every other mark keeps the colours of its vendored asset. One table,
+// read by the tile header and the notification rows alike.
+static const lv_image_dsc_t *engine_mark(const char *engine, bool *recolor)
+{
+    *recolor = false;
+    if (!engine || !engine[0]) return NULL;
+    if (!strcmp(engine, "claude"))      { *recolor = true; return &icon_claude; }
+    if (!strcmp(engine, "codex"))       return &icon_codex;
+    if (!strcmp(engine, "cursor"))      return &icon_cursor;
+    if (!strcmp(engine, "opencode"))    return &icon_opencode;
+    if (!strcmp(engine, "pi"))          return &icon_pi;
+    if (!strcmp(engine, "hermes"))      return &icon_hermes;
+    if (!strcmp(engine, "commandcode")) return &icon_commandcode;
+    if (!strcmp(engine, "devin"))       return &icon_devin;
+    if (!strcmp(engine, "muse"))        return &icon_muse;
+    if (!strcmp(engine, "amp"))         return &icon_amp;
+    if (!strcmp(engine, "kilo"))        return &icon_kilo;
+    if (!strcmp(engine, "grok"))        return &icon_grok;
+    if (!strcmp(engine, "agy"))         return &icon_agy;
+    if (!strcmp(engine, "copilot"))     return &icon_copilot;
+    return NULL;
+}
+
 static void apply_engine_label(proj_t *p)
 {
     if (!p->engine_lbl || !p->engine_text_lbl) return;
-    const lv_image_dsc_t *src = NULL;
     bool recolor = false;
-    if (!strcmp(p->engine, "claude"))      { src = &icon_claude; recolor = true; }
-    else if (!strcmp(p->engine, "codex"))  { src = &icon_codex; }
-    else if (!strcmp(p->engine, "cursor")) { src = &icon_cursor; }
-    else if (!strcmp(p->engine, "opencode")) { src = &icon_opencode; }
-    else if (!strcmp(p->engine, "pi"))      { src = &icon_pi; }
-    else if (!strcmp(p->engine, "hermes"))  { src = &icon_hermes; }
-    else if (!strcmp(p->engine, "commandcode")) { src = &icon_commandcode; }
-    else if (!strcmp(p->engine, "devin")) { src = &icon_devin; }
-    else if (!strcmp(p->engine, "muse")) { src = &icon_muse; }
-    else if (!strcmp(p->engine, "amp")) { src = &icon_amp; }
-    else if (!strcmp(p->engine, "kilo")) { src = &icon_kilo; }
-    else if (!strcmp(p->engine, "grok")) { src = &icon_grok; }
-    else if (!strcmp(p->engine, "agy")) { src = &icon_agy; }
-    else if (!strcmp(p->engine, "copilot")) { src = &icon_copilot; }
+    const lv_image_dsc_t *src = engine_mark(p->engine, &recolor);
     lv_obj_add_flag(p->engine_text_lbl, LV_OBJ_FLAG_HIDDEN);   // product-mark path only
     if (src) {
         lv_image_set_src(p->engine_lbl, src);
@@ -5664,13 +5674,28 @@ static void notif_rebuild(void)
         lv_obj_set_flex_flow(nmrow, LV_FLEX_FLOW_ROW);
         lv_obj_set_flex_align(nmrow, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
         lv_obj_set_style_pad_column(nmrow, 8, 0);
-        lv_obj_t *dot = lv_obj_create(nmrow);   // green "pending" dot (removed only when tapped)
-        lv_obj_remove_style_all(dot);
-        lv_obj_clear_flag(dot, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_set_size(dot, 8, 8);
-        lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
-        lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
-        lv_obj_set_style_bg_color(dot, lv_color_hex(0x04fe08), 0);
+        // The agent's ENGINE MARK where the green dot was (owner, 2026-09-16, mockup/notif-engine-mark.html
+        // option A): the same 20px product mark the tile wears, native size, no scaling — which kind of
+        // agent finished, before the name is read. The dot stays only for an agent the list no longer
+        // has, whose engine the dial cannot know.
+        bool recolor = false;
+        int ai = find_proj(n->proj_id);
+        const lv_image_dsc_t *mark = ai >= 0 ? engine_mark(s_proj[ai].engine, &recolor) : NULL;
+        if (mark) {
+            lv_obj_t *ic = lv_image_create(nmrow);
+            lv_obj_clear_flag(ic, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+            lv_image_set_src(ic, mark);
+            lv_obj_set_style_image_recolor(ic, COL_CLAUDE, 0);
+            lv_obj_set_style_image_recolor_opa(ic, recolor ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+        } else {
+            lv_obj_t *dot = lv_obj_create(nmrow);   // green "pending" dot, as before
+            lv_obj_remove_style_all(dot);
+            lv_obj_clear_flag(dot, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_set_size(dot, 8, 8);
+            lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
+            lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
+            lv_obj_set_style_bg_color(dot, lv_color_hex(0x04fe08), 0);
+        }
         lv_obj_t *nm = lv_label_create(nmrow);
         lv_obj_set_style_text_font(nm, &geist_reg_20, 0);   // agent name — small, GREEN
         lv_obj_set_style_text_color(nm, lv_color_hex(0x04fe08), 0);
