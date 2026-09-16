@@ -107,14 +107,54 @@ class _TerminalPageState extends State<TerminalPage>
   /// bottom inset is pinned at zero inside this page.
   bool _keyboardUp = false;
 
+  /// Whether the keyboard is mid-animation, and so the pane's height is still
+  /// changing frame by frame. Handed to [TerminalPanel.settling], which freezes
+  /// the renderer and the auto-resize until this clears.
+  bool _keyboardSettling = false;
+
+  /// The last bottom inset seen, in physical pixels, and the timer that decides
+  /// the animation has stopped.
+  ///
+  /// The platform gives no "keyboard animation finished" callback on either OS —
+  /// only a stream of [didChangeMetrics] ticks — so the end is detected by the
+  /// inset going quiet. The window is a little longer than one frame at 60Hz so
+  /// a slow frame mid-animation does not read as the end of it.
+  double? _lastInset;
+  Timer? _settleTimer;
+  static const _settleWindow = Duration(milliseconds: 80);
+
+  /// Stops the settle watch, leaving the renderer live.
+  ///
+  /// ⚠️ Called from [dispose], so it must not touch [setState].
+  void _cancelSettle() {
+    _settleTimer?.cancel();
+    _settleTimer = null;
+    _lastInset = null;
+  }
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
   }
 
+  /// Releases the freeze when this page is parked mid-animation.
+  ///
+  /// A settle that never ends would otherwise be waiting on [didChangeMetrics]
+  /// ticks that only the page ON SCREEN gets, and the pane would come back from
+  /// the pager with its renderer still gated.
+  @override
+  void didUpdateWidget(TerminalPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.isActive && !widget.isActive) {
+      _cancelSettle();
+      if (_keyboardSettling) setState(() => _keyboardSettling = false);
+    }
+  }
+
   @override
   void dispose() {
+    _cancelSettle();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -133,15 +173,42 @@ class _TerminalPageState extends State<TerminalPage>
   void didChangeMetrics() {
     super.didChangeMetrics();
     if (!mounted) return;
+    final inset = View.of(context).viewInsets.bottom;
     // The FIRST frame of the keyboard rising is enough — it need not finish.
     // Spending the claim this early is the point: it is off long before any
     // Back press can arrive.
-    final up = View.of(context).viewInsets.bottom > 0;
+    final up = inset > 0;
     final claim = _claimSpent || up;
-    if (up == _keyboardUp && claim == _claimSpent) return;
+
+    // Every tick that MOVES the inset is the animation still running; the run
+    // ends when one window passes without another move. Gated on a real change
+    // so the ticks this page gets for everything else — a rotation, a status
+    // bar resizing — never freeze a pane whose height is not moving.
+    //
+    // The very first tick is deliberately not a move: `_lastInset` starts null
+    // and only seeds the baseline, so arriving on this page cannot begin a
+    // settle of its own.
+    final previous = _lastInset;
+    _lastInset = inset;
+    if (previous != null && inset != previous) {
+      _settleTimer?.cancel();
+      _settleTimer = Timer(_settleWindow, () {
+        _settleTimer = null;
+        if (!mounted || !_keyboardSettling) return;
+        setState(() => _keyboardSettling = false);
+      });
+    }
+
+    final settling = _settleTimer != null;
+    if (up == _keyboardUp &&
+        claim == _claimSpent &&
+        settling == _keyboardSettling) {
+      return;
+    }
     setState(() {
       _keyboardUp = up;
       _claimSpent = claim;
+      _keyboardSettling = settling;
     });
   }
 
@@ -337,6 +404,11 @@ class _TerminalPageState extends State<TerminalPage>
                                 // from taking it back after Back.
                                 focused: widget.isActive && !_claimSpent,
                                 visible: widget.isActive,
+                                // Hold the renderer still while the keyboard
+                                // slides. Separate from `visible` because this
+                                // must NOT release focus — the animation being
+                                // waited on is the one that focus started.
+                                settling: _keyboardSettling,
                                 showHeader: false,
                                 // No composer, and so no grip above it: the
                                 // page hands the pane its full height and the

@@ -54,6 +54,24 @@ class TerminalPanel extends StatefulWidget {
   /// Only the focused grid tile may claim keyboard focus on mount/rebuild.
   final bool focused;
   final bool visible;
+
+  /// True while the software keyboard is mid-animation and the pane's height is
+  /// still a moving target.
+  ///
+  /// Freezes the renderer for the duration, WITHOUT touching focus — that is
+  /// the whole reason this is not just `visible: false`, which releases the
+  /// keyboard this animation is raising.
+  ///
+  /// ⚠️ What actually stutters is not painting, it is the RESIZE. Every frame
+  /// of the keyboard sliding gives the view a new height, xterm re-derives rows
+  /// from it in `performLayout` and fires `onResize` → `session.resize` → a
+  /// `terminal_resize` frame and a real SIGWINCH on the far machine. A full-screen
+  /// TUI redraws for each one, and those redraws come back as keyframes that
+  /// repaint the pane while it is still moving. `renderingEnabled: false` gates
+  /// both halves of that loop in the vendored renderer (see
+  /// `RenderTerminal._resizeTerminalIfNeeded`), so the shell is asked exactly
+  /// once, for the height the keyboard settles at.
+  final bool settling;
   final Size? viewportSize;
 
   /// A shared terminal can move to another harness without being remounted.
@@ -93,6 +111,7 @@ class TerminalPanel extends StatefulWidget {
     required this.session,
     required this.focused,
     this.visible = true,
+    this.settling = false,
     this.viewportSize,
     this.paneLocation,
     this.layoutRequest,
@@ -280,6 +299,17 @@ class _TerminalPanelState extends State<TerminalPanel>
         (!oldWidget.visible || oldWidget.paneLocation != widget.paneLocation)) {
       _afterTerminalMounted();
     }
+    // The keyboard has finished moving and the pane's height is final. Measure
+    // it once and ask the shell for that size — the single SIGWINCH this whole
+    // gate exists to reduce the animation to.
+    //
+    // `claimFocus: false` on purpose: the keyboard is already up, or already
+    // gone, and whoever owns the caret decided that. Re-claiming here would
+    // pull it back from the composer, or summon the keyboard again just as the
+    // user finished dismissing it.
+    if (oldWidget.settling && !widget.settling && widget.visible) {
+      _afterTerminalMounted(claimFocus: false);
+    }
     if (oldWidget.viewportSize != widget.viewportSize ||
         oldWidget.layoutRequest != widget.layoutRequest) {
       // Geometry can change while a resize handle or another control owns
@@ -337,6 +367,13 @@ class _TerminalPanelState extends State<TerminalPanel>
   /// is `remote` (see the filter in `_loadMachines`), so `isRemote` is true for every pane,
   /// including this very computer. What separates them is whether the machine's computerId is this
   /// one, which is what puts it on the loopback transport.
+  /// Whether the renderer is allowed to paint and to resize the remote shell.
+  ///
+  /// A parked page stops both because nobody is looking; a settling one stops
+  /// them because its height is still moving. Focus is deliberately NOT part of
+  /// this — see [TerminalPanel.settling].
+  bool get _live => widget.visible && !widget.settling;
+
   bool get _showsComposer {
     final machineState = widget.notifier.stateOf(widget.session.machineId);
     return machineState?.isLocalMachine != true && widget.composerVisible;
@@ -586,7 +623,9 @@ class _TerminalPanelState extends State<TerminalPanel>
     if (!findEnabled) _clearFindHighlight();
     final enabled =
         mounted &&
-        widget.visible &&
+        // `_live`, not `visible`: a cursor phase is a markNeedsPaint on the
+        // terminal, and nothing should repaint it while the keyboard slides.
+        _live &&
         !widget.readOnly &&
         _focusNode.hasFocus &&
         widget.session.acceptsInput &&
@@ -1294,9 +1333,9 @@ class _TerminalPanelState extends State<TerminalPanel>
                           session.terminal,
                           key: _terminalViewKey,
                           controller: _controller,
-                          autoResize: widget.visible,
+                          autoResize: _live,
                           resizeBuffer: false,
-                          renderingEnabled: widget.visible,
+                          renderingEnabled: _live,
                           scrollController: _scrollController,
                           focusNode: _focusNode,
                           autofocus: widget.focused && !showComposer,
