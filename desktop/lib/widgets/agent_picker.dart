@@ -50,6 +50,7 @@ class AgentPicker extends StatelessWidget {
     ],
     preferredValues: quickAgents,
     onChanged: onChanged,
+    notifyOnReselect: true,
     optionKey: (id) => ValueKey('new-agent-quick-$id'),
     moreKey: const Key('new-agent-engine-field'),
     moreLabel: 'More agents',

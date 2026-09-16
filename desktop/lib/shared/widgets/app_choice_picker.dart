@@ -22,6 +22,7 @@ class AppChoicePicker<T> extends StatefulWidget {
     this.wrap = true,
     this.compact = false,
     this.tileSize,
+    this.notifyOnReselect = false,
   });
 
   final T value;
@@ -36,6 +37,7 @@ class AppChoicePicker<T> extends StatefulWidget {
   final bool wrap;
   final bool compact;
   final Size? tileSize;
+  final bool notifyOnReselect;
 
   @override
   State<AppChoicePicker<T>> createState() => _AppChoicePickerState<T>();
@@ -100,7 +102,9 @@ class _AppChoicePickerState<T> extends State<AppChoicePicker<T>> {
   ];
 
   void _choose(T next) {
-    if (next != widget.value) widget.onChanged(next);
+    // Clicking the current choice is still explicit intent. Callers may need
+    // to pin it against an asynchronous discovery/default update.
+    if (next != widget.value || widget.notifyOnReselect) widget.onChanged(next);
   }
 
   @override

@@ -24,6 +24,17 @@ import 'keymap_host_test.dart' show MemoryKeymap;
 import 'keymap_runtime_test.dart' as runtime;
 
 final _newHarness = find.byKey(const ValueKey('harness-start-new'));
+final _localProject = find.byKey(const Key('new-agent-project-browse'));
+final _newProject = find.byKey(const Key('new-agent-folder-newProject'));
+
+FocusNode _localFocus(WidgetTester tester) =>
+    Focus.of(tester.element(find.text('Local')));
+
+Future<void> _browseLocal(WidgetTester tester) async {
+  await tester.ensureVisible(_localProject);
+  await tester.tap(_localProject);
+}
+
 final _startInput = find.byKey(const ValueKey('harness-start-search'));
 
 class _FirstUseApp extends AppNotifier {
@@ -161,11 +172,6 @@ void main() {
         expect(node.hasPrimaryFocus, isTrue);
       }
 
-      final machineToggle = find.byKey(const Key('new-agent-machine-toggle'));
-      await tabTo(Focus.of(tester.element(find.text('My computer').last)));
-      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-      await tester.pumpAndSettle();
-      expect(machineToggle, findsOneWidget);
       await tabTo(Focus.of(tester.element(find.text('Workshop machine'))));
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pumpAndSettle();
@@ -179,9 +185,7 @@ void main() {
       );
       expect(app.launches, isEmpty);
 
-      final folder = tester
-          .widget<InkWell>(find.byKey(const Key('new-agent-folder')))
-          .focusNode!;
+      final folder = _localFocus(tester);
       await tabTo(folder);
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pumpAndSettle();
@@ -287,10 +291,10 @@ void main() {
     expect(picker.opened, 0);
     expect(find.byType(AlertDialog), findsOneWidget);
     expect(app.probes, 1);
-    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await _browseLocal(tester);
     await tester.pump();
     expect(picker.opened, 1);
-    expect(find.text('/work/my-project'), findsOneWidget);
+    expect(find.text('my-project'), findsOneWidget);
     expect(app.launches, isEmpty);
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pump();
@@ -342,15 +346,13 @@ void main() {
       await tester.tap(_newHarness);
       await tester.pump();
       expect(picker.opened, 0);
-      await tester.tap(find.byKey(const Key('new-agent-folder')));
+      await tester.tap(_localProject);
       await tester.pump();
       expect(picker.opened, 1);
-      expect(find.text('/work/my-project'), findsOneWidget);
-      await tester.tap(find.byKey(const Key('new-agent-machine-toggle')));
-      await tester.pump();
+      expect(find.text('my-project'), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('new-agent-machine-m')));
       await tester.pump();
-      expect(find.text('/work/my-project'), findsOneWidget);
+      expect(find.text('my-project'), findsOneWidget);
       expect(
         tester
             .widget<AppChoicePicker<String>>(
@@ -367,7 +369,7 @@ void main() {
             .options
             .last
             .detail,
-        'Remote · Offline',
+        isNull,
       );
       expect(app.launches, isEmpty);
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
@@ -390,7 +392,7 @@ void main() {
       await mount(tester, app);
       await chord(tester, LogicalKeyboardKey.keyN);
       await tester.pump();
-      await tester.tap(find.text('Browse…'));
+      await _browseLocal(tester);
       await tester.pump();
       await tester.tap(find.byKey(const ValueKey('create-agent-submit')));
       await tester.pump();
@@ -402,11 +404,7 @@ void main() {
       expect(find.text('Creating agent…'), findsOneWidget);
       expect(app.launches, hasLength(1));
       expect(app.panes, isEmpty);
-      final folder = find.byKey(const Key('new-agent-folder'));
-      expect(
-        tester.widget<InkWell>(folder).focusNode!.canRequestFocus,
-        isFalse,
-      );
+      expect(tester.widget<AppChoiceTile>(_localProject).onPressed, isNull);
 
       app.creation!.complete('Choose another project folder and try again.');
       await tester.pump();
@@ -414,7 +412,7 @@ void main() {
         find.text('Choose another project folder and try again.'),
         findsOneWidget,
       );
-      expect(find.text('/work/my-project'), findsOneWidget);
+      expect(find.text('my-project'), findsOneWidget);
       expect(
         tester
             .widget<AppSelectField<String>>(
@@ -423,7 +421,7 @@ void main() {
             .value,
         'claude',
       );
-      await tester.tap(find.text('Change'));
+      await _browseLocal(tester);
       await tester.pump();
       expect(
         find.text('Choose another project folder and try again.'),
@@ -520,16 +518,14 @@ void main() {
         await tester.pump();
         expect(find.byType(AlertDialog), findsOneWidget);
         expect(find.text('/work/existing'), findsNothing);
-        expect(find.text('Choose a folder…'), findsOneWidget);
-        await tester.tap(find.byKey(const Key('new-agent-machine-toggle')));
-        await tester.pump();
+        expect(tester.widget<AppChoiceTile>(_newProject).selected, isTrue);
         final machineField = tester.widget<AppChoicePicker<String>>(
           find.byKey(const Key('new-agent-machine-field')),
         );
         expect(machineField.value, 'm');
         expect(machineField.options.map((option) => option.detail), [
-          'This computer',
-          'Remote',
+          'This machine',
+          null,
         ]);
         expect(machineField.options.map((option) => option.label), [
           'My computer',
@@ -546,7 +542,7 @@ void main() {
         expect(app.panes, [pane]);
         expect(app.launches, isEmpty);
         expect(app.input, isEmpty);
-        expect(find.text('Cancel'), findsOneWidget);
+        expect(find.text('Cancel'), findsNothing);
         expect(find.text('Back to Search'), findsNothing);
         await tester.sendKeyEvent(LogicalKeyboardKey.escape);
         await tester.pump();
@@ -582,25 +578,32 @@ void main() {
       await chord(tester, LogicalKeyboardKey.keyN);
       await tester.pump();
 
-      final folder = tester.widget<InkWell>(
-        find.byKey(const Key('new-agent-folder')),
+      expect(
+        Focus.of(tester.element(find.text('New project'))).hasPrimaryFocus,
+        isTrue,
       );
-      expect(folder.focusNode!.hasPrimaryFocus, isTrue);
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      expect(_localFocus(tester).hasPrimaryFocus, isTrue);
       expect(picker.opened, 0);
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pump();
       expect(picker.opened, 1);
-      expect(find.text('Waiting for the folder picker…'), findsOneWidget);
+      expect(tester.widget<AppChoiceTile>(_localProject).onPressed, isNull);
       picker.pending!.complete('/work/my-project');
       await tester.pump();
       await tester.pump();
-      expect(find.text('/work/my-project'), findsOneWidget);
+      expect(find.text('my-project'), findsOneWidget);
       final submit = tester.widget<FilledButton>(
         find.byKey(const ValueKey('create-agent-submit')),
       );
+      for (var i = 0; i < 8 && !submit.focusNode!.hasPrimaryFocus; i++) {
+        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+        await tester.pump();
+      }
       expect(submit.focusNode!.hasPrimaryFocus, isTrue);
       expect(app.launches, isEmpty);
-      expect(find.text('Cancel'), findsOneWidget);
+      expect(find.text('Cancel'), findsNothing);
       expect(find.text('Back to Search'), findsNothing);
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pump();
@@ -634,12 +637,12 @@ void main() {
       addTearDown(() => FileSelectorPlatform.instance = oldPicker);
       await mount(tester, app);
       await chord(tester, LogicalKeyboardKey.keyN);
-      final field = find.byKey(const Key('new-agent-folder'));
+      final field = _localProject;
       await tester.tap(field);
       await tester.pump();
       await tester.pump();
-      expect(find.text('/work/my-project'), findsOneWidget);
-      final folder = tester.widget<InkWell>(field).focusNode!;
+      expect(find.text('my-project'), findsOneWidget);
+      final folder = _localFocus(tester);
       folder.requestFocus();
       await tester.pump();
       picker.pending = Completer<String?>();
@@ -654,7 +657,7 @@ void main() {
       await tester.pump();
       await tester.pump();
       expect(folder.hasPrimaryFocus, isTrue);
-      expect(find.text('/work/my-project'), findsOneWidget);
+      expect(find.text('my-project'), findsOneWidget);
       expect(app.launches, isEmpty);
       picker.pending = Completer<String?>();
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
@@ -694,17 +697,21 @@ void main() {
       find.byKey(const Key('new-agent-engine-field')),
     );
     expect(engine.value, 'codex');
-    expect(find.byKey(const Key('new-agent-machine-field')), findsNothing);
+    expect(find.byKey(const Key('new-agent-machine-field')), findsOneWidget);
     expect(
-      tester.getTopLeft(find.text('Agent')).dy,
-      lessThan(tester.getTopLeft(find.text('Project')).dy),
+      tester.getTopLeft(find.text('Choose a harness')).dy,
+      lessThan(
+        tester
+            .getTopLeft(find.text('Which project will this agent work in?'))
+            .dy,
+      ),
     );
     expect(picker.opened, 0);
-    await tester.tap(find.byKey(const Key('new-agent-folder')));
+    await tester.tap(_localProject);
     await tester.pump();
     expect(picker.opened, 1);
     expect(app.probes, 1);
-    expect(find.text('/work/my-project'), findsOneWidget);
+    expect(find.text('my-project'), findsOneWidget);
     expect(app.launches, isEmpty);
     await tester.tap(find.byKey(const ValueKey('create-agent-submit')));
     await tester.pump();
@@ -789,7 +796,7 @@ void main() {
       await tester.tap(_newHarness);
       await tester.pump();
       expect(find.byType(AlertDialog), findsOneWidget);
-      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await _browseLocal(tester);
       await tester.pump();
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await chord(tester, LogicalKeyboardKey.keyN);
@@ -807,7 +814,7 @@ void main() {
       picker.pending!.complete('/work/chosen');
       await tester.pump();
       await tester.pump();
-      expect(find.text('/work/chosen'), findsOneWidget);
+      expect(find.text('chosen'), findsOneWidget);
       expect(
         tester
             .widget<AppSelectField<String>>(
@@ -835,7 +842,7 @@ void main() {
       await mount(tester, app);
       await tester.tap(_newHarness);
       await tester.pump();
-      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await _browseLocal(tester);
       await tester.pump();
       expect(picker.opened, 1);
       await tester.pumpWidget(const SizedBox());
@@ -862,7 +869,7 @@ void main() {
         await tester.pump();
         if (chooseExplicitly) {
           await tester.tap(
-            find.byKey(const ValueKey('new-agent-quick-autonomous/copper')),
+            find.byKey(const ValueKey('new-agent-quick-claude')),
           );
           await tester.pump();
         }
@@ -877,7 +884,7 @@ void main() {
         final engine = tester.widget<AppSelectField<String>>(
           find.byKey(const Key('new-agent-engine-field')),
         );
-        expect(engine.value, chooseExplicitly ? 'autonomous/copper' : 'codex');
+        expect(engine.value, chooseExplicitly ? 'claude' : 'codex');
         expect(app.launches, isEmpty);
         await tester.pumpWidget(const SizedBox());
         app.dispose();

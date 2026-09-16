@@ -334,6 +334,23 @@ void main() {
       ),
       findsOneWidget,
     );
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.byKey(const ValueKey('create-agent-submit')),
+          )
+          .onPressed,
+      isNotNull,
+      reason: 'An unsupported CLI must release the form for retry or another harness.',
+    );
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('new-agent-quick-claude')),
+    );
+    await tester.tap(find.byKey(const ValueKey('new-agent-quick-claude')));
+    await tester.pumpAndSettle();
+    await create(tester);
+    expect(app.launches.single['engine'], 'claude');
+    expect(app.launches.single['dsh'], isNull);
   });
 
   testWidgets('More lists the machine\'s harnesses after the engines', (

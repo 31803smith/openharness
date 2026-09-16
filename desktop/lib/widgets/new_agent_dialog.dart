@@ -421,6 +421,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
       final catalog = widget.notifier.stateOf(_machineId)?.dsh;
       if (catalog != null && !catalog.loaded && catalog.error != null) {
         setState(() {
+          _submitting = false;
           _error =
               'Update Harness CLI on $_machineName to create a '
               '${_labelOf(harness)} agent.';
@@ -784,10 +785,12 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
               setState(() {
                 unawaited(widget.notifier.agentPreference.select(value));
                 _engineChosenByUser = true;
-                _engine = value;
+                if (_engine != value) {
+                  _engine = value;
+                  _codexProfile = null;
+                  _codexProfilesBusy = true;
+                }
                 _error = null;
-                _codexProfile = null;
-                _codexProfilesBusy = true;
                 if (!kEngineBypassPermissionFlag.containsKey(
                   _baseEngine(value),
                 )) {

@@ -53,6 +53,13 @@ class _NewAgentProjectPickerState extends State<NewAgentProjectPicker> {
   late String? _folder = widget.initialFolder;
   GitHubRepository? _repository;
   bool _chosen = false, _browsing = false;
+  final _localFocus = FocusNode();
+
+  @override
+  void dispose() {
+    _localFocus.dispose();
+    super.dispose();
+  }
 
   @override
   void initState() {
@@ -153,6 +160,7 @@ class _NewAgentProjectPickerState extends State<NewAgentProjectPicker> {
 
   Future<void> _browse() async {
     if (_browsing || widget.locked) return;
+    final restoreFocus = _localFocus.hasFocus;
     _chosen = true;
     setState(() => _browsing = true);
     try {
@@ -161,7 +169,14 @@ class _NewAgentProjectPickerState extends State<NewAgentProjectPicker> {
         _select(_ProjectSource.local, folder: path);
       }
     } finally {
-      if (mounted) setState(() => _browsing = false);
+      if (mounted) {
+        setState(() => _browsing = false);
+        if (restoreFocus) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && !widget.locked) _localFocus.requestFocus();
+          });
+        }
+      }
     }
   }
 
@@ -204,6 +219,7 @@ class _NewAgentProjectPickerState extends State<NewAgentProjectPicker> {
             AppChoiceTile(
               key: const Key('new-agent-project-browse'),
               size: widget.tileSize,
+              focusNode: _localFocus,
               label: 'Local',
               detail: _source == _ProjectSource.local && _folder != null
                   ? p.basename(_folder!)
