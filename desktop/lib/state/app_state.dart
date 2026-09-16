@@ -5259,6 +5259,13 @@ class AppNotifier extends ChangeNotifier {
           _conn(pane.machineId).sendTerminalFrame(type, payload),
       sendBinary: (frame) => _sendTerminalBinary(pane.machineId, frame),
       onOpenStalled: () => _conn(pane.machineId).forceReconnect(),
+      // A `terminal_open` can round-trip app → local CLI → (for a relayed
+      // machine) the E2EE relay → the remote peer → tmux → back, possibly
+      // negotiating P2P on the way, so a cold open legitimately takes several
+      // seconds. Give the open watchdog 10s before it forces a full redial, so
+      // a merely slow open is not mistaken for a stale session and re-dialled
+      // needlessly; the forced-reconnect recovery still runs if it elapses.
+      resyncTimeout: const Duration(seconds: 10),
     );
     pane.session = terminal;
     terminal.addListener(notifyListeners);

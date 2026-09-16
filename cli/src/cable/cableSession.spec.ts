@@ -550,6 +550,34 @@ describe('cable session', () => {
     await session.stop()
   })
 
+  it('sends the focus without waiting for the new machine\'s history', async () => {
+    // THE BUG, measured on the desk: clicking from a local agent to a remote one left the dial on the old
+    // tile for 1.5 s. `selectMachine` awaited `pushRestores`, and a restore asks every agent's own machine
+    // what it was last doing — one cloud round trip per remote agent, in a serial loop, ahead of the one
+    // frame the person was actually waiting for. History is `restore: true`; it can land afterwards.
+    let releaseHistory!: () => void
+    const history = new Promise<void>((resolve) => { releaseHistory = resolve })
+    let selected = 'mac-local'
+    const host = makeHost({
+      selectedMachine: () => selected,
+      selectMachine: vi.fn(async (machineId: string) => { selected = machineId; return { ok: true as const } }),
+      listAgents: async () => [{ id: 'r1', name: 'Remote Claude', engine: 'claude' }],
+      recentSummaries: async () => { await history; return [{ recap: 'shipped it', text: 'shipped it' }] },
+    })
+    const { session, port } = await connect(host)
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
+    await settle()
+
+    await session.followApp('remote-machine', 'r1')
+
+    expect(port.sent.filter((m) => m.t === 'focus').map((m) => m.agentId)).toContain('r1')
+    expect(port.types()).not.toContain('summary')   // nothing of the history has been waited on
+
+    releaseHistory()
+    await vi.waitFor(() => expect(port.types()).toContain('summary'))
+    await session.stop()
+  })
+
   it('does not bounce a local app selection back to the previous remote agent', async () => {
     let selected = 'remote-machine'
     let finishSelection!: () => void
