@@ -227,7 +227,7 @@ class _AgentsBody extends StatelessWidget {
       );
     }
     if (agents.isEmpty && status == PhoneMachineStatus.connecting) {
-      return const PhoneListSkeleton();
+      return const PhoneListSkeleton(height: kPhoneAgentCardHeight);
     }
     final loadError = machine.agentsLoadError;
     if (agents.isEmpty && loadError != null) {
