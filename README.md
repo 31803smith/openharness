@@ -1,12 +1,12 @@
 # Harness
 
-Agents that build things, in one window. Code with Claude Code, Codex, Cursor and eleven more. PCBs
-with Copper. 3D parts with Solid. Keynotes with Marp. Every agent runs in a persistent terminal on
+Agents that build things, in one window. Code with Claude Code, Codex, Cursor and eleven more. 3D
+parts with Solid. PCBs with Copper. Keynotes with Marp. Every agent runs in a persistent terminal on
 any machine you own, and the domains beyond code get a viewer beside it that shows the work as it
 is made.
 
 <p align="center">
-  <img src=".github/assets/screenshots/marp.png" width="960" alt="A Marp tab: the keynote in the viewer on the left, the Claude Code agent that wrote it on the right, ten slides and Ready in the header">
+  <img src=".github/assets/screenshots/harnesses.gif" width="960" alt="Four tabs, one window: a Claude Code agent explaining the daemon; a Solid tab with a 3D case in the viewer beside the Codex agent that made it; a Copper tab with a fab-ready board beside its agent; a Marp tab with a keynote beside its agent">
 </p>
 
 ## One app, many harnesses
@@ -50,9 +50,9 @@ the machine, its viewer beside the terminal, and a header that says where the wo
 today, each on one of the agents above, and yours is a git repository away.
 
 <p align="center">
-  <img src=".github/assets/engines/copper.png" height="72" alt="Copper · PCB"       title="Copper · PCB, on Claude Code">
-  &nbsp;&nbsp;
   <img src=".github/assets/engines/solid.png"  height="72" alt="Solid · 3D design"  title="Solid · 3D design, on Codex">
+  &nbsp;&nbsp;
+  <img src=".github/assets/engines/copper.png" height="72" alt="Copper · PCB"       title="Copper · PCB, on Claude Code">
   &nbsp;&nbsp;
   <img src=".github/assets/engines/marp.png"   height="72" alt="Marp · Slides"      title="Marp · Slides, on Claude Code">
 </p>
@@ -60,14 +60,10 @@ today, each on one of the agents above, and yours is a git repository away.
 | Harness | You say | You get | You watch |
 |---|---|---|---|
 | **Claude Code, Codex, Cursor, …** · Code | "add OAuth to the API" | the change, in your repo | the agent's terminal |
-| **Copper** · PCB | "a USB-C powered ESP32 sensor board" | a fab-ready board, ordered in a click | the board, its checks, the fab |
 | **Solid** · 3D design | "an iPhone case with a lanyard loop" | a printable STEP part | the model: Build, Fit, Print, Review |
+| **Copper** · PCB | "a USB-C powered ESP32 sensor board" | a fab-ready board, ordered in a click | the board, its checks, the fab |
 | **Marp** · Slides | "a launch keynote for 200 engineers" | a keynote with art and speaker notes | the slides filling in, then Present |
 | **Yours** | | anything an agent can build in a folder | [build a harness](#extend-harness) |
-
-<p align="center">
-  <img src=".github/assets/screenshots/solid.png" width="960" alt="A Solid tab: the 3D part in the viewer, the Codex agent that made it beside it, Ready in the header">
-</p>
 
 ## Every machine you own
 
