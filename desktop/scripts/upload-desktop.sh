@@ -19,7 +19,8 @@
 # `--build-name`/`--build-number` flags, and this script asserts the artifact really carries it
 # before publishing, so the running release always equals the published manifest version.
 #
-# Prereqs: `gsutil` authenticated with WRITE access; the bucket/objects must be public-read;
+# Prereqs: `gcloud storage` (or gsutil) authenticated with WRITE access on the bucket; the
+# bucket/objects must be public-read;
 # `flutter` on PATH; the Xcode project signs Release with a "Developer ID Application" identity
 # (see macos/Runner.xcodeproj — CODE_SIGN_IDENTITY/DEVELOPMENT_TEAM) whose certificate + private key
 # must be in this machine's LOGIN keychain (NOT the System keychain — that one prompts for an admin
@@ -116,7 +117,37 @@ fi
 
 NOTARY_PROFILE="${NOTARY_PROFILE:-harness-notarize}"
 
-command -v gsutil  >/dev/null 2>&1 || { echo "error: gsutil not found — install/authenticate the gcloud SDK" >&2; exit 1; }
+# --- GCS client: `gcloud storage` if we have it, else gsutil ---
+# gsutil is a standalone Python tool that only understands gcloud's *user* and *service-account-key*
+# credentials. It cannot use the external-account (federated) credential that Workload Identity
+# Federation issues, so a CI job authenticated by WIF fails on every gsutil call while the identical
+# `gcloud storage` call works — it is the same gcloud binary that performed the token exchange.
+# gsutil stays as the fallback for a laptop whose SDK predates `gcloud storage`.
+# Kept byte-identical to cli/scripts/upload-cli.sh — fix both together.
+if command -v gcloud >/dev/null 2>&1 && gcloud storage --help >/dev/null 2>&1; then
+  GCS_CLI=gcloud
+elif command -v gsutil >/dev/null 2>&1; then
+  GCS_CLI=gsutil
+  echo ">> note: falling back to gsutil (no 'gcloud storage'); this will not work under workload identity federation" >&2
+else
+  echo "error: neither 'gcloud storage' nor gsutil found — install/authenticate the gcloud SDK" >&2
+  exit 1
+fi
+
+# gcs_cp <src> <dst> [cache-control] [content-type] — either side may be gs:// or a local path or `-`.
+gcs_cp() {
+  local src="$1" dst="$2" cc="${3:-}" ct="${4:-}" args=()
+  if [ "$GCS_CLI" = gcloud ]; then
+    args=(storage cp)
+    if [ -n "$cc" ]; then args+=("--cache-control=$cc"); fi
+    if [ -n "$ct" ]; then args+=("--content-type=$ct"); fi
+    gcloud "${args[@]}" "$src" "$dst"
+  else
+    if [ -n "$cc" ]; then args+=(-h "Cache-Control:$cc"); fi
+    if [ -n "$ct" ]; then args+=(-h "Content-Type:$ct"); fi
+    gsutil "${args[@]}" cp "$src" "$dst"
+  fi
+}
 command -v python3 >/dev/null 2>&1 || { echo "error: python3 not found" >&2; exit 1; }
 command -v flutter >/dev/null 2>&1 || { echo "error: flutter not found" >&2; exit 1; }
 if [ "$DO_NOTARIZE" -eq 1 ]; then
@@ -280,13 +311,13 @@ echo ">> uploading release $VER"
 # Immutable per-version path — see the CDN_ASSET_BASE_URL note near the top of this script. Long
 # max-age here is what actually lets the CDN cache these instead of hitting GCS on every install/update.
 echo "   zip: gs://${GCS_BUCKET}/${GCS_PATH}  ($SIZE bytes, sha256=$SHA)"
-gsutil -h "Cache-Control:public, max-age=31536000, immutable" cp "$ZIP" "gs://${GCS_BUCKET}/${GCS_PATH}"
+gcs_cp "$ZIP" "gs://${GCS_BUCKET}/${GCS_PATH}" "public, max-age=31536000, immutable"
 echo "   dmg: gs://${GCS_BUCKET}/${DMG_GCS_PATH}  ($DMG_SIZE bytes, sha256=$DMG_SHA)"
-gsutil -h "Cache-Control:public, max-age=31536000, immutable" cp "$DMG" "gs://${GCS_BUCKET}/${DMG_GCS_PATH}"
+gcs_cp "$DMG" "gs://${GCS_BUCKET}/${DMG_GCS_PATH}" "public, max-age=31536000, immutable"
 
 echo ">> merging manifest: gs://${GCS_BUCKET}/${METADATA_PATH}  (${OTA_KEY}, ${DMG_KEY})"
 SRC="$(mktemp)"; DST="$(mktemp)"   # removed by cleanup() on EXIT
-if ! gsutil cp "gs://${GCS_BUCKET}/${METADATA_PATH}" "$SRC" 2>/dev/null; then
+if ! gcs_cp "gs://${GCS_BUCKET}/${METADATA_PATH}" "$SRC" 2>/dev/null; then
   echo "   (no existing metadata.json — creating a new one)"
   printf '{}' > "$SRC"
 fi
@@ -316,9 +347,8 @@ with open(dst, "w") as f:
     json.dump(data, f, indent=2)
     f.write("\n")
 PY
-gsutil -h "Content-Type:application/json" \
-       -h "Cache-Control:no-cache, no-store, must-revalidate" \
-       cp "$DST" "gs://${GCS_BUCKET}/${METADATA_PATH}"
+gcs_cp "$DST" "gs://${GCS_BUCKET}/${METADATA_PATH}" \
+       "no-cache, no-store, must-revalidate" "application/json"
 
 echo
 echo ">> published desktop app $VER"
