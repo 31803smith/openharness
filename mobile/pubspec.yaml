@@ -59,6 +59,12 @@ dependencies:
   # for why the whole pipe past this point accepts nothing else.
   image_picker: ^1.2.3
 
+  # Talking to an agent: tapping the terminal opens voice input before the
+  # keyboard (`phone/voice_input_panel.dart`). The OS's own recognizer — Speech
+  # on iOS, SpeechRecognizer on Android — so no audio reaches a server of ours,
+  # and it is the one thing in this app that opens the microphone.
+  speech_to_text: ^7.5.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

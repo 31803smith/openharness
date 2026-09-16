@@ -18,6 +18,12 @@
          cannot run without: a tablet or emulator with no camera must still
          install and show every other screen. -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <!-- Voice input, the terminal's default way to type (speech_to_text). No
+         BLUETOOTH_CONNECT beside it: the recognizer is initialised with
+         `androidNoBluetooth`, so a headset is never asked for and nobody is
+         shown a "nearby devices" prompt for talking into the phone. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <application
         android:label="harness"
         android:name="${applicationName}"
@@ -59,6 +65,11 @@
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
+        </intent>
+        <!-- Android 11+ hides the speech recognizer service from an app that
+             does not declare it, and voice input then reads as unavailable. -->
+        <intent>
+            <action android:name="android.speech.RecognitionService"/>
         </intent>
     </queries>
 </manifest>
