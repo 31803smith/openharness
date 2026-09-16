@@ -415,13 +415,27 @@ class _SwarmScreenState extends State<SwarmScreen> {
                         )),
                   },
               ],
-              'status': machine.needsLink
-                  ? 'Link required'
+              // Two independent slots. `presence` is the node's own state
+              // (is `harness` running/reachable?), shown after the name — a
+              // definite "Online"/"Offline", or blank while unknown. `status`
+              // /`linkRequired` is the trailing slot: the peer link/trust
+              // between this computer and the machine. They are orthogonal, so
+              // an unlinked machine whose node is up reads BOTH "Online" and
+              // "Link required" instead of the link state masking presence.
+              'presence': machine.nodeOnline == true
+                  ? 'Online'
                   : machine.nodeOnline == false
                   ? 'Offline'
-                  : machine.nodeOnline == true
-                  ? 'Online'
-                  : 'Connecting…',
+                  : '',
+              'linkRequired': machine.needsLink,
+              // Trailing word. Offline/Online live in `presence` now, so they
+              // drop out here (the agent count fills the slot). Only the link
+              // state and the still-connecting case need the trailing edge.
+              'status': machine.needsLink
+                  ? 'Link required'
+                  : machine.nodeOnline == null
+                  ? 'Connecting…'
+                  : '',
             },
         ],
       }),

@@ -77,7 +77,7 @@ class _Notifier extends AppNotifier {
   Future<String?> installDsh(String machineId, String id) {
     installs.add(id);
     final machine = machineStates[machineId]!;
-    machine.dsh.installs[id] = DshInstallProgress(id: id, phase: 'setup');
+    machine.dsh.applyInstall(DshInstallProgress(id: id, phase: 'setup'));
     notifyListeners();
     final pending = pendingInstall;
     if (pending == null) {

@@ -3655,7 +3655,10 @@ class AppNotifier extends ChangeNotifier {
     final machine = machineStates[machineId];
     if (machine == null) return 'Machine not found';
     final machineName = machine.machine.displayName;
-    machine.dsh.installs[id] = DshInstallProgress(id: id, phase: 'clone');
+    // A new run every time the button is pressed: a retry after a failure is
+    // its own attempt, with its own clock.
+    machine.dsh.runs.remove(id);
+    machine.dsh.applyInstall(DshInstallProgress(id: id, phase: 'clone'));
     notifyListeners();
     try {
       final result = await _conn(machineId).request(
@@ -3691,7 +3694,7 @@ class AppNotifier extends ChangeNotifier {
     } catch (_) {
       return _finishInstall(machine, id, 'Install failed on $machineName');
     }
-    machine.dsh.installs[id] = DshInstallProgress(id: id, phase: 'done');
+    machine.dsh.applyInstall(DshInstallProgress(id: id, phase: 'done'));
     notifyListeners();
     // The stored answer just became stale by the dialog's own hand.
     await probeDsh(machineId, force: true);
@@ -3699,10 +3702,8 @@ class AppNotifier extends ChangeNotifier {
   }
 
   String _finishInstall(MachineState machine, String id, String error) {
-    machine.dsh.installs[id] = DshInstallProgress(
-      id: id,
-      phase: 'failed',
-      detail: error,
+    machine.dsh.applyInstall(
+      DshInstallProgress(id: id, phase: 'failed', detail: error),
     );
     notifyListeners();
     return error;
@@ -6177,7 +6178,7 @@ class AppNotifier extends ChangeNotifier {
         // Only ever advances a known install: a phase for an id nobody here
         // asked about is still worth showing, so it is recorded either way.
         final progress = DshInstallProgress.fromJson(payload);
-        if (progress != null) machine.dsh.installs[progress.id] = progress;
+        if (progress != null) machine.dsh.applyInstall(progress);
         break;
       case 'commander_question':
         final agentId = _eventAgentId(machine, event, payload);

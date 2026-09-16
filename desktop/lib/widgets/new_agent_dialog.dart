@@ -24,6 +24,7 @@ import 'codex_profile_field.dart';
 import 'agent_picker.dart';
 import 'remote_folder_picker.dart';
 import 'new_agent_project_picker.dart';
+import 'dsh_install_panel.dart';
 
 /// Mirrors the harness CLI's `BYPASS_PERMISSION_FLAGS`
 /// (autonomous-harness/cli/src/lib/engineLaunch.ts) 1:1 — this is UI-only display + gating, the CLI
@@ -250,10 +251,15 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
 
   /// The one-line install status while a harness install is running, read off
   /// the machine's own narration (`dsh_install_status`), or null.
-  String? get _installStatus {
-    if (!_installing) return null;
-    final progress = widget.notifier.stateOf(_machineId)?.dsh.installs[_engine];
-    return progress?.label ?? 'Installing…';
+  /// The install this dialog is watching for the chosen harness: the one in
+  /// flight, or the one that just failed (kept on screen so its verdict and
+  /// the fix it names stay readable under the Retry). Null otherwise.
+  DshInstallRun? get _installRun {
+    final run = widget.notifier.stateOf(_machineId)?.dsh.runs[_engine];
+    if (run == null) return null;
+    if (_installing) return run;
+    if (run.failed && _willInstallHarness(_engine)) return run;
+    return null;
   }
 
   Future<void> _loadAgentPreference() async {
@@ -411,8 +417,13 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     // A harness the machine does not have yet is installed FIRST, as its own
     // step with its own words: minutes of clone and toolchain under a button
     // that said "Creating agent…" would read as a create that hung. The
-    // machine's catalog decides "has it"; wait for its answer if it is out.
-    if (harness != null && !_confirmationPending && _harness(harness) == null) {
+    // machine's catalog decides "has it" — asked AGAIN at this moment, not
+    // read from the answer the dialog opened with: a harness removed or
+    // installed in the meantime (`harness dsh remove` in a terminal, another
+    // window) made the stale answer send a create for a harness the machine
+    // no longer had, and the create failed with "not installed" instead of
+    // installing. The answer is an index read on the machine; it is cheap.
+    if (harness != null && !_confirmationPending) {
       await _probeHarnesses();
       if (!mounted) return;
       // A machine whose Harness CLI predates harnesses refuses `dsh_list`
@@ -577,6 +588,23 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                         child: _choices(),
                       ),
                     ),
+                    // Under everything chosen, and OUTSIDE the AbsorbPointer
+                    // above: the choices lock while the install runs, and a
+                    // panel inside that lock cannot be clicked (owner,
+                    // 2026-09-16: "Show log bấm không được"). The install is
+                    // what happens after the choices, and reads that way here.
+                    if (!_confirmationPending && _installRun != null) ...[
+                      const SizedBox(height: _gapBlock),
+                      Semantics(
+                        liveRegion: true,
+                        child: DshInstallPanel(
+                          key: const Key('new-agent-install-status'),
+                          run: _installRun!,
+                          harnessName: _labelOf(_engine),
+                          machineName: _machineName,
+                        ),
+                      ),
+                    ],
                     if (_error != null) ...[
                       const SizedBox(height: _gapBlock),
                       Semantics(
@@ -608,7 +636,15 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                   spacing: 8,
                   runSpacing: 8,
                   children: [
-                    if (_confirmationPending)
+                    // Close belongs to the UNCERTAIN state — a create whose
+                    // reply was lost, where the person may leave and check
+                    // later. `awaitingConfirmation` is set the moment the
+                    // request goes out, so on its own it also covered every
+                    // ordinary create in flight, and a disabled Close sat
+                    // beside "Creating agent…" meaning nothing (owner,
+                    // 2026-09-16). Same gate as Find an agent below.
+                    if (_confirmationPending &&
+                        (!_submitting || _checkingCreation))
                       TextButton(
                         onPressed: _submitting
                             ? null
@@ -683,7 +719,11 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                               ),
                             )
                           : Text(
-                              _confirmationPending ? 'Check status' : 'Create',
+                              _confirmationPending
+                                  ? 'Check status'
+                                  : _installRun?.failed == true
+                                  ? 'Retry'
+                                  : 'Create',
                             ),
                     ),
                   ],
@@ -800,19 +840,6 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
               if (isHarnessId(value)) unawaited(_probeHarnesses());
             },
           ),
-          if (!_confirmationPending && _installStatus != null) ...[
-            const SizedBox(height: 6),
-            Semantics(
-              liveRegion: true,
-              child: Text(
-                key: const Key('new-agent-install-status'),
-                'Installing ${_labelOf(_engine)} on $_machineName… '
-                '$_installStatus',
-                style: Theme.of(context).textTheme.bodySmall
-                    ?.copyWith(color: grid.AppPalette.textSecondary),
-              ),
-            ),
-          ],
           if (!_confirmationPending && _engineCheckFailed) ...[
             const SizedBox(height: 6),
             Row(
