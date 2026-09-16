@@ -3,8 +3,6 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:lucide_icons_flutter/lucide_icons.dart';
-
 import 'package:flutter/services.dart';
 import 'package:xterm/xterm.dart';
 
@@ -12,7 +10,6 @@ import '../clipboard/native_clipboard.dart';
 import '../state/app_state.dart';
 
 import 'agent_drag.dart';
-import 'rename_agent_dialog.dart';
 import 'terminal_composer.dart';
 import '../shortcuts/app_keymap.dart';
 import '../shortcuts/keymap.dart';
@@ -30,13 +27,14 @@ import '../terminal/terminal_theme_store.dart';
 import '../terminal/terminal_viewport.dart';
 import '../shared/theme/app_theme.dart' as grid;
 import '../theme/app_theme.dart';
-import 'engine_identity.dart';
-import 'pane_header_actions.dart';
+import 'terminal_pane_badges.dart';
+import 'terminal_pane_header.dart';
 
-/// The pane header's own horizontal inset.
-const double _stripPadding = 14;
-
-typedef TerminalNotice = ({String label, String detail, IconData icon});
+// The header strip, its drag ghost and the small badges are presentation that
+// only changes when its inputs do; they live in `terminal_pane_header.dart` and
+// `terminal_pane_badges.dart`. Re-exported so this file stays the one import a
+// pane needs.
+export 'terminal_pane_header.dart' show TerminalNotice, TerminalPaneHeader;
 
 class TerminalPanel extends StatefulWidget {
   final AppNotifier notifier;
@@ -82,7 +80,7 @@ class TerminalPanel extends StatefulWidget {
   final VoidCallback? onToggleComposer;
 
   /// Lets the header be dragged to trade places with another tile. Null when
-  /// this is the only tile — see [_TerminalHeader.paneDrag].
+  /// this is the only tile — see [TerminalPaneHeader.paneDrag].
   final PaneDragHandle? paneDrag;
 
   /// Test seam for OS actions; normal panes use the platform launcher.
@@ -157,7 +155,24 @@ class _TerminalPanelState extends State<TerminalPanel>
   int? _lastInertiaMicros;
   late final TerminalLinkOpener _linkOpener;
   Offset? _linkPointerPosition;
-  String? _hoveredLink;
+
+  /// The link under the pointer, and whether the modifier that would open it is
+  /// down. Both change on ordinary mouse movement and on every modifier press,
+  /// and both feed ONLY the tooltip and the cursor shape.
+  ///
+  /// ⚠️ NOT setState. A rebuild of this element rebuilds [TerminalView] with it,
+  /// and that is the one widget in the pane whose element must not be churned
+  /// while output is streaming: it carries the input connection, the scroll
+  /// position and the retained render object. Hovering a link, or tapping ⌘,
+  /// used to rebuild the whole pane; now it repaints two leaves.
+  final ValueNotifier<String?> _hoveredLink = ValueNotifier(null);
+  final ValueNotifier<bool> _linkModifierDown = ValueNotifier(false);
+
+  /// Download progress for a link preview. Ticks once per chunk, so it gets the
+  /// same treatment as [_hoveredLink] — see the note there.
+  final ValueNotifier<RemoteMediaProgress?> _previewProgress = ValueNotifier(
+    null,
+  );
   String? _pressedLink;
   bool _openingLink = false;
   bool _linkRefreshPending = false;
@@ -166,7 +181,6 @@ class _TerminalPanelState extends State<TerminalPanel>
   bool _observingLinkModifiers = false;
   late final RemoteMediaDownloader _mediaDownloader;
   MediaDownloadCancellation? _previewCancellation;
-  RemoteMediaProgress? _previewProgress;
   Object? _headerPresentation;
   Widget? _header;
 
@@ -231,7 +245,7 @@ class _TerminalPanelState extends State<TerminalPanel>
       _clearLastFind();
       _lastFindQuery = '';
       _previewCancellation?.cancel();
-      _previewProgress = null;
+      _previewProgress.value = null;
       oldWidget.session.setCursorBlinkPhase(true);
       oldWidget.session.removeListener(_onSessionChanged);
       oldWidget.session.detachViewport(this);
@@ -244,7 +258,7 @@ class _TerminalPanelState extends State<TerminalPanel>
       _viewTerminal = widget.session.terminal;
       _viewTerminal.addListener(_scheduleLinkRefresh);
       _pressedLink = null;
-      _hoveredLink = null;
+      _hoveredLink.value = null;
       _observeLinkModifiers(false);
       _terminalViewKey = GlobalKey<TerminalViewState>();
       _followTail = true;
@@ -258,7 +272,7 @@ class _TerminalPanelState extends State<TerminalPanel>
       _composerFocus.unfocus();
       _cancelDialInertia();
       _linkPointerPosition = null;
-      _hoveredLink = null;
+      _hoveredLink.value = null;
       _pressedLink = null;
       _observeLinkModifiers(false);
     }
@@ -307,6 +321,9 @@ class _TerminalPanelState extends State<TerminalPanel>
     _scrollController.dispose();
     _focusNode.dispose();
     _composerFocus.dispose();
+    _hoveredLink.dispose();
+    _linkModifierDown.dispose();
+    _previewProgress.dispose();
     super.dispose();
   }
 
@@ -432,7 +449,7 @@ class _TerminalPanelState extends State<TerminalPanel>
     _viewTerminal = terminal;
     _viewTerminal.addListener(_scheduleLinkRefresh);
     _pressedLink = null;
-    _hoveredLink = null;
+    _hoveredLink.value = null;
     _observeLinkModifiers(false);
     _cancelDialInertia();
     _alternateScrollRemainder = 0;
@@ -1030,7 +1047,10 @@ class _TerminalPanelState extends State<TerminalPanel>
     if (_linkPointerPosition != null &&
         mounted &&
         modifiers.contains(event.logicalKey)) {
-      setState(() {}); // Refresh the cursor even when the mouse has not moved.
+      // Refresh the cursor even when the mouse has not moved. Published, not
+      // setState: the cursor is one leaf, and a rebuild here would take the
+      // streaming TerminalView with it.
+      _linkModifierDown.value = _linkModifierPressed;
     }
     return false; // Modifier observation never consumes a terminal key.
   }
@@ -1043,8 +1063,12 @@ class _TerminalPanelState extends State<TerminalPanel>
     final keyboard = HardwareKeyboard.instance;
     if (enabled) {
       keyboard.addHandler(_onLinkModifierChanged);
+      _linkModifierDown.value = _linkModifierPressed;
     } else {
       keyboard.removeHandler(_onLinkModifierChanged);
+      // Nothing is watching the modifier any more, so the cursor must not stay
+      // latched on a ⌘ that was down when the pointer left the link.
+      _linkModifierDown.value = false;
     }
   }
 
@@ -1087,7 +1111,7 @@ class _TerminalPanelState extends State<TerminalPanel>
         ? null
         : _linkAtPointer(_linkPointerPosition!);
     _observeLinkModifiers(target != null);
-    if (target != _hoveredLink) setState(() => _hoveredLink = target);
+    _hoveredLink.value = target;
   }
 
   bool _onLinkTapDown(TapDownDetails details, CellOffset cell) {
@@ -1127,9 +1151,7 @@ class _TerminalPanelState extends State<TerminalPanel>
             !mounted ||
             !identical(session, widget.session),
         downloadRemote: (path) async {
-          setState(
-            () => _previewProgress = const RemoteMediaProgress('', 0, null),
-          );
+          _previewProgress.value = const RemoteMediaProgress('', 0, null);
           return _mediaDownloader.download(
             readChunk: ({required offset, revision}) =>
                 notifier.readRemoteMediaChunk(
@@ -1144,7 +1166,7 @@ class _TerminalPanelState extends State<TerminalPanel>
               if (mounted &&
                   !cancellation.isCancelled &&
                   identical(session, widget.session)) {
-                setState(() => _previewProgress = progress);
+                _previewProgress.value = progress;
               }
             },
           );
@@ -1159,7 +1181,9 @@ class _TerminalPanelState extends State<TerminalPanel>
       _openingLink = false;
       if (identical(_previewCancellation, cancellation)) {
         _previewCancellation = null;
-        if (mounted) setState(() => _previewProgress = null);
+        // `mounted` gates the notifier, not a rebuild: a download can outlive
+        // the pane, and writing to a disposed ValueNotifier throws.
+        if (mounted) _previewProgress.value = null;
       }
     }
   }
@@ -1204,7 +1228,7 @@ class _TerminalPanelState extends State<TerminalPanel>
                                 Expanded(
                                   child: Padding(
                                     padding: const EdgeInsets.symmetric(
-                                      horizontal: _stripPadding,
+                                      horizontal: stripPadding,
                                     ),
                                     child: Text(
                                       session.agentName,
@@ -1263,10 +1287,9 @@ class _TerminalPanelState extends State<TerminalPanel>
                       onEnter: (event) => _hoverLink(event.position),
                       onHover: (event) => _hoverLink(event.position),
                       onExit: (_) => _hoverLink(null),
-                      child: Tooltip(
-                        message: _hoveredLink == null
-                            ? ''
-                            : '${defaultTargetPlatform == TargetPlatform.macOS ? '⌘' : 'Ctrl'}-click to open\n$_hoveredLink',
+                      child: _LinkTooltip(
+                        link: _hoveredLink,
+                        modifierDown: _linkModifierDown,
                         child: TerminalView(
                           session.terminal,
                           key: _terminalViewKey,
@@ -1314,10 +1337,10 @@ class _TerminalPanelState extends State<TerminalPanel>
                           onKeyEvent: _onTerminalKey,
                           onTapDown: _onLinkTapDown,
                           onTapUp: _onLinkTapUp,
-                          mouseCursor:
-                              _hoveredLink != null && _linkModifierPressed
-                              ? SystemMouseCursors.click
-                              : SystemMouseCursors.text,
+                          // Constant on purpose. The click cursor is applied by
+                          // [_LinkTooltip]'s own MouseRegion, which repaints
+                          // without rebuilding this view.
+                          mouseCursor: SystemMouseCursors.text,
                           onSecondaryTapDown: (_, _) => _copyOrPaste(),
 
                           onAltBufferScroll: session.scrollViaTmuxCopyMode
@@ -1327,36 +1350,19 @@ class _TerminalPanelState extends State<TerminalPanel>
                       ),
                     ),
                   ),
-                  if (session.uploadProgress != null ||
-                      _previewProgress != null)
-                    Positioned(
-                      left: 14,
-                      right: 14,
-                      bottom: 12,
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (session.uploadProgress != null)
-                            _TransferProgressBadge(
-                              label:
-                                  'Uploading ${session.uploadProgress!.label}',
-                              fraction: session.uploadProgress!.percent,
-                              onCancel: () => unawaited(session.cancelUpload()),
-                            ),
-                          if (session.uploadProgress != null &&
-                              _previewProgress != null)
-                            const SizedBox(height: 8),
-                          if (_previewProgress != null)
-                            _TransferProgressBadge(
-                              label: _previewProgress!.totalBytes == null
-                                  ? 'Preparing preview…'
-                                  : 'Downloading ${_previewProgress!.filename}',
-                              fraction: _previewProgress!.fraction,
-                              onCancel: () => _previewCancellation?.cancel(),
-                            ),
-                        ],
-                      ),
+                  // Both bars tick once per transferred chunk. Listening here
+                  // keeps that traffic off the pane's own element, so a paste
+                  // or a preview download cannot stutter the live terminal.
+                  Positioned(
+                    left: 14,
+                    right: 14,
+                    bottom: 12,
+                    child: _TransferOverlay(
+                      session: session,
+                      preview: _previewProgress,
+                      onCancelPreview: () => _previewCancellation?.cancel(),
                     ),
+                  ),
                 ],
               ),
             ),
@@ -1417,7 +1423,7 @@ class _TerminalPanelState extends State<TerminalPanel>
     );
     if (_headerPresentation != presentation) {
       _headerPresentation = presentation;
-      _header = _TerminalHeader(
+      _header = TerminalPaneHeader(
         notifier: widget.notifier,
         session: session,
         notice: widget.notice,
@@ -1442,515 +1448,100 @@ class _TerminalPanelState extends State<TerminalPanel>
   }
 }
 
-class _TerminalHeader extends StatelessWidget {
-  final AppNotifier notifier;
-  final TerminalSession session;
-  final TerminalNotice? notice;
-  final bool readOnly;
-  final VoidCallback? onClose;
-
-  /// Ends the agent (with a confirmation), as the rail's row menu does. Null
-  /// where the pane cannot name a live agent to end.
-  final VoidCallback? onDelete;
-  final bool compact;
-  final VoidCallback? onToggleZoom;
-  final bool zoomed;
-  final VoidCallback? onToggleComposer;
-  final bool composerVisible;
-
-  /// This strip's drag gesture, or null when there is nothing to drag.
-  ///
-  /// Null with a SINGLE pane, and then the strip is inert on purpose: there is
-  /// no other tile to trade places with, so a drag would have no meaning to
-  /// give it. It used to move the WINDOW here (window_manager's
-  /// DragToMoveArea, left over from hiding the title bar) — but once AppKit's
-  /// `startDragging` takes a gesture it keeps it, so the two meanings cannot
-  /// share one drag. The window is moved from HarnessTopBar now.
-  final PaneDragHandle? paneDrag;
-
-  const _TerminalHeader({
-    required this.notifier,
-    required this.session,
-    this.notice,
-    this.readOnly = false,
-    this.onClose,
-    this.onDelete,
-    this.compact = false,
-    this.onToggleZoom,
-    this.zoomed = false,
-    this.paneDrag,
-    this.onToggleComposer,
-    this.composerVisible = false,
+/// The "⌘-click to open" hint, and the click cursor that goes with it.
+///
+/// Both answer the same two facts — which link is under the pointer, and
+/// whether the modifier is down — and both used to live in the pane's own
+/// `build`, which meant a mouse crossing a URL rebuilt [TerminalView]. Reading
+/// the notifiers HERE confines that to this subtree: the terminal element, its
+/// input connection and its scroll position are never touched.
+class _LinkTooltip extends StatelessWidget {
+  const _LinkTooltip({
+    required this.link,
+    required this.modifierDown,
+    required this.child,
   });
+
+  final ValueListenable<String?> link;
+  final ValueListenable<bool> modifierDown;
+  final Widget child;
 
   @override
   Widget build(BuildContext context) {
-    final color = switch (session.status) {
-      TerminalSessionStatus.controlling => AppColors.success,
-      TerminalSessionStatus.opening ||
-      TerminalSessionStatus.resyncing => AppColors.warning,
-      TerminalSessionStatus.takenOver => AppColors.warning,
-      TerminalSessionStatus.error => AppColors.danger,
-      TerminalSessionStatus.closed => AppColors.mutedStrong,
-    };
-    final profile = notifier
-        .stateOf(session.machineId)
-        ?.agents
-        .where((agent) => agent.id == session.agentId)
-        .firstOrNull
-        ?.codexHome;
-    final status =
-        notice ??
-        switch (session.status) {
-          TerminalSessionStatus.controlling => null,
-          TerminalSessionStatus.opening => (
-            label: 'Connecting',
-            icon: Icons.sync,
-            detail:
-                'Connecting to this terminal. Retained output is read only.',
-          ),
-          TerminalSessionStatus.resyncing => (
-            label: 'Restoring',
-            icon: Icons.sync,
-            detail: 'Restoring this terminal. Retained output is read only.',
-          ),
-          TerminalSessionStatus.takenOver => (
-            label: 'Take control',
-            icon: Icons.lock_outline,
-            detail: 'Read only: another app controls this terminal. Take control moves input ownership to this app.',
-          ),
-          TerminalSessionStatus.error || TerminalSessionStatus.closed => (
-            label: 'Reconnect',
-            icon: Icons.refresh,
-            detail:
-                session.errorMessage ??
-                session.errorCode ??
-                'This stream is closed. Retained output is read only.',
-          ),
-        };
-    final canReconnect =
-        notice == null &&
-        !readOnly &&
-        (session.status == TerminalSessionStatus.error ||
-            session.status == TerminalSessionStatus.closed ||
-            session.status == TerminalSessionStatus.takenOver);
-    final machine = notifier.stateOf(session.machineId);
-    final agent = machine?.agents
-        .where((a) => a.id == session.agentId)
-        .firstOrNull;
-    final project = agent == null ? null : machine?.projectOf(agent);
-    final machineName = machine?.machine.displayName ?? session.machineId;
-    final identityDetail = [
-      session.agentName,
-      machineName,
-      if (project != null) project.cwd,
-      if (project?.branch != null) 'Branch: ${project!.branch}',
-      if (profile != null) 'Codex profile: $profile',
-      'Double-click to rename',
-    ].join('\n');
-    final remoteComposer = machine != null && !machine.isLocalMachine
-        ? onToggleComposer
-        : null;
-    final actionsWidth = remoteComposer == null ? 88.0 : 118.0;
-    final folder =
-        project?.cwd
-            .split(RegExp(r'[/\\]'))
-            .where((part) => part.isNotEmpty)
-            .lastOrNull ??
-        project?.name;
-    final details = [
-      if (folder?.isNotEmpty == true) folder!,
-      if (project?.branch?.trim().isNotEmpty == true) project!.branch!,
-      machineName,
-    ];
-    final branchIndex = project?.branch?.trim().isNotEmpty == true
-        ? (folder?.isNotEmpty == true ? 1 : 0)
-        : null;
-    final strip = PaneHeaderHover(
-      child: SizedBox(
-        height: compact ? 38 : 46,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: _stripPadding),
-          child: LayoutBuilder(
-            builder: (context, constraints) => Row(
-              children: [
-                EngineMark(engine: session.engineId, size: 17),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Tooltip(
-                    message: identityDetail,
-                    waitDuration: const Duration(milliseconds: 700),
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onDoubleTap: () => unawaited(
-                        showAgentRenameDialog(
-                          context,
-                          notifier,
-                          session.machineId,
-                          session.agentId,
-                          session.agentName,
-                        ),
-                      ),
-                      child: Text(
-                        session.agentName,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: AppColors.text,
-                          fontFamily: AppFonts.sans,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                if (status != null)
-                  ConstrainedBox(
-                    constraints: BoxConstraints(
-                      maxWidth: math.max(
-                        0,
-                        math.min(
-                          constraints.maxWidth * .3,
-                          constraints.maxWidth - actionsWidth - 110,
-                        ),
-                      ),
-                    ),
-                    child: Align(
-                      alignment: Alignment.centerRight,
-                      child: Tooltip(
-                        message: status.detail,
-                        child: TextButton(
-                          onPressed: canReconnect
-                              ? () => notifier.selectAgent(
-                                  session.machineId,
-                                  session.agentId,
-                                )
-                              : null,
-                          style: TextButton.styleFrom(
-                            foregroundColor: color,
-                            disabledForegroundColor: AppColors.textSoft,
-                            minimumSize: Size.zero,
-                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 4,
-                            ),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(status.icon, size: 14),
-                              const SizedBox(width: 6),
-                              Flexible(
-                                child: Text(
-                                  status.label,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(fontSize: 11),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  )
-                else if (!compact)
-                  Padding(
-                    padding: const EdgeInsets.all(4),
-                    child: Icon(Icons.circle, size: 8, color: color),
-                  ),
-                // Which of the three paths carries this pane's bytes. Absent for a local machine's own
-                // terminal, which has no such distinction and so gets no badge.
-                //
-                // The wire word and the word a person reads differ for the middle state, deliberately:
-                // the CLI sends 'turn' (it is a TURN allocation) but both middle and last are relays to
-                // a reader, so they read as "relay" and "ws". 'relay' on the wire kept its original
-                // meaning — the backend WebSocket — so an older CLI is never mislabelled.
-                if (!compact && session.linkMode != null)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 2),
-                    child: _LinkModeMark(mode: session.linkMode!),
-                  ),
-                ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxWidth: math.max(
-                      actionsWidth,
-                      constraints.maxWidth * (status == null ? .55 : .3),
-                    ),
-                  ),
-                  child: PaneHeaderActions(
-                    name: session.agentName,
-                    zoomed: zoomed,
-                    onZoom: onToggleZoom,
-                    onDelete: onDelete,
-                    onClose: onClose,
-                    onToggleComposer: remoteComposer,
-                    composerVisible: composerVisible,
-                    details: Tooltip(
-                      message: [
-                        if (project != null) project.cwd,
-                        if (project?.branch?.isNotEmpty == true)
-                          'Branch: ${project!.branch}',
-                        machineName,
-                      ].join('\n'),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          for (var i = 0; i < details.length; i++) ...[
-                            if (i > 0)
-                              Text(
-                                '  •  ',
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  color: AppColors.mutedStrong,
-                                ),
-                              ),
-                            Flexible(
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  if (i == branchIndex) ...[
-                                    Icon(
-                                      LucideIcons.gitBranch300,
-                                      size: 12,
-                                      color: AppColors.mutedStrong,
-                                    ),
-                                    const SizedBox(width: 4),
-                                  ],
-                                  Flexible(
-                                    child: Text(
-                                      details[i],
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        fontFamily: AppFonts.sans,
-                                        fontSize: 12,
-                                        color: AppColors.mutedStrong,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
+    final modifier = defaultTargetPlatform == TargetPlatform.macOS
+        ? '⌘'
+        : 'Ctrl';
+    return ValueListenableBuilder<String?>(
+      valueListenable: link,
+      // The terminal is passed through untouched, so rebuilding this builder
+      // re-parents nothing: `child` is the same element every time.
+      child: child,
+      builder: (context, target, child) => ValueListenableBuilder<bool>(
+        valueListenable: modifierDown,
+        child: child,
+        builder: (context, down, child) => MouseRegion(
+          opaque: false,
+          cursor: target != null && down
+              ? SystemMouseCursors.click
+              : MouseCursor.defer,
+          child: Tooltip(
+            message: target == null ? '' : '$modifier-click to open\n$target',
+            child: child,
           ),
         ),
       ),
     );
-    final handle = paneDrag;
-    if (handle == null) return strip;
-
-    return Draggable<PaneDragRef>(
-      data: handle.ref,
-      // The grip is kept where the hand took it, so the ghost stays under the
-      // cursor at the same spot on the header it was picked up by.
-      dragAnchorStrategy: childDragAnchorStrategy,
-      onDragStarted: () => paneDragging.value = handle.ref,
-      onDragEnd: (_) => paneDragging.value = null,
-      onDraggableCanceled: (_, _) => paneDragging.value = null,
-      feedback: _PaneGhost(session: session, size: handle.size, header: strip),
-
-      // The header itself does NOT change — the whole tile fades instead, in
-      // _PaneCell, so what dims is the thing that is moving rather than one
-      // strip of it.
-      child: strip,
-    );
   }
 }
 
-/// The pane header's transport badge: a compact topology for the path carrying terminal bytes.
+/// The upload and preview-download bars stacked in the pane's corner.
 ///
-/// The three shapes describe one hop, an intermediate hop, and a central server respectively. That
-/// makes the modes distinguishable without colour while keeping the badge small enough for a four-pane
-/// layout. The wire name `relay` still means the backend WebSocket; only its human-facing label is WS.
-class _LinkModeMark extends StatelessWidget {
-  final String mode;
-
-  const _LinkModeMark({required this.mode});
-
-  @override
-  Widget build(BuildContext context) {
-    final (icon, color, label) = switch (mode) {
-      'p2p' => (
-        LucideIcons.link2,
-        AppColors.success,
-        'P2P · Direct peer connection',
-      ),
-      'turn' => (
-        LucideIcons.waypoints,
-        AppColors.warning,
-        'TURN · Via Cloudflare relay',
-      ),
-      _ => (
-        LucideIcons.server,
-        AppColors.mutedStrong,
-        'WS · Via Harness WebSocket relay',
-      ),
-    };
-    return Tooltip(
-      message: label,
-      child: Icon(icon, size: 14, color: color, semanticLabel: label),
-    );
-  }
-}
-
-/// Image/file transfer progress with a cancel action, kept in the pane's corner.
-class _TransferProgressBadge extends StatelessWidget {
-  final String label;
-  final double? fraction;
-  final VoidCallback onCancel;
-  const _TransferProgressBadge({
-    required this.label,
-    required this.fraction,
-    required this.onCancel,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    grid.AppTheme.watch(context);
-    final percentLabel = fraction == null
-        ? ''
-        : ' · ${(fraction! * 100).round()}%';
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: BoxDecoration(
-        color: grid.AppPalette.panelBg.withValues(alpha: 0.93),
-        border: Border.all(color: AppColors.borderStrong),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  '$label$percentLabel',
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: AppColors.textSoft,
-                    fontFamily: AppFonts.sans,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              InkWell(
-                onTap: onCancel,
-                child: Text(
-                  'CANCEL',
-                  style: TextStyle(
-                    color: AppColors.textSoft,
-                    fontFamily: AppFonts.sans,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(3),
-            child: LinearProgressIndicator(
-              minHeight: 4,
-              value: fraction,
-              backgroundColor: AppColors.border,
-              color: AppColors.accent,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// The whole tile, carried under the cursor.
-///
-/// ⚠️ THIS IS DRAWN, NOT PHOTOGRAPHED, AND THE PHOTOGRAPH IS WHY. The obvious
-/// way to carry "the whole pane" is RepaintBoundary.toImage() on press — and it
-/// FROZE THE APP. That call is a GPU readback on the raster thread, and the
-/// raster thread in this app is never idle: every pane holds a terminal that
-/// repaints on its own, so asking it to stop and hand a surface back on every
-/// pointer-down deadlocked the window. It is not a tuning problem; there is
-/// nothing to tune down to.
-///
-/// So the ghost is built from what is already known — the pane's measured size
-/// and its own header — and the body is a plain surface rather than a copy of
-/// the scrollback. It reads as the tile because it is tile-SHAPED and carries
-/// the tile's name, which is what the eye is following.
-///
-/// See-through on purpose: a full-size opaque copy sits exactly over the tile
-/// being aimed at and hides the "Swap with this pane" highlight that says the
-/// drop will land.
-class _PaneGhost extends StatelessWidget {
-  const _PaneGhost({
+/// Kept out of the pane's `build` because both tick once per chunk: a 4 MB
+/// paste is hundreds of notifications, and each one would otherwise rebuild the
+/// streaming terminal beside it.
+class _TransferOverlay extends StatelessWidget {
+  const _TransferOverlay({
     required this.session,
-    required this.size,
-    required this.header,
+    required this.preview,
+    required this.onCancelPreview,
   });
 
   final TerminalSession session;
-
-  /// The tile's size, handed down from the grid's LayoutBuilder.
-  final Size size;
-
-  final Widget header;
+  final ValueListenable<RemoteMediaProgress?> preview;
+  final VoidCallback onCancelPreview;
 
   @override
   Widget build(BuildContext context) {
-    grid.AppTheme.watch(context);
-    final tile = size;
-    return Material(
-      color: Colors.transparent,
-      child: Opacity(
-        opacity: 0.75,
-        child: Container(
-          width: tile.width,
-          height: tile.height,
-          decoration: BoxDecoration(
-            color: grid.AppPalette.windowBg,
-            border: Border.all(color: AppColors.accent, width: 1.5),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.45),
-                blurRadius: 24,
-                offset: const Offset(0, 10),
-              ),
-            ],
-          ),
-          child: Column(
+    return AnimatedBuilder(
+      animation: session,
+      builder: (context, _) => ValueListenableBuilder<RemoteMediaProgress?>(
+        valueListenable: preview,
+        builder: (context, download, _) {
+          final upload = session.uploadProgress;
+          if (upload == null && download == null) {
+            return const SizedBox.shrink();
+          }
+          return Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              header,
-              Divider(height: 1, color: AppColors.border),
-              Expanded(
-                child: Center(
-                  child: Text(
-                    session.agentName,
-                    style: TextStyle(
-                      color: AppColors.mutedStrong,
-                      fontFamily: AppFonts.sans,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
+              if (upload != null)
+                TransferProgressBadge(
+                  label: 'Uploading ${upload.label}',
+                  fraction: upload.percent,
+                  onCancel: () => unawaited(session.cancelUpload()),
                 ),
-              ),
+              if (upload != null && download != null) const SizedBox(height: 8),
+              if (download != null)
+                TransferProgressBadge(
+                  label: download.totalBytes == null
+                      ? 'Preparing preview…'
+                      : 'Downloading ${download.filename}',
+                  fraction: download.fraction,
+                  onCancel: onCancelPreview,
+                ),
             ],
-          ),
-        ),
+          );
+        },
       ),
     );
   }
