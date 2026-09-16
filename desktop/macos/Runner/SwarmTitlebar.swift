@@ -1278,8 +1278,12 @@ private final class SwarmTabStrip: NSView {
 
   }
   override func mouseDown(with event: NSEvent) {
-    if ownsBackgroundDoubleClick(event) { window?.performZoom(nil) }
-    else if event.clickCount == 1 { window?.performDrag(with: event) }
+    // A double-click on the strip's background zooms the window — AppKit's
+    // own title-bar behaviour, on mouse-up, since this view lets the window
+    // move. Zooming here as well undid it a beat later (owner, 2026-09-15:
+    // "maximizes out and resizes back"). Only the drag is ours to start.
+    _ = ownsBackgroundDoubleClick(event)
+    if event.clickCount == 1 { window?.performDrag(with: event) }
   }
   fileprivate func ownsBackgroundDoubleClick(_ event: NSEvent) -> Bool {
     if event.clickCount == 1 {
