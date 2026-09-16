@@ -55,9 +55,16 @@ class _Notifier extends AppNotifier {
   @override
   Future<void> probeEngines(String machineId, {bool force = false}) async {}
 
+  /// When set, the machine answers `dsh_list` the way a CLI that predates
+  /// harnesses does: with a refusal, and no catalog.
+  String? probeRefusal;
+
   @override
   Future<void> probeDsh(String machineId, {bool force = false}) async {
     harnessProbes++;
+    if (probeRefusal case final refusal?) {
+      stateOf(machineId)!.dsh.error = refusal;
+    }
   }
 
   @override
@@ -310,6 +317,24 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets('a machine whose CLI predates harnesses is told to update', (
+    tester,
+  ) async {
+    final app = await open(tester, seed: (_) {});
+    app.probeRefusal = 'unknown request: dsh_list';
+    await pick(tester, 'Copper');
+    await create(tester);
+    await tester.pump();
+    expect(app.installs, isEmpty);
+    expect(app.launches, isEmpty, reason: 'never a plain agent in silence');
+    expect(
+      find.text(
+        'Update Harness CLI on harness-remote-box to create a Copper agent.',
+      ),
+      findsOneWidget,
+    );
+  });
 
   testWidgets('More lists the machine\'s harnesses after the engines', (
     tester,

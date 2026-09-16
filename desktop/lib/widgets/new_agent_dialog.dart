@@ -415,6 +415,18 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     if (harness != null && !_confirmationPending && _harness(harness) == null) {
       await _probeHarnesses();
       if (!mounted) return;
+      // A machine whose Harness CLI predates harnesses refuses `dsh_list`
+      // and would take `dsh` on `agent_create` in silence — creating a plain
+      // Claude Code where Copper was picked. Say so and stop here instead.
+      final catalog = widget.notifier.stateOf(_machineId)?.dsh;
+      if (catalog != null && !catalog.loaded && catalog.error != null) {
+        setState(() {
+          _error =
+              'Update Harness CLI on $_machineName to create a '
+              '${_labelOf(harness)} agent.';
+        });
+        return;
+      }
     }
     if (harness != null &&
         !_confirmationPending &&
