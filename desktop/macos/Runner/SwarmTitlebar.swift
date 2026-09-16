@@ -1248,7 +1248,11 @@ private final class SwarmTabStrip: NSView {
     let trailing: CGFloat = spacious ? 12 : 8
     let actionsWidth = openWidth * 2 + 10 + trailing
     newButton.isHidden = bounds.width < 420
-    let available = max(32, bounds.width - leading - actionsWidth - (newButton.isHidden ? 0 : 36))
+    // A reserve after the "+" that tabs never grow into — Chrome's gap. It is
+    // where a full strip can still be dragged and double-clicked to zoom
+    // (owner, 2026-09-15); tabs shrink and then scroll instead of taking it.
+    let grip: CGFloat = spacious ? 120 : 64
+    let available = max(32, bounds.width - leading - actionsWidth - (newButton.isHidden ? 0 : 36) - grip)
     let width = min(220, max(min(132, available), available / CGFloat(max(1, tabs.count))))
     let occupied = min(available, CGFloat(tabs.count) * width)
     scroll.frame = NSRect(x: leading, y: 0, width: occupied, height: bounds.height)
