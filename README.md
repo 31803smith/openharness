@@ -34,8 +34,7 @@ ciphertext and holds no keys, and terminal traffic goes machine to machine over 
 Sessions live on the machine, not in the window. Every agent is a tmux pane there. Close the laptop,
 open it on the train: same pane, same scrollback. After a reboot the daemon brings each agent back
 with the engine's own `--resume` and the same id. Start an agent on another machine by browsing its
-folders from New Agent, or clone a repository there first. The same machines are reachable from a
-browser at [harness.autonomous.ai](https://harness.autonomous.ai) after one pairing.
+folders from New Agent, or clone a repository there first.
 
 <p align="center">
   <img src=".github/assets/screenshots/new-agent.png" width="720" alt="New Agent: choose a harness, then where it runs — this machine, the iMac at home, the iMac at the office">
@@ -53,27 +52,18 @@ https://github.com/user-attachments/assets/97848065-61c6-40df-be66-a8247f69aa4c
 
 ## Install
 
-**macOS 12+ (Apple Silicon and Intel), Linux (Ubuntu 22.04+).** Download the app from
-[harness.autonomous.ai/desktop](https://harness.autonomous.ai/desktop). On first launch it checks for
-tmux, installs a managed Node 20 and the `harness` daemon under `~/.harness`, signs you in with SSO,
-and starts the daemon. This computer is your first machine.
+1. **The app**, macOS 12+ or Ubuntu 22.04+: [harness.autonomous.ai/desktop](https://harness.autonomous.ai/desktop).
+   First launch installs the daemon and signs you in. This computer is your first machine.
+2. **Another machine**, a server, a Mac mini, a container, with Node ≥ 20 and tmux:
 
-**Add another machine** — a server, a Mac mini, a container — with the daemon alone. Node ≥ 20 and
-tmux are the prerequisites; `sqlite3` is needed only for the engines that keep their conversations in
-SQLite (OpenCode, Kilo, Hermes, Devin).
+   ```bash
+   curl -fsSL https://harness.autonomous.ai/cli/install.sh | bash
+   harness login
+   harness start
+   ```
 
-```bash
-curl -fsSL https://harness.autonomous.ai/cli/install.sh | bash
-harness login      # browser SSO, saves this computer's session
-harness start      # connects; reconnects to the same machine on every later start
-```
-
-It appears in the app's machine list within a minute. There is no token to copy: a durable computer
-id under `~/.harness` keeps later starts attached to the same machine record.
-
-One thing to know from the start: **the daemon only knows about panes it created.** Sessions you start
-from the app or the web are tmux sessions named `harness-*`, owned by the daemon. A `claude` you launch
-by hand in your own tmux is not picked up.
+   It shows up in the app within a minute.
+3. **⌘N**: a harness, a machine, a folder, Create.
 
 ## First five minutes
 
@@ -83,44 +73,27 @@ already on it. **⌘R** and **⌘D** split, **⌘S** picks a layout, **⌘⏎** 
 the agents waiting on you. The full keymap, and how to remap it: [docs/keyboard.md](docs/keyboard.md).
 The window in detail: [docs/app.md](docs/app.md).
 
-## Extend Harness
+## Extend and contribute
 
-Every layer has a contract, a starter and a check.
+Every layer has a contract, a starter and a check, and most ways in never touch this repo's code.
 
-| Add | Start at | The bar |
+| You could | Start at | The bar |
 |---|---|---|
-| a **domain harness**: PCB, CAD, slides, yours | [`dsh/README.md`](dsh/README.md), [`dsh/starter-dsh/`](dsh/starter-dsh/) | `harness dsh check .` |
-| an **agent** as a CLI engine | [`cli/src/engines/README.md`](cli/src/engines/README.md) | the recorded-session fixtures pass |
-| an **agent** as an API provider | [`provider/README.md`](provider/README.md) | the conformance runner, zero failures |
-| a **terminal multiplexer** | [CONTRIBUTING.md](CONTRIBUTING.md#adding-a-multiplexer) | `npm run test:tmux-real` |
-| a **palette** or terminal theme | [`docs/extending.md`](docs/extending.md#palettes-and-appearance) | `flutter test` |
-| a **keymap** | `~/.config/harness/keybindings.jsonc`, no code | it reloads on save |
-| **automation** over the daemon | [`docs/cli.md`](docs/cli.md#automation) | the loopback socket answers |
-
-**A domain harness** is a git repository: a manifest, an `AGENTS.md`, skills, a workspace template,
-a toolchain that installs itself, and for the pane a viewer server and a verdict file. Harness reads
-the manifest and nothing else about its code. Copy the starter, `harness dsh check .`,
-`harness dsh install . --link`, and your tile is in New Agent. One registry file in a pull request
-lists it for everyone. [Marp](https://github.com/autonomous-ai/autonomous-marp) is the smallest
-complete one and the place to start; [Copper](https://github.com/autonomous-ai/autonomous-circuit)
-and [Solid](https://github.com/autonomous-ai/autonomous-workshop) are the big ones.
-
-**An agent** is a CLI engine, a normalizer in this repo written from a recorded session of the real
-binary, or an API provider, eight JSON-RPC methods on your own infrastructure. Both are first-class:
-[docs/extending.md](docs/extending.md).
-
-## Contribute
-
-There are more ways in than a pull request to this repo, and most of them never touch its code.
-
-| You could | Where | What it takes |
-|---|---|---|
-| **Build a harness** for your domain and list it | [`dsh/README.md`](dsh/README.md) → a file in [`dsh/registry/`](dsh/registry/) | an afternoon from the starter; `harness dsh check .` green |
-| **Bring your agent** as an engine or a provider | [`cli/src/engines/README.md`](cli/src/engines/README.md) · [`provider/README.md`](provider/README.md) | a recorded session of the real binary, or an endpoint that passes the conformance runner |
-| **Record a session** for a bug | an issue | an engine bug is fixed from a real transcript; attach one and it is half done |
-| **A palette, a terminal theme, a keymap** | [`docs/extending.md`](docs/extending.md) | one Dart value, or one JSONC file |
+| **Build a harness** for your domain and list it | [`dsh/README.md`](dsh/README.md), [`dsh/starter-dsh/`](dsh/starter-dsh/), then a file in [`dsh/registry/`](dsh/registry/) | `harness dsh check .` green; an afternoon from the starter |
+| **Bring your agent** as a CLI engine | [`cli/src/engines/README.md`](cli/src/engines/README.md) | a recorded session of the real binary; the fixtures pass |
+| **Bring your agent** as an API provider | [`provider/README.md`](provider/README.md) | eight JSON-RPC methods; the conformance runner, zero failures |
+| **A terminal multiplexer** | [CONTRIBUTING.md](CONTRIBUTING.md#adding-a-multiplexer) | `npm run test:tmux-real`; open an issue first |
+| **A palette or terminal theme** | [`docs/extending.md`](docs/extending.md#palettes-and-appearance) | one Dart value; `flutter test` |
+| **A keymap** | `~/.config/harness/keybindings.jsonc` | no code; it reloads on save |
+| **Automation** over the daemon | [`docs/cli.md`](docs/cli.md#automation) | the loopback socket answers |
+| **A bug report** | an issue | an engine bug is fixed from a real transcript; attach one and it is half done |
 | **Docs** | this file and [`docs/`](docs/) | what confused you in the first five minutes is the next fix |
-| **A machine, a multiplexer, a platform** | [CONTRIBUTING.md](CONTRIBUTING.md) | open an issue first so the shape is agreed |
+
+A domain harness is a git repository: a manifest, an `AGENTS.md`, skills, a workspace template, a
+toolchain that installs itself, and for the pane a viewer server and a verdict file. Harness reads
+the manifest and nothing else. Copy the starter, `harness dsh check .`, `harness dsh install . --link`,
+and your tile is in New Agent. [Marp](https://github.com/autonomous-ai/autonomous-marp) is the
+smallest complete one and the place to start.
 
 [CONTRIBUTING.md](CONTRIBUTING.md) has the workflow, [SECURITY.md](SECURITY.md) takes security
 reports, and the licence is [MIT](LICENSE).

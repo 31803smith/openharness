@@ -1,5 +1,12 @@
 # The daemon and CLI
 
+One thing to know from the start: **the daemon only knows about panes it created.** Sessions you
+start from the app are tmux sessions named `harness-*`, owned by the daemon. A `claude` you launch
+by hand in your own tmux is not picked up. Another machine needs Node ≥ 20 and tmux; `sqlite3` only
+for the engines that keep their conversations in SQLite (OpenCode, Kilo, Hermes, Devin). There is no
+token to copy between machines: a durable computer id under `~/.harness` keeps later starts attached
+to the same machine record.
+
 `harness` is one pure-JS bundle run by the managed Node under `~/.harness/cli`. Everything below
 works the same on a headless Linux server; the app is not required on a machine, only the daemon.
 
