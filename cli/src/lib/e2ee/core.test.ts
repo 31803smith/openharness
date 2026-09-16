@@ -142,6 +142,9 @@ describe('e2ee core — codes + fingerprint + classification', () => {
       expect(C.isEncryptedDownType(type)).toBe(true)
     }
     expect(C.isEncryptedRpcResultType('usage_read_result')).toBe(true)
+    // The desktop's pane colours ride the same path; a miss here is the same silent timeout.
+    expect(C.isEncryptedDownType('theme_set')).toBe(true)
+    expect(C.isEncryptedRpcResultType('theme_set_result')).toBe(true)
     expect(C.ENCRYPTED_RPC_RESULT_TYPES.has('session_get_result')).toBe(true)
     expect(C.ENCRYPTED_RPC_RESULT_TYPES.has('agents_list_result')).toBe(true)
     expect(C.ENCRYPTED_RPC_RESULT_TYPES.has('agent_update_result')).toBe(true)
@@ -207,6 +210,6 @@ describe('e2ee core — interop keystone', () => {
   it('core.ts still hashes to the pinned value shared with the other implementations', () => {
     const here = dirname(fileURLToPath(import.meta.url))
     const actual = createHash('sha256').update(readFileSync(join(here, 'core.ts'))).digest('hex')
-    expect(actual).toBe('d3c8e0a38615d188502946d10330884eb2ca85a10f0d1f5ecb1f74a5fa2af1fe')
+    expect(actual).toBe('8ddeee04b79ee06a99bbdc18855404cc74b2caaa59b06d8b028c1acfbd2623ab')
   })
 })

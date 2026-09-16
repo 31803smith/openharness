@@ -21,9 +21,16 @@ void main() {
         request.prepareLocal(projectHome: root.path),
       ]);
       expect(folders.toSet(), hasLength(2));
+      expect(folders.map(p.basename).toSet(), {'agent-1', 'agent-2'});
       expect(folders.every((folder) => p.isWithin(root.path, folder)), isTrue);
       expect(await existing.readAsString(), 'keep');
       expect(request.payload, {'projectSource': 'new'});
+      await File(p.join(root.path, 'agent-4')).writeAsString('keep');
+      expect(
+        p.basename(await request.prepareLocal(projectHome: root.path)),
+        'agent-5',
+      );
+      expect(await File(p.join(root.path, 'agent-4')).readAsString(), 'keep');
     },
   );
   test(

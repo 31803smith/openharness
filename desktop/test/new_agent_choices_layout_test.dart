@@ -12,6 +12,7 @@ import 'package:harness/core/models.dart';
 import 'package:harness/shared/theme/app_theme.dart' as grid;
 import 'package:harness/state/app_state.dart';
 import 'package:harness/widgets/new_agent_dialog.dart';
+import 'package:harness/shared/widgets/app_choice_picker.dart';
 
 import 'support/real_fonts.dart';
 
@@ -22,6 +23,7 @@ class _ChoicesApp extends AppNotifier {
       ('office', 'M2'),
       ('home', 'T480 - Omarchy'),
       ('studio', 'Studio'),
+      ('laptop', 'dees-MacBook-Pro.local'),
     ]) {
       final machine = Machine(
         machineId: id,
@@ -47,6 +49,23 @@ class _ChoicesApp extends AppNotifier {
   }
 
   @override
+  Future<Map<String, dynamic>> readProjectPreview(
+    String machineId,
+    String path,
+  ) async => {
+    'path': path,
+    'branch': 'main',
+    'changedFiles': 2,
+    'readme': '# Harness\nOne window for your coding agents.\n\n## Development\nRun agents on your machines and keep every project within reach.',
+    'commit': {
+      'subject': 'Simplify the project picker',
+      'author': 'Alex',
+      'date': '2026-09-15T10:00:00Z',
+    },
+    'contributors': ['Alex', 'Dee', 'Sam'],
+  };
+
+  @override
   Future<void> probeEngines(String machineId, {bool force = false}) async {}
 
   @override
@@ -61,6 +80,7 @@ class _ChoicesApp extends AppNotifier {
 }
 
 void main() {
+  WidgetController.hitTestWarningShouldBeFatal = true;
   setUpAll(() async {
     await loadRealFonts();
     await (FontLoader(
@@ -73,6 +93,7 @@ void main() {
   });
 
   for (final (size, scale) in [
+    (const Size(1280, 1000), 1.0),
     (const Size(900, 720), 1.0),
     (const Size(880, 560), 1.0),
     (const Size(600, 700), 2.0),
@@ -85,6 +106,14 @@ void main() {
       addTearDown(tester.view.reset);
       final app = _ChoicesApp();
       await app.agentPreference.select('codex');
+      for (final path in [
+        '/Users/example/code/workshop',
+        '/Users/example/code/website',
+        '/Users/example/code/harness',
+      ]) {
+        await app.projectHistory.select('local', path);
+      }
+      await app.projectHistory.select('local', null);
       addTearDown(() async {
         await tester.pumpWidget(const SizedBox());
         app.dispose();
@@ -142,66 +171,88 @@ void main() {
       }
 
       await capture('initial');
-      for (final label in [
-        'iMac - Office',
-        if (scale == 1) ...['M2', 'T480 - Omarchy'],
-        'Codex',
-        'Claude Code',
-        'Cursor',
-      ]) {
-        expect(
-          tester
-              .renderObject<RenderParagraph>(find.text(label))
-              .didExceedMaxLines,
-          isFalse,
-          reason: label,
-        );
+      for (final id in ['local', 'office', 'studio']) {
+        expect(find.byKey(ValueKey('new-agent-machine-$id')), findsOneWidget);
       }
-      if (scale == 1) {
-        final machineTop = tester
-            .getTopLeft(find.byKey(const ValueKey('new-agent-machine-local')))
-            .dy;
-        for (final id in ['office', 'home']) {
-          expect(
-            tester.getTopLeft(find.byKey(ValueKey('new-agent-machine-$id'))).dy,
-            machineTop,
-          );
+      for (final id in ['codex', 'claude', 'opencode']) {
+        expect(find.byKey(ValueKey('new-agent-quick-$id')), findsOneWidget);
+      }
+      void expectUniformTiles() {
+        final tile = tester.getSize(
+          find.byKey(const ValueKey('new-agent-quick-codex')),
+        );
+        for (final key in [
+          for (final id in ['claude', 'opencode']) 'new-agent-quick-$id',
+          for (final id in ['local', 'office', 'studio'])
+            'new-agent-machine-$id',
+          'new-agent-engine-field',
+          'new-agent-machine-more',
+          'new-agent-folder-newProject',
+          'new-agent-project-browse',
+          'new-agent-project-git',
+          'new-agent-project-recent',
+        ]) {
+          expect(tester.getSize(find.byKey(ValueKey(key))), tile, reason: key);
         }
-        final agentTop = tester
-            .getTopLeft(find.byKey(const ValueKey('new-agent-quick-codex')))
-            .dy;
-        expect(
-          tester
-              .getTopLeft(find.byKey(const ValueKey('new-agent-quick-cursor')))
-              .dy,
-          agentTop,
-        );
       }
-      final visibleMachines = ['local', 'office', 'home']
-          .map((id) => find.byKey(ValueKey('new-agent-machine-$id')))
-          .where((finder) => finder.evaluate().isNotEmpty);
-      final top = tester.getTopLeft(visibleMachines.first).dy;
-      for (final choice in visibleMachines) {
-        expect(tester.getTopLeft(choice).dy, top);
+
+      expectUniformTiles();
+      expect(find.text('This machine'), findsOneWidget);
+      expect(find.text('Cancel'), findsNothing);
+      expect(find.widgetWithText(FilledButton, 'Create'), findsOneWidget);
+      final advanced = find.byKey(const Key('new-agent-advanced'));
+      await tester.ensureVisible(advanced);
+      await tester.tap(advanced);
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Bypass approvals'));
+      expect(find.text('Permissions'), findsNothing);
+      expect(find.text('Add'), findsOneWidget);
+      if (size.width >= 900 && scale == 1) {
+        final settingsCenter = tester.getCenter(advanced).dy;
+        for (final control in [
+          find.text('Bypass approvals'),
+          find.byKey(const Key('new-agent-codex-profile-field')),
+          find.text('Add'),
+        ]) {
+          expect(tester.getCenter(control).dy, closeTo(settingsCenter, 1));
+        }
       }
-      expect(
-        tester.getTopLeft(find.byKey(const Key('new-agent-machine-more'))).dy,
-        top,
-      );
-      await tester.tap(find.byKey(const Key('new-agent-machine-more')));
+      await capture('advanced');
+      await tester.ensureVisible(advanced);
+      await tester.tap(advanced);
       await tester.pumpAndSettle();
-      await tester.ensureVisible(find.text('Studio'));
+      expect(find.text('Bypass approvals'), findsNothing);
+      expect(find.text('Add'), findsNothing);
+      final recent = find.byKey(const Key('new-agent-project-recent'));
+      await tester.ensureVisible(recent);
+      await tester.tap(recent);
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Studio'));
+      await capture('projects');
+      await tester.ensureVisible(find.text('workshop'));
       await tester.pumpAndSettle();
-      expect(
-        find.byKey(const ValueKey('new-agent-machine-studio')),
-        findsOneWidget,
+      await tester.tap(find.text('workshop'));
+      await tester.pumpAndSettle();
+      final git = find.byKey(const Key('new-agent-project-git'));
+      await tester.ensureVisible(git);
+      await tester.tap(git);
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('new-agent-git-url')),
+        'owner/repo',
       );
-      expect(
-        find.byKey(const ValueKey('new-agent-machine-home')),
-        findsNothing,
-      );
+      await capture('repository');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      final moreMachines = find.byKey(const Key('new-agent-machine-more'));
+      await tester.ensureVisible(moreMachines);
+      await tester.tap(moreMachines);
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('T480 - Omarchy'));
+      await tester.tap(find.text('T480 - Omarchy'));
+      await tester.pumpAndSettle();
+      expect(find.text('T480 - Omarchy'), findsOneWidget);
+      expect(find.text('Offline'), findsNothing);
+      expect(find.byKey(const Key('new-agent-machine-home')), findsNothing);
       final moreAgents = find.byKey(const Key('new-agent-engine-field'));
       await tester.ensureVisible(moreAgents);
       await tester.tap(moreAgents);
@@ -210,18 +261,18 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Kilo'));
       await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('new-agent-quick-kilo')), findsNothing);
       expect(
-        find.byKey(const ValueKey('new-agent-quick-kilo')),
+        find.byKey(const ValueKey('new-agent-quick-opencode')),
         findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('new-agent-quick-cursor')),
-        findsNothing,
       );
       expect(find.text('Kilo'), findsOneWidget);
+      expectUniformTiles();
+      expect(find.byType(AppChoiceTile), findsNWidgets(9));
+      expect(find.byType(Tooltip), findsNothing);
       expect(
         find.text('Harness will install Kilo before starting.'),
-        findsOneWidget,
+        findsNothing,
       );
       await capture('selected');
       final submit = find.byKey(const ValueKey('create-agent-submit'));

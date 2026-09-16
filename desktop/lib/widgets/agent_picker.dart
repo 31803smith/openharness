@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../shared/widgets/app_choice_picker.dart';
 import '../shared/widgets/app_select_field.dart';
@@ -10,15 +11,21 @@ class AgentPicker extends StatelessWidget {
     required this.value,
     required this.options,
     required this.onChanged,
+    this.compact = false,
+    this.tileSize,
   });
   final String value;
   final List<SelectOption<String>> options;
   final ValueChanged<String> onChanged;
+  final bool compact;
+  final Size? tileSize;
   static const quickAgents = ['codex', 'claude', 'cursor'];
 
   @override
   Widget build(BuildContext context) => AppChoicePicker<String>(
     value: value,
+    compact: compact,
+    tileSize: tileSize,
     options: [
       for (final option in options)
         SelectOption(
@@ -30,10 +37,13 @@ class AgentPicker extends StatelessWidget {
           trailing: option.trailing,
         ),
     ],
-    preferredValues: quickAgents,
+    preferredValues: tileSize != null
+        ? const ['codex', 'claude', 'opencode']
+        : quickAgents,
     onChanged: onChanged,
     optionKey: (id) => ValueKey('new-agent-quick-$id'),
     moreKey: const Key('new-agent-engine-field'),
     moreLabel: 'More agents',
+    moreLeading: const Icon(LucideIcons.layoutGrid, size: 18),
   );
 }

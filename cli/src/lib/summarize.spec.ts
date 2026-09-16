@@ -42,7 +42,7 @@ vi.mock('./oneshot.js', () => ({
   shutdownOneShotPool: vi.fn(),
 }))
 
-import { deriveTurnBody, summarizeTurnText, syncSummaryPoolSessions } from './summarize.js'
+import { deriveTurnBody, summarizeTurnText, syncSummaryPoolSessions, deriveTurnSummary } from './summarize.js'
 
 beforeEach(() => {
   mocks.runClaude.mockReset()
@@ -328,5 +328,17 @@ describe('the body under the headline', () => {
     expect(prompt).not.toContain('Part 2')
     expect(prompt).not.toContain('LAY PART 2')
     expect(prompt).not.toContain('two parts')
+  })
+})
+
+describe('deriveTurnSummary (the local recap)', () => {
+  it('headlines the opening of the answer', () => {
+    const text = 'Blue selected.\n\nAnything else?'
+    expect(deriveTurnSummary(text)?.split('\n')[0]).toBe('Blue selected.')
+  })
+
+  it('skips a label at the top', () => {
+    const text = 'Kết quả:\nĐã sửa xong file cấu hình.'
+    expect(deriveTurnSummary(text)?.split('\n')[0]).toBe('Đã sửa xong file cấu hình.')
   })
 })

@@ -792,6 +792,18 @@ export function setPaneMouseOn(pane: string): Promise<void> {
   })
 }
 
+/**
+ * The colours tmux reports to a program in the pane that asks (`OSC 10;?`/`OSC 11;?`) — see
+ * `hostTheme.ts` for why a TUI's palette depends on it. Window-scoped, never `-g`: the daemon
+ * shares the user's default tmux server and must not restyle sessions it did not create.
+ * Best-effort and idempotent, like [setPaneMouseOn].
+ */
+export function setPaneWindowStyle(pane: string, style: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    execFile('tmux', ['set-option', '-w', '-t', pane, 'window-style', style], { timeout: 2_000 }, (error) => resolve(!error))
+  })
+}
+
 /** What tmux knows about a pane right now. See `agentCreateDiagnosis.ts` for why this is read. */
 export interface TmuxPaneState {
   dead: boolean

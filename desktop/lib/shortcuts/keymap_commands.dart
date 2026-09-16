@@ -56,14 +56,14 @@ final harnessCommands = <HarnessCommand>[
   ),
   const HarnessCommand(
     'swarm.new',
-    'New Tab',
+    'New Harness',
     ShortcutGroup.navigate,
     action: ShortcutAction.newSwarm,
     nativeAction: 'new',
   ),
   const HarnessCommand(
     'swarm.close',
-    'Close Tab',
+    'Close Harness',
     ShortcutGroup.navigate,
     action: ShortcutAction.closeSwarm,
     nativeAction: 'closeActive',
@@ -77,7 +77,7 @@ final harnessCommands = <HarnessCommand>[
   ),
   const HarnessCommand(
     'swarm.next',
-    'Next Tab',
+    'Next Harness',
     ShortcutGroup.navigate,
     action: ShortcutAction.nextSwarm,
     nativeAction: 'next',
@@ -85,7 +85,7 @@ final harnessCommands = <HarnessCommand>[
   ),
   const HarnessCommand(
     'swarm.previous',
-    'Previous Tab',
+    'Previous Harness',
     ShortcutGroup.navigate,
     action: ShortcutAction.previousSwarm,
     nativeAction: 'previous',
@@ -93,7 +93,7 @@ final harnessCommands = <HarnessCommand>[
   ),
   const HarnessCommand(
     'swarm.rename',
-    'Rename Tab',
+    'Rename Harness',
     ShortcutGroup.actions,
     action: ShortcutAction.renameSwarm,
     nativeAction: 'renameActive',
@@ -131,7 +131,7 @@ final harnessCommands = <HarnessCommand>[
   for (var i = 1; i <= 9; i++)
     HarnessCommand(
       'swarm.select_$i',
-      'Select tab $i',
+      'Select harness $i',
       ShortcutGroup.navigate,
       extraKeys: ['cmd+$i'],
     ),
@@ -272,7 +272,7 @@ final harnessCommands = <HarnessCommand>[
   ),
   const HarnessCommand(
     'agent.add',
-    'Add Agent',
+    'Open Agent',
     ShortcutGroup.actions,
     action: ShortcutAction.addAgent,
     nativeAction: 'addAgent',

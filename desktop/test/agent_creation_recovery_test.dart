@@ -1,3 +1,5 @@
+import 'support/new_agent_project.dart';
+
 import 'dart:async';
 
 import 'package:file_selector_platform_interface/file_selector_platform_interface.dart';
@@ -103,22 +105,20 @@ void main() {
         switch (entry) {
           case 'header':
             await tester.tap(
-              find.byKey(const ValueKey('swarm-add-harness-button')),
+              find.byKey(const ValueKey('swarm-new-agent-button')),
             );
-            await tester.pump();
-            await tester.tap(find.byKey(const ValueKey('harness-picker-new')));
           case 'start page':
             await chord(tester, LogicalKeyboardKey.keyT);
             await tester.tap(find.byKey(const ValueKey('harness-start-new')));
           case 'search shortcut':
-            await chord(tester, LogicalKeyboardKey.keyN);
+            await chord(tester, LogicalKeyboardKey.keyO);
             await tester.enterText(
               find.byKey(const ValueKey('swarm-search-input')),
               'Agent 12',
             );
-            await chord(tester, LogicalKeyboardKey.keyN, shift: true);
+            await chord(tester, LogicalKeyboardKey.keyN);
           default:
-            await chord(tester, LogicalKeyboardKey.keyN, shift: true);
+            await chord(tester, LogicalKeyboardKey.keyN);
         }
         await tester.pumpAndSettle();
         expect(find.byType(AlertDialog), findsOneWidget);
@@ -164,7 +164,7 @@ void main() {
     final connection = _Connection();
     final app = createApp(connectionForTest: (_) => connection);
     await mount(tester, app);
-    await chord(tester, LogicalKeyboardKey.keyN, shift: true);
+    await chord(tester, LogicalKeyboardKey.keyN);
     await tester.pumpAndSettle();
     expect(find.byType(AlertDialog), findsOneWidget);
     await tester.tapAt(const Offset(12, 72));
@@ -200,7 +200,7 @@ void main() {
         await mount(tester, app);
         final field = find.byKey(const ValueKey('swarm-search-input'));
         if (entry == 'Open') {
-          await chord(tester, LogicalKeyboardKey.keyN);
+          await chord(tester, LogicalKeyboardKey.keyO);
         } else {
           await chord(tester, LogicalKeyboardKey.keyP, shift: true);
           await tester.enterText(field, '> $entry');
@@ -209,7 +209,7 @@ void main() {
           await tester.pump();
         }
         expect(find.byType(SwarmSearchResults), findsOneWidget);
-        await tester.tap(find.byKey(const ValueKey('harness-picker-new')));
+        await chord(tester, LogicalKeyboardKey.keyN);
         await tester.pumpAndSettle();
         expect(find.byType(AlertDialog), findsOneWidget);
         expect(find.byType(SwarmSearchResults), findsNothing);
@@ -221,7 +221,7 @@ void main() {
           }),
           findsWidgets,
         );
-        await tester.tap(find.byKey(const Key('new-agent-folder')));
+        await browseNewAgentProject(tester);
         await tester.pumpAndSettle();
         await tester.tap(find.byKey(const ValueKey('create-agent-submit')));
         await tester.pump();
@@ -269,9 +269,9 @@ void main() {
         await tester.sendKeyEvent(LogicalKeyboardKey.enter);
         await tester.pump();
       }
-      await chord(tester, LogicalKeyboardKey.keyN, shift: true);
+      await chord(tester, LogicalKeyboardKey.keyN);
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('new-agent-folder')));
+      await browseNewAgentProject(tester);
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('create-agent-submit')));
       await tester.pump();
@@ -344,10 +344,10 @@ void main() {
     final input = <TerminalBinaryFrame>[];
     final pane = app.adoptSessionForTest(terminal('a0', input));
     await mount(tester, app);
+    await chord(tester, LogicalKeyboardKey.keyO);
     await chord(tester, LogicalKeyboardKey.keyN);
-    await chord(tester, LogicalKeyboardKey.keyN, shift: true);
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('new-agent-folder')));
+    await browseNewAgentProject(tester);
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('create-agent-submit')));
     await tester.pump();
@@ -370,9 +370,9 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
     await tester.pump();
     expect(input.single.bytes, [27, 91, 66]);
-    await chord(tester, LogicalKeyboardKey.keyN);
+    await chord(tester, LogicalKeyboardKey.keyO);
     expect(find.byType(SwarmSearchResults), findsOneWidget);
-    expect(find.byKey(const ValueKey('harness-picker-new')), findsOneWidget);
+    expect(find.byKey(const ValueKey('create-agent-submit')), findsNothing);
     expect(connection.calls, hasLength(1));
     await tester.pumpWidget(const SizedBox());
     app.dispose();
@@ -628,8 +628,8 @@ void main() {
         const WsRequestTimeout('agent_create'),
       );
       await tester.pumpAndSettle();
-      expect(find.text('/work'), findsOneWidget);
-      expect(find.widgetWithText(FilledButton, 'New Agent'), findsNothing);
+      expect(find.text('work'), findsOneWidget);
+      expect(find.widgetWithText(FilledButton, 'Create'), findsNothing);
       final action = tester.widget<FilledButton>(
         find.widgetWithText(FilledButton, 'Check status'),
       );

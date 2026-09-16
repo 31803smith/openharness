@@ -260,6 +260,11 @@ export class RemoteRelayPool {
     const token = await this.auth.accessToken({ force: forceRefresh })
     const url = `${this.backendWsBase}/api/web-ws?autonomousEnv=${encodeURIComponent(autonomousEnv)}`
     const ws = new WebSocket(url, [token])
+    // An 'error' with no listener throws out of the emitter and takes the daemon down. The handshake's
+    // once('error') below is consumed by its first emit, and nothing listens after the handshake at all;
+    // this sink turns every later emit — including the one terminate() raises while CONNECTING — into a
+    // plain 'close', which is what the owners actually clean up on.
+    ws.on('error', () => { /* handled via 'close' */ })
     const crypto = new RelaySessionCrypto({ machineId, selfIdentity: this.selfIdentity, peerPub: b64d(peer.pub) })
     const entry: Entry = {
       ws,
@@ -288,7 +293,7 @@ export class RemoteRelayPool {
     // e2e_hello/e2e_welcome as the "client" role — see lib/e2ee/relayClient.ts. Only once BOTH are done
     // does the app's onOutgoing/sink start receiving anything, so it never sees a half-encrypted stream.
     let selected = false
-    await new Promise<void>((resolve, reject) => {
+    const handshake = new Promise<void>((resolve, reject) => {
       let settled = false
       const timeout = setTimeout(() => {
         if (!settled) { settled = true; reject(new RelayConnectError('relay connect timed out')) }
@@ -446,6 +451,23 @@ export class RemoteRelayPool {
         if (!settled) { settled = true; clearTimeout(timeout); reject(err instanceof Error ? err : new Error(String(err))) }
       })
     })
+    try {
+      await handshake
+    } catch (err) {
+      // A rejected handshake MUST take the socket down with it. Only `e2e_denied` used to; the timeout
+      // (peer never answered e2e_hello) and `machine_select_error` just dropped their reference, leaving
+      // an OPEN socket nothing could reach — not in `entries`, no heartbeat, but still auto-answering
+      // backend's pings — and the app's select retries leaked one more each time (175 concurrent
+      // sockets from one user on a single backend pod, 2026-09-15). A clean close(1000) so backend logs
+      // an ordinary disconnect; `ws` bounds the wait for the peer's close frame at 30s (closeTimeout)
+      // and terminates on its own after that, so a mute peer cannot turn this back into a leak.
+      if (ws.readyState === WebSocket.OPEN) {
+        try { ws.close(1000, 'handshake failed') } catch { ws.terminate() }
+      } else if (ws.readyState === WebSocket.CONNECTING) {
+        ws.terminate()
+      }
+      throw err
+    }
     // Handshake done — from here on, a close is the entry's real end-of-life, not a handshake failure.
     ws.on('close', (code, reasonBuf) => {
       entry.heartbeat?.stop()

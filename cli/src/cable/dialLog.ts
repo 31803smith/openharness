@@ -98,6 +98,16 @@ export class DialLog {
     }
   }
 
+  /**
+   * The dial greeted — a fresh boot, or a reconnect. Its first `alive` comes a minute after boot, so the
+   * watch restarts from now rather than from the last beat of the previous boot; without this an OTA
+   * reboot (port never closed, ticks back to zero) read as "no heartbeat for 90s" every time.
+   */
+  greeted(): void {
+    this.lastHeartbeat = this.now()
+    this.gapMarked = false
+  }
+
   /** Every queued write has reached the file. */
   flush(): Promise<void> {
     return this.chain

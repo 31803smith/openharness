@@ -52,9 +52,16 @@ class ApiClient {
   }
 
   // -- machines (control plane, proxied by the local CLI) --
+  /// Whether the last [machines] answer came from the daemon's cache rather than the backend.
+  ///
+  /// The daemon answers 200 with the last known-good list when the backend leg is unreachable, so a
+  /// caller that only checked the status code would mistake an outage for a healthy, current read.
+  bool lastMachinesStale = false;
+
   Future<List<Machine>> machines() async {
     final res = await _dio.get('/api/machines');
     final data = unwrapApiResponse(res) as Map<String, dynamic>;
+    lastMachinesStale = data['stale'] == true;
     final list = data['machines'] as List<dynamic>? ?? [];
     return list
         .map((e) => Machine.fromJson(e as Map<String, dynamic>))
@@ -111,6 +118,21 @@ dynamic unwrapApiResponse(Response res) {
         : 'Request failed (${res.statusCode})',
     status: res.statusCode,
   );
+}
+
+/// The local daemon can answer normally while its separate backend request fails.
+/// Those gateway errors need recovery just as a broken loopback connection does.
+bool isTransientApiError(Object error) {
+  if (error is ApiException) {
+    return const {502, 503, 504}.contains(error.status);
+  }
+  return error is DioException &&
+      const {
+        DioExceptionType.connectionError,
+        DioExceptionType.connectionTimeout,
+        DioExceptionType.sendTimeout,
+        DioExceptionType.receiveTimeout,
+      }.contains(error.type);
 }
 
 /// The sentence a failed local-CLI call earns on an error strip. A raw

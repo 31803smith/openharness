@@ -165,14 +165,19 @@ void main() {
       );
       await tester.tap(find.text('open'));
       await tester.pumpAndSettle();
-      // Create stays dead until a folder is chosen. This machine is not
-      // `thisComputer`, so Browse… opens the in-app remote picker rather than
-      // a native panel this agent has no plugin for.
-      await tester.tap(find.text('Browse…'));
+      // Browse on a remote machine uses the in-app folder picker.
+      final project = find.byKey(const Key('new-agent-project-bar'));
+      await tester.ensureVisible(project);
+      await tester.tap(project);
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(
+        find.byKey(const Key('new-agent-project-browse')),
+      );
+      await tester.tap(find.byKey(const Key('new-agent-project-browse')));
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, 'Select this folder'));
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(FilledButton, 'New Agent'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Create'));
       await tester.pumpAndSettle();
     }
 

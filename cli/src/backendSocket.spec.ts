@@ -2,12 +2,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'fs'
 import { fileURLToPath } from 'url'
 import { BackendSocket, compactRuntimePickerModels, deviceAgentListItem, grokHistoryPage } from './backendSocket.js'
+import { AuthSessionError, type AuthSessionManager } from './lib/authSession.js'
 import { WS_IDLE_DEADLINE_MS as IDLE_DEADLINE_MS } from './lib/wsLiveness.js'
 import type { TerminalStreamManager } from './lib/terminalStreamManager.js'
 import { decodeTerminalLocal, TerminalBinaryKind } from './lib/terminalBinary.js'
 import { registry, type RegisteredSession } from './lib/registry.js'
 import * as mediaPreview from './lib/mediaPreview.js'
 import * as projectFolder from './lib/projectFolder.js'
+import * as projectPreview from './lib/projectPreview.js'
 import { randomUUID } from 'node:crypto'
 
 const wsMock = vi.hoisted(() => {
@@ -77,6 +79,12 @@ const wsMock = vi.hoisted(() => {
     /** What `ws` does when `handshakeTimeout` elapses: abort the upgrade, then report the socket gone. */
     handshakeTimeout(): void {
       this.emit('error', new Error('Opening handshake has timed out'))
+      this.close()
+    }
+
+    /** What `ws` does when the upgrade is answered with an HTTP status: 'error', then 'close'. */
+    refused(status: number): void {
+      this.emit('error', new Error(`Unexpected server response: ${status}`))
       this.close()
     }
 
@@ -205,6 +213,84 @@ describe('BackendSocket outbound queue', () => {
     await socket.stop()
   })
 
+  describe('a 401 on the upgrade', () => {
+    // A stub in the shape the socket needs: the first token is what the backend refuses, and the
+    // refresh answers with whatever the case under test says.
+    function authStub(refresh: () => Promise<string>): { auth: AuthSessionManager; calls: Array<{ force?: boolean; failedToken?: string }> } {
+      const calls: Array<{ force?: boolean; failedToken?: string }> = []
+      let current = 'stale-token'
+      const auth = {
+        accessToken: async (opts: { force?: boolean; failedToken?: string } = {}) => {
+          if (opts.force) { calls.push(opts); current = await refresh() }
+          return current
+        },
+      } as unknown as AuthSessionManager
+      return { auth, calls }
+    }
+
+    it('refreshes the token, reports the link down meanwhile, and reconnects with the new token', async () => {
+      vi.useFakeTimers()
+      const statuses: boolean[] = []
+      const { auth, calls } = authStub(async () => 'fresh-token')
+      const socket = new BackendSocket('0123456789abcdef0123456789abcdef', auth, (connected) => statuses.push(connected))
+      const revoked = vi.fn()
+      socket.onRevoked = revoked
+      socket.connect()
+      await vi.advanceTimersByTimeAsync(0)
+      const ws1 = wsMock.instances[0]
+      expect(ws1.protocols).toEqual(['stale-token'])
+      ws1.open()
+
+      ws1.refused(401)
+      await vi.advanceTimersByTimeAsync(0)
+      // The socket is gone the ordinary way: status says so, no session was wiped.
+      expect(statuses).toEqual([true, false])
+      expect(calls).toEqual([{ force: true, failedToken: 'stale-token' }])
+      expect(revoked).not.toHaveBeenCalled()
+      // And the refresh, not a backoff timer, opened the next socket — with the new token.
+      expect(wsMock.instances).toHaveLength(2)
+      expect(wsMock.instances[1].protocols).toEqual(['fresh-token'])
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(wsMock.instances).toHaveLength(2) // no second dial racing the first
+      await socket.stop()
+    })
+
+    it('keeps the session and backs off when the refresh merely fails', async () => {
+      vi.useFakeTimers()
+      const { auth } = authStub(async () => { throw new AuthSessionError('service unavailable', 'UNAVAILABLE') })
+      const socket = new BackendSocket('0123456789abcdef0123456789abcdef', auth)
+      const revoked = vi.fn()
+      socket.onRevoked = revoked
+      socket.connect()
+      await vi.advanceTimersByTimeAsync(0)
+      wsMock.instances[0].open()
+      wsMock.instances[0].refused(401)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(revoked).not.toHaveBeenCalled()
+      expect(wsMock.instances).toHaveLength(1)
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(wsMock.instances).toHaveLength(2) // the ordinary backoff, session intact
+      await socket.stop()
+    })
+
+    it('signs out only when the refresh token itself is rejected', async () => {
+      vi.useFakeTimers()
+      const { auth } = authStub(async () => { throw new AuthSessionError('refresh token is invalid', 'INVALID_REFRESH') })
+      const socket = new BackendSocket('0123456789abcdef0123456789abcdef', auth)
+      const revoked = vi.fn()
+      socket.onRevoked = revoked
+      socket.connect()
+      await vi.advanceTimersByTimeAsync(0)
+      wsMock.instances[0].open()
+      wsMock.instances[0].refused(401)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(revoked).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(wsMock.instances).toHaveLength(1)
+      await socket.stop()
+    })
+  })
+
   it('keeps a frame queued when ws.send reports an error and retries after reconnect', async () => {
     vi.useFakeTimers()
     const socket = new BackendSocket('token')
@@ -280,6 +366,40 @@ describe('BackendSocket outbound queue', () => {
     await socket.stop()
   })
 
+  it('hands theme_set to the host-theme sink and acknowledges it to the requester', async () => {
+    const socket = new BackendSocket('token')
+    const received: unknown[] = []
+    socket.hostThemeSink = (theme) => received.push(theme)
+    socket.connect()
+    const ws = wsMock.instances[0]
+    ws.open()
+    const unwrap = vi.spyOn(socket.e2ee, 'unwrapDown')
+    vi.spyOn(socket.e2ee, 'hasSession').mockReturnValue(true)
+    const wrapReply = vi.spyOn(socket.e2ee, 'wrapRpcReply').mockReturnValue({
+      type: 'theme_set_result', payload: { __e2e: { v: 1, k: 's', n: 1, ct: 'ciphertext' } },
+    })
+    const envelope = { __e2e: { v: 1, k: 's', n: 1, ct: 'ciphertext' } }
+
+    unwrap.mockReturnValueOnce({
+      type: 'theme_set', payload: { requestId: 't-1', background: '#171B29', foreground: '#f5f5f5' },
+    })
+    ws.message({ t: 'down', connId: 'web-1', frame: { type: 'theme_set', payload: envelope } })
+    await vi.waitFor(() => {
+      expect(wrapReply).toHaveBeenCalledWith('web-1', 'theme_set_result', 't-1', { applied: true })
+    })
+    // Normalised to lowercase, and a full pair — never half a style.
+    expect(received).toEqual([{ background: '#171b29', foreground: '#f5f5f5' }])
+
+    // A malformed colour is refused, not half-applied.
+    unwrap.mockReturnValueOnce({ type: 'theme_set', payload: { requestId: 't-2', background: 'dark' } })
+    ws.message({ t: 'down', connId: 'web-1', frame: { type: 'theme_set', payload: envelope } })
+    await vi.waitFor(() => {
+      expect(wrapReply).toHaveBeenCalledWith('web-1', 'theme_set_result', 't-2', { error: 'BAD_THEME' })
+    })
+    expect(received).toHaveLength(1)
+    await socket.stop()
+  })
+
   it('answers usage_read with this machine\'s own readings, wrapped for the requester', async () => {
     // What goes back names what the person spends and on whose account, so it must leave encrypted.
     // The reader is the socket's own field: this never touches a real home, Keychain or network.
@@ -313,6 +433,33 @@ describe('BackendSocket outbound queue', () => {
     await vi.waitFor(() => {
       expect(wrapReply).toHaveBeenCalledWith('web-1', 'usage_read_result', 'usage-1', { providers: readings })
     })
+    await socket.stop()
+  })
+
+  it('returns project previews only to the requesting encrypted connection', async () => {
+    vi.spyOn(registry, 'list').mockReturnValue([{ cwd: '/remote/workspace' }] as RegisteredSession[])
+    const preview = { path: '/remote/workspace', readme: 'Private project README', branch: 'main', files: ['README.md'], contributors: [] }
+    const read = vi.spyOn(projectPreview, 'projectPreview').mockResolvedValue(preview)
+    const socket = new BackendSocket('token')
+    socket.connect()
+    const ws = wsMock.instances[0]
+    ws.open()
+    vi.spyOn(socket.e2ee, 'unwrapDown').mockReturnValue({ type: 'project_preview', payload: {
+      requestId: 'preview-1', path: '/remote/workspace',
+    } })
+    vi.spyOn(socket.e2ee, 'hasSession').mockReturnValue(true)
+    const wrap = vi.spyOn(socket.e2ee, 'wrapRpcReply').mockReturnValue({
+      type: 'project_preview_result', payload: { __e2e: { v: 1, k: 'p', n: 1, ct: 'encrypted-preview' } },
+    })
+    ws.message({ t: 'down', connId: 'viewer-a', frame: {
+      type: 'project_preview', payload: { __e2e: { v: 1, k: 'p', n: 1, ct: 'encrypted-request' } },
+    } })
+    await vi.waitFor(() => expect(wrap).toHaveBeenCalledWith('viewer-a', 'project_preview_result', 'preview-1', preview))
+    expect(read).toHaveBeenCalledWith('/remote/workspace', ['/remote/workspace'])
+    expect(parseSent(ws)).toContainEqual(expect.objectContaining({ targetConnId: 'viewer-a', frame: {
+      type: 'project_preview_result', payload: { __e2e: { v: 1, k: 'p', n: 1, ct: 'encrypted-preview' } },
+    } }))
+    expect(JSON.stringify(parseSent(ws))).not.toContain('Private project README')
     await socket.stop()
   })
 

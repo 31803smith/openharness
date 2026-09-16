@@ -16,16 +16,19 @@ void main() {
     final input = <TerminalBinaryFrame>[];
     final pane = app.adoptSessionForTest(terminal('a0', input));
     await mount(tester, app);
-    await chord(tester, LogicalKeyboardKey.keyN);
+    await chord(tester, LogicalKeyboardKey.keyO);
     final field = find.byKey(const ValueKey('swarm-search-input'));
     final results = find.byKey(const ValueKey('swarm-search-results'));
     expect(field, findsOneWidget);
     expect(find.byType(AlertDialog), findsNothing);
     expect(find.byKey(const ValueKey('swarm-search-new-agent')), findsNothing);
-    expect(tester.getRect(field).width, tester.getRect(results).width);
-    await chord(tester, LogicalKeyboardKey.keyN, shift: true);
+    final panelRect = tester.getRect(results);
+    final fieldRect = tester.getRect(field);
+    expect(fieldRect.left, panelRect.left);
+    expect(fieldRect.right, panelRect.right);
+    await chord(tester, LogicalKeyboardKey.keyN);
     expect(find.byType(AlertDialog), findsOneWidget);
-    expect(find.widgetWithText(FilledButton, 'New Agent'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, 'Create'), findsOneWidget);
     expect(results, findsNothing);
     expect(find.text('Back to Search'), findsNothing);
     expect(app.panes, [pane]);
@@ -53,7 +56,7 @@ void main() {
       app.newSwarm();
       final target = app.activeSwarm;
       await mount(tester, app);
-      await chord(tester, LogicalKeyboardKey.keyN);
+      await chord(tester, LogicalKeyboardKey.keyO);
       final field = find.byKey(const ValueKey('swarm-search-input'));
       if (activate == 'click') {
         await tester.enterText(field, 'Agent 0');

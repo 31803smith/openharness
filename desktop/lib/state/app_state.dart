@@ -3,6 +3,9 @@ import 'dart:io' show exit, pid;
 import 'dart:math' show Random;
 
 import 'package:dio/dio.dart';
+
+import 'dart:ui' show Color;
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -25,11 +28,17 @@ import '../core/local_git_projects.dart';
 import '../core/test_run.dart';
 import '../core/models.dart';
 import '../core/project_folder.dart';
+import '../core/project_history.dart';
+import '../core/project_preview.dart';
 import '../core/repository_clone.dart';
 import '../core/retry.dart';
 import '../settings/config_store.dart';
 import '../stats/harness_stats.dart';
 import '../terminal/terminal_session.dart';
+import '../terminal/terminal_theme.dart';
+import '../terminal/terminal_theme_store.dart';
+import '../logging/app_log.dart';
+import '../shared/theme/app_theme.dart' as grid;
 import '../terminal/remote_media_download.dart';
 import '../widgets/engine_identity.dart' show allEngines;
 import 'dial_status.dart';
@@ -369,6 +378,11 @@ class AppNotifier extends ChangeNotifier {
   // successful bootstrap (see `ensureCliDaemonReady`), cancelled on dispose. Cancelling only stops this
   // Dart-side loop; the daemon itself self-daemonizes and must keep running after the app quits.
   Timer? _daemonSupervisionTimer;
+  // Backend REST can fail while the daemon and its WebSocket remain ready. Recover that list
+  // independently, with capped backoff and the same in-flight request as a manual retry.
+  Timer? _machineRecoveryTimer;
+  int _machineRecoveryAttempts = 0;
+  String? _machineLoadError;
 
   /// The last [ensureCliDaemonReady] did not reach a ready daemon — the one
   /// error the supervisor's ready transition is allowed to retry away.
@@ -394,6 +408,8 @@ class AppNotifier extends ChangeNotifier {
       !_disposed && revision == _authRevision;
 
   int _invalidateAuthWork() {
+    _stopMachineRecovery();
+    _machineLoadError = null;
     _resetLoginBrowser();
     _loginAuthorized = false;
     _profileInFlight = null;
@@ -522,7 +538,7 @@ class AppNotifier extends ChangeNotifier {
   bool get canOpenNewTab =>
       swarms.length < maxSwarms || swarms.any((swarm) => swarm.isEmptyStarter);
 
-  // A New Tab remains temporary until it has content or a custom name.
+  // A New Harness remains temporary until it has content or a custom name.
   // The return destination is session-local; abandoned drafts are never saved.
   final _draftSwarmReturns = <String, String>{};
 
@@ -537,7 +553,7 @@ class AppNotifier extends ChangeNotifier {
 
   void newSwarm({String name = Swarm.defaultName, bool draft = false}) {
     name = Swarm.normalizeName(name);
-    // Every New Tab entry point reuses the existing start page, including
+    // Every New Harness entry point reuses the existing start page, including
     // when another tab is selected or the tab limit has been reached.
     if (name == Swarm.defaultName) {
       final starter = activeSwarm.isEmptyStarter
@@ -582,7 +598,7 @@ class AppNotifier extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Cancel an untouched New Tab without closing a session or recording
+  /// Cancel an untouched New Harness without closing a session or recording
   /// Recently Closed. A sole workspace remains the app's starting screen.
   bool cancelSwarmDraft(String id) {
     final returnId = _draftSwarmReturns[id];
@@ -1087,6 +1103,7 @@ class AppNotifier extends ChangeNotifier {
        // without one (the tests) nothing is written anywhere.
        dial = DialState(paneLayoutStore?.storage),
        agentPreference = AgentPreference(paneLayoutStore?.storage),
+       projectHistory = ProjectHistory(paneLayoutStore?.storage),
        session = authSession,
        _store = configStore,
        cliLink = cliLink ?? CliLink(),
@@ -1103,6 +1120,11 @@ class AppNotifier extends ChangeNotifier {
     this.peerLinks = peerLinks ?? this.viewer?.links ?? this.cliLink;
     _autonomousEnv = this.config.autonomousEnv;
     api = _newApiClient();
+    // `grid.AppTheme.palette`, not the prefs store: main.dart copies the saved
+    // choice into the palette notifier while rebuilding, so the store fires
+    // before the colours the panes actually use have moved.
+    grid.AppTheme.palette.addListener(_announceTerminalThemeEverywhere);
+    terminalThemeStore.addListener(_announceTerminalThemeEverywhere);
   }
 
   /// Through the local CLI in a desktop build; straight to the backend, signed, in a viewer.
@@ -1110,6 +1132,19 @@ class AppNotifier extends ChangeNotifier {
       ApiClient(config: config, session: session, auth: viewer?.auth);
 
   String? get lastError => _lastError;
+
+  /// The machine list's own failure, separate from [lastError] — that slot is shared with agent-launch
+  /// and other one-off errors, and is cleared by [dismissError]. A pane asking "is this machine missing
+  /// because we could not read the list?" needs the narrower question.
+  String? get machineListError => _machineLoadError;
+
+  /// True when the machine list on screen came from the daemon's cache because the backend could not be
+  /// reached. The rows are the last known-good ones, not current.
+  bool machinesAreStale = false;
+
+  /// Whether a machine-list recovery is armed. Mirrors [environmentRecheckPending] — the honest way for a
+  /// test to ask "is this still trying?" without reaching into a private timer.
+  bool get machineRecoveryPending => _machineRecoveryTimer != null;
   bool get lastErrorRetryable => _lastErrorRetryable;
   String? get bootStatusMessage => _bootStatusMessage;
 
@@ -1144,6 +1179,7 @@ class AppNotifier extends ChangeNotifier {
   /// without dragging the whole rail through a machine-list rebuild.
   final DialState dial;
   final AgentPreference agentPreference;
+  final ProjectHistory projectHistory;
 
   TerminalPane? get focusedPane {
     final id = focusedPaneId;
@@ -1375,6 +1411,101 @@ class AppNotifier extends ChangeNotifier {
   /// Publish the selected pane to the existing local CLI connection. The CLI
   /// shares this focus with paired devices and the dial; terminal attachments
   /// and operating-system window activation do not define the selected agent.
+  /// The colours the panes are actually painted with — the terminal theme in
+  /// force, not the app palette by assumption (Tango is its own scheme).
+  static Map<String, String> terminalThemeColours() {
+    final theme = terminalThemeFor(
+      grid.AppTheme.palette.value,
+      terminalThemeStore.value,
+    );
+    String hex(Color color) =>
+        '#${(color.toARGB32() & 0xFFFFFF).toRadixString(16).padLeft(6, '0')}';
+    return {
+      'background': hex(theme.background),
+      'foreground': hex(theme.foreground),
+    };
+  }
+
+  /// Tells one machine's daemon the pane colours (`theme_set`, answered by
+  /// the CLI's lib/hostTheme.ts). Fire-and-forget: a daemon that predates the
+  /// type cannot open the envelope and goes silent, and that is nothing to
+  /// put on the error strip — the pane still opens, only a TUI's palette may
+  /// guess wrong there.
+  void _announceTerminalTheme(String machineId) {
+    if (_disposed) return;
+    final connection = _pool != null || connectionForTest != null
+        ? _conn(machineId)
+        : null;
+    if (connection == null) return;
+    unawaited(
+      connection
+          .request(
+            'theme_set',
+            payload: terminalThemeColours(),
+            timeout: const Duration(seconds: 5),
+          )
+          .catchError((Object error) {
+            appLog.debug('ws', 'theme_set not applied on $machineId: $error');
+            return <String, dynamic>{};
+          }),
+    );
+  }
+
+  /// The palette or terminal theme changed: every connected machine hears it,
+  /// so a session created after this on any of them starts with the new
+  /// colours and existing ones are restyled on the daemon's next scan.
+  void _announceTerminalThemeEverywhere() {
+    for (final entry in machineStates.entries) {
+      if (entry.value.connectionStatus != ConnectionStatus.connected) continue;
+      _announceTerminalTheme(entry.key);
+    }
+  }
+
+  /// What a machine hears the moment its socket is up — first connect, or a
+  /// reconnect after its daemon restarted, which has forgotten all of it.
+  void _onMachineConnected(String machineId, MachineState machine) {
+    machine.needsLink = false;
+    _stopLinkRetry(machineId);
+    // A daemon that just came up — first connect, or a reconnect after it
+    // restarted — has never been told what is on the grid. Without this
+    // the dial goes back to beeping about tiles in plain sight until the
+    // next time a pane happens to change.
+    _announceOpenPanesToDial();
+    // ...nor which tile this window is looking at. The daemon repeats that to the dial after every
+    // list push, which is what keeps the two screens from drifting apart — but it can only repeat
+    // something it has been told, and until now the first telling waited for the focus to CHANGE.
+    // A daemon restarted mid-session therefore had nothing to say, and a dial that re-anchored onto
+    // the wrong tile stayed there.
+    _announceAppFocus();
+    // ...nor what colour its panes are. tmux answers a TUI's "what is my background?"
+    // (OSC 10/11 — Codex picks its light or dark diff palette from it) with whichever
+    // terminal attached first, unless told; this tells it, for the sessions it owns.
+    _announceTerminalTheme(machineId);
+    // The local CLI never hands back `connected` until it has terminated E2EE (or confirmed
+    // none is needed, for its own machine) — every machine's data is ready to load right away,
+    // with no separate app-side readiness gate to wait on anymore.
+    if (machine.isLocalMachine) {
+      machine.transportMode = MachineTransportMode.localPlaintext;
+    } else {
+      machine.transportMode = MachineTransportMode.cloudE2ee;
+    }
+    // Route through _applyNodeStatus (not just `machine.nodeOnline = true`) for every machine,
+    // not only the local one — a successful select IS the machine being reachable again, and
+    // this is what lets a pending agent (captured below on disconnect) reattach automatically
+    // instead of leaving the user stuck on the empty "select a machine" placeholder.
+    unawaited(_applyNodeStatus(machine, true));
+    unawaited(_loadMachineData(machine, force: true));
+    _startAgentSyncTimer(machineId);
+  }
+
+  @visibleForTesting
+  void onMachineConnectedForTest(String machineId) {
+    final machine = machineStates[machineId];
+    if (machine == null) return;
+    machine.connectionStatus = ConnectionStatus.connected;
+    _onMachineConnected(machineId, machine);
+  }
+
   void _announceAppFocus() {
     final pane = focusedPane;
     final machineId = pane?.agentId == null ? null : pane?.machineId;
@@ -2064,8 +2195,7 @@ class AppNotifier extends ChangeNotifier {
       await refreshMachines();
     } catch (error) {
       if (!_authWorkCurrent(revision)) return;
-      _lastError = 'Could not load machines: ${describeApiError(error)}';
-      _lastErrorRetryable = true;
+      _reportMachineLoadError(error);
     }
     if (_authWorkCurrent(revision)) notifyListeners();
   }
@@ -2160,6 +2290,7 @@ class AppNotifier extends ChangeNotifier {
   /// a not-ready daemon is what lets a boot that landed mid-update recover without a click.
   void _startDaemonSupervision(LocalCliDiscovery discovery) {
     _daemonSupervisionTimer ??= discovery.startSupervising(
+      spawnAllowedAt: inSpawnSlot,
       stillSignedIn: () async => (await cliLogin.checkStatus()).loggedIn,
       onSignedOut: () => _signedOutAtRuntime(_signedOutMessage),
       onSnapshot: _updateLocalProjectSnapshot,
@@ -2567,34 +2698,7 @@ class AppNotifier extends ChangeNotifier {
         if (machine == null) return;
         machine.connectionStatus = nextStatus;
         if (nextStatus == ConnectionStatus.connected) {
-          machine.needsLink = false;
-          _stopLinkRetry(machineId);
-          // A daemon that just came up — first connect, or a reconnect after it
-          // restarted — has never been told what is on the grid. Without this
-          // the dial goes back to beeping about tiles in plain sight until the
-          // next time a pane happens to change.
-          _announceOpenPanesToDial();
-          // ...nor which tile this window is looking at. The daemon repeats that to the dial after every
-          // list push, which is what keeps the two screens from drifting apart — but it can only repeat
-          // something it has been told, and until now the first telling waited for the focus to CHANGE.
-          // A daemon restarted mid-session therefore had nothing to say, and a dial that re-anchored onto
-          // the wrong tile stayed there.
-          _announceAppFocus();
-          // The local CLI never hands back `connected` until it has terminated E2EE (or confirmed
-          // none is needed, for its own machine) — every machine's data is ready to load right away,
-          // with no separate app-side readiness gate to wait on anymore.
-          if (machine.isLocalMachine) {
-            machine.transportMode = MachineTransportMode.localPlaintext;
-          } else {
-            machine.transportMode = MachineTransportMode.cloudE2ee;
-          }
-          // Route through _applyNodeStatus (not just `machine.nodeOnline = true`) for every machine,
-          // not only the local one — a successful select IS the machine being reachable again, and
-          // this is what lets a pending agent (captured below on disconnect) reattach automatically
-          // instead of leaving the user stuck on the empty "select a machine" placeholder.
-          unawaited(_applyNodeStatus(machine, true));
-          unawaited(_loadMachineData(machine, force: true));
-          _startAgentSyncTimer(machineId);
+          _onMachineConnected(machineId, machine);
         } else if (nextStatus == ConnectionStatus.reconnecting ||
             nextStatus == ConnectionStatus.disconnected) {
           _stopAgentSyncTimer(machineId);
@@ -2645,6 +2749,31 @@ class AppNotifier extends ChangeNotifier {
     }
     try {
       await _refreshMachines(revision);
+      if (_authWorkCurrent(revision)) {
+        // A cached answer is readable but not current, so the job is not done: leave the recovery timer
+        // running and it converges on its own once the backend is back. Without this the daemon's 200
+        // would read as success, recovery would stop, and the app would sit on stale rows until
+        // somebody pressed reload.
+        if (machinesAreStale) {
+          _scheduleMachineRecovery(revision);
+        } else {
+          _stopMachineRecovery();
+        }
+        if (_lastError != null && _lastError == _machineLoadError) {
+          _lastError = null;
+          notifyListeners();
+        }
+        _machineLoadError = null;
+      }
+    } catch (error) {
+      if (_authWorkCurrent(revision)) {
+        if (isTransientApiError(error)) {
+          _scheduleMachineRecovery(revision);
+        } else {
+          _stopMachineRecovery();
+        }
+      }
+      rethrow;
     } finally {
       // Said out loud: the list's own notify fires before this, so a flag
       // dropped silently here would leave the rail on its placeholders.
@@ -2652,6 +2781,76 @@ class AppNotifier extends ChangeNotifier {
         machinesLoading = false;
         notifyListeners();
       }
+    }
+  }
+
+  void _stopMachineRecovery() {
+    _machineRecoveryTimer?.cancel();
+    _machineRecoveryTimer = null;
+    _machineRecoveryAttempts = 0;
+  }
+
+  void _scheduleMachineRecovery(int revision) {
+    if (!_authWorkCurrent(revision) ||
+        status != AppStatus.authenticated ||
+        _machineRecoveryTimer != null) {
+      return;
+    }
+    const seconds = [2, 4, 8, 16, 30];
+    final delay = seconds[_machineRecoveryAttempts];
+    if (_machineRecoveryAttempts < seconds.length - 1) {
+      _machineRecoveryAttempts++;
+    }
+    _machineRecoveryTimer = Timer(Duration(seconds: delay), () {
+      _machineRecoveryTimer = null;
+      if (_authWorkCurrent(revision) && status == AppStatus.authenticated) {
+        unawaited(
+          _retryMachines(automatic: true).whenComplete(() {
+            // A timer can join a manual retry already in progress. Keep recovering if that run
+            // stopped at the daemon gate; success and non-transient errors reset the counter.
+            if (_machineRecoveryAttempts > 0) {
+              _scheduleMachineRecovery(revision);
+            }
+          }),
+        );
+      }
+    });
+  }
+
+  void _reportMachineLoadError(Object error, {bool automatic = false}) {
+    final message = 'Could not load machines: ${describeApiError(error)}';
+    // A recovery must not replace a later agent error or redisplay a dismissed strip.
+    if (!automatic || (_lastError != null && _lastError == _machineLoadError)) {
+      _lastError = message;
+      _lastErrorRetryable = true;
+    }
+    _machineLoadError = message;
+  }
+
+  /// What the loopback probe means for one machine's transport.
+  ///
+  /// Written once because two callers need the same answer: the refresh loop, and the failure path that
+  /// keeps this computer usable when the backend list could not be read.
+  void _applyLocalTransport(
+    MachineState state,
+    LocalCliEndpoint? localEndpoint,
+    String? localComputerId,
+  ) {
+    if (state.localOnly && localEndpoint?.computerId == localComputerId) {
+      state.localEndpoint = localEndpoint;
+      state.transportMode = state.connectionStatus == ConnectionStatus.connected
+          ? MachineTransportMode.localPlaintext
+          : MachineTransportMode.localOffline;
+    } else if (state.localOnly) {
+      // The token still identifies this as local, but the CLI is offline or
+      // failed its identity/capability check. Never fall back to cloud E2EE.
+      state.localEndpoint = null;
+      state.transportMode = MachineTransportMode.localOffline;
+      state.nodeOnline = false;
+      _startOfflineRetry(state);
+    } else {
+      state.localEndpoint = null;
+      state.transportMode = MachineTransportMode.cloudE2ee;
     }
   }
 
@@ -2663,12 +2862,49 @@ class AppNotifier extends ChangeNotifier {
     // status endpoint is trusted only when it advertises that same identity.
     final localComputerId = await discovery?.computerId();
     if (!_authWorkCurrent(revision)) return;
+    // Null in a viewer build, which has no local CLI to probe — see `discovery` above.
     final localFuture =
         discovery?.discover(expectedComputerId: localComputerId) ??
         Future<LocalCliEndpoint?>.value();
-    final list = await _fetchMachines();
-    final localEndpoint = await localFuture;
+    // The two legs stay independent. The loopback probe reads a local file and asks 127.0.0.1, so it
+    // cannot fail for a network reason — but awaiting it BEHIND the backend call meant a cloud outage
+    // threw first and threw away an answer that was already correct, while awaiting it FIRST would let a
+    // slow probe hold up the list. Latch it as it lands instead, and use it on both paths.
+    LocalCliEndpoint? probed;
+    final localSettled = localFuture.then((value) => probed = value).catchError(
+      (Object error) {
+        // A probe that fails is the CLI being unreachable, which the transport decision below already
+        // handles — but swallowing it silently leaves nothing to diagnose from.
+        debugPrint('local CLI probe failed: $error');
+        return null;
+      },
+    );
+    final List<Machine> list;
+    try {
+      list = await _fetchMachines();
+      machinesAreStale = api.lastMachinesStale;
+    } catch (_) {
+      // A backend outage must not cost this computer its own transport. Without this the probe result
+      // stayed unapplied, so `usesLocalTransport` went false and `_connectMachine` skipped the local
+      // machine — while relayed machines, which never consult it, kept streaming. That asymmetry was the
+      // bug: the local terminal stopped rendering and the relayed ones did not.
+      await localSettled;
+      if (_authWorkCurrent(revision)) {
+        final endpoint = probed;
+        for (final state in machineStates.values) {
+          _applyLocalTransport(state, endpoint, localComputerId);
+          _connectMachine(state);
+        }
+        if (endpoint != null) _updateLocalProjectSnapshot(endpoint);
+        notifyListeners();
+      }
+      rethrow; // the recovery timer owns the retry; this only protects what already works
+    }
+    await localSettled;
+    // Both legs are in: this is the one gate that decides whether a result that arrived after a
+    // sign-out or a dispose may still be published.
     if (!_authWorkCurrent(revision)) return;
+    final localEndpoint = probed;
     machines = list
         .where((machine) => machine.authMode == MachineAuthMode.remote)
         .toList();
@@ -2691,24 +2927,7 @@ class AppNotifier extends ChangeNotifier {
       state.localOnly =
           localComputerId != null &&
           _normalizeComputerId(machine.computerId) == localComputerId;
-      if (state.localOnly && localEndpoint?.computerId == localComputerId) {
-        state.localEndpoint = localEndpoint;
-        if (state.connectionStatus == ConnectionStatus.connected) {
-          state.transportMode = MachineTransportMode.localPlaintext;
-        } else {
-          state.transportMode = MachineTransportMode.localOffline;
-        }
-      } else if (state.localOnly) {
-        // The token still identifies this as local, but the CLI is offline or
-        // failed its identity/capability check. Never fall back to cloud E2EE.
-        state.localEndpoint = null;
-        state.transportMode = MachineTransportMode.localOffline;
-        state.nodeOnline = false;
-        _startOfflineRetry(state);
-      } else {
-        state.localEndpoint = null;
-        state.transportMode = MachineTransportMode.cloudE2ee;
-      }
+      _applyLocalTransport(state, localEndpoint, localComputerId);
       final reportedOnline = _nodeOnlineFromStatus(machine.status);
       if (!state.isLocalMachine &&
           reportedOnline != null &&
@@ -2733,7 +2952,7 @@ class AppNotifier extends ChangeNotifier {
     api.machines,
     maxAttempts: 2,
     initialDelay: const Duration(milliseconds: 500),
-    isRetryable: (error) => error is DioException,
+    isRetryable: (error) => error is DioException && isTransientApiError(error),
   );
 
   void _startOfflineRetry(MachineState machine) {
@@ -3032,12 +3251,14 @@ class AppNotifier extends ChangeNotifier {
   /// the error strip's own retry.
   Future<void>? _retryInFlight;
 
-  Future<void> retryMachines() {
+  Future<void> retryMachines() => _retryMachines(automatic: false);
+
+  Future<void> _retryMachines({required bool automatic}) {
     if (_disposed) return Future<void>.value();
     final inFlight = _retryInFlight;
     if (inFlight != null) return inFlight;
     late final Future<void> run;
-    run = _performRetryMachines().whenComplete(() {
+    run = _performRetryMachines(automatic: automatic).whenComplete(() {
       if (identical(_retryInFlight, run)) {
         _retryInFlight = null;
         if (!_disposed) notifyListeners();
@@ -3048,7 +3269,7 @@ class AppNotifier extends ChangeNotifier {
     return run;
   }
 
-  Future<void> _performRetryMachines() async {
+  Future<void> _performRetryMachines({required bool automatic}) async {
     final revision = _authRevision;
     if (!_authWorkCurrent(revision)) return;
     // Re-verify the daemon first: a retry that skips straight to `refreshMachines()` can hit
@@ -3057,8 +3278,12 @@ class AppNotifier extends ChangeNotifier {
       await ensureCliDaemonReady();
     } catch (error) {
       if (!_authWorkCurrent(revision)) return;
-      _lastError = '$error';
-      _lastErrorRetryable = true;
+      if (automatic) {
+        _scheduleMachineRecovery(revision);
+      } else {
+        _lastError = '$error';
+        _lastErrorRetryable = true;
+      }
       notifyListeners();
       return;
     }
@@ -3069,11 +3294,10 @@ class AppNotifier extends ChangeNotifier {
     try {
       await refreshMachines();
       if (!_authWorkCurrent(revision)) return;
-      _lastError = null;
+      if (!automatic) _lastError = null;
     } catch (error) {
       if (!_authWorkCurrent(revision)) return;
-      _lastError = 'Could not load machines: ${describeApiError(error)}';
-      _lastErrorRetryable = true;
+      _reportMachineLoadError(error, automatic: automatic);
       notifyListeners();
       return;
     }
@@ -3877,6 +4101,36 @@ class AppNotifier extends ChangeNotifier {
     }
   }
 
+  /// Reads source material only on the machine that owns the selected path.
+  Future<Map<String, dynamic>> readProjectPreview(
+    String machineId,
+    String path,
+  ) async {
+    final machine = machineStates[machineId];
+    if (machine == null) return {'error': 'UNAVAILABLE'};
+    if (machine.isLocalMachine) {
+      return readLocalProjectPreview(path).timeout(
+        const Duration(seconds: 4),
+        onTimeout: () => {'error': 'UNAVAILABLE'},
+      );
+    }
+    if (machine.nodeOnline == false ||
+        machine.needsLink ||
+        machine.connectionStatus != ConnectionStatus.connected &&
+            connectionForTest == null) {
+      return {'error': 'UNAVAILABLE'};
+    }
+    try {
+      return await _conn(machineId).request(
+        'project_preview',
+        payload: {'path': path},
+        timeout: const Duration(seconds: 4),
+      );
+    } catch (_) {
+      return {'error': 'UNAVAILABLE'};
+    }
+  }
+
   /// Every Codex profile folder the CLI on [machineId] can offer, merged with [observedPaths]
   /// (Codex homes already known from this same machine's other Codex agents). Runs entirely on that
   /// machine — this app never touches a filesystem itself, which is what makes it work for a remote
@@ -4030,7 +4284,7 @@ class AppNotifier extends ChangeNotifier {
         return creation._complete(error.message);
       } catch (_) {
         return creation._complete(
-          'Could not prepare the project folder. Choose Local to select an existing folder.',
+          'Could not prepare the project folder. Browse for an existing folder.',
         );
       }
       // Preparation may be slow. Revalidate before starting a process, using
@@ -4169,6 +4423,11 @@ class AppNotifier extends ChangeNotifier {
     if (_disposed || machineStates[machineId] != machine) return null;
     _upsertAgent(machine, agent);
     // Apply each creation receipt once, even if its transport result is replayed.
+    final projectPath =
+        agent.project?.cwd ?? creation.preparedFolder ?? choices['cwd'];
+    if (projectPath is String && projectPath.isNotEmpty) {
+      unawaited(projectHistory.select(machineId, projectPath));
+    }
     harnessStats.onAgentSpawned();
     notifyListeners();
     if (_creationPlacementError(targetId, split) != null) {
@@ -4643,10 +4902,7 @@ class AppNotifier extends ChangeNotifier {
       target.arrangedKey = key;
     }
     if (firstAgent && target.name == Swarm.defaultName) {
-      final name = agent.name.trim();
-      if (name.isNotEmpty) {
-        target.name = name.length > 80 ? name.substring(0, 80) : name;
-      }
+      target.name = _nextHarnessName();
     }
     if (replaced != null && !allPanes.contains(replaced)) {
       // Release just the desktop stream. The CLI agent process keeps running.
@@ -5129,6 +5385,25 @@ class AppNotifier extends ChangeNotifier {
 
   Future<void> flushPaneLayout() =>
       _paneLayout?.flushSwarms() ?? Future<void>.value();
+
+  String _nextHarnessName() {
+    var next = BigInt.one;
+    final names = [
+      for (final swarm in swarms) swarm.name,
+      for (final entry in _closedHistory)
+        if (entry is ClosedSwarm)
+          entry.name
+        else if (entry is ClosedAgent)
+          entry.swarmName,
+    ];
+    for (final name in names) {
+      final match = RegExp(r'^harness-([1-9]\d*)$').firstMatch(name);
+      if (match == null) continue;
+      final number = BigInt.parse(match.group(1)!);
+      if (number >= next) next = number + BigInt.one;
+    }
+    return 'harness-$next';
+  }
 
   void _persistLayout() {
     _draftSwarmReturns.removeWhere((id, _) {
@@ -5732,9 +6007,12 @@ class AppNotifier extends ChangeNotifier {
 
   @override
   void dispose() {
+    grid.AppTheme.palette.removeListener(_announceTerminalThemeEverywhere);
+    terminalThemeStore.removeListener(_announceTerminalThemeEverywhere);
     _localGitProjects.dispose();
     sessionPreviews.dispose();
     _disposed = true;
+    _stopMachineRecovery();
     if (signingIn) cliLogin.cancel();
     _closedHistory.clear();
     _daemonSupervisionTimer?.cancel();

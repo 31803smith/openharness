@@ -33,6 +33,7 @@ import { probeEngines } from './lib/engineProbe.js'
 import { AgentCreationReceipts, AgentCreationReceiptError, creationFingerprint, validCreationId, type AgentCreationStatus } from './lib/agentCreationReceipt.js'
 import { engineInstallRecipe } from './lib/engineInstall.js'
 import { parseProjectFolder, prepareProjectFolder, ProjectFolderError } from './lib/projectFolder.js'
+import { projectPreview } from './lib/projectPreview.js'
 import { agentFrame, type AgentFrame } from './lib/agentFrame.js'
 import { routeVoiceTask } from './lib/voiceRouter.js'
 import { tailFile } from './lib/sessions.js'
@@ -41,6 +42,7 @@ import { listFileTree, readProjectFile } from './lib/files.js'
 import { MediaPreviewError, readMediaPreviewChunk } from './lib/mediaPreview.js'
 import { codexMessagesToEvents, windowCodexLines } from './engines/codex/normalizer.js'
 import { codexSubagentResolverFor } from './engines/codex/subagent.js'
+import { parseHostTheme, type HostTheme } from './lib/hostTheme.js'
 import { cursorMessagesToEvents, windowCursorLines } from './engines/cursor/normalizer.js'
 import { loadCursorReplayTaskLinks } from './engines/cursor/subagent.js'
 import { opencodeMessagesToEvents, windowOpencodeMessages } from './engines/opencode/normalizer.js'
@@ -283,6 +285,7 @@ async function enrichSubagentStats(events: SessionEvent[], transcriptPath: strin
 export class BackendSocket {
   private ws: WebSocket | null = null
   private connecting = false
+  /** A 401 on the upgrade is being answered with a token refresh; that refresh owns the next connect. */
   private retryingAuth = false
   private readonly auth: AuthSessionManager
   /** Constructor-without-auth is retained for isolated unit tests only. */
@@ -382,6 +385,9 @@ export class BackendSocket {
   /** Answers `usage_read` — this machine's own agent-account usage (lib/accountUsage.ts). A field
    *  rather than a direct call so a spec answers it without a real home, Keychain or network. */
   accountUsageReader: () => Promise<AccountUsageReading[]> = readAccountUsage
+  /** Receives `theme_set` — the desktop's pane colours, to become this machine's tmux
+   *  `window-style` (lib/hostTheme.ts). Wired by cli.ts; null answers with UNSUPPORTED. */
+  hostThemeSink: ((theme: HostTheme) => void) | null = null
   runtimeProfileProvider: ((session: RegisteredSession) => string | null) | null = null
   onRuntimeProfileUpdate: ((sessionId: string, selectedModel: string) => Promise<void>) | null = null
   /** Web↔adapter E2EE: group-encrypts user events, runs the CPace pairing, holds per-conn sessions. */
@@ -623,6 +629,9 @@ export class BackendSocket {
       this.replayCommanderOnNextSnapshot = true
       this.onStatus(false)
       if (this.closed) return
+      // A 401 refresh owns the next connect (see the error handler below): no competing backoff timer,
+      // or two sockets would race for the one machine claim.
+      if (this.retryingAuth) { console.log(`[backend] disconnected (${why}) — refreshing the token before reconnecting`); return }
       const delay = Math.min(MAX_DELAY_MS, BASE_DELAY_MS * 2 ** Math.min(this.attempts++, 5))
       console.log(`[backend] disconnected (${why}) — retrying in ${Math.round(delay / 1000)}s (attempt ${this.attempts})`)
       setTimeout(() => this.connect(), delay)
@@ -632,14 +641,36 @@ export class BackendSocket {
       const e = err as Error & { code?: string }
       const msg = e.message || e.code || String(err)
       console.error('[backend] socket error:', msg)
-      // 401/403 on the upgrade = this machine is gone/invalid (deleted while we were offline, or a bad
-      // token). Retrying cannot help → stop for good and let CLI clear the saved SSO session.
+      // 401 on the upgrade = the access token was refused. Refresh it and come back; the socket is
+      // torn down the ordinary way below (`ws.close()` → onGone: timers, status, streams), which is
+      // what the previous shape skipped — it nulled `this.ws` first, so onGone returned at its first
+      // line, status kept saying connected, and a refresh that failed for ANY reason (a network blip
+      // included) wiped the SSO session. Only a refresh token the backend itself rejects means the
+      // session is over; everything else is a transient and re-enters the backoff.
       if (/Unexpected server response: 401\b/.test(msg) && !this.retryingAuth) {
         this.retryingAuth = true
-        this.ws = null
         void this.auth.accessToken({ force: true, failedToken: token })
-          .then(() => { this.retryingAuth = false; this.connect() })
-          .catch(() => { this.retryingAuth = false; this.closed = true; this.onRevoked?.() })
+          .then(() => {
+            this.retryingAuth = false
+            // onGone has normally run by now (the close lands long before a network round trip
+            // returns); if this socket is somehow still ours, let go of it before dialing again.
+            if (this.ws === ws) { this.ws = null; try { ws.terminate() } catch { /* ignore */ } }
+            this.connect()
+          })
+          .catch((error: unknown) => {
+            this.retryingAuth = false
+            // No session to refresh, or a refresh token the backend rejects: the session is over.
+            if (error instanceof AuthSessionError && (error.code === 'INVALID_REFRESH' || error.code === 'MISSING')) {
+              this.closed = true
+              this.onRevoked?.()
+              return
+            }
+            if (this.closed) return
+            if (this.ws === ws) { this.ws = null; try { ws.terminate() } catch { /* ignore */ } }
+            const delay = Math.min(MAX_DELAY_MS, BASE_DELAY_MS * 2 ** Math.min(this.attempts++, 5))
+            console.log(`[backend] token refresh failed (${error instanceof Error ? error.message : String(error)}) — retrying in ${Math.round(delay / 1000)}s (attempt ${this.attempts})`)
+            setTimeout(() => this.connect(), delay)
+          })
       } else if (/Unexpected server response: 40[13]\b/.test(msg)) {
         this.closed = true
         this.onRevoked?.()
@@ -978,7 +1009,7 @@ export class BackendSocket {
   private emitReply(connId: string, type: string, requestId: unknown, payload: Record<string, unknown>): void {
     const resultType = `${type}_result`
     // Before the E2EE wrap: an RPC reply is only readable here.
-    if (env.LOG_FRAMES && type !== 'agent_read_file') logFrame('→', connId ? `conn:${sid(connId)}` : 'backend', { type: resultType, payload: { requestId, ...payload } })
+    if (env.LOG_FRAMES && type !== 'agent_read_file' && type !== 'project_preview') logFrame('→', connId ? `conn:${sid(connId)}` : 'backend', { type: resultType, payload: { requestId, ...payload } })
     if (this.localClients.has(connId)) {
       this.sendTo(connId, { type: resultType, payload: { requestId, ...payload } })
       return
@@ -1052,7 +1083,7 @@ export class BackendSocket {
     // than as an opaque __e2e envelope.
     // Terminal frames contain raw keystrokes, paste text and screen bytes after
     // unwrap. Never pass them to the frame logger, even in diagnostic mode.
-    if (env.LOG_FRAMES && !type.startsWith('terminal_') && type !== 'agent_read_file') {
+    if (env.LOG_FRAMES && !type.startsWith('terminal_') && type !== 'agent_read_file' && type !== 'project_preview') {
       logFrame('←', connId ? `conn:${sid(connId)}` : 'backend', frame)
     }
     const reply = (t: string, rid: unknown, p: Record<string, unknown>): void => this.emitReply(connId, t, rid, p)
@@ -1705,6 +1736,15 @@ export class BackendSocket {
           return
         }
 
+        case 'project_preview': {
+          const path = typeof payload.path === 'string' ? payload.path : ''
+          // Preview work is detached so typing and other RPCs stay responsive.
+          void projectPreview(path, registry.list().flatMap(agent => agent.cwd ? [agent.cwd] : []))
+            .then(result => reply(type, requestId, result))
+            .catch(() => reply(type, requestId, { error: 'UNAVAILABLE' }))
+          return
+        }
+
         case 'fs_list_dir': {
           // One-level remote directory listing for the New Agent folder browser.
           const path = typeof payload.path === 'string' ? payload.path : ''
@@ -1814,6 +1854,17 @@ export class BackendSocket {
         // back as it came: see lib/accountUsage.ts for why the parsing stays on the client.
         case 'usage_read': {
           reply(type, requestId, { providers: await this.accountUsageReader() })
+          return
+        }
+
+        // The colours the desktop paints its panes with, so tmux answers a TUI's OSC 10/11 with
+        // them instead of with whatever terminal happened to attach first (lib/hostTheme.ts).
+        case 'theme_set': {
+          if (!this.hostThemeSink) { reply(type, requestId, { error: 'UNSUPPORTED' }); return }
+          const theme = parseHostTheme(payload)
+          if (!theme) { reply(type, requestId, { error: 'BAD_THEME' }); return }
+          this.hostThemeSink(theme)
+          reply(type, requestId, { applied: true })
           return
         }
 

@@ -432,6 +432,8 @@ class WsConn {
     // File paths and media contents are user data, not frame diagnostics.
     'agent_read_file',
     'agent_read_file_result',
+    'project_preview',
+    'project_preview_result',
     'terminal_output',
     'terminal_input',
     'terminal_resize',

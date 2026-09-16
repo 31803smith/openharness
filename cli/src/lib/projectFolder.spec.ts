@@ -24,8 +24,15 @@ describe('project folder preparation', () => {
   it('creates different folders for two deliberate new projects', async () => {
     const folders = await Promise.all([prepareProjectFolder({ source: 'new' }, { root }), prepareProjectFolder({ source: 'new' }, { root })])
     expect(new Set(folders).size).toBe(2)
-    expect(folders.every(folder => folder.startsWith(join(root, 'project-')))).toBe(true)
+    expect(new Set(folders)).toEqual(new Set([join(root, 'agent-1'), join(root, 'agent-2')]))
     expect(await readdir(root)).toHaveLength(2)
+  })
+
+  it('continues numbering past existing folders and files without changing them', async () => {
+    await mkdir(join(root, 'agent-2'))
+    await writeFile(join(root, 'agent-4'), 'keep')
+    expect(await prepareProjectFolder({ source: 'new' }, { root })).toBe(join(root, 'agent-5'))
+    expect(await readFile(join(root, 'agent-4'), 'utf8')).toBe('keep')
   })
 
   it('publishes a complete clone and never replaces existing files or starts a second clone', async () => {

@@ -12,11 +12,14 @@
 //   2. a `styleFrom` at a call site restates it, because `styleFrom` REPLACES
 //      the theme's style rather than merging with it.
 import 'dart:math' as math;
+import 'dart:ui' show PointerDeviceKind;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:harness/shared/theme/app_theme.dart';
+import 'package:harness/shared/widgets/app_icon_button.dart';
 
 const _hovered = {WidgetState.hovered};
 
@@ -60,6 +63,7 @@ void main() {
           'text': theme.textButtonTheme.style,
           'outlined': theme.outlinedButtonTheme.style,
           'filled': theme.filledButtonTheme.style,
+          'icon': theme.iconButtonTheme.style,
         };
         kinds.forEach((name, style) {
           final overlay = style?.overlayColor?.resolve(_hovered);
@@ -74,6 +78,15 @@ void main() {
             reason: '$name buttons resolve to a fully transparent hover',
           );
         });
+      });
+
+      test('icon focus is visible and disabled icons stay quiet', () {
+        final overlay = theme.iconButtonTheme.style!.overlayColor!;
+        expect(overlay.resolve({WidgetState.focused})!.a, greaterThan(0));
+        expect(
+          overlay.resolve({WidgetState.disabled, WidgetState.hovered})!.a,
+          0,
+        );
       });
 
       // An overlay that exists but cannot be seen is the same bug wearing a
@@ -97,4 +110,44 @@ void main() {
       });
     });
   }
+
+  testWidgets('compact icons respond to hover and keyboard activation', (
+    tester,
+  ) async {
+    var presses = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildAppTheme(brightness: Brightness.dark),
+        home: Scaffold(
+          body: Center(
+            child: AppIconButton(icon: Icons.add, onPressed: () => presses++),
+          ),
+        ),
+      ),
+    );
+    final button = find.byType(AppIconButton);
+    final fill = find.descendant(
+      of: button,
+      matching: find.byType(AnimatedContainer),
+    );
+    Color background() =>
+        (tester.widget<AnimatedContainer>(fill).decoration! as BoxDecoration)
+            .color!;
+    expect(background().a, 0);
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await mouse.addPointer(location: Offset.zero);
+    await mouse.moveTo(tester.getCenter(button));
+    await tester.pumpAndSettle();
+    expect(background().a, greaterThan(0));
+    await mouse.moveTo(Offset.zero);
+    await tester.pumpAndSettle();
+    expect(background().a, 0);
+    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+    await tester.pumpAndSettle();
+    expect(background().a, greaterThan(0));
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.sendKeyEvent(LogicalKeyboardKey.space);
+    expect(presses, 2);
+    await mouse.removePointer();
+  });
 }

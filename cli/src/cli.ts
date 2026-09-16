@@ -34,7 +34,7 @@ import { buildLogBundle, bundleFileName, redactSecretsInText } from './lib/logBu
 import { CableSession } from './cable/cableSession.js'
 import { DaemonCableHost, cableEventFor, cableQuestionFor, cableQuestionCloseFor } from './cable/cableHost.js'
 
-import { MachineListCache } from './device/machineList.js'
+import { MachineListCache, machineListCachePath, withStaleMarker } from './device/machineList.js'
 import { DeviceLink } from './device/deviceLink.js'
 import { DeviceFleet } from './device/deviceFleet.js'
 import { registry, projectDisplayName, type RegisteredSession } from './lib/registry.js'
@@ -66,6 +66,7 @@ import { terminateDeletedAgent, checkPidRuntime } from './lib/deleteAgentFallbac
 import { restartAgent, type RestartAgentDeps } from './lib/restartAgent.js'
 import { claudeContinuation, findLiveSession } from './lib/sessionRepair.js'
 import { TmuxBackend } from './lib/tmuxBackend.js'
+import { DEFAULT_HOST_THEME, loadHostTheme, saveHostTheme, type HostTheme } from './lib/hostTheme.js'
 import { createAndRegisterPane } from './lib/createAgentPane.js'
 import { restoreAgents } from './lib/restoreAgents.js'
 import { buildLaunchOverrides, validateLaunchOverrides, type LaunchOverridesDeps, type LaunchOverridesResult, type LaunchSource } from './lib/launchOverrides.js'
@@ -802,6 +803,19 @@ async function startCommand(foreground: boolean, repair: boolean = false): Promi
   // cli.js/.prev, and two writers there can leave `.prev` holding the NEW bytes — which is what a
   // later rollback would then "restore". The lock is re-entrant, so `launch` below just joins it.
   if (!foreground) {
+    // A daemon that is already up is left ALONE — bundle included. Staging is for the daemon this
+    // command is about to spawn; a live one updates itself (and hands off under the spawn lock). The
+    // desktop app re-runs `harness start` whenever its 400ms probe misreads a busy daemon as down, and
+    // staging on each of those swapped cli.js/notify.mjs under the running process and dropped its
+    // `.prev` — so the daemon's own updater later wrote `.prev` from the NEW bytes, and a rollback
+    // "restored" the very build that had just failed. `spawnDaemon` repeats this check under the
+    // lock, for the daemon that comes up while we are waiting our turn.
+    const running = readPid()
+    if (running && isAlive(running)) {
+      console.log(`machine already running (pid ${running}) — it auto-reconnects.`)
+      console.log('  check: harness status   ·   stop: harness stop   ·   update now: harness update')
+      process.exit(0)
+    }
     await withSpawnLock('start', async () => {
       const [v] = await Promise.all([
         stageLatestBundle((m) => console.log(m)),
@@ -942,6 +956,9 @@ async function logout(): Promise<void> {
   await stopDaemonProcess()
   clearAuthSession()
   rmSync(MACHINE_NAME_FILE, { force: true })
+  // Same reason as the name above: the cached machine list describes the account that just left, and the
+  // local `/api/machines` fallback would otherwise hand it to whoever signs in next on this computer.
+  rmSync(machineListCachePath(), { force: true })
   console.log('Signed out. Run `harness login`, then `harness start`, to reconnect this computer.')
   // Existence is the whole of the test — nothing is read out of the store, and nothing is written
   // into it. On stderr, so a script reading this command's output is unaffected by it.
@@ -1030,7 +1047,11 @@ async function runForeground(session: AuthSession): Promise<void> {
       console.log(`[tmux] not on the daemon PATH · adopted ${tmuxPath.from} from the user's login shell`)
     }
   }
-  const tmuxBackend = terminalConfig.backends.includes('tmux') ? new TmuxBackend() : null
+  // The desktop's pane colours, for tmux's `window-style` (lib/hostTheme.ts): the last ones the app
+  // sent, or its stock dark palette until it says otherwise. Read through a closure so a change
+  // reaches sessions created after it without rebuilding the backend.
+  let hostTheme: HostTheme = loadHostTheme() ?? DEFAULT_HOST_THEME
+  const tmuxBackend = terminalConfig.backends.includes('tmux') ? new TmuxBackend(() => hostTheme) : null
   const herdrTargets = await resolveHerdrTargets()
   activeHerdrSessions = herdrTargets.map((target) => target.sessionName)
   const resolvedHerdrPaths = herdrTargets.flatMap((target) => target.state === 'available' ? [target.endpoint.socketPath] : [])
@@ -1370,6 +1391,17 @@ async function runForeground(session: AuthSession): Promise<void> {
     diagnostic: (event, fields) => console.log(`[terminal-stream] ${event}`, fields),
   })
   backend.setTerminalStreamManager(terminalStreams)
+  // `agentReconciler` is declared further down; this closure only ever runs for a frame, and no
+  // socket is connected until well after that declaration (backend.connect() is the last thing
+  // this function does).
+  backend.hostThemeSink = (theme) => {
+    if (theme.background === hostTheme.background && theme.foreground === hostTheme.foreground) return
+    hostTheme = theme
+    saveHostTheme(theme)
+    console.log(`[theme] panes now bg=${theme.background} fg=${theme.foreground}`)
+    // Existing sessions pick it up on the next scan (TmuxBackend.inventory restyles); nudge one now.
+    void agentReconciler.trigger()
+  }
 
   // Per-session web turn-lifecycle state; the device mirror keeps its own state + recap.
   const turnStates = new Map<string, TurnState>()
@@ -1418,6 +1450,7 @@ async function runForeground(session: AuthSession): Promise<void> {
   let emitSessionEvents = (
     sessionId: string,
     events: ReturnType<CursorNormalizer['ingest']>,
+    _opts?: { resumed?: boolean },
   ): void => {
     if (events.length) queuedSessionEvents.push({ sessionId, events })
   }
@@ -1705,7 +1738,7 @@ async function runForeground(session: AuthSession): Promise<void> {
       const opened = historyEvents.findLast((event) => event.type === 'turn_started')
       if (opened) {
         console.log(`[agent] ${sid(session.agentId)} resumed the turn already open at attach`)
-        emitSessionEvents(session.sessionId, [opened])
+        emitSessionEvents(session.sessionId, [opened], { resumed: true })
       }
     }
     // Watch this pane for a question from ATTACH, not only from the next turn_started.
@@ -1886,10 +1919,10 @@ async function runForeground(session: AuthSession): Promise<void> {
 
 
   // SUMMARY_MODE picks the recap writer.
-  //   model (default) — recap = llm(instruct, previous recap, the user's ask, the answer): a disposable
+  //   model — recap = llm(instruct, previous recap, the user's ask, the answer): a disposable
   //     one-shot of the session's own engine. The previous recap is what lets "same fix, other file"
   //     recap as what was done rather than as a fragment. Costs the one-shot's latency on every turn.
-  //   local — NO MODEL IN THE LOOP. The dial is cabled to the Mac whose window already shows this text
+  //   local (default) — NO MODEL IN THE LOOP. The dial is cabled to the Mac whose window already shows this text
   //     in full, so the recap is a glance and the detail is one turn of the head away; the one-shot cost
   //     ~9s of the user's turn to say something they were already looking at. Instant, but every recap
   //     stands alone.
@@ -2039,7 +2072,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     heartbeats.set(sessionId, timer)
   }
 
-  emitSessionEvents = (sessionId: string, events: ReturnType<CursorNormalizer['ingest']>): void => {
+  emitSessionEvents = (sessionId: string, events: ReturnType<CursorNormalizer['ingest']>, opts?: { resumed?: boolean }): void => {
     if (!events.length || !registry.bySession(sessionId)?.active) return
     for (const event of events) {
       const agentId = agentIdFor(sessionId)
@@ -2051,8 +2084,10 @@ async function runForeground(session: AuthSession): Promise<void> {
         autonomousDeviceService?.turnStarted(agentId)
         startHeartbeat(sessionId)
         questionWatcher.start(sessionId)   // Claude opens its dialog INSIDE a turn
-        // ...and anything already drawn belongs to the turn BEFORE this one.
-        questionWatcher.noteTurnStart(sessionId)
+        // ...and anything already drawn belongs to the turn BEFORE this one — unless this is a turn the
+        // daemon is picking back up at attach: a dialog on the pane then is THIS turn's, still waiting,
+        // and marking it pre-turn is how a restarted daemon never announced a question Codex had open.
+        if (!opts?.resumed) questionWatcher.noteTurnStart(sessionId)
       } else if (event.type === 'turn_ended') {
         const startedAt = turnStartedAt.get(sessionId)
         turnStartedAt.delete(sessionId)
@@ -2541,6 +2576,43 @@ async function runForeground(session: AuthSession): Promise<void> {
     return { status: res.status, body: json }
   }
 
+  // Built HERE rather than beside the cable stack that also uses it (further down), because the hook
+  // server starts long before that point and agent restore can sit between the two. A cache bound late
+  // is a cache that is still null exactly when a cold boot during an outage needs it most.
+  const machineListCache = new MachineListCache(
+    () => proxyBackend('GET', '/api/machines'),
+    computerId,
+    (line) => console.log(`[cable] ${line}`),
+    undefined,
+    // A machine row is per (user, computer): the one local fact that distinguishes two ACCOUNTS here.
+    // Read fresh each time — a re-login swaps it under a daemon that never restarted.
+    () => readAuthSession()?.machineId ?? null,
+  )
+
+  /**
+   * `GET /api/machines` for local clients, answered from the last known-good list when the backend leg
+   * is down.
+   *
+   * The daemon already keeps that list: it re-reads it every 60s for the dial's wheel and persists it to
+   * `machines.json`, with the explicit policy that an outage keeps the rows and stops claiming they are
+   * live. The desktop app was the one consumer that got none of that — a bare pass-through handed it the
+   * 502 and it had nothing to draw, so a ten-second network blip emptied the machine list and left every
+   * pane spinning. Stale rows are not wrong rows; the marker below says which they are.
+   */
+  async function machinesListWithFallback(): Promise<{ status: number; body: Record<string, unknown> }> {
+    const res = await proxyBackend('GET', '/api/machines')
+    if (res.status === 200) {
+      // Feed the cache the answer we already have rather than making it fetch the same thing again.
+      machineListCache.adopt(res.body)
+      return res
+    }
+    // A real end of session is the caller's answer, not an outage: never serve a list from behind it.
+    if (res.status === 401 || res.status === 403) return res
+    const cached = machineListCache.lastResponse()
+    if (!cached) return res
+    return { status: 200, body: withStaleMarker(cached.body, cached.fetchedAt) }
+  }
+
   // Update-handoff state, declared here — ahead of the /api/status handler that reads `restarting` —
   // rather than beside the updater that writes it, so the closure never reaches a `let` in its TDZ.
   let restarting = false
@@ -2919,7 +2991,7 @@ async function runForeground(session: AuthSession): Promise<void> {
       try { return readFileSync(LOG_FILE, 'utf-8').split('\n').slice(-120).join('\n') } catch { return '' }
     },
     onStop: () => { setTimeout(() => process.kill(process.pid, 'SIGTERM'), 50) }, // let the 200 flush first
-    onMachinesList: () => proxyBackend('GET', '/api/machines'),
+    onMachinesList: () => machinesListWithFallback(),
     onMachineRename: (machineId, name) => proxyBackend('PATCH', `/api/machines/${encodeURIComponent(machineId)}`, { name }),
     onMachineDelete: (machineId) => proxyBackend('DELETE', `/api/machines/${encodeURIComponent(machineId)}`),
     onAuthMe: () => proxyBackend('GET', '/api/auth/me'),
@@ -4111,6 +4183,7 @@ async function runForeground(session: AuthSession): Promise<void> {
       key: env.ADAPTER_UPDATE_KEY,
       dir: env.ADAPTER_CLI_DIR,
       intervalMs: env.ADAPTER_UPDATE_CHECK_MS,
+      slotSecond: env.ADAPTER_UPDATE_SLOT_SEC,
       // The lock spans the byte swap AND the handoff it triggers, as one critical section: a
       // `harness start` that lands between the two would otherwise stage over our .prev, and one
       // that lands during the handoff would spawn a second daemon.
@@ -4125,7 +4198,9 @@ async function runForeground(session: AuthSession): Promise<void> {
         handoffChild = null
       }),
     })
-    console.log(`[update] self-update on · v${VERSION} · every ${Math.round(env.ADAPTER_UPDATE_CHECK_MS / 1000)}s`)
+    const slotted = env.ADAPTER_UPDATE_SLOT_SEC >= 0 && 60_000 % env.ADAPTER_UPDATE_CHECK_MS === 0
+    console.log(`[update] self-update on · v${VERSION} · every ${Math.round(env.ADAPTER_UPDATE_CHECK_MS / 1000)}s`
+      + (slotted ? ` at :${String(env.ADAPTER_UPDATE_SLOT_SEC % 60).padStart(2, '0')}` : ''))
   } else if (!env.ADAPTER_UPDATE_DISABLE) {
     console.log(`[update] self-update off · running a dev/repo build (v${VERSION}), not the installed copy`)
   }
@@ -4212,11 +4287,9 @@ async function runForeground(session: AuthSession): Promise<void> {
   // Three independent things, on purpose. The LIST is a REST read that works while the backend socket is
   // down; `local` is derived from the computer id and needs no network at all; and the LANE is a device
   // socket that only exists while the dial is actually looking at another machine.
-  const machineList = new MachineListCache(
-    () => proxyBackend('GET', '/api/machines'),
-    computerId,
-    (line) => console.log(`[cable] ${line}`),
-  )
+  // The same cache the local `/api/machines` handler answers from (built up near `proxyBackend`), so the
+  // dial's wheel and the desktop's list cannot disagree — and neither can go stale while the other is fresh.
+  const machineList = machineListCache
   void machineList.refresh()
   const machineListTimer = setInterval(() => void machineList.refresh(), 60_000)
   machineListTimer.unref?.()
@@ -4430,7 +4503,6 @@ async function runningDaemonVersion(): Promise<string> {
 function printInfoBlock(opts: {
   status: string; pid: number; machineId?: string; sessions: number; version: string
 }): void {
-  const link = opts.machineId ? `${env.WEB_URL.replace(/\/$/, '')}/machine/${opts.machineId}` : env.WEB_URL
   const row = (k: string, v: string): string => `   ${k.padEnd(10)} ${v}`
   const rule = '  ' + '─'.repeat(37)
   console.log('')
@@ -4444,17 +4516,12 @@ function printInfoBlock(opts: {
   if (machineName) console.log(row('machine', machineName))
   console.log(row('version', `v${opts.version}`))
   console.log(row('backend', env.BACKEND_WS_URL))
-  console.log(row('watching', tildify(env.CLAUDE_PROJECTS_DIR)))
   console.log(row('agents', `${opts.sessions} available`))
   console.log(row('pid', String(opts.pid)))
   console.log(row('logs', tildify(LOG_FILE)))
   console.log(row('dial log', tildify(join(env.HARNESS_LOGS_DIR, 'dial-YYYYMMDD.log'))))
   console.log(row('dashboard', `http://127.0.0.1:${daemonPort()}`))
   console.log(rule)
-  console.log('   ▸ Open in your browser to chat with this computer:')
-  console.log(`     ${link}`)
-  console.log('   ▸ Set up a browser:')
-  console.log('     harness browser-link')
   console.log('  running in background · stop with: harness stop')
   console.log('')
 }

@@ -918,6 +918,21 @@ describe('cable session', () => {
     await session.stop()
   })
 
+  it('names the board a dial greets with, and lives without it', async () => {
+    // Two dials ship on one image; the firmware says which it is in `hw`. A firmware from before the
+    // field greets without it, and that is not an error — only a shorter line.
+    const lines: string[] = []
+    const seen: unknown[] = []
+    const { session, port } = await connect(makeHost({ log: (l) => lines.push(l), onDialStatus: (s) => seen.push(s) }))
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb', fw: '0.0.68', proto: 3, hw: 'cst816s' })
+    await vi.waitFor(() => expect(lines.some((l) => l.includes('on fw 0.0.68 proto 3 hw cst816s'))).toBe(true))
+    expect(seen).toEqual([{ attached: true, fw: '0.0.68', hw: 'cst816s' }])
+    port.say({ t: 'hello', product: 'harness', mac: 'cc:dd', fw: '0.0.67', proto: 3 })
+    await vi.waitFor(() => expect(lines.some((l) => l.includes('dial cc:dd on fw 0.0.67 proto 3'))).toBe(true))
+    expect(seen.at(-1)).toEqual({ attached: true, fw: '0.0.67' })
+    await session.stop()
+  })
+
   it('files framed device logs instead of losing them', async () => {
     // The dial has ONE USB port, shared by its console and this protocol. While the daemon holds it,
     // these frames are the only copy of that console which exists anywhere — `idf.py monitor` cannot open

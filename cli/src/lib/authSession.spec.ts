@@ -97,6 +97,19 @@ describe('AuthSessionManager', () => {
     expect(readAuthSession()).toMatchObject({ refreshToken: 'refresh-1' })
   })
 
+  it('gives up on a refresh that never answers, keeping the session', async () => {
+    // The daemon's reconnect waits on this call, and the desktop never restarts a daemon that is
+    // alive — an unbounded fetch here was a machine "connected" in status and disconnected in fact.
+    writeAuthSession(baseSession())
+    vi.stubGlobal('fetch', vi.fn((_url: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new Error('aborted')))
+    })))
+    const manager = new AuthSessionManager('https://api.example.test', { refreshTimeoutMs: 50 })
+
+    await expect(manager.accessToken()).rejects.toMatchObject({ code: 'UNAVAILABLE' })
+    expect(readAuthSession()).toMatchObject({ refreshToken: 'refresh-1' })
+  })
+
   it('still says `harness login` when the service gives no message of its own', async () => {
     writeAuthSession(baseSession())
     vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockRejectedValue(new Error('socket hang up')))

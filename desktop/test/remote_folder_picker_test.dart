@@ -388,16 +388,25 @@ void main() {
       );
       await tester.tap(find.text('Open'));
       await tester.pumpAndSettle();
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('new-agent-quick-codex')),
+      );
       await tester.tap(find.byKey(const ValueKey('new-agent-quick-codex')));
-      await tester.tap(find.text('Change'));
+      await tester.ensureVisible(
+        find.byKey(const Key('new-agent-project-browse')),
+      );
+      await tester.tap(find.byKey(const Key('new-agent-project-browse')));
       await tester.pump();
       app.requests.single.reply.complete(_listing('/home/dev/old'));
       await tester.pumpAndSettle();
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
       await tester.pumpAndSettle();
-      expect(find.text('/home/dev/old'), findsOneWidget);
+      expect(find.text('old'), findsOneWidget);
       expect(app.launches, isEmpty);
-      await tester.tap(find.text('Change'));
+      await tester.ensureVisible(
+        find.byKey(const Key('new-agent-project-browse')),
+      );
+      await tester.tap(find.byKey(const Key('new-agent-project-browse')));
       await tester.pump();
       app.requests.last.reply.complete(_listing('/home/dev/old'));
       await tester.pumpAndSettle();
@@ -414,9 +423,10 @@ void main() {
       await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
       await tester.pumpAndSettle();
       expect(find.byType(AlertDialog), findsOneWidget);
-      expect(find.text('/home/dev/target'), findsOneWidget);
+      expect(find.text('target'), findsOneWidget);
+      expect(find.text('/home/dev/target'), findsNothing);
       expect(app.launches, isEmpty);
-      await tester.tap(find.widgetWithText(FilledButton, 'New Agent'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Create'));
       await tester.pumpAndSettle();
       expect(app.launches, [
         (machine: 'remote', engine: 'codex', folder: '/home/dev/target'),

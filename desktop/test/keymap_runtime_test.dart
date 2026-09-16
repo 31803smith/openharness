@@ -177,7 +177,7 @@ void main() {
     map.dispose();
   });
 
-  testWidgets('Command-T opens New Tab and Command-S opens Layout', (
+  testWidgets('Command-T opens New Harness and Command-S opens Layout', (
     tester,
   ) async {
     final app = createApp();
@@ -380,7 +380,7 @@ void main() {
         if (inline) {
           await tester.tap(input);
         } else {
-          await key(tester, LogicalKeyboardKey.keyN, cmd: true);
+          await key(tester, LogicalKeyboardKey.keyO, cmd: true);
         }
         await tester.enterText(input, 'Agent');
         await tester.pump();
@@ -456,7 +456,7 @@ void main() {
     expect(find.byType(SwarmSearchResults), findsNothing);
     expect(tester.widget<TextField>(field).controller!.text, '> ');
     expect(tester.widget<TextField>(field).focusNode!.hasFocus, isFalse);
-    await key(tester, LogicalKeyboardKey.keyN, cmd: true);
+    await key(tester, LogicalKeyboardKey.keyO, cmd: true);
     final modal = find.byKey(const ValueKey('swarm-search-input'));
     expect(tester.widget<TextField>(modal).focusNode!.hasFocus, isTrue);
     expect(tester.widget<TextField>(modal).controller!.text, isEmpty);
@@ -609,7 +609,7 @@ void main() {
           await tester.pump();
           await opening;
         } else {
-          await key(tester, LogicalKeyboardKey.keyN, cmd: true, shift: true);
+          await key(tester, LogicalKeyboardKey.keyN, cmd: true);
         }
         await tester.pumpAndSettle();
         expect(find.byType(AlertDialog), findsOneWidget);
@@ -662,7 +662,7 @@ void main() {
         if (inline) {
           await tester.tap(field);
         } else {
-          await key(tester, LogicalKeyboardKey.keyN, cmd: true);
+          await key(tester, LogicalKeyboardKey.keyO, cmd: true);
         }
         await tester.enterText(field, 'Agent');
         await tester.pump();

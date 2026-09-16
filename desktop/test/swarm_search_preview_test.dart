@@ -99,7 +99,7 @@ void main() {
     await seedPreviews(app);
     app.adoptSessionForTest(terminal('a69', []));
     await mount(tester, app);
-    await chord(tester, LogicalKeyboardKey.keyN);
+    await chord(tester, LogicalKeyboardKey.keyO);
     final field = find.byKey(const ValueKey('swarm-search-input'));
     await tester.enterText(field, 'Workspace sync');
     await tester.pump();
@@ -124,6 +124,16 @@ void main() {
         (tester) async {
           final app = createApp();
           await seedPreviews(app);
+          // Both session and group previews must outgrow the reading area.
+          app.machineStates['m']!.agents.addAll([
+            for (var i = 3; i < 8; i++)
+              Agent(
+                id: 'paging-$i',
+                name: 'Additional agent $i',
+                engine: 'codex',
+                terminalAvailable: true,
+              ),
+          ]);
           await app.handleEventForTest('m', {
             'type': 'text_delta',
             'payload': {
@@ -163,7 +173,7 @@ void main() {
           if (inline) {
             await tester.tap(field);
           } else {
-            await chord(tester, LogicalKeyboardKey.keyN);
+            await chord(tester, LogicalKeyboardKey.keyO);
           }
           await tester.enterText(field, 'Checkout retries');
           await tester.pump();
@@ -276,7 +286,7 @@ void main() {
         if (inline) {
           await tester.tap(field);
         } else {
-          await chord(tester, LogicalKeyboardKey.keyN);
+          await chord(tester, LogicalKeyboardKey.keyO);
         }
         await tester.enterText(field, 'Checkout retries');
         await tester.pump();
@@ -371,7 +381,7 @@ void main() {
       );
       app.adoptSessionForTest(terminal('a69', []));
       await mount(tester, app);
-      await chord(tester, LogicalKeyboardKey.keyN);
+      await chord(tester, LogicalKeyboardKey.keyO);
       await tester.enterText(
         find.byKey(const ValueKey('swarm-search-input')),
         'Checkout',
@@ -405,7 +415,7 @@ void main() {
       await mount(tester, app);
       tester.view.physicalSize = size;
       await tester.pump();
-      await chord(tester, LogicalKeyboardKey.keyN);
+      await chord(tester, LogicalKeyboardKey.keyO);
       await tester.enterText(
         find.byKey(const ValueKey('swarm-search-input')),
         'Checkout',

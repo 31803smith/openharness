@@ -279,11 +279,7 @@ const List<AppShortcut> kAppShortcuts = [
   // --- actions --------------------------------------------------------------
   AppShortcut(
     action: ShortcutAction.newAgent,
-    activator: SingleActivator(
-      LogicalKeyboardKey.keyN,
-      meta: true,
-      shift: true,
-    ),
+    activator: SingleActivator(LogicalKeyboardKey.keyN, meta: true),
     label: 'New Agent',
     group: ShortcutGroup.actions,
   ),
@@ -345,8 +341,8 @@ List<AppShortcut> appShortcuts({bool swarmMode = true}) => [
 const kSwarmShortcuts = [
   AppShortcut(
     action: ShortcutAction.addAgent,
-    activator: SingleActivator(LogicalKeyboardKey.keyN, meta: true),
-    label: 'Add Agent',
+    activator: SingleActivator(LogicalKeyboardKey.keyO, meta: true),
+    label: 'Open Agent',
     group: ShortcutGroup.actions,
   ),
   AppShortcut(
@@ -358,7 +354,7 @@ const kSwarmShortcuts = [
   AppShortcut(
     action: ShortcutAction.newSwarm,
     activator: SingleActivator(LogicalKeyboardKey.keyT, meta: true),
-    label: 'New Tab',
+    label: 'New Harness',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
@@ -374,7 +370,7 @@ const kSwarmShortcuts = [
   AppShortcut(
     action: ShortcutAction.closeSwarm,
     activator: SingleActivator(LogicalKeyboardKey.keyW, meta: true),
-    label: 'Close Tab',
+    label: 'Close Harness',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
@@ -384,7 +380,7 @@ const kSwarmShortcuts = [
       meta: true,
       shift: true,
     ),
-    label: 'Rename Tab',
+    label: 'Rename Harness',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
@@ -394,7 +390,7 @@ const kSwarmShortcuts = [
       meta: true,
       shift: true,
     ),
-    label: 'Next Tab',
+    label: 'Next Harness',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
@@ -404,13 +400,13 @@ const kSwarmShortcuts = [
       meta: true,
       shift: true,
     ),
-    label: 'Previous Tab',
+    label: 'Previous Harness',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
     action: ShortcutAction.nextSwarm,
     activator: SingleActivator(LogicalKeyboardKey.tab, control: true),
-    label: 'Next Tab',
+    label: 'Next Harness',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
@@ -420,7 +416,7 @@ const kSwarmShortcuts = [
       control: true,
       shift: true,
     ),
-    label: 'Previous Tab',
+    label: 'Previous Harness',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(
@@ -521,7 +517,7 @@ List<ShortcutRow> shortcutRows() {
   // The digits are not in [kAppShortcuts] — nine near-identical rows would bury
   // everything around them — so they join here, at the end of their group.
   final digits = ShortcutRow(
-    label: 'Select tabs 1–9',
+    label: 'Select harnesses 1–9',
     chords: const [
       ['⌘', '1 – $kTabDigitCount'],
     ],

@@ -100,7 +100,7 @@ needs no machine component and events for a machine that is not selected are dro
 
 | `t` | Fields | Meaning |
 |---|---|---|
-| `hello` | `fw`, `proto`, `mac` | First thing after boot, and repeated (below). `mac` is also the USB serial number, so the daemon can tell one dial from another before a byte is exchanged. |
+| `hello` | `fw`, `proto`, `mac`, `hw` | First thing after boot, and repeated (below). `mac` is also the USB serial number, so the daemon can tell one dial from another before a byte is exchanged. `hw` (since fw 0.0.68, optional) names the board the firmware detected itself on at boot — `cst9217+axp2101` or `cst816s` — two dials ship on one image (device `board/board.h`); informational, the daemon logs it and passes it to the app in `dial_status`. |
 | `pong` | — | The answer to `ping`. Empty: the arrival is the content. |
 | `agents.list` | — | Send me the tiles. |
 | `machines.list` | — | Send me the machine wheel. |

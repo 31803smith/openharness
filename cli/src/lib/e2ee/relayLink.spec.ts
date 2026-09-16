@@ -529,3 +529,77 @@ describe('RemoteRelayPool drops a peer the responder no longer trusts', () => {
     }
   })
 })
+
+describe('RemoteRelayPool closes the upstream socket when the handshake fails', () => {
+  // Regression for the leak measured on prod 2026-09-15: a handshake that rejected without closing
+  // its socket left an OPEN, unreachable `/api/web-ws` connection behind on every retry — one user
+  // reached 175 concurrent sockets on a single backend pod — and each one counted as a "connection"
+  // in user_daily_presence. Any rejection path must take the socket down with it.
+  const fakeAuth = { accessToken: async () => 'unused-in-this-fake' } as unknown as import('../authSession.js').AuthSessionManager
+
+  /** Dials once against a fake backend and reports how it ended: the acquire() rejection and the close
+   *  code the SERVER saw on the socket (-1 = never closed within 2s, i.e. leaked). */
+  async function dialAgainst(serverBehaviour: (ws: import('ws').WebSocket) => void): Promise<{ rejection: unknown; closeCode: number }> {
+    const wss = new WebSocketServer({ port: 0 })
+    let resolveClose!: (code: number) => void
+    const serverSawClose = new Promise<number>((resolve) => { resolveClose = resolve })
+    wss.on('connection', (ws) => {
+      ws.on('close', (code) => resolveClose(code))
+      serverBehaviour(ws)
+    })
+    try {
+      const port = (wss.address() as AddressInfo).port
+      const peers = new MachinePeerStore()
+      peers.pin(MACHINE_ID, C.b64e(C.newIdentity().pub), 'harness link')
+      const pool = new RemoteRelayPool(fakeAuth, `ws://127.0.0.1:${port}`, C.newIdentity(), peers)
+      const sink = { sendFrame: () => true, sendBinary: () => true }
+      let rejection: unknown = null
+      try {
+        await pool.acquire(MACHINE_ID, 'prod', { type: 'machine_select', payload: { machineId: MACHINE_ID } }, sink, () => {})
+      } catch (err) { rejection = err }
+      // Bounded wait: if the socket is leaked this never resolves, and the test must fail, not hang.
+      const closeCode = await Promise.race([
+        serverSawClose,
+        new Promise<number>((resolve) => setTimeout(() => resolve(-1), 2_000)),
+      ])
+      return { rejection, closeCode }
+    } finally {
+      // A leaked client would otherwise keep wss.close() waiting until the test timeout — kill it so a
+      // regression fails on the closeCode assertion instead.
+      for (const client of wss.clients) client.terminate()
+      await new Promise<void>((resolve) => wss.close(() => resolve()))
+    }
+  }
+
+  it('machine_select_error rejects AND closes the socket', async () => {
+    const { rejection, closeCode } = await dialAgainst((ws) => {
+      ws.on('message', (raw) => {
+        const frame = JSON.parse(raw.toString()) as Frame
+        if (frame.type === 'machine_select') {
+          ws.send(JSON.stringify({ type: 'machine_select_error', payload: { machineId: MACHINE_ID, error: 'NOT_YOUR_MACHINE' } }))
+        }
+      })
+    })
+    expect(rejection).toBeInstanceOf(Error)
+    expect((rejection as Error).message).toBe('NOT_YOUR_MACHINE')
+    expect(closeCode).toBe(1000)
+  })
+
+  it('an invalid e2e_welcome rejects AND closes the socket', async () => {
+    // Stands in for the timeout path (peer never answers e2e_hello): same catch block, but without
+    // waiting out CONNECT_TIMEOUT_MS. The select is acked so this socket is already bound to the
+    // machine on the backend side — exactly the shape of the leaked sockets seen in prod.
+    const { rejection, closeCode } = await dialAgainst((ws) => {
+      ws.on('message', (raw) => {
+        const frame = JSON.parse(raw.toString()) as Frame
+        if (frame.type === 'machine_select') {
+          ws.send(JSON.stringify({ type: 'connected', payload: { machineId: MACHINE_ID } }))
+        } else if (frame.type === 'e2e_hello') {
+          ws.send(JSON.stringify({ type: 'e2e_welcome', payload: { garbage: true } }))
+        }
+      })
+    })
+    expect((rejection as Error).message).toBe('E2EE_WELCOME_INVALID')
+    expect(closeCode).toBe(1000)
+  })
+})

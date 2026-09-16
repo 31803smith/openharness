@@ -3,6 +3,7 @@
 #include "touch.h"
 #include "ui_screens.h"
 #include "board_pins.h"
+#include "board.h"
 #include "ram_telemetry.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -167,7 +168,7 @@ static void panel_bringup(void)
         .flags = { .use_qspi_interface = 1 },
     };
     esp_lcd_panel_dev_config_t pcfg = {
-        .reset_gpio_num = BSP_LCD_RST,
+        .reset_gpio_num = board()->lcd_rst,   // differs between the two dials — see board.h
         .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB,
         .bits_per_pixel = BSP_LCD_BIT_PER_PIXEL,
         .vendor_config = &vendor,

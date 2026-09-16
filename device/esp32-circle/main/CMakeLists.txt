@@ -16,6 +16,8 @@ idf_component_register(
         "audio_client.c"
         "ptt.c"
         "board/board_i2c.c"
+        "board/board.c"
+        "board/board_table.c"
         "board/power.c"
         "ui/display.c"
         "ui/touch.c"
@@ -83,4 +85,12 @@ endif()
 # so there is no need to bake credentials in or re-run setup just to move the socket.
 if(DEVICE_BACKEND_URL)
     target_compile_definitions(${COMPONENT_LIB} PRIVATE DEVICE_PROD_BACKEND_URL="${DEVICE_BACKEND_URL}")
+endif()
+
+# BRING-UP PROBE: `idf.py -DBOARD_PROBE=1 build` (separate build dir recommended). app_main runs
+# board/board_probe.c before the display comes up and prints what is on the I2C bus, which reset pins
+# do what, and what each touch driver reads idle. Never set for a release image.
+if(BOARD_PROBE)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE BOARD_PROBE=1)
+    target_sources(${COMPONENT_LIB} PRIVATE "board/board_probe.c")
 endif()

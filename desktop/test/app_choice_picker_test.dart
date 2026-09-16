@@ -5,6 +5,99 @@ import 'package:harness/shared/widgets/app_choice_picker.dart';
 import 'package:harness/shared/widgets/app_select_field.dart';
 
 void main() {
+  testWidgets('tiled overflow omits direct choices and keeps one selection', (
+    tester,
+  ) async {
+    var selected = 'codex';
+    const moreKey = ValueKey('more');
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: StatefulBuilder(
+            builder: (context, setState) => AppChoicePicker<String>(
+              value: selected,
+              options: const [
+                SelectOption(value: 'codex', label: 'Codex'),
+                SelectOption(value: 'claude', label: 'Claude Code'),
+                SelectOption(value: 'opencode', label: 'OpenCode'),
+                SelectOption(value: 'amp', label: 'Amp'),
+                SelectOption(value: 'pi', label: 'Pi'),
+              ],
+              optionKey: (id) => ValueKey(id),
+              moreKey: moreKey,
+              moreLabel: 'More engines',
+              tileSize: const Size(180, 76),
+              onChanged: (value) => setState(() => selected = value),
+            ),
+          ),
+        ),
+      ),
+    );
+    Future<void> chooseFromMenu(LogicalKeyboardKey key, String letter) async {
+      await tester.tap(find.byKey(moreKey));
+      await tester.sendKeyEvent(key, character: letter);
+      await tester.pumpAndSettle();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+    }
+
+    await tester.tap(find.byKey(moreKey));
+    await tester.pumpAndSettle();
+    for (final name in ['Codex', 'Claude Code', 'OpenCode']) {
+      expect(
+        find.text(name),
+        findsOneWidget,
+      ); // Only the tile, never a menu row.
+    }
+    expect(find.text('Amp'), findsOneWidget);
+    expect(find.text('Pi'), findsOneWidget);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+
+    await chooseFromMenu(LogicalKeyboardKey.keyA, 'a');
+    expect(selected, 'amp');
+    expect(
+      tester.widget<AppSelectField<String>>(find.byKey(moreKey)).selected,
+      isTrue,
+    );
+    expect(
+      tester
+          .widgetList<AppChoiceTile>(find.byType(AppChoiceTile))
+          .where((tile) => tile.selected),
+      isEmpty,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('codex')));
+    await tester.pumpAndSettle();
+    // Browsing alternatives and cancelling returns focus to the fourth tile.
+    await tester.tap(find.byKey(moreKey));
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(selected, 'codex');
+    expect(find.text('Amp'), findsOneWidget);
+    final more = find.byKey(moreKey);
+    final trigger = tester.widget<InkWell>(
+      find.descendant(of: more, matching: find.byType(InkWell)).first,
+    );
+    expect(trigger.focusNode!.hasPrimaryFocus, isTrue);
+    expect(tester.widget<AppSelectField<String>>(more).selected, isFalse);
+    final container = tester.widget<AnimatedContainer>(
+      find.descendant(of: more, matching: find.byType(AnimatedContainer)).first,
+    );
+    expect(
+      ((container.decoration! as BoxDecoration).border! as Border).top.color,
+      Colors.transparent,
+    );
+    expect(
+      tester
+          .widgetList<AppChoiceTile>(find.byType(AppChoiceTile))
+          .where((tile) => tile.selected)
+          .map((tile) => tile.label),
+      ['Codex'],
+    );
+  });
+
   testWidgets(
     'overflow selection replaces the third choice and retains keyboard control',
     (tester) async {

@@ -5,13 +5,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/auth/auth_session.dart';
 import 'package:harness/core/config.dart';
+import 'package:harness/core/models.dart';
 import 'package:harness/state/app_state.dart';
 import 'package:harness/terminal/terminal_session.dart';
 import 'package:harness/theme/app_theme.dart';
 import 'package:harness/widgets/terminal_panel.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import 'support/real_fonts.dart';
+
 void main() {
+  setUpAll(loadRealFonts);
   TerminalSession sessionNamed(String name) {
     final session = TerminalSession(
       machineId: 'local',
@@ -37,6 +41,26 @@ void main() {
       authSession: AuthSession(),
       configStore: null,
     );
+    notifier.machineStates['local'] =
+        MachineState(
+            const Machine(
+              machineId: 'local',
+              name: 'Office',
+              authMode: MachineAuthMode.remote,
+            ),
+          )
+          ..agents = const [
+            Agent(
+              id: 'agent-1',
+              name: 'Desktop',
+              engine: 'codex',
+              project: AgentProject(
+                name: 'autonomous-harness',
+                branch: 'main',
+                cwd: '/work/autonomous-harness',
+              ),
+            ),
+          ];
     addTearDown(notifier.dispose);
     await tester.pumpWidget(
       MaterialApp(
@@ -58,6 +82,32 @@ void main() {
 
   // Each shape describes the path topology, not an assumed speed: direct link, intermediate hop,
   // backend server. Tooltip and semantics use the protocol names people will diagnose with.
+  testWidgets(
+    'connection status follows the session name without moving project details',
+    (tester) async {
+      final session = sessionNamed('Desktop');
+      addTearDown(session.dispose);
+      await pump(tester, session);
+      final project = find.text('autonomous-harness');
+      final projectRect = tester.getRect(project);
+      for (final (status, label) in [
+        (TerminalSessionStatus.opening, 'Connecting'),
+        (TerminalSessionStatus.resyncing, 'Restoring'),
+        (TerminalSessionStatus.closed, 'Reconnect'),
+        (TerminalSessionStatus.error, 'Reconnect'),
+      ]) {
+        session.status = status;
+        await pump(tester, session);
+        final nameRect = tester.getRect(find.text('Desktop'));
+        final statusRect = tester.getRect(find.text(label));
+        expect(statusRect.left, greaterThan(nameRect.right));
+        expect(statusRect.right, lessThan(projectRect.left));
+        expect(tester.getRect(project), projectRect);
+        expect(tester.takeException(), isNull);
+      }
+    },
+  );
+
   testWidgets(
     'the transport badge describes each link mode by shape, colour, and label',
     (tester) async {

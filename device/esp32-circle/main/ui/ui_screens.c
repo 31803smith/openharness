@@ -5728,13 +5728,16 @@ static void switch_row_tap(lv_event_t *e)
     snprintf(id, sizeof id, "%s", s_switch_ids[idx]);   // copy: closing rebuilds nothing, but a pick might
     switch_close();
     if (!id[0]) return;
+    // A PERSON picked this row, so the window is told — as an OPEN, the same as a notification tap (owner,
+    // 2026-09-15: "chọn agent từ list … cùng rule với noti"): the window lands on the tab that holds the
+    // agent, the current one first, or opens a tab for it. The id goes up as-is, before the local
+    // centring below: an agent in another tab is known but not on the ring, so that centring is held
+    // for the list the window pushes back — and reporting the tile afterwards would name the wrong one.
+    cable_client_send_open(id);
     ui_focus_project(id);
     display_lock();
     apply_active_from_col();
     display_unlock();
-    // A PERSON picked this row, so the window is told — the centring above went through code and is muted
-    // like every other programmatic move.
-    ui_report_active_agent();
 }
 
 // Fill the picker from the FIRST tiles in the list.
@@ -6908,6 +6911,25 @@ static void q_render(void)
 {
     lv_obj_clean(scr_question);
     qitem_t *q = &s_q.q[s_q.idx];
+    // WHO is asking, above the question (owner, 2026-09-15: "noti cần thêm tên của agent ở phía trên …
+    // để user có thêm context ra quyết định"). The same question — "switch to the cheaper model?" —
+    // means different things from a scratch agent and from the one mid-deploy. Muted, small, one line:
+    // an eyebrow, not a second title.
+    {
+        int ai = find_proj(s_q.project);
+        if (ai >= 0 && s_proj[ai].name[0]) {
+            static char who[64];
+            utf8_filter(s_proj[ai].name, who, sizeof(who));
+            lv_obj_t *l = lv_label_create(scr_question);
+            lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
+            lv_obj_set_width(l, lv_pct(100));
+            lv_obj_set_style_text_font(l, &geist_sem_24, 0);
+            lv_obj_set_style_text_color(l, COL_MUTED, 0);
+            lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
+            lv_obj_set_style_pad_bottom(l, 2, 0);
+            lv_label_set_text(l, who);
+        }
+    }
     static char tmp[256];
     utf8_filter(q->text, tmp, sizeof(tmp));
     q_add_text(tmp[0] ? tmp : "?", COL_FG, &geist_med_32);                       // prompt = title
@@ -7084,6 +7106,10 @@ void ui_question_show(const char *project_id, const char *session_id, const char
     lv_screen_load(scr_question);
     display_unlock();
     audio_notify_done();   // audible alert so the user notices a question is waiting
+    // …and bring the window to the same agent, so the question can be judged against what it is doing.
+    // The same `open` a notification tap sends: the window finds the tab that holds the agent — the
+    // current one first — or opens one for it (owner, 2026-09-15, "rule vẫn như cũ").
+    if (s_q.project[0]) cable_client_send_open(s_q.project);
 }
 
 // ── Machine picker (Settings → Machines) ──────────────────────────────────────────────────────────────

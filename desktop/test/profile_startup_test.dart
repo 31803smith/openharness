@@ -235,6 +235,118 @@ void main() {
     expect(app.machinesRefreshing, isFalse);
   });
 
+  testWidgets(
+    'startup recovers a backend timeout even while the daemon stays ready',
+    (tester) async {
+      final start = app.bootstrap();
+      await tester.pump();
+      api.profiles.single.complete(_profile('current'));
+      api.lists.single.completeError(
+        ApiException('Backend unreachable', status: 502),
+      );
+      await tester.pump();
+      await start;
+      expect(app.lastError, contains('Backend unreachable'));
+
+      await tester.pump(const Duration(milliseconds: 1999));
+      expect(api.lists, hasLength(1));
+      await tester.pump(const Duration(milliseconds: 1));
+      expect(api.lists, hasLength(2));
+      // Manual retry joins the automatic request rather than duplicating it.
+      final joined = app.retryMachines();
+      await tester.pump(const Duration(seconds: 30));
+      expect(api.lists, hasLength(2));
+      api.lists.last.complete([_machine]);
+      await tester.pump();
+      await joined;
+      expect(app.lastError, isNull);
+      expect(app.machineStates['fixture']!.agents, hasLength(1));
+      expect(app.daemonChecks, 2);
+      await tester.pump(const Duration(seconds: 35));
+      expect(api.lists, hasLength(2));
+      disposeApp();
+    },
+  );
+
+  testWidgets(
+    'machine recovery backs off and keeps a dismissed error dismissed',
+    (tester) async {
+      app.status = AppStatus.authenticated;
+      final first = app.retryMachines();
+      await tester.pump();
+      api.profiles.single.complete(_profile('current'));
+      api.lists.single.completeError(
+        ApiException('Backend timeout', status: 504),
+      );
+      await tester.pump();
+      await first;
+      app.dismissError();
+      await tester.pump(const Duration(seconds: 2));
+      expect(api.lists, hasLength(2));
+      api.lists.last.completeError(
+        ApiException('Still unavailable', status: 503),
+      );
+      await tester.pump();
+      expect(app.lastError, isNull);
+      await tester.pump(const Duration(seconds: 3));
+      expect(api.lists, hasLength(2));
+      await tester.pump(const Duration(seconds: 1));
+      expect(api.lists, hasLength(3));
+      api.lists.last.complete([]);
+      await tester.pump();
+      expect(app.lastError, isNull);
+      disposeApp();
+    },
+  );
+
+  testWidgets('machine recovery stops on an authentication refusal', (
+    tester,
+  ) async {
+    app.status = AppStatus.authenticated;
+    final first = app.retryMachines();
+    await tester.pump();
+    api.profiles.single.complete(_profile('current'));
+    api.lists.single.completeError(
+      ApiException('Backend unreachable', status: 502),
+    );
+    await tester.pump();
+    await first;
+    await tester.pump(const Duration(seconds: 2));
+    api.lists.last.completeError(ApiException('Sign in again', status: 401));
+    await tester.pump();
+    expect(app.lastError, contains('Sign in again'));
+    await tester.pump(const Duration(minutes: 2));
+    expect(api.lists, hasLength(2));
+    disposeApp();
+  });
+
+  for (final closeApp in [false, true]) {
+    testWidgets(
+      '${closeApp ? 'dispose' : 'sign-out'} cancels pending machine recovery',
+      (tester) async {
+        app.status = AppStatus.authenticated;
+        final first = app.retryMachines();
+        await tester.pump();
+        api.profiles.single.complete(_profile('current'));
+        api.lists.single.completeError(
+          ApiException('Backend unreachable', status: 502),
+        );
+        await tester.pump();
+        await first;
+        if (closeApp) {
+          disposeApp();
+        } else {
+          final logout = app.logout();
+          await tester.pump();
+          await logout;
+        }
+        await tester.pump(const Duration(minutes: 2));
+        expect(api.lists, hasLength(1));
+        disposeApp();
+      },
+    );
+  }
+
   test('a late profile response cannot restore a signed-out account', () async {
     final start = app.login();
     await Future<void>.delayed(Duration.zero);

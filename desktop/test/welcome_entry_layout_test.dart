@@ -84,18 +84,12 @@ void main() {
         if (Platform.environment['HARNESS_ENTRY_CAPTURE_DIR'] != null) {
           await tester.runAsync(() async {
             final context = tester.element(find.byType(SwarmScreen));
-            await Future.wait([
-              precacheImage(
-                const AssetImage('assets/harness_device.webp'),
-                context,
-              ),
-              precacheImage(
-                const AssetImage(
-                  'assets/swarm-wallpapers/swarm-welcome-dusk.jpg',
-                ),
-                context,
-              ),
-            ]);
+            // Only the device image: the ground behind the page is drawn
+            // (swarm_wallpaper.dart), not loaded.
+            await precacheImage(
+              const AssetImage('assets/harness_device_studio.png'),
+              context,
+            );
           });
           await tester.pump();
         }
@@ -120,8 +114,8 @@ void main() {
         expect(createRect.left, greaterThan(openRect.right));
         expect(fieldRect.center.dx, closeTo(width / 2, 1));
         expect(deviceRect.left, closeTo(fieldRect.left, 1));
-        expect(deviceRect.bottom, closeTo(height - 32, 1));
-        expect(find.text('Meet the Harness device'), findsOneWidget);
+        expect(deviceRect.bottom, closeTo(height - 80, 1));
+        expect(find.text('Meet the\nHarness device'), findsOneWidget);
         expect(create.hitTestable(), findsOneWidget);
         expect(open.hitTestable(), findsOneWidget);
         expect(createRect.bottom, lessThanOrEqualTo(height));

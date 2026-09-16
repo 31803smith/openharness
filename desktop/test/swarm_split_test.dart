@@ -98,7 +98,7 @@ void main() {
     );
 
     testWidgets(
-      'hover split $direction targets that pane without disturbing its neighbor',
+      'edge Open $direction targets that pane without disturbing its neighbor',
       (tester) async {
         final app = createApp();
         final machine = app.machineStates['m']!;
@@ -132,9 +132,14 @@ void main() {
         final previousFocus = FocusManager.instance.primaryFocus;
         final button = find.descendant(
           of: target,
-          matching: find.byKey(ValueKey('pane-split-$direction')),
+          matching: find.byKey(ValueKey('pane-open-$direction')),
+        );
+        final newButton = find.descendant(
+          of: target,
+          matching: find.byKey(ValueKey('pane-new-$direction')),
         );
         expect(button.hitTestable(), findsNothing);
+        expect(newButton.hitTestable(), findsNothing);
         final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
         await mouse.addPointer(location: rect.center);
         await mouse.moveTo(
@@ -144,6 +149,11 @@ void main() {
         );
         await tester.pump(const Duration(milliseconds: 120));
         expect(button.hitTestable(), findsOneWidget);
+        expect(newButton.hitTestable(), findsOneWidget);
+        expect(
+          tester.getRect(button).overlaps(tester.getRect(newButton)),
+          isFalse,
+        );
         expect(app.focusedPaneId, neighbor.id);
         expect(FocusManager.instance.primaryFocus, same(previousFocus));
         expect(tester.element(view), same(retained));
@@ -151,6 +161,9 @@ void main() {
         expect(frames, isEmpty);
 
         // Moving from the border onto the inset button must keep it visible.
+        await mouse.moveTo(tester.getCenter(newButton));
+        await tester.pump();
+        expect(newButton.hitTestable(), findsOneWidget);
         await mouse.moveTo(tester.getCenter(button));
         await tester.pump();
         expect(button.hitTestable(), findsOneWidget);
@@ -193,6 +206,86 @@ void main() {
         app.dispose();
       },
     );
+    testWidgets('edge New $direction opens creation with the hovered project', (
+      tester,
+    ) async {
+      final connection = _Creation();
+      final app = createApp(connectionForTest: (_) => connection);
+      final machine = app.machineStates['m']!;
+      machine.nodeOnline = true;
+      machine.agents[0] = const Agent(
+        id: 'a0',
+        name: 'First project',
+        engine: 'claude',
+        project: AgentProject(name: 'first', cwd: '/work/first'),
+      );
+      machine.agents[1] = const Agent(
+        id: 'a1',
+        name: 'Neighbor',
+        engine: 'claude',
+        project: AgentProject(name: 'neighbor', cwd: '/work/neighbor'),
+      );
+      final frames = <TerminalBinaryFrame>[];
+      final first = app.adoptSessionForTest(terminal('a0', frames));
+      final neighbor = app.adoptSessionForTest(terminal('a1', frames));
+      app.focusPane(neighbor.id);
+      await mountWide(tester, app);
+      tester.view.physicalSize = const Size(3000, 1800);
+      await tester.pump();
+      final target = find.byKey(first.cellKey);
+      final before = tester.getRect(target);
+      final neighborBefore = tester.getRect(find.byKey(neighbor.cellKey));
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await mouse.addPointer(location: before.center);
+      await mouse.moveTo(
+        axis == PaneResizeAxis.x
+            ? Offset(before.right - 2, before.center.dy)
+            : Offset(before.center.dx, before.bottom - 2),
+      );
+      await tester.pump(const Duration(milliseconds: 120));
+      final create = find.descendant(
+        of: target,
+        matching: find.byKey(ValueKey('pane-new-$direction')),
+      );
+      await mouse.moveTo(tester.getCenter(create));
+      await mouse.down(tester.getCenter(create));
+      await mouse.up();
+      await tester.pump();
+      expect(find.byType(AlertDialog), findsOneWidget);
+      expect(
+        find.text(
+          axis == PaneResizeAxis.x
+              ? 'New Agent to the right'
+              : 'New Agent below',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('new-agent-project-browse')),
+          matching: find.text('first'),
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('/work/neighbor'), findsNothing);
+      expect(find.byKey(const ValueKey('swarm-search-input')), findsNothing);
+      expect(app.focusedPaneId, first.id);
+      expect(tester.getRect(target), before);
+      expect(tester.getRect(find.byKey(neighbor.cellKey)), neighborBefore);
+      expect(connection.calls, isNot(contains('agent_create')));
+      expect(frames, isEmpty);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
+      await tester.pump();
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(app.panes, [first, neighbor]);
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+      await tester.pump(const Duration(milliseconds: 10));
+      expect(frames.single.streamId, first.session!.streamId);
+      await mouse.removePointer();
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+    });
   }
 
   testWidgets(
@@ -379,10 +472,16 @@ void main() {
     expect(find.byKey(const ValueKey('harness-picker-new')), findsOneWidget);
     expect(find.byKey(const ValueKey('swarm-row-action')), findsOneWidget);
     expect(find.byType(AlertDialog), findsNothing);
-    await chord(tester, LogicalKeyboardKey.keyN, shift: true);
+    await chord(tester, LogicalKeyboardKey.keyN);
     await tester.pump();
     expect(find.text('New Agent to the right'), findsOneWidget);
-    expect(find.text('/work/checkout'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('new-agent-project-browse')),
+        matching: find.text('checkout'),
+      ),
+      findsOneWidget,
+    );
     expect(app.panes, [pane]);
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pump();

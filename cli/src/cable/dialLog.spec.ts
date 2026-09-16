@@ -88,6 +88,19 @@ describe('DialLog', () => {
     expect(text).toMatch(/dial heartbeat back after 121s/)
   })
 
+  it('restarts the watch when the dial greets again (a reboot on an open port)', async () => {
+    const d = dir()
+    const c = clock()
+    const log = new DialLog(d, { now: c.now, heartbeatGapMs: 90_000 })
+    log.device('I (60000) ui: alive up=60s')
+    c.advance(80_000)
+    log.greeted()          // OTA reboot: hello arrives, ticks go back to zero
+    c.advance(30_000)
+    log.tick(true)         // 110s since the last beat, but only 30s since the greeting
+    await log.flush()
+    expect(readFileSync(log.currentPath, 'utf8')).not.toMatch(/no dial heartbeat/)
+  })
+
   it('does not chase a heartbeat while the port is closed', async () => {
     const d = dir()
     const c = clock()

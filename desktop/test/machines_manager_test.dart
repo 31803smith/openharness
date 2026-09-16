@@ -37,7 +37,9 @@ void main() {
         tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
           channel,
           (call) async {
-            if (call.method == 'update') updates.add(call.arguments as Map);
+            if (call.method == 'machinesState') {
+              updates.add(call.arguments as Map);
+            }
             return null;
           },
         );

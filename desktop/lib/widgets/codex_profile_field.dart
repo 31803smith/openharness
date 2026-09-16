@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -7,7 +9,6 @@ import '../core/codex_profiles.dart';
 import '../state/app_state.dart';
 import '../shared/theme/app_theme.dart' as grid;
 import '../shared/widgets/app_select_field.dart';
-import '../shared/widgets/labeled_field.dart';
 import 'remote_folder_picker.dart';
 
 /// Every profile comes from the harness CLI running on [machineId]
@@ -184,77 +185,86 @@ class _CodexProfileFieldState extends State<CodexProfileField> {
       for (final profile in _profiles) profile.path: profile,
       if (widget.value != null) widget.value!.path: widget.value!,
     };
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
+    const refreshValue = '__refresh_profiles__';
+    return Wrap(
+      spacing: 8,
+      runSpacing: 6,
+      crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        Row(
-          children: [
-            const Expanded(child: FieldLabel('Codex profile')),
-            Tooltip(
-              message:
-                  'A profile is the Codex folder containing your account and settings '
-                  '(CODEX_HOME). Profiles stay on the selected machine.',
-              child: Icon(
-                LucideIcons.info,
-                size: 14,
-                color: grid.AppPalette.textSecondary,
-              ),
-            ),
-          ],
-        ),
-        AppSelectField<String>(
-          key: const Key('new-agent-codex-profile-field'),
-          value: widget.value?.path ?? '',
-          options: [
-            SelectOption(
-              value: '',
-              label: 'Default profile',
-              note: _loading ? 'loading profiles…' : null,
-              detail: 'Use this machine’s normal Codex launch.',
-            ),
-            for (final profile in choices.values)
+        SizedBox(
+          width:
+              252 *
+              math.min(1.4, MediaQuery.textScalerOf(context).scale(13) / 13),
+          height: 34,
+          child: AppSelectField<String>(
+            key: const Key('new-agent-codex-profile-field'),
+            height: 34,
+            value: widget.value?.path ?? '',
+            options: [
+              const SelectOption(value: '', label: 'Default profile'),
+              for (final profile in choices.values)
+                SelectOption(
+                  value: profile.path,
+                  label: profile.label,
+                  detail: profile.path,
+                ),
               SelectOption(
-                value: profile.path,
-                label: profile.label,
-                detail: profile.path,
+                value: refreshValue,
+                label: 'Refresh profiles',
+                leading: () => const Icon(LucideIcons.refreshCw, size: 14),
               ),
-          ],
-          onChanged: (value) => _select(choices[value]),
-        ),
-        const SizedBox(height: 4),
-        Row(
-          children: [
-            Expanded(
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton(
-                  onPressed: _linking ? null : _link,
-                  style: TextButton.styleFrom(
-                    foregroundColor: grid.AppPalette.textSecondary,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 0,
-                      vertical: 6,
-                    ),
-                    minimumSize: const Size(0, 32),
-                  ),
+            ],
+            onChanged: (value) {
+              if (value == refreshValue) {
+                _load();
+              } else {
+                _select(choices[value]);
+              }
+            },
+            trigger: Row(
+              children: [
+                Expanded(
                   child: Text(
-                    _linking ? 'Linking profile…' : 'Link a profile folder…',
+                    'Codex profile: ${widget.value?.label ?? (_loading ? 'Loading…' : 'Default')}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: grid.AppPalette.textPrimary,
+                    ),
                   ),
                 ),
-              ),
+                const SizedBox(width: 8),
+                Icon(
+                  Icons.keyboard_arrow_down,
+                  size: 16,
+                  color: grid.AppPalette.textSecondary,
+                ),
+              ],
             ),
-            IconButton(
-              tooltip: 'Refresh profiles',
-              onPressed: _loading || _linking ? null : _load,
-              icon: const Icon(LucideIcons.refreshCw, size: 14),
+          ),
+        ),
+        TextButton(
+          onPressed: _linking ? null : _link,
+          style: TextButton.styleFrom(
+            foregroundColor: grid.AppPalette.textSecondary,
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+            minimumSize: const Size(0, 32),
+            textStyle: TextStyle(
+              fontFamily: grid.AppFont.sans,
+              fontFamilyFallback: grid.AppFont.sansFallback,
+              fontSize: 13,
             ),
-          ],
+          ),
+          child: Text(_linking ? 'Adding…' : 'Add'),
         ),
         if (_error != null)
           Text(
             _error!,
-            style: TextStyle(color: Theme.of(context).colorScheme.error),
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.error,
+              fontSize: 12,
+            ),
           ),
       ],
     );

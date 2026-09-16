@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { lstat, mkdir, mkdtemp, rename, rm } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, readdir, rename, rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -15,7 +15,7 @@ export function parseProjectFolder(payload: Record<string, unknown>): ProjectFol
   if (payload.projectSource === undefined) return null
   if (payload.projectSource === 'new' && payload.repositoryUrl === undefined) return { source: 'new' }
   if (payload.projectSource !== 'remote' || typeof payload.repositoryUrl !== 'string') {
-    throw new ProjectFolderError('INVALID_PROJECT_SOURCE', 'Choose New, Local, or Remote for the project folder.')
+    throw new ProjectFolderError('INVALID_PROJECT_SOURCE', 'Choose a project.')
   }
   const raw = payload.repositoryUrl.trim()
   let path: string
@@ -48,22 +48,34 @@ export async function prepareProjectFolder(
   project: ProjectFolder,
   options: { root?: string; clone?: (url: string, destination: string) => Promise<void> } = {},
 ): Promise<string> {
-  const root = options.root ?? join(homedir(), 'Harness Projects')
+  const root = options.root ?? join(homedir(), 'harnesses')
   let staging: string | undefined
   try {
     await mkdir(root, { recursive: true })
-    if (project.source === 'new') return await mkdtemp(join(root, 'project-'))
+    if (project.source === 'new') {
+      const numbers = (await readdir(root)).map(name => /^agent-([1-9]\d*)$/.exec(name)?.[1])
+      let next = numbers.reduce((max, value) => value && BigInt(value) > max ? BigInt(value) : max, 0n) + 1n
+      for (;;) {
+        const folder = join(root, `agent-${next++}`)
+        try { await mkdir(folder); return folder }
+        catch (error) {
+          // mkdir reserves the name atomically, including simultaneous desktop
+          // and remote creates. Files and symlinks also count as occupied.
+          if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+        }
+      }
+    }
     const destination = join(root, project.name)
-    if (await exists(destination)) throw new ProjectFolderError('PROJECT_EXISTS', `“${project.name}” already exists. Choose Local to open that folder.`)
+    if (await exists(destination)) throw new ProjectFolderError('PROJECT_EXISTS', `“${project.name}” already exists. Select that folder from your projects.`)
     staging = await mkdtemp(join(root, '.harness-clone-'))
     const checkout = join(staging, 'checkout')
     await (options.clone ?? cloneRepository)(project.repositoryUrl, checkout)
-    if (await exists(destination)) throw new ProjectFolderError('PROJECT_EXISTS', `“${project.name}” was created while cloning. Choose Local to open that folder.`)
+    if (await exists(destination)) throw new ProjectFolderError('PROJECT_EXISTS', `“${project.name}” was created while cloning. Select that folder from your projects.`)
     await rename(checkout, destination)
     return destination
   } catch (error) {
     if (error instanceof ProjectFolderError) throw error
-    throw new ProjectFolderError('PROJECT_PREPARATION_FAILED', 'Could not create a project folder on this machine. Choose Local to select a folder you can edit.')
+    throw new ProjectFolderError('PROJECT_PREPARATION_FAILED', 'Could not create a project folder on this machine. Browse for a folder you can edit.')
   } finally {
     if (staging) await rm(staging, { force: true, recursive: true }).catch(() => {})
   }

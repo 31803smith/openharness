@@ -104,6 +104,9 @@ void main() {
       await _mount(tester, app);
       expect(app.prepared, isEmpty);
       expect(connection.calls, isEmpty);
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('new-agent-folder-newProject')),
+      );
       await tester.tap(
         find.byKey(const ValueKey('new-agent-folder-newProject')),
       );
@@ -150,44 +153,39 @@ void main() {
     });
   }
 
-  testWidgets(
-    'Remote uses its inline URL and status retries never clone again',
-    (tester) async {
-      final connection = _Connection();
-      final app = _App(connection, local: false);
-      addTearDown(() async {
-        await tester.pumpWidget(const SizedBox());
-        app.dispose();
-      });
-      await _mount(tester, app);
-      await tester.tap(find.byKey(const ValueKey('new-agent-folder-remote')));
-      await tester.pumpAndSettle();
-      final field = find.byKey(const ValueKey('new-agent-repository'));
-      expect(tester.widget<TextField>(field).focusNode!.hasFocus, isTrue);
-      expect(
-        tester
-            .widget<FilledButton>(
-              find.byKey(const ValueKey('create-agent-submit')),
-            )
-            .onPressed,
-        isNull,
-      );
-      await tester.enterText(field, 'owner/repo');
-      await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('create-agent-submit')));
-      await tester.pump();
-      final (_, payload, result) = connection.calls.single;
-      expect(payload['projectSource'], 'remote');
-      expect(payload['repositoryUrl'], 'https://github.com/owner/repo.git');
-      expect(app.prepared, isEmpty);
-      result.completeError(const WsRequestTimeout('agent_create'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('create-agent-submit')));
-      await tester.pump();
-      expect(connection.calls.last.$1, 'agent_create_status');
-      expect(connection.calls.last.$2, {'creationId': payload['creationId']});
-      connection.fail();
-      await tester.pumpAndSettle();
-    },
-  );
+  testWidgets('Git uses its URL dialog and status retries never clone again', (
+    tester,
+  ) async {
+    final connection = _Connection();
+    final app = _App(connection, local: false);
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+    });
+    await _mount(tester, app);
+    final git = find.byKey(const Key('new-agent-project-git'));
+    await tester.ensureVisible(git);
+    await tester.tap(git);
+    await tester.pumpAndSettle();
+    final field = find.byKey(const Key('new-agent-git-url'));
+    expect(tester.widget<TextField>(field).autofocus, isTrue);
+    await tester.enterText(field, 'owner/repo');
+    await tester.pump();
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('create-agent-submit')));
+    await tester.pump();
+    final (_, payload, result) = connection.calls.single;
+    expect(payload['projectSource'], 'remote');
+    expect(payload['repositoryUrl'], 'https://github.com/owner/repo.git');
+    expect(app.prepared, isEmpty);
+    result.completeError(const WsRequestTimeout('agent_create'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('create-agent-submit')));
+    await tester.pump();
+    expect(connection.calls.last.$1, 'agent_create_status');
+    expect(connection.calls.last.$2, {'creationId': payload['creationId']});
+    connection.fail();
+    await tester.pumpAndSettle();
+  });
 }

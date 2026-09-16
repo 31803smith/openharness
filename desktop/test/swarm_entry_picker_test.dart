@@ -155,7 +155,7 @@ void main() {
       expect(
         find.descendant(
           of: find.byType(AlertDialog),
-          matching: find.widgetWithText(FilledButton, 'New Agent'),
+          matching: find.widgetWithText(FilledButton, 'Create'),
         ),
         findsOneWidget,
       );
@@ -174,7 +174,7 @@ void main() {
 
     for (final dismissal in ['outside', 'escape']) {
       testWidgets(
-        'New Tab has a usable page after $dismissal (native=$native)',
+        'New Harness has a usable page after $dismissal (native=$native)',
         (tester) async {
           final app = createApp();
           final frames = <TerminalBinaryFrame>[];
@@ -187,7 +187,7 @@ void main() {
           expect(page, isNot(original));
           expect(_results, findsNothing);
           expect(_startInput, findsOneWidget);
-          await chord(tester, LogicalKeyboardKey.keyN);
+          await chord(tester, LogicalKeyboardKey.keyO);
           expect(_results, findsOneWidget);
           if (dismissal == 'outside') {
             await tester.tapAt(const Offset(20, 200));
@@ -218,7 +218,7 @@ void main() {
     (tester) async {
       final app = createApp();
       await mount(tester, app);
-      await chord(tester, LogicalKeyboardKey.keyN);
+      await chord(tester, LogicalKeyboardKey.keyO);
       await tester.enterText(_input, 'Agent 12');
       await tester.pump();
       final text = tester.widget<TextField>(_input).controller!;
@@ -261,7 +261,7 @@ void main() {
     app.newSwarm();
     final destination = app.activeSwarmId;
     await mount(tester, app);
-    await chord(tester, LogicalKeyboardKey.keyN);
+    await chord(tester, LogicalKeyboardKey.keyO);
     await tester.enterText(_input, 'Agent 0');
     await tester.pump();
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);

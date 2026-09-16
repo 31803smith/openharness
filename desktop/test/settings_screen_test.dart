@@ -17,7 +17,6 @@ import 'package:harness/core/config.dart';
 import 'package:harness/settings/settings_screen.dart';
 import 'package:harness/shared/theme/app_theme.dart';
 import 'package:harness/state/app_state.dart';
-import 'package:harness/terminal/terminal_font_store.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -66,68 +65,25 @@ void main() {
     return notifier;
   }
 
-  testWidgets('opens on Appearance, with every section in the rail', (
-    tester,
-  ) async {
-    await openSettings(tester);
-
-    // The rail: every group caption and every row.
-    expect(find.text('Preferences'), findsOneWidget);
-    expect(find.text('Help'), findsOneWidget);
-    expect(find.text('Terminal'), findsOneWidget);
-    expect(find.text('Keyboard shortcuts'), findsOneWidget);
-    expect(find.text('About'), findsOneWidget);
-    expect(find.text('Back to app'), findsOneWidget);
-
-    // Appearance is the section it opens on, so its name is both the rail row
-    // and the pane's title.
-    expect(find.text('Appearance'), findsNWidgets(2));
-  });
-
-  testWidgets('the Appearance pane is the typography controls', (tester) async {
-    await openSettings(tester);
-
-    // Typography is the whole pane now that there is no theme to choose —
-    // Harness Desktop is dark-only.
-    expect(find.text('Typography'), findsOneWidget);
-    expect(find.text('UI font'), findsOneWidget);
-    expect(find.text('UI font size'), findsOneWidget);
-    expect(find.byKey(const Key('appearance-ui-size-field')), findsOneWidget);
-  });
-
-  testWidgets('picking Terminal swaps the pane for the font controls', (
-    tester,
-  ) async {
-    await openSettings(tester);
-
-    await tester.tap(find.text('Terminal'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Terminal'), findsNWidgets(2));
-    expect(
-      find.byKey(const Key('terminal-font-family-dropdown')),
-      findsOneWidget,
-    );
-    expect(
-      find.text(TerminalFontChoice.defaultForPlatform.label),
-      findsOneWidget,
-    );
-    expect(find.text('13pt'), findsOneWidget);
-    expect(
-      find.byKey(const Key('terminal-font-size-decrease')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const Key('terminal-font-size-increase')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const Key('terminal-settings-reset-button')),
-      findsOneWidget,
-    );
-    // The Appearance controls are gone with their pane.
-    expect(find.byKey(const Key('appearance-ui-size-field')), findsNothing);
-  });
+  testWidgets(
+    'Settings lists its remaining sections after customization moves',
+    (tester) async {
+      await openSettings(tester);
+      expect(find.text('Preferences'), findsOneWidget);
+      expect(find.text('Help'), findsOneWidget);
+      expect(find.text('Usage'), findsNWidgets(2));
+      expect(find.text('Keyboard shortcuts'), findsOneWidget);
+      expect(find.text('About'), findsOneWidget);
+      expect(find.text('Back to app'), findsOneWidget);
+      expect(find.text('Appearance'), findsNothing);
+      expect(find.text('Terminal'), findsNothing);
+      expect(find.byKey(const Key('appearance-ui-size-field')), findsNothing);
+      expect(
+        find.byKey(const Key('terminal-font-family-dropdown')),
+        findsNothing,
+      );
+    },
+  );
 
   testWidgets('About prints the running version', (tester) async {
     await openSettings(tester);
@@ -158,9 +114,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Keyboard shortcuts'), findsOneWidget);
-    // Rail rows gone; the open pane's own title is what remains of
-    // 'Appearance'.
-    expect(find.text('Appearance'), findsOneWidget);
+    // Filtering the rail preserves the open pane.
+    expect(find.text('Usage'), findsOneWidget);
     expect(find.text('Terminal'), findsNothing);
     expect(find.text('Preferences'), findsNothing);
 

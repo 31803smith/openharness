@@ -7,6 +7,8 @@
 // does not refuse it either — the frame goes out over the relay and nothing ever comes back, so the
 // app waits out its 30s timeout and then knows nothing. Meanwhile the panel had already promised a
 // launch, and the create failed at the far end with `exec: opencode: not found`.
+import 'support/new_agent_project.dart';
+
 import 'dart:async';
 
 import 'package:file_selector_platform_interface/file_selector_platform_interface.dart';
@@ -75,7 +77,7 @@ void main() {
     await tester.tap(find.text('open'));
     await tester.pumpAndSettle();
     // 'Browse…' until a folder is chosen; 'Change' after.
-    await tester.tap(find.text('Browse…'));
+    await browseNewAgentProject(tester);
     await tester.pumpAndSettle();
     return notifier;
   }
@@ -96,11 +98,12 @@ void main() {
       findsOneWidget,
     );
     expect(find.textContaining('uses an older Harness CLI'), findsNothing);
+    await tester.ensureVisible(find.byKey(const Key('new-agent-advanced')));
     await tester.tap(find.byKey(const Key('new-agent-advanced')));
     await tester.pump();
     expect(
       find.textContaining('If harness-remote-box uses an older Harness CLI'),
-      findsOneWidget,
+      findsNothing,
     );
   });
 
@@ -134,11 +137,15 @@ void main() {
       (engines) => engines.error = 'Check failed',
       app: app,
     );
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('new-agent-quick-codex')),
+    );
     await tester.tap(find.byKey(const ValueKey('new-agent-quick-codex')));
+    await tester.ensureVisible(find.byKey(const Key('new-agent-advanced')));
     await tester.tap(find.byKey(const Key('new-agent-advanced')));
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('Bypass permission prompts'));
-    await tester.tap(find.text('Bypass permission prompts'));
+    await tester.ensureVisible(find.text('Bypass approvals'));
+    await tester.tap(find.text('Bypass approvals'));
     await tester.pump();
     final retry = find.byKey(const Key('new-agent-retry-check'));
     await tester.ensureVisible(retry);
@@ -171,7 +178,8 @@ void main() {
 
     expect(find.byType(AlertDialog), findsOneWidget);
     expect(retry, findsNothing);
-    expect(find.text(pickedFolder), findsOneWidget);
+    expect(find.text('20260907'), findsOneWidget);
+    expect(find.text(pickedFolder), findsNothing);
     expect(
       tester
           .widget<AppSelectField<String>>(
@@ -186,7 +194,7 @@ void main() {
       findsOneWidget,
     );
     expect(app.launches, isEmpty);
-    await tester.tap(find.widgetWithText(FilledButton, 'New Agent'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Create'));
     await tester.pump();
     expect(app.launches.single, {
       'machine': 'machine-1',
@@ -216,9 +224,14 @@ void main() {
     final pending = app.pending['machine-1'] = Completer<void>();
     await tester.tap(find.byKey(const Key('new-agent-retry-check')));
     await tester.pump();
+    await tester.pump();
     await tester.tap(find.byKey(const ValueKey('new-agent-machine-machine-2')));
     await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('new-agent-quick-codex')),
+    );
     await tester.tap(find.byKey(const ValueKey('new-agent-quick-codex')));
+    await tester.ensureVisible(find.byKey(const Key('new-agent-advanced')));
     await tester.tap(find.byKey(const Key('new-agent-advanced')));
     await tester.pumpAndSettle();
     expect(
@@ -246,7 +259,7 @@ void main() {
           .value,
       'codex',
     );
-    expect(find.text(pickedFolder), findsNothing);
+    expect(find.text('20260907'), findsNothing);
     expect(app.launches, isEmpty);
     expect(tester.takeException(), isNull);
   });

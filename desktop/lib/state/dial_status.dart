@@ -9,7 +9,7 @@ import '../core/local_key_value_store.dart';
 /// once more the moment this window connects, so a window opened after the dial was plugged in is not
 /// left believing there is none.
 class DialStatus {
-  const DialStatus({required this.attached, this.fw, this.updating});
+  const DialStatus({required this.attached, this.fw, this.hw, this.updating});
 
   static const none = DialStatus(attached: false);
 
@@ -18,6 +18,11 @@ class DialStatus {
   /// The version it greeted with. Null until the first greeting — a dial can be on the wire before it
   /// has said which image it runs.
   final String? fw;
+
+  /// Which of the two dials it is — `cst9217+axp2101` or `cst816s` — as the firmware detected itself
+  /// at boot. Null from a firmware that predates the field. Shown only in the row's detail: a person
+  /// does not choose it, support reads it.
+  final String? hw;
 
   /// The version on its way over the cable, or null. The one state that deserves its own word in the
   /// window, because it is the minute in which people unplug the thing.
@@ -28,6 +33,9 @@ class DialStatus {
     attached: json['attached'] == true,
     fw: json['fw'] is String && (json['fw'] as String).isNotEmpty
         ? json['fw'] as String
+        : null,
+    hw: json['hw'] is String && (json['hw'] as String).isNotEmpty
+        ? json['hw'] as String
         : null,
     updating:
         json['updating'] is String && (json['updating'] as String).isNotEmpty

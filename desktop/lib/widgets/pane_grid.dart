@@ -38,12 +38,14 @@ class PaneGrid extends StatelessWidget {
     this.swarmMode = false,
     this.empty,
     this.onSplit,
+    this.onNewSplit,
   });
 
   final AppNotifier notifier;
   final bool swarmMode;
   final Widget? empty;
   final void Function(int paneId, PaneResizeAxis axis)? onSplit;
+  final void Function(int paneId, PaneResizeAxis axis)? onNewSplit;
 
   @override
   Widget build(BuildContext context) {
@@ -56,6 +58,7 @@ class PaneGrid extends StatelessWidget {
             dragging: dragging,
             empty: empty,
             onSplit: onSplit,
+            onNewSplit: onNewSplit,
           );
         }
         final panes = notifier.panes;
@@ -222,11 +225,13 @@ class _SwarmCanvas extends StatefulWidget {
     required this.dragging,
     this.empty,
     this.onSplit,
+    this.onNewSplit,
   });
   final AppNotifier notifier;
   final AgentDragRef? dragging;
   final Widget? empty;
   final void Function(int paneId, PaneResizeAxis axis)? onSplit;
+  final void Function(int paneId, PaneResizeAxis axis)? onNewSplit;
   @override
   State<_SwarmCanvas> createState() => _SwarmCanvasState();
 }
@@ -423,10 +428,10 @@ class _SwarmCanvasState extends State<_SwarmCanvas> {
       zoomed: app.zoomedPaneId == pane.id,
       canSplit: app.canAddPane,
       splitRight:
-          widget.onSplit != null &&
+          (widget.onSplit != null || widget.onNewSplit != null) &&
           app.preparePaneSplit(PaneResizeAxis.x, paneId: pane.id) != null,
       splitDown:
-          widget.onSplit != null &&
+          (widget.onSplit != null || widget.onNewSplit != null) &&
           app.preparePaneSplit(PaneResizeAxis.y, paneId: pane.id) != null,
       composer: pane.composerVisible,
       blocked:
@@ -516,6 +521,7 @@ class _SwarmCanvasState extends State<_SwarmCanvas> {
                           visible: rectangles.containsKey(pane.id),
                           swarmMode: true,
                           onSplit: widget.onSplit,
+                          onNewSplit: widget.onNewSplit,
                         ),
                       ),
                     ),
@@ -1084,6 +1090,7 @@ class _PaneCell extends StatelessWidget {
     this.visible = true,
     this.swarmMode = false,
     this.onSplit,
+    this.onNewSplit,
   });
 
   final AppNotifier notifier;
@@ -1092,6 +1099,7 @@ class _PaneCell extends StatelessWidget {
   final bool visible;
   final bool swarmMode;
   final void Function(int paneId, PaneResizeAxis axis)? onSplit;
+  final void Function(int paneId, PaneResizeAxis axis)? onNewSplit;
 
   bool get _single => notifier.panes.length == 1;
 
@@ -1124,7 +1132,7 @@ class _PaneCell extends StatelessWidget {
               swarmMode &&
               visible &&
               agentId != null &&
-              onSplit != null &&
+              (onSplit != null || onNewSplit != null) &&
               notifier.zoomedPaneId == null &&
               notifier.canAddPane &&
               dragging == null &&
@@ -1136,6 +1144,9 @@ class _PaneCell extends StatelessWidget {
               notifier.preparePaneSplit(PaneResizeAxis.y, paneId: pane.id) !=
               null,
           onSplit: onSplit == null ? null : (axis) => onSplit!(pane.id, axis),
+          onNewSplit: onNewSplit == null
+              ? null
+              : (axis) => onNewSplit!(pane.id, axis),
           child: child!,
         ),
         child: Container(
@@ -1370,12 +1381,24 @@ class _PaneContent extends StatelessWidget {
 
     // A never-attached view has no output to preserve: keep its setup guidance.
     if (machine == null) {
+      // "Waiting" is only honest while there is still something to wait FOR. When the machine list
+      // itself could not be read, this machine is not slow — it is unknown, and a spinner that never
+      // ends is the wrong answer. Keyed off `machineListError`, not `lastError`: that slot is shared
+      // with agent-launch failures and is cleared by `dismissError`.
+      final listFailed = notifier.machineListError != null;
+      final retrying = notifier.machinesRefreshing;
       return _PaneStatus(
         title: wantedAgentId ?? pane.machineId,
-        icon: Icons.hourglass_empty,
-        message: 'Waiting for this machine to answer…',
+        icon: listFailed ? Icons.cloud_off : Icons.hourglass_empty,
+        message: listFailed
+            ? 'Could not reach the Harness backend, so this machine is unknown right now.'
+            : 'Waiting for this machine to answer…',
         onClose: single && !swarmMode ? null : close,
-        busy: true,
+        busy: !listFailed || retrying,
+        // The automatic recovery is already retrying in the background; this is for someone who does not
+        // want to wait for the next tick. `retryMachines` coalesces, so pressing it during a run joins it.
+        actionLabel: listFailed && !retrying ? 'RETRY' : null,
+        onAction: listFailed ? notifier.retryMachines : null,
       );
     }
     if (needsLink) {
@@ -1852,6 +1875,8 @@ class _PaneStatus extends StatelessWidget {
     required this.message,
     this.onClose,
     this.busy = false,
+    this.actionLabel,
+    this.onAction,
   });
 
   final String title;
@@ -1859,6 +1884,11 @@ class _PaneStatus extends StatelessWidget {
   final String message;
   final VoidCallback? onClose;
   final bool busy;
+
+  /// An optional way out of the state being described. A pane that is merely waiting has none; one
+  /// reporting a failure the user can retry does, and it reads the same as the error strip's RETRY.
+  final String? actionLabel;
+  final VoidCallback? onAction;
 
   @override
   Widget build(BuildContext context) {
@@ -1892,6 +1922,10 @@ class _PaneStatus extends StatelessWidget {
                       fontSize: 11.5,
                     ),
                   ),
+                  if (actionLabel != null && onAction != null) ...[
+                    const SizedBox(height: 4),
+                    TextButton(onPressed: onAction, child: Text(actionLabel!)),
+                  ],
                 ],
               ),
             ),

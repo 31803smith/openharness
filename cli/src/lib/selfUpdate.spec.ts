@@ -3,7 +3,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { createHash } from 'crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { canary, isLocalDevBuild, semverGt, shouldAutoUpdate, stage, startSelfUpdater } from './selfUpdate.js'
+import { canary, isLocalDevBuild, msUntilSlot, semverGt, shouldAutoUpdate, stage, startSelfUpdater } from './selfUpdate.js'
 
 let dirs: string[] = []
 
@@ -60,6 +60,33 @@ describe('shouldAutoUpdate', () => {
   })
 })
 
+describe('msUntilSlot', () => {
+  const MIN = 60_000
+  const at = (second: number, ms = 0) => second * 1000 + ms // some minute boundary + offset
+
+  it('lands on the slot second of the current minute when it is still ahead', () => {
+    expect(msUntilSlot(at(10), 45, MIN)).toBe(35_000)
+    expect(msUntilSlot(at(44, 999), 45, MIN)).toBe(1)
+  })
+
+  it('waits for the next minute once the slot has passed — including exactly on it', () => {
+    expect(msUntilSlot(at(45), 45, MIN)).toBe(MIN)
+    expect(msUntilSlot(at(50), 45, MIN)).toBe(55_000)
+  })
+
+  it('folds the slot into a shorter interval that still divides a minute', () => {
+    // 30s interval: slot :45 is 15s past each boundary.
+    expect(msUntilSlot(at(0), 45, 30_000)).toBe(15_000)
+    expect(msUntilSlot(at(20), 45, 30_000)).toBe(25_000)
+  })
+
+  it('is the plain interval without a slot, or with one that cannot align to the clock', () => {
+    expect(msUntilSlot(at(10), undefined, MIN)).toBe(MIN)
+    expect(msUntilSlot(at(10), -1, MIN)).toBe(MIN)
+    expect(msUntilSlot(at(10), 45, 7_000)).toBe(7_000) // 7s does not divide a minute
+  })
+})
+
 describe('startSelfUpdater', () => {
   const cliSource = Buffer.from('#!/usr/bin/env node\nimport { createRequire } from "module";\nconsole.log(createRequire(import.meta.url) ? "9.9.9" : "nope")\n')
   const notifySource = Buffer.from('export {}\n')
@@ -99,7 +126,7 @@ describe('startSelfUpdater', () => {
       url: 'https://updates.test/metadata.json',
       key: 'adapter',
       dir,
-      intervalMs: 60_000,
+      intervalMs: 20, // no tick on start any more — the first one is a short interval away
       withLock: async (fn) => {
         events.push('lock')
         try { return await fn() } finally { events.push('unlock') }
@@ -118,6 +145,65 @@ describe('startSelfUpdater', () => {
     expect(events).toEqual(['lock', 'staged:9.9.9', 'handoff-done', 'unlock'])
   })
 
+  it('does not check on start; the first check lands on the slot, the next on the following one', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-09-15T10:00:10.000Z'))
+      const fetchMock = vi.fn(async () => new Response(JSON.stringify({ adapter: { version: '1.0.0' } })))
+      vi.stubGlobal('fetch', fetchMock)
+      const poller = startSelfUpdater({
+        currentVersion: '1.0.0',
+        url: 'https://updates.test/metadata.json',
+        key: 'adapter',
+        dir: tempDir(),
+        intervalMs: 60_000,
+        slotSecond: 45,
+        onStaged: () => {},
+      })
+      await vi.advanceTimersByTimeAsync(34_000)
+      expect(fetchMock).not.toHaveBeenCalled() // :44 — not yet
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(fetchMock).toHaveBeenCalledTimes(1) // :45
+      await vi.advanceTimersByTimeAsync(59_000)
+      expect(fetchMock).toHaveBeenCalledTimes(1) // :44 of the next minute
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(fetchMock).toHaveBeenCalledTimes(2) // :45 again
+      poller.stop()
+      await vi.advanceTimersByTimeAsync(120_000)
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps the schedule alive when a check is still running as the next slot arrives', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-09-15T10:00:44.000Z'))
+      // The first manifest fetch hangs for two minutes (a stalled link); later ones answer at once.
+      let release: () => void = () => {}
+      const stalled = new Promise<Response>((resolve) => { release = () => resolve(new Response(JSON.stringify({ adapter: { version: '1.0.0' } }))) })
+      const fetchMock = vi.fn()
+        .mockImplementationOnce(() => stalled)
+        .mockImplementation(async () => new Response(JSON.stringify({ adapter: { version: '1.0.0' } })))
+      vi.stubGlobal('fetch', fetchMock)
+      const poller = startSelfUpdater({
+        currentVersion: '1.0.0', url: 'https://updates.test/metadata.json', key: 'adapter', dir: tempDir(),
+        intervalMs: 60_000, slotSecond: 45, onStaged: () => {},
+      })
+      await vi.advanceTimersByTimeAsync(1_000) // :45 — the stalled check starts
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(60_000) // next :45 — skipped, still checking
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      release()
+      await vi.advanceTimersByTimeAsync(60_000) // the :45 after that — the chain is still booked
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+      poller.stop()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('releases the lock when onStaged throws', async () => {
     serveUpdate()
     const dir = tempDir()
@@ -129,7 +215,7 @@ describe('startSelfUpdater', () => {
       url: 'https://updates.test/metadata.json',
       key: 'adapter',
       dir,
-      intervalMs: 60_000,
+      intervalMs: 20, // no tick on start any more — the first one is a short interval away
       withLock: async (fn) => {
         events.push('lock')
         try { return await fn() } finally { events.push('unlock'); sawThrow() }
