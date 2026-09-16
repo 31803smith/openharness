@@ -3817,7 +3817,10 @@ static void parse_and_store(proj_t *p)
 #define CTL_CHIP_PAD_V  6
 #define CTL_CHIP_GAP    13          // between pills (10 → 13: the row sits lower now, so there is room)
 #define CTL_MARK_SRC    20          // every engine icon asset is 20x20
-static void swarm_line_paint(proj_t *p);     // no line to paint any more — see build_shell; kept for ui_swarms_replace
+#define SHELL_MARK      28          // the mark beside the name: 0.72 of a 38px name, rounded
+#define SHELL_MARK_GAP  10          // between the mark and the first letter
+static void swarm_line_tap(lv_event_t *e);   // the tab line → the tab picker (defined with it)
+static void swarm_line_paint(proj_t *p);     // name the window's current tab on this tile, or hide the line
 // Chip row BOTTOM → agent name top.
 //
 // ⚠️ THIS AND TILE_PAD_TOP MOVE TOGETHER. The row FLOATS off the header, so its screen position is
@@ -3880,7 +3883,7 @@ static void header_ext_draw_cb(lv_event_t *e)
 // picker is one build_shell call from being back.
 //
 // A small glass-pill chip for the per-agent controls row (Model / Effort). Clickable → opens a picker.
-static lv_obj_t *ctl_chip(lv_obj_t *parent, lv_event_cb_t cb)
+static __attribute__((unused)) lv_obj_t *ctl_chip(lv_obj_t *parent, lv_event_cb_t cb)
 {
     lv_obj_t *c = lv_label_create(parent);
     lv_obj_set_style_text_font(c, CTL_CHIP_FONT, 0);
@@ -4014,8 +4017,8 @@ static void request_picker(int want)
     ui_show_picker_loading(want);
     s_req_models = true;
 }
-static void model_chip_tap(lv_event_t *e)  { (void)e; request_picker(PICK_MODE_MODEL); }
-static void effort_chip_tap(lv_event_t *e) { (void)e; request_picker(PICK_MODE_EFFORT); }
+static __attribute__((unused)) void model_chip_tap(lv_event_t *e)  { (void)e; request_picker(PICK_MODE_MODEL); }
+static __attribute__((unused)) void effort_chip_tap(lv_event_t *e) { (void)e; request_picker(PICK_MODE_EFFORT); }
 
 
 
@@ -4536,12 +4539,27 @@ static const lv_image_dsc_t *engine_mark(const char *engine, bool *recolor)
     return NULL;
 }
 
+// Size the name to its text, capped at what the mark leaves of the row. The header is a flex row
+// centred as a unit, so the mark sits one gap from the first letter whatever the name's length; a box
+// the width of the row would put the mark at the row's left edge and the name in the middle of what was
+// left, and the two would read as unrelated. LONG_DOT needs a real width to elide against, which is why
+// the text is measured rather than left to LV_SIZE_CONTENT.
+static void shell_name_fit(proj_t *p)
+{
+    if (!p->name_lbl) return;
+    bool mark = p->engine_lbl && !lv_obj_has_flag(p->engine_lbl, LV_OBJ_FLAG_HIDDEN);
+    int32_t cap = SAFE_CONTENT_W - (mark ? SHELL_MARK + SHELL_MARK_GAP : 0);
+    lv_point_t sz;
+    lv_text_get_size(&sz, lv_label_get_text(p->name_lbl), &geist_med_38, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    lv_obj_set_width(p->name_lbl, sz.x < cap ? sz.x : cap);
+}
+
 static void apply_engine_label(proj_t *p)
 {
-    if (!p->engine_lbl || !p->engine_text_lbl) return;
+    if (!p->engine_lbl || !p->name_lbl) return;
     bool recolor = false;
     const lv_image_dsc_t *src = engine_mark(p->engine, &recolor);
-    lv_obj_add_flag(p->engine_text_lbl, LV_OBJ_FLAG_HIDDEN);   // product-mark path only
+    if (p->engine_text_lbl) lv_obj_add_flag(p->engine_text_lbl, LV_OBJ_FLAG_HIDDEN);   // product-mark path only
     if (src) {
         lv_image_set_src(p->engine_lbl, src);
         // Box = exactly one pill, artwork CENTRED inside it. Sizing the box to the zoomed bitmap instead
@@ -4550,8 +4568,10 @@ static void apply_engine_label(proj_t *p)
         // the pill height makes the row one band by construction, whatever the font or padding become.
         lv_image_set_inner_align(p->engine_lbl, LV_IMAGE_ALIGN_CENTER);
         lv_image_set_pivot(p->engine_lbl, (int32_t)src->header.w / 2, (int32_t)src->header.h / 2);
-        lv_image_set_scale(p->engine_lbl, (uint32_t)ctl_mark_scale());
-        lv_obj_set_size(p->engine_lbl, ctl_pill_h(), ctl_pill_h());
+        // Beside the name, at SHELL_MARK px — 0.72 of the name's size, the ratio the launch-page
+        // prototype draws the pair at.
+        lv_image_set_scale(p->engine_lbl, (uint32_t)(SHELL_MARK * 256 / CTL_MARK_SRC));
+        lv_obj_set_size(p->engine_lbl, SHELL_MARK, SHELL_MARK);
         lv_obj_set_style_image_recolor(p->engine_lbl, COL_CLAUDE, 0);
         // Reset this on every engine change: the same LVGL image object may previously have shown Claude.
         lv_obj_set_style_image_recolor_opa(p->engine_lbl, recolor ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
@@ -4559,83 +4579,81 @@ static void apply_engine_label(proj_t *p)
     } else {
         lv_obj_add_flag(p->engine_lbl, LV_OBJ_FLAG_HIDDEN);
     }
+    shell_name_fit(p);
 }
 
 // THE MACHINE LINE IS GONE from the agent tile (mockup/recap-done.html): the same fact is already on the
 // Overview eyebrow and on the switcher's second line. THE HEADER'S HEIGHT IS THE TILE'S LAYOUT: it is a
 // flex child of the tile, so its height is exactly what the "Done" block below it is pushed down by.
 //
-// The swarm line that sat in the chip band for a day is gone with the concept (owner, 2026-09-15: "không
-// còn khái niệm swarm nữa"): the band is the [mark][Model] row again, as it was before.
+// THE TAB LINE (owner, 2026-09-16: the swarm-day layout again, with the concept renamed — the window
+// is tabs now). The band above the name that once held [mark][Model] names the tab the window has on
+// screen, in the Model chip's own pill; a tap opens the list of the others. The mark sits beside the
+// name, at 0.72 of its size.
 static void build_shell(proj_t *p)
 {
 
     if (!p->tile || p->header) return;      // no tile, or shell already built
     p->dot = NULL;                          // recap design drops the status dot (its only reader is guarded)
 
-    // Keep name + engine as ONE top-level tile child. The engine line consumes space from the old 24px
-    // name→body gap, so adding it does not push the recap card down or affect the round-screen margins.
+    // The header is ONE ROW: [engine mark] [name], centred as a pair. See shell_name_fit for why the name
+    // is measured rather than boxed.
     p->header = lv_obj_create(p->tile);
     lv_obj_remove_style_all(p->header);
     lv_obj_clear_flag(p->header, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
-    // One line, always: the name. See the note above the header height.
     lv_obj_set_size(p->header, SAFE_CONTENT_W, lv_font_get_line_height(&geist_med_38));
-    lv_obj_set_flex_flow(p->header, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(p->header, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_flex_flow(p->header, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(p->header, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(p->header, SHELL_MARK_GAP, 0);
 
-
+    p->engine_lbl = lv_image_create(p->header);        // engine product mark, sized by apply_engine_label
+    p->engine_text_lbl = NULL;                         // the text fallback went with the chip row
     p->name_lbl = lv_label_create(p->header);
     lv_obj_set_style_text_color(p->name_lbl, COL_FG, 0);
     lv_obj_set_style_text_font(p->name_lbl, &geist_med_38, 0);   // agent name — Medium for emphasis
-    lv_obj_set_size(p->name_lbl, SAFE_CONTENT_W, lv_font_get_line_height(&geist_med_38));
     lv_obj_set_style_text_align(p->name_lbl, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_long_mode(p->name_lbl, LV_LABEL_LONG_DOT);
     lv_label_set_text(p->name_lbl, p->name[0] ? p->name : "\xE2\x80\xA6");  // model name, or "…" placeholder
 
-
-    // Per-agent controls row FLOATING in the band ABOVE the name: [Engine] [Model] [Effort] pills, one style.
-    // Remote machines only; a tap opens the model/effort picker. The notif pull-down zone was narrowed to
-    // y<44 (touch.c) so taps here still reach LVGL.
+    // THE TAB LINE, floating in the band above the name where the [mark][Model][Effort] chips were. It
+    // names the tab the window has on screen — the one whose panes this carousel walks — and a tap opens
+    // the list of the others. Hidden when the daemon has sent no tabs: no window, nothing to name.
     //
-    // Parented to the HEADER, not the tile, so it tracks the name. A FLOATING child is positioned at
-    // parent->coords.y1 + parent's top pad + offset, so hanging it off the tile pinned it to the tile's
-    // pad_top — which the working state sets to 0, throwing the row ~48px off the top of the screen. The
-    // header has no padding and flex moves it in both states, so anchoring here lands the row exactly one
-    // CTL_NAME_GAP above the name whatever the state. Idle is unchanged: the row still sits at
-    // TILE_PAD_TOP - (pill + gap). Only IN-parent aligns survive a re-layout (lv_obj_pos.c falls through
-    // to `default:` for every LV_ALIGN_OUT_*), so this must stay TOP_MID with a negative offset.
+    // Parented to the HEADER, not the tile, for the reason the chip row was: a FLOATING child is placed
+    // from its parent's top pad, and the tile's changes between the idle and working layouts. Only
+    // IN-parent aligns survive a re-layout, so this stays TOP_MID with a negative offset.
     lv_obj_add_flag(p->header, LV_OBJ_FLAG_OVERFLOW_VISIBLE);   // the row hangs above the header's box
     lv_obj_add_event_cb(p->header, header_ext_draw_cb, LV_EVENT_REFR_EXT_DRAW_SIZE, NULL);  // …and stays tappable
-    lv_obj_t *ctl = lv_obj_create(p->header);
+    // The same glass pill the Model chip wore (ctl_chip): dark fill, hairline border, full radius.
+    lv_obj_t *ctl = lv_button_create(p->header);
     lv_obj_remove_style_all(ctl);
-    lv_obj_set_size(ctl, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_size(ctl, LV_SIZE_CONTENT, ctl_pill_h());
+    lv_obj_set_style_pad_hor(ctl, CTL_CHIP_PAD_H, 0);
+    lv_obj_set_style_radius(ctl, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(ctl, lv_color_hex(0x1c1e24), 0);
+    lv_obj_set_style_bg_opa(ctl, LV_OPA_70, 0);
+    lv_obj_set_style_bg_opa(ctl, LV_OPA_COVER, LV_STATE_PRESSED);
+    lv_obj_set_style_border_width(ctl, 1, 0);
+    lv_obj_set_style_border_color(ctl, lv_color_hex(0x3a3f4b), 0);
+    lv_obj_set_ext_click_area(ctl, 12);   // forgiving tap target, as the chip had
     lv_obj_set_flex_flow(ctl, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(ctl, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_column(ctl, CTL_CHIP_GAP, 0);
-    lv_obj_clear_flag(ctl, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_pad_column(ctl, 8, 0);
+    lv_obj_clear_flag(ctl, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_GESTURE_BUBBLE);
     lv_obj_add_flag(ctl, LV_OBJ_FLAG_FLOATING);
     lv_obj_align(ctl, LV_ALIGN_TOP_MID, 0, ctl_row_y());
-    p->engine_lbl = lv_image_create(ctl);            // engine product mark
-    p->engine_text_lbl = lv_label_create(ctl);       // retained as a hidden compatibility fallback
-    lv_obj_set_size(p->engine_text_lbl, ctl_pill_h(), ctl_pill_h());   // fallback badge matches the pills too
-    lv_obj_set_style_text_font(p->engine_text_lbl, CTL_CHIP_FONT, 0);
-    lv_obj_set_style_text_align(p->engine_text_lbl, LV_TEXT_ALIGN_CENTER, 0);
-    p->model_lbl  = ctl_chip(ctl, model_chip_tap);   // Model → opens the model picker
-    // EFFORT IS OFF THE TILE (mockup/recap-done.html): it is a thing you set BEFORE a turn runs, and this
-    // screen is what you read AFTER one finished. Everything behind it — the wheel, the picker mode, the
-    // agent_update it sends — is untouched and one flip of this switch away.
-    p->effort_lbl = AGENT_EFFORT_CHIP ? ctl_chip(ctl, effort_chip_tap) : NULL;
-    apply_engine_label(p);
-    model_chip_paint(p);
-    effort_chip_paint(p);
+    lv_obj_add_event_cb(ctl, swarm_line_tap, LV_EVENT_CLICKED, NULL);
+    p->swarm_lbl = lv_label_create(ctl);
+    lv_obj_set_style_text_font(p->swarm_lbl, CTL_CHIP_FONT, 0);   // the chip's own face and colour
+    lv_obj_set_style_text_color(p->swarm_lbl, COL_FG, 0);
+    lv_obj_set_style_max_width(p->swarm_lbl, 260, 0);
+    lv_label_set_long_mode(p->swarm_lbl, LV_LABEL_LONG_DOT);
+    // No ▾ after the name: the pill IS the affordance, as the Model chip was.
+    p->model_lbl = NULL;    // the Model / Effort chips are off the tile; their painters accept NULL
+    p->effort_lbl = NULL;
     p->ctl_row = ctl;
-    // The machine on the cable carries a runtime model and effort, so the row applies.
-    //
-    // TAPPABLE, unlike the first cable machine this firmware served. Back then the picker's catalog came
-    // from a backend RPC the cable had no socket for, so an open picker could never populate and the
-    // chips were deliberately inert. The daemon answers `models.list` over the wire now, so the screen
-    // fills — and a chip you cannot tap is a control that lies about being one.
-    if (!AGENT_CTL_CHIPS) lv_obj_add_flag(ctl, LV_OBJ_FLAG_HIDDEN);
+    apply_engine_label(p);
+    swarm_line_paint(p);
 }
 
 
@@ -5145,7 +5163,7 @@ void ui_project_set_name(const char *project_id, const char *name)
         char clipped[80];
         name_clip(filtered, clipped, sizeof(clipped));
         snprintf(s_proj[i].name, sizeof s_proj[i].name, "%s", clipped);   // MODEL: source of truth
-        if (s_proj[i].name_lbl) lv_label_set_text(s_proj[i].name_lbl, clipped);   // VIEW mirrors model (may be NULL when off-window)
+        if (s_proj[i].name_lbl) { lv_label_set_text(s_proj[i].name_lbl, clipped); shell_name_fit(&s_proj[i]); }   // VIEW mirrors model (may be NULL when off-window)
     }
     display_unlock();
 }
@@ -5336,7 +5354,7 @@ int ui_notif_pull_zone_px(void)
     // "nút X tắt ở màn hình setting chưa work").
     if (lv_screen_active() == scr_projects && s_settings_active) return 0;
     bool agent_tile = lv_screen_active() == scr_projects && !s_overview_active && !s_settings_active && !s_machines_active;
-    return (AGENT_CTL_CHIPS && agent_tile) ? 44 : 90;
+    return agent_tile ? 44 : 90;   // narrow on agent tiles so the tab pill still gets taps
 }
 
 // A FOCUS THE RING COULD NOT HONOUR YET, kept until it can.
@@ -5899,7 +5917,15 @@ void ui_switch_open(void)
 // the screen here. Nothing is written optimistically: the line names what the window shows, not what
 // was asked for, the same rule the machine wheel's ✓ follows.
 
-static void swarm_line_paint(proj_t *p) { (void)p; }   // the line left the face with the concept
+static void swarm_line_paint(proj_t *p)
+{
+    if (!p || !p->ctl_row || !p->swarm_lbl) return;
+    const cable_swarm_t *sel = NULL;
+    for (int i = 0; i < s_swarm_count; i++) if (strcmp(s_swarms[i].id, s_swarm_selected) == 0) { sel = &s_swarms[i]; break; }
+    if (!sel) { lv_obj_add_flag(p->ctl_row, LV_OBJ_FLAG_HIDDEN); return; }
+    lv_label_set_text(p->swarm_lbl, sel->name[0] ? sel->name : "New Harness");
+    lv_obj_clear_flag(p->ctl_row, LV_OBJ_FLAG_HIDDEN);
+}
 
 // Every live tile: the line is per-tile LVGL, the fact is global.
 static void swarm_lines_repaint(void)
@@ -5953,7 +5979,7 @@ static void swarm_picker_rebuild(void)
         // An untouched welcome tab — the window's default name and nothing in it — is not a place the
         // dial can go, so it is not a row (owner, 2026-09-14: "không có New swarm"). The one on screen
         // is still listed, whatever it is called.
-        if (!here && w->agents == 0 && strcmp(w->name, "New swarm") == 0) continue;
+        if (!here && w->agents == 0) continue;   // an empty tab has no pane the dial could walk to (the app calls it "New Harness" now)
         shown++;
         lv_obj_t *row = lv_button_create(s_swarm_list);
         lv_obj_set_width(row, lv_pct(100));
@@ -5987,7 +6013,7 @@ static void swarm_picker_rebuild(void)
         lv_obj_set_style_text_align(sub, LV_TEXT_ALIGN_CENTER, 0);
         lv_label_set_text_fmt(sub, "%d agent%s", w->agents, w->agents == 1 ? "" : "s");
     }
-    if (shown == 0) make_label(s_swarm_list, "No swarms — open the app", COL_MUTED, &geist_med_28);
+    if (shown == 0) make_label(s_swarm_list, "No tabs — open the app", COL_MUTED, &geist_med_28);
 }
 
 static void swarm_picker_build(void)
@@ -6008,7 +6034,7 @@ static void swarm_picker_build(void)
     lv_obj_set_style_text_font(title, &geist_reg_20, 0);
     lv_obj_set_style_text_color(title, COL_DOT_OFF, 0);
     lv_obj_set_style_text_letter_space(title, 2, 0);
-    lv_label_set_text(title, "SWARMS");
+    lv_label_set_text(title, "TABS");
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 62);
     s_swarm_list = lv_obj_create(s_swarm_screen);
     lv_obj_remove_style_all(s_swarm_list);
@@ -6024,7 +6050,7 @@ static void swarm_picker_build(void)
 }
 
 // The swarm line on a tile was tapped. Runs on the LVGL task under its own lock.
-static __attribute__((unused)) void swarm_line_tap(lv_event_t *e)
+static void swarm_line_tap(lv_event_t *e)
 {
     (void)e;
     s_suppress_tap = true;   // this press was the line's — not a tap on the tile behind it
@@ -6037,7 +6063,7 @@ static __attribute__((unused)) void swarm_line_tap(lv_event_t *e)
     lv_obj_scroll_to_y(s_swarm_list, 0, LV_ANIM_OFF);
     display_unlock();
     cable_client_list_swarms();      // and ask for a fresh list while it is open
-    ESP_LOGI(TAG, "swarm picker: %d swarms", s_swarm_count);
+    ESP_LOGI(TAG, "tab picker: %d tabs", s_swarm_count);
 }
 
 bool ui_notif_pill_hit(uint16_t x, uint16_t y)
