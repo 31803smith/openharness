@@ -183,7 +183,9 @@ void main() {
   }
 
   Future<void> create(WidgetTester tester) async {
-    await tester.ensureVisible(find.byKey(const ValueKey('create-agent-submit')));
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('create-agent-submit')),
+    );
     await tester.tap(find.byKey(const ValueKey('create-agent-submit')));
     await tester.pump();
   }
@@ -202,7 +204,11 @@ void main() {
         seed: (state) =>
             state.dsh.replace([_circuit.copyWith(installed: true)]),
       );
-      expect(app.harnessProbes, 0, reason: 'not asked until a harness is chosen');
+      expect(
+        app.harnessProbes,
+        0,
+        reason: 'not asked until a harness is chosen',
+      );
       await pick(tester, 'Copper');
       expect(app.harnessProbes, 1);
       expect(engineField(tester), 'autonomous/copper');
@@ -218,10 +224,7 @@ void main() {
       await tester.tap(find.byKey(const Key('new-agent-advanced')));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('new-agent-runs-on')), findsOneWidget);
-      expect(
-        find.textContaining('Runs on Claude Code.'),
-        findsOneWidget,
-      );
+      expect(find.textContaining('Runs on Claude Code.'), findsOneWidget);
       // Its base engine's bypass flag is the one offered: a harness has no
       // flag of its own, and without the base's it would say "Managed by".
       await tester.ensureVisible(find.text('Bypass approvals'));
@@ -333,7 +336,7 @@ void main() {
     await tester.ensureVisible(find.text('Robot Arm').last);
     await tester.pumpAndSettle();
     expect(find.text('Robot Arm'), findsWidgets);
-    expect(find.text('on Codex'), findsOneWidget);
+    expect(find.text('on Codex'), findsNothing, reason: 'backend detail');
     await tester.tap(find.text('Robot Arm').last);
     await tester.pumpAndSettle();
     expect(engineField(tester), 'someone/robot-arm');

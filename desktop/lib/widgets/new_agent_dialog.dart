@@ -752,7 +752,8 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                 SelectOption(
                   value: harness.id,
                   label: harness.name,
-                  note: 'on ${_labelOf(harness.engine)}',
+                  // No "on Codex" here: the engine underneath is a backend
+                  // detail (owner, 2026-09-15) — the settings row says it.
                   // What it makes, in a word or two; the machine's word first,
                   // this build's when the machine has not answered.
                   detail:

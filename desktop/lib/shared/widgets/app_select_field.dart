@@ -72,6 +72,7 @@ class AppSelectField<T> extends StatefulWidget {
     required this.options,
     required this.onChanged,
     this.width,
+    this.menuWidth,
     this.height = AppControl.height,
     this.trigger,
     this.focusNode,
@@ -87,6 +88,11 @@ class AppSelectField<T> extends StatefulWidget {
   /// Fixed width, so a column of these lines up on one right edge. Null lets it
   /// take whatever its parent gives.
   final double? width;
+
+  /// A floor for the menu's width, when the rows carry more than the field
+  /// does — a name, a second line and a mark want room to be read at a
+  /// glance. Never narrower than the field itself.
+  final double? menuWidth;
   final double height;
 
   /// An alternate compact trigger, such as the agent picker's More button.
@@ -362,7 +368,10 @@ class _AppSelectFieldState<T> extends State<AppSelectField<T>> {
       menuChildren: [
         if (widget.options.isEmpty && widget.emptyLabel != null)
           SizedBox(
-            width: math.max(panelWidth ?? 0, _minPanelWidth),
+            width: math.max(
+              math.max(panelWidth ?? 0, widget.menuWidth ?? 0),
+              _minPanelWidth,
+            ),
             height: AppMenuRowMetrics.roomy.extent,
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -378,7 +387,10 @@ class _AppSelectFieldState<T> extends State<AppSelectField<T>> {
         for (final option in widget.options)
           _typingRegion(
             SizedBox(
-              width: math.max(panelWidth ?? 0, _minPanelWidth),
+              width: math.max(
+                math.max(panelWidth ?? 0, widget.menuWidth ?? 0),
+                _minPanelWidth,
+              ),
               child: AppMenuItem(
                 // No glyph of its own: the leading slot belongs to the tick,
                 // and stays empty (not a blank checkbox) on rows without it.
