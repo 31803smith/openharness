@@ -482,18 +482,45 @@ model UserDailyDevicePresence {
 /// row for each day it touches. `lastSeenAt` is refreshed on connect, on close, and at most every
 /// MACHINE_PRESENCE_WRITE_MS while the socket is open, so it lags real liveness by ≤ that interval.
 /// Redis `machine:{id}:mgr` remains the "online right now" answer; this is the history.
+/// `turnsStarted` is the usage signal on top of liveness: every `turn_started` up-frame the daemon
+/// relays bumps it (adapterWs hub tap). A row can legitimately read `connections: 0, turnsStarted: 0`
+/// — a session that spanned midnight and sat idle.
 model MachineDailyPresence {
-  id          String   @id @default(auto()) @map("_id") @db.ObjectId
-  machineId   String // Machine.machineId
-  userId      String // owner at connect time (Machine.userId), for per-user rollups
-  dayUtc      DateTime
-  connections Int      @default(0)
-  firstSeenAt DateTime
-  lastSeenAt  DateTime
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  machineId    String // Machine.machineId
+  userId       String // owner at connect time (Machine.userId), for per-user rollups
+  dayUtc       DateTime
+  connections  Int      @default(0)
+  turnsStarted Int      @default(0) // `turn_started` up-frames the daemon sent that day (adapterWs tap)
+  firstSeenAt  DateTime
+  lastSeenAt   DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   @@unique([machineId, dayUtc])
   @@index([userId, dayUtc])
   @@map("machine_daily_presence")
+}
+
+/// Per-day record of an AGENT being driven: one row per (machine, agent, UTC day), created and
+/// bumped by every `turn_started` the machine's daemon relays through adapter-ws
+/// (src/lib/adapterWs.ts). There is no "connect" for an agent — a turn is the presence signal —
+/// so unlike the machine/user/device rows there is no `connections` column. `agentId` is the
+/// plaintext correlation id on the frame; the turn's content stays E2EE and is never read here.
+model AgentDailyPresence {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  machineId    String // Machine.machineId — agentId is only unique within a machine
+  agentId      String // MachineAgent.agentId (may be gone from machine_agents later — keep the history)
+  userId       String // owner at the time of the turn
+  dayUtc       DateTime
+  turnsStarted Int      @default(0)
+  firstSeenAt  DateTime
+  lastSeenAt   DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([machineId, agentId, dayUtc])
+  @@index([machineId, dayUtc])
+  @@index([userId, dayUtc])
+  @@map("agent_daily_presence")
 }

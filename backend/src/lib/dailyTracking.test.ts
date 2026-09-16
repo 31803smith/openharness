@@ -2,15 +2,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const db = vi.hoisted(() => ({
   machinePresenceUpsert: vi.fn(),
+  agentPresenceUpsert: vi.fn(),
 }))
 
 vi.mock('./prisma.js', () => ({
   prisma: {
     machineDailyPresence: { upsert: db.machinePresenceUpsert },
+    agentDailyPresence: { upsert: db.agentPresenceUpsert },
   },
 }))
 
-import { presenceWriteDue, touchMachineOnlineDay } from './dailyTracking.js'
+import { presenceWriteDue, recordTurnStarted, touchMachineOnlineDay } from './dailyTracking.js'
 import { utcDayStart } from '../types/analytics.js'
 
 describe('touchMachineOnlineDay', () => {
@@ -49,6 +51,51 @@ describe('touchMachineOnlineDay', () => {
     await expect(
       touchMachineOnlineDay('user-1', 'machine-a', new Date(), { isNewConnection: true }),
     ).rejects.toThrow('mongo down')
+  })
+})
+
+describe('recordTurnStarted', () => {
+  const now = new Date('2026-09-16T10:15:30.000Z')
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    db.machinePresenceUpsert.mockResolvedValue({})
+    db.agentPresenceUpsert.mockResolvedValue({})
+  })
+
+  it('bumps turnsStarted on the machine row without counting a connection', async () => {
+    await recordTurnStarted('user-1', 'machine-a', 'agent-x', now)
+
+    expect(db.machinePresenceUpsert).toHaveBeenCalledTimes(1)
+    const call = db.machinePresenceUpsert.mock.calls[0][0]
+    expect(call.where).toEqual({ machineId_dayUtc: { machineId: 'machine-a', dayUtc: utcDayStart(now) } })
+    expect(call.create).toEqual({
+      machineId: 'machine-a', userId: 'user-1', dayUtc: utcDayStart(now),
+      connections: 0, turnsStarted: 1, firstSeenAt: now, lastSeenAt: now,
+    })
+    expect(call.update).toEqual({ lastSeenAt: now, turnsStarted: { increment: 1 } })
+  })
+
+  it('bumps the (machine, agent, day) row', async () => {
+    await recordTurnStarted('user-1', 'machine-a', 'agent-x', now)
+
+    expect(db.agentPresenceUpsert).toHaveBeenCalledTimes(1)
+    const call = db.agentPresenceUpsert.mock.calls[0][0]
+    expect(call.where).toEqual({
+      machineId_agentId_dayUtc: { machineId: 'machine-a', agentId: 'agent-x', dayUtc: utcDayStart(now) },
+    })
+    expect(call.create).toEqual({
+      machineId: 'machine-a', agentId: 'agent-x', userId: 'user-1', dayUtc: utcDayStart(now),
+      turnsStarted: 1, firstSeenAt: now, lastSeenAt: now,
+    })
+    expect(call.update).toEqual({ lastSeenAt: now, turnsStarted: { increment: 1 } })
+  })
+
+  it('propagates a failure from either upsert', async () => {
+    db.agentPresenceUpsert.mockRejectedValueOnce(new Error('agent row failed'))
+    await expect(recordTurnStarted('user-1', 'machine-a', 'agent-x', now)).rejects.toThrow('agent row failed')
+    // The machine write was still attempted — the two are independent.
+    expect(db.machinePresenceUpsert).toHaveBeenCalledTimes(1)
   })
 })
 
