@@ -178,9 +178,9 @@ class _WebPanePanelState extends State<WebPanePanel> {
                 size: 17,
               ),
               const SizedBox(width: 10),
-              // The name, and where the work is — the current phase, one
-              // word, in the place a "Viewer" label would only repeat what
-              // the pane shows. A status, not a history.
+              // The name, and one status after it — ready, or what stands in
+              // the way, or where the work is — in the place a "Viewer" label
+              // would only repeat what the pane shows. A status, not a history.
               Expanded(
                 child: Tooltip(
                   message: widget.pane.url ?? '',
@@ -200,7 +200,7 @@ class _WebPanePanelState extends State<WebPanePanel> {
                           ),
                         ),
                       ),
-                      if (widget.verdict?.currentPhase case final phase?) ...[
+                      if (widget.verdict case final verdict?) ...[
                         Text(
                           '  ·  ',
                           style: TextStyle(
@@ -209,18 +209,13 @@ class _WebPanePanelState extends State<WebPanePanel> {
                             fontWeight: FontWeight.w500,
                           ),
                         ),
-                        Flexible(child: PhaseMark(phase: phase)),
+                        Flexible(child: VerdictStatus(verdict: verdict)),
                       ],
                     ],
                   ),
                 ),
               ),
               const SizedBox(width: 8),
-              if (widget.verdict case final verdict?)
-                Padding(
-                  padding: const EdgeInsets.only(right: 6),
-                  child: VerdictChip(verdict: verdict),
-                ),
               if (_loading)
                 const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 6),

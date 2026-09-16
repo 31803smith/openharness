@@ -1,5 +1,5 @@
-// The verdict's phases: parsed defensively from the frame, drawn as a strip
-// beside the chip in the viewer pane's header.
+// The one status a verdict puts in the viewer's title, and the phases it is
+// read from.
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/core/models.dart';
@@ -66,74 +66,75 @@ void main() {
             ?.name,
         'P1',
       );
-      expect(
-        v([AgentPhaseState.done, AgentPhaseState.failed]).currentPhase?.name,
-        'P1',
-      );
       expect(v([AgentPhaseState.pending]).currentPhase, isNull);
       expect(const AgentVerdict(ready: true).currentPhase, isNull);
     },
   );
 
-  testWidgets('the mark names the phase and its state', (tester) async {
-    await tester.pumpWidget(
-      const MaterialApp(
-        home: Scaffold(
-          body: PhaseMark(
-            phase: AgentPhase(
-              id: 'draft',
-              name: 'Draft',
-              state: AgentPhaseState.active,
-            ),
-          ),
-        ),
-      ),
+  testWidgets('one status: ready, then errors, then the phase, then warnings', (
+    tester,
+  ) async {
+    const build = AgentPhase(
+      id: 'build',
+      name: 'Build',
+      state: AgentPhaseState.done,
     );
-    expect(find.byKey(const ValueKey('pane-phase-mark')), findsOneWidget);
-    expect(find.text('Draft'), findsOneWidget);
-  });
-
-  testWidgets('the chip says ready, or how far from it', (tester) async {
-    final chip = find.byKey(const ValueKey('pane-verdict-chip'));
+    const checks = AgentPhase(
+      id: 'checks',
+      name: 'Checks',
+      state: AgentPhaseState.active,
+    );
     final cases = <(AgentVerdict, String, Color)>[
       (
-        const AgentVerdict(ready: true, summary: 'Board is fab-ready'),
+        const AgentVerdict(ready: true, phases: [build, checks], summary: 'ok'),
         'Ready',
         AppColors.success,
       ),
       (
-        const AgentVerdict(ready: false, errors: 3, warnings: 2),
+        const AgentVerdict(ready: false, errors: 3, phases: [build, checks]),
         '3 errors',
         AppColors.danger,
       ),
       (
-        const AgentVerdict(ready: false, errors: 0, warnings: 1),
+        const AgentVerdict(ready: false, warnings: 2, phases: [build, checks]),
+        'Checks',
+        AppColors.text,
+      ),
+      (
+        const AgentVerdict(ready: false, warnings: 1, phases: [build]),
         '1 warning',
         AppColors.warning,
       ),
+      (
+        const AgentVerdict(ready: false, phases: [build]),
+        'Build',
+        AppColors.success,
+      ),
       (const AgentVerdict(ready: false), 'Checked', AppColors.mutedStrong),
     ];
+    final status = find.byKey(const ValueKey('pane-status'));
     for (final (verdict, label, color) in cases) {
       await tester.pumpWidget(
         MaterialApp(
-          home: Scaffold(body: VerdictChip(verdict: verdict)),
+          home: Scaffold(body: VerdictStatus(verdict: verdict)),
         ),
       );
-      expect(chip, findsOneWidget, reason: label);
+      expect(status, findsOneWidget, reason: label);
       expect(
-        find.descendant(of: chip, matching: find.text(label)),
+        find.descendant(of: status, matching: find.text(label)),
         findsOneWidget,
+        reason: label,
       );
       expect(
         tester
-            .widget<Text>(find.descendant(of: chip, matching: find.text(label)))
+            .widget<Text>(
+              find.descendant(of: status, matching: find.text(label)),
+            )
             .style
             ?.color,
         color,
+        reason: label,
       );
-      if (verdict.summary != null) {
-        expect(find.byTooltip(verdict.summary!), findsOneWidget);
-      }
     }
   });
 }

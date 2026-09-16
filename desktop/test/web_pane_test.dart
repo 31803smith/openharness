@@ -248,7 +248,7 @@ void main() {
     // The verdict is the viewer's to show — chip and strip in its header,
     // nothing on the terminal's — and the terminal's header carries the
     // control that hides and shows the viewer.
-    expect(find.byKey(const ValueKey('pane-verdict-chip')), findsNothing);
+    expect(find.byKey(const ValueKey('pane-status')), findsNothing);
     await _synced(
       app,
       'a0',
@@ -263,6 +263,8 @@ void main() {
       },
     );
     await tester.pump();
+    // One status in the viewer's title, and nothing on the terminal's: the
+    // phase under way here, since the deck is neither ready nor failing.
     final viewerHeader = find.ancestor(
       of: find.byTooltip('Close viewer'),
       matching: find.byType(WebPanePanel),
@@ -270,16 +272,14 @@ void main() {
     expect(
       find.descendant(
         of: viewerHeader,
-        matching: find.byKey(const ValueKey('pane-verdict-chip')),
+        matching: find.byKey(const ValueKey('pane-status')),
       ),
       findsOneWidget,
     );
-    expect(find.byKey(const ValueKey('pane-verdict-chip')), findsOneWidget);
-    // One phase, the current one, in the title — not the whole history.
-    expect(find.byKey(const ValueKey('pane-phase-mark')), findsOneWidget);
+    expect(find.byKey(const ValueKey('pane-status')), findsOneWidget);
     expect(find.text('Checks'), findsOneWidget);
     expect(find.text('Build'), findsNothing);
-    // No "Viewer" label in the title: the pane says what it is.
+    expect(find.text('1 warning'), findsNothing, reason: 'the phase wins');
     expect(find.textContaining('·  Viewer'), findsNothing);
     expect(find.byTooltip('Hide viewer'), findsOneWidget);
     await tester.tap(find.byTooltip('Close viewer'));

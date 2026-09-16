@@ -58,6 +58,8 @@ export type AgentFrame = {
 
 /** What the daemon knows about an agent's DSH — looked up by the caller, never here. */
 export interface AgentDshContext {
+  /** The harness's CURRENT id — an agent created under a former name (`formerly`) reports the new one. */
+  id: string | null
   name: string | null
   viewerUrl: string | null
   verdict: DshVerdict | null
@@ -110,7 +112,7 @@ export async function agentFrame(
     project: await agentProject(s.cwd),
     // All four are real answers when null, for the reason the module doc gives: a frame that omits
     // them would erase a viewer URL or a verdict an earlier frame had reported.
-    dsh: s.dsh ?? null,
+    dsh: dsh?.id ?? s.dsh ?? null,
     dshName: dsh?.name ?? null,
     viewerUrl: dsh?.viewerUrl ?? null,
     verdict: dsh?.verdict ?? null,

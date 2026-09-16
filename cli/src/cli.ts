@@ -1369,8 +1369,11 @@ async function runForeground(session: AuthSession): Promise<void> {
   const dshFrameContext = (s: RegisteredSession): AgentDshContext | null => {
     if (!s.dsh) return null
     const state = dshFrames.get(s.agentId)
+    const installed = installedDsh(s.dsh)
     return {
-      name: installedDsh(s.dsh)?.manifest.name ?? registryEntry(s.dsh)?.name ?? null,
+      // The current id, so a face drawn by id survives a rename the agent predates.
+      id: installed?.id ?? s.dsh,
+      name: installed?.manifest.name ?? registryEntry(s.dsh)?.name ?? null,
       viewerUrl: state?.viewerUrl ?? null,
       verdict: state?.verdict ?? null,
     }
