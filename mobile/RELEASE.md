@@ -55,7 +55,7 @@ icon size in thirty seconds instead of in an email twenty minutes later.
 | `1.0.0 (3)` | 2026-09-16 | TestFlight. **iPhone only** |
 | `1.0.0 (4)` | 2026-09-16 | TestFlight. Adds agent/machine search (`feat/mobile-search`) |
 | `1.0.0 (5)` | 2026-09-16 | TestFlight. Agent creation flow; Machines tab pairs/unpairs |
-| `1.0.0 (6)` | 2026-09-16 | TestFlight. Voice input by default on a terminal tap; Keyboard hands over |
+| `1.0.0 (6)` | 2026-09-16 | TestFlight. Custom voice input on a terminal tap — misheard Vietnamese, removed for the keyboard's own dictation |
 
 `pubspec.yaml` is therefore at `1.0.0+7`: the repo always holds the NEXT build number, so a release
 runs clean without anyone having to remember the last one.
@@ -183,10 +183,6 @@ owned by the user's own machine, which is why an account with no paired machine 
 
 The camera permission is used only when sending a photo into a session (Agents ▸ a session ▸ the
 image button).
-
-The microphone and speech recognition permissions are used only for voice input: tapping a session's
-terminal opens it, and what is said is turned into the message sent to that session (Agents ▸ a
-session ▸ tap the terminal).
 ```
 
 ## Submitting

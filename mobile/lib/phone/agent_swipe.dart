@@ -6,7 +6,6 @@ import 'package:harness_mobile/state/app_state.dart';
 
 import 'agent_index.dart';
 import 'terminal_page.dart';
-import 'voice_input_controller.dart';
 
 /// The agents a terminal page can swipe between, in the order the list drew them.
 ///
@@ -124,11 +123,6 @@ class _AgentSwipeHostState extends State<AgentSwipeHost> {
   /// and the panes to close are the ones actually opened, not the ones a fresh list would name.
   final Set<({String machineId, String agentId})> _attached = {};
 
-  /// Voice input for every page of this pager: open or closed, and what has been heard so far,
-  /// survive a swipe the way a keyboard that is up does. Disposed with the pager, which is what
-  /// turns the microphone off on the way out.
-  final VoiceInputController _voice = VoiceInputController();
-
   @override
   void initState() {
     super.initState();
@@ -158,7 +152,6 @@ class _AgentSwipeHostState extends State<AgentSwipeHost> {
 
   @override
   void dispose() {
-    _voice.dispose();
     _controller?.dispose();
     _detachAll();
     // Leaving the terminal means the next launch starts on the list. A process the OS kills never
@@ -198,7 +191,6 @@ class _AgentSwipeHostState extends State<AgentSwipeHost> {
         notifier: widget.notifier,
         machineId: widget.machineId,
         agentId: widget.agentId,
-        voice: _voice,
         isActive: true,
       );
     }
@@ -229,7 +221,6 @@ class _AgentSwipeHostState extends State<AgentSwipeHost> {
           notifier: widget.notifier,
           machineId: entry.machineId,
           agentId: entry.agent.id,
-          voice: _voice,
           // Exactly one mounted page, by page number — see [_page].
           isActive: i == _page,
         );

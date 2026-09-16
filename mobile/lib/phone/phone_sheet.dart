@@ -48,26 +48,16 @@ Future<void> showPhoneSheet(
             style: TextStyle(color: AppPalette.textSecondary, fontSize: 13),
           ),
         ),
-        // Scrolls once the rows outgrow the sheet — a list of languages does — and is laid out
-        // exactly like a plain column until then.
-        Flexible(
-          child: ListView(
-            shrinkWrap: true,
-            padding: EdgeInsets.zero,
-            children: [
-              for (final action in actions)
-                _SheetRow(
-                  action: action,
-                  // Close first, then act: an action that opens a dialog or pushes a page must not
-                  // do it underneath a sheet that is still animating out.
-                  onTap: () {
-                    Navigator.of(sheetContext).pop();
-                    action.onTap();
-                  },
-                ),
-            ],
+        for (final action in actions)
+          _SheetRow(
+            action: action,
+            // Close first, then act: an action that opens a dialog or pushes a page must not do it
+            // underneath a sheet that is still animating out.
+            onTap: () {
+              Navigator.of(sheetContext).pop();
+              action.onTap();
+            },
           ),
-        ),
         const SizedBox(height: 8),
       ],
     ),

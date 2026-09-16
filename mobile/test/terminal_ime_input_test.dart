@@ -242,4 +242,46 @@ void main() {
     },
     variant: TargetPlatformVariant.only(TargetPlatform.android),
   );
+
+  testWidgets(
+    "the keyboard's own dictation lands as what was finally heard",
+    (tester) async {
+      final terminal = newTerminal();
+      final outbound = <String>[];
+      terminal.onOutput = outbound.add;
+      await pumpTerminal(tester, terminal);
+
+      // Voice input on the phone IS the keyboard's mic. Dictation streams its
+      // guesses into the buffer and then rewrites them — here the capital, the
+      // accents and the question it first misheard — with no composing range
+      // to hold any of it back from the pty.
+      for (final guess in const [
+        'hom nay',
+        'hom nay la thu may',
+        'Hôm nay là thứ mấy?',
+      ]) {
+        tester.testTextInput.updateEditingValue(
+          TextEditingValue(
+            text: guess,
+            selection: TextSelection.collapsed(offset: guess.length),
+          ),
+        );
+        await tester.pump();
+      }
+
+      // The prompt sees every revision as rubbing out and retyping, so what it
+      // ends up holding is the line a readline-style editor would.
+      final line = <int>[];
+      for (final chunk in outbound) {
+        // DEL — the keytab's plain Backspace, one per rune rubbed out.
+        if (chunk == '\x7f') {
+          line.removeLast();
+        } else {
+          line.addAll(chunk.runes);
+        }
+      }
+      expect(String.fromCharCodes(line), 'Hôm nay là thứ mấy?');
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
 }
