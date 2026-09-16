@@ -3,16 +3,14 @@ import 'package:flutter/material.dart';
 import 'package:harness_mobile/shared/theme/app_theme.dart';
 import 'package:harness_mobile/state/app_state.dart';
 import 'package:harness_mobile/widgets/link_machine_screen.dart';
-import 'agents_page.dart';
+
 import 'phone_header.dart';
-import 'phone_navigation.dart';
 
 /// A machine's password form, as a phone page — the same [LinkMachineScreen] the desktop pops
 /// up, since the exchange behind it is the same.
 ///
-/// It leaves by itself both ways: forward onto the machine's agents once the link lands, and
-/// back when the form's own Close is pressed — unless it is [embedded], where moving on is somebody
-/// else's job.
+/// It leaves by itself either way — once the link lands, and when the form's own Close is pressed —
+/// unless it is [embedded], where moving on is somebody else's job.
 class LinkPage extends StatefulWidget {
   const LinkPage({
     super.key,
@@ -82,15 +80,12 @@ class _LinkPageState extends State<LinkPage> {
     final machine = widget.notifier.stateOf(widget.machineId);
     final navigator = Navigator.of(context);
     if (machine != null && !machine.needsLink) {
+      // Linked: this form is finished, so it leaves. It used to `pushReplacement` its way to that
+      // machine's agent list, which is the navigation the Machines tab no longer does — agents
+      // belong to the Agents tab, where the machine is a filter rather than a step. Going back is
+      // what shows the result: the row this was opened from is now under "Linked".
       _leaving = true;
-      navigator.pushReplacement(
-        phoneRoute(
-          (_) => AgentsPage(
-            notifier: widget.notifier,
-            machineId: widget.machineId,
-          ),
-        ),
-      );
+      navigator.maybePop();
       return;
     }
     final closed =

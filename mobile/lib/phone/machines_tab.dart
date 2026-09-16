@@ -1,15 +1,21 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import 'package:harness_mobile/shared/theme/app_theme.dart';
 import 'package:harness_mobile/shared/widgets/empty_state.dart';
 import 'package:harness_mobile/state/app_state.dart';
+
+import 'link_page.dart';
 import 'machine_index.dart';
 import 'machine_tile.dart';
 import 'phone_card.dart';
 import 'phone_header.dart';
 import 'phone_navigation.dart';
 import 'phone_search_button.dart';
+import 'phone_sheet.dart';
+import 'unlink_machine.dart';
 
 /// The machines on the account, grouped by what they need.
 ///
@@ -91,37 +97,64 @@ class _Body extends StatelessWidget {
         children: [
           if (working.isNotEmpty) ...[
             const _SectionLabel('Linked'),
-            for (final state in working) _tile(context, ordered, state),
+            for (final state in working) _tile(context, state),
             const SizedBox(height: 6),
           ],
           if (needsAttention.isNotEmpty) ...[
-            if (working.isNotEmpty)
-              const _SectionLabel('Needs your attention'),
-            for (final state in needsAttention) _tile(context, ordered, state),
+            if (working.isNotEmpty) const _SectionLabel('Needs your attention'),
+            for (final state in needsAttention) _tile(context, state),
           ],
         ],
       ),
     );
   }
 
-  Widget _tile(
-    BuildContext context,
-    List<MachineState> ordered,
-    MachineState state,
-  ) => Padding(
+  Widget _tile(BuildContext context, MachineState state) => Padding(
     padding: const EdgeInsets.only(bottom: kPhoneCardGap),
-    child: MachineTile(
-      machine: state,
-      // The whole visible list goes with the tap, so the page opens as a pager over exactly the
-      // machines on screen. Swiping there walks this order.
-      onTap: () => openMachinePager(
-        context,
-        notifier,
-        ordered,
-        state.machine.machineId,
-      ),
-    ),
+    child: MachineTile(machine: state, onTap: () => _open(context, state)),
   );
+
+  /// This screen connects and disconnects, and does nothing else.
+  ///
+  /// A machine that wants its password opens the form for it. A machine that already has one has
+  /// exactly one thing left to offer — giving it up — so a tap brings that rather than a page.
+  ///
+  /// ⚠️ Deliberately NOT the agent list any more. Agents belong to the Agents tab, which lists
+  /// every one on the account and treats the machine as a filter; reaching them a second way
+  /// through here made the machine something to navigate THROUGH, which is the shape that tab
+  /// exists to replace.
+  void _open(BuildContext context, MachineState state) {
+    if (state.needsLink) {
+      Navigator.of(context).push(
+        phoneRoute(
+          (_) =>
+              LinkPage(notifier: notifier, machineId: state.machine.machineId),
+        ),
+      );
+      return;
+    }
+    // ⚠️ One row, and it is load-bearing rather than a menu waiting to grow. Unlinking asks for no
+    // confirmation, so this sheet IS the confirmation: the step between a finger landing on a row
+    // in a list and this phone losing its pairing. Collapsing it into the tap would leave nothing
+    // between them.
+    //
+    // No "Re-enter password" here. A machine that is linked has a working password already, and the
+    // way to replace one is to give this one up and enter the new one — the row below, then the row
+    // the machine lands on in "Needs your attention".
+    showPhoneSheet(
+      context,
+      title: state.machine.displayName,
+      actions: [
+        // No trailing `…`: this acts on the tap rather than opening anything.
+        PhoneSheetAction(
+          icon: LucideIcons.unlink300,
+          label: 'Unlink this phone',
+          destructive: true,
+          onTap: () => unawaited(unlinkThisPhone(context, notifier, state)),
+        ),
+      ],
+    );
+  }
 }
 
 class _SectionLabel extends StatelessWidget {

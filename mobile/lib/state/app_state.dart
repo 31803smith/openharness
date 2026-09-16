@@ -275,6 +275,7 @@ class AppNotifier extends ChangeNotifier {
   final AuthSession session;
   AppConfig config;
   late ApiClient api;
+
   /// Signs in, and says whether this computer is signed in: the harness CLI in a desktop build,
   /// [ViewerServices.login] in a viewer build — which has no CLI — under one name, so every call
   /// site reads the same in both.
@@ -2908,10 +2909,32 @@ class AppNotifier extends ChangeNotifier {
   }
 
   /// Removes a linked machine's trust pin, then refreshes the list. Returns null on success.
+  ///
+  /// ⚠️ Dropping the pin does NOT end the connection by itself, and that is the whole reason the
+  /// teardown below exists. The pin is local to this device — the machine is never told — and the
+  /// socket already open has negotiated its session, so it keeps working exactly as before. No
+  /// close arrives, so nothing flips [MachineState.needsLink], and the row stays under "Linked"
+  /// looking connected because it IS connected.
+  ///
+  /// So this does by hand what a `NO_PEER_LINK` close does on its own: shut the socket, mark the
+  /// machine as wanting its password, and tell the open terminals they are no longer reachable.
   Future<String?> unlinkMachine(String machineId) async {
     final error = await peerLinks.unlink(machineId);
-    if (error == null) await refreshLinkedMachines();
-    return error;
+    if (error != null) return error;
+    await refreshLinkedMachines();
+    final machine = machineStates[machineId];
+    if (machine == null) return null;
+    // Closed first: the state below says this machine wants a password, and a live socket still
+    // answering underneath would make that a lie for as long as it lasted.
+    await _pool?.closeMachine(machineId);
+    machine.needsLink = true;
+    machine.agentLoadStatus = AgentLoadStatus.needsLink;
+    _markSessionsUnreachable(
+      machine,
+      'This phone is no longer linked. Enter the password again to reconnect.',
+    );
+    notifyListeners();
+    return null;
   }
 
   Future<void> _pollOfflineMachine(String machineId) async {
