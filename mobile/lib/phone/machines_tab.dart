@@ -9,6 +9,7 @@ import 'machine_tile.dart';
 import 'phone_card.dart';
 import 'phone_header.dart';
 import 'phone_navigation.dart';
+import 'phone_search_button.dart';
 
 /// The machines on the account, grouped by what they need.
 ///
@@ -34,7 +35,18 @@ class MachinesTab extends StatelessWidget {
           bottom: false,
           child: Column(
             children: [
-              const PhoneHeader(large: true, title: 'Machines'),
+              // The same search the Agents tab offers, reached the same way.
+              // It spans both kinds, so which tab it was opened from changes
+              // nothing about what it finds — a machine hunted for from here
+              // and an agent hunted for from there are one query.
+              PhoneHeader(
+                large: true,
+                title: 'Machines',
+                trailing: [
+                  if (notifier.machines.isNotEmpty)
+                    PhoneSearchButton(notifier: notifier),
+                ],
+              ),
               Expanded(child: _Body(notifier: notifier)),
             ],
           ),
