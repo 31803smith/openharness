@@ -421,7 +421,8 @@ model AnalyticsMachineState {
 }
 
 /// Presence/remote-usage tracking — separate from the Analytics family above (not opt-in, not
-/// collector-reported; derived directly from the web-ws relay in src/lib/webWs.ts).
+/// collector-reported; derived directly from the relays: web-ws in src/lib/webWs.ts, device-ws in
+/// src/lib/deviceWs.ts, adapter-ws in src/lib/adapterWs.ts).
 
 /// Per-day record of whether a user's desktop app was connected to the web-ws relay. One row per
 /// (user, UTC day). A connection spanning midnight produces a row for each day it touches.
@@ -474,4 +475,25 @@ model UserDailyDevicePresence {
   @@unique([userId, deviceId, dayUtc])
   @@index([userId, dayUtc])
   @@map("user_daily_device_presence")
+}
+
+/// Per-day record of whether a MACHINE's `harness` daemon was connected to the adapter-ws relay
+/// (src/lib/adapterWs.ts). One row per (machine, UTC day); a connection spanning midnight produces a
+/// row for each day it touches. `lastSeenAt` is refreshed on connect, on close, and at most every
+/// MACHINE_PRESENCE_WRITE_MS while the socket is open, so it lags real liveness by ≤ that interval.
+/// Redis `machine:{id}:mgr` remains the "online right now" answer; this is the history.
+model MachineDailyPresence {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  machineId   String // Machine.machineId
+  userId      String // owner at connect time (Machine.userId), for per-user rollups
+  dayUtc      DateTime
+  connections Int      @default(0)
+  firstSeenAt DateTime
+  lastSeenAt  DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([machineId, dayUtc])
+  @@index([userId, dayUtc])
+  @@map("machine_daily_presence")
 }

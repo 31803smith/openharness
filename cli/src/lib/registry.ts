@@ -13,6 +13,7 @@
  * Module singleton (like the ws `clients` set) — imported by routes + reaper.
  */
 
+import { DSH_ID_RE } from '../dsh/manifest.js'
 import {
   closeSync,
   constants,
@@ -119,6 +120,14 @@ export interface RegisteredSession {
    */
   codexHome?: string | null
   /**
+   * The domain-specific harness this agent was created as (`autonomous/copper`), or null for a plain
+   * engine. NOT a second engine: `engine` stays the base (`claude`, `codex`, …) and every normalizer,
+   * probe and install path keys on that. Chosen at creation, carried forward, and re-read off the
+   * live process's `HARNESS_DSH` by discovery so a pane the daemon did not create (or had to mint
+   * again after a restart) is still labelled. Fill-only, like `codexHome`. See `src/dsh/`.
+   */
+  dsh?: string | null
+  /**
    * Whether the engine was launched with its permission prompts bypassed (`--dangerously-skip-permissions`
    * and friends, `BYPASS_PERMISSION_FLAGS`). Recorded at launch because it is otherwise only readable
    * off a LIVE process's argv — and a pane that has to be recreated after a reboot has no live process
@@ -186,6 +195,11 @@ const NAME_OVERRIDES = new Map<string, string>()
 const PANE_RE = /^%\d+$/
 const GROK_SESSION_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const AGENT_ENGINES: ReadonlySet<string> = new Set(ENGINES)
+
+/** A persisted DSH id, or null for anything that is not one (older rows have no field at all). */
+function normalizedDshId(value: unknown): string | null {
+  return typeof value === 'string' && DSH_ID_RE.test(value) ? value : null
+}
 
 function normalizedAgentEngine(value: unknown): AgentEngine {
   return typeof value === 'string' && AGENT_ENGINES.has(value)
@@ -751,6 +765,7 @@ class Registry {
           gateway: raw.gateway === 'ori' ? 'ori' : null,
           grid: normalizedGridAssignment(raw.grid),
           codexHome: typeof rawCodexHome === 'string' && rawCodexHome ? rawCodexHome : null,
+          dsh: normalizedDshId((raw as { dsh?: unknown }).dsh),
           ...(rawGridLaunch !== undefined ? { gridLaunch: rawGridLaunch } : {}),
           ...(raw.bypassPermission === true ? { bypassPermission: true } : {}),
           transcriptPath,
@@ -845,6 +860,8 @@ class Registry {
     /** Codex only: the CODEX_HOME the process was launched under, read off its environment. Fills a
      *  row that does not know its profile yet; never overwrites one that does (see `codexHome`). */
     codexHome?: string | null
+    /** The DSH read off the process's `HARNESS_DSH`, if any. Fill-only, like `codexHome`. */
+    dsh?: string | null
   }):
     {
       entry: RegisteredSession
@@ -896,6 +913,7 @@ class Registry {
       if (input.gateway !== undefined) existing.gateway = input.gateway
       if (input.grid !== undefined) existing.grid = input.grid
       if (input.codexHome && !existing.codexHome) existing.codexHome = input.codexHome
+      if (input.dsh && !existing.dsh) existing.dsh = input.dsh
       existing.updatedAt = Date.now()
       this.index(existing)
       this.terminalAvailableAgents.add(existing.agentId)
@@ -937,6 +955,7 @@ class Registry {
       // A discovered grid agent has no credential the daemon ever saw: it can be observed, not relaunched.
       gridLaunch: null,
       codexHome: input.codexHome ?? null,
+      dsh: input.dsh ?? null,
       transcriptPath: null,
       projectDir: basename(input.cwd ?? '') || agentId,
       cwd: input.cwd ?? null,
@@ -968,6 +987,7 @@ class Registry {
     grid?: GridAssignment | null
     gridLaunch?: GridLaunchOverride | null
     codexHome?: string | null
+    dsh?: string | null
     bypassPermission?: boolean
   }): RegisteredSession | null {
     if (this.writeBlocked) return null
@@ -989,6 +1009,7 @@ class Registry {
       grid: input.grid ?? null,
       gridLaunch: input.gridLaunch ?? null,
       codexHome: input.codexHome ?? null,
+      dsh: input.dsh ?? null,
       ...(input.bypassPermission ? { bypassPermission: true } : {}),
       transcriptPath: null,
       projectDir: basename(input.cwd ?? '') || agentId,
@@ -1167,6 +1188,7 @@ class Registry {
       // re-reads off the live process on every discovery) — a hook-triggered bind must carry it
       // forward or the very first SessionStart hook would silently wipe the agent's chosen profile.
       codexHome: existing?.codexHome ?? null,
+      dsh: existing?.dsh ?? null,
       ...(existing?.bypassPermission ? { bypassPermission: true } : {}),
       processIdentity: validProcessIdentity(input.processIdentity) ? input.processIdentity : existing?.processIdentity ?? null,
       registeredAt: existing?.registeredAt ?? now,
@@ -1348,6 +1370,17 @@ class Registry {
     const session = this.agents.get(agentId)
     if (!session || session.engine !== 'codex' || session.codexHome) return false
     session.codexHome = codexHome
+    session.updatedAt = Date.now()
+    this.save()
+    return true
+  }
+
+  /** Fill in the DSH a row did not know (discovery read `HARNESS_DSH` off the live process). Never
+   *  replaces one it already has — the harness is chosen once, at creation. */
+  setDsh(agentId: string, dsh: string): boolean {
+    const session = this.agents.get(agentId)
+    if (!session || session.dsh || !DSH_ID_RE.test(dsh)) return false
+    session.dsh = dsh
     session.updatedAt = Date.now()
     this.save()
     return true

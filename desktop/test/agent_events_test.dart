@@ -63,6 +63,7 @@ class FakeCreateAgentNotifier extends AppNotifier {
     ProjectFolderRequest? projectFolder,
     bool bypassPermission = false,
     String? codexHome,
+    String? dsh,
     String? swarmId,
     PaneSplitRequest? split,
     AgentCreationAttempt? attempt,
@@ -166,10 +167,6 @@ void main() {
       await tester.tap(find.text('open'));
       await tester.pumpAndSettle();
       // Browse on a remote machine uses the in-app folder picker.
-      final project = find.byKey(const Key('new-agent-project-bar'));
-      await tester.ensureVisible(project);
-      await tester.tap(project);
-      await tester.pumpAndSettle();
       await tester.ensureVisible(
         find.byKey(const Key('new-agent-project-browse')),
       );

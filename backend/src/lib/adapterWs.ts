@@ -25,9 +25,11 @@ import {
 import { trackSocketLiveness } from './hub.js'
 import { guardedSend, guardedSendJson } from './wsSend.js'
 import { attachNodeRole, PRESENCE_TTL_SEC } from './nodeRole.js'
+import { presenceWriteDue, touchMachineOnlineDay, type PresenceWriteState } from './dailyTracking.js'
 import { recordCreatedAgent, recordDeletedAgent } from './agentTracker.js'
 import type { Frame } from './tunnel.js'
 import { logger } from '../utils/logger.js'
+import { utcDayKey } from '../types/analytics.js'
 import { machineBillingAllowsDataPlane } from './billingState.js'
 import { normalizeComputerId } from './deviceAuth.js'
 import { authenticateAccessToken, SsoAuthError } from './ssoAuth.js'
@@ -73,6 +75,12 @@ const APP_STATES = new Set(['open', 'closed', 'missing'])
 // `?v=` is self-declared by the client, so it is never persisted raw: anything outside a plain
 // semver-ish token (or longer than 64 chars) is dropped rather than stored.
 const CLIENT_VERSION_RE = /^[A-Za-z0-9._+-]{1,64}$/
+
+// Daily presence (`machine_daily_presence`): how often an OPEN adapter socket refreshes its row's
+// `lastSeenAt`. Rides the node role's existing 15s heartbeat (plus every app ping) rather than a
+// timer of its own — this is just the floor between two Mongo writes, so a machine that is up all
+// day costs ~300 upserts, not ~6000. Connect and close always write regardless.
+const MACHINE_PRESENCE_WRITE_MS = 5 * 60_000
 
 function sanitizeClientVersion(raw: string | null): string | undefined {
   const v = raw?.trim()
@@ -216,6 +224,24 @@ async function attachAdapter(ws: WebSocket, machineId: string, userId: string, c
   // unnamed so a stale mirror clears. Renames while connected arrive the same way (machine_meta).
   send({ t: 'down', connId: '', frame: { type: 'machine_meta', payload: { name: currentName?.trim() || seededName } } })
 
+  // Daily presence row for the machine, mirroring the user/device variants in webWs/deviceWs. The
+  // guard only advances on a SUCCESSFUL write, so a transient DB failure is retried on the next
+  // heartbeat instead of being silently skipped until the interval elapses again. Heartbeats also
+  // skip while a write is still in flight: `onHeartbeat` fires from two 15s sources (node role
+  // interval + app ping), and before the connect write lands `presenceWriteDue` would say "due" —
+  // without this a slow Mongo gets a second concurrent upsert precisely when it is already slow.
+  const lastMachinePresence: PresenceWriteState = { dayKey: null, wroteAt: 0 }
+  let machinePresenceInFlight = false
+  const touchMachinePresence = (kind: 'connect' | 'heartbeat' | 'close'): void => {
+    const now = new Date()
+    if (kind === 'heartbeat' && (machinePresenceInFlight || !presenceWriteDue(lastMachinePresence, now, MACHINE_PRESENCE_WRITE_MS))) return
+    machinePresenceInFlight = true
+    touchMachineOnlineDay(userId, machineId, now, { isNewConnection: kind === 'connect' })
+      .then(() => { lastMachinePresence.dayKey = utcDayKey(now); lastMachinePresence.wroteAt = now.getTime() })
+      .catch((err) => logger.warn('machine presence tracking failed', { machineId, kind, error: String(err) }))
+      .finally(() => { machinePresenceInFlight = false })
+  }
+
   // The node role — down subscription, presence, `__clients` resync, node_status — is shared with
   // every other backer of a machine and lives in nodeRole.ts. Only the delivery and teardown are
   // adapter-specific, so only those are passed in.
@@ -244,8 +270,10 @@ async function attachAdapter(ws: WebSocket, machineId: string, userId: string, c
       if (computerId) void claimMachineOwner(machineId, computerId, PRESENCE_TTL_SEC) // renew the one-computer claim
       // Same tick renews the app-state key, so it shares presence's TTL and can never outlive it.
       if (appState) void setMachineAppState(machineId, appState.engine, appState.state, PRESENCE_TTL_SEC)
+      touchMachinePresence('heartbeat') // throttled inside — see MACHINE_PRESENCE_WRITE_MS
     },
   })
+  touchMachinePresence('connect')
   const terminalDownUnsub = await subscribeTerminalDown(machineId, (packet) => {
     // Terminal input toward the adapter is 'must': dropping keystrokes is not recoverable client-side.
     guardedSend(ws, packet, 'must', { machineId, kind: 'adapter' })
@@ -375,6 +403,7 @@ async function attachAdapter(ws: WebSocket, machineId: string, userId: string, c
       // and every row builder omits the app keys when offline, so the device converges on that frame;
       // this delete is what stops a reconnect from briefly re-reading the dead value.
       void clearMachineAppState(machineId)
+      touchMachinePresence('close') // exact lastSeenAt at disconnect; a superseded socket must not stamp it
       logger.info('adapter disconnected', { machineId })
     }
   }

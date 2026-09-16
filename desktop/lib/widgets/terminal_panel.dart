@@ -1376,6 +1376,10 @@ class _TerminalPanelState extends State<TerminalPanel>
       machine: machine?.machine,
       local: machine?.isLocalMachine,
       agent: agent,
+      // Named on its own even though `agent` is already here: an Agent has no
+      // equality, so a frame that changed nothing but the verdict must still
+      // be seen as a change by the one field that can say so.
+      verdict: agent?.verdict,
       project: agent == null ? null : machine?.projectOf(agent),
       compact: widget.compactHeader,
       close: widget.onClose != null,
@@ -1552,7 +1556,13 @@ class _TerminalHeader extends StatelessWidget {
           child: LayoutBuilder(
             builder: (context, constraints) => Row(
               children: [
-                EngineMark(engine: session.engineId, size: 17),
+                if (agent != null)
+                  EngineMark.forAgent(agent, size: 17)
+                else
+                  EngineMark(engine: session.engineId, size: 17),
+                // Icon and name, the same as every other pane (owner,
+                // 2026-09-15): a harness agent is its harness here, and the
+                // engine it runs on is the dialog's and the tooltip's to say.
                 const SizedBox(width: 10),
                 Expanded(
                   child: Row(
@@ -1675,6 +1685,20 @@ class _TerminalHeader extends StatelessWidget {
                     onClose: onClose,
                     onToggleComposer: remoteComposer,
                     composerVisible: composerVisible,
+                    // A harness agent's viewer, shown or hidden from the
+                    // pane it belongs to.
+                    onToggleViewer: agent?.viewerUrl == null
+                        ? null
+                        : () => notifier.toggleViewerPane(
+                            session.machineId,
+                            agent!.id,
+                          ),
+                    viewerVisible:
+                        agent != null &&
+                        notifier.viewerPaneShown(session.machineId, agent.id),
+                    viewerColor: agent == null
+                        ? null
+                        : agentIdentity(agent).color,
                     details: Tooltip(
                       message: [
                         if (project != null) project.cwd,
@@ -1754,6 +1778,12 @@ class _TerminalHeader extends StatelessWidget {
   }
 }
 
+/// A domain harness's verdict on the agent's workspace, in one word or one count.
+///
+/// Green "Ready" is the harness's one machine fact — fab-ready, every gate passed. Red carries the
+/// error count, amber the warning count when nothing blocks, grey "Checked" a clean run that the
+/// harness still would not call ready. The summary rides in the tooltip; the findings themselves
+/// live in the harness's own viewer, which is the pane beside this one.
 /// The pane header's transport badge: a compact topology for the path carrying terminal bytes.
 ///
 /// The three shapes describe one hop, an intermediate hop, and a central server respectively. That

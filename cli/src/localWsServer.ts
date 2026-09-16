@@ -303,6 +303,12 @@ export function attachLocalWsServer(server: http.Server, options: LocalWsServerO
           return
         }
 
+        // Parsed ONCE. Every sniff below used to re-run JSON.parse on the same bytes — up to seven
+        // times for a frame that matched none of them, which is what a terminal_ack (every 16ms of
+        // output) and a resize are. A frame that does not parse falls through all of them, as before,
+        // to the close at the bottom.
+        const parsed = isBinary ? null : jsonFrame(raw)
+
         // THE APP MOVED — tell whoever wants to follow it, before the frame is dispatched either way.
         // Sniffed here rather than in the backend socket because that path never sees a RELAYED machine's
         // frames: those are forwarded upstream a few lines below and would be invisible, which is exactly
@@ -316,9 +322,8 @@ export function attachLocalWsServer(server: http.Server, options: LocalWsServerO
         // daemon owns the cable, and only a full picture lets that one decide
         // whether a finished turn is already in front of the person.
         if (!isBinary && options.onAppPanes) {
-          const roster = jsonFrame(raw)
-          if (roster?.type === 'app_panes') {
-            const raw = (roster.payload as Record<string, unknown> | undefined)?.agentIds
+          if (parsed?.type === 'app_panes') {
+            const raw = (parsed.payload as Record<string, unknown> | undefined)?.agentIds
             const ids = Array.isArray(raw) ? raw.filter((id): id is string => typeof id === 'string' && id !== '') : []
             sentPanes = true
             options.onAppPanes(ids)
@@ -326,9 +331,8 @@ export function attachLocalWsServer(server: http.Server, options: LocalWsServerO
           }
         }
         if (!isBinary && options.onAppSwarms) {
-          const frame = jsonFrame(raw)
-          if (frame?.type === 'app_swarms') {
-            const swarms = appSwarmsFrom(frame.payload)
+          if (parsed?.type === 'app_swarms') {
+            const swarms = appSwarmsFrom(parsed.payload)
             if (swarms) { sentSwarms = true; options.onAppSwarms(swarms) }
             return
           }
@@ -343,9 +347,8 @@ export function attachLocalWsServer(server: http.Server, options: LocalWsServerO
         // Consumed here like app_focus: it describes a hand at this desk, not anything the machine could
         // act on.
         if (!isBinary && (options.onRouteTask || options.onRouteSend || options.onVoiceRouteReply)) {
-          const asked = jsonFrame(raw)
-          if (asked?.type === 'route_task' && options.onRouteTask) {
-            const payload = asked.payload as Record<string, unknown> | undefined
+          if (parsed?.type === 'route_task' && options.onRouteTask) {
+            const payload = parsed.payload as Record<string, unknown> | undefined
             const requestId = typeof payload?.requestId === 'string' ? payload.requestId : ''
             const text = typeof payload?.text === 'string' ? payload.text.trim() : ''
             // An answer ALWAYS goes back, even for a question we cannot serve: the window is holding a
@@ -361,8 +364,8 @@ export function attachLocalWsServer(server: http.Server, options: LocalWsServerO
             sink.sendFrame({ type: 'route_result', payload: { requestId, ...answer } })
             return
           }
-          if (asked?.type === 'voice_route_reply' && options.onVoiceRouteReply) {
-            const payload = asked.payload as Record<string, unknown> | undefined
+          if (parsed?.type === 'voice_route_reply' && options.onVoiceRouteReply) {
+            const payload = parsed.payload as Record<string, unknown> | undefined
             const voiceId = typeof payload?.voiceId === 'string' ? payload.voiceId : ''
             const state = typeof payload?.state === 'string' ? payload.state : ''
             const agentId = typeof payload?.agentId === 'string' ? payload.agentId : ''
@@ -375,8 +378,8 @@ export function attachLocalWsServer(server: http.Server, options: LocalWsServerO
             }
             return
           }
-          if (asked?.type === 'route_send' && options.onRouteSend) {
-            const payload = asked.payload as Record<string, unknown> | undefined
+          if (parsed?.type === 'route_send' && options.onRouteSend) {
+            const payload = parsed.payload as Record<string, unknown> | undefined
             const requestId = typeof payload?.requestId === 'string' ? payload.requestId : ''
             const agentId = typeof payload?.agentId === 'string' ? payload.agentId : ''
             const text = typeof payload?.text === 'string' ? payload.text : ''
@@ -399,11 +402,10 @@ export function attachLocalWsServer(server: http.Server, options: LocalWsServerO
           }
         }
         if (!isBinary && boundMachineId && ws.readyState === WebSocket.OPEN) {
-          const moved = jsonFrame(raw)
-          const agentId = (moved?.payload as Record<string, unknown> | undefined)?.agentId
-          if (moved?.type === 'app_focus') {
+          const agentId = (parsed?.payload as Record<string, unknown> | undefined)?.agentId
+          if (parsed?.type === 'app_focus') {
             if (agentId === null || (typeof agentId === 'string' && agentId)) {
-              const revision = (moved.payload as Record<string, unknown>)?.focusRevision
+              const revision = (parsed.payload as Record<string, unknown>)?.focusRevision
               if (options.onAppFocusState?.(boundMachineId, agentId, connId,
                 typeof revision === 'string' ? revision : undefined) === false) return
               if (agentId) options.onAppFocus?.(boundMachineId, agentId)
@@ -412,7 +414,7 @@ export function attachLocalWsServer(server: http.Server, options: LocalWsServerO
             return
           }
           // Preserve the old dial fallback; terminal streams never establish voice focus.
-          if (moved?.type === 'terminal_open' && typeof agentId === 'string' && agentId) {
+          if (parsed?.type === 'terminal_open' && typeof agentId === 'string' && agentId) {
             options.onAppFocus?.(boundMachineId, agentId)
           }
         }
@@ -427,9 +429,8 @@ export function attachLocalWsServer(server: http.Server, options: LocalWsServerO
             await relay.sendBinary(clear)
             return
           }
-          const frame = jsonFrame(raw)
-          if (!frame) { close(4400, 'invalid json frame'); return }
-          await relay.send(frame)
+          if (!parsed) { close(4400, 'invalid json frame'); return }
+          await relay.send(parsed)
           return
         }
 
@@ -439,9 +440,8 @@ export function attachLocalWsServer(server: http.Server, options: LocalWsServerO
           await options.backend.handleLocalBinary(connId, frame)
           return
         }
-        const frame = jsonFrame(raw)
-        if (!frame) { close(4400, 'invalid json frame'); return }
-        options.backend.handleLocalFrame(connId, frame)
+        if (!parsed) { close(4400, 'invalid json frame'); return }
+        options.backend.handleLocalFrame(connId, parsed)
       }).catch(() => close(1011, 'local dispatch failed'))
     })
 

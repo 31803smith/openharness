@@ -22,6 +22,7 @@ import { stat } from 'node:fs/promises'
 import { agentProject, type AgentProject } from './agentProject.js'
 import type { GridAssignment } from './gridAssignment.js'
 import { projectDisplayName, type RegisteredSession } from './registry.js'
+import type { DshVerdict } from '../dsh/verdict.js'
 
 /**
  * One agent as it travels to every client.
@@ -45,6 +46,23 @@ export type AgentFrame = {
   grid: GridAssignment | null
   codexHome: string | null
   project: AgentProject | null
+  /** The domain-specific harness this agent was created as, or null for a plain engine. */
+  dsh: string | null
+  /** Its display name from the installed manifest; null when unknown here (not installed, plain engine). */
+  dshName: string | null
+  /** Where this agent's viewer is being served right now, or null when it has none up. */
+  viewerUrl: string | null
+  /** The DSH's last verdict for this workspace, reduced for the pane header; null when none yet. */
+  verdict: DshVerdict | null
+}
+
+/** What the daemon knows about an agent's DSH — looked up by the caller, never here. */
+export interface AgentDshContext {
+  /** The harness's CURRENT id — an agent created under a former name (`formerly`) reports the new one. */
+  id: string | null
+  name: string | null
+  viewerUrl: string | null
+  verdict: DshVerdict | null
 }
 
 /** What the caller knows and this module deliberately does not look up for itself. */
@@ -53,6 +71,8 @@ export interface AgentFrameContext {
   selectedModel: string | null
   /** `registry.terminalAvailable(agentId)` — the caller already holds the registry. */
   terminalAvailable: boolean
+  /** The DSH companions' state for this agent; absent when the caller has none to give. */
+  dsh?: AgentDshContext | null
 }
 
 /**
@@ -64,7 +84,7 @@ export interface AgentFrameContext {
  */
 export async function agentFrame(
   s: RegisteredSession,
-  { selectedModel, terminalAvailable }: AgentFrameContext,
+  { selectedModel, terminalAvailable, dsh }: AgentFrameContext,
 ): Promise<AgentFrame> {
   const st = s.transcriptPath ? await stat(s.transcriptPath).catch(() => null) : null
   return {
@@ -90,5 +110,11 @@ export async function agentFrame(
     // `grid: null` is above.
     codexHome: s.codexHome ?? null,
     project: await agentProject(s.cwd),
+    // All four are real answers when null, for the reason the module doc gives: a frame that omits
+    // them would erase a viewer URL or a verdict an earlier frame had reported.
+    dsh: dsh?.id ?? s.dsh ?? null,
+    dshName: dsh?.name ?? null,
+    viewerUrl: dsh?.viewerUrl ?? null,
+    verdict: dsh?.verdict ?? null,
   }
 }

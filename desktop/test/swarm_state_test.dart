@@ -61,7 +61,7 @@ AppNotifier createApp({
 
 void main() {
   test(
-    'New Harness reuses the unused page from every tab, even at capacity',
+    'New Tab reuses the unused page from every tab, even at capacity',
     () async {
       final app = createApp();
       addTearDown(app.dispose);
@@ -135,10 +135,10 @@ void main() {
     'New tab',
     'New Tab',
     'New Agent',
-    'New Harness',
+    'New Tab',
   ]) {
     test(
-      '$legacy empty tabs restore as New Harness and number the first occupied tab',
+      '$legacy empty tabs restore as New Tab and number the first occupied tab',
       () async {
         final store = MemoryStore();
         final original = createApp(store: store);
@@ -153,7 +153,7 @@ void main() {
         final restored = createApp(store: store);
         addTearDown(restored.dispose);
         await restored.restorePaneLayoutForTest();
-        expect(restored.activeSwarm.name, 'New Harness');
+        expect(restored.activeSwarm.name, 'New Tab');
         await restored.addAgentToSwarm('m', 'a0');
         expect(restored.activeSwarm.name, 'harness-1');
       },

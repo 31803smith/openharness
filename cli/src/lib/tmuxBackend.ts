@@ -93,6 +93,8 @@ export class TmuxBackend implements TerminalBackend<TmuxRuntimeRef> {
 
   /** What each Harness pane's `window-style` was last set to, so a scan re-applies only changes. */
   private readonly styledPanes = new Map<string, string>()
+  private readonly desiredStyles = new Map<string, string>()
+  private readonly stylingPanes = new Set<string>()
 
   /**
    * [hostTheme] answers with the desktop's current pane colours (see `hostTheme.ts`); read at every
@@ -263,17 +265,30 @@ export class TmuxBackend implements TerminalBackend<TmuxRuntimeRef> {
   private restyle(panes: readonly string[]): void {
     const style = windowStyleOf(this.hostTheme())
     const live = new Set(panes)
-    for (const pane of panes) {
-      if (this.styledPanes.get(pane) === style) continue
-      // Recorded only once tmux has taken it: a pane recorded on the attempt would never be
-      // retried after a timeout, until the theme happened to change again.
-      void setPaneWindowStyle(pane, style).then((applied) => {
-        if (applied && live.has(pane)) this.styledPanes.set(pane, style)
-      })
+    for (const pane of this.desiredStyles.keys()) {
+      if (!live.has(pane)) this.desiredStyles.delete(pane)
     }
-    for (const pane of [...this.styledPanes.keys()]) {
+    for (const pane of this.styledPanes.keys()) {
       if (!live.has(pane)) this.styledPanes.delete(pane)
     }
+    for (const pane of panes) {
+      this.desiredStyles.set(pane, style)
+      this.applyStyle(pane)
+    }
+  }
+
+  private applyStyle(pane: string): void {
+    const style = this.desiredStyles.get(pane)
+    if (style === undefined || this.stylingPanes.has(pane) || this.styledPanes.get(pane) === style) return
+    // Serialize writes per pane: scans can overlap a slow tmux command or a theme change.
+    this.stylingPanes.add(pane)
+    void setPaneWindowStyle(pane, style).then((applied) => {
+      if (applied && this.desiredStyles.has(pane)) this.styledPanes.set(pane, style)
+    }).finally(() => {
+      this.stylingPanes.delete(pane)
+      // Apply a newer theme immediately, but retry a failed unchanged write on the next scan.
+      if (this.desiredStyles.get(pane) !== style) this.applyStyle(pane)
+    })
   }
 
   async validate(runtime: TmuxRuntimeRef, expected: TerminalProcessExpectation): Promise<RuntimeValidation> {

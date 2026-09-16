@@ -234,11 +234,11 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     }
     if let file = main.item(withTitle: "File") { main.removeItem(file) }
     let file = NSMenu(title: "File")
-    add(file, "New Harness", "t", "new")
+    add(file, "New Tab", "t", "new")
     add(file, "New Agent…", "n", "newAgent")
     add(file, "Open Agent…", "o", "addAgent")
-    add(file, "Rename Harness…", "r", "renameActive", [.command, .shift])
-    add(file, "Close Harness", "w", "closeActive")
+    add(file, "Rename Tab…", "r", "renameActive", [.command, .shift])
+    add(file, "Close Tab", "w", "closeActive")
     file.addItem(.separator())
     add(file, "Split Right…", "r", "splitRight")
     add(file, "Split Down…", "d", "splitDown")
@@ -1075,11 +1075,25 @@ private final class SwarmTabStrip: NSView {
   private var tabOrderChanged = false
   private var actionsEnabled = false
   private var lastBackgroundClick: (time: TimeInterval, point: NSPoint)?
+  // Hold ⌘ and each of the first nine tabs shows the digit that reaches it
+  // (⌘1…⌘9, the app's own bindings) — the same discoverability Safari and
+  // the terminals give their tabs. Off again the moment ⌘ is released or the
+  // app goes to the background.
+  private var commandHeld = false
+  private var flagsMonitor: Any?
+  private var resignObserver: NSObjectProtocol?
   override var mouseDownCanMoveWindow: Bool { true }
 
   override init(frame: NSRect) {
     super.init(frame: frame)
     wantsLayer = true
+    flagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+      self?.setCommandHeld(event.modifierFlags.contains(.command))
+      return event
+    }
+    resignObserver = NotificationCenter.default.addObserver(
+      forName: NSApplication.didResignActiveNotification, object: nil, queue: .main
+    ) { [weak self] _ in self?.setCommandHeld(false) }
     scroll.drawsBackground = false
     scroll.hasHorizontalScroller = false
     scroll.hasVerticalScroller = false
@@ -1097,8 +1111,8 @@ private final class SwarmTabStrip: NSView {
       button.setAccessibilityLabel(label)
       addSubview(button)
     }
-    button(newButton, "plus", "New Harness", #selector(newSwarm))
-    newButton.setAccessibilityLabel("New Harness")
+    button(newButton, "plus", "New Tab", #selector(newSwarm))
+    newButton.setAccessibilityLabel("New Tab")
     newButton.isEnabled = false
     button(notificationButton, "bell", "Notifications", #selector(openNotifications))
     notificationButton.isEnabled = false
@@ -1142,6 +1156,23 @@ private final class SwarmTabStrip: NSView {
     openButton.borderColor = palette.accent.withAlphaComponent(0.3)
   }
 
+  deinit {
+    if let flagsMonitor { NSEvent.removeMonitor(flagsMonitor) }
+    if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
+  }
+
+  private func setCommandHeld(_ held: Bool) {
+    guard commandHeld != held else { return }
+    commandHeld = held
+    applyShortcutBadges()
+  }
+
+  fileprivate func applyShortcutBadges() {
+    for (index, tab) in tabs.enumerated() {
+      tab.shortcut = commandHeld && actionsEnabled && index < 9 ? index + 1 : nil
+    }
+  }
+
   func update(_ state: [String: Any]) {
     // Workspace teardown clears its controls without changing appearance.
     if let palette = state["palette"] as? [String: Any] { updatePalette(palette) }
@@ -1159,13 +1190,13 @@ private final class SwarmTabStrip: NSView {
       guard let id = row["id"] as? String else { return nil }
       let tab = previous[id] ?? SwarmTabButton(id: id)
       tab.palette = palette
-      tab.name = row["name"] as? String ?? "New Harness"
+      tab.name = row["name"] as? String ?? "New Tab"
       let count = row["agentCount"] as? Int ?? 0
       tab.icon = count == 1
         ? icons.image(engine: row["engine"] as? String, asset: row["iconAsset"] as? String)
         : count > 1
         ? SwarmIdentity.menuIcon
-        : NSImage(systemSymbolName: "plus", accessibilityDescription: "New Harness")
+        : NSImage(systemSymbolName: "plus", accessibilityDescription: "New Tab")
       tab.selected = id == activeId
       tab.actionsEnabled = actionsEnabled
       tab.attention = (row["attention"] as? Int ?? 0) > 0
@@ -1180,6 +1211,7 @@ private final class SwarmTabStrip: NSView {
       return tab
     }
     updateDividers()
+    applyShortcutBadges()
     // Moving frames alone leaves AppKit's child traversal in insertion order.
     document.setAccessibilityChildren(tabs)
     newButton.isEnabled = actionsEnabled && (state["canOpenNewTab"] as? Bool ?? (tabs.count < 24))
@@ -1216,7 +1248,11 @@ private final class SwarmTabStrip: NSView {
     let trailing: CGFloat = spacious ? 12 : 8
     let actionsWidth = openWidth * 2 + 10 + trailing
     newButton.isHidden = bounds.width < 420
-    let available = max(32, bounds.width - leading - actionsWidth - (newButton.isHidden ? 0 : 36))
+    // A reserve after the "+" that tabs never grow into — Chrome's gap. It is
+    // where a full strip can still be dragged and double-clicked to zoom
+    // (owner, 2026-09-15); tabs shrink and then scroll instead of taking it.
+    let grip: CGFloat = spacious ? 84 : 44
+    let available = max(32, bounds.width - leading - actionsWidth - (newButton.isHidden ? 0 : 36) - grip)
     let width = min(220, max(min(132, available), available / CGFloat(max(1, tabs.count))))
     let occupied = min(available, CGFloat(tabs.count) * width)
     scroll.frame = NSRect(x: leading, y: 0, width: occupied, height: bounds.height)
@@ -1246,6 +1282,10 @@ private final class SwarmTabStrip: NSView {
 
   }
   override func mouseDown(with event: NSEvent) {
+    // A double-click on the strip's background zooms the window. This is the
+    // one place that does: the Flutter bar under the strip only drags, since
+    // its own double-tap zoomed a second time, straight back (owner,
+    // 2026-09-15: "maximizes out and resizes back").
     if ownsBackgroundDoubleClick(event) { window?.performZoom(nil) }
     else if event.clickCount == 1 { window?.performDrag(with: event) }
   }
@@ -1301,10 +1341,12 @@ private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidati
     didSet { if palette != oldValue { needsDisplay = true } }
   }
   let swarmId: String
-  var name = "New Harness" { didSet { if name != oldValue { invalidateLabel(); updateAccessibility() } } }
+  var name = "New Tab" { didSet { if name != oldValue { invalidateLabel(); updateAccessibility() } } }
   var selected = false { didSet { if selected != oldValue { invalidateLabel(); updateAccessibility() } } }
   var attention = false { didSet { if attention != oldValue { needsDisplay = true; updateAccessibility() } } }
   var showsDivider = false { didSet { if showsDivider != oldValue { needsDisplay = true } } }
+  /// The ⌘-digit that selects this tab, shown while ⌘ is held; nil otherwise.
+  var shortcut: Int? { didSet { if shortcut != oldValue { updateCloseVisibility(); needsDisplay = true } } }
   var contentCenterY: CGFloat = 20
   var emit: ((String, Any?) -> Void)?
   var hoverChanged: (() -> Void)?
@@ -1345,7 +1387,7 @@ private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidati
     selectButton.target = self
     selectButton.action = #selector(selectSwarm)
     addSubview(selectButton)
-    closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close Harness")
+    closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close Tab")
     closeButton.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 10, weight: .semibold)
     closeButton.contentTintColor = NSColor(white: 0.78, alpha: 1)
     closeButton.isBordered = false
@@ -1353,7 +1395,7 @@ private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidati
     closeButton.action = #selector(closeSwarm)
     addSubview(closeButton)
     let menu = NSMenu()
-    for (title, action) in [("Rename Harness…", #selector(renameSwarm)), ("Close Harness", #selector(closeSwarm))] {
+    for (title, action) in [("Rename Tab…", #selector(renameSwarm)), ("Close Tab", #selector(closeSwarm))] {
       let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
       item.target = self
       menu.addItem(item)
@@ -1386,7 +1428,9 @@ private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidati
     hoverChanged?()
   }
   fileprivate func updateCloseVisibility() {
-    closeButton.showsGlyph = hovered || selectButton.hasKeyboardFocus || closeButton.hasKeyboardFocus
+    // The badge borrows the close glyph's slot; while ⌘ is held the digit wins.
+    closeButton.showsGlyph = shortcut == nil
+      && (hovered || selectButton.hasKeyboardFocus || closeButton.hasKeyboardFocus)
   }
   private func invalidateLabel() {
     cachedLabel = nil
@@ -1434,6 +1478,15 @@ private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidati
     if attention {
       NSColor.systemOrange.setFill()
       NSBezierPath(ovalIn: NSRect(x: 13, y: contentCenterY - 2, width: 4, height: 4)).fill()
+    }
+    if let shortcut {
+      let paragraph = NSMutableParagraphStyle()
+      paragraph.alignment = .right
+      let badge = NSAttributedString(string: "⌘\(shortcut)",
+        attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium),
+          .foregroundColor: NSColor(white: 1, alpha: selected ? 0.7 : 0.5), .paragraphStyle: paragraph])
+      let badgeHeight = badge.size().height
+      badge.draw(in: NSRect(x: bounds.width - 46, y: contentCenterY - badgeHeight / 2, width: 32, height: badgeHeight))
     }
   }
   // Overflowed tabs might not be drawn. Their names and selection still need

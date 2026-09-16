@@ -65,7 +65,7 @@ void main() {
         name: 'Design',
         terminalAvailable: true,
         project: AgentProject(
-          name: 'Workshop',
+          name: 'Solid',
           cwd: '/work/workshop',
           branch: 'feature/wood',
         ),
@@ -84,7 +84,7 @@ void main() {
       SavedSwarmProject(
         machineId: 'm',
         path: '/work/workshop',
-        name: 'Workshop',
+        name: 'Solid',
         members: [(machineId: 'remote', agentId: 'chess')],
       ),
     ];
@@ -96,11 +96,11 @@ void main() {
       isTrue,
     );
     expect(
-      rankSwarmDestinations(entries, 'Workshop').any((e) => e.isProject),
+      rankSwarmDestinations(entries, 'Solid').any((e) => e.isProject),
       isTrue,
     );
     expect(
-      rankSwarmDestinations(entries, 'Workshop chess').single.agentId,
+      rankSwarmDestinations(entries, 'Solid chess').single.agentId,
       'chess',
     );
     expect(rankSwarmDestinations(entries, 'wood Design').single.agentId, 'a0');

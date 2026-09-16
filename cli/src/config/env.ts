@@ -234,6 +234,9 @@ const envSchema = z.object({
   // `app-*.log`/`cli-*.log`, so one directory holds everything a bug report needs. Not the data dir:
   // `harness.log` there is the daemon's console, and `harness reset` wipes it.
   HARNESS_LOGS_DIR: z.string().default(join(adapterRootDir, 'logs')),
+  // Where domain-specific harnesses are installed (`harness dsh install`): one directory per
+  // `<owner>/<name>` plus `installed.json`. Product-root state like the SSO session, not daemon data.
+  DSH_DIR: z.string().default(join(adapterRootDir, 'dsh')),
   // This computer's stable id, minted once and never regenerated (see computerIdFile above). Pin it
   // explicitly on a box with no durable home — a container or CI job that gets a fresh ~/.harness on
   // every boot would otherwise look like a NEW computer each time and collect a machine per start.

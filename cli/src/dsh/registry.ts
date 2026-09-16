@@ -1,0 +1,98 @@
+/**
+ * The bundled registry: `dsh/registry/<owner>/<name>.json` at the repo root, baked into the CLI at
+ * build time the same way the version is (`__DSH_REGISTRY__`, an esbuild `define` in both
+ * `build.mjs` and `build-bundle.mjs`). Under `tsx`/vitest there is no define, so the files are read
+ * off the source tree — the dev loop sees the same entries the release does.
+ *
+ * A registry entry is how the desktop can offer "Install Circuit" for a DSH this machine does not
+ * have yet: it names the repo and the ref to clone. Nothing here runs code.
+ */
+import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { z } from 'zod'
+import { ENGINES } from '../engines/types.js'
+import { DSH_ID_RE } from './manifest.js'
+
+declare const __DSH_REGISTRY__: string | undefined
+
+export const DshRegistryEntrySchema = z.strictObject({
+  id: z.string().regex(DSH_ID_RE),
+  name: z.string().min(1).max(40),
+  description: z.string().max(300).optional(),
+  category: z.string().min(1).max(24).optional(),
+  repo: z.string().min(1).max(2048),
+  ref: z.string().min(1).max(200).optional(),
+  engine: z.enum(ENGINES),
+  tier: z.union([z.literal(0), z.literal(1), z.literal(2)]).optional(),
+  verified: z.boolean().optional(),
+})
+
+export type DshRegistryEntry = z.infer<typeof DshRegistryEntrySchema>
+
+function parseEntries(values: unknown[]): DshRegistryEntry[] {
+  const entries: DshRegistryEntry[] = []
+  for (const value of values) {
+    const parsed = DshRegistryEntrySchema.safeParse(value)
+    if (parsed.success) entries.push(parsed.data)
+  }
+  return entries.sort((a, b) => a.id.localeCompare(b.id))
+}
+
+/** Read `dsh/registry/**\/*.json` from a checkout; used by the build and by the dev fallback. */
+export function readRegistryDir(dir: string): unknown[] {
+  const out: unknown[] = []
+  let owners: string[]
+  try {
+    owners = readdirSync(dir)
+  } catch {
+    return out
+  }
+  for (const owner of owners) {
+    const ownerDir = join(dir, owner)
+    let files: string[]
+    try {
+      if (!statSync(ownerDir).isDirectory()) continue
+      files = readdirSync(ownerDir)
+    } catch {
+      continue
+    }
+    for (const file of files) {
+      if (!file.endsWith('.json')) continue
+      try {
+        out.push(JSON.parse(readFileSync(join(ownerDir, file), 'utf8')))
+      } catch {
+        // A malformed entry is a registry bug, not a runtime one; the conformance check catches it.
+      }
+    }
+  }
+  return out
+}
+
+let cached: DshRegistryEntry[] | null = null
+
+export function bundledDshRegistry(): DshRegistryEntry[] {
+  if (cached) return cached
+  if (typeof __DSH_REGISTRY__ !== 'undefined') {
+    try {
+      cached = parseEntries(JSON.parse(__DSH_REGISTRY__) as unknown[])
+      return cached
+    } catch {
+      cached = []
+      return cached
+    }
+  }
+  // src/dsh/registry.ts → ../../../dsh/registry (the same relative walk from dist/dsh/registry.js).
+  const dir = fileURLToPath(new URL('../../../dsh/registry', import.meta.url))
+  cached = parseEntries(readRegistryDir(dir))
+  return cached
+}
+
+export function registryEntry(id: string): DshRegistryEntry | undefined {
+  return bundledDshRegistry().find((entry) => entry.id === id)
+}
+
+/** Test seam. */
+export function resetBundledDshRegistry(): void {
+  cached = null
+}

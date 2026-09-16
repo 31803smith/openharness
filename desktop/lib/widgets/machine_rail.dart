@@ -1057,10 +1057,7 @@ class _AgentRowState extends State<_AgentRow> {
         : !state.terminalCapabilityAvailable
         ? state.terminalCapabilityError
         : null;
-    final identity = engineIdentity(
-      agent.engine,
-      displayName: agent.engineDisplayName,
-    );
+    final identity = agentIdentity(agent);
     final processing = state.processingAgentIds.contains(agent.id);
     // Right-click wraps the row rather than fighting it: SidebarItem owns the
     // primary tap and the press/hover states that go with it, and exposes no
@@ -1139,9 +1136,8 @@ class _AgentRowState extends State<_AgentRow> {
                 child: Semantics(
                   label: '${identity.label} engine',
                   image: true,
-                  child: EngineMark(
-                    engine: agent.engine,
-                    displayName: agent.engineDisplayName,
+                  child: EngineMark.forAgent(
+                    agent,
                     enabled: visuallyEnabled,
                     size: 15,
                   ),
@@ -1253,7 +1249,7 @@ class _AgentRowState extends State<_AgentRow> {
       ),
       onDragEnd: (_) => agentDrag.value = null,
       onDraggableCanceled: (_, _) => agentDrag.value = null,
-      feedback: _DragChip(name: agent.name, engine: agent.engine),
+      feedback: _DragChip(name: agent.name, engine: agent.identityEngine),
       // The row stays put and dims. Removing it would reflow the list under the
       // pointer mid-drag, moving every other row out from under the place the
       // hand had already aimed at.

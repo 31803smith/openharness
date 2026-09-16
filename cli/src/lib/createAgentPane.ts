@@ -31,6 +31,7 @@ export interface CreateAgentPaneDeps {
     grid?: { baseUrl: string; model: string | null } | null
     gridLaunch?: GridLaunchOverride | null
     codexHome?: string | null
+    dsh?: string | null
     bypassPermission?: boolean
   }) => RegisteredSession | null }
   engine: AgentEngine
@@ -45,6 +46,8 @@ export interface CreateAgentPaneDeps {
   gridLaunch?: GridLaunchOverride | null
   /** The CODEX_HOME folder this agent was launched against, if the caller chose one; codex only. */
   codexHome?: string | null
+  /** The domain-specific harness this agent is created as, if any. */
+  dsh?: string | null
   maxAttempts?: number
 }
 
@@ -78,6 +81,7 @@ export async function createAndRegisterPane(deps: CreateAgentPaneDeps): Promise<
       grid: deps.grid,
       gridLaunch: deps.gridLaunch,
       codexHome: deps.codexHome,
+      dsh: deps.dsh,
       bypassPermission: deps.bypassPermission,
     })
     if (pending) return { ok: true, spawned, pending }

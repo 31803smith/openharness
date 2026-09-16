@@ -19,7 +19,18 @@ class AgentPicker extends StatelessWidget {
   final ValueChanged<String> onChanged;
   final bool compact;
   final Size? tileSize;
-  static const quickAgents = ['codex', 'claude', 'cursor'];
+
+  /// The preferred order: the three engines the tiles show, then the two
+  /// first-party domain harnesses, first in More; a chosen one is what the
+  /// More tile then shows.
+  static const quickAgents = [
+    'codex',
+    'claude',
+    'opencode',
+    'autonomous/copper',
+    'autonomous/solid',
+    'autonomous/marp',
+  ];
 
   @override
   Widget build(BuildContext context) => AppChoicePicker<String>(
@@ -37,10 +48,9 @@ class AgentPicker extends StatelessWidget {
           trailing: option.trailing,
         ),
     ],
-    preferredValues: tileSize != null
-        ? const ['codex', 'claude', 'opencode']
-        : quickAgents,
+    preferredValues: quickAgents,
     onChanged: onChanged,
+    notifyOnReselect: true,
     optionKey: (id) => ValueKey('new-agent-quick-$id'),
     moreKey: const Key('new-agent-engine-field'),
     moreLabel: 'More agents',

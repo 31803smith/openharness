@@ -70,7 +70,7 @@ Future<void> chord(
 void main() {
   for (final native in [false, true]) {
     testWidgets(
-      'New Harness actions reuse the existing page (native: $native)',
+      'New Tab actions reuse the existing page (native: $native)',
       (tester) async {
         const channel = MethodChannel('harness/swarm_tabs');
         const codec = StandardMethodCodec();
@@ -121,7 +121,7 @@ void main() {
             await chord(tester, LogicalKeyboardKey.keyP, shift: true);
             await tester.enterText(
               find.byKey(const ValueKey('swarm-search-input')),
-              'New Harness',
+              'New Tab',
             );
             await tester.pump();
             await tester.sendKeyEvent(LogicalKeyboardKey.enter);
@@ -367,7 +367,7 @@ void main() {
       expect(input.single.streamId, 'stream-a1');
       expect(String.fromCharCodes(input.single.bytes), 'x');
       await activate('rename', {'id': second});
-      expect(find.text('Rename Harness'), findsOneWidget);
+      expect(find.text('Rename Tab'), findsOneWidget);
       final name = tester.widget<TextField>(find.byType(TextField));
       expect(name.focusNode!.hasPrimaryFocus, isTrue);
       tester.testTextInput.enterText('Keyboard work');

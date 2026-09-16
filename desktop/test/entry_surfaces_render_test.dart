@@ -28,7 +28,7 @@ class _RenderApp extends AppNotifier {
     for (final id in ['local', 'remote']) {
       final machine = Machine(
         machineId: id,
-        name: id == 'local' ? 'MacBook Pro' : 'Workshop',
+        name: id == 'local' ? 'MacBook Pro' : 'Solid',
         authMode: MachineAuthMode.remote,
       );
       machines.add(machine);
@@ -206,7 +206,7 @@ void main() {
         await capture('new');
         debugDisableShadows = previousShadows;
         expect(tester.takeException(), isNull);
-        for (final label in ['Codex', 'Claude Code', 'Cursor']) {
+        for (final label in ['Codex', 'Claude Code', 'OpenCode']) {
           if (tester
               .renderObject<RenderParagraph>(find.text(label))
               .didExceedMaxLines) {

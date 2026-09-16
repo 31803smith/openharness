@@ -44,7 +44,11 @@ class HarnessTopBar extends StatelessWidget {
   Widget build(BuildContext context) {
     if (!Platform.isMacOS) return const SizedBox.shrink();
     grid.AppTheme.watch(context);
-    return DragToMoveArea(
+    // Drag only. The native tab strip above this bar owns the title-bar
+    // double-click and zooms the window itself; DragToMoveArea's own
+    // double-tap zoomed it a second time, straight back (owner, 2026-09-15:
+    // "maximizes out and resizes back").
+    return WindowDragArea(
       child: Container(
         height: height,
         decoration: BoxDecoration(
@@ -78,8 +82,9 @@ class HarnessTopBar extends StatelessWidget {
 /// top edge of the window, which is also the part of it people click most.
 ///
 /// The maximize gesture is worth having on a strip that holds nothing —
-/// [HarnessTopBar] and [WindowDragStrip] keep [DragToMoveArea] for it — and is
-/// not worth 300ms on every control in the app's chrome.
+/// [WindowDragStrip] keeps [DragToMoveArea] for it; on macOS the native tab
+/// strip zooms on double-click and [HarnessTopBar] under it only drags — and
+/// is not worth 300ms on every control in the app's chrome.
 class WindowDragArea extends StatelessWidget {
   const WindowDragArea({super.key, required this.child});
 

@@ -22,6 +22,7 @@ import '../bootstrap/environment_provisioner.dart';
 import '../core/viewer_mode.dart';
 import '../core/config.dart';
 import '../core/agent_preference.dart';
+import '../core/dsh_catalog.dart';
 import '../core/engine_availability.dart';
 import '../core/local_hostname.dart';
 import '../core/local_git_projects.dart';
@@ -40,7 +41,7 @@ import '../terminal/terminal_theme_store.dart';
 import '../logging/app_log.dart';
 import '../shared/theme/app_theme.dart' as grid;
 import '../terminal/remote_media_download.dart';
-import '../widgets/engine_identity.dart' show allEngines;
+import '../widgets/engine_identity.dart' show allEngines, engineIdentity;
 import 'dial_status.dart';
 import 'pane_layout_store.dart';
 import 'terminal_pane.dart';
@@ -191,6 +192,10 @@ class MachineState {
   // machines on one account hold different engines, and the Docker rig holds
   // exactly one. See `engines_probe` in the CLI's backendSocket.
   final MachineEngines engines = MachineEngines();
+  // Which domain-specific harnesses this machine has or could install, as it
+  // answered `dsh_list`. Per machine for the same reason `engines` is: an
+  // install is a clone and a toolchain on ONE box.
+  final MachineDsh dsh = MachineDsh();
   // Adapter/manager presence for this machine, from `node_status` pushes —
   // distinct from `connectionStatus`, which only reflects OUR websocket to
   // the backend. null = not seen yet (initial connect).
@@ -538,7 +543,7 @@ class AppNotifier extends ChangeNotifier {
   bool get canOpenNewTab =>
       swarms.length < maxSwarms || swarms.any((swarm) => swarm.isEmptyStarter);
 
-  // A New Harness remains temporary until it has content or a custom name.
+  // A New Tab remains temporary until it has content or a custom name.
   // The return destination is session-local; abandoned drafts are never saved.
   final _draftSwarmReturns = <String, String>{};
 
@@ -553,7 +558,7 @@ class AppNotifier extends ChangeNotifier {
 
   void newSwarm({String name = Swarm.defaultName, bool draft = false}) {
     name = Swarm.normalizeName(name);
-    // Every New Harness entry point reuses the existing start page, including
+    // Every New Tab entry point reuses the existing start page, including
     // when another tab is selected or the tab limit has been reached.
     if (name == Swarm.defaultName) {
       final starter = activeSwarm.isEmptyStarter
@@ -598,7 +603,7 @@ class AppNotifier extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Cancel an untouched New Harness without closing a session or recording
+  /// Cancel an untouched New Tab without closing a session or recording
   /// Recently Closed. A sole workspace remains the app's starting screen.
   bool cancelSwarmDraft(String id) {
     final returnId = _draftSwarmReturns[id];
@@ -1508,13 +1513,16 @@ class AppNotifier extends ChangeNotifier {
 
   void _announceAppFocus() {
     final pane = focusedPane;
-    final machineId = pane?.agentId == null ? null : pane?.machineId;
+    // A viewer is its agent's, so focusing it is focusing that agent: the dial
+    // and the daemon see one agent at this desk, not a tile they cannot name.
+    final agentId = pane?.agentId ?? pane?.ownerAgentId;
+    final machineId = agentId == null ? null : pane?.machineId;
     final previousMachineId = _announcedFocusMachineId;
     _announcedFocusMachineId = machineId;
     if (previousMachineId != null && previousMachineId != machineId) {
       _sendAppFocus(previousMachineId, null);
     }
-    if (machineId != null) _sendAppFocus(machineId, pane!.agentId);
+    if (machineId != null) _sendAppFocus(machineId, agentId);
   }
 
   void _sendAppFocus(String machineId, String? agentId) {
@@ -3083,7 +3091,11 @@ class AppNotifier extends ChangeNotifier {
           prev.launchDetail != agent.launchDetail ||
           prev.status != agent.status ||
           prev.terminalAvailable != agent.terminalAvailable ||
-          prev.terminalUnavailableReason != agent.terminalUnavailableReason) {
+          prev.terminalUnavailableReason != agent.terminalUnavailableReason ||
+          prev.dsh != agent.dsh ||
+          prev.dshName != agent.dshName ||
+          prev.viewerUrl != agent.viewerUrl ||
+          prev.verdict != agent.verdict) {
         return false;
       }
     }
@@ -3596,6 +3608,106 @@ class AppNotifier extends ChangeNotifier {
   /// reopening it mid-probe, does not start a second sweep. Never throws — a
   /// machine that cannot answer leaves every engine unknown, and unknown is
   /// rendered as the dialog behaved before this existed.
+  /// Which domain-specific harnesses [machineId] has or could install — the
+  /// `dsh_list` answer, cached per machine and deduplicated on
+  /// [MachineDsh.inFlight] exactly like [probeEngines]. The Create dialog asks
+  /// with [force] on every open, since an install it started itself is what
+  /// most often makes the stored answer stale.
+  Future<void> probeDsh(String machineId, {bool force = false}) {
+    final machine = machineStates[machineId];
+    if (machine == null) return Future.value();
+    final existing = machine.dsh.inFlight;
+    if (existing != null) return existing;
+    if (machine.dsh.loaded && !force) return Future.value();
+    final work = _probeDsh(machine);
+    machine.dsh.inFlight = work;
+    notifyListeners();
+    return work;
+  }
+
+  Future<void> _probeDsh(MachineState machine) async {
+    try {
+      final result = await _conn(machine.machine.machineId)
+          .request('dsh_list', timeout: const Duration(seconds: 30));
+      final raw = result['dsh'];
+      if (raw is! List) throw const FormatException('dsh_list: no list');
+      machine.dsh.replace(raw.map(DshEntry.fromJson).whereType<DshEntry>());
+    } catch (error) {
+      // A CLI that predates `dsh_list` refuses it by code, and the dialog then
+      // offers only the harnesses this build ships a face for; the machine
+      // has the final say at create time (`INVALID_DSH`).
+      machine.dsh.error = error is WsRequestFailure
+          ? (error.detail?.isNotEmpty == true ? error.detail : error.code)
+          : 'This machine could not report its harnesses';
+    } finally {
+      machine.dsh.inFlight = null;
+      notifyListeners();
+    }
+  }
+
+  /// Install the harness [id] on [machineId]: clone, set up its toolchain, run
+  /// its doctor. Minutes, not seconds — the Circuit toolchain alone is an
+  /// `npm ci` — so the request carries its own long budget and the machine
+  /// narrates progress through `dsh_install_status` pushes, which land in
+  /// [MachineDsh.installs] for the dialog's status line. Null on success, else
+  /// a sentence for the person who clicked.
+  Future<String?> installDsh(String machineId, String id) async {
+    final machine = machineStates[machineId];
+    if (machine == null) return 'Machine not found';
+    final machineName = machine.machine.displayName;
+    machine.dsh.installs[id] = DshInstallProgress(id: id, phase: 'clone');
+    notifyListeners();
+    try {
+      final result = await _conn(machineId).request(
+        'dsh_install',
+        payload: {'id': id},
+        timeout: const Duration(minutes: 10),
+      );
+      if (result['ok'] != true) {
+        final detail = result['detail'];
+        return _finishInstall(
+          machine,
+          id,
+          detail is String && detail.isNotEmpty
+              ? detail
+              : 'Install failed on $machineName',
+        );
+      }
+    } on WsRequestFailure catch (failure) {
+      return _finishInstall(machine, id, switch (failure.code) {
+        'UNSUPPORTED' || 'UNSUPPORTED_ON_REMOTE' =>
+          'Update the harness CLI on $machineName to install harnesses',
+        _ =>
+          failure.detail?.isNotEmpty == true
+              ? failure.detail!
+              : 'Install failed on $machineName (${failure.code})',
+      });
+    } on WsRequestTimeout {
+      return _finishInstall(
+        machine,
+        id,
+        '$machineName is still installing. Try again in a few minutes.',
+      );
+    } catch (_) {
+      return _finishInstall(machine, id, 'Install failed on $machineName');
+    }
+    machine.dsh.installs[id] = DshInstallProgress(id: id, phase: 'done');
+    notifyListeners();
+    // The stored answer just became stale by the dialog's own hand.
+    await probeDsh(machineId, force: true);
+    return null;
+  }
+
+  String _finishInstall(MachineState machine, String id, String error) {
+    machine.dsh.installs[id] = DshInstallProgress(
+      id: id,
+      phase: 'failed',
+      detail: error,
+    );
+    notifyListeners();
+    return error;
+  }
+
   Future<void> probeEngines(String machineId, {bool force = false}) {
     final machine = machineStates[machineId];
     if (machine == null) return Future.value();
@@ -3745,6 +3857,9 @@ class AppNotifier extends ChangeNotifier {
       _markAgentProcessing(machine, agentId);
     }
     _warmPreviews(machine);
+    for (final agent in agents) {
+      _syncViewerPane(machine, agent);
+    }
   }
 
   void _upsertAgent(MachineState machine, Agent agent) {
@@ -3771,6 +3886,7 @@ class AppNotifier extends ChangeNotifier {
     }
     machine.agentLoadStatus = AgentLoadStatus.loaded;
     machine.agentsLoadError = null;
+    _syncViewerPane(machine, agent);
     if (agent.launchState == 'failed' && previous?.launchState != 'failed') {
       _lastError = agent.launchDetail ?? 'Failed to start ${agent.name}';
       // The launch already ran and failed (e.g. the engine's automatic
@@ -3808,14 +3924,139 @@ class AppNotifier extends ChangeNotifier {
     // already destroyed.
     final machineId = machine.machine.machineId;
     for (final pane in allPanes.toList()) {
-      if (pane.machineId != machineId || pane.agentId != agentId) continue;
+      final owned =
+          pane.machineId == machineId &&
+          (pane.agentId == agentId ||
+              (pane.isWeb && pane.ownerAgentId == agentId));
+      if (!owned) continue;
       await _detachSession(pane, sendClose: false);
       for (final swarm in swarms) {
         swarm.remove(pane);
       }
     }
+    _dismissedViewers.remove(_viewerKey(machineId, agentId));
     _persistLayout();
     _announceAppFocus();
+  }
+
+  // ── harness viewers ─────────────────────────────────────────────────────────
+
+  /// Viewer URLs the person closed, by `machine/agent`. A frame carrying the
+  /// same URL again leaves the tile closed; a different URL reopens it. Memory
+  /// only — a restart is a fresh look at whatever the agent is showing.
+  final _dismissedViewers = <String, String>{};
+
+  String _viewerKey(String machineId, String agentId) => '$machineId/$agentId';
+
+  /// Keep [agent]'s viewer tile in step with its frame.
+  ///
+  /// The daemon says where the harness's viewer is (`viewerUrl`); this puts a
+  /// web tile immediately to the RIGHT of the agent's terminal in whichever
+  /// tab that shows that terminal, navigates an open tile when the URL
+  /// changes, and takes the tile down when the viewer or the terminal goes.
+  /// It never steals focus: the person is typing in the terminal the viewer
+  /// belongs to. Nothing is persisted — see [PaneKind.web].
+  void _syncViewerPane(MachineState machine, Agent agent) {
+    final machineId = machine.machine.machineId;
+    final url = agent.viewerUrl;
+    final dismissed =
+        url != null &&
+        _dismissedViewers[_viewerKey(machineId, agent.id)] == url;
+    var changed = false;
+    // Tab by tab: wherever this agent's terminal is, its viewer is beside it,
+    // and nowhere else. A terminal opened in a second tab gets a second
+    // viewer; a tab whose terminal went loses its viewer.
+    for (final swarm in swarms) {
+      final at = swarm.panes.indexWhere(
+        (pane) =>
+            !pane.isWeb &&
+            pane.machineId == machineId &&
+            pane.agentId == agent.id,
+      );
+      final viewers = [
+        for (final pane in swarm.panes)
+          if (pane.isWeb &&
+              pane.machineId == machineId &&
+              pane.ownerAgentId == agent.id)
+            pane,
+      ];
+      if (url == null || at < 0) {
+        for (final pane in viewers) {
+          swarm.remove(pane);
+          changed = true;
+        }
+        continue;
+      }
+      if (viewers.isNotEmpty) {
+        // The same page again is nothing new; a different one navigates in
+        // place rather than reopening a tile.
+        for (final pane in viewers) {
+          pane.url = url;
+        }
+        continue;
+      }
+      if (dismissed || swarm.panes.length >= maxPanes) continue;
+      // The viewer goes LEFT of the terminal: it is what the user watches, the
+      // terminal is where they type, and reading order puts the product first.
+      final insertion = at;
+      final pane = TerminalPane(
+        id: _nextPaneId++,
+        machineId: machineId,
+        kind: PaneKind.web,
+        url: url,
+        ownerAgentId: agent.id,
+      );
+      swarm.panes.insert(insertion, pane);
+      // The same bookkeeping a split does when it grows the grid by one:
+      // pins past the insertion slide right, and the shape is re-derived.
+      swarm.pinnedSlots.updateAll(
+        (_, slot) => slot >= insertion ? slot + 1 : slot,
+      );
+      swarm.arranged = null;
+      swarm.arrangedKey = null;
+      // Alone with its terminal, the viewer takes two thirds of the tab — a
+      // board or a part wants the width, and a third is the least a coding
+      // agent's interface reads well at. Only when nobody has sized this pair
+      // by hand: a manual layout is the user's.
+      if (swarm.panes.length == 2 && swarm.paneSizes['2:manual'] == null) {
+        swarm.savePaneSizes('2:manual', PaneArrangement.viewerBesideTerminal);
+      }
+      changed = true;
+    }
+    if (changed) _persistLayout();
+  }
+
+  /// Whether the active tab shows this agent's viewer beside its terminal.
+  bool viewerPaneShown(String machineId, String agentId) =>
+      activeSwarm.panes.any(
+        (pane) =>
+            pane.isWeb &&
+            pane.machineId == machineId &&
+            pane.ownerAgentId == agentId,
+      );
+
+  /// The header's viewer control: hide the viewer in this tab, or bring it
+  /// back beside the terminal. Bringing it back also lifts a dismissal, so a
+  /// page closed by hand earlier opens again on request.
+  Future<void> toggleViewerPane(String machineId, String agentId) async {
+    final viewer = activeSwarm.panes
+        .where(
+          (pane) =>
+              pane.isWeb &&
+              pane.machineId == machineId &&
+              pane.ownerAgentId == agentId,
+        )
+        .firstOrNull;
+    if (viewer != null) {
+      await closePane(viewer.id);
+      return;
+    }
+    final machine = machineStates[machineId];
+    final agent = machine?.agents.where((a) => a.id == agentId).firstOrNull;
+    if (machine == null || agent == null || agent.viewerUrl == null) return;
+    _dismissedViewers.remove(_viewerKey(machineId, agentId));
+    _syncViewerPane(machine, agent);
+    notifyListeners();
   }
 
   String? _eventAgentId(
@@ -4182,6 +4423,7 @@ class AppNotifier extends ChangeNotifier {
     ProjectFolderRequest? projectFolder,
     bool bypassPermission = false,
     String? codexHome,
+    String? dsh,
     String? swarmId,
     PaneSplitRequest? split,
     AgentCreationAttempt? attempt,
@@ -4193,6 +4435,9 @@ class AppNotifier extends ChangeNotifier {
       ...?projectFolder?.payload,
       'bypassPermission': bypassPermission,
       'codexHome': ?codexHome,
+      // The harness this agent is created from. `engine` above is its BASE —
+      // the machine refuses the pair when they disagree (`INVALID_DSH`).
+      'dsh': ?dsh,
     };
     if (creation._choices != null &&
         (creation._machineId != machineId ||
@@ -4204,9 +4449,27 @@ class AppNotifier extends ChangeNotifier {
     if (creation._finished) return Future.value(creation._outcome);
     if (creation._inFlight case final inFlight?) return inFlight;
     if (creation._choices == null) {
+      var targetId = split?.swarmId ?? swarmId ?? activeSwarmId;
+      // A harness gets a tab of its own, named after it: its viewer is the
+      // product and needs the width, and the two tiles read as one workspace
+      // rather than two more tiles in whatever tab was open. A New Tab
+      // start page the user is already on IS that tab. A split was asked for
+      // by name and wins; so does a tab other than the current one. The
+      // current tab is what the dialog passes when nothing was chosen.
+      if (dsh != null &&
+          split == null &&
+          (swarmId == null || swarmId == activeSwarmId)) {
+        final label = engineIdentity(dsh).label;
+        if (activeSwarm.isEmptyStarter) {
+          renameSwarm(activeSwarmId, label);
+        } else {
+          newSwarm(name: label);
+        }
+        targetId = activeSwarmId;
+      }
       creation._choices = choices;
       creation._machineId = machineId;
-      creation._targetId = split?.swarmId ?? swarmId ?? activeSwarmId;
+      creation._targetId = targetId;
       creation._split = split;
     }
     final work = _createAgentWithReceipt(creation);
@@ -4244,6 +4507,9 @@ class AppNotifier extends ChangeNotifier {
               'Install tmux there, then try again.',
         'UNSUPPORTED_ON_REMOTE' || 'UNSUPPORTED' =>
           'Update the harness CLI on this machine to create an agent',
+        'INVALID_DSH' =>
+          'This harness is not installed on $machine. '
+              '${detail ?? 'Install it there, then try again.'}',
         _ => 'Create agent failed: ${detail ?? code}',
       };
 
@@ -4346,6 +4612,7 @@ class AppNotifier extends ChangeNotifier {
         'INVALID_ENGINE',
         'INVALID_GRID',
         'INVALID_CODEX_HOME',
+        'INVALID_DSH',
         'TMUX_UNAVAILABLE',
         'TMUX_TOO_OLD_FOR_GRID',
         'GRID_CONFIG_FAILED',
@@ -4670,11 +4937,14 @@ class AppNotifier extends ChangeNotifier {
             agent.terminalAvailable &&
             machine.terminalCapabilityAvailable) {
           machine.pendingOfflineAgentId = null;
-          // Only reattach the terminal if the user is still on THIS machine — recovery can finish
-          // well after the user has moved on to a different machine/agent, and forcing selectAgent
-          // here would yank their focus back to what they were looking at before, mid-navigation.
-          // The recovered agent still shows normally in the rail; they can click it themselves.
-          if (selectedMachineId == machineId) {
+          // Loading already reattaches retained panes across every tab. Selecting that agent
+          // again would insert it into the current tab and steal focus from the user's work.
+          // Only fulfill a pending selection when it has no pane yet and the user is still on
+          // this machine; a reconnect must preserve the layout and selection they left open.
+          final hasPane = allPanes.any(
+            (pane) => pane.machineId == machineId && pane.agentId == agentId,
+          );
+          if (!hasPane && selectedMachineId == machineId) {
             await selectAgent(machineId, agentId);
           } else {
             notifyListeners();
@@ -4802,7 +5072,12 @@ class AppNotifier extends ChangeNotifier {
     }
 
     final existing = panes
-        .where((pane) => pane.machineId == machineId && pane.agentId == null)
+        .where(
+          (pane) =>
+              pane.machineId == machineId &&
+              pane.agentId == null &&
+              !pane.isWeb,
+        )
         .firstOrNull;
     if (existing != null) {
       focusPane(existing.id);
@@ -4811,7 +5086,7 @@ class AppNotifier extends ChangeNotifier {
     }
 
     final target = focusedPane;
-    if (target != null && target.agentId == null) {
+    if (target != null && target.agentId == null && !target.isWeb) {
       target.machineId = machineId;
       focusPane(target.id);
       notifyListeners();
@@ -4929,6 +5204,9 @@ class AppNotifier extends ChangeNotifier {
     // duplicate with the inferred one is free: the daemon drops the second against where the dial
     // already is.
     if (target == activeSwarm) _announceAppFocus();
+    // The agent may already have a viewer the grid could not show until now,
+    // because this tile is what it hangs beside.
+    _syncViewerPane(machine, agent);
 
     if (machine.nodeOnline == false) {
       machine.pendingOfflineAgentId = agentId;
@@ -5339,6 +5617,15 @@ class AppNotifier extends ChangeNotifier {
   Future<void> closePane(int paneId, {bool persist = true}) async {
     final pane = panes.where((p) => p.id == paneId).firstOrNull;
     if (pane == null) return;
+    if (pane.isWeb) {
+      // A viewer closed by hand stays closed for THIS page: the agent's next
+      // frame carries the same URL and must not reopen it. A different URL —
+      // a new artifact, a restarted viewer — is news, and opens again.
+      final owner = pane.ownerAgentId;
+      if (owner != null && pane.url != null) {
+        _dismissedViewers[_viewerKey(pane.machineId, owner)] = pane.url!;
+      }
+    }
     if (pane.agentId != null) {
       final machine = stateOf(pane.machineId);
       final agent = machine?.agents
@@ -5351,7 +5638,7 @@ class AppNotifier extends ChangeNotifier {
           historyId: 'closed-${_nextClosedHistoryId++}',
           name: agent?.name ?? pane.session?.agentName ?? pane.agentId!,
           machineName: machine?.machine.displayName ?? pane.machineId,
-          engine: agent?.engine ?? pane.session?.engineId,
+          engine: agent?.identityEngine ?? pane.session?.engineId,
         ),
       );
     }
@@ -5359,6 +5646,18 @@ class AppNotifier extends ChangeNotifier {
     // background tile going away changes nothing the dial can see.
     final wasFocused = focusedPaneId == paneId;
     activeSwarm.remove(pane);
+    // A harness's viewer lives beside its terminal and nowhere else: closing
+    // the terminal in this tab takes the viewer in this tab with it. The
+    // viewer's own close above is different — it is a choice about the page.
+    if (!pane.isWeb && pane.agentId != null) {
+      for (final viewer in activeSwarm.panes.toList()) {
+        if (viewer.isWeb &&
+            viewer.machineId == pane.machineId &&
+            viewer.ownerAgentId == pane.agentId) {
+          activeSwarm.remove(viewer);
+        }
+      }
+    }
     _settlePins();
     if (persist) _persistLayout();
     selectedMachineId = focusedPane?.machineId;
@@ -5873,6 +6172,13 @@ class AppNotifier extends ChangeNotifier {
       // until now, even though the daemon had already shaped the question for
       // the dial — `sendCommander` is device-only, so it never came down this
       // wire at all.
+      case 'dsh_install_status':
+        // The machine narrating an install this window (or another) asked for.
+        // Only ever advances a known install: a phase for an id nobody here
+        // asked about is still worth showing, so it is recorded either way.
+        final progress = DshInstallProgress.fromJson(payload);
+        if (progress != null) machine.dsh.installs[progress.id] = progress;
+        break;
       case 'commander_question':
         final agentId = _eventAgentId(machine, event, payload);
         if (agentId != null) {
