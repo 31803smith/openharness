@@ -14,6 +14,23 @@ import 'phone_status.dart';
 import 'phone_tab_bar.dart';
 import 'settings_page.dart';
 
+/// Whether the shell draws its tab bar.
+///
+/// Off because the terminal is where the phone opens: the landing rules below
+/// reopen the last agent, fall back to Machines when nothing answers, and carry
+/// a freshly linked machine through to its first agent — so the app puts itself
+/// where it belongs, and a bar for steering it there by hand is a row of chrome
+/// under every screen paying for the case those rules already cover.
+///
+/// ⚠️ It hides the BAR, not the tabs. All three still exist, still hold their
+/// own page stacks, [_PhoneShellState._select] still pops one back to its root,
+/// and the landing rules still choose between them — nothing below this flag
+/// knows it is off. What goes with it is the only way to REACH a tab by hand,
+/// so with it off the app can only be where it was put: fine while that place
+/// is one agent's terminal, and the reason this is a flag rather than a
+/// deletion.
+const bool _showTabBar = false;
+
 /// The signed-in phone app: three tabs, each with its own page stack.
 ///
 /// Its own [Navigator] per tab, nested under the app's, on purpose. Two reasons, and both are
@@ -374,11 +391,25 @@ class _PhoneShellState extends State<PhoneShell> with WidgetsBindingObserver {
                   ),
               ],
             ),
-            bottomNavigationBar: PhoneTabBar(
-              current: _tab,
-              onSelect: _select,
-              waitingCount: waitingAgents(agentIndex(widget.notifier)).length,
-            ),
+            // ⚠️ Hidden, not removed. The terminal is the screen the phone
+            // opens on, and the three-tab bar under it is on its way out — but
+            // the tabs themselves still carry the whole app: every page here is
+            // rooted in one of them, [_select] is what pops a tab back and
+            // keeps its stack, and the landing rules above still choose between
+            // them. Deleting the bar would take all of that with it.
+            //
+            // So the shell is unchanged and only the bar is not drawn. Flip
+            // [_showTabBar] to bring it straight back, and everything below is
+            // still wired to it.
+            bottomNavigationBar: !_showTabBar
+                ? null
+                : PhoneTabBar(
+                    current: _tab,
+                    onSelect: _select,
+                    waitingCount: waitingAgents(
+                      agentIndex(widget.notifier),
+                    ).length,
+                  ),
           ),
         ),
       ),

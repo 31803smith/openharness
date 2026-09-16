@@ -24,10 +24,13 @@ import 'status_pill.dart';
 /// ⚠️ It never asks a machine anything. Keystrokes filter the cached index and
 /// nothing else, so typing on a phone with two bars of signal stays instant and
 /// costs no data.
-void openPhoneSearch(BuildContext context, AppNotifier notifier) =>
-    Navigator.of(context).push(
-      phoneRoute((_) => PhoneSearchPage(notifier: notifier)),
-    );
+///
+/// Returns when the search closes, so a caller whose own chrome depends on
+/// being the top route can rebuild — see `terminal_page.dart`, where the header
+/// buttons hide behind a keyboard this page did not raise.
+Future<void> openPhoneSearch(BuildContext context, AppNotifier notifier) =>
+    Navigator.of(context)
+        .push(phoneRoute((_) => PhoneSearchPage(notifier: notifier)));
 
 class PhoneSearchPage extends StatefulWidget {
   const PhoneSearchPage({super.key, required this.notifier});
@@ -282,8 +285,7 @@ class _Results extends StatelessWidget {
       return const EmptyState(
         icon: LucideIcons.laptopMinimal300,
         title: 'Nothing to search yet',
-        message:
-            'Link a machine and its agents will be findable from here.',
+        message: 'Link a machine and its agents will be findable from here.',
       );
     }
     if (rows.isEmpty) {

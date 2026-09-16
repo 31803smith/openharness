@@ -16,8 +16,11 @@ import 'package:harness_mobile/widgets/engine_identity.dart';
 import 'package:harness_mobile/widgets/rename_agent_dialog.dart';
 import 'package:harness_mobile/widgets/terminal_panel.dart';
 
+import 'agents_page.dart' show openNewAgent;
 import 'delete_agent.dart';
+import 'phone_fab.dart';
 import 'phone_header.dart';
+import 'phone_search_page.dart' show openPhoneSearch;
 import 'phone_sheet.dart';
 import 'phone_status.dart';
 import 'status_pill.dart';
@@ -303,6 +306,27 @@ class _TerminalPageState extends State<TerminalPage>
   /// xterm reopens it on the next tap in the pane.
   void _dismissKeyboard() => FocusManager.instance.primaryFocus?.unfocus();
 
+  /// Whether the keyboard on screen is THIS page's — the question the header
+  /// chrome asks, which [_keyboardUp] alone answers wrongly.
+  ///
+  /// ⚠️ [_keyboardUp] means "an inset exists", not "this page raised it". A
+  /// pushed page with a text field — search, rename — raises one of its own,
+  /// and this page is still mounted underneath, still gets `didChangeMetrics`,
+  /// and so still records the keyboard as up. It then stops receiving ticks
+  /// once it is no longer the route being laid out, so the fall back to zero
+  /// after that page closes never reaches it: the flag stays true forever and
+  /// the header controls it hides never come back.
+  ///
+  /// [ModalRoute.isCurrent] is what separates the two. False while anything is
+  /// stacked above, so an inset belonging to that page is not read as this
+  /// one's — and true again the moment it pops, whatever the stale flag says.
+  ///
+  /// Not used for [_shouldFocus] or for the key bar: those are about the
+  /// keyboard ITSELF, which is screen-wide, and a covered page must keep
+  /// tracking it to know what to do when it is uncovered.
+  bool get _ownsKeyboard =>
+      _keyboardUp && (ModalRoute.of(context)?.isCurrent ?? true);
+
   /// Guards against a second picker while one is already up.
   ///
   /// The key bar stays on screen under the sheet the OS puts over it, so its
@@ -401,6 +425,48 @@ class _TerminalPageState extends State<TerminalPage>
         final reclaim = phoneReclaimAction(session);
         return Scaffold(
           backgroundColor: AppPalette.windowBg,
+          // New agent, moved out of the header and onto the terminal as the
+          // one filled thing on the page — see the note beside search for why
+          // it left the row.
+          //
+          // ⚠️ Unlike the Agents tab, this does NOT ask which machine to
+          // create on: this page knows, and it is the machine the agent on
+          // screen runs on. The tab has to ask because it lists every
+          // machine's agents at once and a guess would put an agent on a
+          // computer nobody named — see `agents_tab.dart`'s `_pickMachine`.
+          // Here that question is already answered, so asking it again is a
+          // step with one possible answer.
+          //
+          // Gated on the machine ANSWERING, the same gate the Agents tab puts
+          // on its own fab: creating needs the machine to list its folders and
+          // name its engines, so one that is offline or still wants its
+          // password cannot host a new agent. Null rather than disabled, the
+          // convention [PhoneFab] documents.
+          //
+          // ⚠️ Gone while the keyboard is up, for the reason the header
+          // controls are: a Scaffold's fab floats over the body, so it would
+          // sit on top of [TerminalKeyBar] — the one row the thumb is actually
+          // aiming at while typing.
+          floatingActionButton:
+              !_ownsKeyboard &&
+                  machine != null &&
+                  phoneMachineStatusOf(machine) == PhoneMachineStatus.ready
+              ? PhoneFab(
+                  icon: LucideIcons.plus300,
+                  tooltip: 'New agent',
+                  // Awaited for the same reason search is: the form may be
+                  // backed out of rather than completed, and this page gets no
+                  // rebuild when it lands back on top.
+                  onPressed: () async {
+                    await openNewAgent(
+                      context,
+                      widget.notifier,
+                      widget.machineId,
+                    );
+                    if (mounted) setState(() {});
+                  },
+                )
+              : null,
           // ⚠️ Plain `SafeArea`. A `bottom: !keyboardUp` toggle was here,
           // computed from `MediaQuery.viewInsetsOf(context).bottom > 0` — and
           // that value is pinned at ZERO inside this page (see
@@ -415,18 +481,12 @@ class _TerminalPageState extends State<TerminalPage>
                     displayName: agent?.engineDisplayName,
                     size: 22,
                   ),
-                  subtitle: StatusPill(
-                    fontSize: 12,
-                    summary: (
-                      // The machine alone once the button beside it is saying
-                      // the state: two words for one fact, in a row this
-                      // narrow, is what truncated "Taken over" to "Ta…".
-                      label: reclaim == null
-                          ? '${machine?.machine.displayName ?? ''} · ${status.label}'
-                          : machine?.machine.displayName ?? '',
-                      tone: status.tone,
-                    ),
-                  ),
+                  // ⚠️ No subtitle. The machine and its state moved to
+                  // [_MachineBar] at the foot of the page — see there for why.
+                  // A header carrying both a name and a status line spent two
+                  // rows on identity and left the filename, the one thing that
+                  // says WHICH agent this is, sharing its row with four
+                  // controls and ellipsing halfway through.
                   trailing: [
                     // Read-only is a state to get OUT of, so its way out is a
                     // labelled button in the header rather than a line in the
@@ -440,6 +500,39 @@ class _TerminalPageState extends State<TerminalPage>
                           widget.machineId,
                           widget.agentId,
                         ),
+                      ),
+                    // Search is here because this page is where the phone now
+                    // opens, so what the list screens offered has to be
+                    // reachable without going back to them first:
+                    // [openPhoneSearch] is the same search that spans agents
+                    // and machines.
+                    //
+                    // ⚠️ `+` is NOT beside it any more — it is the [PhoneFab]
+                    // over the terminal. Two bare glyphs at the end of a row
+                    // whose other end is a whole back band gave the corner
+                    // three targets and told the eye nothing about which one
+                    // creates something; the fab says that by being the only
+                    // filled thing on the page.
+                    //
+                    // ⚠️ Still hidden while the keyboard is up. The header is
+                    // one row, and a terminal being typed into is the one
+                    // moment search is not what the thumb is reaching for —
+                    // the key bar directly under it is.
+                    // ⚠️ Not [PhoneSearchButton], which pushes and forgets. A
+                    // page that pops back onto the top gets no rebuild of its
+                    // own, so [_ownsKeyboard] would keep answering with what
+                    // was true while the search was covering it. Awaiting the
+                    // push is what turns "the search closed" into a frame.
+                    if (!_ownsKeyboard)
+                      AppIconButton(
+                        icon: LucideIcons.search300,
+                        size: 22,
+                        tooltip: 'Search',
+                        color: AppPalette.textSecondary,
+                        onPressed: () async {
+                          await openPhoneSearch(context, widget.notifier);
+                          if (mounted) setState(() {});
+                        },
                       ),
                     // Null while the agent is not loaded: there is nothing to act on yet, and a
                     // menu of actions that all fail is worse than no menu.
@@ -534,6 +627,35 @@ class _TerminalPageState extends State<TerminalPage>
                                   )
                                 : null,
                           ),
+                        ),
+                      // Which computer this is running on, and whether it is
+                      // still answering — the pair that used to sit under the
+                      // filename in the header.
+                      //
+                      // ⚠️ Below the key bar, not above it. The bar is what the
+                      // thumb works, and a line that moves every time it
+                      // appears would shift the keys under it. Here it is the
+                      // last row on the page and nothing it does moves
+                      // anything above it.
+                      //
+                      // ⚠️ Hidden while this page owns the keyboard, the same
+                      // gate the header controls take. The key bar is already
+                      // tall, and a status line wedged under it is a row of
+                      // chrome the terminal loses for nothing — state is not
+                      // what is being read mid-typing.
+                      if (!_ownsKeyboard)
+                        _MachineBar(
+                          name: machine?.machine.displayName ?? '',
+                          // ⚠️ The machine ALONE once the reclaim button is up.
+                          // The two say the same fact in different words —
+                          // "Taken over" here against "Take control" there,
+                          // "Disconnected" against "Reconnect" — and a page
+                          // stating its problem twice reads as two problems.
+                          // The button wins because it is the way out of the
+                          // state, not just a report of it. Same rule the
+                          // header's subtitle followed before this row took
+                          // the pair over.
+                          status: reclaim == null ? status : null,
                         ),
                     ],
                   ),
@@ -676,4 +798,71 @@ class _Attaching extends StatelessWidget {
       ],
     ),
   );
+}
+
+/// The foot of the page: which computer the agent runs on, and whether that
+/// computer is still answering.
+///
+/// It reads as one fact — *this agent, on that machine, live* — so the machine
+/// and the state share a row rather than stacking. The dot belongs to the
+/// state, not to the name, which is why [StatusPill] draws the pair and this
+/// widget only puts the machine in front of it.
+///
+/// ⚠️ The name is what yields when the row is narrow. A truncated state word
+/// is the bug this layout was moved out of the header to avoid — "Taken over"
+/// ellipsed to "Ta…" there — so [StatusPill] keeps its intrinsic width and the
+/// [Flexible] is on the name alone. A machine called "Macbook Pro của Phát"
+/// loses its tail; "Disconnected" never does.
+class _MachineBar extends StatelessWidget {
+  const _MachineBar({required this.name, required this.status});
+
+  final String name;
+
+  /// Null while the header's reclaim button is saying the state instead — see
+  /// the call site. The row then carries the machine alone, at the same height
+  /// it has with both, so nothing under the terminal moves when a session is
+  /// taken over.
+  final PhoneSummary? status;
+
+  @override
+  Widget build(BuildContext context) {
+    AppTheme.watch(context);
+    final status = this.status;
+    // Nothing to say — the machine has not loaded and the header is carrying
+    // the state. Draw no row rather than an empty one holding its padding
+    // open under the terminal.
+    if (name.isEmpty && status == null) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 10),
+      child: Row(
+        children: [
+          if (name.isNotEmpty)
+            Flexible(
+              child: Text(
+                name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: AppPalette.textSecondary,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          if (name.isNotEmpty && status != null)
+            // A separator the eye passes over rather than reads: the two halves
+            // are one sentence, and a heavier mark between them made the row
+            // look like two controls.
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 7),
+              child: Text(
+                '·',
+                style: TextStyle(color: AppPalette.textFaint, fontSize: 12),
+              ),
+            ),
+          if (status != null) StatusPill(fontSize: 12, summary: status),
+        ],
+      ),
+    );
+  }
 }
