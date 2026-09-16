@@ -1,4 +1,4 @@
-// The Run a local model dialog and the one action behind it: the copy, the machine line, the
+// The Talk to Local model manager dialog and the one action behind it: the copy, the machine line, the
 // prerequisites that replace it, and what Start actually sends.
 import 'dart:async';
 import 'dart:io' show Platform;
@@ -74,7 +74,7 @@ class _Conn extends WsConn {
           'state': 'created',
           'agent': {
             'id': 'lm1',
-            'name': 'Local models manager',
+            'name': 'Local model manager',
             'engine': 'opencode',
           },
         });
@@ -133,7 +133,7 @@ void main() {
               child: TextButton(
                 key: const Key('door'),
                 onPressed: () => notifier.runLocalModel(context),
-                child: const Text('Run a local model'),
+                child: const Text('Talk to Local model manager'),
               ),
             ),
           ),
@@ -153,12 +153,12 @@ void main() {
   testWidgets('the copy is the plan\'s, and names no plumbing', (tester) async {
     await open(tester);
 
-    expect(find.text('A model that lives on your machine'), findsOneWidget);
+    expect(find.text('Models that live on your machine'), findsOneWidget);
     expect(
       find.text(
-        "Say what you'll use it for. Harness picks one that fits this computer, brings it down, "
-        "and starts it. Once it's running, switch to it in any agent you want, right from that "
-        "agent's model picker.",
+        "Local model manager is an agent that looks after the models on this computer. Say what "
+        "you need and it helps you pick one that fits both this machine and the work, then sets "
+        "it up for you. Once one is up, pick it in any agent's model picker.",
       ),
       findsOneWidget,
     );
@@ -169,6 +169,9 @@ void main() {
     // a computer. The app runs on Linux too.
     expect(find.textContaining('grid'), findsNothing);
     expect(find.textContaining('this Mac'), findsNothing);
+    // The body introduces the agent by name and never says the product's: the person is meeting
+    // Local model manager, not being told to go talk to Harness.
+    expect(find.textContaining('Harness'), findsNothing);
     expect(find.textContaining('!'), findsNothing);
     // No dashes of any kind in the copy: the owner's rule for this dialog.
     expect(find.textContaining('—'), findsNothing);
@@ -212,7 +215,7 @@ void main() {
     await tester.tap(find.byKey(const Key('run-local-model-not-now')));
     await tester.pumpAndSettle();
 
-    expect(find.text('A model that lives on your machine'), findsNothing);
+    expect(find.text('Models that live on your machine'), findsNothing);
     expect(conn.creates, isEmpty);
     expect(notifier.panes, isEmpty);
   });
@@ -224,13 +227,13 @@ void main() {
       await tester.tap(start);
       await tester.pumpAndSettle();
 
-      expect(find.text('A model that lives on your machine'), findsNothing);
+      expect(find.text('Models that live on your machine'), findsNothing);
       final payload = conn.creates.single;
       expect(payload['engine'], 'opencode');
       // The pane IS the agent (`opencode --agent harness-compute`), and is titled before opencode
       // reports a session title.
       expect(payload['agent'], 'harness-compute');
-      expect(payload['name'], 'Local models manager');
+      expect(payload['name'], 'Local model manager');
       // No first message: the person opens the conversation, and the dialog says so.
       expect(payload.containsKey('prompt'), isFalse);
       // Home, not a project: a local model is not about any one repo.
@@ -275,7 +278,7 @@ void main() {
 
     await tester.tap(find.byKey(const Key('door')));
     await tester.pumpAndSettle();
-    expect(find.text('A model that lives on your machine'), findsNothing);
+    expect(find.text('Models that live on your machine'), findsNothing);
     expect(conn.creates, hasLength(2));
     expect(conn.creates.last['agent'], 'harness-compute');
     expect(conn.creates.last.containsKey('prompt'), isFalse);
@@ -291,7 +294,7 @@ void main() {
 
     await tester.tap(find.byKey(const Key('door')));
     await tester.pumpAndSettle();
-    expect(find.text('A model that lives on your machine'), findsOneWidget);
+    expect(find.text('Models that live on your machine'), findsOneWidget);
   });
 
   testWidgets(

@@ -141,7 +141,7 @@ void main() {
   // it already has. Only the middle one is about the ACCOUNT, and folding the first two together is
   // what told a signed-in user to "sign in again" when the real problem was a daemon that had not
   // answered: advice that was wrong, and useless even if the diagnosis had been right. The third
-  // says nothing: the "Run a local model" row under Local is what a person does about it.
+  // says nothing: the "Talk to Local model manager" row under Local is what a person does about it.
   testWidgets(
     'a machine that did not answer says so, and does not blame the account',
     (tester) async {
@@ -169,7 +169,7 @@ void main() {
       await open(tester);
       expect(find.text('Nothing is being served yet.'), findsNothing);
       expect(find.text('Could not reach this machine.'), findsNothing);
-      expect(find.text('Run a local model'), findsOneWidget);
+      expect(find.text('Talk to Local model manager'), findsOneWidget);
     },
   );
 
@@ -177,6 +177,39 @@ void main() {
   // allow — a two-line menu wore the width of the longest model id it could ever hold. The minimum is
   // what keeps a status off a model id; the maximum is a CEILING, not a target. One test each, because
   // re-pumping reuses the State and the second open would answer from the first one's memo.
+  testWidgets('a model that came up since the last open appears in THIS open', (
+    tester,
+  ) async {
+    // A warm open draws the memo at once — that is what makes the click free — and used to leave
+    // the refresh for the NEXT open. A person who has just started a model and opens the picker is
+    // looking for exactly that row, so the refresh has to land in the menu that is showing.
+    final served = <Map<String, Object?>>[
+      {'id': 'Qwen3.5-4B', 'node': 'macbook'},
+    ];
+    notifier.dispose();
+    notifier = AppNotifier(
+      config: AppConfig.dev,
+      authSession: AuthSession(),
+      configStore: null,
+      connectionForTest: (_) => _Conn(served),
+    );
+    await open(tester);
+    expect(find.text('Qwen3.5-4B'), findsOneWidget);
+    expect(find.text('LFM2.5-8B'), findsNothing);
+
+    // Close, start another model on the grid, open again: the memo still says one model.
+    await tester.tapAt(const Offset(5, 5));
+    await tester.pumpAndSettle();
+    served.add({'id': 'LFM2.5-8B', 'node': 'macbook'});
+    await tester.tap(find.text('Model'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Qwen3.5-4B'), findsOneWidget);
+    expect(find.text('LFM2.5-8B'), findsOneWidget);
+    // Still one menu, redrawn — not a second one over the first.
+    expect(find.text('Local'), findsOneWidget);
+  });
+
   testWidgets('a short menu is not as wide as the widest menu could be', (
     tester,
   ) async {
@@ -424,10 +457,10 @@ void main() {
     testWidgets('is there after the served models', (tester) async {
       build(models: served);
       await open(tester);
-      expect(find.text('Run a local model'), findsOneWidget);
+      expect(find.text('Talk to Local model manager'), findsOneWidget);
       // After the models, not among them: it is the way to get another one, and a row that
       // started something sitting between two places the agent could go would read as a third.
-      final row = tester.getTopLeft(find.text('Run a local model'));
+      final row = tester.getTopLeft(find.text('Talk to Local model manager'));
       final model = tester.getTopLeft(find.text('Qwen-Test'));
       expect(row.dy, greaterThan(model.dy));
     });
@@ -438,8 +471,8 @@ void main() {
         // The empty-state sentence is the sentence this row answers, so the row is under it — and it
         // is there even with no grid, because a person with no Local models is exactly who needs it.
         await open(tester);
-        expect(find.text('Run a local model'), findsOneWidget);
-        final row = tester.getTopLeft(find.text('Run a local model'));
+        expect(find.text('Talk to Local model manager'), findsOneWidget);
+        final row = tester.getTopLeft(find.text('Talk to Local model manager'));
         final sentence = tester.getTopLeft(
           find.text('No local models on this account yet.'),
         );
@@ -464,7 +497,7 @@ void main() {
           (rowFor('Qwen-Test').decoration as BoxDecoration?)?.color,
           isNotNull,
         );
-        expect(rowFor('Run a local model').decoration, isNull);
+        expect(rowFor('Talk to Local model manager').decoration, isNull);
       },
     );
 
@@ -480,7 +513,7 @@ void main() {
         onOwnLogin: () => logins++,
         onSelected: (m) => picked = m,
       );
-      await tester.tap(find.text('Run a local model'));
+      await tester.tap(find.text('Talk to Local model manager'));
       await tester.pumpAndSettle();
       expect(runs, 1);
       // Not a move: the agent stays where it was. `currentModel` is set so a stray own-login call
@@ -488,7 +521,7 @@ void main() {
       expect(logins, 0);
       expect(picked, isNull);
       // The menu closed on the choice, like any other row.
-      expect(find.text('Run a local model'), findsNothing);
+      expect(find.text('Talk to Local model manager'), findsNothing);
     });
   });
 

@@ -3402,9 +3402,9 @@ class AppNotifier extends ChangeNotifier {
 
   /// What the pane is called before, and if never, the engine names its
   /// session.
-  static const localModelAgentName = 'Local models manager';
+  static const localModelAgentName = 'Local model manager';
 
-  /// The one action behind every "Run a local model" entry: explain once,
+  /// The one action behind every "Talk to Local model manager" entry: explain once,
   /// then open opencode as the agent that starts one.
   ///
   /// Runs on the computer the app is on ([MachineState.isLocalMachine]) — a

@@ -15,7 +15,7 @@ import 'package:harness/ws/ws_conn.dart';
 
 import 'swarm_state_test.dart' show createApp;
 
-/// Answers what the Run a local model dialog reads on opening and records the
+/// Answers what the Talk to Local model manager dialog reads on opening and records the
 /// create it sends on Start. Anything else asked (the terminal the new pane
 /// opens, say) is left pending, which is what a machine that has not answered
 /// yet looks like — the same shape as the dialog's own test.
@@ -61,7 +61,7 @@ class _LocalModelConn extends WsConn {
           'state': 'created',
           'agent': {
             'id': 'lm1',
-            'name': 'Local models manager',
+            'name': 'Local model manager',
             'engine': 'opencode',
           },
         });
@@ -353,7 +353,7 @@ void main() {
         (_) => reply.complete(),
       );
       await tester.pumpAndSettle();
-      expect(find.text('A model that lives on your machine'), findsOneWidget);
+      expect(find.text('Models that live on your machine'), findsOneWidget);
       // Nothing is missing on this machine, so nothing about it is said.
       expect(find.byKey(const Key('run-local-model-status')), findsNothing);
       expect(conn.creates, isEmpty);
@@ -363,7 +363,7 @@ void main() {
       // The handler answers only once the dialog is done, the way every
       // dialog door does, so native focus is not handed back mid-dialog.
       await reply.future;
-      expect(find.text('A model that lives on your machine'), findsNothing);
+      expect(find.text('Models that live on your machine'), findsNothing);
       final create = conn.creates.single;
       expect(create['engine'], 'opencode');
       expect(create['agent'], AppNotifier.localModelAgent);

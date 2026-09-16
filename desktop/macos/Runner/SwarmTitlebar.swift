@@ -434,7 +434,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     // section returns when there is a real source for it, not before.
     modelsMenu.addItem(.separator())
     section("Local")
-    // Nothing served is not said: the "Run a local model" row that ends this section is the
+    // Nothing served is not said: the "Talk to Local model manager" row that ends this section is the
     // answer, and an empty-list sentence above an empty list is noise.
     do {
       for (id, node) in localModels {
@@ -458,7 +458,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     // they want is not there yet, so it sits in the same list rather than in a section of its own.
     // It replaces the `Add Model` placeholder that dispatched nothing, and is wired like Link
     // Machine…, through the guarded channel handler. Present whether or not anything is served.
-    let run = NSMenuItem(title: "Run a local model", action: #selector(menuAction(_:)), keyEquivalent: "")
+    let run = NSMenuItem(title: "Talk to Local model manager", action: #selector(menuAction(_:)), keyEquivalent: "")
     run.target = self
     run.representedObject = "runLocalModel"
     run.identifier = NSUserInterfaceItemIdentifier(HarnessKeymapMenu.actionPrefix + "runLocalModel")

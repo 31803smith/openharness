@@ -24,6 +24,11 @@ Future<({bool skipNextTime})?> showRunLocalModelDialog(
   String machineId,
 ) => showAppDialog<({bool skipNextTime})>(
   context: context,
+  // Lighter than the app's default veil: this is a two-second yes/no in front
+  // of the swarm the person was just looking at, not a screen of its own, and
+  // the 90% default read as the window going dark. The blur stays, so what is
+  // behind is felt rather than read. Same weight the swarm rename uses.
+  veilTint: const Color(0x99000000),
   builder: (_) =>
       _RunLocalModelDialog(notifier: notifier, machineId: machineId),
 );
@@ -105,18 +110,30 @@ class _RunLocalModelDialogState extends State<_RunLocalModelDialog> {
           null => null,
         };
         return AlertDialog(
-          title: const Text('A model that lives on your machine'),
+          title: const Text('Models that live on your machine'),
           content: SizedBox(
             width: 440,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  "Say what you'll use it for. Harness picks one that fits "
-                  "this computer, brings it down, and starts it. Once it's "
-                  "running, switch to it in any agent you want, right from "
-                  "that agent's model picker.",
+                Text.rich(
+                  TextSpan(
+                    children: [
+                      const TextSpan(
+                        text: 'Local model manager',
+                        style: TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                      const TextSpan(
+                        text:
+                            " is an agent that looks after the models on this "
+                            "computer. Say what you need and it helps you pick "
+                            "one that fits both this machine and the work, then "
+                            "sets it up for you. Once one is up, pick it in any "
+                            "agent's model picker.",
+                      ),
+                    ],
+                  ),
                   style: TextStyle(
                     fontFamily: grid.AppFont.sans,
                     fontSize: 13.5,

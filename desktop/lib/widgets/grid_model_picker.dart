@@ -36,7 +36,7 @@ class GridModelPicker extends StatefulWidget {
   /// have to know a command for.
   final VoidCallback? onUseOwnLogin;
 
-  /// Called when the last row under Local — "Run a local model" — is chosen. An action, not a
+  /// Called when the last row under Local — "Talk to Local model manager" — is chosen. An action, not a
   /// destination: it opens the flow that puts a model on the user's own computer, which is the
   /// answer to the empty section this menu otherwise stops at. Always offered, whether or not
   /// anything is being served yet: a person with no Local models is exactly who needs the door.
@@ -100,6 +100,14 @@ class _GridModelPickerState extends State<GridModelPicker> {
   /// Closes the menu this control has open, if any. Set while one is showing.
   void Function()? _close;
 
+  /// The answer the OPEN menu is drawing, and the overlay entry drawing it. Both set only while a
+  /// menu is showing. A refresh that lands while the menu is open swaps the first and rebuilds
+  /// the second, so a model that came up since the last open appears in THIS one rather than the
+  /// next — a person who just started a model and opened the picker is looking for exactly that
+  /// row, and a menu that showed it only on a second click read as the model not being there.
+  GridModels? _shown;
+  OverlayEntry? _entry;
+
   @override
   void dispose() {
     // A pane can go away under an open menu — closed, moved, or its swarm switched — and an overlay
@@ -141,7 +149,8 @@ class _GridModelPickerState extends State<GridModelPicker> {
     final GridModels answer;
     if (_last != null) {
       answer = _last!;
-      unawaited(_prefetch());
+      // The refresh lands INTO the open menu, not only into the memo for the next one.
+      unawaited(_prefetch().then((_) => _refreshOpenMenu()));
       await _show(answer);
       return;
     }
@@ -167,6 +176,7 @@ class _GridModelPickerState extends State<GridModelPicker> {
   /// the same menu as a cold one rather than a second copy of it.
   Future<void> _show(GridModels answer) async {
     if (!mounted) return;
+    _shown = answer;
 
     final box = context.findRenderObject() as RenderBox?;
     final overlay =
@@ -205,19 +215,19 @@ class _GridModelPickerState extends State<GridModelPicker> {
         // refuses the move) is told so here, instead of being offered rows whose click would do
         // nothing. The daemon names the capable engines beside the list; an older daemon names
         // none, and then every row is offered as before.
-        if (!answer.canRunLocally(widget.engineLabel))
+        if (!_shown!.canRunLocally(widget.engineLabel))
           _empty(
             '${engineIdentity(widget.engineLabel).label} can only run on its own login.',
           )
         // Two different facts, two sentences. "We could not ask" and "this account has no grid"
         // send a person to two different places, and the one that used to cover both told a
         // signed-in user to sign in again. "The grid is serving nothing" is NOT a sentence here:
-        // the "Run a local model" row that ends this section is the answer, and a line saying the
+        // the "Talk to Local model manager" row that ends this section is the answer, and a line saying the
         // list is empty above an empty list is noise.
-        else if (answer.models.isEmpty && _emptySentence(answer) != null)
-          _empty(_emptySentence(answer)!),
-        if (answer.canRunLocally(widget.engineLabel))
-          for (final model in answer.models)
+        else if (_shown!.models.isEmpty && _emptySentence(_shown!) != null)
+          _empty(_emptySentence(_shown!)!),
+        if (_shown!.canRunLocally(widget.engineLabel))
+          for (final model in _shown!.models)
             _item(
               onTap: () => close(_Choice.model(model)),
               child: _Row(
@@ -235,7 +245,7 @@ class _GridModelPickerState extends State<GridModelPicker> {
         // Offered whatever THIS pane's engine can do: it opens a new pane, on an engine that can.
         _item(
           onTap: () => close(const _Choice.runLocalModel()),
-          child: const _Row(selected: false, title: 'Run a local model'),
+          child: const _Row(selected: false, title: 'Talk to Local model manager'),
         ),
       ],
     );
@@ -259,7 +269,7 @@ class _GridModelPickerState extends State<GridModelPicker> {
   /// account. Folding them together is what put "sign in again to set them up" in front of a
   /// signed-in user whose daemon happened to be offline — advice that was wrong, and that would
   /// not have helped even if the diagnosis had been right. A reachable grid serving nothing says
-  /// nothing (null): the "Run a local model" row under it is what a person does about that.
+  /// nothing (null): the "Talk to Local model manager" row under it is what a person does about that.
   String? _emptySentence(GridModels answer) {
     if (!answer.reachable) return 'Could not reach this machine.';
     if (answer.gridName == null) return 'No local models on this account yet.';
@@ -292,6 +302,8 @@ class _GridModelPickerState extends State<GridModelPicker> {
       closed = true;
       deregister();
       entry.remove();
+      _entry = null;
+      _shown = null;
       if (!completer.isCompleted) completer.complete(choice);
     }
 
@@ -345,13 +357,49 @@ class _GridModelPickerState extends State<GridModelPicker> {
         ],
       ),
     );
+    _entry = entry;
     overlayState.insert(entry);
     return completer.future.whenComplete(() => _close = null);
   }
 
+  /// Redraw the open menu from the fresh memo, if the list changed under it. Nothing to do when
+  /// no menu is open, or when the refresh said what the menu already shows — a rebuild for an
+  /// identical list would only flicker the hover.
+  void _refreshOpenMenu() {
+    final entry = _entry;
+    final fresh = _last;
+    final shown = _shown;
+    if (!mounted || entry == null || fresh == null || shown == null) return;
+    if (_sameAnswer(fresh, shown)) return;
+    _shown = fresh;
+    entry.markNeedsBuild();
+  }
+
+  static bool _sameAnswer(GridModels a, GridModels b) {
+    if (a.reachable != b.reachable || a.gridName != b.gridName) return false;
+    if (a.models.length != b.models.length) return false;
+    for (var i = 0; i < a.models.length; i += 1) {
+      if (a.models[i].id != b.models[i].id ||
+          a.models[i].node != b.models[i].node)
+        return false;
+    }
+    return true;
+  }
+
   /// One selectable row.
-  Widget _item({required VoidCallback onTap, required Widget child}) =>
-      InkWell(onTap: onTap, child: child);
+  ///
+  /// The hover is the SAME rectangle as the selected fill — inset by [_menuInset] and rounded the
+  /// same — so a row looks like one thing whether the pointer is on it or the agent is. An InkWell
+  /// around the whole item painted edge to edge and square, over a selected fill that was neither,
+  /// and the two reading as different shapes made the current row look like the odd one out.
+  Widget _item({required VoidCallback onTap, required Widget child}) => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: _menuInset),
+    child: InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(_rowRadius),
+      child: child,
+    ),
+  );
 
   /// A line that states something rather than offering it — no hover, no tap.
   Widget _empty(String text) => Padding(
@@ -506,16 +554,15 @@ class _Row extends StatelessWidget {
       ],
     );
     return Container(
-      // The highlight is the row, so it needs the row's own inset rather than the item's padding —
-      // which is why the `PopupMenuItem`s around these set `padding: EdgeInsets.zero`.
-      margin: const EdgeInsets.symmetric(horizontal: _menuInset),
+      // No margin of its own: the inset is the item's (see `_item`), so that the hover the item
+      // paints and the fill this row paints are one and the same rectangle.
       padding: const EdgeInsets.symmetric(horizontal: _rowPadding, vertical: 5),
       decoration: selected
           // Subtle on purpose: one row in the menu is already the current one, and a mark loud
           // enough to announce that would compete with the thing a person opened the menu to read.
           ? BoxDecoration(
               color: AppColors.selected,
-              borderRadius: BorderRadius.circular(5),
+              borderRadius: BorderRadius.circular(_rowRadius),
             )
           : null,
       // The subtitle sits INSIDE the fill, under the title: it is about this row, and a sentence
@@ -545,6 +592,9 @@ class _Row extends StatelessWidget {
 /// carries their SUM as a left inset, so header text sits exactly above the row text it heads.
 const double _menuInset = 6;
 const double _rowPadding = 8;
+
+/// One radius for the hover and the selected fill: they are the same shape.
+const double _rowRadius = 5;
 
 /// One row's meaning: a grid model, the engine's own login, or the action that starts a local
 /// model. A sealed set rather than a nullable `GridModel`, because `null` already means "the menu
