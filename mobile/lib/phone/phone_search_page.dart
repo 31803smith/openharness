@@ -125,13 +125,30 @@ class _SearchField extends StatelessWidget {
       child: Row(
         children: [
           Expanded(
-            child: Container(
-              height: 44,
-              padding: const EdgeInsets.symmetric(horizontal: 13),
-              decoration: BoxDecoration(
-                color: AppGlass.rowFill,
-                borderRadius: BorderRadius.circular(AppCard.radius),
-                border: Border.all(color: AppGlass.hair),
+            // The rim lives on the BOX, never on the TextField inside it — see
+            // the decoration below for why the field draws no border of its own.
+            // Listening to the node here is what lets the box carry the focus
+            // state instead.
+            child: ListenableBuilder(
+              listenable: focus,
+              builder: (context, child) => AnimatedContainer(
+                duration: AppMotion.hover,
+                curve: AppMotion.curve,
+                height: 44,
+                padding: const EdgeInsets.symmetric(horizontal: 13),
+                decoration: BoxDecoration(
+                  color: AppGlass.rowFill,
+                  borderRadius: BorderRadius.circular(AppCard.radius),
+                  // Focus is said once, by the rim of the box the field fills.
+                  // The accent is the same one the caret already uses, so the
+                  // two read as one state rather than as two decorations.
+                  border: Border.all(
+                    color: focus.hasFocus
+                        ? AppPalette.accentOnSurface
+                        : AppGlass.hair,
+                  ),
+                ),
+                child: child,
               ),
               child: Row(
                 children: [
@@ -159,6 +176,11 @@ class _SearchField extends StatelessWidget {
                       // `Dijkstra-visualization.html` — and a capital forced
                       // onto the first letter of one is a wrong query.
                       textCapitalization: TextCapitalization.none,
+                      // With the decoration's padding zeroed below, the field
+                      // is exactly one line tall inside a 44pt box; this is
+                      // what centres that line on the glyph beside it instead
+                      // of letting it sit on the box's top edge.
+                      textAlignVertical: TextAlignVertical.center,
                       style: TextStyle(
                         color: AppPalette.textPrimary,
                         fontSize: 16,
@@ -166,7 +188,29 @@ class _SearchField extends StatelessWidget {
                       cursorColor: AppPalette.accentOnSurface,
                       decoration: InputDecoration(
                         isDense: true,
+                        // ⚠️ **Every** border state, not just `border`.
+                        //
+                        // `border` alone is the wrong half of the fix: it is
+                        // the fallback, and the app's `inputDecorationTheme`
+                        // fills the named states in — `focusedBorder` is a
+                        // 1.5px accent outline at [AppControl.radius] (8).
+                        // This box is [AppCard.radius] (12), so focusing drew
+                        // a second, tighter blue rectangle INSIDE the rim —
+                        // the reported bug. Naming each state is what keeps
+                        // the theme from reaching past `border`.
                         border: InputBorder.none,
+                        enabledBorder: InputBorder.none,
+                        focusedBorder: InputBorder.none,
+                        errorBorder: InputBorder.none,
+                        focusedErrorBorder: InputBorder.none,
+                        disabledBorder: InputBorder.none,
+                        // The theme also fills these, and both would draw on
+                        // top of the box: a `surfaceContainerHighest` fill over
+                        // the rim's own, and Material's phone-sized padding
+                        // over the 44pt height set above.
+                        filled: false,
+                        contentPadding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
                         hintText: 'Search agents and machines',
                         hintStyle: TextStyle(
                           color: AppPalette.textFaint,
