@@ -8,6 +8,7 @@ import 'package:harness_mobile/state/app_state.dart';
 import 'agent_index.dart';
 import 'agent_row.dart';
 import 'agents_page.dart';
+import 'attention_entry.dart';
 import 'machine_filter_bar.dart';
 import 'phone_card.dart';
 import 'phone_fab.dart';
@@ -94,6 +95,11 @@ class _AgentsTabState extends State<AgentsTab> {
                 large: true,
                 title: 'Agents',
                 trailing: [
+                  // Only while something is actually waiting — the button draws
+                  // itself away otherwise, which is why there is no condition
+                  // here. It sits before search because it is the one control
+                  // that appears in response to something happening.
+                  buildAttentionButton(context, widget.notifier),
                   if (machines.isNotEmpty)
                     PhoneSearchButton(notifier: widget.notifier),
                 ],
