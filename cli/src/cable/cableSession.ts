@@ -1155,18 +1155,35 @@ export class CableSession {
    * rename would replay a week of recaps.
    */
   async pushRestores(): Promise<void> {
-    return this.queued(() => this.pushRestoresNow())
+    // READ FIRST, QUEUE SECOND, and the split is the whole point. A remote agent's history is a cloud
+    // round trip and there is one per agent; asking for them from INSIDE the push chain holds every frame
+    // behind them — including the `focus` the person who just clicked is waiting for. Measured on the
+    // desk: a click from a local agent to a remote one took 1.5 s, of which 0.7 s was this loop waiting
+    // on the first `agent_recent` while the dial sat on the old tile.
+    const rows: Array<{ id: string; past: Array<{ recap: string; text: string }> }> = []
+    for (const a of await this.host.listAgents()) {
+      rows.push({ id: a.id, past: await this.host.recentSummaries(a.id) })
+    }
+    return this.queued(async () => {
+      for (const row of rows) {
+        // Oldest first, so the newest ends up on top of the tile's stack.
+        for (const s of [...row.past].reverse()) {
+          if (!s.recap && !s.text) continue
+          await this.send({ t: 'summary', agentId: row.id, recap: s.recap, text: s.text, restore: true })
+        }
+      }
+    })
   }
 
-  private async pushRestoresNow(): Promise<void> {
-    for (const a of await this.host.listAgents()) {
-      const past = await this.host.recentSummaries(a.id)
-      // Oldest first, so the newest ends up on top of the tile's stack.
-      for (const s of [...past].reverse()) {
-        if (!s.recap && !s.text) continue
-        await this.send({ t: 'summary', agentId: a.id, recap: s.recap, text: s.text, restore: true })
-      }
-    }
+  /**
+   * The same history, off the critical path.
+   *
+   * A machine switch owes the person two things and they are not equally urgent: the tile they clicked,
+   * NOW, and what every tile was last doing, eventually. `restore: true` says the second one is history —
+   * no beep, no notification — so nothing about it is worth a second of staring at the old tile.
+   */
+  private restoreInBackground(): void {
+    void this.pushRestores().catch((err) => this.log(`cable: restores failed (${(err as Error).message})`))
   }
 
   /** Attach: tell the dial everything, whether or not any of it looks unchanged from here. */
@@ -1247,7 +1264,7 @@ export class CableSession {
     if (machineId === this.host.selectedMachine()) {
       await this.send({ t: 'machine.selected', machineId })
       await this.syncAgents(true)
-      await this.pushRestores()
+      this.restoreInBackground()
       return
     }
     const result = await this.host.selectMachine(machineId)
@@ -1262,8 +1279,10 @@ export class CableSession {
     this.lastAgentsKey = ''
     await this.send({ t: 'machine.selected', machineId })
     await this.syncAgents(true)
-    await this.pushRestores()
     await this.syncMachines(true)   // the ✓ moved, and the agent counts with it
+    // LAST, AND NOT AWAITED. This is what the caller is blocked on: `followApp` selects the machine and
+    // only then commands the focus, so anything awaited here is time the dial spends on the old tile.
+    this.restoreInBackground()
   }
 
   /** One row changed — liveness, a rename, a count. Cheaper than re-streaming the wheel. */
