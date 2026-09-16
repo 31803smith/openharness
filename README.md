@@ -13,57 +13,17 @@ is made.
 
 A harness is an agent plus a domain. For code, the agent is the whole harness: fourteen engines,
 unwrapped. Harness reads the transcript each one already writes and installs the vendor's own hooks;
-your credentials stay in your `~/.claude`, `~/.codex`, and so on.
+your credentials stay in your `~/.claude`, `~/.codex`, and so on. For everything else, a harness
+brings the domain with it: its skills in the agent, its toolchain on the machine, its viewer beside
+the terminal, and a header that says where the work is. Three ship today, each on one of the coding
+agents, and yours is a git repository away.
 
-<p align="center">
-  <img src=".github/assets/engines/claude.png"      height="72" alt="Claude Code"  title="Claude Code">
-  &nbsp;&nbsp;
-  <img src=".github/assets/engines/codex.png"       height="72" alt="Codex"        title="Codex">
-  &nbsp;&nbsp;
-  <img src=".github/assets/engines/cursor.png"      height="72" alt="Cursor"       title="Cursor">
-  &nbsp;&nbsp;
-  <img src=".github/assets/engines/opencode.png"    height="72" alt="OpenCode"     title="OpenCode">
-  &nbsp;&nbsp;
-  <img src=".github/assets/engines/pi.png"          height="72" alt="Pi"           title="Pi">
-  &nbsp;&nbsp;
-  <img src=".github/assets/engines/hermes.png"      height="72" alt="Hermes"       title="Hermes">
-  &nbsp;&nbsp;
-  <img src=".github/assets/engines/commandcode.png" height="72" alt="Command Code" title="Command Code">
-  &nbsp;&nbsp;
-  <img src=".github/assets/engines/devin.png"       height="72" alt="Devin"        title="Devin">
-  &nbsp;&nbsp;
-  <img src=".github/assets/engines/muse.png"        height="72" alt="Muse Code"    title="Muse Code">
-  &nbsp;&nbsp;
-  <img src=".github/assets/engines/amp.png"         height="72" alt="Amp"          title="Amp">
-  &nbsp;&nbsp;
-  <img src=".github/assets/engines/kilo.png"        height="72" alt="Kilo"         title="Kilo">
-  &nbsp;&nbsp;
-  <img src=".github/assets/engines/grok.png"        height="72" alt="Grok"         title="Grok">
-  &nbsp;&nbsp;
-  <img src=".github/assets/engines/agy.png"         height="72" alt="Antigravity"  title="Antigravity">
-  &nbsp;&nbsp;
-  <img src=".github/assets/engines/copilot.png"     height="72" alt="GitHub Copilot" title="GitHub Copilot">
-</p>
-
-For everything else, a harness brings the domain with it: its skills in the agent, its toolchain on
-the machine, its viewer beside the terminal, and a header that says where the work is. Three ship
-today, each on one of the agents above, and yours is a git repository away.
-
-<p align="center">
-  <img src=".github/assets/engines/solid.png"  height="72" alt="Solid · 3D design"  title="Solid · 3D design, on Codex">
-  &nbsp;&nbsp;
-  <img src=".github/assets/engines/copper.png" height="72" alt="Copper · PCB"       title="Copper · PCB, on Claude Code">
-  &nbsp;&nbsp;
-  <img src=".github/assets/engines/marp.png"   height="72" alt="Marp · Slides"      title="Marp · Slides, on Claude Code">
-</p>
-
-| Harness | You say | You get | You watch |
-|---|---|---|---|
-| **Claude Code, Codex, Cursor, …** · Code | "add OAuth to the API" | the change, in your repo | the agent's terminal |
-| **Solid** · 3D design | "an iPhone case with a lanyard loop" | a printable STEP part | the model: Build, Fit, Print, Review |
-| **Copper** · PCB | "a USB-C powered ESP32 sensor board" | a fab-ready board, ordered in a click | the board, its checks, the fab |
-| **Marp** · Slides | "a launch keynote for 200 engineers" | a keynote with art and speaker notes | the slides filling in, then Present |
-| **Yours** | | anything an agent can build in a folder | [build a harness](#extend-harness) |
+| Category | Apps |
+|---|---|
+| **Code** | <img src=".github/assets/engines/claude.png" height="28" alt="Claude Code"> Claude Code &nbsp;&nbsp; <img src=".github/assets/engines/codex.png" height="28" alt="Codex"> Codex &nbsp;&nbsp; <img src=".github/assets/engines/cursor.png" height="28" alt="Cursor"> Cursor &nbsp;&nbsp; <img src=".github/assets/engines/opencode.png" height="28" alt="OpenCode"> OpenCode &nbsp;&nbsp; <img src=".github/assets/engines/pi.png" height="28" alt="Pi"> Pi &nbsp;&nbsp; <img src=".github/assets/engines/hermes.png" height="28" alt="Hermes"> Hermes &nbsp;&nbsp; <img src=".github/assets/engines/commandcode.png" height="28" alt="Command Code"> Command Code &nbsp;&nbsp; <img src=".github/assets/engines/devin.png" height="28" alt="Devin"> Devin &nbsp;&nbsp; <img src=".github/assets/engines/muse.png" height="28" alt="Muse Code"> Muse Code &nbsp;&nbsp; <img src=".github/assets/engines/amp.png" height="28" alt="Amp"> Amp &nbsp;&nbsp; <img src=".github/assets/engines/kilo.png" height="28" alt="Kilo"> Kilo &nbsp;&nbsp; <img src=".github/assets/engines/grok.png" height="28" alt="Grok"> Grok &nbsp;&nbsp; <img src=".github/assets/engines/agy.png" height="28" alt="Antigravity"> Antigravity &nbsp;&nbsp; <img src=".github/assets/engines/copilot.png" height="28" alt="GitHub Copilot"> GitHub Copilot |
+| **3D design** | <img src=".github/assets/engines/solid.png" height="28" alt="Solid"> Solid |
+| **PCB** | <img src=".github/assets/engines/copper.png" height="28" alt="Copper"> Copper |
+| **Slides** | <img src=".github/assets/engines/marp.png" height="28" alt="Marp"> Marp |
 
 ## Every machine you own
 
