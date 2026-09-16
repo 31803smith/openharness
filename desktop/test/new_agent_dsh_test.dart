@@ -223,8 +223,6 @@ void main() {
       await tester.ensureVisible(find.byKey(const Key('new-agent-advanced')));
       await tester.tap(find.byKey(const Key('new-agent-advanced')));
       await tester.pumpAndSettle();
-      expect(find.byKey(const Key('new-agent-runs-on')), findsOneWidget);
-      expect(find.textContaining('Runs on Claude Code.'), findsOneWidget);
       // Its base engine's bypass flag is the one offered: a harness has no
       // flag of its own, and without the base's it would say "Managed by".
       await tester.ensureVisible(find.text('Bypass approvals'));
@@ -304,7 +302,6 @@ void main() {
       await tester.ensureVisible(find.byKey(const Key('new-agent-advanced')));
       await tester.tap(find.byKey(const Key('new-agent-advanced')));
       await tester.pumpAndSettle();
-      expect(find.textContaining('Runs on Codex.'), findsOneWidget);
       await create(tester);
       // The machine never answered, so nothing can be called missing.
       expect(app.installs, isEmpty);
@@ -343,7 +340,6 @@ void main() {
     await tester.ensureVisible(find.byKey(const Key('new-agent-advanced')));
     await tester.tap(find.byKey(const Key('new-agent-advanced')));
     await tester.pumpAndSettle();
-    expect(find.textContaining('Runs on Codex.'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

@@ -857,17 +857,6 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     },
   );
 
-  /// What a harness choice means for the launch, in one line beside the
-  /// other settings: the engine it runs on is the one whose profile and
-  /// permission flag apply here.
-  Widget _harnessNote() => Text(
-    key: const Key('new-agent-runs-on'),
-    'Runs on ${_labelOf(_baseEngine(_engine))}. '
-    'Skills, toolchain and viewer come from the harness.',
-    style: Theme.of(context).textTheme.bodySmall
-        ?.copyWith(color: grid.AppPalette.textSecondary),
-  );
-
   Widget _profileOptions() => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     mainAxisSize: MainAxisSize.min,
@@ -937,7 +926,6 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
         ),
       ),
       if (_baseEngine(_engine) == 'codex') _setting(_profileOptions()),
-      if (_engineIsHarness) _setting(_harnessNote()),
     ],
   );
 
