@@ -101,7 +101,7 @@ class SwarmSearchController extends ChangeNotifier {
       ? 'Search commands…'
       : history != null
       ? 'Search history…'
-      : 'Find an agent';
+      : 'Find a harness';
 
   bool get canCreate =>
       history == null &&
@@ -117,7 +117,7 @@ class SwarmSearchController extends ChangeNotifier {
   String get primaryAction => switch (split?.axis) {
     PaneResizeAxis.x => 'Split right',
     PaneResizeAxis.y => 'Split down',
-    null => 'Open Agent',
+    null => 'Open Harness',
   };
 
   String actionLabel(SwarmDestination? row) => row?.isCommand == true
@@ -317,7 +317,7 @@ class SwarmSearchController extends ChangeNotifier {
       ? 'Run command'
       : row.closedId != null
       ? 'Reopen'
-      : 'Open Agent';
+      : 'Open Harness';
 
   @override
   void dispose() {

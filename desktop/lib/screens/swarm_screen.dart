@@ -81,7 +81,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
   final _navigation = SwarmNavigationHistory();
   final _searchCatalog = SwarmSearchCatalog();
   final _searchText = TextEditingController();
-  final _searchFocus = FocusNode(debugLabel: 'Find an agent');
+  final _searchFocus = FocusNode(debugLabel: 'Find a harness');
   SwarmSearchController? _search;
   OverlayEntry? _searchOverlay;
   (String, bool)? _searchHeaderState;
@@ -973,7 +973,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
               ),
             ),
           Semantics(
-            label: commandsOnly ? 'Search commands' : 'Find an agent',
+            label: commandsOnly ? 'Search commands' : 'Find a harness',
             child: SwarmSearchInput(
               inputKey: const ValueKey('swarm-search-input'),
               controller: _searchText,
@@ -985,13 +985,13 @@ class _SwarmScreenState extends State<SwarmScreen> {
               showClose: true,
               rounded: true,
               prominent: !commandsOnly,
-              hintText: commandsOnly ? null : 'Find an agent',
+              hintText: commandsOnly ? null : 'Find a harness',
               trailing: !commandsOnly && search.split != null
                   ? KeymapRegion(
                       contextKind: KeymapContext.workspace,
                       child: IconButton(
                         key: const ValueKey('harness-picker-new'),
-                        tooltip: 'New Agent',
+                        tooltip: 'New Harness',
                         onPressed: search.canCreate
                             ? () => _runShortcut('agent.new')
                             : null,
@@ -1623,7 +1623,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
         create ? AgentActionIcons.create : AgentActionIcons.open,
         size: 16,
       ),
-      label: Text(create ? 'New Agent' : 'Open Agent'),
+      label: Text(create ? 'New Harness' : 'Open Harness'),
     );
   }
 }

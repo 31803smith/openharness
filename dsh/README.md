@@ -2,7 +2,7 @@
 
 A **domain-specific harness (DSH)** turns Harness into a product for one domain: PCB design,
 3D CAD, short drama, robot training. It is a git repo that Harness installs on a machine. Users see
-it as one more tile in New Agent — pick **Copper**, choose a folder, prompt — and get
+it as one more tile in New Harness — pick **Copper**, choose a folder, prompt — and get
 the domain's skills in the agent, its toolchain on the machine, its viewer in a pane next to the
 terminal, and its verdict in the pane header.
 
@@ -82,7 +82,7 @@ is what lets hundreds of DSHs exist without any of them touching this repo.
    harness dsh list                       # installed here, and what the registry offers
    ```
 
-   Then New Agent, your tile, a folder, a prompt. For a check without the app,
+   Then New Harness, your tile, a folder, a prompt. For a check without the app,
    [`dsh/tools/dsh-e2e.mjs`](tools/) creates an agent over the daemon's loopback socket and
    reports the materialized workspace, the viewer URL, the pane's environment and the first verdict.
    The viewer process reads its own files when it starts; after you edit it, kill it and the daemon

@@ -112,7 +112,7 @@ class _RenameAgentDialogState extends State<_RenameAgentDialog> {
   Widget build(BuildContext context) {
     grid.AppTheme.watch(context);
     return AlertDialog(
-      title: const Text('Rename Agent'),
+      title: const Text('Rename Harness'),
       content: SizedBox(
         width: 360,
         child: Column(

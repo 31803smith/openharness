@@ -40,14 +40,14 @@ class ProjectFolderRequest {
       }
       var next = BigInt.one;
       await for (final entry in root.list(followLinks: false)) {
-        final match = RegExp(r'^agent-([1-9]\d*)$')
+        final match = RegExp(r'^(?:harness|agent)-([1-9]\d*)$')
             .firstMatch(p.basename(entry.path));
         if (match == null) continue;
         final number = BigInt.parse(match.group(1)!);
         if (number >= next) next = number + BigInt.one;
       }
       for (;;) {
-        final folder = p.join(root.path, 'agent-$next');
+        final folder = p.join(root.path, 'harness-$next');
         next += BigInt.one;
         // Directory.create accepts an existing directory. The platform mkdir
         // command reserves it exclusively, so concurrent creates never share

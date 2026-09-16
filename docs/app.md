@@ -4,11 +4,11 @@ What the window does, pane by pane. The keys are in [keyboard.md](keyboard.md).
 
 ## Sessions
 
-An agent is one engine process in one tmux pane on one machine. The app calls it an agent. A tab
+A harness is one session: one engine process, the agent, in one tmux pane on one machine. A tab
 holds any number of panes, from any mix of machines; the app remembers tabs, pane placement, sizes,
 pinned slots, focus and zoom across restarts, in `~/.harness/desktop-app-v2/state.json`.
 
-**New Agent (⌘N)** asks for four things: the machine, the working folder, the engine, and,
+**New Harness (⌘N)** asks for four things: the machine, the working folder, the engine, and,
 under Advanced, two settings most people never touch. The folder picker is the native panel on this
 computer and a remote directory list on any other machine, served over the daemon's `fs_list_dir`.
 **Clone repository** clones a GitHub URL into a parent folder first. The engine row shows every engine
@@ -21,11 +21,11 @@ hooks.
 Creation carries a receipt. If the reply is lost, the button turns into **Check status** rather than
 creating a second session.
 
-Closing a pane is a view operation; the agent keeps running. **Stop Agent** ends the engine process
-and asks first. **Restart Agent** relaunches it in the same pane with the same id, resuming the
+Closing a pane is a view operation; the agent keeps running. **Stop Harness** ends the engine process
+and asks first. **Restart Harness** relaunches it in the same pane with the same id, resuming the
 conversation where the engine supports it.
 
-**Open Agent (⌘O)** is the search: agents, tabs, projects, machines, history and commands, fuzzy
+**Open Harness (⌘O)** is the search: harnesses, tabs, projects, machines, history and commands, fuzzy
 matched, with a session preview on the right built from cached recent turns. Type `>` for commands
 only (also ⇧⌘P).
 

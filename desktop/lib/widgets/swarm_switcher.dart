@@ -411,7 +411,7 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                               : search.adding && search.query.isEmpty
                               ? 'Create a new agent to start fresh.'
                               : search.adding
-                              ? 'No matching agents'
+                              ? 'No matching harnesses'
                               : 'No matching results',
                           style: const TextStyle(
                             fontSize: 14,

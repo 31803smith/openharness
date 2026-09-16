@@ -4524,7 +4524,7 @@ class AppNotifier extends ChangeNotifier {
             failure.code == 'UNSUPPORTED_ON_REMOTE' ||
             failure.code == 'E2EE_REQUIRED') {
           return '$machineName cannot check this creation. '
-              'Use Find an agent to look for it before creating another.';
+              'Use Find a harness to look for it before creating another.';
         }
         return unconfirmed;
       }
@@ -4571,15 +4571,15 @@ class AppNotifier extends ChangeNotifier {
         // receipt-aware version. Missing is not proof that nothing started.
         // Check status stays read-only, even across upgrades and reconnects.
         return '$machineName has no record of this request. '
-            'Use Find an agent to look for it before creating another.';
+            'Use Find a harness to look for it before creating another.';
       case 'pending':
         return '$machineName is still starting your agent. Check again in a moment.';
       case 'unconfirmed':
         return '$machineName could not confirm whether this agent started. '
-            'Use Open Agent to look for it before creating another.';
+            'Use Open Harness to look for it before creating another.';
       case 'unavailable':
         return creation._complete(
-          'This agent was created but is no longer available. '
+          'This harness was created but is no longer available. '
           'You can create a new one.',
         );
       case 'failed':
@@ -4625,8 +4625,8 @@ class AppNotifier extends ChangeNotifier {
     notifyListeners();
     if (_creationPlacementError(targetId, split) != null) {
       _lastError =
-          'The agent was created, but its original tab or layout changed. '
-          'Use Open Agent to find it.';
+          'The harness was created, but its original tab or layout changed. '
+          'Use Open Harness to find it.';
       _lastErrorRetryable = false;
       notifyListeners();
       return null;

@@ -16,7 +16,7 @@ Future<void> confirmDeleteAgent(
   final confirmed = await showAppDialog<bool>(
     context: context,
     builder: (dialogContext) => AlertDialog(
-      title: const Text('Stop Agent'),
+      title: const Text('Stop Harness'),
       content: SizedBox(
         width: 360,
         child: Text(
@@ -35,7 +35,7 @@ Future<void> confirmDeleteAgent(
             backgroundColor: grid.AppPalette.dangerFill,
           ),
           onPressed: () => Navigator.of(dialogContext).pop(true),
-          child: const Text('Stop Agent'),
+          child: const Text('Stop Harness'),
         ),
       ],
     ),

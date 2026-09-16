@@ -6,8 +6,8 @@ The defaults, in the workspace:
 
 | Keys | Action |
 |---|---|
-| ⌘N | New Agent |
-| ⌘O | Open Agent — search sessions, tabs, machines, history; `>` for commands |
+| ⌘N | New Harness |
+| ⌘O | Open Harness — search sessions, tabs, machines, history; `>` for commands |
 | ⇧⌘P | Command palette |
 | ⌘B | Boss mode: describe a task, it picks the agent |
 | ⌘T · ⌘W · ⇧⌘T · ⇧⌘R | New tab · close tab · reopen last closed · rename tab |

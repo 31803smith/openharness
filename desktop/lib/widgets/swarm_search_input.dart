@@ -85,7 +85,7 @@ class SwarmSearchInput extends StatelessWidget {
       decoration: InputDecoration(
         hintText: search?.isCommandMode == true
             ? search!.hint
-            : hintText ?? search?.hint ?? 'Find an agent',
+            : hintText ?? search?.hint ?? 'Find a harness',
         hintStyle: const TextStyle(fontSize: 16, color: Colors.white60),
         prefixIcon: const Icon(Icons.search, size: 20, color: Colors.white60),
         prefixIconConstraints: BoxConstraints(
