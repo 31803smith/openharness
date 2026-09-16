@@ -20,6 +20,7 @@ Initial contract. Lifted from the `.board.json` (Circuit) and `.episode.json` (T
   in a word or two — "PCB", "3D design", "Slides". `dsh_list` forwards it; the picker shows it under
   the name, the way every engine now shows "Code". The first-party ids are `autonomous/copper`
   (Circuit's pipeline) and `autonomous/solid` (Workshop's Make stage); `autonomous/marp` is unchanged.
-- **Backward compatible:** `category` is optional. The old ids are not aliased: an agent created as
-  `autonomous/circuit` or `autonomous/workshop` before this change draws by its name and loses its
-  viewer on the next daemon start.
+- **Backward compatible:** `category` is optional. Manifests may list the ids they went by in
+  `formerly` (≤ 8); the daemon resolves an agent's `HARNESS_DSH` through it, so an agent created as
+  `autonomous/circuit` or `autonomous/workshop` keeps its harness, viewer and verdict after the
+  rename. Without it, such an agent draws by its name and runs as its plain engine.

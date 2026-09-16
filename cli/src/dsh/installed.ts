@@ -147,6 +147,13 @@ export function listDshState(): { installed: InstalledDsh[]; broken: BrokenDsh[]
   return stateNow()
 }
 
+/**
+ * The installed harness for an id — by its own id first, then by a name it went by before
+ * (`formerly` in the manifest): an agent created under the old name keeps its harness, its viewer
+ * and its verdict across a rename instead of falling back to a plain engine.
+ */
 export function installedDsh(id: string): InstalledDsh | undefined {
-  return stateNow().installed.find((entry) => entry.id === id)
+  const { installed } = stateNow()
+  return installed.find((entry) => entry.id === id)
+    ?? installed.find((entry) => entry.manifest.formerly?.includes(id))
 }

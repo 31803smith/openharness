@@ -36,6 +36,8 @@ export const DshManifestSchema = z.strictObject({
   description: z.string().max(300).optional(),
   /** The one- or two-word kind of thing it makes — "PCB", "3D design", "Slides" — the picker's second line. */
   category: z.string().min(1).max(24).optional(),
+  /** Ids this harness answered to before: an agent created under one keeps its harness across a rename. */
+  formerly: z.array(z.string().regex(DSH_ID_RE)).max(8).optional(),
   engine: z.enum(ENGINES),
   workspace: z.strictObject({
     template: relativePath.optional(),

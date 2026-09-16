@@ -35,6 +35,15 @@
       "maxLength": 24,
       "description": "The kind of thing it makes, in a word or two \u2014 PCB, 3D design, Slides. The picker's second line under the name."
     },
+    "formerly": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9-]+/[a-z0-9-]+$"
+      },
+      "description": "Ids this harness answered to before. An agent created under one keeps its harness across a rename."
+    },
     "engine": {
       "type": "string",
       "description": "The base engine this harness runs on: claude, codex, cursor, \u2026 (one of the CLI's ENGINES)."

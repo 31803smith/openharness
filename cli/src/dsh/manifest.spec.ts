@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { dshSkillsDirFor, dshTier, dshVerdictPath, expandDshValue, parseDshManifest, readDshManifest } from './manifest.js'
+import { DshManifestSchema, dshSkillsDirFor, dshTier, dshVerdictPath, expandDshValue, parseDshManifest, readDshManifest } from './manifest.js'
 
 const STARTER = fileURLToPath(new URL('../../../dsh/starter-dsh', import.meta.url))
 
@@ -67,4 +67,11 @@ describe('dshSkillsDirFor', () => {
     expect(dshSkillsDirFor('codex')).toBe('.agents/skills')
     expect(dshSkillsDirFor('cursor')).toBe('.agents/skills')
   })
+  it('accepts the ids a harness went by before, and only well-formed ones', () => {
+    const base = { spec: 1, id: 'acme/solid', name: 'Solid', engine: 'codex' }
+    expect(DshManifestSchema.safeParse({ ...base, formerly: ['acme/workshop'] }).success).toBe(true)
+    expect(DshManifestSchema.safeParse({ ...base, formerly: ['Not An Id'] }).success).toBe(false)
+    expect(DshManifestSchema.safeParse({ ...base, formerly: Array(9).fill('acme/x') }).success).toBe(false)
+  })
+
 })
