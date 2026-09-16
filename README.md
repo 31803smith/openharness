@@ -1,5 +1,3 @@
-https://github.com/user-attachments/assets/97848065-61c6-40df-be66-a8247f69aa4c
-
 # Harness
 
 Agents that build things, in one window. Code with Claude Code, Codex, Cursor and eleven more. PCBs
@@ -11,44 +9,11 @@ is made.
   <img src=".github/assets/screenshots/marp.png" width="960" alt="A Marp tab: the keynote in the viewer on the left, the Claude Code agent that wrote it on the right, ten slides and Ready in the header">
 </p>
 
-## Why Harness
+## One app, many harnesses
 
-- **More than code.** Copper (PCB), Solid (3D design) and Marp (Slides) sit beside the coding
-  agents. One prompt, and the pane fills with the board, the part, the keynote while the agent works.
-- **Your agents, unwrapped.** Fourteen engines. Harness reads the transcript each one already writes
-  and installs the vendor's own hooks; it never wraps a CLI. Credentials stay in your `~/.claude`,
-  `~/.codex`, and so on.
-- **Sessions that outlive the laptop.** Every agent is a tmux pane on its machine, kept by a small
-  daemon. Close the lid, open it on the train: same pane, same scrollback. After a reboot the daemon
-  brings each one back with the engine's own `--resume`.
-- **Every machine, no SSH.** Laptop, the Mac mini at home, the box in the rack, side by side. Each
-  machine dials out; nothing to open; encrypted end to end through a relay that holds no keys.
-- **Built for the keyboard.** ⌘N for a new agent, ⌘O to find anything, ⌘B to say what you want and
-  have it land on the right agent. Every key remappable in one file.
-- **A device for the desk.** A round USB display with your agents as tiles, their questions
-  answerable with a tap, and a voice turn a double-tap away.
-
-## Harnesses
-
-| Harness | You say | You get | You watch |
-|---|---|---|---|
-| **Claude Code, Codex, Cursor, …** · Code | "add OAuth to the API" | the change, in your repo | the agent's terminal |
-| **Copper** · PCB | "a USB-C powered ESP32 sensor board" | a fab-ready board, ordered in a click | the board, its checks, the fab |
-| **Solid** · 3D design | "an iPhone case with a lanyard loop" | a printable STEP part | the model: Build, Fit, Print, Review |
-| **Marp** · Slides | "a launch keynote for 200 engineers" | a keynote with art and speaker notes | the slides filling in, then Present |
-| **Yours** | | anything an agent can build in a folder | [build a harness](#extend-harness) |
-
-<p align="center">
-  <img src=".github/assets/screenshots/solid.png" width="960" alt="A Solid tab: the 3D part in the viewer, the Codex agent that made it beside it, Ready in the header">
-</p>
-
-Every harness is the same thing to the app: a tile in New Agent, a tab with the terminal on the
-right and the domain's viewer on the left, and a header that says where the work is. The domain
-lives in its own git repository, installed on first use, never in Harness itself.
-
-<p align="center">
-  <img src=".github/assets/screenshots/new-agent.png" width="720" alt="New Agent: choose a harness — Codex, Claude Code, OpenCode, and under More: Copper PCB, Solid 3D design, Marp Slides, Cursor, Pi, Hermes…">
-</p>
+A harness is an agent plus a domain. For code, the agent is the whole harness: fourteen engines,
+unwrapped. Harness reads the transcript each one already writes and installs the vendor's own hooks;
+your credentials stay in your `~/.claude`, `~/.codex`, and so on.
 
 <p align="center">
   <img src=".github/assets/engines/claude.png"      height="72" alt="Claude Code"  title="Claude Code">
@@ -80,7 +45,9 @@ lives in its own git repository, installed on first use, never in Harness itself
   <img src=".github/assets/engines/copilot.png"     height="72" alt="GitHub Copilot" title="GitHub Copilot">
 </p>
 
-And the harnesses for the domains beyond code, each on one of those agents:
+For everything else, a harness brings the domain with it: its skills in the agent, its toolchain on
+the machine, its viewer beside the terminal, and a header that says where the work is. Three ship
+today, each on one of the agents above, and yours is a git repository away.
 
 <p align="center">
   <img src=".github/assets/engines/copper.png" height="72" alt="Copper · PCB"       title="Copper · PCB, on Claude Code">
@@ -89,6 +56,44 @@ And the harnesses for the domains beyond code, each on one of those agents:
   &nbsp;&nbsp;
   <img src=".github/assets/engines/marp.png"   height="72" alt="Marp · Slides"      title="Marp · Slides, on Claude Code">
 </p>
+
+| Harness | You say | You get | You watch |
+|---|---|---|---|
+| **Claude Code, Codex, Cursor, …** · Code | "add OAuth to the API" | the change, in your repo | the agent's terminal |
+| **Copper** · PCB | "a USB-C powered ESP32 sensor board" | a fab-ready board, ordered in a click | the board, its checks, the fab |
+| **Solid** · 3D design | "an iPhone case with a lanyard loop" | a printable STEP part | the model: Build, Fit, Print, Review |
+| **Marp** · Slides | "a launch keynote for 200 engineers" | a keynote with art and speaker notes | the slides filling in, then Present |
+| **Yours** | | anything an agent can build in a folder | [build a harness](#extend-harness) |
+
+<p align="center">
+  <img src=".github/assets/screenshots/solid.png" width="960" alt="A Solid tab: the 3D part in the viewer, the Codex agent that made it beside it, Ready in the header">
+</p>
+
+## Every machine you own
+
+Your laptop, the Mac mini at home, the box in the rack, in one window, side by side. Each machine
+runs a small daemon that dials out; nothing to open, no SSH, no VPN. The relay in between forwards
+ciphertext and holds no keys, and terminal traffic goes machine to machine over WebRTC when it can.
+
+Sessions live on the machine, not in the window. Every agent is a tmux pane there. Close the laptop,
+open it on the train: same pane, same scrollback. After a reboot the daemon brings each agent back
+with the engine's own `--resume` and the same id. Start an agent on another machine by browsing its
+folders from New Agent, or clone a repository there first. The same machines are reachable from a
+browser at [harness.autonomous.ai](https://harness.autonomous.ai) after one pairing.
+
+<p align="center">
+  <img src=".github/assets/screenshots/new-agent.png" width="720" alt="New Agent: choose a harness, then where it runs — this machine, the iMac at home, the iMac at the office">
+</p>
+
+## A device for the desk
+
+A round USB display with a microphone. Your agents are tiles in the order of the window's panes,
+each with what it is doing and for how long. When an agent asks a question, it is on the face,
+answerable with a tap. When a turn finishes, the recap, with one quiet tone. Double-tap and speak, and
+Boss mode routes the task to the agent already on it. No WiFi, no credential: plugging it in is the
+authorization, and the daemon on that computer serves it over the cable.
+
+https://github.com/user-attachments/assets/97848065-61c6-40df-be66-a8247f69aa4c
 
 ## Install
 
@@ -150,19 +155,19 @@ binary, or an API provider, eight JSON-RPC methods on your own infrastructure. B
 
 ## Contribute
 
-Harness gets better in more ways than pull requests here.
+There are more ways in than a pull request to this repo, and most of them never touch its code.
 
-- **Build a harness for your domain** and list it in [`dsh/registry/`](dsh/registry/). It is a
-  product on its own, and it never touches this code.
-- **Bring your agent** as an engine or a provider.
-- **Record a session.** An engine bug is fixed from a real recorded session of the real binary.
-  Attach one to the issue and it is half done.
-- **A palette, a terminal theme, a keymap** you are proud of.
-- **Docs.** What confused you in the first five minutes is the next fix.
+| You could | Where | What it takes |
+|---|---|---|
+| **Build a harness** for your domain and list it | [`dsh/README.md`](dsh/README.md) → a file in [`dsh/registry/`](dsh/registry/) | an afternoon from the starter; `harness dsh check .` green |
+| **Bring your agent** as an engine or a provider | [`cli/src/engines/README.md`](cli/src/engines/README.md) · [`provider/README.md`](provider/README.md) | a recorded session of the real binary, or an endpoint that passes the conformance runner |
+| **Record a session** for a bug | an issue | an engine bug is fixed from a real transcript; attach one and it is half done |
+| **A palette, a terminal theme, a keymap** | [`docs/extending.md`](docs/extending.md) | one Dart value, or one JSONC file |
+| **Docs** | this file and [`docs/`](docs/) | what confused you in the first five minutes is the next fix |
+| **A machine, a multiplexer, a platform** | [CONTRIBUTING.md](CONTRIBUTING.md) | open an issue first so the shape is agreed |
 
-Open an issue before writing an engine or a multiplexer so the shape and the software a maintainer
-needs to reproduce it are agreed first. [CONTRIBUTING.md](CONTRIBUTING.md) has the workflow,
-[SECURITY.md](SECURITY.md) takes security reports, and the licence is [MIT](LICENSE).
+[CONTRIBUTING.md](CONTRIBUTING.md) has the workflow, [SECURITY.md](SECURITY.md) takes security
+reports, and the licence is [MIT](LICENSE).
 
 ## Docs
 
