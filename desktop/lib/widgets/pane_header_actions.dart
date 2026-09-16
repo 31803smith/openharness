@@ -15,11 +15,23 @@ class PaneHeaderActions extends StatelessWidget {
     this.onClose,
     this.onToggleComposer,
     this.composerVisible = false,
+    this.onToggleViewer,
+    this.viewerVisible = false,
+    this.viewerColor,
     this.details,
   });
 
   final bool zoomed, composerVisible;
   final VoidCallback? onZoom, onRestart, onDelete, onClose, onToggleComposer;
+
+  /// A harness agent's viewer: show it beside this terminal, or hide it.
+  /// Absent for an agent that has no viewer.
+  final VoidCallback? onToggleViewer;
+  final bool viewerVisible;
+
+  /// The harness's own colour: the sparkles glow with it while the viewer
+  /// is open, and go quiet when it is hidden.
+  final Color? viewerColor;
 
   /// Folder, branch and machine share the controls' space while idle. Both
   /// layers keep their size so hovering never changes the title's width.
@@ -69,6 +81,15 @@ class PaneHeaderActions extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (onToggleViewer != null) ...[
+              _ViewerToggle(
+                key: const ValueKey('pane-viewer-toggle'),
+                on: viewerVisible,
+                color: viewerColor ?? AppColors.text,
+                onPressed: onToggleViewer,
+              ),
+              const SizedBox(width: 2),
+            ],
             if (onToggleComposer != null) ...[
               action(
                 composerVisible
@@ -153,4 +174,62 @@ class _PaneHeaderVisibility extends InheritedWidget {
   @override
   bool updateShouldNotify(_PaneHeaderVisibility oldWidget) =>
       visible != oldWidget.visible;
+}
+
+/// The way into the magic box: sparkles that glow in the harness's colour
+/// while its viewer is open, and sit muted when it is hidden. Same footprint
+/// as the other header actions, so the row never shifts.
+class _ViewerToggle extends StatelessWidget {
+  const _ViewerToggle({
+    super.key,
+    required this.on,
+    required this.color,
+    required this.onPressed,
+  });
+
+  final bool on;
+  final Color color;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final glow = color.withValues(alpha: .55);
+    return IconButton(
+      tooltip: on ? 'Hide viewer' : 'Show viewer',
+      onPressed: onPressed,
+      icon: AnimatedContainer(
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOut,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          boxShadow: on
+              ? [
+                  BoxShadow(color: glow, blurRadius: 10, spreadRadius: 1),
+                  BoxShadow(
+                    color: color.withValues(alpha: .25),
+                    blurRadius: 18,
+                    spreadRadius: 4,
+                  ),
+                ]
+              : const [],
+        ),
+        child: Icon(
+          LucideIcons.sparkles,
+          size: 16,
+          color: on ? color : AppColors.mutedStrong.withValues(alpha: .6),
+        ),
+      ),
+      style: ButtonStyle(
+        fixedSize: const WidgetStatePropertyAll(Size(28, 28)),
+        minimumSize: const WidgetStatePropertyAll(Size(28, 28)),
+        padding: const WidgetStatePropertyAll(EdgeInsets.zero),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        visualDensity: VisualDensity.standard,
+        shape: WidgetStatePropertyAll(
+          RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+        ),
+        overlayColor: WidgetStatePropertyAll(grid.AppSurface.hoverFill),
+      ),
+    );
+  }
 }

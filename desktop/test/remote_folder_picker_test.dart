@@ -47,6 +47,7 @@ class _Folders extends AppNotifier {
     ProjectFolderRequest? projectFolder,
     bool bypassPermission = false,
     String? codexHome,
+    String? dsh,
     String? swarmId,
     PaneSplitRequest? split,
     AgentCreationAttempt? attempt,

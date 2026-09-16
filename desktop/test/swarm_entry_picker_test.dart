@@ -174,7 +174,7 @@ void main() {
 
     for (final dismissal in ['outside', 'escape']) {
       testWidgets(
-        'New Harness has a usable page after $dismissal (native=$native)',
+        'New Tab has a usable page after $dismissal (native=$native)',
         (tester) async {
           final app = createApp();
           final frames = <TerminalBinaryFrame>[];

@@ -10,6 +10,7 @@ import '../analytics/analytics.dart';
 import '../state/pane_arrangement.dart';
 import '../core/engine_availability.dart';
 import '../core/codex_profiles.dart';
+import '../core/dsh_catalog.dart';
 import '../core/project_folder.dart';
 import '../core/repository_clone.dart';
 import '../shared/theme/app_theme.dart' as grid;
@@ -135,6 +136,11 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   bool _advancedOpen = false;
   bool _submitting = false;
 
+  /// A harness install is running ahead of the create. Its progress line is
+  /// read off the machine's catalog on every rebuild; this only decides what
+  /// the button says.
+  bool _installing = false;
+
   @override
   void dispose() {
     _folderFocus.dispose();
@@ -147,7 +153,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   void initState() {
     super.initState();
     final remembered = widget.notifier.agentPreference.value;
-    if (allEngines.any((identity) => identity.id == remembered)) {
+    if (_knownChoice(remembered)) {
       _engine = remembered!;
       _engineChosenByUser = true;
     } else {
@@ -176,11 +182,85 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     });
   }
 
+  /// Whether [id] is something this dialog can offer: an engine, or a harness
+  /// this build ships a face for, or one the machine has named.
+  bool _knownChoice(String? id) =>
+      id != null &&
+      (allEngines.any((identity) => identity.id == id) ||
+          knownHarnesses.any((identity) => identity.id == id) ||
+          _harness(id) != null);
+
+  /// Which harnesses this machine has or could install — asked when a harness
+  /// is chosen, not on open: most creates never involve one, and the answer
+  /// costs the machine a request. Forced, for the reason `_probeEngines`
+  /// gives: an install this very dialog starts is what makes a stored answer
+  /// stale.
+  Future<void> _probeHarnesses() =>
+      widget.notifier.probeDsh(_machineId, force: true);
+
+  /// The machine's row for harness [id], or null while it has not answered
+  /// (or does not know the request). Null is "unknown", never "absent".
+  DshEntry? _harness(String id) {
+    final machine = widget.notifier.stateOf(_machineId);
+    if (machine == null || !machine.dsh.loaded) return null;
+    return machine.dsh[id];
+  }
+
+  bool get _engineIsHarness => isHarnessId(_engine);
+
+  /// The engine a choice actually launches: a harness runs ON one of them, and
+  /// that is what travels as `engine` beside the harness id.
+  String _baseEngine(String id) => isHarnessId(id)
+      ? _harness(id)?.engine ?? knownHarnessBase[id] ?? 'claude'
+      : id;
+
+  /// What to call [id] on screen: the machine's name for a harness when it has
+  /// answered, else this build's.
+  String _labelOf(String id) =>
+      _harness(id)?.name ??
+      (id == 'claude' ? 'Claude Code' : engineIdentity(id).label);
+
+  /// The harness is absent from this machine and Harness would install it
+  /// before launching. False until the machine has answered: a harness cannot
+  /// be called missing on the strength of a request that has not come back.
+  bool _willInstallHarness(String id) {
+    final entry = _harness(id);
+    return entry != null && !entry.installed;
+  }
+
+  /// The harnesses to list after the engines: what the machine named when it
+  /// has answered, else the ones this build ships a face for.
+  List<DshEntry> get _harnessOptions {
+    final machine = widget.notifier.stateOf(_machineId);
+    if (machine != null &&
+        machine.dsh.loaded &&
+        machine.dsh.entries.isNotEmpty) {
+      return machine.dsh.entries;
+    }
+    return [
+      for (final identity in knownHarnesses)
+        DshEntry(
+          id: identity.id,
+          name: identity.label,
+          category: identity.category,
+          engine: knownHarnessBase[identity.id] ?? 'claude',
+        ),
+    ];
+  }
+
+  /// The one-line install status while a harness install is running, read off
+  /// the machine's own narration (`dsh_install_status`), or null.
+  String? get _installStatus {
+    if (!_installing) return null;
+    final progress = widget.notifier.stateOf(_machineId)?.dsh.installs[_engine];
+    return progress?.label ?? 'Installing…';
+  }
+
   Future<void> _loadAgentPreference() async {
     await widget.notifier.agentPreference.load();
     if (!mounted || _choicesLocked || _engineChosenByUser) return;
     final remembered = widget.notifier.agentPreference.value;
-    if (allEngines.any((identity) => identity.id == remembered)) {
+    if (_knownChoice(remembered)) {
       setState(() {
         _engineChosenByUser = true;
         if (_engine != remembered) {
@@ -193,6 +273,9 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   }
 
   String _preferredInstalledEngine() {
+    // A harness is not in the engine probe at all; its own install state is
+    // the machine's catalog, and a remembered harness stays chosen.
+    if (_engineIsHarness) return _engine;
     final engines = widget.notifier.stateOf(_machineId)?.engines;
     if (engines?.loaded != true || engines?[_engine]?.installed == true) {
       return _engine;
@@ -267,7 +350,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   /// Create waits while the Codex profile list is still loading on a machine
   /// that can launch into one, so a click cannot land before the choice does.
   bool get _waitingForCodexProfile =>
-      _engine == 'codex' &&
+      _baseEngine(_engine) == 'codex' &&
       _availability('codex')?.supportsCodexHome == true &&
       _codexProfilesBusy;
 
@@ -313,7 +396,9 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
         (!_confirmationPending && _waitingForCodexProfile)) {
       return;
     }
-    final engine = _engine;
+    final choice = _engine;
+    final harness = _engineIsHarness ? choice : null;
+    final engine = _baseEngine(choice);
     final profile = _codexProfile;
     final bypassPermission =
         _bypassPermission && kEngineBypassPermissionFlag.containsKey(engine);
@@ -323,6 +408,44 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
       _submitting = true;
       _error = null;
     });
+    // A harness the machine does not have yet is installed FIRST, as its own
+    // step with its own words: minutes of clone and toolchain under a button
+    // that said "Creating agent…" would read as a create that hung. The
+    // machine's catalog decides "has it"; wait for its answer if it is out.
+    if (harness != null && !_confirmationPending && _harness(harness) == null) {
+      await _probeHarnesses();
+      if (!mounted) return;
+      // A machine whose Harness CLI predates harnesses refuses `dsh_list`
+      // and would take `dsh` on `agent_create` in silence — creating a plain
+      // Claude Code where Copper was picked. Say so and stop here instead.
+      final catalog = widget.notifier.stateOf(_machineId)?.dsh;
+      if (catalog != null && !catalog.loaded && catalog.error != null) {
+        setState(() {
+          _error =
+              'Update Harness CLI on $_machineName to create a '
+              '${_labelOf(harness)} agent.';
+        });
+        return;
+      }
+    }
+    if (harness != null &&
+        !_confirmationPending &&
+        _willInstallHarness(harness)) {
+      setState(() => _installing = true);
+      final failure = await widget.notifier.installDsh(_machineId, harness);
+      if (!mounted) return;
+      setState(() => _installing = false);
+      if (failure != null) {
+        setState(() {
+          _submitting = false;
+          _error = failure;
+        });
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _actionFocus.requestFocus();
+        });
+        return;
+      }
+    }
     final error = await widget.notifier.createAgent(
       _machineId,
       engine: engine,
@@ -334,6 +457,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
       // Keep the explicit choice even if machine discovery changes mid-submit.
       // The notifier must reject a now-remote target, never use its default login.
       codexHome: engine == 'codex' ? profile?.path : null,
+      dsh: harness,
       attempt: _creation,
     );
     if (!mounted) return;
@@ -355,7 +479,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
       });
       return;
     }
-    analytics.agentCreated(engine: engine, bypassPermission: bypassPermission);
+    analytics.agentCreated(engine: choice, bypassPermission: bypassPermission);
     Navigator.of(context).pop(NewAgentDialogResult.created);
   }
 
@@ -388,7 +512,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   }
 
   Widget _buildDialog(BuildContext context) {
-    final bypassFlag = kEngineBypassPermissionFlag[_engine];
+    final bypassFlag = kEngineBypassPermissionFlag[_baseEngine(_engine)];
     final canCreate =
         (_preparedFolder != null ||
             (_folderSource == _FolderSource.local
@@ -550,6 +674,8 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                                                   _FolderSource.remote &&
                                               _preparedFolder == null
                                         ? 'Cloning and starting…'
+                                        : _installing
+                                        ? 'Installing ${_labelOf(_engine)}…'
                                         : 'Creating agent…',
                                   ),
                                 ],
@@ -619,7 +745,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _sectionLabel('Choose an engine'),
+          _sectionLabel('Choose a harness'),
           AgentPicker(
             compact: true,
             tileSize: tileSize,
@@ -629,7 +755,28 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                 SelectOption(
                   value: identity.id,
                   label: identity.label,
+                  detail: identity.category,
                   leading: () => EngineMark(engine: identity.id, size: 14),
+                ),
+              // The domain harnesses, after the engines they run on. What the
+              // machine named when it has answered, else this build's own two.
+              for (final harness in _harnessOptions)
+                SelectOption(
+                  value: harness.id,
+                  label: harness.name,
+                  // No "on Codex" here: the engine underneath is a backend
+                  // detail (owner, 2026-09-15) — the settings row says it.
+                  // What it makes, in a word or two; the machine's word first,
+                  // this build's when the machine has not answered.
+                  detail:
+                      harness.category ??
+                      engineIdentity(harness.id).category ??
+                      harness.description,
+                  leading: () => EngineMark(
+                    engine: harness.id,
+                    displayName: harness.name,
+                    size: 14,
+                  ),
                 ),
             ],
             onChanged: (value) {
@@ -641,12 +788,28 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                 _error = null;
                 _codexProfile = null;
                 _codexProfilesBusy = true;
-                if (!kEngineBypassPermissionFlag.containsKey(value)) {
+                if (!kEngineBypassPermissionFlag.containsKey(
+                  _baseEngine(value),
+                )) {
                   _bypassPermission = false;
                 }
               });
+              if (isHarnessId(value)) unawaited(_probeHarnesses());
             },
           ),
+          if (!_confirmationPending && _installStatus != null) ...[
+            const SizedBox(height: 6),
+            Semantics(
+              liveRegion: true,
+              child: Text(
+                key: const Key('new-agent-install-status'),
+                'Installing ${_labelOf(_engine)} on $_machineName… '
+                '$_installStatus',
+                style: Theme.of(context).textTheme.bodySmall
+                    ?.copyWith(color: grid.AppPalette.textSecondary),
+              ),
+            ),
+          ],
           if (!_confirmationPending && _engineCheckFailed) ...[
             const SizedBox(height: 6),
             Row(
@@ -654,7 +817,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
               children: [
                 Expanded(
                   child: Text(
-                    'Couldn’t check whether ${engineIdentity(_engine).label} is installed. '
+                    'Couldn’t check whether ${_labelOf(_baseEngine(_engine))} is installed. '
                     'You can still try creating an agent.',
                     style: Theme.of(context).textTheme.bodySmall
                         ?.copyWith(color: grid.AppPalette.textSecondary),
@@ -774,7 +937,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
               : (value) => setState(() => _bypassPermission = value),
         ),
       ),
-      if (_engine == 'codex') _setting(_profileOptions()),
+      if (_baseEngine(_engine) == 'codex') _setting(_profileOptions()),
     ],
   );
 
@@ -861,6 +1024,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
         _error = null;
       });
       unawaited(_probeEngines());
+      if (_engineIsHarness) unawaited(_probeHarnesses());
     },
   );
 }

@@ -386,10 +386,38 @@ cd cli && npm run test:tmux-real       # the real multiplexer discovery suite
 
 ### Add a domain harness
 
-Circuit (PCB design) and Workshop (3D CAD) are being packaged as domain harnesses: a git repo with a
-manifest, the domain's skills, a workspace template, a verifier that writes one verdict file, and an
-optional viewer that opens in a pane beside the terminal, installed with `harness dsh install`. The
-work is on the `dsh-mvp` branch and this section lands with it.
+A domain harness is an engine tile that comes with a domain: Copper (PCBs, on Claude Code), Solid
+(3D parts, on Codex), Marp (slide decks, on Claude Code). Pick one in New Agent and you get
+a tab of its own — the domain's viewer on the left, the engine's terminal on the right — and the
+engine starts with the domain's skills loaded in a workspace the harness laid out. Nothing about the
+domain lives in Harness itself: a harness is a git repository, installed per machine on first use.
+
+| In the repo | What it is |
+|---|---|
+| `harness.json` | the manifest: id, name, category, base engine, template, skills, toolchain, viewer, verdict path |
+| `AGENTS.md` | what the engine is told — Claude Code gets a `CLAUDE.md` that includes it |
+| `skills/` | the domain's skills, linked into the workspace (`.claude/skills/` or `.agents/skills/`) |
+| `template/` | a fresh workspace, copied once, plus an `init` script |
+| `toolchain/setup`, `doctor` | install the domain's tools; say what is missing, one line per check |
+| `viewer` | a loopback web server Harness starts beside the terminal; the pane is a webview |
+| `.harness/verdict.json` | one file the domain writes and Harness reads: ready or not, findings, phases |
+
+The pane is progressive. The verdict is written at every phase and every check, not at the end, so
+the header's phase strip and chip move while the agent works; the viewer follows the artifact the
+verdict names. A harness that only produces a final file is not one.
+
+```bash
+harness dsh check .                                   # conformance, on a plain checkout
+harness dsh install https://github.com/you/thing      # clone → setup → doctor, into ~/.harness/dsh
+harness dsh install ./thing --link                    # a checkout you are editing
+harness dsh doctor you/thing                          # can this machine run it
+harness dsh list
+```
+
+Start from [`dsh/starter-dsh/`](dsh/starter-dsh/) — a manifest, an `AGENTS.md`, one skill — and read
+[`dsh/spec/README.md`](dsh/spec/README.md) for the contract and its schemas. First-party harnesses
+are listed in [`dsh/registry/`](dsh/registry/), one JSON file each; the app offers them in New Agent's
+More menu before they are installed and installs on Create.
 
 ## Providers, relay, web
 

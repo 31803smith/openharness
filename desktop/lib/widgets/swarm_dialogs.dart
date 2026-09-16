@@ -33,7 +33,7 @@ class _RenameSwarmDialogState extends State<_RenameSwarmDialog> {
   late final _text = TextEditingController(
     text: widget.name,
   )..selection = TextSelection(baseOffset: 0, extentOffset: widget.name.length);
-  final _focus = FocusNode(debugLabel: 'Rename Harness name');
+  final _focus = FocusNode(debugLabel: 'Rename Tab name');
 
   @override
   void initState() {
@@ -68,7 +68,7 @@ class _RenameSwarmDialogState extends State<_RenameSwarmDialog> {
     return ListenableBuilder(
       listenable: _text,
       builder: (context, _) => AlertDialog(
-        title: const Text('Rename Harness'),
+        title: const Text('Rename Tab'),
         titleTextStyle: Theme.of(context).textTheme.titleMedium,
         content: SizedBox(
           width: 360,

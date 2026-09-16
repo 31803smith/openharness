@@ -177,7 +177,7 @@ void main() {
     map.dispose();
   });
 
-  testWidgets('Command-T opens New Harness and Command-S opens Layout', (
+  testWidgets('Command-T opens New Tab and Command-S opens Layout', (
     tester,
   ) async {
     final app = createApp();

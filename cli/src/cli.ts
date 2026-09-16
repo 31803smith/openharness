@@ -71,6 +71,16 @@ import { createAndRegisterPane } from './lib/createAgentPane.js'
 import { restoreAgents } from './lib/restoreAgents.js'
 import { buildLaunchOverrides, validateLaunchOverrides, type LaunchOverridesDeps, type LaunchOverridesResult, type LaunchSource } from './lib/launchOverrides.js'
 import { buildHarnessSessionLabel } from './lib/harnessSessionLabel.js'
+import { installedDsh } from './dsh/installed.js'
+import { dshVerdictPath } from './dsh/manifest.js'
+import { registryEntry } from './dsh/registry.js'
+import { installDsh, resolveInstallSource } from './dsh/install.js'
+import { materializeWorkspace } from './dsh/materialize.js'
+import { dshLaunch } from './dsh/launch.js'
+import { DshViewerManager } from './dsh/viewer.js'
+import { DshVerdictWatcher, type DshVerdict } from './dsh/verdict.js'
+import { dshCommand, dshUsage } from './dsh/command.js'
+import type { AgentDshContext } from './lib/agentFrame.js'
 import { basename } from 'node:path'
 import {
   bypassPermissionActive,
@@ -303,6 +313,8 @@ Grid (the fleet of AI engines the \`grid\` CLI serves — needs \`grid\` on PATH
   harness grid logout [flags]  sign out of your grid — the whole of \`grid logout\`, which stops what
                                this box is serving BEFORE deleting anything. Flags go straight to it:
                                --force signs out over a serve child it could not confirm stopped
+
+${dshUsage()}
 
 Browser end-to-end encryption:
   harness browser-link         print a reusable 7-day setup link for browsers
@@ -966,8 +978,24 @@ async function logout(): Promise<void> {
   process.exit(0)
 }
 
+/** The pane's session environment: the grid's or the profile's, with the DSH's layered on top. */
+function mergedLaunchEnv(
+  base: Record<string, string> | undefined,
+  dsh: Record<string, string> | undefined,
+): Record<string, string> | undefined {
+  if (!base && !dsh) return undefined
+  return { ...(base ?? {}), ...(dsh ?? {}) }
+}
+
+/** Set by runForeground once the DSH companions exist; a frame projected before that carries none. */
+let dshFrameContextRef: ((s: RegisteredSession) => AgentDshContext | null) | null = null
+
 function projectFrame(s: RegisteredSession, selectedModel: string | null): Promise<AgentFrame> {
-  return agentFrame(s, { selectedModel, terminalAvailable: registry.terminalAvailable(s.agentId) })
+  return agentFrame(s, {
+    selectedModel,
+    terminalAvailable: registry.terminalAvailable(s.agentId),
+    dsh: dshFrameContextRef?.(s) ?? null,
+  })
 }
 
 function primaryTerminalLabel(session: RegisteredSession): string {
@@ -1325,6 +1353,80 @@ async function runForeground(session: AuthSession): Promise<void> {
   const announceSession = (s: RegisteredSession, opts: { device?: boolean } = {}): void => {
     syncSession(s, opts)
     announceRename(s, opts)
+  }
+
+  // ── Domain-specific harness companions ──────────────────────────────────────────────────────────
+  // A DSH agent has two things beside its pane that the daemon owns for as long as the agent exists:
+  // its viewer server (a URL the desktop shows in a pane next to the terminal) and a watch on the
+  // verdict file its scripts write. Both are keyed on the agent, attached wherever an agent with a
+  // `dsh` comes into being (create, restore, discovery) and detached where it is forgotten.
+  const dshFrames = new Map<string, { viewerUrl: string | null; verdict: DshVerdict | null }>()
+  const dshFrameFor = (agentId: string): { viewerUrl: string | null; verdict: DshVerdict | null } => {
+    let state = dshFrames.get(agentId)
+    if (!state) { state = { viewerUrl: null, verdict: null }; dshFrames.set(agentId, state) }
+    return state
+  }
+  const dshFrameContext = (s: RegisteredSession): AgentDshContext | null => {
+    if (!s.dsh) return null
+    const state = dshFrames.get(s.agentId)
+    const installed = installedDsh(s.dsh)
+    return {
+      // The current id, so a face drawn by id survives a rename the agent predates.
+      id: installed?.id ?? s.dsh,
+      name: installed?.manifest.name ?? registryEntry(s.dsh)?.name ?? null,
+      viewerUrl: state?.viewerUrl ?? null,
+      verdict: state?.verdict ?? null,
+    }
+  }
+  dshFrameContextRef = dshFrameContext
+  // A companion's news (a viewer URL, a verdict) is pushed on the agent's frame — but only once
+  // the agent's terminal is attached. During a daemon start the viewer is often up before the
+  // pane is re-attached, and a frame with no terminal reads to the desktop as "agent gone": it
+  // closed the tiles of every harness agent on every restart (seen 2026-09-15, three times). The
+  // attach's own sync carries whatever arrived first.
+  const syncCompanion = (agentId: string): void => {
+    const session = registry.byAgent(agentId)
+    if (session && registry.terminalAvailable(agentId)) syncSession(session)
+  }
+  const dshViewers = new DshViewerManager({
+    onUrl: (agentId, url) => {
+      dshFrameFor(agentId).viewerUrl = url
+      syncCompanion(agentId)
+    },
+    log: (line) => console.log(line),
+  })
+  const dshVerdicts = new DshVerdictWatcher({
+    onChange: (agentId, verdict) => {
+      dshFrameFor(agentId).verdict = verdict
+      // The verdict's artifact is what the viewer should show, when it names one.
+      dshViewers.setVerdictArtifact(agentId, verdict?.artifact ?? null)
+      syncCompanion(agentId)
+    },
+    log: (line) => console.log(line),
+  })
+  const dshWarned = new Set<string>()
+  /** Idempotent: safe to call on every observation of the agent. */
+  const attachDsh = (s: RegisteredSession): void => {
+    if (!s.dsh || !s.cwd) return
+    const installed = installedDsh(s.dsh)
+    if (!installed) {
+      if (!dshWarned.has(s.dsh)) {
+        dshWarned.add(s.dsh)
+        console.warn(`[dsh] ${s.dsh} is not installed on this machine · agent ${sid(s.agentId)} runs as plain ${s.engine} (no viewer, no verdict)`)
+      }
+      return
+    }
+    dshVerdicts.watch(s.agentId, join(s.cwd, dshVerdictPath(installed.manifest)))
+    if (installed.manifest.viewer) {
+      void dshViewers.start(s.agentId, installed, s.cwd).catch((error) => {
+        console.warn(`[dsh] ${s.dsh} viewer failed to start · ${error instanceof Error ? error.message : error}`)
+      })
+    }
+  }
+  const detachDsh = (agentId: string): void => {
+    dshVerdicts.unwatch(agentId)
+    void dshViewers.stop(agentId)
+    dshFrames.delete(agentId)
   }
 
   const syncTerminalTitles = async (): Promise<void> => {
@@ -2003,6 +2105,23 @@ async function runForeground(session: AuthSession): Promise<void> {
     return session ? runtimeProfiles.modelsForSession(session) : Promise.resolve([])
   }
   backend.runtimeProfileProvider = (session) => runtimeProfiles.selectedModel(session)
+  backend.dshFrameProvider = dshFrameContext
+  backend.onDshInstall = async ({ id, url, ref }, progress) => {
+    const resolved = id ? resolveInstallSource(id) : url ? { source: url, ref } : null
+    if (!resolved) return { ok: false, error: 'INVALID_DSH', detail: `${id ?? url} is not a known harness` }
+    const result = await installDsh({
+      source: resolved.source,
+      ref: ref ?? resolved.ref,
+      onProgress: progress,
+      onLine: (line) => console.log(`[dsh] install · ${line}`),
+    })
+    if (!result.ok) {
+      console.warn(`[dsh] install of ${id ?? url} failed · ${result.error} · ${result.detail}`)
+      return { ok: false, error: result.error, detail: result.detail }
+    }
+    console.log(`[dsh] installed ${result.installed.id} at ${result.installed.dir}`)
+    return { ok: true, id: result.installed.id }
+  }
   backend.onAgentRename = (session, name) => { void terminals.setTitle(session, name) }
   backend.onRuntimeProfileUpdate = (sessionId, selectedModel) => runtimeController.setProfile(sessionId, selectedModel)
   runtimeProfiles.onChanged = (sessionId) => {
@@ -2187,6 +2306,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     void watcher.removeSession(sessionId)
     stopHeartbeat(sessionId)
     input.forget(doomed?.agentId ?? sessionId)
+    if (!opts.keepAgent) detachDsh(announceId)
     mirror.forget(sessionId) // aborts any in-flight recap + clears busy; KEEPS the persisted summary
     if (opts.keepAgent) return
     backend.send({ type: 'agent_deleted', payload: { agentId: announceId } }) // web tab
@@ -2428,8 +2548,10 @@ async function runForeground(session: AuthSession): Promise<void> {
         gateway: observed.gateway,
         grid: observed.grid,
         codexHome: observed.codexHome,
+        dsh: observed.dsh,
       })
       if (!opened) return
+      if (opened.entry.dsh) attachDsh(opened.entry)
       if (opened.evicted) {
         console.log(`[discovery] ${observed.primaryRuntimeKey} replaced ${sid(opened.evicted.agentId)}`)
         // ⚠️ THE REGISTRY ALREADY DROPPED IT; NOBODY HAD TOLD THE CLIENTS. That
@@ -2468,6 +2590,11 @@ async function runForeground(session: AuthSession): Promise<void> {
       // under learns it from the process, before the hook path validates a transcript against it.
       // Fill-only — a profile the row already knows is never re-derived.
       if (observed.codexHome && !current.codexHome) registry.setCodexHome(current.agentId, observed.codexHome)
+      // And the DSH: a row minted by discovery (or written before the field existed) learns it from
+      // the process's own `HARNESS_DSH`, and gets its viewer and verdict watch from here on.
+      if (observed.dsh && !current.dsh) registry.setDsh(current.agentId, observed.dsh)
+      const withDsh = registry.byAgent(current.agentId)
+      if (withDsh?.dsh) attachDsh(withDsh)
       if (wasLaunching) registry.setLaunch(current.agentId, { state: 'ready' })
       await bindObservedAgent(observed)
       if (wasDormant || wasLaunching) {
@@ -3384,9 +3511,19 @@ async function runForeground(session: AuthSession): Promise<void> {
     writeGridConfigDir,
     tmuxSupportsSessionEnv,
     installCodexHooks: (codexHome) => { if (!env.DISABLE_HOOK_INSTALL) installCodexHooks(hookPort, codexHome) },
+    dshLaunch: (id, workspace) => {
+      const installed = installedDsh(id)
+      if (!installed) {
+        console.warn(`[dsh] ${id} is not installed on this machine · relaunching as its plain base engine`)
+        return null
+      }
+      return dshLaunch(installed, workspace)
+    },
   }
+  // Whatever the source (the row itself, or a grid override the desktop just sent), the agent's DSH
+  // and workspace come from the row: a retarget must not silently drop the harness the agent is.
   const relaunchOverrides = (session: RegisteredSession, source: LaunchSource = session): Promise<LaunchOverridesResult> =>
-    buildLaunchOverrides(launchOverridesDeps, session.engine, source, session.agentId)
+    buildLaunchOverrides(launchOverridesDeps, session.engine, { dsh: session.dsh ?? null, cwd: session.cwd, ...source }, session.agentId)
 
   watcher.start()
   await cursorDiscovery.start()
@@ -3453,6 +3590,9 @@ async function runForeground(session: AuthSession): Promise<void> {
         + (registry.rebootedSinceLastRun ? ' · after reboot' : ''))
     }
   }
+  // Every DSH agent the registry kept gets its viewer and verdict watch back — restored or not, an
+  // agent whose pane is still up is still that harness.
+  for (const session of registry.list()) if (session.dsh) attachDsh(session)
   await agentReconciler.start(env.TERMINAL_RECONCILE_INTERVAL_MS ?? env.TMUX_REAP_INTERVAL_MS)
   for (const task of await loadCursorPendingTasks(env.ADAPTER_DATA_DIR)) {
     onCursorTaskStart(task.sessionId, task.toolUseId, task.input)
@@ -3585,12 +3725,42 @@ async function runForeground(session: AuthSession): Promise<void> {
    * pass can miss it — retry `triggerHint` a few times with backoff before giving up.
    */
 
-  backend.onCreateAgent = async ({ engine, cwd, bypassPermission, grid, codexHome }) => {
+  backend.onCreateAgent = async ({ engine, cwd, bypassPermission, grid, codexHome, dsh }) => {
     if (!tmuxBackend) return { ok: false, error: 'TMUX_UNAVAILABLE' }
     try {
       if (!statSync(cwd).isDirectory()) return { ok: false, error: 'CWD_NOT_FOUND' }
     } catch {
       return { ok: false, error: 'CWD_NOT_FOUND' }
+    }
+    // A domain-specific harness: put its files into the workspace first (template, AGENTS.md, skill
+    // links) and take its env/argv for the launch. Refused, never approximated, when it is not here.
+    let dshEnv: Record<string, string> | undefined
+    let dshArgs: string[] = []
+    if (dsh) {
+      const installed = installedDsh(dsh)
+      if (!installed) return { ok: false, error: 'INVALID_DSH', detail: `${dsh} is not installed on this machine` }
+      if (installed.manifest.engine !== engine) {
+        return { ok: false, error: 'INVALID_DSH', detail: `${dsh} runs on ${installed.manifest.engine}, not ${engine}` }
+      }
+      if (!(await tmuxSupportsSessionEnv())) {
+        const detail = `this machine's tmux is older than ${TMUX_SESSION_ENV_MIN.major}.${TMUX_SESSION_ENV_MIN.minor}, `
+          + `which is the first version that can give a new session its own environment — so ${installed.manifest.name} `
+          + `could not tell ${engine} which harness it is. Upgrade tmux.`
+        console.warn(`[agent] create ${dsh} refused · ${detail}`)
+        return { ok: false, error: 'TMUX_TOO_OLD_FOR_DSH', detail }
+      }
+      try {
+        const materialized = await materializeWorkspace(installed, cwd)
+        for (const warning of materialized.warnings) console.warn(`[dsh] ${dsh} materialize · ${warning}`)
+        console.log(`[dsh] ${dsh} materialized ${cwd} · created ${materialized.created.length} · kept ${materialized.kept.length}`)
+      } catch (error) {
+        const detail = `could not prepare the workspace for ${dsh} · ${error instanceof Error ? error.message : error}`
+        console.warn(`[agent] create ${dsh} refused · ${detail}`)
+        return { ok: false, error: 'DSH_MATERIALIZE_FAILED', detail }
+      }
+      const launch = dshLaunch(installed, cwd)
+      dshEnv = launch.env
+      dshArgs = launch.args
     }
     // Harness-created sessions are easy to distinguish from a user's organic tmux sessions while
     // retaining the engine and a collision-resistant creation suffix for diagnostics. Computed
@@ -3651,7 +3821,8 @@ async function runForeground(session: AuthSession): Promise<void> {
     // only `invalid x-api-key`. Nothing is cleared when no grid is in play: an agent on its own login
     // is supposed to use exactly these variables.
     const clearEnv = gridLaunch ? gridConflictingEnvToClear(gridLaunch) : undefined
-    const launchOptions = { bypassPermission, extraArgs: gridLaunch?.args, installIfMissing, clearEnv, cwd }
+    const extraArgs = [...(gridLaunch?.args ?? []), ...dshArgs]
+    const launchOptions = { bypassPermission, extraArgs: extraArgs.length ? extraArgs : undefined, installIfMissing, clearEnv, cwd }
     const command = buildEngineCommandArgv(engine, launchOptions)
     const argv = buildEngineLaunchArgv(engine, launchOptions)
     // A tmux route is enough to stream its screen. Register it before looking for a process so both
@@ -3671,15 +3842,17 @@ async function runForeground(session: AuthSession): Promise<void> {
       cwd,
       sessionLabel: label,
       argv,
-      env: gridLaunch?.env ?? (codexHome ? { CODEX_HOME: codexHome } : undefined),
+      env: mergedLaunchEnv(gridLaunch?.env ?? (codexHome ? { CODEX_HOME: codexHome } : undefined), dshEnv),
       grid: grid ? { baseUrl: grid.baseUrl, model: grid.model ?? null } : null,
       gridLaunch: grid ?? null,
       codexHome,
+      dsh,
       bypassPermission,
     })
     if (!result.ok) return { ok: false, error: result.error, detail: result.detail }
     const { spawned, pending } = result
     announceSession(pending)
+    if (pending.dsh) attachDsh(pending)
 
     const watchCreatedPane = async (): Promise<void> => {
       const budgetMs = 10 * 60_000
@@ -4103,6 +4276,9 @@ async function runForeground(session: AuthSession): Promise<void> {
     hookServer.close()
     shutdownSummaryPool()
     shutdownVoiceRouter()
+    // The new daemon starts its own viewers for the agents it restores; ours must not hold the ports.
+    await dshViewers.stopAll()
+    await dshVerdicts.stop()
     autonomousDeviceDirect?.stop()
     await backend.stop() // graceful WS close → releases the Redis machine-owner claim
     await new Promise((r) => setTimeout(r, 1000)) // grace before the same-machine reclaim
@@ -4242,6 +4418,8 @@ async function runForeground(session: AuthSession): Promise<void> {
     hookServer.close()
     shutdownSummaryPool()
     shutdownVoiceRouter()
+    await dshViewers.stopAll()
+    await dshVerdicts.stop()
     autonomousDeviceDirect?.stop()
     await backend.stop()
     try { if (readPid() === process.pid) rmSync(PID_FILE, { force: true }) } catch { /* ignore */ }
@@ -5406,6 +5584,11 @@ switch (cmd) {
     // takes one, forwarding the flag with nothing behind it.
     else if (args[0] === 'logout') gridLogoutCommand(withoutFirst(rest, 'logout')).catch(onError)
     else { console.error(`Unknown command: grid ${args[0] ?? ''}`); usage(1) }
+    break
+  case 'dsh':
+    dshCommand(args[0], args[0] === undefined ? rest : withoutFirst(rest, args[0]))
+      .then((code) => { process.exitCode = code })
+      .catch(onError)
     break
   case 'machines':
     if (!args[0]) machinesListCommand(flags.includes('--json')).catch(onError)

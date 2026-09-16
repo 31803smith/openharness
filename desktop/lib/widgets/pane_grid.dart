@@ -26,6 +26,7 @@ import 'new_agent_dialog.dart';
 import 'delete_agent_dialog.dart';
 import 'restart_agent_action.dart';
 import 'terminal_panel.dart';
+import 'web_pane_panel.dart';
 import 'pane_resize_handle.dart';
 import 'pane_split_edges.dart';
 
@@ -1262,13 +1263,39 @@ class _PaneContent extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final machine = notifier.stateOf(pane.machineId);
+    void close() => notifier.closePane(pane.id);
+    // A harness's viewer: the one tile that is not a terminal and not about a
+    // machine. Decided first, before anything below reads `agentId` — which a
+    // viewer keeps null on purpose (see TerminalPane.ownerAgentId).
+    if (pane.isWeb) {
+      final owner = machine?.agents
+          .where((agent) => agent.id == pane.ownerAgentId)
+          .firstOrNull;
+      return WebPanePanel(
+        key: ValueKey('web-pane-${pane.id}'),
+        notifier: notifier,
+        pane: pane,
+        ownerName: owner?.name ?? pane.ownerAgentId ?? 'Viewer',
+        ownerEngine: owner?.identityEngine,
+        ownerDisplayName: owner?.identityDisplayName,
+        verdict: owner?.verdict,
+        onClose: close,
+        compactHeader: swarmMode,
+        zoomed: notifier.zoomedPaneId == pane.id,
+        onToggleZoom: swarmMode && (!single || notifier.zoomedPaneId == pane.id)
+            ? () {
+                notifier.focusPane(pane.id);
+                notifier.toggleZoomPane();
+              }
+            : null,
+      );
+    }
     final session = pane.session;
     final wantedAgentId = pane.agentId;
     final agent = machine?.agents
         .where((agent) => agent.id == wantedAgentId)
         .firstOrNull;
     final agentName = agent?.name;
-    void close() => notifier.closePane(pane.id);
     final needsLink =
         machine != null &&
         machine.isRemote &&

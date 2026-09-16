@@ -67,6 +67,7 @@ class _FirstUseApp extends AppNotifier {
     ProjectFolderRequest? projectFolder,
     bool bypassPermission = false,
     String? codexHome,
+    String? dsh,
     String? swarmId,
     PaneSplitRequest? split,
     AgentCreationAttempt? attempt,
@@ -861,7 +862,7 @@ void main() {
         await tester.pump();
         if (chooseExplicitly) {
           await tester.tap(
-            find.byKey(const ValueKey('new-agent-quick-cursor')),
+            find.byKey(const ValueKey('new-agent-quick-autonomous/copper')),
           );
           await tester.pump();
         }
@@ -876,7 +877,7 @@ void main() {
         final engine = tester.widget<AppSelectField<String>>(
           find.byKey(const Key('new-agent-engine-field')),
         );
-        expect(engine.value, chooseExplicitly ? 'cursor' : 'codex');
+        expect(engine.value, chooseExplicitly ? 'autonomous/copper' : 'codex');
         expect(app.launches, isEmpty);
         await tester.pumpWidget(const SizedBox());
         app.dispose();
