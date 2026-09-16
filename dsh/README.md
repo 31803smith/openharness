@@ -2,7 +2,7 @@
 
 A **domain-specific harness (DSH)** turns Harness into a product for one domain: PCB design,
 3D CAD, short drama, robot training. It is a git repo that Harness installs on a machine. Users see
-it as one more engine tile in Create Harness — pick **Circuit**, choose a folder, prompt — and get
+it as one more tile in New Agent — pick **Copper**, choose a folder, prompt — and get
 the domain's skills in the agent, its toolchain on the machine, its viewer in a pane next to the
 terminal, and its verdict in the pane header.
 
@@ -29,7 +29,7 @@ viewer/           optional: whatever viewer.sh serves
 | 1 | + scripts that write `.harness/verdict.json` | + a ready chip and findings in the pane header |
 | 2 | + a viewer server | + a web pane next to the terminal |
 
-[`starter-dsh/`](starter-dsh/) is tier 0 and the copy-me template. Circuit and Workshop are tier 2.
+[`starter-dsh/`](starter-dsh/) is tier 0 and the copy-me template. Copper, Solid and Marp are tier 2.
 
 ## The contract
 
@@ -49,8 +49,8 @@ harness dsh doctor autonomous/copper
 harness dsh check /path/to/checkout                                       # conformance, before publishing
 ```
 
-The desktop app offers the same install from the Create Harness dialog: a DSH the machine does not
-have yet shows "Harness will install Circuit on this machine before starting".
+The desktop app offers the same install from New Agent: a harness the machine does not have yet is
+installed on Create.
 
 ## Publishing
 

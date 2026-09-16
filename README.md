@@ -2,14 +2,27 @@ https://github.com/user-attachments/assets/97848065-61c6-40df-be66-a8247f69aa4c
 
 # Harness
 
-Harness is a desktop app for the coding agents you already run — Claude Code, Codex, Cursor, and
-eleven more — on every machine you own, in one window. Each agent is a tmux pane on the machine it
-runs on, kept there by a small daemon (`harness`). The window attaches to those panes, from this
-computer or from any other, with everything between machines encrypted end to end. An optional USB
-device puts the same agents on your desk.
+Harness is a desktop app for agents that build things. Code, with Claude Code, Codex, Cursor and
+eleven more. PCBs, with Copper. 3D parts, with Solid. Keynotes, with Marp. One window, every machine
+you own. Each agent is a persistent terminal on the machine it runs on, and for the domains beyond
+code, a viewer beside it shows the work as it is made.
 
-Sessions live on the machine, not in the window. Close the laptop, open it on the train: same pane,
-same scrollback.
+| Harness | You say | You get | You watch |
+|---|---|---|---|
+| **Claude Code, Codex, Cursor, …** · Code | "add OAuth to the API" | the change, in your repo | the agent's terminal |
+| **Copper** · PCB | "a USB-C powered ESP32 sensor board" | a fab-ready board, ordered in a click | the board, its checks, the fab |
+| **Solid** · 3D design | "an iPhone case with a lanyard loop" | a printable STEP part | the model: Build, Fit, Print, Review |
+| **Marp** · Slides | "a launch keynote for 200 engineers" | a keynote with art and speaker notes | the slides filling in, then Present |
+| **Yours** | | anything an agent can build in a folder | [add a domain harness](#add-a-domain-harness) |
+
+Every harness is the same thing to the app: a tile in New Agent, and a tab with the agent's terminal
+on the right, the domain's viewer on the left, and the pane header saying where the work is. The
+domain lives in its own git repository, installed on first use, never in Harness itself.
+
+Each terminal is a tmux pane on the machine it runs on, kept there by a small daemon (`harness`).
+The window attaches to those panes, from this computer or from any other, with everything between
+machines encrypted end to end. Close the laptop, open it on the train: same pane, same scrollback.
+An optional USB device puts the same agents on your desk.
 
 It drives the agents you already run:
 
@@ -43,8 +56,22 @@ It drives the agents you already run:
   <img src=".github/assets/engines/copilot.png"     height="72" alt="GitHub Copilot" title="GitHub Copilot">
 </p>
 
+And the harnesses for the domains beyond code, each on one of those agents:
+
+<p align="center">
+  <img src=".github/assets/engines/copper.png" height="72" alt="Copper · PCB"       title="Copper · PCB, on Claude Code">
+  &nbsp;&nbsp;
+  <img src=".github/assets/engines/solid.png"  height="72" alt="Solid · 3D design"  title="Solid · 3D design, on Codex">
+  &nbsp;&nbsp;
+  <img src=".github/assets/engines/marp.png"   height="72" alt="Marp · Slides"      title="Marp · Slides, on Claude Code">
+</p>
+
 ## What you get
 
+- **Harnesses for more than code.** Copper (PCB), Solid (3D design) and Marp (Slides) sit beside the
+  coding agents in New Agent. Pick one and the tab opens with the domain's viewer next to the
+  terminal, the domain's skills in the agent, and its toolchain installed on the machine. Build your
+  own from the starter in an afternoon: [Add a domain harness](#add-a-domain-harness).
 - **One window, N machines.** Panes from your laptop, the Mac mini at home and the box in the rack,
   side by side. Create sessions, make splits, move panes, change focus, zoom, pin, pick a layout.
 - **Remote persistent sessions.** Agents run in tmux on the machine. Disconnect, reconnect, same
@@ -54,7 +81,7 @@ It drives the agents you already run:
   is promoted to a direct WebRTC data channel between the two ends when ICE succeeds, and stays on the
   relay when it doesn't. The relay holds no key material and forwards ciphertext.
 - **Remote directory lists and clone.** Start a session on another machine by browsing its filesystem
-  from the New Harness dialog, or clone a repository into a folder there first.
+  from the New Agent dialog, or clone a repository into a folder there first.
 - **Keyboard first.** A full default keymap, one-to-four-stroke sequences, a JSONC keymap file that
   live-reloads, and a command palette over every action. Native macOS menus follow the same keymap.
 - **Agent-aware terminals.** Turn boundaries, the agent's own questions (`AskUserQuestion` and the
@@ -386,38 +413,124 @@ cd cli && npm run test:tmux-real       # the real multiplexer discovery suite
 
 ### Add a domain harness
 
-A domain harness is an engine tile that comes with a domain: Copper (PCBs, on Claude Code), Solid
-(3D parts, on Codex), Marp (slide decks, on Claude Code). Pick one in New Agent and you get
-a tab of its own — the domain's viewer on the left, the engine's terminal on the right — and the
-engine starts with the domain's skills loaded in a workspace the harness laid out. Nothing about the
-domain lives in Harness itself: a harness is a git repository, installed per machine on first use.
+A domain harness turns Harness into a product for one domain. Copper makes PCBs, Solid makes 3D
+parts, Marp makes keynotes; yours can make anything an agent can build in a folder. To the user it
+is one more tile in New Agent, with a category under the name. Pick it and you get a tab of its own:
+the domain's viewer on the left, the engine's terminal on the right, the engine started with the
+domain's skills in a workspace the harness laid out, and the pane header reporting where the work is.
+
+Nothing about the domain lives in this repo. A harness is a git repository that Harness installs on
+a machine on first use. Harness reads one manifest, copies files into the workspace, runs the commands
+the manifest names, and watches one JSON file. That is the whole coupling.
 
 | In the repo | What it is |
 |---|---|
-| `harness.json` | the manifest: id, name, category, base engine, template, skills, toolchain, viewer, verdict path |
-| `AGENTS.md` | what the engine is told — Claude Code gets a `CLAUDE.md` that includes it |
-| `skills/` | the domain's skills, linked into the workspace (`.claude/skills/` or `.agents/skills/`) |
-| `template/` | a fresh workspace, copied once, plus an `init` script |
-| `toolchain/setup`, `doctor` | install the domain's tools; say what is missing, one line per check |
-| `viewer` | a loopback web server Harness starts beside the terminal; the pane is a webview |
-| `.harness/verdict.json` | one file the domain writes and Harness reads: ready or not, findings, phases |
+| `harness.json` | the manifest: id, name, category, base engine, workspace, skills, toolchain, viewer, verdict path |
+| `AGENTS.md` | what the engine is told in every workspace; a `claude` base gets a `CLAUDE.md` that imports it |
+| `skills/` | the domain's craft as `SKILL.md` bundles, symlinked into the workspace so edits are live |
+| `template/` | a fresh workspace, copied once into an empty folder, plus an optional `init` script |
+| `toolchain/setup`, `doctor` | install the domain's tools at install time; say what is missing, one line per check |
+| `viewer` | a loopback web server Harness runs beside the terminal; the pane is a webview on it |
+| `.harness/verdict.json` | the one file the domain writes and Harness reads: ready or not, findings, phases |
 
-The pane is progressive. The verdict is written at every phase and every check, not at the end, so
-the header's phase strip and chip move while the agent works; the viewer follows the artifact the
-verdict names. A harness that only produces a final file is not one.
+#### Build one
 
-```bash
-harness dsh check .                                   # conformance, on a plain checkout
-harness dsh install https://github.com/you/thing      # clone → setup → doctor, into ~/.harness/dsh
-harness dsh install ./thing --link                    # a checkout you are editing
-harness dsh doctor you/thing                          # can this machine run it
-harness dsh list
-```
+1. **Copy the starter.** [`dsh/starter-dsh/`](dsh/starter-dsh/) is a complete tier-0 harness: a
+   manifest, an `AGENTS.md`, one skill, a template, a toolchain that installs nothing.
 
-Start from [`dsh/starter-dsh/`](dsh/starter-dsh/) — a manifest, an `AGENTS.md`, one skill — and read
-[`dsh/spec/README.md`](dsh/spec/README.md) for the contract and its schemas. First-party harnesses
-are listed in [`dsh/registry/`](dsh/registry/), one JSON file each; the app offers them in New Agent's
-More menu before they are installed and installs on Create.
+   ```bash
+   cp -r dsh/starter-dsh ~/code/my-harness && cd ~/code/my-harness && git init
+   ```
+
+   In `harness.json` set `id` (`owner/name`, the install directory and the wire id), `name` (the
+   tile), `category` (the tile's second line), `engine` (`claude` or `codex`), and
+   `workspace.marker` (a file whose presence means the workspace is already laid out).
+
+2. **Tell the agent its job.** `AGENTS.md` says what the workspace is, where things go, what to do
+   first, and how to work so the pane moves: first save within a minute, then build up, check after
+   every pass. The craft itself goes in `skills/<name>/SKILL.md`: the dialect, the patterns, the
+   commands. Skills are symlinked, so a change in your checkout is live in every workspace.
+
+3. **Lay out the workspace.** `template/` is copied into an empty folder once; then
+   `workspace.init` runs with the workspace as its working directory and `HARNESS_DSH_DIR` pointing
+   at the install. Seed the first verdict here so the header has a state before the first prompt.
+
+4. **Ship the toolchain with the harness.** `toolchain/setup.sh` runs once at install, in the
+   install directory: pin versions and vendor them there (a `node_modules`, a `.venv`), never into
+   the user's machine. `toolchain/doctor.sh` exits 0 when the machine can run the harness and prints
+   one line per check; Harness shows those lines. Point the agent at the tools through `agent.env`
+   (`"MARP_TOOLCHAIN": "${dsh}/toolchain"`); `${dsh}`, `${workspace}` and `${home}` expand.
+
+5. **Write the verdict as a feed.** `.harness/verdict.json` is written at every check and every
+   phase change, not at the end. `ready` is the one machine truth; `summary` is the header's line;
+   `phases` is how the header says "you are here".
+
+   ```json
+   { "spec": 1, "ready": false, "summary": "10 slides so far · 1 warning",
+     "findings": [{ "severity": "warning", "kind": "dense", "message": "slide 4 has 61 words" }],
+     "artifact": "deck.md",
+     "phases": [{ "id": "outline", "name": "Outline", "state": "done" },
+                { "id": "draft", "name": "Draft", "state": "active" },
+                { "id": "polish", "name": "Polish", "state": "pending" }],
+     "updatedAt": "2026-09-15T23:33:00Z" }
+   ```
+
+6. **Add the viewer.** `viewer.command` is a long-running process. Harness starts it with
+   `HARNESS_VIEWER_PORT`, `HARNESS_WORKSPACE`, `HARNESS_DSH_DIR` and `HARNESS_DSH` in its
+   environment, waits for the port to open on `127.0.0.1`, then loads `viewer.url` in the pane
+   (`${port}` and `${artifact}` expand; the artifact is what the verdict names, or the newest file
+   matching `artifactExtensions`). Serve files from the workspace and nothing outside it, watch the
+   workspace, push a reload on every change, and re-run your check on every change so the header
+   moves while the agent writes without the agent running anything. Marp's viewer does all of this
+   in about 110 lines of Node with no dependencies beyond its renderer.
+
+7. **Check it, install it, run it.**
+
+   ```bash
+   harness dsh check .                    # conformance: the manifest, the scripts, the schemas
+   harness dsh install . --link           # this checkout as the installed harness (a symlink)
+   harness dsh doctor owner/name          # what the machine is missing, if anything
+   harness dsh list                       # installed here, and what the registry offers
+   ```
+
+   Then New Agent, your tile, a folder, a prompt. For a check without the app,
+   [`dsh/tools/dsh-e2e.mjs`](dsh/tools/) creates an agent over the daemon's loopback socket and
+   reports the materialized workspace, the viewer URL, the pane's environment and the first verdict.
+   The viewer process reads its own files when it starts; after you edit it, kill it and the daemon
+   respawns it on the new code.
+
+8. **Publish.** Add `dsh/registry/<owner>/<name>.json` in a pull request:
+
+   ```json
+   { "id": "owner/name", "name": "Name", "category": "Thing", "description": "One line.",
+     "repo": "https://github.com/owner/name", "ref": "main", "engine": "claude",
+     "tier": 2, "verified": false }
+   ```
+
+   CI clones the repo at that ref and runs the conformance check. Once merged, the app offers the
+   tile before the harness is installed and installs it on Create; `verified: true` is for
+   first-party entries, everything else shows its git URL on install.
+
+#### Tiers
+
+| Tier | Ships | Harness shows |
+|---|---|---|
+| 0 | manifest, `AGENTS.md`, skills, template | the tile, a terminal with the skills loaded |
+| 1 | + a check that writes `.harness/verdict.json` | + ready or not, findings and phases in the pane header |
+| 2 | + a viewer server | + the viewer pane beside the terminal, following the artifact |
+
+#### Worked examples
+
+| Harness | Base | What it shows |
+|---|---|---|
+| [Marp](https://github.com/autonomous-ai/autonomous-marp) (Slides) | Claude Code | the smallest complete tier 2: a 110-line viewer with live reload and a present mode, two themes, an offline art generator, a check that writes the verdict, node tests. Start here. |
+| [Copper](https://github.com/autonomous-ai/autonomous-circuit) (PCB) | Claude Code | a Python toolchain vendored by `setup.sh`, a board viewer, phases Build / Checks / Fab written by the generation pipeline |
+| [Solid](https://github.com/autonomous-ai/autonomous-workshop) (3D design) | Codex | a Codex base, CAD scripts as skills, a STEP viewer found through `artifactExtensions`, phases Build / Fit / Print / Motion / Review |
+
+Two rules hold across all of them. The pane is progressive: a harness that only produces a final
+file is not one. And the domain stays in the harness: if adding yours needs a change in this repo,
+that is a spec change, and [`dsh/spec/README.md`](dsh/spec/README.md) with its schemas is where the
+contract lives. Changes to it are appended to `dsh/spec/CHANGES.md`.
 
 ## Providers, relay, web
 
@@ -442,7 +555,7 @@ cli/        the harness daemon and CLI (TypeScript, one bundle). src/engines/ is
 backend/    the relay (Node, Prisma/MongoDB, Redis)
 provider/   the API-provider spec, reference and example providers, conformance runner
 device/     firmware for the Harness device (ESP-IDF, esp32-circle)
-docs/       specs (the cable protocol), design notes, plans, release map (cicd.md)
+dsh/        domain harnesses: the contract and schemas, the registry, the starter, daemon-level tools
 ```
 
 ## Development
