@@ -40,3 +40,30 @@ firmware over the air. `ci.yml` runs the CLI suite on demand (Actions -> CI -> R
 no secrets, which is what lets it run on a fork's branch.
 `make remote-machine`
 brings up a second machine in Docker so the remote path can be exercised from one laptop.
+
+## Isolated end-to-end testing
+
+With Node, tmux, Flutter and a running Docker engine, run from the repository root:
+
+```bash
+(cd cli && npm ci)
+(cd backend && npm ci)
+(cd desktop && flutter pub get && bash scripts/test-terminal-local-e2e.sh)
+```
+
+The runner creates disposable MongoDB and Redis containers, a backend, a daemon, identities,
+projects and a dedicated tmux server. It exercises both local and encrypted backend connections,
+including creation retries, terminal input and resize, reconnect, agent/daemon restart, deletion,
+and domain harness workspace/viewer/verdict recovery. The identity service and model CLI are
+fixtures; it needs no real account and does not replace the running Harness daemon or engine hooks.
+It cleans up its processes and containers when finished.
+
+Set `HARNESS_E2E_DOCKER_CONTEXT` to use a separate Docker context. Set `HARNESS_STACK_KEEP=1` to
+retain fixture logs and files for debugging; services and containers still stop. The test is
+explicitly skipped in a plain `flutter test` run and exercised by the script above.
+
+For the backend-to-provider chain, install dependencies in `provider/reference-provider`, then
+run `PROVIDER_E2E=1 npm test` in `backend`. The cross-implementation provider suite in `provider/e2e`
+also needs dependencies installed in `provider/example-provider`.
+
+See [the reliability run](reliability-2026-09-16.md) for verified coverage and remaining limits.
