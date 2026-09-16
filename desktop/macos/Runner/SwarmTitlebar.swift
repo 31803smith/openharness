@@ -294,12 +294,21 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
   private func rebuildMachinesMenu() {
     machinesMenu.removeAllItems()
     machinesMenu.minimumWidth = 0
-    let labels = machines.map { machine in
-      (name: SwarmMenuText.fitted(machine.name, width: 200), status: machine.status,
+    let labels = machines.map { machine -> (name: String, presence: String, status: String, count: String) in
+      (name: SwarmMenuText.fitted(machine.name, width: 200),
+       // Node presence ("Online"/"Offline"), shown grey right after the name,
+       // independent of the link state on the trailing edge.
+       presence: machine.presence,
+       status: machine.status,
        count: machine.agentCount.map { "\($0) \($0 == 1 ? "agent" : "agents")" } ?? "")
     }
     // Preserve the compact menu's proportions, with the requested extra room.
-    let compactEdge = SwarmMenuText.trailingEdge(labels.map { ($0.name + "  " + $0.status, $0.count) })
+    // Leading text = name + presence; trailing column = the agent count, or the
+    // status word ("Link required"/"Offline"/…) when there is no count.
+    let compactEdge = SwarmMenuText.trailingEdge(labels.map {
+      ($0.presence.isEmpty ? $0.name : $0.name + "  " + $0.presence,
+       $0.count.isEmpty ? $0.status : $0.count)
+    })
     let trailingEdge = ceil((compactEdge + 62) * 1.2) - 62
     let manager = NSMenuItem(title: "Open Machines Manager", action: #selector(menuAction(_:)), keyEquivalent: "")
     manager.target = self
@@ -315,10 +324,13 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
       paragraph.tabStops = [NSTextTab(textAlignment: .right, location: trailingEdge)]
       let label = NSMutableAttributedString(string: parts.name,
         attributes: [.font: NSFont.menuFont(ofSize: 0), .paragraphStyle: paragraph])
-      let suffix = parts.count.isEmpty
-        ? "\t" + parts.status
-        : "  " + parts.status + "\t" + parts.count
-      label.append(NSAttributedString(string: suffix,
+      // After the name: the node presence ("Online"). Trailing (tab-aligned
+      // right): the agent count, or the link/offline status when there is no
+      // count. The two are independent slots, so a machine can read
+      // "Online … Link required".
+      let afterName = parts.presence.isEmpty ? "" : "  " + parts.presence
+      let trailing = parts.count.isEmpty ? parts.status : parts.count
+      label.append(NSAttributedString(string: afterName + "\t" + trailing,
         attributes: [.font: NSFont.menuFont(ofSize: 0), .paragraphStyle: paragraph,
           .foregroundColor: NSColor.secondaryLabelColor]))
       item.attributedTitle = label
@@ -332,8 +344,19 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
         submenu.addItem(child)
       }
       if machine.agents.isEmpty {
-        let title = machine.agentCount == 0 ? "No agents yet" :
-          machine.status == "Online" || machine.status == "Connecting…" ? "Loading agents…" : machine.status
+        // Presence/online no longer rides in `status` (it moved to its own
+        // slot). Link-required wins; a node known to be offline says so; a
+        // reachable-or-connecting node is still fetching.
+        let title: String
+        if machine.agentCount == 0 {
+          title = "No agents yet"
+        } else if machine.linkRequired {
+          title = "Link required"
+        } else if machine.presence == "Offline" {
+          title = "Offline"
+        } else {
+          title = "Loading agents…"
+        }
         let empty = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         empty.isEnabled = false
         submenu.addItem(empty)
@@ -582,6 +605,8 @@ private struct SwarmMachineEntry: Equatable {
   let id: String
   let name: String
   let status: String
+  let presence: String
+  let linkRequired: Bool
   let local: Bool
   let agentCount: Int?
   let agents: [SwarmMachineAgent]
@@ -591,6 +616,8 @@ private struct SwarmMachineEntry: Equatable {
     self.id = id
     self.name = String(name.prefix(128))
     status = String((row["status"] as? String ?? "").prefix(80))
+    presence = String((row["presence"] as? String ?? "").prefix(80))
+    linkRequired = row["linkRequired"] as? Bool == true
     local = row["local"] as? Bool == true
     agentCount = (row["agentCount"] as? Int).map { max(0, $0) }
     agents = (row["agents"] as? [[String: Any]] ?? []).prefix(512).compactMap(SwarmMachineAgent.init)
