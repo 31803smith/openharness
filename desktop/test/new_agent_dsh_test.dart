@@ -252,7 +252,7 @@ void main() {
         'engine': 'claude',
         'dsh': 'autonomous/autonomous-circuit',
         'folder': '',
-        'bypass': false,
+        'bypass': true,
       });
       expect(tester.takeException(), isNull);
     },

@@ -200,7 +200,8 @@ void main() {
       'machine': 'machine-1',
       'engine': 'codex',
       'folder': pickedFolder,
-      'bypass': true,
+      // On by default; the click above turned it off, and the retry kept that choice.
+      'bypass': false,
     });
     expect(tester.takeException(), isNull);
   });

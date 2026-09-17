@@ -1826,7 +1826,8 @@ export class BackendSocket {
           const input = {
             engine,
             cwd: typeof cwd === 'string' ? cwd : '',
-            bypassPermission: payload.bypassPermission === true,
+            // On unless a client says otherwise: a harness works without stopping to ask for each command.
+            bypassPermission: payload.bypassPermission !== false,
             grid: grid.state === 'ok' ? grid.override : null,
             codexHome,
             dsh,

@@ -184,9 +184,10 @@ void main() {
     testWidgets('carries the engine and the bypass flag', (tester) async {
       await create(tester);
 
+      // Auto-approve is on unless the person turns it off.
       expect(tracked.paramsOf('agent_created'), {
         'engine': 'claude',
-        'bypass_permission': false,
+        'bypass_permission': true,
       });
     });
 

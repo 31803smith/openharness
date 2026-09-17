@@ -4724,7 +4724,7 @@ class AppNotifier extends ChangeNotifier {
     required String engine,
     required String folder,
     ProjectFolderRequest? projectFolder,
-    bool bypassPermission = false,
+    bool bypassPermission = true,
     String? codexHome,
     String? dsh,
     String? prompt,

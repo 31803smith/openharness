@@ -139,7 +139,9 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   late String? _folder = widget.initialFolder;
   LocalCodexProfile? _codexProfile;
   bool _codexProfilesBusy = true;
-  bool _bypassPermission = false;
+  /// On unless the person turns it off: a new harness works without stopping to ask for each
+  /// command — Claude Code's manual mode was what every harness opened in before.
+  bool _bypassPermission = true;
 
   /// Whether the fold is open. Closed on every open of the dialog, deliberately:
   /// it is shut for the case it exists to serve, and a drawer that remembers
@@ -942,12 +944,9 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                   _codexProfile = null;
                   _codexProfilesBusy = true;
                 }
+                // The choice is kept across agents; one with no flag simply shows none (and sends
+                // false, see _submit), so coming back to Claude Code finds it as it was left.
                 _error = null;
-                if (!kEngineBypassPermissionFlag.containsKey(
-                  _baseEngine(value),
-                )) {
-                  _bypassPermission = false;
-                }
               });
               if (isHarnessId(value)) unawaited(_probeHarnesses());
             },

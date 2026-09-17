@@ -730,7 +730,7 @@ void main() {
         machine: 'm',
         engine: 'codex',
         folder: '/work/my-project',
-        bypass: false,
+        bypass: true,
       ),
     ]);
     expect(find.byType(TerminalView), findsOneWidget);

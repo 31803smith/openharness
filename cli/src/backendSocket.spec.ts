@@ -738,6 +738,37 @@ describe('BackendSocket outbound queue', () => {
     await socket.stop()
   })
 
+  it('creates with approvals bypassed unless the client turns that off', async () => {
+    const socket = new BackendSocket('token')
+    const frames: Array<Record<string, unknown>> = []
+    socket.registerLocalClient('local:bypass', {
+      sendFrame: (frame) => { frames.push(frame); return true }, sendBinary: () => true,
+    })
+    const pending = (agentId: string): RegisteredSession => ({
+      schemaVersion: 2, active: true, launch: { state: 'starting' },
+      agentId, sessionId: '', boundAt: null, engine: 'claude',
+      transcriptPath: null, projectDir: 'work', cwd: '/tmp/work',
+      runtimes: [{ backend: 'tmux', paneId: '%9' }], primaryRuntimeKey: 'tmux/%9', tmuxPane: '%9',
+      source: null, title: null, model: null, cliVersion: null, processIdentity: null,
+      registeredAt: 1, updatedAt: 1, lastHookAt: 1, lastTranscriptAt: 1,
+    })
+    const create = vi.fn(async (input: { bypassPermission: boolean }) => ({ ok: true as const, session: pending(`b-${create.mock.calls.length}`) }))
+    socket.onCreateAgent = create
+    const ask = (requestId: string, extra: Record<string, unknown>) => socket.handleLocalFrame('local:bypass', {
+      type: 'agent_create', payload: { requestId, engine: 'claude', cwd: '/tmp/work', ...extra },
+    })
+    try {
+      ask('unsaid', {})
+      ask('on', { bypassPermission: true })
+      ask('off', { bypassPermission: false })
+      await vi.waitFor(() => expect(create).toHaveBeenCalledTimes(3))
+      expect(create.mock.calls.map(([input]) => input.bypassPermission)).toEqual([true, true, false])
+    } finally {
+      await socket.unregisterLocalClient('local:bypass')
+      await socket.stop()
+    }
+  })
+
   it('recovers a delayed creation on the same connection without starting another agent', async () => {
     const socket = new BackendSocket('token')
     const frames: Array<Record<string, unknown>> = []
