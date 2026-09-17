@@ -169,7 +169,7 @@ Security reports go through [SECURITY.md](SECURITY.md).
    currently run manually through **Actions → CI → Run workflow**; a PR does not automatically
    exercise the app, real engines, or hardware. Report those checks separately.
 5. **Merge and release.** PRs are squash-merged. Rebase on the latest `main` when needed to keep
-   the diff readable. Harness catalog changes use the independent catalog publisher. App, CLI, and
+   the diff readable. Harness catalog changes publish automatically after merge. App, CLI, and
    firmware releases have their own schedules.
 
 ## Conventions across this repository
