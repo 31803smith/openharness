@@ -10,8 +10,8 @@ PCB/schematic sources are not included yet.
 | File | Part |
 |---|---|
 | `Housing.step` | Main enclosure housing |
-| `Iron_base.step` | Base/stand plate |
-| `USB_clamp.step` | USB cable strain-relief clamp |
+| `Iron_base.step` | Iron counterweight block (keeps the device from tipping/sliding on a desk) |
+| `USB_clamp.step` | Clamp that holds the USB-C port PCB in place |
 | `Button.step` | Physical button cap/actuator |
 
 `Harness.step` (the full assembled harness, ~120 MB) is not included in this commit — it exceeds
