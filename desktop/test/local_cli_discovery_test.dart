@@ -692,7 +692,7 @@ void main() {
   // machine) exits, and the supervisor respawned it forever — every replacement starting without a
   // session and exiting again, silently, for the app's whole lifetime.
   test(
-    'startSupervising brings back a signed-out daemon, which now runs as a guest, and says so',
+    'startSupervising stops respawning once the CLI reports it is signed out',
     () async {
       const computerId = '0123456789abcdef0123456789abcdef';
       final identityFile = File('${scratch.path}/computer-id')
@@ -727,16 +727,13 @@ void main() {
 
       await Future.delayed(const Duration(milliseconds: 300));
 
-      // A signed-out daemon used to exit and refuse to start again, so respawning it looped forever.
-      // It now starts without an account and serves this computer, so it is brought back like any
-      // other, and the caller hears of the sign-out (AppNotifier acts only while still signed in).
       expect(
         spawnCount,
-        greaterThan(0),
-        reason: 'a signed-out daemon starts as a guest now',
+        0,
+        reason: 'a signed-out daemon must never be respawned',
       );
-      expect(signedOutCalls, greaterThanOrEqualTo(1), reason: 'the caller is told');
-      expect(timer.isActive, isTrue, reason: 'supervision goes on');
+      expect(signedOutCalls, 1, reason: 'the caller is told exactly once');
+      expect(timer.isActive, isFalse, reason: 'supervision stops for good');
     },
   );
 
