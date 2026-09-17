@@ -385,6 +385,10 @@ runtime is ever adopted, since onefile self-extracts into `{CACHE_DIR}`.
 - **H1 — pin propagation.** A version-aware ensure (compare the `current-grid` dir name with the
   manifest pin) on daemon start and on the post-update restart — not only in `install.sh` and
   `--repair`. Add a test that the manifest pin ≥ `GRID_VERSION_FLOOR` (`gridExec.ts:36`).
+  **Done** — `ensureManagedGrid()` (`runtimeInstall.ts`, the Node installer generalised into
+  `ensureManagedArchive()`): follows the pin, refuses a manifest below the floor, keeps one version
+  back for the panes still on it; fire-and-forget at the top of `runForeground`, awaited under
+  `--repair`. The publisher refuses a pin below the floor too.
 - **H2 — hardened runtime × native extensions**, only if `--options runtime` is ever adopted:
   `pydantic-core` (a Rust `.so`) is in the runtime dep graph (grid `uv.lock:2255-2270`), so library
   validation needs every Mach-O signed with one Team ID (per file, not `--deep`) or
@@ -394,6 +398,9 @@ runtime is ever adopted, since onefile self-extracts into `{CACHE_DIR}`.
   binary run by absolute path serves.
 - **H3 — darwin-x64 has no builder.** Node and tmux are published for darwin-x64; Nuitka cannot
   cross-compile and `macos-15` is arm64. An Intel runner, or decide "arm64 only; x64 falls back to PATH".
+  **Done, conditionally** — `release-grid-runtime.yml` puts darwin-x64 on `macos-15-intel`; the
+  `platforms` input drops it if that label is unavailable, and a platform absent from the manifest
+  is a sentence at install time, never an error.
 - **H4 — the suite read the developer's real managed runtime.** `vitest.setup.ts` isolated only
   `ADAPTER_DATA_DIR`; with the pin outranking PATH, a real `current-grid` would have hijacked every
   fake-`grid` spec. Fixed in this pass.
@@ -401,13 +408,22 @@ runtime is ever adopted, since onefile self-extracts into `{CACHE_DIR}`.
 - **M2 — manifest shape.** `install.sh` slices a manifest by its FIRST platform key
   (`publish-managed-tmux-runtime.sh:5-6`): grid gets its own `harness/runtime/grid/metadata.json`, not
   a `grid` key inside Node's. Publishing is a manual `workflow_dispatch`; name who bumps.
+  **Done** — `desktop/scripts/publish-managed-grid-runtime.sh` (tmux's, for grid, all four platforms
+  or the `GRID_PLATFORMS` subset), `make upload-grid-runtime`, `release-grid-runtime.yml` whose
+  `grid_version` input IS the pin. Whoever runs the workflow bumps it — RELEASE.md, "Managed grid runtime".
 - **M3 — grid source in harness CI.** Nothing exists. Cleanest: a `release-grid-runtime.yml` cloned
   from `release-tmux-runtime.yml` that checks out `autonomous-ai/autonomous-grid@v<pin>` and runs
   `packaging/build_binary.sh` (after an upstream `--onefile` opt-out). Linux can simply download the
   published onefile and verify it against `SHA256SUMS`.
+  **Done** — `cli/scripts/build-managed-grid.sh`: Linux wraps the release binary, verified against
+  the release's `SHA256SUMS` and re-hosted under our manifest; macOS clones the tag and runs
+  `packaging/build_binary.sh` unchanged — onefile, so no upstream opt-out (see the shape row). The
+  repo is public: no token for the checkout.
 - **M4 — `install.sh` placement.** `--host` stops after step 1 and `--desktop` skips it
   (`install.sh:11-12,45-53`): grid lands in the step-2/3 region. Cold start was not timed above;
   measure it against `gridExec`'s 30 s timeout (`gridExec.ts:43`).
+  **Done** — step 3b, after the CLI and before PATH, in every mode but `--host`; optional (a failed
+  download prints one line and the install goes on; the daemon retries on start); no symlink.
 - **M5 — no desktop surface for a missing CLI.** Only `grid.webSearch` reaches the frame
   (`registry.ts:118`, `models.dart:120`); `GRID_CLI_MISSING` reaches nothing. A
   `gridCli: managed | path | missing` field beside the model list lets the picker and the local-model
@@ -434,6 +450,13 @@ runtime is ever adopted, since onefile self-extracts into `{CACHE_DIR}`.
   file), `gridExec.spec.ts`.
 - M5: `gridCli` on the `grid_models_list` answer (`gridCliPresence()`), parsed into `GridModels`;
   the Local model dialog and the picker's empty sentence say when it is `missing`. Specs on both ends.
+- The managed grid itself, end to end (the shape assumed onefile — see the decision table):
+  `ensureManagedGrid()` + `ADAPTER_GRID_RUNTIME_METADATA_URL` (daemon, H1); `install_managed_grid()`
+  step 3b (installer, M4); `build-managed-grid.sh` + `publish-managed-grid-runtime.sh` +
+  `release-grid-runtime.yml` + `make upload-grid-runtime` (M2, M3, H3); RELEASE.md. Specs:
+  `runtimeInstall.spec.ts` (7 grid cases), `install.spec.ts` (4), `buildManagedGrid.spec.ts` (3,
+  the Linux wrap through a fake release). The Linux wrap was also run against the real v0.3.47
+  release, and the macOS build from its tag, on this Mac.
 
 ---
 
@@ -698,7 +721,7 @@ None. Every decision this plan waited on is recorded above:
 | Name shape | `<local-part>-<8 hex of sha256(user.id)>` |
 | Name uniqueness | Global; the control plane **rejects** a duplicate |
 | Who signs the grid binary | Harness's own release pipeline (Change 2c) |
-| Binary shape | Nuitka `--standalone`, never onefile |
+| Binary shape | ~~Nuitka `--standalone`, never onefile~~ **Revised 2026-09-17, proposed: onefile** — the tree's reason (a hardened runtime) went with notarization; onefile is grid's own build, Linux reuses grid's published binaries, and every platform shares one archive shape. The implementation assumes it; the choice only changes what `build-managed-grid.sh` puts in `bin/` |
 | Grid version | **Pinned** in the harness manifest; no self-update underneath it |
 | `auto` / grid-router model | Excluded from the picker until the grid path is E2EE |
 | Local mode | Out of scope; every call passes `--remote` |
@@ -706,5 +729,6 @@ None. Every decision this plan waited on is recorded above:
 | Where the agent PANE finds `grid` (C1) | **Done (2026-09-17): A** — the pane's launch script prepends the resolved grid's dir to PATH after the shell's startup files (`gridPanePrelude`); `~/.local/bin/grid` stays grid's / uv's |
 | `grid update` under the pin (C2) | **Done (2026-09-17)**: `GRID_NO_UPDATE_CHECK=1` on every spawn and pane; the skill forbids `grid update`. Runtime laid down 0555 — with the installer |
 | How the desktop learns the machine has no `grid` (M5) | **Done (2026-09-17)**: `gridCli: managed \| path \| missing` beside the model list; "Harness Compute isn't installed on this machine." in the dialog and the picker |
-| How a pin bump reaches installed machines (H1) | **Decided (2026-09-17)**: version-aware ensure on daemon start and the post-update restart, not only `install.sh` / `--repair` |
+| How a pin bump reaches installed machines (H1) | **Done (2026-09-17)**: `ensureManagedGrid()` on every daemon start and the post-update restart, awaited under `--repair`; one version kept back for running panes |
+| Where the managed grid comes from | **Done (2026-09-17)**: `release-grid-runtime.yml` → `harness/runtime/grid/metadata.json`; Linux wraps grid's release binaries (verified against `SHA256SUMS`), macOS builds from the tag with grid's own script, ad-hoc, on `macos-15` / `macos-15-intel` |
 | Which binary signs in and out | **Done (2026-09-17)** — `gridHandoff.ts` and `gridLogout.ts` resolve through `gridBinaryPath()` |
