@@ -680,6 +680,7 @@ Future<void> _openStoreAgent(
   DshEntry entry,
   String machineId,
 ) async {
+  final origin = notifier.activeSwarmId;
   notifier.newSwarm(draft: true);
   final target = notifier.activeSwarmId;
   final result = await showNewAgentDialog(
@@ -690,7 +691,15 @@ Future<void> _openStoreAgent(
     initialEngine: entry.id,
     swarmId: target,
   );
-  if (result == null) notifier.cancelSwarmDraft(target);
+  if (result != null) return;
+  // Dismissed: back to the store page. A tab made for this is a draft and cancelling it returns there;
+  // but newSwarm hands over an empty New Tab the window already had instead of making a second one,
+  // and that tab is the person's own — it stays, and the store is selected again.
+  if (!notifier.cancelSwarmDraft(target) &&
+      notifier.activeSwarmId == target &&
+      target != origin) {
+    notifier.selectSwarm(origin);
+  }
 }
 
 class _ProductPage extends StatefulWidget {
