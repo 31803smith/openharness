@@ -54,12 +54,12 @@ const PAGE = join(toolchainDir, 'viewer')
 const PAGE_TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' }
 
 const server = createServer((req, res) => {
-  const url = new URL(req.url ?? '/', `http://${host}:${port}`)
+  const url = new URL(req.url, `http://${host}:${port}`)
   if (url.pathname === '/' || url.pathname.startsWith('/viewer/')) {
     const name = url.pathname === '/' ? 'index.html' : url.pathname.slice('/viewer/'.length)
     const full = normalize(join(PAGE, name))
-    if (!full.startsWith(PAGE + sep) || !existsSync(full) || !statSync(full).isFile()) { res.writeHead(404); res.end('not found'); return }
-    res.writeHead(200, { 'content-type': PAGE_TYPES[extname(full)] ?? 'application/octet-stream', 'cache-control': 'no-store' })
+    if (!full.startsWith(PAGE + sep) || !PAGE_TYPES[extname(full)] || !existsSync(full) || !statSync(full).isFile()) { res.writeHead(404); res.end('not found'); return }
+    res.writeHead(200, { 'content-type': PAGE_TYPES[extname(full)], 'cache-control': 'no-store' })
     res.end(readFileSync(full))
     return
   }
@@ -75,7 +75,7 @@ const server = createServer((req, res) => {
     try {
       body = deckJson(safeDeckFile(url.searchParams.get('file')))
     } catch (error) {
-      body = { error: error instanceof Error ? error.message : String(error) }
+      body = { error: error.message }
     }
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
     res.end(JSON.stringify(body))
@@ -89,7 +89,10 @@ const server = createServer((req, res) => {
     return
   }
   // A workspace file, by the path the deck wrote. Never a path that leaves the workspace.
-  const rel = decodeURIComponent(url.pathname).replace(/^\/+/, '')
+  // A path that is not valid percent-encoding (an image named "50%.png" written unescaped) is a bad
+  // request; left to throw, it took the whole viewer down with it.
+  let rel
+  try { rel = decodeURIComponent(url.pathname).replace(/^\/+/, '') } catch { res.writeHead(400); res.end('bad request'); return }
   const full = normalize(resolve(workspace, rel))
   if (!full.startsWith(workspace + sep) || !existsSync(full) || !statSync(full).isFile()) {
     res.writeHead(404); res.end('not found'); return
@@ -102,9 +105,13 @@ const server = createServer((req, res) => {
 // edit (redraw) from anything else.
 let timer = null
 let lastPath = ''
+const STATE_DIRS = new Set(['.harness', 'dist', '.git', 'node_modules', '.claude'])
 function changed(path) {
-  const rel = relative(workspace, join(workspace, path ?? '')).split(sep).join('/')
-  if (rel.startsWith('.harness') || rel.startsWith('dist') || rel.startsWith('.git') || rel.startsWith('node_modules') || rel.startsWith('.claude')) return
+  /* c8 ignore next */ // fs.watch leaves the filename out only on platforms whose watcher cannot name it
+  const name = path ?? ''
+  const rel = relative(workspace, join(workspace, name)).split(sep).join('/')
+  // By top-level folder: a prefix match also swallowed distribution.md, .github/ and .harness-notes.md.
+  if (STATE_DIRS.has(rel.split('/')[0])) return
   lastPath = rel
   if (timer) clearTimeout(timer)
   timer = setTimeout(() => {
@@ -116,7 +123,7 @@ function changed(path) {
 try {
   watch(workspace, { recursive: true }, (_event, filename) => changed(filename?.toString()))
 } catch (error) {
-  console.error(`[marp] cannot watch ${workspace}: ${error instanceof Error ? error.message : error}`)
+  console.error(`[marp] cannot watch ${workspace}: ${error.message}`)
 }
 setInterval(() => { for (const client of clients) client.write(': ping\n\n') }, 20_000).unref()
 

@@ -40,8 +40,10 @@ else
 fi
 
 # Export to PDF/PPTX renders through a Chromium-family browser marp-cli finds on its own.
+# MARP_APPLICATIONS_DIR is where to look instead of /Applications (the tests point it at a scratch folder).
+apps="${MARP_APPLICATIONS_DIR:-/Applications}"
 found=""
-for app in "/Applications/Google Chrome.app" "/Applications/Chromium.app" "/Applications/Microsoft Edge.app" "/Applications/Brave Browser.app"; do
+for app in "$apps/Google Chrome.app" "$apps/Chromium.app" "$apps/Microsoft Edge.app" "$apps/Brave Browser.app"; do
   [ -d "$app" ] && { found="$app"; break; }
 done
 [ -z "$found" ] && command -v chromium >/dev/null 2>&1 && found="$(command -v chromium)"

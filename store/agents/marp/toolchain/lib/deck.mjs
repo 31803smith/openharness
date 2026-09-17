@@ -38,6 +38,12 @@ function stripTags(html) {
     .replace(/&\w+;/g, ' ')
 }
 
+/** A reference as a file name: percent-escapes decoded, and a name with a bare `%` ("growth-50%.png")
+ * taken as written instead of throwing out of the whole lint. */
+function decoded(ref) {
+  try { return decodeURIComponent(ref) } catch { return ref }
+}
+
 function frontMatter(markdown) {
   const m = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(markdown)
   return m ? m[1] : null
@@ -64,7 +70,7 @@ export function renderDeck(markdown, { dir } = {}) {
       words: text ? text.split(' ').length : 0,
       title: heading ? stripTags(heading[1]).trim() : null,
       images: [...markup.matchAll(/(?:src|url\()=?["'(]?([^"')\s]+)/g)].map((m) => m[1]),
-      notes: (comments[index] ?? []).join('\n'),
+      notes: comments[index].join('\n'),
     }
   })
   return { html, css, slides }
@@ -93,7 +99,7 @@ export function lintDeck(markdown, { dir }) {
   try {
     rendered = renderDeck(markdown, { dir })
   } catch (error) {
-    findings.push({ severity: 'error', kind: 'render', message: `the deck does not render: ${error instanceof Error ? error.message : error}` })
+    findings.push({ severity: 'error', kind: 'render', message: `the deck does not render: ${error.message}` })
     return { ready: false, findings, slides: [], html: [], css: '' }
   }
   const { slides, html, css } = rendered
@@ -112,7 +118,7 @@ export function lintDeck(markdown, { dir }) {
   }
   const refs = imageRefs(markdown)
   for (const ref of refs) {
-    const file = resolve(dir, decodeURIComponent(ref.split('#')[0].split('?')[0]))
+    const file = resolve(dir, decoded(ref.split('#')[0].split('?')[0]))
     if (!existsSync(file) || !statSync(file).isFile()) {
       findings.push({ severity: 'error', kind: 'image', message: `image ${ref} is not in the workspace`, ref })
     }
@@ -153,7 +159,8 @@ export function writeVerdict(workspace, deckFile, lint) {
     ? `${n} slides, ready to present${warnings ? ` · ${warnings} warning${warnings === 1 ? '' : 's'}` : ''}`
     : errors
       ? `${errors} error${errors === 1 ? '' : 's'} · ${n} slide${n === 1 ? '' : 's'}`
-      : `${n} slide${n === 1 ? '' : 's'} so far${warnings ? ` · ${warnings} warning${warnings === 1 ? '' : 's'}` : ''}`
+      // not ready without an error is too few slides, which is always a warning of its own
+      : `${n} slide${n === 1 ? '' : 's'} so far · ${warnings} warning${warnings === 1 ? '' : 's'}`
   const verdict = {
     spec: 1,
     ready: lint.ready,
