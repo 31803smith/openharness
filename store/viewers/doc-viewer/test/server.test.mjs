@@ -28,7 +28,11 @@ before(async () => {
     child.on('exit', (code) => fail(new Error(`viewer exited ${code}`)))
   })
 })
-after(() => { child?.kill(); rmSync(ws, { recursive: true, force: true }) })
+after(async () => {
+  // Wait for the exit: the server ends its streams and exits on SIGTERM (and V8 writes its coverage then).
+  if (child && child.exitCode === null) { const exited = new Promise((ok) => child.once('exit', ok)); child.kill(); await exited }
+  rmSync(ws, { recursive: true, force: true })
+})
 
 test('serves the reader and pdf.js from the package', async () => {
   const page = await fetch(base + '/')

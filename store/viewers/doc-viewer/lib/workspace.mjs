@@ -76,7 +76,9 @@ export function readVerdict(workspace) {
     const st = statSync(path)
     const json = JSON.parse(readFileSync(path, 'utf8'))
     if (!json || typeof json !== 'object') return null
-    return { ...json, findings: Array.isArray(json.findings) ? json.findings : [], mtimeMs: st.mtimeMs }
+    // Only object findings: a `null` in the list is a malformed verdict, not a reason to fail the pane.
+    const findings = Array.isArray(json.findings) ? json.findings.filter((f) => f && typeof f === 'object') : []
+    return { ...json, findings, mtimeMs: st.mtimeMs }
   } catch {
     return null
   }
@@ -131,7 +133,7 @@ export function docState(workspace, requested = '', now = Date.now()) {
   const verdict = readVerdict(workspace)
   const pdfT = pdf?.mtimeMs ?? 0, srcT = source?.mtimeMs ?? 0, verT = verdict?.mtimeMs ?? 0
   const aboutThis = verdict && (!verdict.artifact || !file || verdict.artifact === file)
-  const errors = aboutThis ? verdict.findings.filter((f) => f && f.severity === 'error') : []
+  const errors = aboutThis ? verdict.findings.filter((f) => f.severity === 'error') : []
   let build = 'idle'
   if (source && srcT > pdfT && srcT > verT) build = 'building'
   else if (aboutThis && verdict.ready === false && errors.length && verT >= pdfT) build = 'failed'
