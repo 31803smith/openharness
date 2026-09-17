@@ -354,17 +354,17 @@ void main() {
         (_) => reply.complete(),
       );
       await tester.pumpAndSettle();
-      expect(find.text('Models that live on your machine'), findsOneWidget);
+      expect(find.text('Run a model on this machine'), findsOneWidget);
       // Nothing is missing on this machine, so nothing about it is said.
       expect(find.byKey(const Key('run-local-model-status')), findsNothing);
       expect(conn.creates, isEmpty);
 
-      await tester.tap(find.byKey(const Key('run-local-model-start')));
+      await tester.tap(find.text('Open Model manager'));
       await tester.pumpAndSettle();
       // The handler answers only once the dialog is done, the way every
       // dialog door does, so native focus is not handed back mid-dialog.
       await reply.future;
-      expect(find.text('Models that live on your machine'), findsNothing);
+      expect(find.text('Run a model on this machine'), findsNothing);
       final create = conn.creates.single;
       expect(create['engine'], 'opencode');
       expect(create['agent'], AppNotifier.localModelAgent);
@@ -426,7 +426,7 @@ void main() {
       (_) => reply.complete(),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('run-local-model-start')));
+    await tester.tap(find.text('Open Model manager'));
     await tester.pumpAndSettle();
     await reply.future;
 

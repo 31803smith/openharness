@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../core/models.dart';
@@ -19,8 +18,9 @@ import 'pane_menu.dart';
 /// person decided, and the notifier does the rest, so the two doors cannot
 /// drift into two definitions of what Start means.
 ///
-/// Null is Not now (or Escape, or a click outside). A record is Start: the
-/// machine the manager opens on.
+/// Null is Cancel (or Escape, or a click outside). A record is a start: the
+/// machine the manager opens on, and the message it opens with — null for
+/// "open it and let me talk", which is the third option and the plain door.
 ///
 /// [machineId] is the door's own answer to "which computer" — the pane's
 /// machine, or the one the menu named — and is what the dialog starts on. With
@@ -29,12 +29,12 @@ import 'pane_menu.dart';
 /// and that is that. There is deliberately no "don't show this again": the
 /// dialog is where the machine is chosen, and a dialog that could be waved
 /// off would take the choice with it.
-Future<({String machineId})?> showRunLocalModelDialog(
+Future<({String machineId, String? prompt})?> showRunLocalModelDialog(
   BuildContext context,
   AppNotifier notifier,
   String machineId, {
   bool chooseMachine = true,
-}) => showAppDialog<({String machineId})>(
+}) => showAppDialog<({String machineId, String? prompt})>(
   context: context,
   // Lighter than the app's default veil: this is a two-second yes/no in front
   // of the swarm the person was just looking at, not a screen of its own, and
@@ -199,7 +199,7 @@ class _RunLocalModelDialogState extends State<_RunLocalModelDialog> {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          _label('The model will run on'),
+          _label('Runs on'),
           _machineRow(current, opens: false),
         ],
       );
@@ -212,7 +212,7 @@ class _RunLocalModelDialogState extends State<_RunLocalModelDialog> {
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        _label('Select the machine to run the model'),
+        _label('Runs on'),
         _chips(visible, machines),
       ],
     );
@@ -363,7 +363,7 @@ class _RunLocalModelDialogState extends State<_RunLocalModelDialog> {
         };
         final machines = _machines;
         return AlertDialog(
-          title: const Text('Models that live on your machine'),
+          title: const Text('Run a model on this machine'),
           content: SizedBox(
             // Wider than the app's small dialogs: the machine row below wants
             // three names across before it folds the rest behind "…".
@@ -381,12 +381,10 @@ class _RunLocalModelDialogState extends State<_RunLocalModelDialog> {
                       ),
                       const TextSpan(
                         text:
-                            " is an agent that looks after the models on one "
-                            "of your computers. Say what you need and it helps "
-                            "you pick a model that fits that computer and the "
-                            "work, then sets it up there. Once a model is up, "
-                            "every agent on every machine can switch to it "
-                            "from its model picker.",
+                            " is an agent that finds a model to fit this "
+                            "computer, downloads it, and keeps it running. "
+                            "Once it is up, any agent on any of your machines "
+                            "can switch to it.",
                       ),
                     ],
                   ),
@@ -397,12 +395,11 @@ class _RunLocalModelDialogState extends State<_RunLocalModelDialog> {
                     color: grid.AppPalette.textPrimary,
                   ),
                 ),
-                const SizedBox(height: 14),
-                // Two things a person could say first, with a copy button each:
-                // an empty composer is where most people stall, and a prompt they
-                // can paste is a start they cannot get wrong. Copy rather than
-                // send, because the pane does not exist until Start.
-                _StarterPrompts(key: const Key('run-local-model-prompts')),
+                const SizedBox(height: 16),
+                // Which computer, first: the manager looks after ONE machine's
+                // models, and with more than one linked the answer changes what
+                // is worth asking it. Never a control unless there is a choice.
+                _machineLine(machines),
                 if (status != null) ...[
                   const SizedBox(height: 16),
                   Text(
@@ -416,29 +413,32 @@ class _RunLocalModelDialogState extends State<_RunLocalModelDialog> {
                   ),
                 ],
                 const SizedBox(height: 18),
-                // Which computer, as one slim row at the foot of the message:
-                // the manager looks after ONE machine's models, so the machine
-                // is always named, and never as a control unless there is a
-                // choice. With one machine linked it is a mark and two lines;
-                // with more, the same row opens a list, this computer first —
-                // one row whatever the count, so a long list never spreads
-                // through the dialog.
-                _machineLine(machines),
+                Divider(height: 1, thickness: 1, color: grid.AppPalette.divider),
+                const SizedBox(height: 16),
+                // The three ways to begin, and the dialog's only action: two
+                // openers that start the conversation for you, and a plain door
+                // for a person who would rather word it themselves. Pressing one
+                // IS the start — there is no Start button left, because there is
+                // nothing for it to do that these do not.
+                _StartOptions(
+                  key: const Key('run-local-model-options'),
+                  enabled: missing == null,
+                  onChosen: (prompt) => Navigator.of(context).pop((
+                    machineId: _machineId,
+                    prompt: prompt,
+                  )),
+                ),
               ],
             ),
           ),
+          // Cancel alone: the three options above are the action, and a Start
+          // beside them would be a fourth way to begin that means the same as
+          // one of them.
           actions: [
             TextButton(
               key: const Key('run-local-model-not-now'),
               onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Not now'),
-            ),
-            FilledButton(
-              key: const Key('run-local-model-start'),
-              onPressed: missing == null
-                  ? () => Navigator.of(context).pop((machineId: _machineId))
-                  : null,
-              child: const Text('Start'),
+              child: const Text('Cancel'),
             ),
           ],
         );
@@ -492,106 +492,161 @@ class _MoreMachines extends StatelessWidget {
     ),
   );
 }
+/// The three ways to begin, and the dialog's only action.
+///
+/// Two openers and a plain door. Pressing one closes the dialog and starts the
+/// manager with that message already submitted — opencode's own `--prompt`, so
+/// the pane's first line is the manager's answer rather than an empty composer.
+///
+/// They used to be example sentences with a copy button each, which was the
+/// best a dialog could do when the pane did not exist yet: copy, open, paste,
+/// send. The pane is created from what this returns, so the button can carry
+/// the message itself and the other three steps disappear.
+///
+/// The third sends nothing, and says why it is there in a second line —
+/// "Open Model manager" alone does not explain why a person would take it over
+/// the two above. It is in the same stack rather than off to one side, because
+/// it is the same kind of choice: a way to begin.
+class _StartOptions extends StatelessWidget {
+  const _StartOptions({super.key, required this.enabled, required this.onChosen});
 
-/// Example first messages for the manager, each with a copy button.
-class _StarterPrompts extends StatefulWidget {
-  const _StarterPrompts({super.key});
+  /// False while a prerequisite is missing — the machine is offline, or has no
+  /// opencode. Every option leads to the same pane, so they fail together.
+  final bool enabled;
 
-  static const prompts = [
-    'Set up a model for my coding work, just for me on this machine',
-    'I want a model for chat and writing. What fits this machine?',
+  /// The message to open with, or null for the plain door.
+  final void Function(String? prompt) onChosen;
+
+  static const openers = [
+    (
+      label: 'A model for coding',
+      prompt: 'Set up a model for my coding work on this machine.',
+    ),
+    (
+      label: 'A model for chat and writing',
+      prompt:
+          'I want a model for chat and writing. What fits this machine, and '
+          'can you set it up?',
+    ),
   ];
-
-  @override
-  State<_StarterPrompts> createState() => _StarterPromptsState();
-}
-
-class _StarterPromptsState extends State<_StarterPrompts> {
-  int? _copied;
-  Timer? _reset;
-
-  @override
-  void dispose() {
-    _reset?.cancel();
-    super.dispose();
-  }
-
-  Future<void> _copy(int index) async {
-    try {
-      await Clipboard.setData(
-        ClipboardData(text: _StarterPrompts.prompts[index]),
-      );
-    } catch (_) {
-      // No clipboard (a headless test, a locked-down session): the text is
-      // on screen to type out, so nothing is said.
-      return;
-    }
-    if (!mounted) return;
-    setState(() => _copied = index);
-    _reset?.cancel();
-    _reset = Timer(const Duration(seconds: 2), () {
-      if (mounted) setState(() => _copied = null);
-    });
-  }
 
   @override
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     mainAxisSize: MainAxisSize.min,
     children: [
-      Text(
-        'Try saying',
-        style: TextStyle(
-          fontFamily: grid.AppFont.sans,
-          fontSize: 12.5,
-          color: grid.AppPalette.textSecondary,
+      Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: Text(
+          'Start with',
+          style: TextStyle(
+            fontFamily: grid.AppFont.sans,
+            fontSize: 12,
+            color: grid.AppPalette.textSecondary,
+          ),
         ),
       ),
-      const SizedBox(height: 6),
-      for (var i = 0; i < _StarterPrompts.prompts.length; i++) ...[
-        if (i > 0) const SizedBox(height: 6),
-        Container(
-          padding: const EdgeInsets.fromLTRB(10, 6, 6, 6),
-          decoration: BoxDecoration(
-            color: grid.AppSurface.recess,
-            borderRadius: BorderRadius.circular(6),
-          ),
+      // One card with dividers rather than separate boxes: three ways to do the
+      // same thing are a set, and three loose rectangles read as three features.
+      DecoratedBox(
+        decoration: BoxDecoration(
+          border: Border.all(color: grid.AppPalette.divider),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final opener in openers) ...[
+              _Option(
+                label: opener.label,
+                enabled: enabled,
+                onTap: () => onChosen(opener.prompt),
+              ),
+              Divider(height: 1, thickness: 1, color: grid.AppPalette.divider),
+            ],
+            _Option(
+              label: 'Open Model manager',
+              detail: 'Decide what you need in the conversation',
+              enabled: enabled,
+              onTap: () => onChosen(null),
+            ),
+          ],
+        ),
+      ),
+    ],
+  );
+}
+
+/// One row of the stack: a label, an optional second line, and an arrow that
+/// says this leads somewhere rather than toggling something.
+class _Option extends StatelessWidget {
+  const _Option({
+    required this.label,
+    required this.enabled,
+    required this.onTap,
+    this.detail,
+  });
+
+  final String label;
+  final String? detail;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ink = enabled
+        ? grid.AppPalette.textPrimary
+        : grid.AppPalette.textFaint;
+    return MouseRegion(
+      cursor: enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
+      child: InkWell(
+        onTap: enabled ? onTap : null,
+        mouseCursor: enabled
+            ? SystemMouseCursors.click
+            : SystemMouseCursors.basic,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
           child: Row(
             children: [
               Expanded(
-                child: Text(
-                  _StarterPrompts.prompts[i],
-                  key: ValueKey('run-local-model-prompt-$i'),
-                  style: TextStyle(
-                    fontFamily: grid.AppFont.sans,
-                    fontSize: 12.5,
-                    color: grid.AppPalette.textPrimary,
-                  ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      label,
+                      style: TextStyle(
+                        fontFamily: grid.AppFont.sans,
+                        fontSize: 13.5,
+                        color: ink,
+                      ),
+                    ),
+                    if (detail != null) ...[
+                      const SizedBox(height: 3),
+                      Text(
+                        detail!,
+                        style: TextStyle(
+                          fontFamily: grid.AppFont.sans,
+                          fontSize: 11.5,
+                          color: grid.AppPalette.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ),
-              const SizedBox(width: 8),
-              Tooltip(
-                message: _copied == i ? 'Copied' : 'Copy',
-                child: InkWell(
-                  key: ValueKey('run-local-model-prompt-copy-$i'),
-                  onTap: () => _copy(i),
-                  borderRadius: BorderRadius.circular(4),
-                  child: Padding(
-                    padding: const EdgeInsets.all(4),
-                    child: Icon(
-                      _copied == i ? LucideIcons.check : LucideIcons.copy,
-                      size: 14,
-                      color: _copied == i
-                          ? grid.AppPalette.accentOnSurface
-                          : grid.AppPalette.textSecondary,
-                    ),
-                  ),
-                ),
+              const SizedBox(width: 10),
+              Icon(
+                LucideIcons.arrowRight,
+                size: 15,
+                color: enabled
+                    ? grid.AppPalette.textSecondary
+                    : grid.AppPalette.textFaint,
               ),
             ],
           ),
         ),
-      ],
-    ],
-  );
+      ),
+    );
+  }
 }
