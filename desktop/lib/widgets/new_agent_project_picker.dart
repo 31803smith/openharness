@@ -245,6 +245,12 @@ class _NewAgentProjectPickerState extends State<NewAgentProjectPicker> {
                 value: selectedRecent ? _folder ?? '' : '',
                 options: recent,
                 width: widget.tileSize.width,
+                // Twice the tile: recent projects share a parent folder, and
+                // the path under each name is what tells them apart (owner,
+                // 2026-09-17: "all folders look the same"). Opens leftward
+                // from the row's last tile.
+                menuWidth: widget.tileSize.width * 2,
+                menuAlignedToEnd: true,
                 height: widget.tileSize.height,
                 padding: AppChoiceTile.padding,
                 selected: selectedRecent,
