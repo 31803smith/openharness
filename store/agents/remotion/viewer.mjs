@@ -6,7 +6,8 @@
 //   /__harness/media/<p>   a render from the workspace, with Range support (a <video> needs it to seek)
 //   everything else        proxied to Studio, which runs on a private loopback port
 //
-// Studio is started by this process (`remotion studio`, BROWSER=none) and restarted if it dies. It is
+// Studio is started by this process (`remotion studio`, BROWSER=none; REMOTION_STUDIO_BIN names another
+// binary, which is how the tests stand in for it) and restarted if it dies or cannot start. It is
 // proxied rather than framed cross-origin so it shares the pane's origin: its own same-origin checks
 // pass untouched, and the pane can follow which composition is open. Remotion binds Studio to every
 // interface and has no flag for it, so toolchain/loopback.cjs is preloaded into Studio's process to
@@ -24,7 +25,7 @@ import { fileURLToPath } from 'node:url'
 const here = dirname(fileURLToPath(import.meta.url))
 const port = Number(process.env.HARNESS_VIEWER_PORT)
 const workspace = resolve(process.env.HARNESS_WORKSPACE)
-const remotionBin = join(here, 'node_modules', '.bin', 'remotion')
+const remotionBin = process.env.REMOTION_STUDIO_BIN || join(here, 'node_modules', '.bin', 'remotion')
 const VIDEO = new Set(['.mp4', '.webm', '.mov', '.mkv', '.m4v'])
 const IMAGE = new Set(['.gif', '.png', '.jpg', '.jpeg', '.webp'])
 const AUDIO = new Set(['.mp3', '.wav', '.aac', '.m4a'])
@@ -43,6 +44,7 @@ if (!existsSync(join(workspace, 'node_modules'))) {
 // ---- Studio -------------------------------------------------------------------------------------
 const studio = { state: 'starting', port: null, log: [], restarts: 0, child: null, since: Date.now() }
 let stopping = false
+let restart = null
 
 function freePort() {
   const wanted = Number(process.env.REMOTION_STUDIO_PORT || 0)
@@ -79,15 +81,19 @@ async function startStudio() {
   }
   child.stdout.on('data', onData)
   child.stderr.on('data', onData)
-  child.on('exit', (code) => {
+  const ended = (why) => {
     studio.child = null
     if (stopping) return
     studio.state = 'stopped'; studio.port = null
-    studio.log.push(`Remotion Studio exited (${code ?? 'signal'}).`)
+    studio.log.push(`Remotion Studio ${why}.`)
     broadcast()
     const delay = Math.min(30_000, 1000 * 2 ** studio.restarts++)
-    setTimeout(() => { if (!stopping) startStudio() }, delay)
-  })
+    restart = setTimeout(startStudio, delay)
+  }
+  child.on('exit', (code) => ended(`exited (${code ?? 'signal'})`))
+  // A Studio that cannot be spawned at all (no node_modules yet) emits only 'error', and an 'error'
+  // with no listener would take the pane down with it.
+  child.on('error', (error) => ended(`could not start: ${error.message}`))
 }
 
 // ---- Workspace state ----------------------------------------------------------------------------
@@ -194,7 +200,7 @@ let timer = null
 const soon = () => { if (timer) clearTimeout(timer); timer = setTimeout(broadcast, 120) }
 try {
   watch(workspace, { recursive: true }, (_e, name) => {
-    const n = String(name ?? '').split(sep).join('/')
+    const n = String(name).split(sep).join('/')
     if (n.startsWith('node_modules') || n.startsWith('.git/')) return
     if (n.startsWith('out/') || n === 'out' || n.startsWith('src/') || n === '.harness/render.json') soon()
   })
@@ -213,7 +219,7 @@ function safe(rel) {
 function sendMedia(req, res, rel) {
   const full = safe(rel)
   const ext = extname(rel).toLowerCase()
-  if (!full || !TYPES[ext] || !existsSync(full)) { res.writeHead(404); res.end('not found'); return }
+  if (!full || !TYPES[ext] || !existsSync(full) || !statSync(full).isFile()) { res.writeHead(404); res.end('not found'); return }
   const size = statSync(full).size
   const headers = { 'content-type': TYPES[ext], 'accept-ranges': 'bytes', 'cache-control': 'no-store' }
   const range = req.headers.range && req.headers.range.match(/bytes=(\d*)-(\d*)/)
@@ -240,7 +246,7 @@ function proxy(req, res) {
     return
   }
   const upstream = http.request({ host: '127.0.0.1', port: studio.port, method: req.method, path: req.url, headers: req.headers }, (up) => {
-    res.writeHead(up.statusCode ?? 502, up.headers)
+    res.writeHead(up.statusCode, up.headers)
     up.pipe(res)
   })
   upstream.on('error', () => { if (!res.headersSent) { res.writeHead(502); res.end('Studio did not answer') } else res.end() })
@@ -249,7 +255,7 @@ function proxy(req, res) {
 }
 
 const server = http.createServer((req, res) => {
-  const url = new URL(req.url ?? '/', 'http://127.0.0.1')
+  const url = new URL(req.url, 'http://127.0.0.1')
   const path = url.pathname
   if (path === '/__harness' || path === '/__harness/') {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
@@ -268,7 +274,13 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify(state()))
     return
   }
-  if (path.startsWith('/__harness/media/')) { sendMedia(req, res, decodeURIComponent(path.slice('/__harness/media/'.length))); return }
+  if (path.startsWith('/__harness/media/')) {
+    // A malformed escape would throw out of the request handler and take the whole pane down.
+    let rel
+    try { rel = decodeURIComponent(path.slice('/__harness/media/'.length)) } catch { res.writeHead(400); res.end('bad path'); return }
+    sendMedia(req, res, rel)
+    return
+  }
   proxy(req, res)
 })
 server.listen(port, '127.0.0.1', () => {
@@ -280,8 +292,9 @@ server.listen(port, '127.0.0.1', () => {
 for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
   process.on(sig, () => {
     stopping = true
-    try { studio.child?.kill('SIGTERM') } catch {}
+    clearTimeout(restart)
+    studio.child?.kill('SIGTERM')
     setTimeout(() => process.exit(0), 300).unref()
   })
 }
-process.on('exit', () => { try { studio.child?.kill('SIGTERM') } catch {} })
+process.on('exit', () => { studio.child?.kill('SIGTERM') })
