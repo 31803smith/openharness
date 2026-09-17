@@ -385,12 +385,14 @@ export class BackendSocket {
   private readonly agentCreations = new AgentCreationReceipts(join(env.ADAPTER_DATA_DIR, 'agent-creations'))
   /** Injectable for queue-isolation tests; production uses the machine-local probe. */
   engineProbeProvider: typeof probeEngines = probeEngines
+  /** Entrypoint override for isolated integration fixtures; never a wire option. */
+  orchestratorCommand: string | null = null
   private orchestratorService: OrchestratorService | null = null
   private orchestration(): OrchestratorService {
     return this.orchestratorService ??= new OrchestratorService({
       stateDir: join(env.ADAPTER_DATA_DIR, 'orchestrator'),
       workspaceDir: join(homedir(), 'harnesses', 'orchestrated'),
-      command: `${shellQuote(process.execPath)} ${shellQuote(process.argv[1])} orchestrator --port ${env.PORT} --machine ${shellQuote(this.machineId)}`,
+      command: this.orchestratorCommand ?? `${[process.execPath, ...process.execArgv, process.argv[1]].map(shellQuote).join(' ')} orchestrator --port ${env.PORT} --machine ${shellQuote(this.machineId)}`,
       catalog: () => listInstalledDsh().filter(d => d.manifest.kind !== 'viewer' && !!d.manifest.engine && supportsFirstPrompt(d.manifest.engine)).map(d => ({
         id: d.id, name: d.manifest.name, description: d.manifest.description ?? '', engine: d.manifest.engine!, viewer: !!d.manifest.viewer,
       })),
