@@ -17,3 +17,14 @@ files under `$STUDIO_UPSTREAM` before using an upstream API. Keep controls withi
 ranges, preserve the data needed to reproduce a comparison, and distinguish preview results from
 native service or hardware output. The viewer supports history and artifact downloads; tell the
 user which run contains the result, and what was actually measured.
+
+## Make and validate an instrument
+
+Start by changing one audible property: waveform, pitch, attack, or brightness. Render the
+same four-note phrase before and after. Compare peak/RMS levels and listen to both WAV files.
+For native DSP changes, edit workspace `Source/main.cpp`, run `juce`, and inspect the measured
+recording. Keep the CMake target and WAV command arguments intact so the viewer can run it.
+
+For full plugins, read `$STUDIO_UPSTREAM/skills/juce-project-create/SKILL.md`, then the
+`juce-project-starter` and `juce-build-release` skills there. Plugin exports need their own host
+and audio checks. The offline renderer is the starter's verified native path.

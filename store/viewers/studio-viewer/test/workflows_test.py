@@ -91,6 +91,19 @@ class StudioCase(unittest.TestCase):
         self.assertTrue(verdict['ready']);self.assertTrue((self.workspace/verdict['artifact']).is_file())
 
 class Instrument(StudioCase):
+    def test_portable_cmake_adapter_keeps_paths_and_parameters_as_arguments(self):
+        out=self.output();commands=[]
+        def compiler(argv,**kwargs):
+            commands.append(argv)
+            if str(argv[0]).endswith('HarnessTone'):w.render(self.p,out)
+            return ''
+        with patch.object(w.platform,'system',return_value='Linux'),patch.object(w,'command',side_effect=compiler):
+            result=w.juce(self.p,out)
+        self.assertEqual(len(commands),3)
+        self.assertIn('-DJUCE_ROOT='+str(PACKAGE/'juce'),commands[0])
+        self.assertEqual(commands[-1][1],out/'phrase.wav')
+        self.assertEqual(commands[-1][2],self.p['wave'])
+        self.assertGreater(len(result['data']['waveform']),100)
     @unittest.skipUnless(os.environ.get('STUDIO_NATIVE_JUCE_WORKSPACE'),'Set STUDIO_NATIVE_JUCE_WORKSPACE for a real native compiler check')
     def test_native_juce_produces_measured_audio(self):
         native=Path(os.environ['STUDIO_NATIVE_JUCE_WORKSPACE']).resolve()

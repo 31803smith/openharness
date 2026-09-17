@@ -76,7 +76,12 @@ export async function createStudio({workspace, packageDir, port = 0, jobTimeout 
   };
   const endChild = () => {
     if (child) {
-      try { process.kill(-child.pid, 'SIGTERM'); } catch { child.kill('SIGTERM'); }
+      const current = child;
+      const signal = name => {try { process.kill(-current.pid,name); } catch { current.kill(name); }};
+      signal('SIGTERM');
+      const force = setTimeout(() => signal('SIGKILL'),1000);
+      force.unref();
+      current.once('close',() => clearTimeout(force));
     }
   };
   const server = http.createServer(async (req,res) => {
@@ -159,7 +164,12 @@ export async function createStudio({workspace, packageDir, port = 0, jobTimeout 
     }
   });
   await new Promise((ok,fail) => {server.once('error',fail); server.listen(port,'127.0.0.1',ok);});
-  return {server, url:`http://127.0.0.1:${server.address().port}`, close:async () => {clearTimeout(timer); endChild(); server.closeAllConnections(); await new Promise(ok => server.close(ok));}};
+  return {server, url:`http://127.0.0.1:${server.address().port}`, close:async () => {
+    clearTimeout(timer);
+    const stopped = child ? new Promise(ok => child.once('close',ok)) : Promise.resolve();
+    endChild();server.closeAllConnections();
+    await Promise.all([stopped,new Promise(ok => server.close(ok))]);
+  }};
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

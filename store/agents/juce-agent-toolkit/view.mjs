@@ -6,7 +6,7 @@ export function mount(stage,api){
     grid(ctx,w,h,36);const center=h*.33,amplitude=h*.15;
     const points=[];for(let x=20;x<w-20;x+=2){const a=x/w*7*Math.PI*2-t*2;let v=Math.sin(a);if(p.wave==='triangle')v=Math.asin(Math.sin(a))*2/Math.PI;if(p.wave==='saw')v=2*((a/(2*Math.PI))%1)-1;points.push([x,center+v*amplitude*p.brightness]);}
     ctx.shadowBlur=20;ctx.shadowColor='#e6ac7550';line(ctx,points,'#f2bc88',2);ctx.shadowBlur=0;
-    line(ctx,[[20,center],[w-20,center]],'#ffffff0a',1);words(ctx,`${p.frequency} Hz`,25,center+amplitude+24,'#ac998c',10);
+    line(ctx,[[20,center],[w-20,center]],'#ffffff0a',1);if(w>500)words(ctx,`${p.frequency} Hz`,25,center+amplitude+24,'#ac998c',10);
     if(keyIndex>=0)circle(ctx,w-35,center+amplitude+20,4,'#f2bc88');
     if(result?.data?.waveform){const wave=result.data.waveform;line(ctx,wave.map((v,i)=>[24+i/(wave.length-1)*(w-48),h-20-v*12]),'#bf9875',1);}
   },api.signal);screen.element.setAttribute('aria-label','Oscillator waveform preview');

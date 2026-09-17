@@ -3,7 +3,7 @@ export function mount(stage,api){
   let p=api.getParameters(),result,index=0,playing=true,rate=8,now=0,start=0,last='',follow=false,bounds;
   label(stage,'Every little journey has somewhere to be.');const tag=badge(stage,'TRAFFIC REPLAY');
   const screen=canvas(stage,(ctx,w,h,t)=>{
-    now=t;const size=Math.min(w-50,h-70),left=(w-size)/2,top=18,s=size/400;bounds={left,top,s};const map=(x,y)=>[left+x*s,top+(400-y)*s];
+    now=t;const size=Math.min(w-50,h-170),left=(w-size)/2,top=70,s=size/400;bounds={left,top,s};const map=(x,y)=>[left+x*s,top+(400-y)*s];
     round(ctx,left,top,size,size,14,'#2e4230');
     const mid=left+size/2,cy=top+size/2,road=28;
     ctx.fillStyle='#b9bfaa';ctx.fillRect(left,cy-road/2-4,size,road+8);ctx.fillRect(mid-road/2-4,top,road+8,size);
@@ -12,10 +12,10 @@ export function mount(stage,api){
     ctx.setLineDash([6,8]);line(ctx,[[left,cy],[mid-22,cy]],'#b6c3a04d',1);line(ctx,[[mid+22,cy],[left+size,cy]],'#b6c3a04d',1);line(ctx,[[mid,top],[mid,cy-22]],'#b6c3a04d',1);line(ctx,[[mid,cy+22],[mid,top+size]],'#b6c3a04d',1);ctx.setLineDash([]);
     const frames=result?.data?.frames;
     if(frames?.length){if(playing)index=Math.floor(((t-start)*rate/2)%frames.length);const frame=frames[index];scrub.value=index;tag.textContent=`SUMO · ${frame.time.toFixed(0)} S`;
-      frame.cars.forEach((car,i)=>{const [x,y]=map(car.x,car.y);ctx.save();ctx.translate(x,y);ctx.rotate(car.angle*Math.PI/180);round(ctx,-2.5,-4.5,5,9,1.5,car.speed<.1?'#e79c75':'#d5e9a2');ctx.restore();if(follow&&i===0){circle(ctx,x,y,10,'#e5f8bd25');words(ctx,car.id,x+11,y-7,'#e5f8bd',9);}});
+      frame.cars.forEach((car,i)=>{const [x,y]=map(car.x,car.y);ctx.save();ctx.translate(x,y);ctx.rotate(car.angle*Math.PI/180);round(ctx,-1,-2.5,2,5,1,car.speed<.1?'#e79c75':'#d5e9a2');ctx.restore();if(follow&&i===0){circle(ctx,x,y,10,'#e5f8bd25');words(ctx,car.id,x+11,y-7,'#e5f8bd',9);}});
       if(w>570){words(ctx,'CITY CLOCK',24,69,'#a7c292',9);words(ctx,`${frame.time.toFixed(0)} s`,24,98,'#e1edc5',23);words(ctx,`${frame.cars.length} moving stories`,24,122,'#9cb78b',10);}
     }else words(ctx,'Run the city to record its traffic.',left,top+size/2,'#d5e9a2',11);
-    words(ctx,`${p.green}s EAST–WEST GREEN`,left,top+size+20,'#9cb78b',9);
+    words(ctx,`${result?.parameters.green??p.green}s RECORDED EAST–WEST GREEN`,left,top+size+20,'#9cb78b',9);
   },api.signal);screen.element.setAttribute('aria-label','SUMO traffic replay on a four-way city intersection');
   const bar=toolbar(stage,[['Pause traffic',b=>{playing=!playing;if(playing)start=now-index*2/rate;b.textContent=playing?'Pause traffic':'Play traffic';b.setAttribute('aria-pressed',String(playing));}],['8× speed',b=>{rate=rate===8?16:rate===16?1:8;start=now-index*2/rate;b.textContent=`${rate}× speed`;}],['Follow a car',b=>{follow=!follow;b.textContent=follow?'See the city':'Follow a car';b.setAttribute('aria-pressed',String(follow));}]]);
   const scrub=el('input');scrub.type='range';scrub.min=0;scrub.max=1;scrub.value=0;scrub.style.width='95px';scrub.setAttribute('aria-label','Traffic replay position');scrub.addEventListener('input',()=>{playing=false;index=Number(scrub.value);bar.firstChild.textContent='Play traffic';});bar.append(scrub);

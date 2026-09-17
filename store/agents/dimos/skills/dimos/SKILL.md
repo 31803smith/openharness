@@ -17,3 +17,15 @@ files under `$STUDIO_UPSTREAM` before using an upstream API. Keep controls withi
 ranges, preserve the data needed to reproduce a comparison, and distinguish preview results from
 native service or hardware output. The viewer supports history and artifact downloads; tell the
 user which run contains the result, and what was actually measured.
+
+## Plan, execute, inspect
+
+Choose an open destination in the office or gallery. Run `simulate`, then inspect
+`mission.json` and `mission.xml`. Check arrival, final position, travel time, distance, and wall
+contacts. Replay uses the recorded MuJoCo positions. A destination inside the inflated
+obstacle boundary must fail explicitly; choose another destination instead of inventing a path.
+
+Read `$STUDIO_UPSTREAM/docs/quickstart.md` and `docs/installation/osx.md` before working with
+DimOS itself. The local starter is an original planar rover, not a Unitree simulation. The
+optional `dimos` action only reads daemon status. Simulation success never implies a physical
+robot reached its destination.

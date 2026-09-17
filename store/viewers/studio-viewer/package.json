@@ -4,7 +4,16 @@
   "type": "module",
   "scripts": {
     "test": "node --test test/*.test.mjs",
-    "test:browser": "node test/studios.e2e.mjs"
+    "test:browser": "node test/studios.e2e.mjs",
+    "test:coverage": "c8 --reporter=text --reporter=json --reporter=json-summary --include=server.mjs --include=web/music.mjs --check-coverage --lines=100 --branches=100 --functions=100 --statements=100 node --test test/*.test.mjs",
+    "test:ui": "node test/ui.e2e.mjs",
+    "test:webkit": "STUDIO_TEST_BROWSER=webkit node test/studios.e2e.mjs",
+    "coverage:browser": "node test/browser-coverage.mjs"
   },
-  "devDependencies": { "playwright": "1.58.2", "c8": "10.1.3" }
+  "devDependencies": {
+    "playwright": "1.58.2",
+    "c8": "10.1.3",
+    "istanbul-lib-coverage": "3.2.2",
+    "v8-to-istanbul": "9.3.0"
+  }
 }

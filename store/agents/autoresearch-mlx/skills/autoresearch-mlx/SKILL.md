@@ -17,3 +17,15 @@ files under `$STUDIO_UPSTREAM` before using an upstream API. Keep controls withi
 ranges, preserve the data needed to reproduce a comparison, and distinguish preview results from
 native service or hardware output. The viewer supports history and artifact downloads; tell the
 user which run contains the result, and what was actually measured.
+
+## Run a controlled experiment
+
+Read `train.py`, `train.txt`, and `holdout.txt`. Save a baseline. Change one training choice
+or the editable training code, then run `train`. Inspect `evaluation.json`, the saved model,
+and `learning.csv`. Keep the holdout unchanged; the runner independently reopens the model
+with pickle disabled and computes its score. Data hashes define which earlier runs compare.
+Repeat promising changes with several seeds before presenting a conclusion.
+
+For Apple Silicon, read `$STUDIO_UPSTREAM/program.md` and `README.md`. Prepare a separate
+workspace `mlx/` checkout and its environment/data before running `mlx`. The CPU starter's
+bits-per-character score and the upstream bits-per-byte metric are different experiments.
