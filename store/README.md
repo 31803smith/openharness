@@ -131,11 +131,16 @@ that a manifest does not know. The catalog publisher lists every such folder; th
 
 ```json
 { "homepage": "https://typst.app", "upstream": "https://github.com/typst/typst", "license": "MIT",
+  "tagline": "Markup-based typesetting system",
   "screenshots": [],
   "examples": [{ "prompt": "A one-page invoice for Studio Nord, due in 30 days.",
                  "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/typst/invoice.jpg",
                  "caption": "Invoice · 1 page PDF" }] }
 ```
+
+`tagline` (≤ 80 characters) is the line under the harness's name in New Harness's agent search —
+"MuJoCo by Google DeepMind", then "Advanced physics simulation". Take it from the project's own website
+or repository, in its words, shortened only by dropping clauses. A package without one shows its category.
 
 `examples` (≤ 8) is what the product page leads with: a prompt, a picture of what the harness really
 made from it, and a line naming the result. The page types the prompt out, reveals the picture, and

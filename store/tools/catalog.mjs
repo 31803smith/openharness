@@ -10,7 +10,7 @@ import { readDshRegistry } from '../../cli/scripts/lib/dshRegistry.mjs';
 const MONOREPO='https://github.com/autonomous-ai/openharness';
 const ID=/^[a-z0-9][a-z0-9-]{0,63}\/[a-z0-9][a-z0-9-]{0,63}$/;
 const PACKAGE_PATH=/^(?!\/)(?!.*\/$)(?!.*\/\/)(?!(?:.*\/)?\.{1,2}(?:\/|$))[A-Za-z0-9._\-/]+$/;
-const LIMITS={id:160,name:40,description:300,category:24,author:80,repo:2048,ref:200,path:512,homepage:2048,upstream:2048,license:40,viewerUse:160};
+const LIMITS={id:160,name:40,description:300,category:24,author:80,repo:2048,ref:200,path:512,homepage:2048,upstream:2048,license:40,tagline:80,viewerUse:160};
 
 export function createStoreCatalog(storeDir, ref) {
   if (!/^[a-f0-9]{40}$/i.test(ref)) throw new Error('Publish from a complete git commit SHA');
@@ -18,6 +18,7 @@ export function createStoreCatalog(storeDir, ref) {
   const byId=new Map();
   for (const entry of entries) {
     for(const [key,max]of Object.entries(LIMITS))if(entry[key]!==undefined&&(typeof entry[key]!=='string'||entry[key].length>max||/[\x00-\x1f\x7f]/.test(entry[key])))throw new Error(`${entry.id}: invalid ${key}`);
+    if(entry.tagline!==undefined&&!entry.tagline.trim())throw new Error(`${entry.id}: invalid tagline`);
     if(!ID.test(entry.id)||!entry.name||!entry.repo||byId.has(entry.id))throw new Error(`Invalid or duplicate catalog identity: ${entry.id}`);
     if(entry.kind!==undefined&&!['agent','viewer'].includes(entry.kind))throw new Error(`${entry.id}: invalid kind`);
     if(entry.kind!=='viewer'&&(typeof entry.engine!=='string'||!entry.engine))throw new Error(`${entry.id}: missing engine`);

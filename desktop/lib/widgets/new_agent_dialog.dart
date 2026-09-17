@@ -279,16 +279,21 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     return entry != null && !entry.installed;
   }
 
-  /// What it makes and whose it is — "CAD · Autonomous" — the
-  /// machine's words first, this build's when the machine has not answered,
-  /// the description when there is nothing else.
-  String? _harnessDetail(DshEntry harness) {
+  /// The line under a harness's name in the agent search: its tagline, in
+  /// the project's own words. The machine's catalog first, this build's words
+  /// when the machine's CLI does not send one, then its domain, then its
+  /// description.
+  String? _harnessTagline(DshEntry harness) {
     final identity = engineIdentity(harness.id);
-    final parts = [
+    for (final line in [
+      harness.tagline,
+      identity.tagline,
       harness.category ?? identity.category,
-      harness.author ?? identity.creator,
-    ].whereType<String>().where((s) => s.isNotEmpty);
-    return parts.isEmpty ? harness.description : parts.join(' · ');
+      harness.description,
+    ]) {
+      if (line != null && line.trim().isNotEmpty) return line.trim();
+    }
+    return null;
   }
 
   /// The harnesses to list after the engines: what the machine named when it
@@ -1016,7 +1021,9 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                 AgentChoice(
                   id: identity.id,
                   label: _labelOf(identity.id),
-                  detail: identity.detail,
+                  detail: identity.tagline ?? identity.category,
+                  creator: identity.creator,
+                  keywords: identity.category,
                   description: identity.blurb,
                   mark: (size) => EngineMark(engine: identity.id, size: size),
                 ),
@@ -1026,14 +1033,17 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                 AgentChoice(
                   id: harness.id,
                   label: harness.name,
-                  // No "on Codex" here: the engine underneath is a backend
-                  // detail (owner, 2026-09-15) — the settings row says it.
-                  // What it makes, in a word or two; the machine's word first,
-                  // this build's when the machine has not answered.
-                  detail: _harnessDetail(harness),
-                  // The Store's broad shelf, for the search alone: "media"
-                  // finds Typst beside its own "Documents".
-                  keywords: storeCategoryFor(harness),
+                  // "MuJoCo by Google DeepMind" over "Advanced physics
+                  // simulation" (owner, 2026-09-17). No "on Codex": the engine
+                  // underneath is a backend detail (owner, 2026-09-15).
+                  detail: _harnessTagline(harness),
+                  creator: harness.author ?? engineIdentity(harness.id).creator,
+                  // For the search alone: the Store's shelf and the package's
+                  // own domain, so "engineering" and "PCB" both find Circuit.
+                  keywords: [
+                    storeCategoryFor(harness),
+                    ?(harness.category ?? engineIdentity(harness.id).category),
+                  ].join(' '),
                   description:
                       harness.description ??
                       engineIdentity(harness.id).blurb ??

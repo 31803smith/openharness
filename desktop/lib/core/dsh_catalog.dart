@@ -62,6 +62,7 @@ class DshEntry {
     this.homepage,
     this.upstream,
     this.license,
+    this.tagline,
     this.screenshots = const [],
     this.examples = const [],
     this.linked = false,
@@ -107,6 +108,10 @@ class DshEntry {
   final String? homepage;
   final String? upstream;
   final String? license;
+
+  /// One line in the project's own words, from its website or repository —
+  /// "Advanced physics simulation" — under the name wherever it is chosen.
+  final String? tagline;
   final List<String> screenshots;
 
   /// What a person types and what comes out — the product page is built around these.
@@ -138,6 +143,7 @@ class DshEntry {
       homepage: _httpUrl(raw['homepage']),
       upstream: _httpUrl(raw['upstream']),
       license: _short(raw['license'], 40),
+      tagline: _short(raw['tagline'], 80),
       screenshots: screenshots is List
           ? screenshots
                 .map(_httpUrl)
