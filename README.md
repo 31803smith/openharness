@@ -1,6 +1,6 @@
 # OpenHarness
 
-**An open-source framework for building, sharing, and running AI harnesses. Built by everyone, for everyone.**
+**An open-source framework for building, sharing, and running AI harnesses.**
 
 Design your first 3D model. Make a circuit board. Build a game. Create something you couldn't make
 before. **Agent + viewer = harness.** The agent gets the instructions, tools, and workspace for a new craft;
