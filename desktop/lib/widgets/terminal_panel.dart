@@ -1534,7 +1534,14 @@ class _TerminalHeader extends StatelessWidget {
     final remoteComposer = machine != null && !machine.isLocalMachine
         ? onToggleComposer
         : null;
-    final actionsWidth = remoteComposer == null ? 118.0 : 148.0;
+    // The icon cluster, plus the model picker that now sits at its left — without the extra the
+    // constraint clips the picker rather than the details it was measured for. Zero on an engine
+    // that gets no picker, so those headers keep the width they always had.
+    final showModelPicker =
+        status == null && !readOnly && modelPickerSupports(session.engineId);
+    final pickerWidth = showModelPicker ? 72.0 : 0.0;
+    final actionsWidth =
+        (remoteComposer == null ? 118.0 : 148.0) + pickerWidth;
     final folder =
         project?.cwd
             .split(RegExp(r'[/\\]'))
@@ -1658,33 +1665,6 @@ class _TerminalHeader extends StatelessWidget {
                     ],
                   ),
                 ),
-                // The model picker sits next to the NAME, because that is the pair a person reads
-                // together: this agent, on that model. Hidden while a notice is showing — a header
-                // asking to reconnect is not the moment to offer a menu.
-                if (status == null && !readOnly) ...[
-                  const SizedBox(width: 8),
-                  GridModelPicker(
-                    notifier: notifier,
-                    machineId: session.machineId,
-                    currentModel: agent?.gridModel,
-                    webSearch: agent?.gridWebSearch,
-                    engineLabel: session.engineId,
-                    onSelected: (model) => unawaited(
-                      notifier.retargetAgentToGridModel(
-                        session.machineId,
-                        session.agentId,
-                        model.id,
-                      ),
-                    ),
-                    onUseOwnLogin: () => unawaited(
-                      notifier.clearAgentGrid(session.machineId, session.agentId),
-                    ),
-                    // The pane's own context, because the flow opens a dialog before it opens a
-                    // pane. Which machine it runs on is the notifier's call, not this pane's: a
-                    // local model is about the computer the app is on, whatever this agent is on.
-                    onRunLocalModel: () => unawaited(notifier.runLocalModel(context)),
-                  ),
-                ],
                 const SizedBox(width: 8),
                 // Which of the three paths carries this pane's bytes. Absent for a local machine's own
                 // terminal, which has no such distinction and so gets no badge.
@@ -1706,6 +1686,38 @@ class _TerminalHeader extends StatelessWidget {
                     ),
                   ),
                   child: PaneHeaderActions(
+                    // Where this agent runs, with the controls rather than beside the name — the
+                    // header has room for one of the two, and this is the half you only read while
+                    // reaching for it. Absent while a notice is showing: a header asking to
+                    // reconnect is not the moment to offer a menu.
+                    modelPicker: showModelPicker
+                        ? GridModelPicker(
+                            notifier: notifier,
+                            machineId: session.machineId,
+                            currentModel: agent?.gridModel,
+                            webSearch: agent?.gridWebSearch,
+                            engineLabel: session.engineId,
+                            onSelected: (model) => unawaited(
+                              notifier.retargetAgentToGridModel(
+                                session.machineId,
+                                session.agentId,
+                                model.id,
+                              ),
+                            ),
+                            onUseOwnLogin: () => unawaited(
+                              notifier.clearAgentGrid(
+                                session.machineId,
+                                session.agentId,
+                              ),
+                            ),
+                            // The pane's own context, because the flow opens a dialog before it
+                            // opens a pane. Which machine it runs on is the notifier's call, not
+                            // this pane's: a local model is about the computer the app is on,
+                            // whatever this agent is on.
+                            onRunLocalModel: () =>
+                                unawaited(notifier.runLocalModel(context)),
+                          )
+                        : null,
                     zoomed: zoomed,
                     onZoom: onToggleZoom,
                     onRestart: onRestart,

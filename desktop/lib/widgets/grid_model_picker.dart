@@ -9,6 +9,23 @@ import '../usage/models_menu_controller.dart';
 import 'engine_identity.dart';
 import 'transient_menus.dart';
 
+/// The engines whose panes carry a model picker.
+///
+/// Named here rather than derived from the daemon's `localModelEngines`, because the two answer
+/// different questions. That list is which engines a Local model *can* be handed to — a launch
+/// contract exists for seven of them. This is the narrower question of which ones a person is
+/// OFFERED the switch on, and it is the three whose switching has been driven end to end: Claude
+/// Code and Codex move by environment, and OpenCode by a config file plus its own `/models` picker.
+///
+/// The rest keep the header they had. A picker on an engine whose move has never been watched work
+/// is a menu that looks like a choice and may not be one, and the cost of finding out is an agent
+/// answering on a model nobody asked for.
+const Set<String> kModelPickerEngines = {'claude', 'codex', 'opencode'};
+
+/// Whether [engine] gets a picker. Unknown or absent is NO — a header offers nothing it cannot back.
+bool modelPickerSupports(String? engine) =>
+    kModelPickerEngines.contains(engine?.trim().toLowerCase());
+
 /// The pane header's model picker, in two sections: **Subscription** and **Local**.
 ///
 /// The shape is the app's own Models menu, deliberately — that menu already answers "what could this
@@ -239,14 +256,16 @@ class _GridModelPickerState extends State<GridModelPicker> {
                 subtitle: _subtitleFor(model),
               ),
             ),
-        // The last row under Local, drawn as one of the models: it is what a person picks when the
-        // model they want is not there yet, so it belongs in the same list, not in a section of its
-        // own. Never filled — the fill means "the agent is here", and this row starts something.
+        // The way to GET a Local model, under the ones there are and behind a rule of its own.
+        //
+        // Not a row among the models: those are places this agent can go, and this starts something
+        // instead. Not on the section's own line either — that put a button beside a heading, two
+        // different kinds of thing sharing a line and competing for the same glance. A captioned
+        // rule says plainly that what follows answers a different question, and the button spans
+        // the menu so it reads as the section's one action rather than as a wider row.
+        //
         // Offered whatever THIS pane's engine can do: it opens a new pane, on an engine that can.
-        _item(
-          onTap: () => close(const _Choice.runLocalModel()),
-          child: const _Row(selected: false, title: 'Talk to Local model manager'),
-        ),
+        _ManagerInvitation(onPressed: () => close(const _Choice.runLocalModel())),
       ],
     );
     if (chosen == null) return;
@@ -584,6 +603,93 @@ class _Row extends StatelessWidget {
                 ),
               ],
             ),
+    );
+  }
+}
+
+/// The invitation that closes the Local section: a captioned rule, then the one ACTION in this menu.
+///
+/// Everything above is a destination — pick it and the agent moves. This starts something instead,
+/// and the rule is what says so before the button is read: a line that names a different question,
+/// so the button under it is not scanned as one more place to go.
+///
+/// The spacing is the point as much as the parts. A rule tight against the last model reads as a
+/// separator between two rows rather than the end of a list, and a button pressed against its own
+/// caption reads as one block of chrome; both were tried. The gaps here are deliberately larger
+/// than the row rhythm above, because this is where the menu stops listing and starts offering.
+class _ManagerInvitation extends StatefulWidget {
+  const _ManagerInvitation({required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  State<_ManagerInvitation> createState() => _ManagerInvitationState();
+}
+
+class _ManagerInvitationState extends State<_ManagerInvitation> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final rule = Expanded(child: Container(height: 1, color: AppColors.border));
+    return Padding(
+      // Wider than a row's inset on purpose: this block is not one of them.
+      padding: const EdgeInsets.fromLTRB(
+        _menuInset + _rowPadding,
+        12,
+        _menuInset + _rowPadding,
+        4,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              rule,
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                child: Text(
+                  'Want to manage local models?',
+                  style: TextStyle(
+                    fontSize: 10.5,
+                    letterSpacing: .2,
+                    color: AppColors.mutedStrong,
+                  ),
+                ),
+              ),
+              rule,
+            ],
+          ),
+          const SizedBox(height: 9),
+          MouseRegion(
+            cursor: SystemMouseCursors.click,
+            onEnter: (_) => setState(() => _hovered = true),
+            onExit: (_) => setState(() => _hovered = false),
+            child: GestureDetector(
+              onTap: widget.onPressed,
+              child: Container(
+                // Full width, so it reads as the section's one action rather than as a wider row.
+                width: double.infinity,
+                alignment: Alignment.center,
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                decoration: BoxDecoration(
+                  color: _hovered ? AppColors.selected : Colors.transparent,
+                  border: Border.all(color: AppColors.border),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  'Talk to model manager',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                    color: _hovered ? AppColors.text : AppColors.textSoft,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
