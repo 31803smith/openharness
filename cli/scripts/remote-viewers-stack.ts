@@ -303,11 +303,12 @@ setInterval(() => {}, 1000);
   const oldUrl = slides.remoteUrl
   await remoteDesktop.rpc('agent_restart', { agentId: slides.id })
   const restarted = await agentUrl(remoteDesktop, slides.id)
-  assert.notEqual(restarted, oldUrl)
-  await assert.rejects(fetch(oldUrl))
+  // Restarting the model process deliberately keeps its healthy viewer running.
+  assert.equal(new URL(restarted).origin, new URL(oldUrl).origin)
+  assert.equal((await fetch(oldUrl, { redirect: 'manual' })).status, 302)
   await slides.page.goto(restarted)
   await slides.page.waitForFunction(() => document.body.textContent?.includes('Remote edit arrived'))
-  checkpoint('real agent restart closes the old gateway and restores edited slides')
+  checkpoint('real agent restart preserves the healthy viewer and edited slides')
 
   remoteDesktop.ws.terminate()
   await stop(localBackend)

@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url'
 import { hostname, arch } from 'node:os'
 import { createRequire } from 'node:module'
 import { createHash, randomUUID } from 'node:crypto'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 
 if (process.env.HARNESS_VIEWER_LIVE_TEST !== '1') throw new Error('Opt in with HARNESS_VIEWER_LIVE_TEST=1')
 const root = resolve(process.argv[3] || 'viewer-client')
@@ -31,6 +33,8 @@ const auth = new AuthSessionManager(peer.base)
 const pool = new RemoteRelayPool(auth, peer.base.replace(/^http/, 'ws'), identity, peers)
 const frames: any[] = []
 const checks: string[] = []
+const revokeCheck = process.env.HARNESS_VIEWER_REVOKE_CHECK === '1'
+let closedCode: number | undefined
 const checkpoint = (s: string) => { checks.push(s); console.log(`PASS ${s}`) }
 async function until(label: string, fn: () => unknown | Promise<unknown>, ms = 60_000) {
   const deadline = Date.now() + ms
@@ -48,7 +52,7 @@ let link = await pool.acquire(peer.machineId, readAuthSession()!.autonomousEnv,
       if (f) { terminalText += Buffer.from(f.bytes).toString(); void link?.send({ type: 'terminal_ack', payload: { streamId: f.streamId, seq: f.seq } }) }
       return true
     },
-  }, (code, reason) => console.log(`Relay closed ${code}: ${reason}`))
+  }, (code, reason) => { closedCode = code; console.log(`Relay closed ${code}: ${reason}`) })
 async function rpc(type: string, payload: object = {}) {
   const requestId = randomUUID()
   await link.send({ type, payload: { ...payload, requestId } })
@@ -79,6 +83,7 @@ const agents: string[] = []
 let complete = false
 try {
   for (const [name, workspace] of Object.entries(peer.workspaces) as Array<[string, any]>) {
+    if (revokeCheck && name !== 'marp') continue
     const created = await rpc('agent_create', { creationId: randomUUID(), engine: workspace.engine, cwd: workspace.path, dsh: `autonomous/${name}` })
     assert.ok(created.agent?.id)
     const id = created.agent.id
@@ -116,11 +121,11 @@ try {
       assert.notEqual(await page.locator('#counter').innerText(), before)
       await rpc('agent_restart', { agentId: id })
       const restarted = await viewerUrl(id)
-      assert.notEqual(restarted, url)
-      await assert.rejects(fetch(url))
+      assert.equal(new URL(restarted).origin, new URL(url).origin)
+      assert.equal((await fetch(url, { redirect: 'manual' })).status, 302)
       await page.goto(restarted)
       await page.waitForFunction(() => document.querySelectorAll('#stage svg').length > 0)
-      checkpoint('remote Marp navigation and real agent restart; old local gateway refuses access')
+      checkpoint('remote Marp navigation and real agent restart preserve the healthy viewer')
     } else if (name === 'manim') {
       await page.waitForFunction(() => (document.querySelector('#video') as HTMLVideoElement)?.readyState >= 2)
       await page.evaluate(() => { const v = document.querySelector('#video') as HTMLVideoElement; v.currentTime = 1.5; return v.play() })
@@ -137,6 +142,37 @@ try {
     assert.deepEqual(errors, [])
     await page.screenshot({ path: join(root, `${name}-${peer.host}.png`) })
     checkpoint(`${name} browser viewer on ${peer.host} (${peer.arch}) → ${hostname()} (${arch()}) through ${peer.base}`)
+    if (process.env.HARNESS_VIEWER_WEBKIT) {
+      const expressions: Record<string, string> = {
+        blender: "document.querySelector('#model-name')?.textContent === 'triangle.gltf' && !!document.querySelector('#tree .row')",
+        marp: "document.querySelectorAll('#stage svg').length > 0",
+        manim: "(() => { const v=document.querySelector('#video'); if(!v || v.readyState<2) return false; v.play().catch(()=>{}); return v.currentTime>0.2; })()",
+        godogen: "!!document.querySelector('#frames iframe.active') && !document.querySelector('#play')?.disabled",
+      }
+      const result = await promisify(execFile)(process.env.HARNESS_VIEWER_WEBKIT, [await viewerUrl(id), expressions[name]!, join(root, `${name}-webkit.png`)], { timeout: 100_000 })
+      assert.ok(result.stdout.includes('PASS WKWebView'), result.stdout)
+      checkpoint(`${name}: native WKWebView loaded the forwarded viewer`)
+    }
+  }
+  if (revokeCheck) {
+    const url = await viewerUrl(agents[0]!)
+    const boot = await fetch(url, { redirect: 'manual' })
+    const cookie = boot.headers.get('set-cookie')!.split(';')[0]!
+    const stream = await fetch(new URL('/events', url), { headers: { cookie } })
+    const reader = stream.body!.getReader()
+    assert.ok((await reader.read()).value?.length)
+    console.log(`READY_FOR_REVOCATION test daemon port=${peer.port}; POST /api/revoke-all on that peer only`)
+    await until('remote owner revokes the disposable test identity', () => closedCode === 4404, 180_000)
+    await assert.rejects(reader.read())
+    await assert.rejects(fetch(url))
+    assert.equal(peers.get(peer.machineId), null)
+    checkpoint('physical remote revocation interrupts an active SSE response and removes the local gateway and trust pin')
+    peers.pin(peer.machineId, peer.pub, 'Verify revoked identity is refused')
+    await assert.rejects(pool.acquire(peer.machineId, readAuthSession()!.autonomousEnv,
+      { type: 'machine_select', payload: { machineId: peer.machineId } },
+      { sendFrame: () => true, sendBinary: () => true }, () => {}), (error: any) => error.message === 'NO_PEER_LINK')
+    assert.equal(peers.get(peer.machineId), null)
+    checkpoint('revoked identity cannot establish a new encrypted session through the hosted relay')
   }
   complete = true
 } finally {
@@ -144,10 +180,14 @@ try {
     await page.screenshot({ path: join(root, `failure-${i}.png`), timeout: 5000 }).catch(() => {})
     writeFileSync(join(root, `failure-${i}.html`), await page.content().catch(() => 'unavailable'))
   }
-  for (const id of agents) { try { await rpc('agent_delete', { agentId: id }) } catch (error) { console.error(`Test agent cleanup failed: ${id}`, error) } }
+  if (closedCode !== 4404) for (const id of agents) { try { assert.equal((await rpc('agent_delete', { agentId: id })).deleted, true) } catch (error) { complete = false; console.error(`Test agent cleanup failed: ${id}`, error) } }
   await browser.close()
   pool.invalidate(peer.machineId)
-  writeFileSync(join(root, 'results.json'), JSON.stringify({ complete, local: { hostname: hostname(), arch: arch() },
+  writeFileSync(join(root, revokeCheck ? 'results-revocation.json' : 'results.json'), JSON.stringify({ complete, local: { hostname: hostname(), arch: arch() },
     remote: { hostname: peer.host, arch: peer.arch }, relay: peer.base, checks,
-    limitations: ['fixture model CLI and media', 'temporary identity pins', 'Chrome; native desktop not exercised'] }, null, 2))
+    nativeWebKitTested: !!process.env.HARNESS_VIEWER_WEBKIT,
+    stopPeerToCleanUp: revokeCheck,
+    limitations: ['fixture model CLI and media', 'temporary identity pins', 'complete Flutter desktop not exercised'] }, null, 2))
 }
+// werift can retain STUN retry timers after pool teardown; this standalone runner has no other work.
+process.exit(complete ? 0 : 1)
