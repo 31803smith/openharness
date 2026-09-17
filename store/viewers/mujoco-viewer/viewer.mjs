@@ -56,7 +56,7 @@ function nsFile(path) {
 }
 
 function nsClean(path) {
-  const clean = posix.normalize(String(path ?? '').replace(/\\/g, '/').replace(/^\/+/, ''))
+  const clean = posix.normalize(String(path).replace(/\\/g, '/').replace(/^\/+/, ''))
   return clean === '.' || clean.startsWith('../') || clean === '..' ? null : clean
 }
 
@@ -67,9 +67,7 @@ function statOf(path) {
 }
 
 function readJson(path) {
-  const full = nsFile(path)
-  if (!full) return null
-  try { return JSON.parse(readFileSync(full, 'utf8')) } catch { return null }
+  try { return JSON.parse(readFileSync(nsFile(path), 'utf8')) } catch { return null }
 }
 
 // ─── What to open ───────────────────────────────────────────────────────────────────────────────
@@ -350,9 +348,9 @@ function json(res, value, status = 200) {
 const clients = new Set()
 
 export const server = createServer((req, res) => {
-  const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`)
-  let path
-  try { path = decodeURIComponent(url.pathname) } catch { res.writeHead(400); res.end(); return }
+  // Both can throw on what a client sends (`GET http://a:99999/`, `/%zz`): a bad request, never a crash.
+  let url, path
+  try { url = new URL(req.url, `http://127.0.0.1:${port}`); path = decodeURIComponent(url.pathname) } catch { res.writeHead(400); res.end(); return }
   if (path === '/' || path === '/index.html') { sendFile(req, res, join(PUBLIC, 'index.html')); return }
   if (path.startsWith('/static/')) { sendFile(req, res, safe(PUBLIC, path.slice('/static/'.length))); return }
   if (path === '/favicon.ico') { res.writeHead(204); res.end(); return }
@@ -385,7 +383,7 @@ export const server = createServer((req, res) => {
         }
       }
     }
-    walk(dir && dir !== '.' ? dir : '', 0)
+    walk(dir ?? '', 0)
     json(res, { files }); return
   }
   if (path === '/api/models') { json(res, listModels()); return }
@@ -433,4 +431,6 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     console.log(`[mujoco-viewer] menagerie: ${menagerie}${existsSync(menagerie) ? '' : ' (not there — only workspace MJCF will load)'}`)
   })
   startWatching()
+  // Harness stops the pane with a signal: end the event streams and exit, so nothing is left hanging.
+  for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => { for (const c of clients) c.end(); server.close(); process.exit(0) })
 }
