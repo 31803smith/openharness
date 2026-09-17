@@ -119,6 +119,17 @@ class Agent {
   final String id;
   final String? sessionId;
   final String name;
+
+  /// What the agent is on, in its own words — the transcript's title as the
+  /// daemon cleaned it, null when it has none or it is the name already. A
+  /// created agent keeps its `work · 3188` name while this moves with the work,
+  /// so it is what tells two such agents apart on a phone.
+  final String? title;
+
+  /// When the conversation was last written — the transcript's mtime, which the
+  /// daemon prefers over its own bookkeeping precisely so a client sorting by
+  /// recency follows the work. Null from a daemon too old to send it.
+  final DateTime? updatedAt;
   final String? engine;
   final String? engineDisplayName;
   final String? engineIconHint;
@@ -136,6 +147,8 @@ class Agent {
     required this.id,
     this.sessionId,
     required this.name,
+    this.title,
+    this.updatedAt,
     this.engine,
     this.engineDisplayName,
     this.engineIconHint,
@@ -178,6 +191,8 @@ class Agent {
       id: j['id'] as String,
       sessionId: _safeLabel(j['sessionId']),
       name: j['name'] as String? ?? 'agent',
+      title: _safeLabel(j['title']),
+      updatedAt: _safeTime(j['updatedAt']),
       engine: _safeEngine(j['engine']),
       engineDisplayName: _safeLabel(j['engineDisplayName']),
       engineIconHint: _safeLabel(j['engineIconHint']),
@@ -202,6 +217,8 @@ class Agent {
     id: id,
     sessionId: sessionId,
     name: name ?? this.name,
+    title: title,
+    updatedAt: updatedAt,
     engine: engine,
     engineDisplayName: engineDisplayName,
     engineIconHint: engineIconHint,
@@ -235,6 +252,9 @@ class Agent {
     if (raw is! String || raw.isEmpty) return null;
     return raw.length <= 80 ? raw : raw.substring(0, 80);
   }
+
+  static DateTime? _safeTime(Object? raw) =>
+      raw is String && raw.length <= 64 ? DateTime.tryParse(raw) : null;
 
   static String? _safeDetail(Object? raw) {
     if (raw is! String || raw.isEmpty) return null;

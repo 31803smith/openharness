@@ -1,6 +1,7 @@
 import 'package:flutter/widgets.dart';
 
 import 'package:harness_mobile/core/fuzzy_match.dart';
+
 import 'phone_search_index.dart';
 
 /// Which field earned each query term its score, and whether that field is the
@@ -21,24 +22,13 @@ List<PhoneFieldMatch> phoneResultMatches(
   // work than drawing the whole list.
   for (final term in terms.take(12).toSet()) {
     if (term.length > 128) continue;
-    int? best;
-    var fieldIndex = -1;
-    for (final (index, field) in row.fields.indexed) {
-      if (field.length > 4096) continue;
-      final score = phoneFieldMatchScore(field, term, title: index == 0);
-      if (score != null && (best == null || score < best)) {
-        best = score;
-        fieldIndex = index;
-      }
-      if (best != null && best <= 64) break;
-    }
-    if (fieldIndex >= 0) {
-      matches.add((
-        field: row.fields[fieldIndex],
-        term: term,
-        title: fieldIndex == 0,
-      ));
-    }
+    final best = phoneBestFieldMatch(row, term);
+    if (best == null) continue;
+    matches.add((
+      field: row.fields[best.index],
+      term: term,
+      title: best.index < row.titleFields,
+    ));
   }
   return matches;
 }
