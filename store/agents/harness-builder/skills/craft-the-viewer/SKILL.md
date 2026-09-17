@@ -84,7 +84,9 @@ The brief lists the domain's stages. The viewer shows each one the moment its fi
   a Content-Security-Policy that keeps fetches on the page's own origin.
 - Dark and light: follow `prefers-color-scheme`, and design both on purpose.
 - `?snapshot=1` renders deterministically (no animation, final state of the current files) so
-  `"$BUILDER" snapshot` and proofs can take clean pictures.
+  `"$BUILDER" snapshot` and proofs can take clean pictures — and shows the result **whole**: a
+  picture cannot be scrolled, so what a person would scroll to must fit the frame, scaled down only
+  as far as it stays legible.
 
 ## Delight checklist
 
