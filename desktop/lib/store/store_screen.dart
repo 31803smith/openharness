@@ -66,25 +66,31 @@ class _Discover extends _Shelf {
   const _Discover();
 }
 
-class _All extends _Shelf {
-  const _All();
-}
-
 class _Viewers extends _Shelf {
   const _Viewers();
 }
 
-class _Search extends _Shelf {
+/// The shelves drawn as a plain listing: everything but Discover's front page
+/// and the Viewers page, which have views of their own.
+sealed class _Listed extends _Shelf {
+  const _Listed();
+}
+
+class _All extends _Listed {
+  const _All();
+}
+
+class _Search extends _Listed {
   const _Search(this.query);
   final String query;
 }
 
-class _Collection extends _Shelf {
+class _Collection extends _Listed {
   const _Collection(this.collection);
   final StoreCollection collection;
 }
 
-class _Category extends _Shelf {
+class _Category extends _Listed {
   const _Category(this.name);
   final String name;
 }
@@ -299,7 +305,7 @@ class _StoreTabState extends State<StoreTab> {
         installed
             .where((s) => s.nodeOnline == true && !s.needsLink)
             .firstOrNull;
-    if (target == null || entry.isViewerPackage) {
+    if (target == null) {
       _openPage(entry.id);
       return;
     }
@@ -390,7 +396,7 @@ class _StoreTabState extends State<StoreTab> {
                               onEngines: () => _show(const _Category('Code')),
                             )
                           : _Shelf$View(
-                              shelf: _shelf,
+                              shelf: _shelf as _Listed,
                               entries: _shelved(_shelf),
                               store: _store,
                               installedOn: _installedOn,
@@ -547,7 +553,7 @@ class _Shelf$View extends StatelessWidget {
     required this.onAction,
   });
 
-  final _Shelf shelf;
+  final _Listed shelf;
   final List<DshEntry> entries;
   final StoreController store;
   final List<MachineState> Function(String id) installedOn;
@@ -556,17 +562,14 @@ class _Shelf$View extends StatelessWidget {
   final ValueChanged<DshEntry> onAction;
 
   String get _title => switch (shelf) {
-    _Discover() => 'Discover',
     _All() => 'All harnesses',
-    _Viewers() => 'Viewers',
     _Search() => 'Search results',
     _Collection(:final collection) => collection.title,
     _Category(:final name) => name,
   };
 
   String get _subtitle => switch (shelf) {
-    _Discover() || _All() => 'Find something you have always wanted to make.',
-    _Viewers() => 'Shared previews and the agents that use them.',
+    _All() => 'Find something you have always wanted to make.',
     _Search() => '${entries.length} result${entries.length == 1 ? '' : 's'}',
     _Collection(:final collection) => collection.subtitle,
     _Category() =>
@@ -679,10 +682,6 @@ Future<void> _openStoreAgent(
 ) async {
   notifier.newSwarm(draft: true);
   final target = notifier.activeSwarmId;
-  if (!context.mounted) {
-    notifier.cancelSwarmDraft(target);
-    return;
-  }
   final result = await showNewAgentDialog(
     context,
     notifier,
@@ -762,7 +761,9 @@ class _ProductPageState extends State<_ProductPage> {
       ),
     );
     if (ok != true || !mounted) return;
-    if (!_busy.add(machineId)) return;
+    // No second Remove can be in flight: the dialog above is modal, and while
+    // one runs the row shows progress instead of the button.
+    _busy.add(machineId);
     setState(() {});
     final failure = await widget.notifier.removeDsh(machineId, widget.entry.id);
     _busy.remove(machineId);
@@ -889,9 +890,7 @@ class _ProductPageState extends State<_ProductPage> {
                               const SizedBox(width: 8),
                               Expanded(
                                 child: Text(
-                                  rating.isEmpty
-                                      ? 'No ratings yet'
-                                      : '${rating.average.toStringAsFixed(1)} · ${rating.count} rating${rating.count == 1 ? '' : 's'}',
+                                  '${rating.average.toStringAsFixed(1)} · ${rating.count} rating${rating.count == 1 ? '' : 's'}',
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                   style: TextStyle(
@@ -1374,6 +1373,7 @@ class _LinkChip extends StatelessWidget {
   }
 }
 
+/// Drawn only for a rating somebody has given.
 class _RatingSummary extends StatelessWidget {
   const _RatingSummary({required this.rating});
   final StoreRating rating;
@@ -1388,7 +1388,7 @@ class _RatingSummary extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              rating.isEmpty ? '–' : rating.average.toStringAsFixed(1),
+              rating.average.toStringAsFixed(1),
               style: TextStyle(
                 fontSize: 40,
                 fontWeight: FontWeight.w700,
