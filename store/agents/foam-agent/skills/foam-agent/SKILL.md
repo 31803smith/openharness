@@ -17,3 +17,15 @@ files under `$STUDIO_UPSTREAM` before using an upstream API. Keep controls withi
 ranges, preserve the data needed to reproduce a comparison, and distinguish preview results from
 native service or hardware output. The viewer supports history and artifact downloads; tell the
 user which run contains the result, and what was actually measured.
+
+## Compare flow cases
+
+Save a baseline, then vary shape or radius while holding inlet speed, viscosity, and solver
+steps fixed. Read `flow.csv` and `field.json`; check finite velocities, solid-boundary velocities,
+and the convergence record. A coarse flow picture does not establish drag or mesh convergence.
+Wind strength in `studio.json` is divided by 100 for the lattice inlet velocity.
+
+For real OpenFOAM work, read `$STUDIO_UPSTREAM/.claude/skills/foam.md` before constructing a
+case. The optional `openfoam` action checks the supplied cavity benchmark with active
+`blockMesh` and `icoFoam`. Preserve its boundary conditions when reproducing the benchmark.
+Upstream model/MCP planning requires its separate dependencies and credentials.

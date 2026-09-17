@@ -17,3 +17,15 @@ files under `$STUDIO_UPSTREAM` before using an upstream API. Keep controls withi
 ranges, preserve the data needed to reproduce a comparison, and distinguish preview results from
 native service or hardware output. The viewer supports history and artifact downloads; tell the
 user which run contains the result, and what was actually measured.
+
+## Compare a signal plan
+
+Record the baseline, then change east–west green time while holding demand, duration, and
+seed fixed. Inspect `trips.csv`, the generated network, and raw `traffic.xml`. Compare mean
+delay for completed trips together with the unfinished count and largest stopped queue.
+Do not drop unfinished vehicles when describing congestion.
+
+For custom networks, read `$STUDIO_UPSTREAM/.claude/skills/procedural-memory/` in this order:
+`create-single-intersection/SKILL.md`, `run-simulation/SKILL.md`, and
+`analyze-simulation-outputs/SKILL.md`. Those pinned procedures explain the native SUMO
+commands and raw outputs. The starter is an original intersection, not a calibrated city.

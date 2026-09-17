@@ -85,6 +85,14 @@ test('cancellation also works when the platform cannot signal a process group',a
   assert.equal((await f.req('/api/cancel',{})).status,200);
   await until(f.state,s=>s.job.status==='cancelled');
 });
+
+test('closing the viewer terminates jobs that ignore graceful cancellation',async t=>{
+  const f=await fixture(t,"trap '' TERM; echo ready; while :; do sleep 1; done");
+  await f.run();await until(f.state,s=>s.job.log.includes('ready'));
+  assert.equal((await f.req('/api/cancel',{})).status,200);
+  await f.studio.close();
+  await assert.rejects(fetch(f.studio.url+'/api/state'));
+});
 test('confines files after symlink resolution and serves artifact downloads',async t=>{
   const f=await fixture(t);await mkdir(join(f.workspace,'out'));await writeFile(join(f.root,'secret.txt'),'private');await symlink(join(f.root,'secret.txt'),join(f.workspace,'out/escape.txt'));
   await writeFile(join(f.workspace,'out/sound.wav'),'RIFF');await writeFile(join(f.workspace,'out/data.json'),'{}');await writeFile(join(f.workspace,'out/unknown.xyz'),'hello');

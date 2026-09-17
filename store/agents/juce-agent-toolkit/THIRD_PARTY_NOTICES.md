@@ -7,3 +7,6 @@ License: MIT; JUCE: AGPL-3.0 or commercial. See `LICENSE-upstream` and the fetch
 
 The original local starter and wrapper are MIT licensed. The native runtime and separately
 installed applications retain their own licenses. No upstream endorsement is claimed.
+
+The JUCE 9.0.2 source pin is separately recorded in `upstream.lock.json`; its license is
+preserved in `LICENSE-juce`. This wrapper does not redistribute a prebuilt JUCE plugin.

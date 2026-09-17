@@ -17,3 +17,14 @@ files under `$STUDIO_UPSTREAM` before using an upstream API. Keep controls withi
 ranges, preserve the data needed to reproduce a comparison, and distinguish preview results from
 native service or hardware output. The viewer supports history and artifact downloads; tell the
 user which run contains the result, and what was actually measured.
+
+## Author and check building data
+
+Choose the footprint, storeys, height, and room use, then run `build`. Reopen `building.ifc`
+with IfcOpenShell, inspect spaces/walls/openings, and read the quantity sets. Match their
+areas and volumes to `quantities.csv`. The canvas is a schematic view; IFC is the source
+artifact for downstream editing. Preserve element identifiers when extending an existing model.
+
+Read `$STUDIO_UPSTREAM/docs/examples.md` for Bonsai edits and read-back verification,
+`docs/installation.md` for the bridge, and `docs/tools.md` before native commands. The
+wrapper's `bonsai` action only requests scene information from an existing Blender session.

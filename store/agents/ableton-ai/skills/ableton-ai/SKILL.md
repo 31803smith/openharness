@@ -17,3 +17,15 @@ files under `$STUDIO_UPSTREAM` before using an upstream API. Keep controls withi
 ranges, preserve the data needed to reproduce a comparison, and distinguish preview results from
 native service or hardware output. The viewer supports history and artifact downloads; tell the
 user which run contains the result, and what was actually measured.
+
+## Make a loop that can leave the viewer
+
+Choose a scale, tempo, density, and swing. Audition the step grid, keep a run, and verify
+`notes.json`, `loop.mid`, and `loop.wav`. A nonempty sixteen-character `pattern` mask overrides
+density; clear it to regenerate a seeded rhythm. The browser and exporter share a tested
+pattern algorithm, so note pitches, velocity, and timing remain reproducible.
+
+Read `$STUDIO_UPSTREAM/skills/ableton/SKILL.md` for real Live composition and its documented
+track/device/clip operations. The wrapper's `live` action is a read-only session snapshot; it
+does not import the MIDI, change a set, or start transport. Enable the pinned upstream control
+surface before using its native tools, and preserve the user's current session.

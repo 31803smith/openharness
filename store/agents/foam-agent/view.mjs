@@ -17,7 +17,7 @@ export function mount(stage,api){
     if(!field)for(let row=0;row<19;row++){
       const y0=top+row/18*fh,points=[];
       for(let x=left;x<left+120*scaleX;x+=4){const near=Math.exp(-(((x-cx)/(30*scaleX))**2)),dy=(y0-cy),spread=Math.sign(dy)*p.radius*scaleY*Math.exp(-((dy/(p.radius*scaleY*2))**2))*near;points.push([x,y0+spread]);}
-      line(ctx,points,field?'#b3e5e41b':'#b3e5e42f',.8);
+      line(ctx,points,'#b3e5e42f',.8);
       if(!field){const x=left+((t*p.speed*22+row*53)%(120*scaleX)),near=Math.exp(-(((x-cx)/(30*scaleX))**2)),dy=y0-cy;circle(ctx,x,y0+Math.sign(dy)*p.radius*scaleY*Math.exp(-((dy/(p.radius*scaleY*2))**2))*near,1.4,'#a1dadba0');}
     }
     ctx.fillStyle='#cedad4';ctx.strokeStyle='#f0faf0';ctx.lineWidth=2;ctx.beginPath();

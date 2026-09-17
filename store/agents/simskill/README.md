@@ -21,9 +21,9 @@ Edit `studio.json`, then run:
 "$STUDIO_TOOLCHAIN/run.sh" simulate  # Wake up the city
 ```
 
-The native command is optional and fails with a useful message when its external runtime is
-unavailable. It never silently substitutes sample output. Use the upstream README in `upstream/`
-for full native application setup. See `INTEGRATION.md` for the exact bridge and local test scope.
+SUMO is the local simulator and is installed by setup. The first Intel Mac install compiles two
+headless tools and can take several minutes. Later installs reuse the pinned build. It never
+substitutes sample output. See `INTEGRATION.md` for the exact local test scope.
 
 Every successful run owns a new folder under `out/runs/`, a `result.json` with parameters, engine,
 source commit, timestamps, measured values, and downloadable artifacts. `.harness/verdict.json`

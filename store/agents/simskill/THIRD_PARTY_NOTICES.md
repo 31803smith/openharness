@@ -7,3 +7,7 @@ License: Apache-2.0; SUMO EPL-2.0 / GPL-2.0. See `LICENSE-upstream` and the fetc
 
 The original local starter and wrapper are MIT licensed. The native runtime and separately
 installed applications retain their own licenses. No upstream endorsement is claimed.
+
+Eclipse SUMO 1.27.1: German Aerospace Center (DLR) and contributors. The source pin is
+recorded in `upstream.lock.json`; `LICENSE-sumo` and `NOTICE-sumo.md` preserve its notices.
+The Intel Mac build uses conda-forge Xerces, ICU, and libc++ with exact package build pins.
