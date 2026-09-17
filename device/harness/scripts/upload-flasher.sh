@@ -13,7 +13,7 @@
 # harness.autonomous.ai/flash-circle.sh and ships with a web deploy (same as /cli/install.sh). Nothing in
 # this script touches metadata.json, so a mirror refresh can never disturb the fleet's OTA manifest.
 #
-# Prereqs: an authenticated `gsutil` with write access (objects must be public-read), plus curl.
+# Prereqs: an authenticated `gcloud storage` with write access (objects must be public-read), plus curl.
 # Published layout:  harness/flasher/esptool/<ver>/<asset>  (+ <asset>.sha256)
 set -euo pipefail
 
@@ -37,7 +37,14 @@ done
 
 command -v curl >/dev/null 2>&1 || { echo "error: curl is required" >&2; exit 1; }
 [ -f "$FLASHER" ] || { echo "error: flasher not found at $FLASHER" >&2; exit 1; }
-[ "$DRY" -eq 1 ] || command -v gsutil >/dev/null 2>&1 || { echo "error: gsutil not found — install/authenticate the gcloud SDK" >&2; exit 1; }
+# --- GCS client: `gcloud storage`, and only `gcloud storage` ---
+# gsutil was retired from this repo on 2026-09-17. It is a standalone Python tool that only
+# understands gcloud's *user* and *service-account-key* credentials: it cannot use the
+# external-account (federated) credential Workload Identity Federation issues, so every call fails
+# under WIF while the identical `gcloud storage` call works — it is the same gcloud binary that
+# performed the token exchange. Do not reintroduce it.
+[ "$DRY" -eq 1 ] || command -v gcloud >/dev/null 2>&1 || { echo "error: gcloud not found — install/authenticate the gcloud SDK" >&2; exit 1; }
+[ "$DRY" -eq 1 ] || gcloud storage --help >/dev/null 2>&1 || { echo "error: this gcloud is too old for 'gcloud storage' — update the gcloud SDK" >&2; exit 1; }
 
 sha256_of() {
   if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | awk '{print $1}'
@@ -70,8 +77,8 @@ for asset in \
 "
   dest="gs://${GCS_BUCKET}/${FLASHER_PREFIX}/esptool/${ESPTOOL_VER}/${asset}"
   echo "   ↑ $dest"
-  run gsutil -q cp "$TMP/$asset" "$dest"
-  run gsutil -q cp "$TMP/$asset.sha256" "${dest}.sha256"
+  run gcloud storage cp --quiet "$TMP/$asset" "$dest"
+  run gcloud storage cp --quiet "$TMP/$asset.sha256" "${dest}.sha256"
 done
 
 echo ""

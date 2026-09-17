@@ -39,7 +39,7 @@ install-cli:
 	bash cli/scripts/install-cli.sh $(ARGS)
 
 ## upload-cli: bump version -> bundle -> publish the CLI. MAINTAINER ONLY — it writes to the release
-## bucket, so it needs an authenticated `gcloud storage` (or gsutil) with write access on it, plus
+## bucket, so it needs an authenticated `gcloud storage` with write access on it, plus
 ## node/npm for the bundle step.
 ## Running daemons pick the new version up within ~1 min.
 upload-cli:
@@ -68,7 +68,7 @@ remote-machine:
 ##
 ## NOT a tag-triggered release like the three above, and deliberately so: this builds with a local
 ## ESP-IDF toolchain and writes straight to the GCS bucket every running dial polls, so it needs an
-## authenticated gsutil and a sourced IDF env on the machine that runs it. There is no CI runner with
+## authenticated `gcloud storage` and a sourced IDF env on the machine that runs it. There is no CI runner with
 ## a board attached to check the result. See device/harness/RELEASE.md.
 ##
 ## ARGS="--dry-run" to preview, ARGS="X.Y.Z" for an explicit version, ARGS="--no-bump" to rebuild and

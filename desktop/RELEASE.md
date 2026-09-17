@@ -359,7 +359,7 @@ page, and in its summary — named `Harness-macos[-arm64]-<next version>-<commit
   cannot be found by guessing. The run page that prints its link is public, though, so anyone who
   opens it can download the build. The team chose that on 2026-09-10 over a key-derived link that only
   key holders could work out; if it stops being acceptable, that is the design to go back to.
-- Take a build back with `gsutil -m rm -r gs://s3-autonomous-upgrade-3/harness/desktop-internal/<token>`
+- Take a build back with `gcloud storage rm -r gs://s3-autonomous-upgrade-3/harness/desktop-internal/<token>`
   (the summary prints it); the workflow strips the release's year-long cache headers from these files
   so a deletion sticks.
 - **It never updates itself.** `DESKTOP_UPDATE_METADATA_URL` points at a manifest nothing writes,

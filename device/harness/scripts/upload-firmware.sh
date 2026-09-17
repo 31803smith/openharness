@@ -15,7 +15,7 @@
 # patch is bumped from there — the local version.txt is NOT committed/pushed (only written so the
 # build can stamp the firmware). Steps: (1) resolve+bump version, (2) idf.py build, (3) upload .bin +
 # merge metadata.json to GCS.
-# Prereqs: `gsutil` authenticated (gcloud auth) with WRITE access to the bucket; the bucket/objects
+# Prereqs: `gcloud storage` authenticated (gcloud auth) with WRITE access to the bucket; the bucket/objects
 # must be public-read so devices can download without credentials. `idf.py` on PATH (or IDF_PATH set).
 set -euo pipefail
 
@@ -64,7 +64,14 @@ for arg in "$@"; do
   esac
 done
 
-command -v gsutil >/dev/null 2>&1 || { echo "error: gsutil not found — install/authenticate the gcloud SDK" >&2; exit 1; }
+# --- GCS client: `gcloud storage`, and only `gcloud storage` ---
+# gsutil was retired from this repo on 2026-09-17. It is a standalone Python tool that only
+# understands gcloud's *user* and *service-account-key* credentials: it cannot use the
+# external-account (federated) credential Workload Identity Federation issues, so every call fails
+# under WIF while the identical `gcloud storage` call works — it is the same gcloud binary that
+# performed the token exchange. Do not reintroduce it.
+command -v gcloud >/dev/null 2>&1 || { echo "error: gcloud not found — install/authenticate the gcloud SDK" >&2; exit 1; }
+gcloud storage --help >/dev/null 2>&1 || { echo "error: this gcloud is too old for 'gcloud storage' — update the gcloud SDK" >&2; exit 1; }
 
 # Restore version.txt (if we bumped it) and clean temp files when the release doesn't finish — so a
 # failed run (e.g. build error) doesn't leave version.txt advanced with nothing published.
@@ -179,11 +186,11 @@ URL="${GCS_PUBLIC_BASE_URL%/}/${GCS_PATH#/}"
 
 echo ">> uploading firmware $VER ($SIZE bytes, sha256=$SHA)"
 echo "   dest: gs://${GCS_BUCKET}/${GCS_PATH}"
-gsutil -h "Cache-Control:no-cache, no-store, must-revalidate" cp "$BIN" "gs://${GCS_BUCKET}/${GCS_PATH}"
+gcloud storage cp --cache-control="no-cache, no-store, must-revalidate" "$BIN" "gs://${GCS_BUCKET}/${GCS_PATH}"
 
 echo ">> merging manifest: gs://${GCS_BUCKET}/${METADATA_PATH}  (${OTA_KEY} = {version,url,sha256,size})"
 SRC="$(mktemp)"; DST="$(mktemp)"   # removed by cleanup() on EXIT
-if ! gsutil cp "gs://${GCS_BUCKET}/${METADATA_PATH}" "$SRC" 2>/dev/null; then
+if ! gcloud storage cp "gs://${GCS_BUCKET}/${METADATA_PATH}" "$SRC" 2>/dev/null; then
   echo "   (no existing metadata.json — creating a new one)"
   printf '{}' > "$SRC"
 fi
@@ -205,9 +212,9 @@ with open(dst, "w") as f:
     json.dump(data, f, indent=2)
     f.write("\n")
 PY
-gsutil -h "Content-Type:application/json" \
-       -h "Cache-Control:no-cache, no-store, must-revalidate" \
-       cp "$DST" "gs://${GCS_BUCKET}/${METADATA_PATH}"
+gcloud storage cp --content-type=application/json \
+       --cache-control="no-cache, no-store, must-revalidate" \
+       "$DST" "gs://${GCS_BUCKET}/${METADATA_PATH}"
 PUBLISHED=1   # release completed — cleanup() must NOT revert version.txt
 
 # The version is tracked by the remote metadata.json (single source of truth) — we do NOT git-commit
