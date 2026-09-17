@@ -125,9 +125,6 @@ jobs:
       DEBUG_SURFACE: ${{ needs.prepare.outputs.debug_surface }}
       # The file a tester downloads names the build it is: version AND commit.
       ARTIFACT: ${{ matrix.artifact }}-${{ needs.prepare.outputs.version }}-${{ needs.prepare.outputs.short_sha }}
-      # The `secrets` context cannot be read from a step-level `if:`, so reduce it to a boolean here
-      # — job-level `env:` can see it. Holds "true"/"false", never the value itself.
-      HAS_WIF: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER != '' }}
     defaults:
       run:
         working-directory: desktop
@@ -161,19 +158,13 @@ jobs:
       #
       # Same pool and provider as release.yml, and the SAME service account — this writes to
       # s3-autonomous-upgrade-3, the bucket that one already publishes to, so there was no new GCP
-      # setup to do. Two steps only for the duration of the cutover; DELETE the key step (and the
-      # GCP_SA_KEY secret) once an internal build has gone green on the first.
+      # setup to do. Federation is the only path: the GCP_SA_KEY fallback and the key behind it were
+      # retired on 2026-09-17. Do not reintroduce a key.
       - name: Authenticate to GCP (workload identity federation)
-        if: env.HAS_WIF == 'true'
         uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-      - name: Authenticate to GCP (service-account key — legacy fallback)
-        if: env.HAS_WIF != 'true'
-        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
-        with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
       - uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
 
       - name: Build ${{ matrix.variant }} and pin its renderer
