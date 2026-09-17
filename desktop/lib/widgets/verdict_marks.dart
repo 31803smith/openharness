@@ -69,10 +69,13 @@ class VerdictStatus extends StatelessWidget {
             'Checked',
             FontWeight.w500,
           );
+    // Under the one line, what ready rests on: which checks ran and passed.
+    final evaluation = verdict.evaluation.map((e) => e.line).join('\n');
+    final headline = working
+        ? 'The agent is working${verdict.summary == null ? '' : ' · last check: ${verdict.summary}'}'
+        : verdict.summary ?? label;
     return Tooltip(
-      message: working
-          ? 'The agent is working${verdict.summary == null ? '' : ' · last check: ${verdict.summary}'}'
-          : verdict.summary ?? label,
+      message: evaluation.isEmpty ? headline : '$headline\n$evaluation',
       waitDuration: const Duration(milliseconds: 500),
       child: Semantics(
         label: 'Status: $label',

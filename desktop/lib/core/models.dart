@@ -1,7 +1,11 @@
 /// Data models mirroring the backend/web types.
 library;
 
-import 'package:flutter/foundation.dart' show immutable;
+import 'package:flutter/foundation.dart' show immutable, listEquals;
+
+import 'evaluation.dart';
+
+export 'evaluation.dart' show AgentEvaluation, EvaluationMethod;
 
 enum MachineAuthMode { managed, remote, self, provider }
 
@@ -406,6 +410,17 @@ class AgentPhase {
       artifact: AgentVerdict._safeText(raw['artifact'], 1024),
     );
   }
+
+  @override
+  bool operator ==(Object other) =>
+      other is AgentPhase &&
+      other.id == id &&
+      other.name == name &&
+      other.state == state &&
+      other.artifact == artifact;
+
+  @override
+  int get hashCode => Object.hash(id, name, state, artifact);
 }
 
 @immutable
@@ -417,6 +432,7 @@ class AgentVerdict {
     this.warnings = 0,
     this.artifact,
     this.phases = const [],
+    this.evaluation = const [],
     this.updatedAt,
   });
 
@@ -434,6 +450,10 @@ class AgentVerdict {
   /// Where the work is, in order — at most twelve; empty when the harness
   /// names no phases, and then the header draws no strip.
   final List<AgentPhase> phases;
+
+  /// What [ready] rests on, strongest first — at most eight; empty when the
+  /// harness does not say how it decided.
+  final List<AgentEvaluation> evaluation;
   final DateTime? updatedAt;
 
   /// The phase under way, when one is.
@@ -464,6 +484,7 @@ class AgentVerdict {
       warnings: _safeCount(raw['warnings']),
       artifact: _safeText(raw['artifact'], 1024),
       phases: _phases(raw['phases']),
+      evaluation: _evaluation(raw['evaluation']),
       updatedAt: updated is String ? DateTime.tryParse(updated) : null,
     );
   }
@@ -471,6 +492,13 @@ class AgentVerdict {
   static List<AgentPhase> _phases(Object? raw) {
     if (raw is! List) return const [];
     return [for (final item in raw.take(12)) ?AgentPhase.fromJson(item)];
+  }
+
+  static List<AgentEvaluation> _evaluation(Object? raw) {
+    if (raw is! List) return const [];
+    return [for (final item in raw) ?AgentEvaluation.fromJson(item)]
+        .take(8)
+        .toList(growable: false);
   }
 
   static int _safeCount(Object? raw) {
@@ -493,11 +521,21 @@ class AgentVerdict {
       other.errors == errors &&
       other.warnings == warnings &&
       other.artifact == artifact &&
+      listEquals(other.phases, phases) &&
+      listEquals(other.evaluation, evaluation) &&
       other.updatedAt == updatedAt;
 
   @override
-  int get hashCode =>
-      Object.hash(ready, summary, errors, warnings, artifact, updatedAt);
+  int get hashCode => Object.hash(
+    ready,
+    summary,
+    errors,
+    warnings,
+    artifact,
+    Object.hashAll(phases),
+    Object.hashAll(evaluation),
+    updatedAt,
+  );
 }
 
 /// What the daemon answered when asked where a typed task belongs (⌘B).

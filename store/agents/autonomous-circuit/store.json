@@ -1,6 +1,12 @@
 {
   "upstream": "https://github.com/autonomous-ai/autonomous-circuit",
   "license": "MIT",
+  "evaluation": [
+    {
+      "method": "tool",
+      "by": "tscircuit build errors and fab-readiness gates"
+    }
+  ],
   "examples": [
     {
       "prompt": "Design a six-key USB macropad. Start with the schematic.",

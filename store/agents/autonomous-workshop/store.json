@@ -1,6 +1,12 @@
 {
   "upstream": "https://github.com/autonomous-ai/autonomous-workshop",
   "license": "MIT",
+  "evaluation": [
+    {
+      "method": "tool",
+      "by": "verify_project: STEP geometry and measurements"
+    }
+  ],
   "examples": [
     {
       "prompt": "Design a cable clip that holds three 6 mm cables to the edge of a 20 mm thick desk, printable without supports.",

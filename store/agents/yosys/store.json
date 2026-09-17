@@ -2,6 +2,12 @@
   "homepage": "https://yosyshq.net",
   "upstream": "https://github.com/YosysHQ/yosys",
   "license": "MIT",
+  "evaluation": [
+    {
+      "method": "tool",
+      "by": "a testbench, Yosys synthesis and nextpnr timing"
+    }
+  ],
   "examples": [
     {
       "prompt": "Build a tiny 8-bit CPU for the iCEBreaker that runs a Fibonacci program from ROM and prints every number over the USB serial port at 115200 baud; the button runs it again. Simulate it, check the serial output in the testbench and build the bitstream.",

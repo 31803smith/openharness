@@ -2,6 +2,12 @@
   "homepage": "https://phaser.io",
   "upstream": "https://github.com/phaserjs/phaser",
   "license": "MIT",
+  "evaluation": [
+    {
+      "method": "tool",
+      "by": "a Vite build and a scene and input check"
+    }
+  ],
   "examples": [
     {
       "prompt": "Make a side-scrolling platformer at sunset: a little fox runs and double-jumps across floating islands, collects glowing berries, stomps hedgehogs and races to a lantern at the end. Parallax mountains, procedural art only.",

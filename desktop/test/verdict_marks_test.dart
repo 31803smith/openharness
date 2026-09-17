@@ -149,29 +149,129 @@ void main() {
     }
   });
 
-  testWidgets('a working agent reads Working, or its phase, never the last Ready', (
+  testWidgets(
+    'a working agent reads Working, or its phase, never the last Ready',
+    (tester) async {
+      const build = AgentPhase(
+        id: 'build',
+        name: 'Build',
+        state: AgentPhaseState.active,
+      );
+      final status = find.byKey(const ValueKey('pane-status'));
+      for (final (verdict, label) in [
+        (
+          const AgentVerdict(ready: true, summary: 'main.pdf · 1 page'),
+          'Working',
+        ),
+        (const AgentVerdict(ready: false, errors: 2), 'Working'),
+        (const AgentVerdict(ready: false, phases: [build]), 'Build'),
+      ]) {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: VerdictStatus(verdict: verdict, working: true),
+            ),
+          ),
+        );
+        expect(
+          find.descendant(of: status, matching: find.text(label)),
+          findsOneWidget,
+          reason: label,
+        );
+        expect(
+          find.descendant(of: status, matching: find.text('Ready')),
+          findsNothing,
+        );
+      }
+      final tooltip = tester.widget<Tooltip>(find.byType(Tooltip).first);
+      expect(tooltip.message, 'The agent is working');
+    },
+  );
+
+  test('evaluation parses what ready rests on; none never passes or gates', () {
+    final verdict = AgentVerdict.fromJson({
+      'ready': false,
+      'evaluation': [
+        {
+          'method': 'tool',
+          'by': ' LilyPond 2.24.4 ',
+          'passed': true,
+          'gate': true,
+        },
+        {
+          'method': 'checks',
+          'by': 'brief: key, 16 bars',
+          'passed': false,
+          'gate': true,
+          'detail': '12 of 16 bars',
+        },
+        {'method': 'review', 'by': 'engraving rubric', 'passed': 'maybe'},
+        {'method': 'none', 'passed': true, 'gate': true},
+        {'method': 'vibes', 'passed': true},
+        'tool',
+      ],
+    })!;
+    expect(verdict.evaluation.map((e) => e.method), [
+      EvaluationMethod.tool,
+      EvaluationMethod.checks,
+      EvaluationMethod.review,
+      EvaluationMethod.none,
+    ]);
+    expect(verdict.evaluation.map((e) => e.line), [
+      '✓ Verified by LilyPond 2.24.4',
+      '✗ Checked against brief: key, 16 bars — 12 of 16 bars',
+      '○ Reviewed against engraving rubric · not run yet, advisory',
+      '– No automatic check: you are the judge',
+    ]);
+    expect(verdict.evaluation.last.gate, isFalse);
+    expect(verdict.evaluation.last.passed, isNull);
+    expect(AgentVerdict.fromJson({'ready': true})!.evaluation, isEmpty);
+    // A verdict that only changed what it checked is a different verdict.
+    expect(verdict == AgentVerdict.fromJson({'ready': false}), isFalse);
+    expect(
+      AgentVerdict.fromJson({
+        'ready': false,
+        'evaluation': [
+          {'method': 'tool', 'passed': true},
+        ],
+      }),
+      AgentVerdict.fromJson({
+        'ready': false,
+        'evaluation': [
+          {'method': 'tool', 'passed': true},
+        ],
+      }),
+    );
+  });
+
+  testWidgets('the tooltip lists what ready rests on under its one line', (
     tester,
   ) async {
-    const build = AgentPhase(id: 'build', name: 'Build', state: AgentPhaseState.active);
-    final status = find.byKey(const ValueKey('pane-status'));
-    for (final (verdict, label) in [
-      (const AgentVerdict(ready: true, summary: 'main.pdf · 1 page'), 'Working'),
-      (const AgentVerdict(ready: false, errors: 2), 'Working'),
-      (const AgentVerdict(ready: false, phases: [build]), 'Build'),
-    ]) {
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(body: VerdictStatus(verdict: verdict, working: true)),
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: VerdictStatus(
+            verdict: AgentVerdict.fromJson({
+              'ready': true,
+              'summary': 'score.pdf · 16 bars',
+              'evaluation': [
+                {
+                  'method': 'tool',
+                  'by': 'LilyPond',
+                  'passed': true,
+                  'gate': true,
+                },
+                {'method': 'review', 'passed': true},
+              ],
+            })!,
+          ),
         ),
-      );
-      expect(
-        find.descendant(of: status, matching: find.text(label)),
-        findsOneWidget,
-        reason: label,
-      );
-      expect(find.descendant(of: status, matching: find.text('Ready')), findsNothing);
-    }
+      ),
+    );
     final tooltip = tester.widget<Tooltip>(find.byType(Tooltip).first);
-    expect(tooltip.message, 'The agent is working');
+    expect(
+      tooltip.message,
+      'score.pdf · 16 bars\n✓ Verified by LilyPond\n✓ Reviewed against a rubric · advisory',
+    );
   });
 }

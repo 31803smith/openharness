@@ -243,6 +243,8 @@ void main() {
   // not against Ahem's squares, which overflow a row no person would see.
   setUpAll(loadRealFonts);
 
+  group('evaluation', _evaluationTests);
+
   group('Get, Open and Remove', () {
     testWidgets('the primary Get respects this computer’s availability', (
       tester,
@@ -1269,6 +1271,86 @@ class _NotFoundClient extends ApiClient {
   @override
   Future<Map<String, dynamic>?> storeReviews(String harnessId) async =>
       _notFound('reviews');
+}
+
+void _evaluationTests() {
+  testWidgets(
+    'a page says how its harness judges its output, and nothing when it does not say',
+    (tester) async {
+      const judged = DshEntry(
+        id: 'autonomous/lilypond',
+        name: 'LilyPond',
+        engine: 'claude',
+        installed: true,
+        evaluation: [
+          StoreEvaluation(
+            method: EvaluationMethod.tool,
+            by: 'the LilyPond compiler',
+          ),
+          StoreEvaluation(method: EvaluationMethod.checks),
+          StoreEvaluation(
+            method: EvaluationMethod.review,
+            by: 'an engraving rubric',
+          ),
+        ],
+      );
+      await _open(
+        tester,
+        initialHarness: judged.id,
+        seed: (app) => app.machine(
+          'machine-1',
+          name: 'studio-mac',
+          local: true,
+          dsh: const [judged, _typst],
+        ),
+      );
+      final line = _key('store-evaluation');
+      expect(line, findsOneWidget);
+      for (final phrase in [
+        'Verified by the LilyPond compiler',
+        'Checked against the request',
+        'Reviewed against an engraving rubric',
+      ]) {
+        expect(
+          find.descendant(of: line, matching: find.text(phrase)),
+          findsOneWidget,
+          reason: phrase,
+        );
+      }
+
+      await _open(tester, initialHarness: _typst.id);
+      expect(_key('store-evaluation'), findsNothing);
+    },
+  );
+
+  test('a row reads what judges it, known methods only, at most four', () {
+    final entry = DshEntry.fromJson({
+      'id': 'autonomous/strudel',
+      'engine': 'claude',
+      'evaluation': [
+        {'method': 'none', 'by': 'ignored words are still words'},
+        {'method': 'vibes'},
+        {'method': 'tool', 'by': '  Strudel transpiler  '},
+        'checks',
+        for (var i = 0; i < 6; i++) {'method': 'checks'},
+      ],
+    })!;
+    expect(entry.evaluation.map((e) => e.method), [
+      EvaluationMethod.none,
+      EvaluationMethod.tool,
+      EvaluationMethod.checks,
+      EvaluationMethod.checks,
+    ]);
+    expect(entry.evaluation[1].phrase, 'Verified by Strudel transpiler');
+    expect(
+      entry.evaluation.first.phrase,
+      'No automatic check: you are the judge',
+    );
+    expect(
+      DshEntry.fromJson({'id': 'a/b', 'engine': 'claude'})!.evaluation,
+      isEmpty,
+    );
+  });
 }
 
 /// Lays its child out twice in its first layout — wide, then narrow — so a

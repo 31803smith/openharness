@@ -337,6 +337,15 @@ const _harnesses = <String, EngineIdentity>{
     color: Color(0xffe8894a),
     asset: 'assets/engine-icons/openmontage.png',
   ),
+  // Harness's own package, so it wears Harness's own icon (`assets/app_icon.png`).
+  'autonomous/harness-builder': EngineIdentity(
+    id: 'autonomous/harness-builder',
+    label: 'Harness Builder',
+    category: 'Harnesses',
+    creator: 'Autonomous',
+    color: Color(0xff90ff50),
+    asset: 'assets/engine-icons/harness-builder.png',
+  ),
 };
 
 /// The base engine each first-party harness runs on, so the Create dialog can
@@ -360,6 +369,7 @@ const knownHarnessBase = <String, String>{
   'autonomous/yosys': 'claude',
   'autonomous/circuitjs': 'codex',
   'autonomous/openmontage': 'claude',
+  'autonomous/harness-builder': 'codex',
 };
 
 /// All known engines, in declaration order — for the New Agent engine picker.

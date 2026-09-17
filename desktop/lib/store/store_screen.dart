@@ -963,6 +963,10 @@ class _ProductPageState extends State<_ProductPage> {
                         color: grid.AppPalette.textFaint,
                       ),
                     ),
+                    if (entry.evaluation.isNotEmpty) ...[
+                      const SizedBox(height: 10),
+                      _EvaluationLine(evaluation: entry.evaluation),
+                    ],
                     const SizedBox(height: 12),
                     Wrap(
                       alignment: WrapAlignment.center,
@@ -1336,6 +1340,68 @@ class _QuietLinkState extends State<_QuietLink> {
         onTap: tap,
         child: content,
       ),
+    );
+  }
+}
+
+/// How the harness judges what it makes, in the words its verdict uses: one quiet line under the
+/// name, strongest method first, so a person knows what "Ready" will mean before they try it.
+class _EvaluationLine extends StatelessWidget {
+  const _EvaluationLine({required this.evaluation});
+
+  final List<StoreEvaluation> evaluation;
+
+  static IconData _icon(EvaluationMethod method) => switch (method) {
+    EvaluationMethod.tool => LucideIcons.shieldCheck300,
+    EvaluationMethod.checks => LucideIcons.listChecks300,
+    EvaluationMethod.review => LucideIcons.scanEye300,
+    EvaluationMethod.none => LucideIcons.userRound300,
+  };
+
+  static String _explain(EvaluationMethod method) => switch (method) {
+    EvaluationMethod.tool => "The tool's own verifier runs on every change; its errors keep the result from reading Ready.",
+    EvaluationMethod.checks =>
+      'What you ask for is measured on the result: sizes, counts, keys.',
+    EvaluationMethod.review => 'A fresh reviewer grades snapshots of the result against a written rubric.',
+    EvaluationMethod.none => 'Nothing can verify this kind of work automatically, and the harness says so.',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    grid.AppTheme.watch(context);
+    return Wrap(
+      key: const ValueKey('store-evaluation'),
+      alignment: WrapAlignment.center,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: 18,
+      runSpacing: 6,
+      children: [
+        for (final item in evaluation)
+          Tooltip(
+            message: _explain(item.method),
+            waitDuration: const Duration(milliseconds: 400),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  _icon(item.method),
+                  size: 14,
+                  color: item.method == EvaluationMethod.none
+                      ? grid.AppPalette.textFaint
+                      : grid.AppPalette.online,
+                ),
+                const SizedBox(width: 5),
+                Text(
+                  item.phrase,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: grid.AppPalette.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
     );
   }
 }

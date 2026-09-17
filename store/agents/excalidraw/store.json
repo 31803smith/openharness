@@ -2,6 +2,12 @@
   "homepage": "https://excalidraw.com",
   "upstream": "https://github.com/excalidraw/excalidraw",
   "license": "MIT",
+  "evaluation": [
+    {
+      "method": "tool",
+      "by": "Excalidraw scene rules: ids, bindings, labels"
+    }
+  ],
   "examples": [
     {
       "prompt": "Map an online store's checkout as a flowchart: cart, sign-in or guest checkout, shipping, payment with a declined-card retry loop, a fraud check that can send orders to manual review, then order confirmed and the email receipt. Diamonds for decisions, one frame per stage.",

@@ -9,6 +9,10 @@
 /// on a machine that has never heard of it and say "Harness will install".
 library;
 
+import 'evaluation.dart';
+
+export 'evaluation.dart' show EvaluationMethod, StoreEvaluation;
+
 /// One example on a product page: the prompt, a picture of what the harness made from it, and a line
 /// naming the result. Read defensively — it arrives from any machine's catalog.
 class StoreExample {
@@ -64,6 +68,7 @@ class DshEntry {
     this.license,
     this.screenshots = const [],
     this.examples = const [],
+    this.evaluation = const [],
     this.linked = false,
   });
 
@@ -112,6 +117,10 @@ class DshEntry {
   /// What a person types and what comes out — the product page is built around these.
   final List<StoreExample> examples;
 
+  /// How the harness judges what it makes, strongest first — the product page
+  /// says it under the name; empty when the package does not say.
+  final List<StoreEvaluation> evaluation;
+
   /// Installed as a link to a checkout (`--link`) rather than a clone: a
   /// developer's own working copy, which Remove would only unlink.
   final bool linked;
@@ -150,6 +159,13 @@ class DshEntry {
                 .map(StoreExample.fromJson)
                 .whereType<StoreExample>()
                 .take(8)
+                .toList(growable: false)
+          : const [],
+      evaluation: raw['evaluation'] is List
+          ? (raw['evaluation'] as List)
+                .map(StoreEvaluation.fromJson)
+                .whereType<StoreEvaluation>()
+                .take(4)
                 .toList(growable: false)
           : const [],
       linked: raw['linked'] == true,
