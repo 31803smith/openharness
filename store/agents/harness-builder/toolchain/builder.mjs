@@ -174,7 +174,8 @@ async function main() {
       if (!sub || (!id && sub !== 'stop')) fail('usage: proof <open|run|wait|status|pass|fail|stop> <id>')
       if (!existsSync(join(p.package, 'harness.json'))) fail('no package/harness.json yet')
       if (sub === 'open') {
-        const opened = await openProof(WORKSPACE, id, { engine: typeof a.engine === 'string' ? a.engine : undefined, reset: Boolean(a.reset) })
+        // The same engine a run would use, so a workspace opened by hand has its skills where that engine reads them.
+        const opened = await openProof(WORKSPACE, id, { engine: typeof a.engine === 'string' ? a.engine : process.env.BUILDER_PROOF_ENGINE || undefined, reset: Boolean(a.reset) })
         console.log(`workspace: ${opened.workspace}`)
         console.log(opened.viewer.error ? `viewer: ${opened.viewer.error}` : `viewer running (shown in Builder Studio); snapshot with: "$BUILDER" snapshot ${id}`)
         for (const w of opened.materialized.warnings) console.log(`warn ${w}`)

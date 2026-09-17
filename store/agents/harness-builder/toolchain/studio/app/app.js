@@ -15,8 +15,23 @@ const STAGE_TAB = { research: 'brief', toolchain: 'checks', skills: 'package', v
 const LEVELS = ['easy', 'medium', 'hard']
 
 let state = null
-let chosenTab = null
+// A tab a person picked, or null to follow the work. Kept in the URL's hash, so a reload — the Studio
+// restarts with its viewer — or a link to #brief comes back to the same tab.
+let chosenTab = tabFromHash()
 let liveUrl = null
+
+function tabFromHash() {
+  const id = location.hash.slice(1)
+  return TABS.some((t) => t.id === id) ? id : null
+}
+
+function chooseTab(id) {
+  chosenTab = id
+  history.replaceState(null, '', id ? `#${id}` : `${location.pathname}${location.search}`)
+  if (state) draw()
+}
+
+window.addEventListener('hashchange', () => chooseTab(tabFromHash()))
 
 /** Replace an element's markup only when it changed: no flicker, no lost hover, no restarted image loads. */
 function setHtml(el, html) {
@@ -247,8 +262,7 @@ async function load() {
 $('tabs').addEventListener('click', (event) => {
   const button = event.target.closest('[data-tab]')
   if (!button) return
-  chosenTab = button.dataset.tab === currentTab() && !chosenTab ? null : button.dataset.tab
-  draw()
+  chooseTab(button.dataset.tab === currentTab() && !chosenTab ? null : button.dataset.tab)
 })
 document.addEventListener('click', (event) => {
   const target = event.target.closest('[data-src]')
@@ -264,7 +278,7 @@ document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') $('lightbox').hidden = true
   if (event.target.closest('input, textarea')) return
   const n = Number(event.key)
-  if (n >= 1 && n <= TABS.length) { chosenTab = TABS[n - 1].id; draw() }
+  if (n >= 1 && n <= TABS.length) chooseTab(TABS[n - 1].id)
 })
 
 load()

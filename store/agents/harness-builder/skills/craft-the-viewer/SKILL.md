@@ -89,6 +89,9 @@ The brief lists the domain's stages. The viewer shows each one the moment its fi
 ## Delight checklist
 
 - The first thing on screen is the artifact, large; chrome is quiet and minimal.
+- The artifact follows the theme. A renderer that paints its own white background (a chart, a page,
+  a canvas) gets the theme's colours in dark mode, or sits on a deliberate paper surface the design
+  calls for; never a stray white box inside a dark pane.
 - Type and spacing are deliberate; nothing overflows at 900 px wide or at 2560 px.
 - Motion is smooth and short (150–300 ms), and there is none under `prefers-reduced-motion`.
 - Every control has a visible hover state and a keyboard shortcut for the important ones.
