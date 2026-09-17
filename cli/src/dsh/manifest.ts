@@ -121,7 +121,8 @@ export function parseDshManifest(text: string): ManifestResult {
   try {
     value = JSON.parse(text)
   } catch (error) {
-    return { ok: false, error: `harness.json is not JSON: ${error instanceof Error ? error.message : String(error)}` }
+    // JSON.parse throws only SyntaxError.
+    return { ok: false, error: `harness.json is not JSON: ${(error as Error).message}` }
   }
   const parsed = DshManifestSchema.safeParse(value)
   if (parsed.success) return { ok: true, manifest: parsed.data }
@@ -138,7 +139,8 @@ export function readDshManifest(dir: string): ManifestResult {
   try {
     text = readFileSync(`${dir}/${DSH_MANIFEST_FILE}`, 'utf8')
   } catch (error) {
-    return { ok: false, error: `no ${DSH_MANIFEST_FILE} in ${dir} (${error instanceof Error ? error.message : String(error)})` }
+    // readFileSync throws only system errors.
+    return { ok: false, error: `no ${DSH_MANIFEST_FILE} in ${dir} (${(error as Error).message})` }
   }
   return parseDshManifest(text)
 }
