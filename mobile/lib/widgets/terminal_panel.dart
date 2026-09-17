@@ -418,6 +418,11 @@ class _TerminalPanelState extends State<TerminalPanel>
         if (!mounted || !widget.visible) return;
         if (!_followTail || !_scrollController.hasClients) return;
         final position = _scrollController.position;
+        // ⚠️ A position can be attached before its first layout, and until then `maxScrollExtent`
+        // is a null-check that THROWS — it did, once per output frame, for a pane whose session
+        // was already streaming while the terminal was still behind "Attaching…". Nothing to
+        // follow yet; the next frame after layout does it.
+        if (!position.hasContentDimensions || !position.hasPixels) return;
         if (position.pixels != position.maxScrollExtent) {
           position.jumpTo(position.maxScrollExtent);
         }

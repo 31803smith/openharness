@@ -9,6 +9,7 @@ import 'agent_swipe.dart';
 import 'agents_page.dart';
 import 'link_page.dart';
 import 'machine_swipe.dart';
+import 'phone_shell_scope.dart';
 
 /// Every phone page slides in the iOS way, and goes back with the edge swipe — unless
 /// [swipeToGoBack] is off, which is how a page that wants the horizontal axis for itself keeps it.
@@ -122,6 +123,15 @@ void openAgent(
   AgentSwipeList? swipeNeighbours,
   bool replacingCurrentPage = false,
 }) {
+  // Inside the shell the terminal is the home screen, so an agent is opened THERE — every stack
+  // back to its root and the root switched to this agent — rather than pushed over the page that
+  // asked. A pushed terminal carried a back button to a page the person was done with. The push
+  // below is what a page pumped without a shell still gets.
+  final shell = PhoneShellScope.maybeOf(context);
+  if (shell != null) {
+    shell.onOpenAgent(machineId, agentId);
+    return;
+  }
   final route = phoneRoute(
     (_) => AgentSwipeHost(
       notifier: notifier,

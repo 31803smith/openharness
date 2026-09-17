@@ -30,9 +30,20 @@ import 'phone_status.dart';
 /// which is why the neighbours below are the whole visible list rather than one entry: with no list
 /// screen left, a pager over a single agent would be a home screen with no way off it.
 class AgentHome extends StatefulWidget {
-  const AgentHome({super.key, required this.notifier, this.openMachineId});
+  const AgentHome({
+    super.key,
+    required this.notifier,
+    this.openMachineId,
+    this.openAgent,
+  });
 
   final AppNotifier notifier;
+
+  /// An agent somebody picked elsewhere — search, the new-agent form — to put on this screen.
+  ///
+  /// Listened to for the same reason [openMachineId] is. Outranks everything, including a machine
+  /// still being waited for: it is a choice made by hand a moment ago.
+  final ValueListenable<({String machineId, String agentId})?>? openAgent;
 
   /// A machine whose password has just been accepted, whose first agent should take the screen once
   /// it answers. Holds null the rest of the time.
@@ -128,6 +139,8 @@ class _AgentHomeState extends State<AgentHome> {
     // would otherwise be missed between the write and the listen.
     _awaitingMachine = widget.openMachineId?.value;
     widget.openMachineId?.addListener(_onLinkedMachineChanged);
+    _requestedAgent = widget.openAgent?.value;
+    widget.openAgent?.addListener(_onAgentRequested);
     _loadingDeadline = Timer(_loadingTimeout, () {
       if (!mounted || _gaveUpWaiting) return;
       setState(() => _gaveUpWaiting = true);
@@ -138,6 +151,7 @@ class _AgentHomeState extends State<AgentHome> {
   @override
   void dispose() {
     widget.openMachineId?.removeListener(_onLinkedMachineChanged);
+    widget.openAgent?.removeListener(_onAgentRequested);
     _loadingDeadline?.cancel();
     super.dispose();
   }
@@ -152,6 +166,27 @@ class _AgentHomeState extends State<AgentHome> {
       widget.openMachineId?.addListener(_onLinkedMachineChanged);
       _onLinkedMachineChanged();
     }
+    if (!identical(old.openAgent, widget.openAgent)) {
+      old.openAgent?.removeListener(_onAgentRequested);
+      widget.openAgent?.addListener(_onAgentRequested);
+      _onAgentRequested();
+    }
+  }
+
+  /// An agent picked elsewhere, waiting to take the screen — [AgentHome.openAgent], held until it
+  /// appears in the list. A freshly created agent can reach the request a frame before it reaches
+  /// the machine's agent list, and dropping the request then would leave the screen on the old one.
+  ({String machineId, String agentId})? _requestedAgent;
+
+  void _onAgentRequested() {
+    final requested = widget.openAgent?.value;
+    // Null is the shell resetting before it writes, not a request.
+    if (requested == null) return;
+    setState(() {
+      _requestedAgent = requested;
+      // A choice made by hand supersedes a jump still pending for a machine.
+      _awaitingMachine = null;
+    });
   }
 
   /// A machine's password was accepted somewhere in the app: its first agent now outranks whatever
@@ -188,6 +223,13 @@ class _AgentHomeState extends State<AgentHome> {
   ///    with no list behind it cannot afford to show nothing while agents exist;
   ///  - nothing openable at all → null, and the empty state says so.
   AgentEntry? _target(List<AgentEntry> entries) {
+    // Picked by hand elsewhere — see [AgentHome.openAgent]. Until it is in the list, the screen keeps
+    // what it has rather than blanking.
+    final requested = _requestedAgent;
+    if (requested != null) {
+      final picked = _entryFor(entries, requested);
+      if (picked != null) return picked;
+    }
     // A machine just unlocked outranks what is on screen — see [AgentHome.openMachineId]. Until it
     // has an agent to offer, everything below carries on as usual, so the screen keeps showing
     // something real while the machine dials rather than blanking to a skeleton.
@@ -296,6 +338,7 @@ class _AgentHomeState extends State<AgentHome> {
     builder: (context, _) {
       AppTheme.watch(context);
       final entries = visibleAgents(agentIndex(widget.notifier));
+      _openNewAgentIfUnlockedMachineIsEmpty(entries);
       // ⚠️ `_readingLast` holds the screen back so the record gets to name the agent before the
       // fallback does — but only while the screen is still willing to wait at all. Past
       // [_loadingTimeout] a read that has not returned is not going to, and going on to pick an
@@ -324,6 +367,7 @@ class _AgentHomeState extends State<AgentHome> {
         if (!_anyMachineReady()) {
           return MachinesTab(notifier: widget.notifier);
         }
+        _openNewAgentAfterLastOneWent();
         return _AgentHomeEmpty(notifier: widget.notifier);
       }
       final chosen = (machineId: target.machineId, agentId: target.agent.id);
@@ -340,11 +384,26 @@ class _AgentHomeState extends State<AgentHome> {
         _neighboursFor = chosen;
         _neighbours = AgentSwipeList(entries);
         _showing = chosen;
+        // ⚠️ **The attach, which nothing else makes for the page this screen opens on.** A pager
+        // pushed from a list got it from `openAgent`, which starts `selectAgent` beside the push;
+        // this pager is built in place, and [AgentSwipeHost] only attaches the agents it is SWIPED
+        // to. Without this the opening agent sat on "Attaching…" forever — while the page one swipe
+        // over came up Live — unless a pane for it happened to survive from an earlier run.
+        //
+        // After the frame, because this is build. `selectAgent` reuses a pane already there and only
+        // reopens a session that is dead, so a pager rebuilt around a live agent costs nothing.
+        final attach = chosen;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted || _neighboursFor != attach) return;
+          unawaited(_attachOnly(attach));
+        });
       }
       // Spent only by an agent of the machine the jump actually named. Not by [_onAgentChanged],
       // which would treat the unrelated agent drawn while that machine is still dialling as the jump
       // having been met — and it would then never fire.
       if (_awaitingMachine == chosen.machineId) _awaitingMachine = null;
+      // Met: from here the pager built for it holds the screen, the ordinary way.
+      if (_requestedAgent == chosen) _requestedAgent = null;
       final opened = chosen;
       // ⚠️ **Keyed by the agent the pager OPENED on, not by the agent on screen, and the two come
       // apart the moment somebody swipes.** The pager moves through its own pages internally; this
@@ -370,6 +429,97 @@ class _AgentHomeState extends State<AgentHome> {
     },
   );
 
+  /// A machine just unlocked that turns out to have no agents: the form for its first one, rather
+  /// than a screen saying there is nothing here.
+  ///
+  /// Somebody who has just entered a password came to use that machine, and with nothing on it the
+  /// only next step is creating an agent — so the phone takes that step for them. The form opens on
+  /// the machine the password was for, which is the one they will want it on.
+  ///
+  /// ⚠️ Only once the machine has ANSWERED with its list — ready and `loaded` — never while it is
+  /// still dialling. Before that an empty list means "not yet", and opening the form then would put
+  /// it over the agent that arrives a second later. The request is spent here either way, so the
+  /// form opens once and backing out of it does not bring it straight back.
+  ///
+  /// Pushed after the frame: this runs inside build, where a push trips the navigator's lock.
+  void _openNewAgentIfUnlockedMachineIsEmpty(List<AgentEntry> entries) {
+    final awaiting = _awaitingMachine;
+    if (awaiting == null) return;
+    final machine = widget.notifier.stateOf(awaiting);
+    if (machine == null ||
+        phoneMachineStatusOf(machine) != PhoneMachineStatus.ready ||
+        machine.agentLoadStatus != AgentLoadStatus.loaded) {
+      return;
+    }
+    final hasAgent = entries.any(
+      (entry) => entry.machineId == awaiting && entry.agent.terminalAvailable,
+    );
+    if (hasAgent) return;
+    _awaitingMachine = null;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(openNewAgent(context, widget.notifier, awaiting));
+    });
+  }
+
+  /// Attaches the agent a new pager opened on, then closes every other pane.
+  ///
+  /// The close is what `openAgent` used to do beside its push (`keepOthers: false`), and it matters
+  /// more now that agents are switched IN PLACE: the pager being replaced keeps the pane of the
+  /// agent it last showed — right for a pager popped back to a list, wrong here, where nothing will
+  /// ever show that pane again. Without it every agent picked from search would leave a live remote
+  /// stream behind.
+  ///
+  /// Skipped if the screen has moved on to another pager by the time the attach lands.
+  Future<void> _attachOnly(({String machineId, String agentId}) agent) async {
+    final notifier = widget.notifier;
+    await notifier.selectAgent(agent.machineId, agent.agentId);
+    if (!mounted || _neighboursFor != agent) return;
+    for (final pane in [...notifier.panes]) {
+      if (pane.machineId == agent.machineId && pane.agentId == agent.agentId) {
+        continue;
+      }
+      await notifier.closePane(pane.id);
+    }
+  }
+
+  /// The last agent was just deleted: the form for a new one, instead of "No agents yet".
+  ///
+  /// With no list screen left, the terminal WAS the app — deleting the last agent took it away and
+  /// left a page whose only real action is the `+` in its corner. So that step is taken for them,
+  /// on the machine the deleted agent ran on — the form lets them pick another.
+  ///
+  /// ⚠️ Only on the way DOWN from a terminal to nothing — [_neighboursFor] still naming the pager
+  /// that was up — and the record is cleared as the form opens. That is what makes it once: backing
+  /// out of the form lands on the empty state, whose next rebuild finds no pager to have lost and
+  /// leaves the person there rather than pushing the form straight back over them. A launch onto a
+  /// machine that never had agents is not this path either; nothing was on screen to lose.
+  ///
+  /// Pushed after the frame: this runs inside build, where a push trips the navigator's lock.
+  void _openNewAgentAfterLastOneWent() {
+    final lost = _neighboursFor;
+    if (lost == null) return;
+    // ⚠️ Deleted, not merely unopenable for a moment. An agent being restarted can report no
+    // terminal while it comes back, which also empties the openable list — and a form popping over
+    // a restart would be the screen acting on something that is not happening. Its machine still
+    // answering with an agent list that has NO agents on it is what a deletion looks like.
+    final machine = widget.notifier.stateOf(lost.machineId);
+    if (machine == null ||
+        phoneMachineStatusOf(machine) != PhoneMachineStatus.ready ||
+        machine.agentLoadStatus != AgentLoadStatus.loaded ||
+        machine.agents.isNotEmpty) {
+      return;
+    }
+    _neighboursFor = null;
+    _neighbours = null;
+    _showing = null;
+    final machineId = lost.machineId;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(openNewAgent(context, widget.notifier, machineId));
+    });
+  }
+
   /// The pager reports a SWIPE: the agent arrived at is the one this screen now holds.
   ///
   /// ⚠️ Assigned without setState on purpose. This arrives during the pager's own rebuild, and
@@ -380,6 +530,7 @@ class _AgentHomeState extends State<AgentHome> {
     // A swipe is a choice made by hand, so any jump still pending is abandoned rather than allowed
     // to move the screen again a second later. See [_awaitingMachine].
     _awaitingMachine = null;
+    _requestedAgent = null;
   }
 }
 
