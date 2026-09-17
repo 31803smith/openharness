@@ -636,11 +636,26 @@ class _TerminalPageState extends State<TerminalPage>
 
   /// Pops after the frame: this runs from inside a build, where popping a route synchronously is
   /// not allowed.
+  ///
+  /// ⚠️ **Removes THIS page's route, which is not the same as popping.** `pop` takes whatever is on
+  /// top, and this page is often not on top when its pane goes: the terminal's own `+` opens the
+  /// new-agent form over it, and the agent that form creates is opened as the single pane — closing
+  /// this one. Popping from here then took down the NEW agent's terminal, the page underneath
+  /// surfaced, found its pane gone too and popped again, and the person landed on the list instead
+  /// of in the agent they had just made.
   void _leave() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final navigator = Navigator.of(context);
-      if (navigator.canPop()) navigator.pop();
+      final route = ModalRoute.of(context);
+      if (route == null || !navigator.canPop()) return;
+      if (route.isCurrent) {
+        navigator.pop();
+      } else if (route.isActive) {
+        // Underneath something: leave the stack quietly, so back from the page on top goes to
+        // whatever was below this one.
+        navigator.removeRoute(route);
+      }
     });
   }
 
