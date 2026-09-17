@@ -1,11 +1,11 @@
 // viewer.mjs as Harness runs it: `node viewer.mjs` with HARNESS_WORKSPACE and HARNESS_VIEWER_PORT,
 // refusing to start without them, and closing cleanly (open streams included) on SIGTERM or SIGINT.
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { spawn, spawnSync } from 'node:child_process';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { after, before, test } from 'node:test';
 
@@ -68,3 +68,16 @@ for (const signal of ['SIGTERM', 'SIGINT']) {
     assert.equal(rest.done, true, 'the stream was closed');
   });
 }
+
+test('the manifest\'s doctor passes on Node 20 or newer and fails on an older one, run as Harness runs it', async () => {
+  const { toolchain } = JSON.parse(await readFile(new URL('../harness.json', import.meta.url), 'utf8'));
+  const doctor = (bin) => spawnSync('/bin/sh', ['-c', toolchain.doctor], { env: { PATH: bin }, encoding: 'utf8' }).status;
+  assert.equal(doctor(dirname(process.execPath)), 0, `node ${process.version}`);
+  const old = join(workspace, 'old-node');
+  await mkdir(old);
+  const fake = 'Object.defineProperty(process, "versions", { value: { ...process.versions, node: "18.20.4" } })'; // no single quote: it goes inside one
+  await writeFile(join(old, 'node'), `#!/bin/sh\nexec '${process.execPath}' --import 'data:text/javascript,${encodeURIComponent(fake)}' "$@"\n`);
+  await chmod(join(old, 'node'), 0o755);
+  assert.equal(spawnSync(join(old, 'node'), ['-p', 'process.versions.node'], { encoding: 'utf8' }).stdout.trim(), '18.20.4', 'the stand-in reports an old Node');
+  assert.equal(doctor(old), 1);
+});
