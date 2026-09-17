@@ -31,9 +31,9 @@ void main() {
       loaded: loaded,
     );
     await _show(tester, page(loaded: false));
-    expect(find.text('Asking your machines…'), findsOneWidget);
+    expect(find.text('Asking this computer…'), findsOneWidget);
     await _show(tester, page(loaded: true));
-    expect(find.text('No viewers reported by your machines.'), findsOneWidget);
+    expect(find.text('No viewers reported by this computer.'), findsOneWidget);
   });
 
   testWidgets(

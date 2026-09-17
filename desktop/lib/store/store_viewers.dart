@@ -43,8 +43,8 @@ class StoreViewers extends StatelessWidget {
       if (viewers.isEmpty)
         Text(
           loaded
-              ? 'No viewers reported by your machines.'
-              : 'Asking your machines…',
+              ? 'No viewers reported by this computer.'
+              : 'Asking this computer…',
           style: TextStyle(color: grid.AppPalette.textSecondary),
         ),
       for (final viewer in viewers) _viewer(context, viewer),

@@ -30,10 +30,10 @@ const String kStoreMarkAsset = 'assets/app_icon.png';
 /// with Get, Open and Remove. A tab, not a screen over the window, so the
 /// strip stays where it is and browsing never blocks switching.
 ///
-/// The catalogue is what the machines answered `dsh_list` with, so the same
-/// screen is honest about the one fact an app store usually hides: a harness
-/// is installed PER MACHINE. The page lists your machines and lets you put it
-/// on any of them. Ratings and reviews come from the control plane through
+/// The catalogue and installation state come from this computer's daemon.
+/// Browsing, Get, Open and Remove all refer to this computer; remote machines
+/// do not contribute packages or installation state to the Store.
+/// Ratings and reviews come from the control plane through
 /// [StoreApi]; the screen works without them (a page simply has no stars).
 class StoreTab extends StatefulWidget {
   const StoreTab({
@@ -148,22 +148,18 @@ class _StoreTabState extends State<StoreTab> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       unawaited(_store.loadRatings());
-      // Every machine is asked again: what the store shows as installed is a
-      // per-machine fact, and an install started from a terminal is exactly
-      // what a stored answer misses.
-      for (final machine in widget.notifier.machineStates.values) {
-        _ask(machine);
-      }
+      // Refresh installs made from a local terminal while the Store was closed.
+      final local = widget.notifier.localMachineState;
+      if (local != null) _ask(local);
       widget.notifier.addListener(_onAppChanged);
       // A Store left open picks up new publications; engines do not need reprobes.
       // The daemon caches catalog HTTP requests for five minutes.
       _catalogRefresh = Timer.periodic(const Duration(minutes: 1), (_) {
-        for (final machine in widget.notifier.machineStates.values) {
-          if (machine.connectionStatus == ConnectionStatus.connected) {
-            unawaited(
-              widget.notifier.probeDsh(machine.machine.machineId, force: true),
-            );
-          }
+        final local = widget.notifier.localMachineState;
+        if (local?.connectionStatus == ConnectionStatus.connected) {
+          unawaited(
+            widget.notifier.probeDsh(local!.machine.machineId, force: true),
+          );
         }
       });
     });
@@ -190,7 +186,7 @@ class _StoreTabState extends State<StoreTab> {
 
   void _onAppChanged() {
     final connecting = <MachineState>[];
-    for (final machine in widget.notifier.machineStates.values) {
+    for (final machine in [?widget.notifier.localMachineState]) {
       final id = machine.machine.machineId;
       if (machine.connectionStatus != ConnectionStatus.connected) {
         _askedWhileConnected.remove(id);
@@ -204,6 +200,7 @@ class _StoreTabState extends State<StoreTab> {
       if (!mounted) return;
       for (final machine in connecting) {
         if (machine.connectionStatus == ConnectionStatus.connected &&
+            identical(machine, widget.notifier.localMachineState) &&
             !_askedWhileConnected.contains(machine.machine.machineId)) {
           _ask(machine);
         }
@@ -220,19 +217,12 @@ class _StoreTabState extends State<StoreTab> {
     super.dispose();
   }
 
-  /// One row per harness id across every machine, the local machine's row
-  /// winning (its catalog carries the whole registry) — and one row per
+  /// The local daemon's catalog carries the registry, plus one row per
   /// built-in engine, because a person looking for "Claude Code" in a store
   /// should find it beside Marp, not learn that it is a different kind of thing.
   Map<String, DshEntry> get _catalog {
     final rows = <String, DshEntry>{};
     final local = widget.notifier.localMachineState;
-    final states = [
-      ?local,
-      ...widget.notifier.machineStates.values.where(
-        (s) => !identical(s, local),
-      ),
-    ];
     for (final identity in allEngines) {
       rows[identity.id] = DshEntry(
         id: identity.id,
@@ -243,25 +233,19 @@ class _StoreTabState extends State<StoreTab> {
         author: identity.creator,
         description: identity.blurb,
         homepage: identity.homepage,
-        installed: states.any((s) => s.engines[identity.id]?.installed == true),
+        installed: _installedOnMachine(local, identity.id),
       );
     }
-    for (final state in states) {
-      for (final entry in state.dsh.entries) {
-        rows.putIfAbsent(entry.id, () => entry);
-      }
+    for (final entry in local?.dsh.entries ?? const <DshEntry>[]) {
+      rows.putIfAbsent(entry.id, () => entry);
     }
     return rows;
   }
 
-  /// The machines that have [id] installed — a harness from their catalog, an
-  /// engine from their probe.
+  /// Store installation facts are local, including shared viewer packages.
   List<MachineState> _installedOn(String id) => [
-    for (final state in widget.notifier.machineStates.values)
-      if (isHarnessId(id)
-          ? state.dsh[id]?.installed == true
-          : state.engines[id]?.installed == true)
-        state,
+    for (final state in [?widget.notifier.localMachineState])
+      if (_installedOnMachine(state, id)) state,
   ];
 
   List<String> get _categories {
@@ -311,24 +295,13 @@ class _StoreTabState extends State<StoreTab> {
   });
 
   void _takeAction(DshEntry entry) {
-    final installed = _installedOn(entry.id);
     final local = widget.notifier.localMachineState;
-    final target =
-        installed.where((s) => identical(s, local)).firstOrNull ??
-        installed
-            .where((s) => s.nodeOnline == true && !s.needsLink)
-            .firstOrNull;
-    if (target == null) {
+    if (local == null || !_installedOnMachine(local, entry.id)) {
       _openPage(entry.id);
       return;
     }
     unawaited(
-      _openStoreAgent(
-        context,
-        widget.notifier,
-        entry,
-        target.machine.machineId,
-      ),
+      _openStoreAgent(context, widget.notifier, entry, local.machine.machineId),
     );
   }
 
@@ -364,17 +337,18 @@ class _StoreTabState extends State<StoreTab> {
                               entry: selected,
                               notifier: widget.notifier,
                               store: _store,
-                              installedOn: _installedOn(selected.id),
                               onBack: () => setState(() => _selected = null),
                             )
                           : _shelf is _Viewers
                           ? StoreViewers(
                               viewers: _shelved(const _Viewers()),
-                              agents: [
-                                for (final machine
-                                    in widget.notifier.machineStates.values)
-                                  ...machine.dsh.entries,
-                              ],
+                              agents:
+                                  widget
+                                      .notifier
+                                      .localMachineState
+                                      ?.dsh
+                                      .entries ??
+                                  const [],
                               installedOn: (id) => _installedOn(id)
                                   .map((machine) => machine.machine.displayName)
                                   .toList(),
@@ -626,7 +600,7 @@ class _Shelf$View extends StatelessWidget {
                       ? 'No matching harnesses. Try a name or something you want to make.'
                       : loaded
                       ? 'Nothing here yet.'
-                      : 'Asking your machines…',
+                      : 'Asking this computer…',
                   style: TextStyle(
                     fontSize: 14,
                     height: 1.5,
@@ -687,6 +661,21 @@ class _Stars extends StatelessWidget {
 
 // ─── the page ────────────────────────────────────────────────────────────────
 
+bool _installedOnMachine(MachineState? machine, String id) => isHarnessId(id)
+    ? machine?.dsh[id]?.installed == true
+    : machine?.engines[id]?.installed == true;
+
+bool _canGetOnMachine(MachineState machine, DshEntry entry) {
+  if (machine.needsLink || machine.nodeOnline == false) return false;
+  if (entry.isEngine) {
+    return machine.engines.loaded &&
+        machine.engines[entry.id]?.installable == true;
+  }
+  return machine.dsh.loaded &&
+      machine.dsh[entry.id] != null &&
+      machine.dsh.runs[entry.id]?.inProgress != true;
+}
+
 Future<void> _openStoreAgent(
   BuildContext context,
   AppNotifier notifier,
@@ -721,14 +710,12 @@ class _ProductPage extends StatefulWidget {
     required this.entry,
     required this.notifier,
     required this.store,
-    required this.installedOn,
     required this.onBack,
   });
 
   final DshEntry entry;
   final AppNotifier notifier;
   final StoreController store;
-  final List<MachineState> installedOn;
   final VoidCallback onBack;
 
   @override
@@ -757,6 +744,12 @@ class _ProductPageState extends State<_ProductPage> {
   }
 
   Future<void> _get(String machineId) async {
+    final local = widget.notifier.localMachineState;
+    if (local == null ||
+        local.machine.machineId != machineId ||
+        !_canGetOnMachine(local, widget.entry)) {
+      return;
+    }
     // An engine is installed by the daemon on the way to the first harness
     // that needs it (`installIfMissing` on create), so Get is Open.
     if (widget.entry.isEngine) return _open(machineId);
@@ -772,6 +765,9 @@ class _ProductPageState extends State<_ProductPage> {
   }
 
   Future<void> _remove(String machineId, String machineName) async {
+    if (widget.notifier.localMachineState?.machine.machineId != machineId) {
+      return;
+    }
     final ok = await showAppDialog<bool>(
       context: context,
       builder: (context) => _ConfirmCard(
@@ -797,6 +793,9 @@ class _ProductPageState extends State<_ProductPage> {
   /// a pane never lands in the store tab. A draft tab is opened for it and
   /// abandoned — back to the store — if the dialog is dismissed.
   Future<void> _open(String machineId) async {
+    if (widget.notifier.localMachineState?.machine.machineId != machineId) {
+      return;
+    }
     await _openStoreAgent(context, widget.notifier, widget.entry, machineId);
   }
 
@@ -828,19 +827,8 @@ class _ProductPageState extends State<_ProductPage> {
     final rating = widget.store.ratingOf(_key);
     final page = widget.store.reviews[_key];
     final local = widget.notifier.localMachineState;
-    final localInstalled =
-        local != null &&
-        (entry.isEngine
-            ? local.engines[entry.id]?.installed == true
-            : local.dsh[entry.id]?.installed == true);
-    final machines = widget.notifier.machineStates.values.toList()
-      ..sort((a, b) {
-        if (identical(a, local)) return -1;
-        if (identical(b, local)) return 1;
-        return a.machine.displayName.toLowerCase().compareTo(
-          b.machine.displayName.toLowerCase(),
-        );
-      });
+    final localInstalled = _installedOnMachine(local, entry.id);
+    final machines = [?local];
     final base = entry.engine.isNotEmpty
         ? entry.engine
         : (knownHarnessBase[entry.id] ?? '');
@@ -931,7 +919,11 @@ class _ProductPageState extends State<_ProductPage> {
                   if (!entry.isViewerPackage && local != null)
                     FilledButton(
                       key: const ValueKey('store-primary-action'),
-                      onPressed: _busy.contains(local.machine.machineId)
+                      onPressed:
+                          _busy.contains(local.machine.machineId) ||
+                              local.dsh.runs[entry.id]?.inProgress == true ||
+                              (!localInstalled &&
+                                  !_canGetOnMachine(local, entry))
                           ? null
                           : () => localInstalled
                                 ? _open(local.machine.machineId)
@@ -981,7 +973,7 @@ class _ProductPageState extends State<_ProductPage> {
                 ),
               ],
               const SizedBox(height: 28),
-              _SectionTitle('On your machines'),
+              _SectionTitle('On this computer'),
               const SizedBox(height: 8),
               Container(
                 decoration: BoxDecoration(
@@ -1016,7 +1008,7 @@ class _ProductPageState extends State<_ProductPage> {
                       Padding(
                         padding: const EdgeInsets.all(16),
                         child: Text(
-                          'No machines yet.',
+                          'Connecting to this computer…',
                           style: TextStyle(
                             fontSize: 13,
                             color: grid.AppPalette.textFaint,
@@ -1252,7 +1244,7 @@ class _MachineRow extends StatelessWidget {
           ] else
             FilledButton.tonal(
               key: ValueKey('store-get:${state.machine.machineId}'),
-              onPressed: state.dsh.loaded && unavailable == null ? onGet : null,
+              onPressed: _canGetOnMachine(state, entry) ? onGet : null,
               style: FilledButton.styleFrom(
                 minimumSize: const Size(72, 32),
                 shape: const StadiumBorder(),
@@ -1328,10 +1320,7 @@ extension on _MachineRow {
               onPressed: onOpen,
               child: const Text('Open'),
             )
-          else if (loaded &&
-              probe?.installable == true &&
-              !state.needsLink &&
-              state.nodeOnline != false)
+          else if (_canGetOnMachine(state, entry))
             FilledButton.tonal(
               key: ValueKey('store-get:${state.machine.machineId}'),
               onPressed: onGet,
