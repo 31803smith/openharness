@@ -24,15 +24,18 @@ def judge(data: object, rel: str) -> dict:
         findings.append({"severity": "error", "kind": "schema", "message": f"{rel} is not an Excalidraw scene (type 'excalidraw' with an elements list)"})
     else:
         elements = [e for e in data["elements"] if isinstance(e, dict) and not e.get("isDeleted")]
-        ids = {e.get("id") for e in elements}
+        # A hand-edited file can hold any JSON where an id or a type belongs: only strings are ids,
+        # so a list or an object there is a finding, not a TypeError that leaves no verdict at all.
+        ids = {e["id"] for e in elements if isinstance(e.get("id"), str)}
+        known = lambda ref: isinstance(ref, str) and ref in ids
         for e in elements:
-            if not isinstance(e.get("id"), str) or e.get("type") not in SHAPES:
+            if not isinstance(e.get("id"), str) or not isinstance(e.get("type"), str) or e["type"] not in SHAPES:
                 findings.append({"severity": "error", "kind": "schema", "message": f"element {e.get('id')!r} has no id or an unknown type {e.get('type')!r}"})
             for key in ("startBinding", "endBinding"):
                 b = e.get(key)
-                if isinstance(b, dict) and b.get("elementId") not in ids:
+                if isinstance(b, dict) and not known(b.get("elementId")):
                     findings.append({"severity": "error", "kind": "binding", "message": f"arrow {e.get('id')} is bound to a missing element {b.get('elementId')}"})
-            if e.get("type") == "text" and e.get("containerId") and e["containerId"] not in ids:
+            if e.get("type") == "text" and e.get("containerId") and not known(e["containerId"]):
                 findings.append({"severity": "error", "kind": "binding", "message": f"text {e.get('id')} belongs to a missing container {e['containerId']}"})
         for e in elements:
             if e.get("type") == "arrow" and not (e.get("startBinding") and e.get("endBinding")):
@@ -44,7 +47,8 @@ def judge(data: object, rel: str) -> dict:
     ok = valid and not errors and drawn
     counts: dict[str, int] = {}
     for e in elements:
-        counts[e.get("type", "?")] = counts.get(e.get("type", "?"), 0) + 1
+        kind = e.get("type") if isinstance(e.get("type"), str) else "?"
+        counts[kind] = counts.get(kind, 0) + 1
     shapes = sum(counts.get(k, 0) for k in ("rectangle", "ellipse", "diamond"))
     bits = [Path(rel).name]
     if drawn:
