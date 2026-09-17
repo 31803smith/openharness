@@ -1,11 +1,11 @@
 # OpenHarness
 
-**The open-source stack for AI agents, from the terminal to your desk.**
+**The open-source software and hardware platform for domain-specific harnesses.**
 
-OpenHarness runs Claude Code, Codex, and a dozen more coding agents in persistent terminals on every
-machine you own. **Domain-specific harnesses (DSH)** turn those agents into specialists that design
-circuit boards, model 3D parts, simulate robots, and build games, each with a live viewer. The
-**Harness device** puts all of it on your desk. Software and hardware, end to end, in one repository.
+Run Claude Code, Codex, and every other coding agent in persistent terminals on all your machines. Give
+them a **domain-specific harness (DSH)** and they design circuit boards, model 3D parts, simulate
+robots, and build games in a live viewer. Keep them on your desk with the open-hardware
+**Harness device**.
 
 [Run it](#run-it) · [Domain-specific harnesses](#domain-specific-harnesses-dsh) ·
 [Harness device](#harness-device) · [Architecture](docs/architecture.md) · [Contribute](#contributing)
