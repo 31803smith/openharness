@@ -4776,7 +4776,7 @@ class AppNotifier extends ChangeNotifier {
     final target = swarms.where((s) => s.id == targetId).firstOrNull;
     if (target == null) return 'This tab was closed';
     if (target.panes.length >= maxPanes) {
-      return 'This tab is full. Open a new tab to create an agent.';
+      return 'This tab is full. Open a new tab to create a harness.';
     }
     return null;
   }
@@ -4795,10 +4795,10 @@ class AppNotifier extends ChangeNotifier {
           'The project folder is unavailable on $machine. '
               'Choose another folder and try again.',
         'TMUX_UNAVAILABLE' =>
-          'Harness needs tmux to start agents on $machine. '
+          'Harness needs tmux to start harnesses on $machine. '
               'Install tmux there, then try again.',
         'UNSUPPORTED_ON_REMOTE' || 'UNSUPPORTED' =>
-          'Update the harness CLI on this machine to create an agent',
+          'Update the harness CLI on this machine to create a harness',
         'INVALID_DSH' =>
           'This harness is not installed on $machine. '
               '${detail ?? 'Install it there, then try again.'}',
@@ -4806,7 +4806,7 @@ class AppNotifier extends ChangeNotifier {
           'This engine cannot be opened with a first message on $machine.',
         'AGENT_UNSUPPORTED' =>
           'This engine cannot be opened as a named agent on $machine.',
-        _ => 'Create agent failed: ${detail ?? code}',
+        _ => 'Create harness failed: ${detail ?? code}',
       };
 
   Future<String?> _createAgentWithReceipt(AgentCreationAttempt creation) async {
