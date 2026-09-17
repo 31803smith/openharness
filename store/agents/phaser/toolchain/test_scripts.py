@@ -2,7 +2,8 @@
 
 Each test builds a throwaway package root: the real scripts linked in file by file, fixtures beside
 them, and a PATH that holds only the tools the case allows (a stub npm, a node that can pretend to
-be old, python3 or not). Nothing is installed and nothing touches the network or this folder.
+be old, python3 or not), and a runtime dir where runtimes.sh looks for the node Harness runs on.
+Nothing is installed and nothing touches the network or this folder.
 """
 import json
 import os
@@ -15,7 +16,7 @@ from pathlib import Path
 PKG = Path(__file__).resolve().parent.parent
 NODE = shutil.which("node")
 PYTHON = shutil.which("python3")
-BASE_TOOLS = ("bash", "dirname", "find", "wc", "tr", "mkdir", "ln", "chmod")
+BASE_TOOLS = ("bash", "dirname", "find", "wc", "tr", "mkdir", "ln", "chmod", "cat")
 
 VERSIONS = "PHASER=9.9.9\nVITE=7.7.7\nTERSER=5.0.0\nSKILLS_COMMIT=abcdef1234567890\n"
 
@@ -39,7 +40,8 @@ class Sandbox:
         self.pkg = self.root / "pkg"
         self.bin = self.root / "bin"
         self.ws = self.root / "ws"
-        for d in (self.pkg, self.bin, self.ws):
+        self.runtime = self.root / "runtime"     # never ~/.harness/runtime: that node would answer every miss
+        for d in (self.pkg, self.bin, self.ws, self.runtime):
             d.mkdir()
         self.tools(*BASE_TOOLS)
 
@@ -52,6 +54,7 @@ class Sandbox:
     def file(self, rel: str, text: str = "", base: Path | None = None, mode: int = 0o644) -> Path:
         path = (base or self.pkg) / rel
         path.parent.mkdir(parents=True, exist_ok=True)
+        path.unlink(missing_ok=True)  # a tool is a link to the real one: never write through it
         path.write_text(text)
         path.chmod(mode)
         return path
@@ -72,10 +75,23 @@ class Sandbox:
             raise unittest.SkipTest("node is not on PATH")
         self.stub("node", f'[ "$1" = -e ] && exit 1\nexec "{NODE}" "$@"\n')
 
-    def run(self, rel: str, cwd: Path | None = None, **env: str) -> subprocess.CompletedProcess:
+    def harness_node(self, npm: str | None = None) -> Path:
+        """The real node where Harness keeps its own, recorded in the runtime dir and not on PATH; a stub
+        npm beside it when given."""
+        if NODE is None:
+            raise unittest.SkipTest("node is not on PATH")
+        node = self.root / "harness-node" / "bin" / "node"
+        node.parent.mkdir(parents=True)
+        node.symlink_to(NODE)
+        if npm is not None:
+            self.file("npm", npm, base=node.parent, mode=0o755)
+        (self.runtime / "current-node").write_text(f"{node}\n")
+        return node
+
+    def run(self, rel: str, *args: str, cwd: Path | None = None, **env: str) -> subprocess.CompletedProcess:
         full = dict((k, v) for k, v in os.environ.items() if not k.startswith(("HARNESS_", "VITE", "NPM_")))
-        full.update(PATH=str(self.bin), **env)
-        return subprocess.run([str(self.pkg / rel)], cwd=cwd or self.root, env=full,
+        full.update(PATH=str(self.bin), ADAPTER_RUNTIME_DIR=str(self.runtime), **env)
+        return subprocess.run([str(self.pkg / rel), *args], cwd=cwd or self.root, env=full,
                               capture_output=True, text=True, timeout=60)
 
 
@@ -87,6 +103,7 @@ class Doctor(unittest.TestCase):
     def test_a_complete_install_is_ready(self):
         box = Sandbox(self)
         box.link("toolchain/doctor.sh")
+        box.link("toolchain/runtimes.sh")
         box.tools("node", "python3")
         box.file("node_modules/.bin/vite", "#!/bin/sh\n", mode=0o755)
         box.file("node_modules/phaser/package.json", '{"version": "4.2.1"}')
@@ -97,20 +114,35 @@ class Doctor(unittest.TestCase):
         r = box.run("toolchain/doctor.sh")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         out = lines(r)
-        self.assertEqual(out[:3], ["ok   phaser 4.2.1 · vite 6.4.3",
-                                   "ok   pane: the game frame around vite (viewer.mjs, viewer/)",
-                                   "ok   skills: 3"])
-        self.assertRegex(out[3], r"^ok   Python 3\.\d+")
-        self.assertEqual(len(out), 4)
+        self.assertRegex(out[0], r"^ok   node v\d+\.\d+\.\d+ \(vite and the pane\)$")
+        self.assertEqual(out[1:4], ["ok   phaser 4.2.1 · vite 6.4.3",
+                                    "ok   pane: the game frame around vite (viewer.mjs, viewer/)",
+                                    "ok   skills: 3"])
+        self.assertRegex(out[4], r"^ok   Python 3\.\d+")
+        self.assertEqual(len(out), 5)
+
+    def test_harness_node_serves_when_path_has_none(self):
+        box = Sandbox(self)
+        box.link("toolchain/doctor.sh")
+        box.link("toolchain/runtimes.sh")
+        box.harness_node()
+        box.file("node_modules/.bin/vite", "#!/bin/sh\n", mode=0o755)
+        box.file("node_modules/phaser/package.json", '{"version": "4.2.1"}')
+        box.file("node_modules/vite/package.json", '{"version": "6.4.3"}')
+        r = box.run("toolchain/doctor.sh")
+        self.assertRegex(lines(r)[0], r"^ok   node v\d+\.\d+\.\d+ \(vite and the pane\)$")
+        self.assertEqual(lines(r)[1], "ok   phaser 4.2.1 · vite 6.4.3")
 
     def test_an_empty_install_without_python_says_what_is_missing(self):
         box = Sandbox(self)
         box.link("toolchain/doctor.sh")
+        box.link("toolchain/runtimes.sh")
         box.file("viewer.mjs")  # the frame's files are not all there
         box.file("skills/scenes/SKILL.md")  # nor is the harness skill
         r = box.run("toolchain/doctor.sh")
         self.assertEqual(r.returncode, 1)
-        self.assertEqual(lines(r), ["miss node_modules — run toolchain/setup.sh",
+        self.assertEqual(lines(r), [f"miss node >= 18, and Harness's own Node is not in {box.runtime} — run `harness start` once to lay it down",
+                                    "miss node_modules — run toolchain/setup.sh",
                                     "miss viewer.mjs or viewer/ — the checkout is incomplete",
                                     "miss skills/ — the checkout is incomplete",
                                     "miss python3 (the verdict)"])
@@ -121,6 +153,7 @@ class Setup(unittest.TestCase):
             skills: bool = True) -> Sandbox:
         box = Sandbox(self)
         box.link("toolchain/setup.sh")
+        box.link("toolchain/runtimes.sh")
         box.file("VERSIONS", VERSIONS)
         if node == "real":
             box.tools("node")
@@ -169,12 +202,22 @@ class Setup(unittest.TestCase):
             with self.subTest(node=node):
                 box = self.box(node=node)
                 r = self.run_setup(box)
-                self.assertEqual((r.returncode, lines(r)), (1, ["miss node >= 18 on PATH"]))
+                self.assertEqual((r.returncode, lines(r)), (1, [f"miss node >= 18, and Harness's own Node is not in {box.runtime} — run `harness start` once to lay it down"]))
                 self.assertEqual(self.npm_calls(), [])
 
+    def test_a_machine_without_node_or_with_an_old_one_uses_harnesss_and_the_npm_beside_it(self):
+        for node in ("none", "old"):
+            with self.subTest(node=node):
+                box = self.box(node=node, npm=False)
+                box.harness_node(npm=NPM)
+                r = self.run_setup(box)
+                self.assertEqual((r.returncode, lines(r)[-1]), (0, "ok   skills: 3 (2 from phaserjs/phaser @ abcdef1, plus harness-phaser)"), r.stdout + r.stderr)
+                self.assertEqual(self.npm_calls()[-1], "ci --silent --no-audit --no-fund")
+
     def test_no_npm(self):
-        r = self.run_setup(self.box(npm=False))
-        self.assertEqual((r.returncode, lines(r)), (1, ["miss npm on PATH"]))
+        box = self.box(npm=False)
+        r = self.run_setup(box)
+        self.assertEqual((r.returncode, lines(r)), (1, [f"miss npm beside {box.bin}/node"]))
 
     def test_no_python(self):
         box = self.box(python=False)
@@ -237,10 +280,12 @@ class InitWorkspace(unittest.TestCase):
 
 
 class ViewerScript(unittest.TestCase):
-    def box(self) -> Sandbox:
+    def box(self, node: bool = True) -> Sandbox:
         box = Sandbox(self)
         box.link("viewer.sh")
-        box.stub("node", 'echo "cwd=$PWD"\necho "args=$*"\n')
+        box.link("toolchain/runtimes.sh")
+        if node:
+            box.stub("node", '[ "$1" = -e ] && exit 0\necho "cwd=$PWD"\necho "args=$*"\n')
         return box
 
     def test_needs_the_port_and_the_workspace(self):
@@ -259,12 +304,53 @@ class ViewerScript(unittest.TestCase):
         self.assertEqual(lines(r), [f"cwd={box.ws}", f"args={box.pkg / 'viewer.mjs'}"])
         self.assertEqual(os.readlink(box.ws / "node_modules"), str(box.pkg / "node_modules"))
 
+    def test_a_login_shell_without_node_runs_harnesss_own(self):
+        box = self.box(node=False)
+        node = box.file("harness-node/bin/node", '#!/bin/bash\n[ "$1" = -e ] && exit 0\necho "harness node $*"\n', base=box.root, mode=0o755)
+        (box.runtime / "current-node").write_text(f"{node}\n")
+        r = box.run("viewer.sh", HARNESS_VIEWER_PORT="4173", HARNESS_WORKSPACE=str(box.ws))
+        self.assertEqual((r.returncode, lines(r)), (0, [f"harness node {box.pkg / 'viewer.mjs'}"]), r.stderr)
+
+    def test_no_node_anywhere_never_starts(self):
+        box = self.box(node=False)
+        r = box.run("viewer.sh", HARNESS_VIEWER_PORT="4173", HARNESS_WORKSPACE=str(box.ws))
+        self.assertEqual((r.returncode, lines(r)), (1, [f"miss node >= 18, and Harness's own Node is not in {box.runtime} — run `harness start` once to lay it down"]))
+        self.assertFalse((box.ws / "node_modules").exists())
+
     def test_leaves_an_existing_node_modules_alone(self):
         box = self.box()
         (box.ws / "node_modules").mkdir()
         r = box.run("viewer.sh", HARNESS_VIEWER_PORT="4173", HARNESS_WORKSPACE=str(box.ws))
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertFalse((box.ws / "node_modules").is_symlink())
+
+
+class WithNode(unittest.TestCase):
+    """toolchain/with-node.sh, which the verdict runs vite through."""
+
+    def box(self) -> Sandbox:
+        box = Sandbox(self)
+        box.link("toolchain/with-node.sh")
+        box.link("toolchain/runtimes.sh")
+        return box
+
+    def test_node_on_path_runs_the_command(self):
+        box = self.box()
+        box.tools("node")
+        r = box.run("toolchain/with-node.sh", "node", "-e", "console.log('ran')")
+        self.assertEqual((r.returncode, r.stdout), (0, "ran\n"), r.stderr)
+
+    def test_harnesss_node_is_put_on_path_when_there_is_none(self):
+        box = self.box()
+        node = box.harness_node()
+        r = box.run("toolchain/with-node.sh", "bash", "-c", "command -v node")
+        self.assertEqual((r.returncode, r.stdout), (0, f"{node}\n"), r.stderr)
+
+    def test_no_node_is_127_with_the_miss_on_stderr(self):
+        box = self.box()
+        r = box.run("toolchain/with-node.sh", "vite", "build")
+        self.assertEqual((r.returncode, r.stdout), (127, ""))
+        self.assertEqual(r.stderr, f"miss node >= 18, and Harness's own Node is not in {box.runtime} — run `harness start` once to lay it down\n")
 
 
 if __name__ == "__main__":

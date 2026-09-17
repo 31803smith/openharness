@@ -1,4 +1,5 @@
-import contextlib, io, json, os, runpy, shutil, subprocess, sys, tempfile, time, unittest
+import contextlib, importlib.util, io, json, os, runpy, shutil, subprocess, sys, tempfile, time, types, unittest
+from fractions import Fraction
 from pathlib import Path
 from unittest import mock
 sys.path.insert(0, str(Path(__file__).parent))
@@ -82,24 +83,75 @@ class Probe(unittest.TestCase):
     def test_reads_the_first_video_stream(self):
         out = json.dumps({"streams": [{"width": 854, "height": 480, "nb_frames": "93", "duration": "6.2"}], "format": {"duration": "6.3"}})
         with self.fake(out) as run:
-            self.assertEqual(verdict.probe(Path("a.mp4")), {"width": 854, "height": 480, "frames": 93, "duration": 6.2})
+            self.assertEqual(verdict.ffprobe(Path("a.mp4")), {"width": 854, "height": 480, "frames": 93, "duration": 6.2})
         self.assertEqual(run.call_args.args[0][0], "ffprobe")
 
     def test_a_container_without_stream_facts_falls_back_to_the_format(self):
         with self.fake(json.dumps({"streams": [{"width": 64, "height": 48}], "format": {"duration": "2.0"}})):
-            self.assertEqual(verdict.probe(Path("a.webm")), {"width": 64, "height": 48, "frames": None, "duration": 2.0})
+            self.assertEqual(verdict.ffprobe(Path("a.webm")), {"width": 64, "height": 48, "frames": None, "duration": 2.0})
         with self.fake(""):
-            self.assertEqual(verdict.probe(Path("a.mp4")), {"width": None, "height": None, "frames": None, "duration": None})
+            self.assertEqual(verdict.ffprobe(Path("a.mp4")), {"width": None, "height": None, "frames": None, "duration": None})
 
     def test_no_ffprobe_is_no_facts(self):
         with mock.patch.object(verdict.subprocess, "run", side_effect=FileNotFoundError("ffprobe")):
-            self.assertEqual(verdict.probe(Path("a.mp4")), {})
+            self.assertEqual(verdict.ffprobe(Path("a.mp4")), {})
 
     @unittest.skipIf(not (shutil.which("ffmpeg") and shutil.which("ffprobe")), "ffmpeg/ffprobe not on PATH")
     def test_the_real_ffprobe(self):
         with tempfile.TemporaryDirectory() as d:
             video = Path(d) / "t.mp4"
             subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=64x48:rate=10", "-t", "2", "-pix_fmt", "yuv420p", str(video)], check=True)
+            self.assertEqual(verdict.ffprobe(video), {"width": 64, "height": 48, "frames": 20, "duration": 2.0})
+
+
+class PyAV(unittest.TestCase):
+    """probe() through PyAV, which is in Manim's venv on every machine, ffmpeg binary or not."""
+
+    def av(self, stream=None, container_duration=None, opens=None):
+        """A stand-in `av` module whose open() yields one container with `stream` as its video."""
+        container = mock.MagicMock()
+        container.__enter__.return_value = container
+        container.streams.video = [stream]
+        container.duration = container_duration
+        return mock.patch.dict(sys.modules, {"av": types.SimpleNamespace(open=opens or mock.Mock(return_value=container), time_base=1_000_000)})
+
+    @staticmethod
+    def stream(duration, time_base, frames=116):
+        return types.SimpleNamespace(duration=duration, time_base=time_base, frames=frames, codec_context=types.SimpleNamespace(width=854, height=480))
+
+    def test_the_streams_own_duration(self):
+        with self.av(self.stream(118779, Fraction(1, 15360))):
+            self.assertEqual(verdict.probe(Path("Intro.mp4")), {"width": 854, "height": 480, "frames": 116, "duration": 7.733008})
+
+    def test_the_containers_duration_when_the_stream_keeps_none(self):
+        with self.av(self.stream(None, Fraction(1, 100), frames=0), container_duration=7_740_000):
+            self.assertEqual(verdict.probe(Path("Intro.gif")), {"width": 854, "height": 480, "frames": None, "duration": 7.74})
+        with self.av(self.stream(0, None, frames=0)):
+            self.assertEqual(verdict.probe(Path("still.gif"))["duration"], None)
+
+    def test_a_file_pyav_cannot_read_is_no_facts(self):
+        with self.av(opens=mock.Mock(side_effect=ValueError("Invalid data found when processing input"))):
+            self.assertEqual(verdict.probe(Path("scene.py")), {})
+
+    def test_without_pyav_ffprobe_is_asked(self):
+        with mock.patch.dict(sys.modules, {"av": None}), mock.patch.object(verdict, "ffprobe", return_value={"duration": 2.0}) as ffprobe:
+            self.assertEqual(verdict.probe(Path("a.mp4")), {"duration": 2.0})
+        ffprobe.assert_called_once_with(Path("a.mp4"))
+
+    @unittest.skipUnless(importlib.util.find_spec("av"), "PyAV is not importable here; run with the harness venv's python")
+    def test_the_real_pyav(self):
+        import av
+        with tempfile.TemporaryDirectory() as d:
+            video = Path(d) / "t.mp4"
+            with av.open(str(video), "w") as out:
+                stream = out.add_stream("libx264", rate=10)
+                stream.width, stream.height, stream.pix_fmt = 64, 48, "yuv420p"
+                for i in range(20):
+                    frame = av.VideoFrame(64, 48, "yuv420p")
+                    for plane in frame.planes:
+                        plane.update(bytes([i * 10]) * plane.buffer_size)
+                    out.mux(stream.encode(frame))
+                out.mux(stream.encode())
             self.assertEqual(verdict.probe(video), {"width": 64, "height": 48, "frames": 20, "duration": 2.0})
 
 

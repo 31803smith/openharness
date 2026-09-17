@@ -2,12 +2,15 @@
 # Runs once at install, cwd = the install dir. One node_modules here — Phaser, Vite, terser — that
 # every workspace links to, so a new game is instant and there is one copy of Phaser on the machine.
 # Phaser's own agent skills are vendored in skills/ (MIT, see PROVENANCE.md), so nothing is fetched.
+# Node is this machine's, or the one Harness itself runs on (npm comes beside it).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 # shellcheck disable=SC1091
 . ./VERSIONS
-command -v node >/dev/null 2>&1 && node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 18 ? 0 : 1)' || { echo "miss node >= 18 on PATH"; exit 1; }
-command -v npm >/dev/null 2>&1 || { echo "miss npm on PATH"; exit 1; }
+# shellcheck source=runtimes.sh
+. toolchain/runtimes.sh
+harness_node 18 || exit 1
+command -v npm >/dev/null 2>&1 || { echo "miss npm beside $(command -v node)"; exit 1; }
 command -v python3 >/dev/null 2>&1 || { echo "miss python3 (the verdict)"; exit 1; }
 echo "     npm ci (phaser ${PHASER} + vite ${VITE}, about a minute the first time)"
 if [ -f package-lock.json ]; then npm ci --silent --no-audit --no-fund; else npm install --silent --no-audit --no-fund; fi

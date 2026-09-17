@@ -73,10 +73,25 @@ def with_manim_args(argv: list[str]) -> list[str]:
     return ["render", *args]
 
 
+# What Tex and MathTex run. LaTeX is not part of the toolchain (it is gigabytes), so on most machines a
+# formula scene fails on the first of these; the doctor warns about it.
+TEX_PROGRAMS = {"latex", "pdflatex", "xelatex", "lualatex", "dvisvgm"}
+
+
+def missing_tex(exc: BaseException | None) -> str | None:
+    """The TeX program a Tex/MathTex scene tried to run and this machine does not have."""
+    if isinstance(exc, FileNotFoundError) and os.path.basename(str(exc.filename or "")) in TEX_PROGRAMS:
+        return os.path.basename(str(exc.filename))
+    return None
+
+
 def error_from(exc: BaseException | None, tb) -> dict:
     if exc is None:
         return {"type": "Error", "message": "manim exited with an error"}
     out = {"type": type(exc).__name__, "message": str(exc).strip().splitlines()[0] if str(exc).strip() else type(exc).__name__}
+    tex = missing_tex(exc)
+    if tex:
+        out["message"] = f"Tex/MathTex need LaTeX and `{tex}` is not on this machine — write the formula with Text(…) instead"
     if isinstance(exc, SyntaxError) and exc.filename:
         out.update(file=rel(exc.filename), line=exc.lineno, code=(exc.text or "").strip() or None)
         return out
@@ -356,6 +371,12 @@ def install_hooks(status: Status) -> None:
     def print_exception(*args, **kwargs):
         exc_type, exc, tb = sys.exc_info()
         safely(status.fail, exc, tb, isinstance(exc, KeyboardInterrupt))
+        if missing_tex(exc):
+            # One line that says what to do, not a screen of subprocess frames ending in "No such file".
+            error = error_from(exc, tb)
+            where = f"{error['file']}:{error['line']}: " if error.get("file") and error.get("line") else ""
+            print(f"{where}{error['message']}", file=sys.stderr)
+            return None
         return orig_print_exception(*args, **kwargs)
 
     console.print_exception = print_exception

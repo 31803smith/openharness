@@ -234,10 +234,42 @@ class Main(unittest.TestCase):
     def test_a_build_that_hangs_is_a_build_finding(self):
         self.game()
         hung = subprocess.TimeoutExpired(cmd=["vite", "build"], timeout=600)
+        vite = stub_vite(self.bin, "sys.exit(0)")
         with mock.patch.object(verdict.subprocess, "run", side_effect=hung):
-            code, _, v = self.run_main("vite")
+            code, _, v = self.run_main(vite)
         self.assertEqual(code, 1)
         self.assertIn("timed out after 600 seconds", v["findings"][0]["message"])
+
+    def node_env(self, recorded: bool):
+        """The agent's shell as a new Mac has it: no node on PATH, and Harness's own recorded, or not."""
+        runtime = self.bin / "runtime"
+        runtime.mkdir()
+        if recorded:
+            node = self.bin / "harness-node" / "bin" / "node"
+            node.parent.mkdir(parents=True)
+            node.write_text(f'#!/bin/bash\n[ "$1" = -e ] && exit 0\necho "harness node ran $1" > "{self.bin}/node.log"\n')
+            node.chmod(0o755)
+            (runtime / "current-node").write_text(f"{node}\n")
+        return mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin", "ADAPTER_RUNTIME_DIR": str(runtime)})
+
+    def test_vite_runs_on_harnesss_node_when_the_shell_has_none(self):
+        self.game()
+        vite = self.bin / "vite"
+        vite.write_text("#!/usr/bin/env node\n")             # what node_modules/.bin/vite is
+        vite.chmod(0o755)
+        with self.node_env(recorded=True):
+            code, _, v = self.run_main(str(vite))
+        self.assertEqual((self.bin / "node.log").read_text(), f"harness node ran {vite}\n")
+        self.assertEqual((code, v["findings"], v["ready"]), (0, [], True))
+
+    def test_no_node_anywhere_is_a_build_finding_that_says_so(self):
+        self.game()
+        with self.node_env(recorded=False):
+            code, _, v = self.run_main(stub_vite(self.bin, "sys.exit(0)"))
+        self.assertEqual(code, 1)
+        self.assertEqual(v["findings"][0], {"severity": "error", "kind": "build", "message":
+                         f"miss node >= 18, and Harness's own Node is not in {self.bin / 'runtime'} — run `harness start` once to lay it down"})
+        self.assertEqual(self.calls(), [])
 
     def test_no_build_reads_the_scenes_but_never_runs_vite(self):
         self.game()

@@ -30,6 +30,26 @@ def newest_render(root: Path) -> Path | None:
 
 
 def probe(path: Path) -> dict:
+    """The first video stream's size, frame count and duration: through PyAV, the FFmpeg binding Manim
+    encodes with (in its venv, which render.py runs this in), else ffprobe. Manim needs no ffmpeg
+    binary, so neither may its verdict. {} when neither can read the file."""
+    try:
+        import av
+    except ImportError:
+        return ffprobe(path)
+    try:
+        with av.open(str(path)) as container:
+            s = container.streams.video[0]
+            if s.duration and s.time_base:
+                duration = round(float(s.duration * s.time_base), 6)
+            else:  # a container that keeps no per-stream duration
+                duration = round(container.duration / av.time_base, 6) if container.duration else None
+            return {"width": s.codec_context.width or None, "height": s.codec_context.height or None, "frames": s.frames or None, "duration": duration}
+    except Exception:
+        return {}
+
+
+def ffprobe(path: Path) -> dict:
     try:
         r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height,nb_frames,duration:format=duration", "-of", "json", str(path)], capture_output=True, text=True, timeout=60)
         d = json.loads(r.stdout or "{}")

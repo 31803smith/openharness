@@ -4,7 +4,7 @@ Python), and one real render, a failing scene and a syntax error on the pinned M
     python3 -m unittest toolchain/test_render.py                     # the real renders skip
     "$MANIM_PYTHON" -m unittest toolchain/test_render.py
 """
-import contextlib, importlib.util, io, json, os, runpy, subprocess, sys, tempfile, types, unittest
+import contextlib, importlib.util, io, json, os, runpy, shutil, subprocess, sys, tempfile, types, unittest
 from pathlib import Path
 from unittest import mock
 sys.path.insert(0, str(Path(__file__).parent))
@@ -151,6 +151,23 @@ class Errors(Workspace):
             with mock.patch.object(Path, "resolve", resolve):
                 error = render.error_from(exc, exc.__traceback__)
         self.assertEqual(error, {"type": "ValueError", "message": "x"})
+
+    def test_a_tex_program_this_machine_lacks_says_what_to_do(self):
+        scene = self.put("scenes/formula.py", "def construct():\n    raise FileNotFoundError(2, 'No such file or directory', 'latex')\n")
+        try:
+            scene["construct"]()
+        except FileNotFoundError as exc:
+            error = render.error_from(exc, exc.__traceback__)
+        self.assertEqual(error, {"type": "FileNotFoundError", "message": "Tex/MathTex need LaTeX and `latex` is not on this machine — write the formula with Text(…) instead",
+                                 "file": "scenes/formula.py", "line": 2, "code": "raise FileNotFoundError(2, 'No such file or directory', 'latex')", "function": "construct"})
+        self.assertEqual(render.missing_tex(FileNotFoundError(2, "No such file or directory", "/Library/TeX/texbin/dvisvgm")), "dvisvgm")
+
+    def test_any_other_missing_file_is_itself(self):
+        for exc in (FileNotFoundError(2, "No such file or directory", "assets/logo.png"), FileNotFoundError("no filename"), PermissionError(13, "Permission denied", "latex")):
+            with self.subTest(exc=exc):
+                self.assertIsNone(render.missing_tex(exc))
+                self.assertNotIn("LaTeX", render.error_from(exc, None)["message"])
+        self.assertIsNone(render.missing_tex(None))
 
 
 class Labels(unittest.TestCase):
@@ -434,6 +451,25 @@ class Hooks(unittest.TestCase):
                 args = self.status.fail.call_args.args
                 self.assertEqual((args[0], args[2]), (error, cancelled))
 
+    def test_a_missing_latex_is_one_line_not_a_traceback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp).resolve()
+            source = ws / "scenes" / "formula.py"
+            source.parent.mkdir()
+            source.write_text("def construct():\n    raise FileNotFoundError(2, 'No such file or directory', 'latex')\n")
+            namespace: dict = {}
+            exec(compile(source.read_text(), str(source), "exec"), namespace)
+            for where, construct, line in ((ws, namespace["construct"], "scenes/formula.py:2: "), (ws / "elsewhere", namespace["construct"], "")):
+                with self.subTest(where=line or "no workspace frame"), mock.patch.object(render, "WS", where):
+                    err = io.StringIO()
+                    try:
+                        construct()
+                    except FileNotFoundError as exc:
+                        with contextlib.redirect_stderr(err):
+                            self.assertIsNone(self.console.print_exception(show_locals=False), "Manim's traceback is not printed")
+                        self.assertIs(self.status.fail.call_args.args[0], exc)
+                    self.assertEqual(err.getvalue(), f"{line}Tex/MathTex need LaTeX and `latex` is not on this machine — write the formula with Text(…) instead\n")
+
     def test_a_status_that_raises_never_stops_the_render(self):
         self.status.begin.side_effect = self.status.finish.side_effect = self.status.sync.side_effect = RuntimeError("feed broke")
         self.assertEqual(self.Scene().render(), "rendered")
@@ -555,6 +591,13 @@ class Broken(Scene):
     def construct(self):
         self.play(FadeIn(Sqaure()))
 '''
+FORMULA = '''from manim import *
+
+
+class Formula(Scene):
+    def construct(self):
+        self.play(Write(MathTex(r"e^{i\\pi} + 1 = 0")))
+'''
 SYNTAX = '''from manim import *
 class Bad(Scene:
     pass
@@ -569,7 +612,7 @@ class RealManim(Workspace):
 
     def setUp(self):
         super().setUp()
-        for name, source in (("tiny", TINY), ("broken", BROKEN), ("syntax", SYNTAX)):
+        for name, source in (("tiny", TINY), ("broken", BROKEN), ("syntax", SYNTAX), ("formula", FORMULA)):
             (self.ws / "scenes").mkdir(exist_ok=True)
             (self.ws / "scenes" / f"{name}.py").write_text(source)
         self.unhook = self.hooks_restorer()
@@ -640,6 +683,13 @@ class RealManim(Workspace):
         feed = self.status_file()
         self.assertEqual((feed["state"], feed["scene"], feed["output"]), ("failed", "Bad", "out/videos/syntax/480p15/Bad.mp4"))
         self.assertEqual({k: feed["error"][k] for k in ("type", "file", "line", "code")}, {"type": "SyntaxError", "file": "scenes/syntax.py", "line": 2, "code": "class Bad(Scene:"})
+
+    @unittest.skipIf(shutil.which("latex"), "LaTeX is on this machine")
+    def test_a_formula_without_latex_is_one_clear_line(self):
+        code, err = self.render("formula.py", "Formula")
+        self.assertEqual(code, 1)
+        self.assertEqual(err, "scenes/formula.py:6: Tex/MathTex need LaTeX and `latex` is not on this machine — write the formula with Text(…) instead\n")
+        self.assertEqual({k: self.status_file()["error"][k] for k in ("type", "file", "line")}, {"type": "FileNotFoundError", "file": "scenes/formula.py", "line": 6})
 
 
 if __name__ == "__main__": unittest.main()

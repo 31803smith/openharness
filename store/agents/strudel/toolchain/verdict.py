@@ -12,8 +12,9 @@ human confirms it.
 Check is static. Strudel's own transpiler parses a pattern as ECMAScript 2022 with top-level await
 allowed (`parse(input, { ecmaVersion: 2022, allowAwaitOutsideFunction: true })` in
 @strudel/transpiler), so `node --check --input-type=module` is exactly the parser the REPL will use
-and is the real syntax gate here. Without node we fall back to a bracket/quote scanner. What is not
-checked: whether a name exists in Strudel's eval scope, and whether it sounds good.
+and is the real syntax gate here. node is this machine's or, when the agent's shell has none on PATH,
+the one Harness runs on (with-node.sh finds it). Without either we fall back to a bracket/quote
+scanner. What is not checked: whether a name exists in Strudel's eval scope, and whether it sounds good.
 """
 from __future__ import annotations
 
@@ -27,6 +28,7 @@ from pathlib import Path
 
 WS = Path(os.environ.get("HARNESS_WORKSPACE") or os.getcwd()).resolve()
 DEFAULT = "track.strudel"
+WITH_NODE = Path(__file__).resolve().parent / "with-node.sh"
 
 # Sounds superdough registers itself, with no bank to download: registerSynthSounds() (the four
 # oscillators plus user/one, sbd, supersaw, pulse, bytebeat, bus and the four noises) and
@@ -123,12 +125,12 @@ def strip_code(text: str) -> tuple[str, list[dict], str]:
 
 
 def node_check(text: str) -> list[dict]:
-    """The REPL's own parser, when node is on PATH. Silent when node is not."""
+    """The REPL's own parser, when there is a node to run it. Silent when there is not (127)."""
     try:
-        done = subprocess.run(["node", "--check", "--input-type=module"], input=text, capture_output=True, text=True, timeout=20)
+        done = subprocess.run([str(WITH_NODE), "node", "--check", "--input-type=module"], input=text, capture_output=True, text=True, timeout=20)
     except (OSError, subprocess.SubprocessError):
         return []
-    if done.returncode == 0:
+    if done.returncode in (0, 127):
         return []
     detail = ""
     for raw in (done.stderr or "").splitlines():

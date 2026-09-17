@@ -140,6 +140,12 @@ class Judging(unittest.TestCase):
                     mock.patch.object(verdict.subprocess, "run", side_effect=error):
                 self.assertEqual(verdict.node_check('s("sbd")'), [])
 
+    def test_no_node_on_path_or_in_harness_is_the_scan_alone(self) -> None:
+        done = subprocess.CompletedProcess(["with-node.sh"], 127, stdout="", stderr="miss node >= 18, and Harness's own Node is not in …\n")
+        with mock.patch.object(verdict.subprocess, "run", return_value=done) as run:
+            self.assertEqual(verdict.node_check('s("sbd")'), [])
+        self.assertEqual(run.call_args.args[0], [str(HERE / "with-node.sh"), "node", "--check", "--input-type=module"])
+
     def test_a_node_failure_without_a_syntax_error_line(self) -> None:
         done = subprocess.CompletedProcess(["node"], 1, stdout="", stderr="node: bad option\n")
         with mock.patch.object(verdict.subprocess, "run", return_value=done):

@@ -1,6 +1,7 @@
 """setup.sh, doctor.sh, init-workspace.sh and viewer.sh, run for real against a scratch install whose
 PATH holds only stub commands (and the few coreutils the scripts use), so every ok / miss line and
-exit path is reached without npm, a network or the installed node_modules:
+exit path is reached without npm, a network or the installed node_modules. Node is found the way
+runtimes.sh finds it on a new machine too: not on PATH, but recorded in the runtime dir Harness keeps.
 
     python3 -m unittest toolchain/test_scripts.py
 """
@@ -11,15 +12,20 @@ PACKAGE = Path(__file__).resolve().parent.parent
 # A bash line tracer (BASH_ENV sourcing a DEBUG trap that appends to SHCOV_OUT) is passed through when set.
 TRACER = {k: os.environ[k] for k in ("BASH_ENV", "SHCOV_OUT") if k in os.environ}
 BASH = "/bin/bash"
-COREUTILS = ("dirname", "mkdir")
+COREUTILS = ("dirname", "mkdir", "cat")
 BUNDLE = "node_modules/@excalidraw/excalidraw/dist/excalidraw.production.min.js"
-# `node -p "require(...)"`: the versions the scripts print.
-NODE = 'case "$2" in *react/package.json*) echo 18.3.1 ;; *) echo 0.17.6 ;; esac'
+# node: runtimes.sh's version probe (`node -e … 18`, answered by $NODE_OLD and never logged), its
+# version, and `node -p "require(...)"` for the versions the scripts print.
+NODE = """case "$1" in
+  -e) exit "${NODE_OLD:-0}" ;;
+  -v|--version) echo v22.23.2 ;;
+  -p) case "$2" in *react/package.json*) echo 18.3.1 ;; *) echo 0.17.6 ;; esac ;;
+esac"""
 
 
 class Sandbox:
-    """An install dir with the package's scripts, a bin/ of stubs as the whole PATH, and a log of
-    every stub call."""
+    """An install dir with the package's scripts, a bin/ of stubs as the whole PATH, an empty runtime
+    dir for runtimes.sh, and a log of every stub call."""
 
     def __init__(self, test: unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
@@ -32,17 +38,31 @@ class Sandbox:
         (self.install / "viewer.sh").symlink_to(PACKAGE / "viewer.sh")
         self.bin = self.root / "bin"
         self.bin.mkdir()
+        self.runtime = self.root / "runtime"
+        self.runtime.mkdir()
         self.calls = self.root / "calls.log"
         self.calls.touch()
         for name in COREUTILS:
             real = next(p for p in (Path("/bin") / name, Path("/usr/bin") / name) if p.exists())
             (self.bin / name).symlink_to(real)
 
-    def stub(self, name: str, body: str = "") -> Path:
-        path = self.bin / name
-        path.write_text(f'#!/bin/bash\necho "{name} $*" >> "$CALLS"\n{body}\n')
+    def stub(self, name: str, body: str = "", where: Path | None = None) -> Path:
+        path = (where or self.bin) / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.unlink(missing_ok=True)  # never write through a link to a real command
+        # runtimes.sh's `node -e` probe is not a call the scripts make: it stays out of the log.
+        probe = '[ "$1" = -e ] || ' if name == "node" else ""
+        path.write_text(f'#!/bin/bash\n{probe}echo "{name} $*" >> "$CALLS"\n{body}\n')
         path.chmod(0o755)
         return path
+
+    def harness_node(self, npm: str | None = None) -> Path:
+        """No node on PATH; Harness's own recorded in the runtime dir, npm beside it when given."""
+        node = self.stub("node", NODE, where=self.root / "harness-node" / "bin")
+        if npm is not None:
+            self.stub("npm", npm, where=node.parent)
+        (self.runtime / "current-node").write_text(f"{node}\n")
+        return node
 
     def file(self, rel: str) -> None:
         path = self.install / rel
@@ -51,7 +71,7 @@ class Sandbox:
 
     def run(self, script: str, cwd: Path | None = None, **env: str) -> subprocess.CompletedProcess:
         return subprocess.run([BASH, str(self.install / script)], cwd=cwd or self.install,
-                              env={"PATH": str(self.bin), "CALLS": str(self.calls), **TRACER, **env},
+                              env={"PATH": str(self.bin), "CALLS": str(self.calls), "ADAPTER_RUNTIME_DIR": str(self.runtime), **TRACER, **env},
                               capture_output=True, text=True, timeout=60)
 
     def logged(self) -> list[str]:
@@ -67,13 +87,24 @@ class Doctor(unittest.TestCase):
             box.file(rel)
         r = box.run("toolchain/doctor.sh")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(r.stdout.splitlines(), ["ok   excalidraw 0.17.6", "ok   pane (viewer.mjs, viewer/)", "ok   Python 3.12.1"])
+        self.assertEqual(r.stdout.splitlines(), ["ok   node v22.23.2 (the pane server)", "ok   excalidraw 0.17.6",
+                                                 "ok   pane (viewer.mjs, viewer/)", "ok   Python 3.12.1"])
+
+    def test_harness_node_serves_when_path_has_none(self):
+        box = Sandbox(self)
+        box.harness_node()
+        box.stub("python3", 'echo "Python 3.9.6"')
+        for rel in (BUNDLE, "viewer.mjs", "viewer/index.html", "viewer/app.js"):
+            box.file(rel)
+        r = box.run("toolchain/doctor.sh")
+        self.assertEqual((r.returncode, r.stdout.splitlines()[:2]), (0, ["ok   node v22.23.2 (the pane server)", "ok   excalidraw 0.17.6"]), r.stderr)
 
     def test_every_miss_is_reported_not_just_the_first(self):
         box = Sandbox(self)
         r = box.run("toolchain/doctor.sh")
         self.assertEqual(r.returncode, 1)
-        self.assertEqual(r.stdout.splitlines(), ["miss node_modules — run toolchain/setup.sh",
+        self.assertEqual(r.stdout.splitlines(), [f"miss node >= 18, and Harness's own Node is not in {box.runtime} — run `harness start` once to lay it down",
+                                                 "miss node_modules — run toolchain/setup.sh",
                                                  "miss viewer.mjs or viewer/ — the checkout is incomplete",
                                                  "miss python3"])
 
@@ -85,11 +116,14 @@ class Doctor(unittest.TestCase):
             box.file(rel)
         r = box.run("toolchain/doctor.sh")
         self.assertEqual(r.returncode, 1)
-        self.assertEqual(r.stdout.splitlines()[1], "miss viewer.mjs or viewer/ — the checkout is incomplete")
+        self.assertEqual(r.stdout.splitlines()[2], "miss viewer.mjs or viewer/ — the checkout is incomplete")
+
+
+NPM_CI = f"mkdir -p node_modules/@excalidraw/excalidraw/dist && : > {BUNDLE}"
 
 
 class Setup(unittest.TestCase):
-    def sandbox(self, *missing: str, npm: str = f"mkdir -p node_modules/@excalidraw/excalidraw/dist && : > {BUNDLE}") -> Sandbox:
+    def sandbox(self, *missing: str, npm: str = NPM_CI) -> Sandbox:
         box = Sandbox(self)
         for name, body in (("node", NODE), ("npm", npm), ("python3", "")):
             if name not in missing:
@@ -103,12 +137,32 @@ class Setup(unittest.TestCase):
         self.assertEqual(r.stdout.splitlines(), ["     npm ci (Excalidraw 0.17.6)", "ok   excalidraw 0.17.6 · react 18.3.1"])
         self.assertIn("npm ci --silent --no-audit --no-fund", box.logged())
 
+    def test_a_machine_without_node_uses_harnesss_own_and_the_npm_beside_it(self):
+        box = self.sandbox("node", "npm")
+        node = box.harness_node(npm=NPM_CI)
+        r = box.run("toolchain/setup.sh")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.splitlines(), ["     npm ci (Excalidraw 0.17.6)", "ok   excalidraw 0.17.6 · react 18.3.1"])
+        self.assertIn("npm ci --silent --no-audit --no-fund", box.logged())
+        self.assertTrue((box.install / BUNDLE).is_file())
+        self.assertTrue(node.is_file())
+
+    def test_an_old_node_on_path_is_passed_over_for_harnesss(self):
+        box = self.sandbox("node", "npm")
+        box.stub("node", 'exit 1')                           # a Node 16: the >= 18 probe fails
+        box.harness_node(npm=NPM_CI)
+        r = box.run("toolchain/setup.sh")
+        self.assertEqual((r.returncode, r.stdout.splitlines()[-1]), (0, "ok   excalidraw 0.17.6 · react 18.3.1"), r.stderr)
+
     def test_each_missing_tool_is_a_miss(self):
-        for tool, line in (("node", "miss node >= 18 on PATH"), ("npm", "miss npm on PATH"),
-                           ("python3", "miss python3 (the scene helper and the verdict)")):
+        for tool, line in (("node", None), ("npm", None), ("python3", "miss python3 (the scene helper and the verdict)")):
             with self.subTest(tool=tool):
-                r = self.sandbox(tool).run("toolchain/setup.sh")
+                box = self.sandbox(tool)
+                line = line or {"node": f"miss node >= 18, and Harness's own Node is not in {box.runtime} — run `harness start` once to lay it down",
+                                "npm": f"miss npm beside {box.bin}/node"}[tool]
+                r = box.run("toolchain/setup.sh")
                 self.assertEqual((r.returncode, r.stdout.strip()), (1, line))
+                self.assertNotIn("npm ci --silent --no-audit --no-fund", box.logged())
 
     def test_a_failed_npm_ci_fails_setup(self):
         r = self.sandbox(npm="exit 1").run("toolchain/setup.sh")
@@ -145,6 +199,20 @@ class Viewer(unittest.TestCase):
         r = box.run("viewer.sh", cwd=box.root, HARNESS_VIEWER_PORT="4123", HARNESS_WORKSPACE=str(box.root))
         self.assertEqual((r.returncode, r.stdout), (0, "port 4123\n"), r.stderr)
         self.assertEqual(box.logged(), [f"node {box.install}/viewer.mjs"])
+
+    def test_a_login_shell_without_node_runs_harnesss_own(self):
+        box = Sandbox(self)
+        node = box.harness_node()
+        r = box.run("viewer.sh", cwd=box.root, HARNESS_VIEWER_PORT="4123", HARNESS_WORKSPACE=str(box.root))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(box.logged(), [f"node {box.install}/viewer.mjs"])
+        self.assertTrue(node.is_file())
+
+    def test_no_node_anywhere_never_starts(self):
+        box = Sandbox(self)
+        r = box.run("viewer.sh", cwd=box.root, HARNESS_VIEWER_PORT="4123", HARNESS_WORKSPACE=str(box.root))
+        self.assertEqual(r.returncode, 1)
+        self.assertEqual(r.stdout.strip(), f"miss node >= 18, and Harness's own Node is not in {box.runtime} — run `harness start` once to lay it down")
 
     def test_needs_a_port_and_a_workspace(self):
         box = Sandbox(self)

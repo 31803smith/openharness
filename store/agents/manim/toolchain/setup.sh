@@ -1,24 +1,29 @@
 #!/usr/bin/env bash
-# Runs once at install, cwd = the install dir. One venv with the pinned Manim Community release.
-# ffmpeg must be on the machine (brew install ffmpeg); LaTeX is optional (only for Tex/MathTex).
+# Runs once at install, cwd = the install dir. One environment in .venv with the pinned Manim Community
+# release. pycairo has no wheel on PyPI for macOS or Linux, and manimpango none for Linux: both build
+# from source against a cairo and a pango this machine may not have. So the environment is conda-forge's
+# Python with its pycairo and manimpango (the libraries inside it), and Manim goes in on top from PyPI,
+# which leaves those two as they are. No ffmpeg binary is needed: PyAV carries its own FFmpeg libraries.
+# LaTeX is optional (only for Tex/MathTex).
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# shellcheck source=runtimes.sh
+. toolchain/runtimes.sh
 VERSION="$(cat MANIM_VERSION)"
-# 3.12 first: it is the interpreter the most wheels exist for; pycairo still builds from source on
-# every version, which is what cairo + pkg-config below are for.
-PY=""; for c in python3.12 python3.11 python3.13 python3; do if command -v "$c" >/dev/null 2>&1 && "$c" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then PY="$c"; break; fi; done
-[ -n "$PY" ] || { echo "miss python 3.11+ (brew install python@3.12)"; exit 1; }
-echo "ok   $($PY --version)"
-if [ "$(uname -s)" = Darwin ]; then
-  need=""
-  command -v pkg-config >/dev/null 2>&1 || need="$need pkgconf"
-  pkg-config --exists cairo 2>/dev/null || need="$need cairo"
-  if [ -n "$need" ]; then echo "miss pycairo builds from source and needs:$need — run: brew install$need"; exit 1; fi
-  echo "ok   cairo $(pkg-config --modversion cairo) (manimpango ships its own pango)"
+# An environment that already has this Manim and a pycairo that loads is kept, however it was made
+# (a venv on Homebrew's cairo included): nothing to fetch.
+if .venv/bin/python -c 'import sys, cairo, manim; sys.exit(manim.__version__ != sys.argv[1])' "$VERSION" >/dev/null 2>&1; then
+  echo "ok   manim ${VERSION} already in .venv"
+  exit 0
 fi
-[ -x .venv/bin/python ] || "$PY" -m venv .venv
-.venv/bin/python -m pip install --quiet --upgrade pip >/dev/null 2>&1 || true
+# Manim needs Python 3.11+. A .venv on an older one, or whose pycairo no longer loads (its
+# cairo uninstalled), is made again.
+if ! .venv/bin/python -c 'import sys, cairo; sys.exit(sys.version_info < (3, 11))' >/dev/null 2>&1; then
+  echo "     python 3.12, pycairo and manimpango from conda-forge into .venv (a few minutes the first time)"
+  rm -rf .venv
+  harness_conda_env .venv python=3.12 pycairo manimpango pip || exit 1
+fi
+echo "ok   $(.venv/bin/python --version) with pycairo in .venv"
 echo "     installing manim ${VERSION} (a couple of minutes the first time)"
-.venv/bin/python -m pip install --quiet "manim==${VERSION}"
+harness_pip .venv "manim==${VERSION}" || { echo "miss manim ${VERSION} would not install into .venv"; exit 1; }
 echo "ok   manim $(.venv/bin/manim --version 2>/dev/null | head -1)"
-command -v ffmpeg >/dev/null 2>&1 && echo "ok   ffmpeg $(ffmpeg -version 2>/dev/null | head -1 | cut -d' ' -f3)" || echo "warn ffmpeg not on PATH — renders need it: brew install ffmpeg"

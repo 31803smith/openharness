@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 set -u; cd "$(dirname "$0")/.."; bad=0
+# shellcheck source=runtimes.sh
+. toolchain/runtimes.sh
+if harness_node 18; then echo "ok   node $(node --version) (vite and the pane)"; else bad=1; fi
 if [ -x node_modules/.bin/vite ]; then
-  echo "ok   phaser $(node -p "require('./node_modules/phaser/package.json').version") · vite $(node -p "require('./node_modules/vite/package.json').version")"
+  echo "ok   phaser $(node -p "require('./node_modules/phaser/package.json').version" 2>/dev/null) · vite $(node -p "require('./node_modules/vite/package.json').version" 2>/dev/null)"
 else
   echo "miss node_modules — run toolchain/setup.sh"; bad=1
 fi
