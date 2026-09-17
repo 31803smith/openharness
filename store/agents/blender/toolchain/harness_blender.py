@@ -258,9 +258,9 @@ def turntable(path: str | Path = "out/turntable.mp4", seconds: float = 4.0, fps:
         s.frame_start, s.frame_end, s.render.fps = saved["start"], saved["end"], saved["fps"]
         s.frame_set(saved["current"])
         bpy.context.preferences.edit.keyframe_new_interpolation_type = saved["interp"]
-    ffmpeg = shutil.which("ffmpeg")
+    ffmpeg = _ffmpeg()
     if ffmpeg is None:
-        print(f"warn no ffmpeg on PATH — turntable frames are in {frames_dir}; brew install ffmpeg to get an mp4")
+        print(f"warn no ffmpeg — turntable frames are in {frames_dir}; run toolchain/setup.sh again to get an mp4")
         return out
     _activity("Encoding turntable")
     subprocess.run([ffmpeg, "-y", "-loglevel", "error", "-framerate", str(fps), "-i", str(frames_dir / "frame_%04d.png"),
@@ -268,6 +268,18 @@ def turntable(path: str | Path = "out/turntable.mp4", seconds: float = 4.0, fps:
     shutil.rmtree(frames_dir, ignore_errors=True)
     return out
 
+
+
+def _ffmpeg() -> str | None:
+    """The machine's ffmpeg, else the one imageio-ffmpeg carries in the venv (setup installs it)."""
+    found = shutil.which("ffmpeg")
+    if found:
+        return found
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:  # not installed, or its binary is missing for this platform
+        return None
 
 # ---------------------------------------------------------------------------------------------------
 # Exports

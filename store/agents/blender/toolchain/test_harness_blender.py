@@ -5,7 +5,7 @@
 Every test starts from fresh() in its own scratch workspace; renders are 32×18 and turntables a few
 frames, so the whole file runs in seconds.
 """
-import atexit, contextlib, importlib, io, json, os, shutil, struct, sys, tempfile, unittest
+import atexit, contextlib, importlib, io, json, os, shutil, struct, sys, tempfile, types, unittest
 from pathlib import Path
 from unittest import mock
 
@@ -244,8 +244,9 @@ class Renders(Base):
         self.assertEqual((s.frame_start, s.frame_end, s.render.fps, s.frame_current), (5, 90, 24, 7))
         self.assertEqual(bpy.context.preferences.edit.keyframe_new_interpolation_type, "BEZIER")
 
-    @unittest.skipIf(shutil.which("ffmpeg") is None, "no ffmpeg on PATH")
     def test_a_turntable_is_an_mp4_and_the_scene_is_left_as_found(self):
+        if hb._ffmpeg() is None:
+            self.skipTest("no ffmpeg on PATH or in the venv")
         cam, matrix = self.scene_as_found()
         out = hb.turntable("out/turntable.mp4", seconds=0.3, fps=10, size=SIZE)
         self.assertTrue(out.is_file() and out.stat().st_size > 0)
@@ -260,16 +261,34 @@ class Renders(Base):
         frames.mkdir(parents=True)
         (frames / "frame_0099.png").write_bytes(b"stale")
         printed = io.StringIO()
-        with mock.patch.object(hb.shutil, "which", return_value=None), contextlib.redirect_stdout(printed):
+        with mock.patch.object(hb, "_ffmpeg", return_value=None), contextlib.redirect_stdout(printed):
             out = hb.turntable("out/spin.mp4", seconds=0.2, fps=10, size=SIZE)
         self.assertFalse(out.exists())
         self.assertEqual(sorted(p.name for p in frames.iterdir()), ["frame_0001.png", "frame_0002.png"])
-        self.assertIn("warn no ffmpeg on PATH", printed.getvalue())
+        self.assertIn(f"warn no ffmpeg — turntable frames are in {frames}; run toolchain/setup.sh again", printed.getvalue())
         self.assert_scene_put_back(cam, matrix)
+
+    def test_ffmpeg_is_the_machines_first(self):
+        with mock.patch.object(hb.shutil, "which", return_value="/usr/local/bin/ffmpeg"):
+            self.assertEqual(hb._ffmpeg(), "/usr/local/bin/ffmpeg")
+
+    def test_ffmpeg_falls_back_to_the_one_imageio_ffmpeg_carries(self):
+        carried = types.SimpleNamespace(get_ffmpeg_exe=lambda: "/venv/imageio_ffmpeg/binaries/ffmpeg")
+        with mock.patch.object(hb.shutil, "which", return_value=None), mock.patch.dict(sys.modules, {"imageio_ffmpeg": carried}):
+            self.assertEqual(hb._ffmpeg(), "/venv/imageio_ffmpeg/binaries/ffmpeg")
+
+    def test_no_ffmpeg_anywhere_is_none(self):
+        def missing():
+            raise RuntimeError("no ffmpeg binary for this platform")
+        with mock.patch.object(hb.shutil, "which", return_value=None), \
+                mock.patch.dict(sys.modules, {"imageio_ffmpeg": types.SimpleNamespace(get_ffmpeg_exe=missing)}):
+            self.assertIsNone(hb._ffmpeg())
+        with mock.patch.object(hb.shutil, "which", return_value=None), mock.patch.dict(sys.modules, {"imageio_ffmpeg": None}):
+            self.assertIsNone(hb._ffmpeg(), "not installed: the import itself fails")
 
     def test_a_turntable_shorter_than_a_frame_still_renders_one(self):
         self.cube()
-        with mock.patch.object(hb.shutil, "which", return_value=None), mock.patch.object(hb, "_activity", wraps=hb._activity) as activity, contextlib.redirect_stdout(io.StringIO()):
+        with mock.patch.object(hb, "_ffmpeg", return_value=None), mock.patch.object(hb, "_activity", wraps=hb._activity) as activity, contextlib.redirect_stdout(io.StringIO()):
             hb.turntable("out/blink.mp4", seconds=0.04, fps=10, size=SIZE)
         self.assertIn(mock.call("Rendering turntable 1/1", progress=1.0, force=False), activity.call_args_list,
                       "the progress handler ran (0 frames divided by zero in it)")

@@ -1,6 +1,7 @@
 """setup.sh, doctor.sh and init-workspace.sh, run for real against a scratch install whose PATH holds
 only stub commands (and the few coreutils the scripts use), so every ok / warn / miss line is reached
-without a network, a Python 3.11 or a 300 MB bpy wheel:
+without a network, a Python 3.11 or a 300 MB bpy wheel. uv is a stub too: what runtimes.sh does when
+uv is not on PATH at all is store/tools/test_runtimes.py's business.
 
     python3 -m unittest toolchain/test_scripts.py
 """
@@ -11,14 +12,14 @@ PACKAGE = Path(__file__).resolve().parent.parent
 # A bash line tracer (BASH_ENV sourcing a DEBUG trap that appends to SHCOV_OUT) is passed through when set.
 TRACER = {k: os.environ[k] for k in ("BASH_ENV", "SHCOV_OUT") if k in os.environ}
 BASH = "/bin/bash"
-COREUTILS = ("dirname", "cat", "mkdir", "cp", "rm", "chmod", "grep")
+COREUTILS = ("dirname", "cat", "mkdir", "cp", "rm", "chmod", "grep", "mktemp", "cut", "shasum")
 VERSION = (PACKAGE / "BPY_VERSION").read_text().strip()
 
-# The venv's python: answers the bpy import (IMPORT_BPY), its version string, pip (PIP_EXIT; the pip
-# self-upgrade always fails, which setup tolerates) and the heredoc render check (RENDER_EXIT).
+# The venv's python: its version (VENV_PY — what runtimes.sh's keep-or-replace probe answers is
+# VENV_PY_OK), the bpy import (IMPORT_BPY), bpy's version string and the heredoc render check (RENDER_EXIT).
 VENV_PYTHON = """case "$1" in
-  -c) case "$2" in *version_string*) echo "%s" ;; *) exit "${IMPORT_BPY:-0}" ;; esac ;;
-  -m) case "$*" in *--upgrade*) exit 1 ;; *) exit "${PIP_EXIT:-0}" ;; esac ;;
+  --version) echo "Python ${VENV_PY:-3.11.9}" ;;
+  -c) case "$2" in *version_string*) echo "%s" ;; *version_info*) exit "${VENV_PY_OK:-0}" ;; *) exit "${IMPORT_BPY:-0}" ;; esac ;;
   -) cat >/dev/null; [ "${RENDER_EXIT:-0}" = 0 ] || exit "$RENDER_EXIT"; echo "ok   headless rendering works" ;;
 esac""" % VERSION
 
@@ -47,17 +48,17 @@ class Sandbox:
     def stub(self, name: str, body: str = "", where: Path | None = None) -> Path:
         path = (where or self.bin) / name
         path.parent.mkdir(parents=True, exist_ok=True)
+        path.unlink(missing_ok=True)  # never write through a link to a real command
         path.write_text(f'#!/bin/bash\necho "{name} $*" >> "$CALLS"\n{body}\n')
         path.chmod(0o755)
         return path
 
-    def interpreter(self, name: str, version: str) -> Path:
-        """A python on PATH: the 3.11 probe answers for `version`; `-m venv` makes a venv of stubs."""
+    def uv(self) -> Path:
+        """uv on PATH: `uv venv … DIR` makes a venv of stubs; `uv pip install` answers PIP_EXIT."""
         venv_python = self.stub("python", VENV_PYTHON, where=self.root / "templates")
-        return self.stub(name, f"""case "$1" in
-  -c) [ "{version[:4]}" = 3.11 ] ;;
-  --version) echo "Python {version}" ;;
-  -m) mkdir -p "$3/bin" && cp "{venv_python}" "$3/bin/python" ;;
+        return self.stub("uv", f"""case "$1" in
+  venv) for last in "$@"; do :; done; mkdir -p "$last/bin" && cp "{venv_python}" "$last/bin/python" ;;
+  pip) exit "${{PIP_EXIT:-0}}" ;;
 esac""")
 
     def venv(self) -> Path:
@@ -80,12 +81,19 @@ class Doctor(unittest.TestCase):
         r = box.run("doctor.sh")
         self.assertEqual((r.returncode, r.stdout.splitlines()), (0, [f"ok   blender {VERSION}", "ok   ffmpeg (turntables)"]), r.stderr)
 
-    def test_no_ffmpeg_is_only_a_warning(self):
+    def test_the_venvs_own_ffmpeg_serves(self):
         box = Sandbox(self)
         box.venv()
         r = box.run("doctor.sh")
+        self.assertEqual((r.returncode, r.stdout.splitlines()), (0, [f"ok   blender {VERSION}", "ok   ffmpeg (turntables)"]), r.stderr)
+
+    def test_no_ffmpeg_is_only_a_warning(self):
+        box = Sandbox(self)
+        box.stub("python", 'case "$2" in *imageio_ffmpeg*) exit 1 ;; *version_string*) echo "%s" ;; esac' % VERSION,
+                 where=box.install / ".venv" / "bin")
+        r = box.run("doctor.sh")
         self.assertEqual(r.returncode, 0)
-        self.assertEqual(r.stdout.splitlines()[-1], "warn ffmpeg not on PATH — turntables stay as frames (brew install ffmpeg)")
+        self.assertEqual(r.stdout.splitlines()[-1], "warn no ffmpeg — turntables stay as frames until toolchain/setup.sh runs again")
 
     def test_no_venv_is_a_miss_and_stops(self):
         box = Sandbox(self)
@@ -101,62 +109,60 @@ class Doctor(unittest.TestCase):
 
 
 class Setup(unittest.TestCase):
-    def test_installs_bpy_into_a_venv_and_checks_rendering(self):
+    def test_makes_a_3_11_venv_installs_bpy_and_checks_rendering(self):
         box = Sandbox(self)
-        box.interpreter("python3.11", "3.11.9")
+        box.uv()
         r = box.run("setup.sh")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(r.stdout.splitlines(), [
-            "ok   Python 3.11.9",
+            "     python 3.11 in .venv (uv downloads it when this machine has none)",
+            "ok   Python 3.11.9 in .venv",
             f"     installing bpy {VERSION} (Blender as a module, ~300 MB, a few minutes the first time)",
             f"ok   blender {VERSION}",
             "     render check (Workbench, headless)",
             "ok   headless rendering works",
         ])
         log = box.logged()
-        self.assertIn("python3.11 -m venv .venv", log)
-        self.assertIn(f"python -m pip install --quiet bpy=={VERSION} numpy", log)
+        self.assertIn("uv venv --quiet --seed --python 3.11 --python-preference only-managed .venv", log)
+        self.assertIn(f"uv pip install --quiet --python .venv/bin/python bpy=={VERSION} numpy imageio-ffmpeg", log)
         self.assertEqual(log[-1], "python -")
 
-    def test_python3_serves_when_it_is_3_11(self):
+    def test_an_existing_3_11_venv_is_reused(self):
         box = Sandbox(self)
-        box.interpreter("python3", "3.11.2")
-        r = box.run("setup.sh")
-        self.assertEqual((r.returncode, r.stdout.splitlines()[0]), (0, "ok   Python 3.11.2"))
-        self.assertIn("python3 -m venv .venv", box.logged())
-
-    def test_a_python3_11_that_is_another_version_is_passed_over(self):
-        box = Sandbox(self)
-        box.interpreter("python3.11", "3.12.0")
-        box.interpreter("python3", "3.11.4")
-        r = box.run("setup.sh")
-        self.assertEqual((r.returncode, r.stdout.splitlines()[0]), (0, "ok   Python 3.11.4"))
-
-    def test_no_python_3_11_is_a_miss(self):
-        box = Sandbox(self)
-        box.interpreter("python3", "3.12.1")
-        r = box.run("setup.sh")
-        self.assertEqual(r.returncode, 1)
-        self.assertEqual(r.stdout.strip(), f"miss python 3.11 exactly — the bpy {VERSION} wheel is built for it (brew install python@3.11)")
-
-    def test_an_existing_venv_is_reused(self):
-        box = Sandbox(self)
-        box.interpreter("python3.11", "3.11.9")
+        box.uv()
         box.venv()
         r = box.run("setup.sh")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertNotIn("python3.11 -m venv .venv", box.logged())
+        self.assertEqual(r.stdout.splitlines()[0], "ok   Python 3.11.9 in .venv")
+        self.assertFalse(any(line.startswith("uv venv") for line in box.logged()))
+
+    def test_a_venv_on_another_python_is_replaced(self):
+        box = Sandbox(self)
+        box.uv()
+        box.venv()
+        r = box.run("setup.sh", VENV_PY_OK="1")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("uv venv --quiet --seed --python 3.11 --python-preference only-managed .venv", box.logged())
+
+    def test_no_uv_and_no_network_is_a_miss(self):
+        box = Sandbox(self)
+        box.stub("uname", 'case "$1" in -s) echo Darwin ;; -m) echo arm64 ;; esac')
+        box.stub("curl", "exit 6")
+        r = box.run("setup.sh", ADAPTER_RUNTIME_DIR=str(box.root / "runtime"))
+        self.assertEqual(r.returncode, 1)
+        self.assertEqual(r.stdout.splitlines()[-1], "miss could not download https://github.com/astral-sh/uv/releases/download/"
+                         "0.12.15/uv-aarch64-apple-darwin.tar.gz — check this machine's internet connection")
 
     def test_a_failed_install_stops_setup(self):
         box = Sandbox(self)
-        box.interpreter("python3.11", "3.11.9")
+        box.uv()
         r = box.run("setup.sh", PIP_EXIT="1")
         self.assertNotEqual(r.returncode, 0)
         self.assertNotIn(f"ok   blender {VERSION}", r.stdout)
 
     def test_a_render_check_that_fails_fails_setup(self):
         box = Sandbox(self)
-        box.interpreter("python3.11", "3.11.9")
+        box.uv()
         r = box.run("setup.sh", RENDER_EXIT="3")
         self.assertEqual(r.returncode, 3)
         self.assertEqual(r.stdout.splitlines()[-1], "     render check (Workbench, headless)")

@@ -11,3 +11,20 @@ node store/tools/dsh-delete.mjs <agentId> <machineId>
 ```
 
 `<machineId>` is this machine's id from `harness status` / `~/.harness/cli/data/machines.json`.
+
+## runtimes.sh — what a package runs on
+
+A new machine has Apple's Python 3.9, no Homebrew and usually no Node on PATH, so a package's setup
+never asks the person to install an interpreter: it sources `runtimes.sh` and gets one. `harness_node`
+falls back to the Node Harness itself runs on, `harness_venv` makes a venv on a pinned CPython that
+uv downloads (uv itself is fetched, pinned and checksummed, when absent), and `harness_conda_env`
+covers native libraries PyPI has no wheel for. Everything lands in the package directory or
+`~/.harness/runtime`.
+
+A package installs alone, so each one carries a copy (`toolchain/runtimes.sh` in an agent,
+`runtimes.sh` in a viewer). Edit only `store/tools/runtimes.sh`, then:
+
+```sh
+node store/tools/sync-runtimes.mjs           # rewrite every copy
+node store/tools/sync-runtimes.mjs --check   # exit 1 on a copy that drifted or a package missing one
+```

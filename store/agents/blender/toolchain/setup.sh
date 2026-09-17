@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # Runs once at install, cwd = the install dir. One venv with `bpy` — Blender as a Python module, the
-# whole of Blender minus its window — at the pinned version. The wheel is Python-version specific.
+# whole of Blender minus its window — at the pinned version. The wheel is built for CPython 3.11 alone,
+# so the venv is on 3.11 whatever this machine has: uv downloads that Python when it is not here.
+# imageio-ffmpeg brings an ffmpeg for turntables, since bpy has no movie encoder of its own.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# shellcheck source=runtimes.sh
+. toolchain/runtimes.sh
 VERSION="$(cat BPY_VERSION)"
-PY=""; for c in python3.11 python3; do if command -v "$c" >/dev/null 2>&1 && "$c" -c 'import sys; raise SystemExit(0 if sys.version_info[:2] == (3, 11) else 1)' 2>/dev/null; then PY="$c"; break; fi; done
-[ -n "$PY" ] || { echo "miss python 3.11 exactly — the bpy ${VERSION} wheel is built for it (brew install python@3.11)"; exit 1; }
-echo "ok   $($PY --version)"
-[ -x .venv/bin/python ] || "$PY" -m venv .venv
-.venv/bin/python -m pip install --quiet --upgrade pip >/dev/null 2>&1 || true
+harness_venv .venv 3.11 3.11 3.12 || exit 1
 echo "     installing bpy ${VERSION} (Blender as a module, ~300 MB, a few minutes the first time)"
-.venv/bin/python -m pip install --quiet "bpy==${VERSION}" numpy
+harness_pip .venv "bpy==${VERSION}" numpy imageio-ffmpeg
 echo "ok   blender $(.venv/bin/python -c 'import bpy; print(bpy.app.version_string)')"
 echo "     render check (Workbench, headless)"
 .venv/bin/python - <<'PY'
