@@ -85,24 +85,8 @@ List<PhoneSearchResult> phoneSearchIndex(AppNotifier notifier) {
   for (final entry in recentAgents(agentIndex(notifier))) {
     results.add(_agentResult(entry));
   }
-  for (final machine in visibleMachines(notifier)) {
-    final summary = phoneMachineSummary(machine);
-    results.add(
-      PhoneSearchResult(
-        kind: PhoneSearchKind.machine,
-        id: 'machine:${machine.machine.machineId}',
-        title: machine.machine.displayName,
-        subtitle: summary.label,
-        fields: [
-          machine.machine.displayName.toLowerCase(),
-          summary.label.toLowerCase(),
-        ].where((field) => field.isNotEmpty).toList(),
-        summary: summary,
-        machineId: machine.machine.machineId,
-        machine: machine,
-      ),
-    );
-  }
+  // Agents only. Machines used to be listed here as well; they are reached from the terminal's `⋯`
+  // sheet now (`machine_actions.dart`), so search answers the one question it is opened for.
   return results;
 }
 

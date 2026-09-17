@@ -18,6 +18,7 @@ import 'package:harness_mobile/widgets/terminal_panel.dart';
 
 import 'agents_page.dart' show openNewAgent;
 import 'delete_agent.dart';
+import 'machine_actions.dart';
 import 'phone_header.dart';
 import 'phone_navigation.dart' show phoneRoute;
 import 'phone_search_page.dart' show openPhoneSearch;
@@ -726,59 +727,80 @@ class _TerminalPageState extends State<TerminalPage>
     showPhoneSheet(
       context,
       title: '$agentName · $machineName',
-      // Settings is an icon on the title line rather than a row: it is about the app, not about
-      // this agent, and it is here only because the tab bar that used to lead to it is hidden.
-      titleAction: PhoneSheetAction(
-        icon: LucideIcons.settings300,
-        label: 'Settings',
-        onTap: () => Navigator.of(context).push(
-          phoneRoute(
-            (_) => SettingsPage(notifier: widget.notifier, large: false),
-          ),
+      // Two lines — the agent, then its machine — shown in full.
+      titleParts: [agentName, machineName],
+      // Three groups, by what each row acts on: this agent, the app, and the machines. Machines
+      // moved here from search, which now finds agents only.
+      sections: [
+        PhoneSheetSection(
+          caption: 'Agent',
+          actions: [..._agentActions(agentName)],
         ),
-      ),
-      actions: [
-        PhoneSheetAction(
-          icon: LucideIcons.pencil300,
-          label: 'Rename agent…',
-          onTap: () => showAgentRenameDialog(
-            context,
-            widget.notifier,
-            widget.machineId,
-            widget.agentId,
-            agentName,
-          ),
+        // Four machines, then "N more": the sheet has to stay short enough that App below is not
+        // pushed off a small phone by an account with a rack of machines.
+        PhoneSheetSection(
+          caption: 'Machines',
+          actions: machineSheetRows(context, widget.notifier),
+          maxVisible: 4,
         ),
-        PhoneSheetAction(
-          icon: LucideIcons.refreshCw300,
-          label: 'Restart agent',
-          onTap: () => unawaited(_restart()),
-        ),
-        // Last, and alone in red: the two above are recoverable and this one is
-        // not, so it does not sit where a thumb lands on the way to them.
-        //
-        // ⚠️ Nothing here pops this page. Deleting detaches the pane, and the
-        // `_hadPane` branch above leaves on its own when that happens — the same
-        // path a delete from the list, or from the desktop, already takes. A pop
-        // here would be a second one, and the parked pages in this pager share
-        // the route.
-        PhoneSheetAction(
-          icon: LucideIcons.trash2300,
-          label: 'Delete agent…',
-          destructive: true,
-          onTap: () => unawaited(
-            confirmDeleteAgent(
-              context,
-              widget.notifier,
-              widget.machineId,
-              widget.agentId,
-              agentName,
+        PhoneSheetSection(
+          caption: 'App',
+          actions: [
+            PhoneSheetAction(
+              icon: LucideIcons.settings300,
+              label: 'Settings',
+              onTap: () => Navigator.of(context).push(
+                phoneRoute(
+                  (_) => SettingsPage(notifier: widget.notifier, large: false),
+                ),
+              ),
             ),
-          ),
+          ],
         ),
       ],
     );
   }
+
+  List<PhoneSheetAction> _agentActions(String agentName) => [
+    PhoneSheetAction(
+      icon: LucideIcons.pencil300,
+      label: 'Rename agent…',
+      onTap: () => showAgentRenameDialog(
+        context,
+        widget.notifier,
+        widget.machineId,
+        widget.agentId,
+        agentName,
+      ),
+    ),
+    PhoneSheetAction(
+      icon: LucideIcons.refreshCw300,
+      label: 'Restart agent',
+      onTap: () => unawaited(_restart()),
+    ),
+    // Last, and alone in red: the two above are recoverable and this one is
+    // not, so it does not sit where a thumb lands on the way to them.
+    //
+    // ⚠️ Nothing here pops this page. Deleting detaches the pane, and the
+    // `_hadPane` branch above leaves on its own when that happens — the same
+    // path a delete from the list, or from the desktop, already takes. A pop
+    // here would be a second one, and the parked pages in this pager share
+    // the route.
+    PhoneSheetAction(
+      icon: LucideIcons.trash2300,
+      label: 'Delete agent…',
+      destructive: true,
+      onTap: () => unawaited(
+        confirmDeleteAgent(
+          context,
+          widget.notifier,
+          widget.machineId,
+          widget.agentId,
+          agentName,
+        ),
+      ),
+    ),
+  ];
 
   /// Restarting is a round trip that can fail, and the phone has no status rail to fail into — so
   /// the answer lands as a snackbar, which is the one surface a pushed page here always has.

@@ -7,19 +7,15 @@ import 'package:harness_mobile/shared/theme/app_theme.dart';
 import 'package:harness_mobile/shared/widgets/empty_state.dart';
 import 'package:harness_mobile/state/app_state.dart';
 
-import 'link_page.dart';
 import 'phone_navigation.dart';
 import 'phone_search_field.dart';
 import 'phone_search_folder_header.dart';
 import 'phone_search_groups.dart';
 import 'phone_search_index.dart';
 import 'phone_search_row.dart';
-import 'phone_sheet.dart';
-import 'phone_status.dart';
-import 'unlink_machine.dart';
 
-/// One query over everything the account can reach — agents and machines
-/// together.
+/// One query over every agent the account can reach. Machines are not searched
+/// here — they are on the terminal's `⋯` sheet.
 ///
 /// A screen of its own rather than a field above either list, and that is the
 /// whole point: the two tabs each answer half the question, and somebody who
@@ -141,7 +137,6 @@ class _Results extends StatelessWidget {
 
     final groups = phoneSearchGroups(rows);
     final agents = phoneSearchGroupedRows(groups);
-    final machines = phoneSearchOfKind(rows, PhoneSearchKind.machine);
     final now = DateTime.now();
     return ListView(
       // The keyboard is up and the finger is already on the glass; dragging the
@@ -154,9 +149,8 @@ class _Results extends StatelessWidget {
         MediaQuery.paddingOf(context).bottom + 16,
       ),
       children: [
-        // Agents under their folders, machines in a section of their own. The
-        // two kinds open different things, and a machine row appearing between
-        // two agents is read as another agent until the icon is noticed.
+        // Agents under their folders. Machines are not searched here any more:
+        // they live in the terminal's `⋯` sheet — see `machine_actions.dart`.
         for (final group in groups) ...[
           PhoneSearchFolderHeader(group: group),
           for (final row in group.rows)
@@ -165,16 +159,6 @@ class _Results extends StatelessWidget {
               terms: terms,
               now: now,
               onTap: () => _openAgent(context, agents, row),
-            ),
-        ],
-        if (machines.isNotEmpty) ...[
-          _GroupLabel('Machines', count: machines.length),
-          for (final row in machines)
-            PhoneSearchRow(
-              row: row,
-              terms: terms,
-              now: now,
-              onTap: () => _openMachine(context, row),
             ),
         ],
       ],
@@ -204,95 +188,5 @@ class _Results extends StatelessWidget {
     // index — a shorter list than the one on screen sends a swipe to the wrong
     // agent, with nothing on screen to explain why.
     openAgentPager(context, notifier, phoneSearchAgentEntries(agents), entry);
-  }
-
-  /// A machine that wants its password opens the form for it. One that is
-  /// linked opens a sheet of what can be done TO it — reload its agents,
-  /// re-enter its password, unlink this phone — and no longer a list of its
-  /// agents: those are a swipe away in the terminal, and search already lists
-  /// them above.
-  ///
-  /// Read at the tap, not when the row was drawn, so a machine that got linked
-  /// while this page was open gets the sheet rather than a form it no longer
-  /// needs.
-  void _openMachine(BuildContext context, PhoneSearchResult row) {
-    final machine = notifier.stateOf(row.machineId);
-    if (machine == null) return;
-    switch (phoneMachineStatusOf(machine)) {
-      case PhoneMachineStatus.offline:
-        return;
-      case PhoneMachineStatus.needsPassword:
-        openMachine(context, notifier, row.machineId);
-        return;
-      case PhoneMachineStatus.connecting || PhoneMachineStatus.ready:
-        break;
-    }
-    final machineId = row.machineId;
-    showPhoneSheet(
-      context,
-      title: machine.machine.displayName,
-      actions: [
-        PhoneSheetAction(
-          icon: LucideIcons.refreshCw300,
-          label: 'Reload agents',
-          onTap: () => unawaited(notifier.reloadMachineData(machineId)),
-        ),
-        PhoneSheetAction(
-          icon: LucideIcons.keyRound300,
-          label: 'Re-enter password…',
-          onTap: () => Navigator.of(context).push(
-            phoneRoute(
-              (_) => LinkPage(notifier: notifier, machineId: machineId),
-            ),
-          ),
-        ),
-        // No confirmation, the same as the Machines tab: this sheet is the step
-        // between the tap and the unlink.
-        PhoneSheetAction(
-          icon: LucideIcons.unlink300,
-          label: 'Unlink this phone',
-          destructive: true,
-          onTap: () => unawaited(unlinkThisPhone(context, notifier, machine)),
-        ),
-      ],
-    );
-  }
-}
-
-class _GroupLabel extends StatelessWidget {
-  const _GroupLabel(this.text, {required this.count});
-
-  final String text;
-  final int count;
-
-  @override
-  Widget build(BuildContext context) {
-    AppTheme.watch(context);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(4, 12, 4, 6),
-      child: Row(
-        children: [
-          Text(
-            text.toUpperCase(),
-            style: TextStyle(
-              color: AppPalette.textFaint,
-              fontSize: 11.5,
-              fontWeight: FontWeight.w600,
-              letterSpacing: 0.5,
-            ),
-          ),
-          const SizedBox(width: 7),
-          Text(
-            '$count',
-            style: TextStyle(
-              color: AppPalette.textFaint,
-              fontSize: 11.5,
-              fontWeight: FontWeight.w600,
-              fontFeatures: AppFont.tabularFigures,
-            ),
-          ),
-        ],
-      ),
-    );
   }
 }

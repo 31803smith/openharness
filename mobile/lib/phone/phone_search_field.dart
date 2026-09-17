@@ -164,7 +164,7 @@ class _QueryInput extends StatelessWidget {
         filled: false,
         contentPadding: EdgeInsets.zero,
         constraints: const BoxConstraints(),
-        hintText: 'Search agents and machines',
+        hintText: 'Search agents',
         hintStyle: TextStyle(color: AppPalette.textFaint, fontSize: 16),
       ),
     );
