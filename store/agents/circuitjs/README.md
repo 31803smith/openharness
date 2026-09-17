@@ -32,6 +32,8 @@ harness dsh check .                                  # conformance
 harness dsh install "$PWD" --link                    # this checkout as the installed agent
 harness dsh doctor autonomous/circuitjs              # what the machine is missing
 python3 -m unittest toolchain/test_verdict.py        # the judge's own tests
+python3 -m unittest toolchain/test_scripts.py        # setup (a local stand-in for the downloads), doctor, init, viewer.sh
+node --test test/viewer.test.mjs                     # the pane server, over HTTP, with a stand-in upstream/war
 ```
 
 ## Credit and stewardship
