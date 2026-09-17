@@ -97,8 +97,10 @@ they don't know, and there is nothing for them to choose. The name stays out of 
 it's an argument you pass, not a thing you mention.
 
 No name (or more than one) means it isn't provisioned: stop and say, in plain words, "Harness
-Compute isn't set up on your account yet — sign in to Harness again and it will be." Don't invent
-a name or create one; a guessed name can collide with someone else's on the same shared service.
+Compute isn't set up on this machine yet — restart Harness and it will set itself up." Harness signs
+this machine in to its grid and creates the account's private grid on start, so a restart is what
+completes the setup; signing in again does the same. Don't invent a name or create one; a guessed
+name can collide with someone else's on the same shared service.
 
 **If a command fails because the user isn't signed in**, stop and tell them to run
 `harness login`. That's the only command in this whole feature that's ever theirs to run by hand.

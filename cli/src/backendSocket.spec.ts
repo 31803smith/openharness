@@ -1645,6 +1645,62 @@ describe('grid_models_list says whether this machine has a grid CLI', () => {
 
     expect(await listModels()).toMatchObject({ gridName: GRID_NAME, gridCli: 'path' })
   })
+
+  it('waits for an in-flight grid reconcile before answering, so the first open after an update is not empty', async () => {
+    fake = installFakeGrid(plan)
+    const socket = new BackendSocket('token')
+    // No local fallback and no machine_meta: the name can only come from the reconcile below, so a
+    // non-empty answer proves the RPC waited for it rather than answering "no grid" straight away.
+    socket.deriveGridName = async () => null
+    let settle: () => void = () => {}
+    const reconcile = new Promise<void>((resolve) => {
+      settle = () => { socket.setHarnessGridName(GRID_NAME); resolve() }
+    })
+    socket.gridReadyProbe = () => reconcile
+    socket.connect()
+    const ws = wsMock.instances[0]
+    ws.open()
+    ws.message({ t: 'down', connId: 'web-1', frame: { type: 'grid_models_list', payload: { requestId: 'r' } } })
+    // The reconcile lands a moment later, within the RPC's wait window.
+    setTimeout(() => settle(), 20)
+    await vi.waitFor(() => expect(parseSent(ws).some((item) => (item.frame as { type?: string } | undefined)?.type === 'grid_models_list_result')).toBe(true), { timeout: 10_000 })
+    const reply = parseSent(ws)
+      .map((item) => item.frame as { type?: string; payload?: Record<string, unknown> } | undefined)
+      .find((frame) => frame?.type === 'grid_models_list_result')
+    await socket.stop()
+    expect(reply?.payload).toMatchObject({ gridName: GRID_NAME })
+  })
+})
+
+describe('machine_meta carries the grid name without clobbering it on rename', () => {
+  afterEach(() => { wsMock.instances.length = 0 })
+
+  it('keeps the grid name when a later rename frame omits gridName, and clears it only on an explicit null', async () => {
+    const socket = new BackendSocket('token')
+    // Frames are processed through a queue, so `onMachineMeta` is how a test knows one has landed.
+    const namesSeen: Array<string | null> = []
+    socket.onMachineMeta = (n) => { namesSeen.push(n) }
+    socket.connect()
+    const ws = wsMock.instances[0]
+    ws.open()
+
+    // Connect frame: name and grid together.
+    ws.message({ t: 'down', connId: 'web-1', frame: { type: 'machine_meta', payload: { name: 'mac', gridName: 'someone-7f3a91c4' } } })
+    await vi.waitFor(() => expect(socket.gridName()).toBe('someone-7f3a91c4'))
+
+    // A rename pushes `{ name }` alone — it must NOT wipe the grid name (the bug that left the picker
+    // empty the moment a machine was renamed). Wait until the rename is observably processed, then
+    // confirm the grid name survived it.
+    ws.message({ t: 'down', connId: 'web-1', frame: { type: 'machine_meta', payload: { name: 'renamed' } } })
+    await vi.waitFor(() => expect(namesSeen).toContain('renamed'))
+    expect(socket.gridName()).toBe('someone-7f3a91c4')
+
+    // An explicit null is the account genuinely having no grid, and does clear it.
+    ws.message({ t: 'down', connId: 'web-1', frame: { type: 'machine_meta', payload: { name: 'renamed', gridName: null } } })
+    await vi.waitFor(() => expect(socket.gridName()).toBeNull())
+
+    await socket.stop()
+  })
 })
 
 /** The read-only hardware line for the run-a-harness-compute dialog, answered next to `grid_models_list`. */

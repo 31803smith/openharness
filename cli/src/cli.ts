@@ -59,6 +59,10 @@ import { ensureHarnessGrid } from './lib/gridEnsure.js'
 import { passThroughToGridLogout } from './lib/gridLogout.js'
 import { clearGridMcpUrlCache } from './lib/gridMcpUrl.js'
 import { warnIfGridSignInRemains } from './lib/gridCredentials.js'
+import { reconcileGridAttach, gridNamesLocal } from './lib/gridAttach.js'
+import { signedInGridEmail, resetGridDeriveMemo } from './lib/gridDerive.js'
+import { forgetGridModels } from './lib/gridModels.js'
+import { gridAvailable } from './lib/gridExec.js'
 import { ENGINE_CLI_COMMANDS, ENGINES, engineBin, enginePathOverride } from './lib/engineBin.js'
 import type { AgentEngine } from './engines/types.js'
 import { engineInstallRecipe } from './lib/engineInstall.js'
@@ -274,6 +278,14 @@ const PROXY_BACKEND_TIMEOUT_MS = 20_000
 // declaring an error. A healthy backend connects in well under this; a timeout ⇒ unreachable.
 const CONNECT_WAIT_MS = 10_000
 
+/** Bounds the `POST /api/grid/name` inside the daemon-start grid reconcile, so a stalled control-plane
+ *  connection cannot hold it open. */
+const GRID_MINT_TIMEOUT_MS = 10_000
+/** How long the grid RPCs will gate on the daemon-start reconcile before answering without it,
+ *  whether or not it has settled — the ceiling that keeps a stuck reconcile from degrading every
+ *  grid RPC for the daemon's whole life (`gridReadyProbe`). */
+const GRID_ATTACH_CEILING_MS = 30_000
+
 /** Between session-binding attempts for a process whose engine store is not resolvable yet. */
 const REPAIR_RETRY_MS = 60_000
 /** A NEW process is waiting for a session that is about to appear. Muse makes
@@ -393,18 +405,22 @@ function setupBrowserLink(machineId: string, token: string): string {
   return u.toString()
 }
 
-/** One control-plane call, returning the backend's `data` envelope; throws on a non-2xx / bad body. */
+/** One control-plane call, returning the backend's `data` envelope; throws on a non-2xx / bad body.
+ *  `signal` lets a caller bound the request — a bare `fetch` that accepts the TCP handshake and then
+ *  never answers would otherwise await forever. */
 async function requestJson<T>(
   method: 'GET' | 'POST' | 'DELETE',
   path: string,
   body?: unknown,
   headers: Record<string, string> = {},
+  signal?: AbortSignal,
 ): Promise<T> {
   // A GET/DELETE with no body must not carry a content-type — some proxies reject that pairing.
   const res = await fetch(`${backendHttpBase()}${path}`, {
     method,
     headers: body === undefined ? headers : { 'content-type': 'application/json', ...headers },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    ...(signal ? { signal } : {}),
   })
   const json = (await res.json().catch(() => ({}))) as { success?: boolean; data?: T; error?: { message?: string } }
   if (!res.ok || json.success === false) {
@@ -414,8 +430,8 @@ async function requestJson<T>(
 }
 
 /** POST JSON to the backend and return its `data` envelope; throws on a non-2xx / bad body. */
-async function postJson<T>(path: string, body: unknown, headers: Record<string, string> = {}): Promise<T> {
-  return requestJson<T>('POST', path, body, headers)
+async function postJson<T>(path: string, body: unknown, headers: Record<string, string> = {}, signal?: AbortSignal): Promise<T> {
+  return requestJson<T>('POST', path, body, headers, signal)
 }
 
 /**
@@ -1111,11 +1127,13 @@ async function runForeground(session: AuthSession): Promise<void> {
 
   // The managed grid follows its pin on EVERY daemon start — this one, and the restart a self-update
   // ends in — not only on `--repair`: the pin is expected to move, and a machine installed last month
-  // has to notice. Not awaited: a download must never hold the control port back, and every grid
+  // has to notice. Not awaited here: a download must never hold the control port back, and every grid
   // call resolves the binary afresh (`gridBinaryPath`), so whatever lands is picked up as it lands.
   // Best-effort by construction — it returns rather than throws — and the fatal guard above is the
-  // net under the promise itself.
-  void ensureManagedGrid((m) => console.log(`[grid-runtime] ${m}`))
+  // net under the promise itself. The promise is kept so the grid reconcile below can wait for the
+  // pinned binary before it hands a token over.
+  const managedGridReady = ensureManagedGrid((m) => console.log(`[grid-runtime] ${m}`))
+  void managedGridReady
 
   registry.load()
   // Persisted locators are hints until this process has observed their terminal root and PID/start marker.
@@ -1550,6 +1568,57 @@ async function runForeground(session: AuthSession): Promise<void> {
     })
   }, computerId())
   backendRef = backend
+
+  // Bring this machine's grid sign-in into line with its harness sign-in, once, in the background.
+  // This is what makes a machine that signed in to the harness BEFORE grid existed usable after an
+  // update: it has the `grid` binary now (above), but no grid credentials and no grid to point at
+  // until something signs it in — and the login *event* that used to do that never fires again for
+  // an already-signed-in account. Reconciling on daemon start (the path every update takes) removes
+  // the `harness logout` / `harness login` a person would otherwise have to run by hand.
+  //
+  // Best-effort and non-blocking: it awaits the managed grid, mints/reads the account's name, and
+  // signs in + creates the grid only when the machine is not already there. The RPCs that need the
+  // name wait briefly for it through `gridReadyProbe`.
+  let gridAttachSettled = false
+  // A hard ceiling on how long the RPCs will gate on the reconcile, INDEPENDENT of whether it
+  // settled. `mintName` is bounded below, but the hand-off child (`grid login --harness`) has no
+  // watchdog of its own — a control plane that black-holes its connection could keep the reconcile
+  // pending for the daemon's life, and without this ceiling every grid RPC would then pay the full
+  // per-call wait forever. Past the ceiling the probe returns null and the RPCs stop waiting; a
+  // reconcile that lands later still publishes the name through `onName`.
+  const gridReadyDeadline = Date.now() + GRID_ATTACH_CEILING_MS
+  const gridAttachInFlight = reconcileGridAttach({
+    managedGridReady,
+    gridAvailable: () => gridAvailable(),
+    // The backend mints and remembers the name; this CLI holds neither the account's email nor its
+    // id. An older backend (no route) answers nothing, which the reconcile treats as "no grid yet".
+    // Bounded so a stalled control-plane connection cannot hold the reconcile open indefinitely.
+    mintName: async () => {
+      const { headers } = await controlPlaneAuth()
+      return (await postJson<{ gridName?: string }>('/api/grid/name', {}, headers, AbortSignal.timeout(GRID_MINT_TIMEOUT_MS))).gridName ?? null
+    },
+    accessToken: () => new AuthSessionManager(backendHttpBase()).accessToken(),
+    signedInEmail: () => signedInGridEmail(),
+    gridNames: () => gridNamesLocal(),
+    handoff: (token) => handOffToGrid(token, { json: true }),
+    ensure: (name) => ensureHarnessGrid(name),
+    onName: (name) => {
+      // Answer the picker with this account's grid at once, and drop the memos a stale or absent
+      // sign-in may have filled — the model list, the derived name, and the web-tools URL.
+      backend.setHarnessGridName(name)
+      forgetGridModels()
+      resetGridDeriveMemo()
+      clearGridMcpUrlCache()
+    },
+    log: (line) => console.log(`[grid-attach] ${line}`),
+  }).catch((err) => {
+    console.error('[grid-attach] reconcile failed:', err instanceof Error ? (err.stack ?? err.message) : err)
+    return null
+  }).finally(() => { gridAttachSettled = true })
+  void gridAttachInFlight
+  // While the reconcile is still running AND within the ceiling, the RPCs that need the grid name
+  // wait briefly on it; once it settles, or the ceiling passes, they read the name directly.
+  backend.gridReadyProbe = () => (gridAttachSettled || Date.now() >= gridReadyDeadline ? null : gridAttachInFlight)
 
   /**
    * Is ANY device surface watching this machine?

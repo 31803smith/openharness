@@ -119,6 +119,10 @@ const APP_PRESENCE_UP_MS = 60_000
 // `this.ws` set, every later connect() returning early, and the daemon reporting "cloud
 // reconnecting…" until someone restarted it.
 const HANDSHAKE_TIMEOUT_MS = 15_000
+/** How long `resolveGridName` waits for a grid reconcile still in flight before answering with
+ *  whatever is resolved. Well under the app's 12s `grid_models_list` timeout, leaving that RPC room
+ *  for its own `grid` spawns; a reconcile slower than this lands by the next open. */
+const GRID_ATTACH_WAIT_MS = 6_000
 const BASE_DELAY_MS = 1_000
 const MAX_DELAY_MS = 30_000
 const QUEUE_MAX = 2_000
@@ -602,6 +606,14 @@ export class BackendSocket {
   private harnessGridName: string | null = null
   /** Injected so the derivation (a `grid` spawn) is a seam in tests; see `lib/gridDerive.ts`. */
   deriveGridName: () => Promise<string | null> = deriveHarnessGridName
+  /** The daemon-start grid reconcile (`lib/gridAttach.ts`), while it is running — so the first
+   *  `grid_models_list` / retarget after an update waits for the sign-in it may still be arranging
+   *  rather than answering "no grid". Set by `cli.ts`; returns null when nothing is in flight. */
+  gridReadyProbe: (() => Promise<unknown> | null) | null = null
+
+  /** Set the account's private grid name from the reconcile that just confirmed it, so the RPCs
+   *  answer with it at once rather than waiting for the next `machine_meta` (`lib/gridAttach.ts`). */
+  setHarnessGridName(name: string | null): void { this.harnessGridName = name }
 
   /** Which grid this machine's agents can be pointed at — for `harness status` and the models RPC. */
   gridName(): string | null { return this.harnessGridName }
@@ -611,8 +623,23 @@ export class BackendSocket {
    * work out for itself (`lib/gridDerive.ts`). A backend that predates `machine_meta.gridName`
    * left every picker empty while `grid models` listed the model fine; the derivation is the
    * skill's own rule, so the daemon and the agent it opens agree on which grid is "yours".
+   *
+   * Waits, once and briefly, for a grid reconcile still in flight — the machine that just updated is
+   * signing in to grid in the background, and a picker opened in that window would otherwise read
+   * "no grid" for the one moment the answer is about to arrive. Bounded so a slow reconcile (a fresh
+   * sign-in and a grid create) never holds the RPC past the app's own timeout; whatever is resolved
+   * by then is answered, and the next open — after the reconcile has landed — is correct regardless.
    */
   private async resolveGridName(): Promise<string | null> {
+    const inFlight = this.gridReadyProbe?.()
+    if (inFlight) {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      await Promise.race([
+        inFlight.catch(() => {}),
+        new Promise<void>((resolve) => { timer = setTimeout(resolve, GRID_ATTACH_WAIT_MS) }),
+      ])
+      if (timer) clearTimeout(timer)
+    }
     return this.harnessGridName ?? await this.deriveGridName()
   }
 
@@ -1232,12 +1259,20 @@ export class BackendSocket {
 
     // Machine display name (seed on connect + web renames) — mirrored locally for `harness status`.
     if (type === 'machine_meta') {
-      const meta = frame.payload as { name?: unknown; gridName?: unknown } | undefined
-      const name = meta?.name
-      // The account's private grid, pushed on every connect. Held in memory only: it is the
-      // backend's value, and a daemon that cached it on disk would keep answering with a stale one
-      // after the account's grid changed.
-      this.harnessGridName = typeof meta?.gridName === 'string' && meta.gridName.trim() ? meta.gridName.trim() : null
+      // A malformed/hostile frame's payload need not be an object; `'gridName' in meta` would throw
+      // on a primitive (and drop the whole frame via enqueueDown's catch). Guard the type first, the
+      // way the plain property reads elsewhere in this dispatcher tolerate one.
+      const meta = (typeof frame.payload === 'object' && frame.payload !== null ? frame.payload : {}) as { name?: unknown; gridName?: unknown }
+      const name = meta.name
+      // The account's private grid, pushed on connect. Held in memory only: it is the backend's
+      // value, and a daemon that cached it on disk would keep answering with a stale one after the
+      // account's grid changed. Only ACT on the key when it is present: the connect frame always
+      // carries it (a string or null), but a rename pushes `{name}` alone — and treating that
+      // absence as null used to WIPE a grid name a moment after it was set, leaving the picker
+      // empty. Absent ⇒ unchanged; null ⇒ this account has none; a string ⇒ that grid.
+      if ('gridName' in meta) {
+        this.harnessGridName = typeof meta.gridName === 'string' && meta.gridName.trim() ? meta.gridName.trim() : null
+      }
       this.onMachineMeta?.(typeof name === 'string' && name.trim() ? name.trim() : null)
       return
     }
