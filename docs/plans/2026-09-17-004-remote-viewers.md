@@ -104,6 +104,11 @@ Both disposable M2 machine registrations returned HTTP 200 on deletion after the
 The test bootstrap harness was deleted and a subsequent agent listing confirmed that both bootstrap
 IDs were absent. Logs, screenshots and fixture workspaces were retained for review.
 
+Godogen running on M2, rendered on iMac Home by the native WKWebView probe through the hosted
+encrypted relay (viewer content only; this is not a capture of the complete Flutter app):
+
+![Godogen forwarded from M2 to iMac Home in native WKWebView](assets/remote-viewer-m2-godogen-webkit.png)
+
 Specific assertions:
 
 - Blender's model viewer rendered a small valid glTF. A 12 MiB + 17 byte transfer matched its SHA-256
