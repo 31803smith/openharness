@@ -29,6 +29,7 @@ import { listDir } from './lib/fsBrowse.js'
 import { linkCodexProfile, listCodexProfiles } from './lib/codexProfiles.js'
 import { gridCapableEngines, parseGridLaunchOverride, type GridLaunchOverride } from './lib/gridLaunch.js'
 import { listGridModels, resolveGridTarget } from './lib/gridModels.js'
+import { deriveHarnessGridName } from './lib/gridDerive.js'
 import { AGENT_NAME_RE, FirstPromptUnsupportedError, MAX_FIRST_PROMPT_CHARS, NamedAgentUnsupportedError, supportsFirstPrompt, supportsNamedAgent } from './lib/engineLaunch.js'
 import { readAccountUsage, type AccountUsageReading } from './lib/accountUsage.js'
 import { probeEngines } from './lib/engineProbe.js'
@@ -580,9 +581,21 @@ export class BackendSocket {
   /** The account's private harness grid name, as the backend last reported it. Null until the first
    *  `machine_meta` lands, or when this account has none yet. */
   private harnessGridName: string | null = null
+  /** Injected so the derivation (a `grid` spawn) is a seam in tests; see `lib/gridDerive.ts`. */
+  deriveGridName: () => Promise<string | null> = deriveHarnessGridName
 
   /** Which grid this machine's agents can be pointed at — for `harness status` and the models RPC. */
   gridName(): string | null { return this.harnessGridName }
+
+  /**
+   * The account's private grid: the backend's word when it gave one, else what this machine can
+   * work out for itself (`lib/gridDerive.ts`). A backend that predates `machine_meta.gridName`
+   * left every picker empty while `grid models` listed the model fine; the derivation is the
+   * skill's own rule, so the daemon and the agent it opens agree on which grid is "yours".
+   */
+  private async resolveGridName(): Promise<string | null> {
+    return this.harnessGridName ?? await this.deriveGridName()
+  }
 
   connect(): void {
     if (this.closed || this.ws || this.connecting) return
@@ -1475,9 +1488,10 @@ export class BackendSocket {
         case 'grid_models_list': {
           // Only the account's OWN private grid: the picker is "models my machines serve", not a
           // catalogue of every grid this computer's `grid` CLI happens to be signed into.
+          const gridName = await this.resolveGridName()
           reply(type, requestId, {
-            gridName: this.harnessGridName,
-            models: await listGridModels(this.harnessGridName),
+            gridName,
+            models: await listGridModels(gridName),
             // Which engines a Local model can be offered to at all. Static per CLI version — it is
             // the set of launch contracts in `gridLaunch.ts` — and answered here, beside the list,
             // so the picker can say "Cursor runs only on its own login" instead of offering a row
@@ -1838,7 +1852,7 @@ export class BackendSocket {
           // not know. A client that sends the full `grid` object still works unchanged.
           const picked = typeof payload.gridModel === 'string' ? payload.gridModel : ''
           if (picked && payload.grid === undefined && !clear) {
-            const resolved = await resolveGridTarget(this.harnessGridName, picked)
+            const resolved = await resolveGridTarget(await this.resolveGridName(), picked)
             if (!resolved) {
               reply(type, requestId, { error: 'GRID_UNAVAILABLE', detail: 'Could not read this machine\'s grid endpoint.' })
               return

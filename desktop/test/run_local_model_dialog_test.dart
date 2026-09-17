@@ -7,27 +7,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/auth/auth_session.dart';
 import 'package:harness/core/config.dart';
-import 'package:harness/core/local_key_value_store.dart';
 import 'package:harness/core/models.dart';
 import 'package:harness/settings/config_store.dart';
 import 'package:harness/state/app_state.dart';
 import 'package:harness/widgets/pane_menu.dart';
 import 'package:harness/ws/ws_conn.dart';
-
-class _MemoryStore implements LocalKeyValueStore {
-  final values = <String, String>{};
-  @override
-  Future<String?> read(String key) async => values[key];
-  @override
-  Future<void> write(String key, String value) async {
-    values[key] = value;
-  }
-
-  @override
-  Future<void> delete(String key) async {
-    values.remove(key);
-  }
-}
 
 /// A connection that answers the dialog's three reads and the create at once. Without it the
 /// dialog would wait out each request's own timeout, and `pumpAndSettle` would be measuring those
@@ -165,7 +149,9 @@ void main() {
       ),
       findsOneWidget,
     );
-    expect(find.text("Don't show this again"), findsOneWidget);
+    // No "Don't show this again": the dialog is where the machine is chosen, and a dialog that
+    // could be waved off would take the choice with it.
+    expect(find.text("Don't show this again"), findsNothing);
     expect(find.text('Not now'), findsOneWidget);
     expect(find.text('Start'), findsOneWidget);
     // The product's two rules for this dialog: never the CLI's name, never one vendor's noun for
@@ -378,46 +364,6 @@ void main() {
     expect(payload.containsKey('agent'), isFalse);
   });
 
-  testWidgets('the tick is remembered, and the next entry skips the dialog', (
-    tester,
-  ) async {
-    final storage = _MemoryStore();
-    build(configStore: ConfigStore(storage: storage));
-    await open(tester);
-    await tester.tap(find.byKey(const Key('run-local-model-skip')));
-    await tester.pump();
-    await tester.tap(start);
-    await tester.pumpAndSettle();
-    expect(conn.creates, hasLength(1));
-
-    // Persisted under the plan's key, and read back by a fresh store — the choice is about the
-    // person, and it has to survive a relaunch to be one.
-    expect(storage.values['runLocalModel.skipDialog'], 'true');
-    final reopened = ConfigStore(storage: storage);
-    await reopened.load();
-    expect(reopened.runLocalModelSkipDialog, isTrue);
-
-    await tester.tap(find.byKey(const Key('door')));
-    await tester.pumpAndSettle();
-    expect(find.text('Models that live on your machine'), findsNothing);
-    expect(conn.creates, hasLength(2));
-    expect(conn.creates.last['agent'], 'harness-compute');
-    expect(conn.creates.last.containsKey('prompt'), isFalse);
-  });
-
-  testWidgets('Start without the tick keeps asking', (tester) async {
-    final storage = _MemoryStore();
-    build(configStore: ConfigStore(storage: storage));
-    await open(tester);
-    await tester.tap(start);
-    await tester.pumpAndSettle();
-    expect(storage.values.containsKey('runLocalModel.skipDialog'), isFalse);
-
-    await tester.tap(find.byKey(const Key('door')));
-    await tester.pumpAndSettle();
-    expect(find.text('Models that live on your machine'), findsOneWidget);
-  });
-
   testWidgets('a named machine wins over this computer\'s own', (tester) async {
     // The pane picker names its pane's machine. This computer has a local machine of its own
     // here, and it must NOT be preferred: a picker on a remote agent's pane is asking about the
@@ -477,6 +423,79 @@ void main() {
     // That machine's own home, as it reports it — never this computer's `$HOME`.
     expect(conns['studio']!.creates.single['cwd'], '/home/remote');
     expect(notifier.panes.single.machineId, 'studio');
+  });
+
+  testWidgets('from a pane, the machine is named, not offered', (tester) async {
+    // A pane's picker asks about THAT pane's computer. Two machines linked, the door names the
+    // remote one and says not to offer the other: the dialog shows one plain row, no chips, and
+    // Start opens there.
+    final conns = {
+      'local': _Conn(engines: _installed, gridName: 'someone-7f3a91c4'),
+      'studio': _Conn(engines: _installed, gridName: 'someone-7f3a91c4'),
+    };
+    notifier.dispose();
+    notifier = AppNotifier(
+      config: AppConfig.dev,
+      authSession: AuthSession(),
+      configStore: null,
+      connectionForTest: (id) => conns[id]!,
+    )..hasNavigationRail = false;
+    const local = Machine(
+      machineId: 'local',
+      authMode: MachineAuthMode.remote,
+      name: 'this one',
+    );
+    const studio = Machine(
+      machineId: 'studio',
+      authMode: MachineAuthMode.remote,
+      name: 'studio-7',
+    );
+    notifier.machines = [local, studio];
+    notifier.machineStates['local'] = MachineState(local)
+      ..localOnly = true
+      ..agentLoadStatus = AgentLoadStatus.loaded;
+    notifier.machineStates['studio'] = MachineState(studio)
+      ..nodeOnline = true
+      ..agentLoadStatus = AgentLoadStatus.loaded;
+
+    tester.view.physicalSize = const Size(1200, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => TextButton(
+              key: const Key('door'),
+              onPressed: () => notifier.runLocalModel(
+                context,
+                machineId: 'studio',
+                chooseMachine: false,
+              ),
+              child: const Text('door'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(const Key('door')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('studio-7'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('run-local-model-machine-local')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('run-local-model-machine-studio')),
+      findsNothing,
+    );
+    expect(find.text('Pick the machine it should work on.'), findsNothing);
+
+    await tester.tap(start);
+    await tester.pumpAndSettle();
+    expect(conns['local']!.creates, isEmpty);
+    expect(conns['studio']!.creates, hasLength(1));
   });
 
   testWidgets('with two machines the dialog lists them, and the pick wins', (

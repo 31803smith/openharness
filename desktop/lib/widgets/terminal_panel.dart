@@ -1717,6 +1717,7 @@ class _TerminalHeader extends StatelessWidget {
                               notifier.runLocalModel(
                                 context,
                                 machineId: session.machineId,
+                                chooseMachine: false,
                               ),
                             ),
                           )

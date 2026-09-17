@@ -291,6 +291,7 @@ class AppNotifier extends ChangeNotifier {
   final AuthSession session;
   AppConfig config;
   late ApiClient api;
+
   /// Signs in, and says whether this computer is signed in: the harness CLI in a desktop build,
   /// [ViewerServices.login] in a viewer build — which has no CLI — under one name, so every call
   /// site reads the same in both.
@@ -3482,14 +3483,9 @@ class AppNotifier extends ChangeNotifier {
   /// The one action behind every "Talk to Local model manager" entry: explain once,
   /// then open opencode as the agent that starts one.
   ///
-  /// Runs on the computer the app is on ([MachineState.isLocalMachine]) — a
-  /// local model is about THIS hardware — and falls back to the focused
-  /// machine only when there is no local one, in which case the dialog's
-  /// machine line says so by naming it. With the dialog waved off for good
-  /// ([ConfigStore.runLocalModelSkipDialog]) the agent is created straight
-  /// away; otherwise the dialog decides, and Start is what creates. Nothing
-  /// here reports progress: the pane appearing is the confirmation, and a
-  /// refusal lands in [lastError] like any other create.
+  /// The dialog decides, and Start is what creates. Nothing here reports
+  /// progress: the pane appearing is the confirmation, and a refusal lands in
+  /// [lastError] like any other create.
   ///
   /// Takes the caller's [context] because the dialog needs one and this
   /// notifier holds none — the same shape as every other dialog a door opens.
@@ -3500,7 +3496,16 @@ class AppNotifier extends ChangeNotifier {
   /// the app has one, else whatever the person is looking at. Never guessed
   /// past a named machine: a picker on a remote pane that opened the manager
   /// on this computer was the bug this argument exists to end.
-  Future<void> runLocalModel(BuildContext context, {String? machineId}) async {
+  ///
+  /// [chooseMachine] is whether the dialog offers the other machines. A pane's
+  /// picker is a question about THAT pane's computer, so it does not (the
+  /// machine is named, not offered); the Models menu is about the account, so
+  /// it does.
+  Future<void> runLocalModel(
+    BuildContext context, {
+    String? machineId,
+    bool chooseMachine = true,
+  }) async {
     final machine = machineId != null
         ? machineStates[machineId]
         : _localModelMachine();
@@ -3513,20 +3518,15 @@ class AppNotifier extends ChangeNotifier {
       return;
     }
     machineId = machine.machine.machineId;
-    if (_store?.runLocalModelSkipDialog != true) {
-      final decision = await showRunLocalModelDialog(context, this, machineId);
-      if (decision == null) return;
-      // The dialog lists the machines and the person may have moved the choice.
-      machineId = decision.machineId;
-      if (decision.skipNextTime) {
-        try {
-          await _store?.saveRunLocalModelSkipDialog(true);
-        } catch (_) {
-          // A state file that cannot be written costs one more look at the
-          // dialog next time, not the agent being asked for now.
-        }
-      }
-    }
+    final decision = await showRunLocalModelDialog(
+      context,
+      this,
+      machineId,
+      chooseMachine: chooseMachine,
+    );
+    if (decision == null) return;
+    // The dialog may list the machines, and the person may have moved the choice.
+    machineId = decision.machineId;
     final error = await _startLocalModelAgent(machineId);
     if (error != null) {
       _lastError = error;

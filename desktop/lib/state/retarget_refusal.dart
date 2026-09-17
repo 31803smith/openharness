@@ -25,8 +25,13 @@ String retargetRefusalMessage(String code, {required String engineLabel}) {
     'TMUX_TOO_OLD_FOR_GRID' => "This machine's tmux is too old to move an agent to a Local model. Update tmux there.",
     'TMUX_UNAVAILABLE' || 'TMUX_FAILED' =>
       "This machine's tmux did not answer. Try again in a moment.",
+    // Changing model restarts the agent's process, which would cut off the
+    // reply it is writing — so the daemon waits for the person, and the
+    // sentence says what to do rather than naming the state ("mid-turn" read
+    // as an error).
     'AGENT_BUSY' =>
-      'This agent is mid-turn. Let it finish, then choose the model again.',
+      'This agent is still responding. Stop it or let it finish, then '
+          'choose the model again.',
     'AGENT_NOT_FOUND' ||
     'MISSING_AGENT_ID' => 'This agent is no longer on the machine.',
     'NO_ACTIVE_PROCESS' || 'RETARGET_UNSUPPORTED_BACKEND' =>

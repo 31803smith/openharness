@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../shared/theme/app_theme.dart' as grid;
-import '../shared/widgets/app_checkbox.dart';
 import '../shared/widgets/app_dialog.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
@@ -19,27 +18,32 @@ import 'pane_menu.dart';
 /// drift into two definitions of what Start means.
 ///
 /// Null is Not now (or Escape, or a click outside). A record is Start: the
-/// machine the manager opens on, and whether the person asked not to see this
-/// again — persisted by the caller, not here, because the store belongs to the
-/// notifier.
+/// machine the manager opens on.
 ///
 /// [machineId] is the door's own answer to "which computer" — the pane's
 /// machine, or the one the menu named — and is what the dialog starts on. With
-/// more than one machine linked the dialog shows them and lets the person move
-/// the choice; with one, there is nothing to choose and nothing is shown.
-Future<({String machineId, bool skipNextTime})?> showRunLocalModelDialog(
+/// [chooseMachine] and more than one machine linked, the dialog shows the
+/// others and lets the person move the choice; otherwise the machine is named
+/// and that is that. There is deliberately no "don't show this again": the
+/// dialog is where the machine is chosen, and a dialog that could be waved
+/// off would take the choice with it.
+Future<({String machineId})?> showRunLocalModelDialog(
   BuildContext context,
   AppNotifier notifier,
-  String machineId,
-) => showAppDialog<({String machineId, bool skipNextTime})>(
+  String machineId, {
+  bool chooseMachine = true,
+}) => showAppDialog<({String machineId})>(
   context: context,
   // Lighter than the app's default veil: this is a two-second yes/no in front
   // of the swarm the person was just looking at, not a screen of its own, and
   // the 90% default read as the window going dark. The blur stays, so what is
   // behind is felt rather than read. Same weight the swarm rename uses.
   veilTint: const Color(0x99000000),
-  builder: (_) =>
-      _RunLocalModelDialog(notifier: notifier, machineId: machineId),
+  builder: (_) => _RunLocalModelDialog(
+    notifier: notifier,
+    machineId: machineId,
+    chooseMachine: chooseMachine,
+  ),
 );
 
 /// Two prerequisites, said only when one is missing, as one sentence with
@@ -53,10 +57,15 @@ Future<({String machineId, bool skipNextTime})?> showRunLocalModelDialog(
 enum _Prerequisite { unlinked, offline, opencode }
 
 class _RunLocalModelDialog extends StatefulWidget {
-  const _RunLocalModelDialog({required this.notifier, required this.machineId});
+  const _RunLocalModelDialog({
+    required this.notifier,
+    required this.machineId,
+    required this.chooseMachine,
+  });
 
   final AppNotifier notifier;
   final String machineId;
+  final bool chooseMachine;
 
   @override
   State<_RunLocalModelDialog> createState() => _RunLocalModelDialogState();
@@ -66,9 +75,6 @@ class _RunLocalModelDialogState extends State<_RunLocalModelDialog> {
   /// The machine the manager will open on. Starts as the door's answer and
   /// moves when the person picks another; every read below is about THIS one.
   late String _machineId = widget.machineId;
-
-  bool _skipNextTime = false;
-  bool _skipHovered = false;
 
   @override
   void initState() {
@@ -190,7 +196,9 @@ class _RunLocalModelDialogState extends State<_RunLocalModelDialog> {
   Widget _machineLine(List<MachineState> machines) {
     final current = widget.notifier.stateOf(_machineId) ?? machines.firstOrNull;
     if (current == null) return const SizedBox.shrink();
-    if (machines.length < 2) return _machineRow(current, opens: false);
+    if (!widget.chooseMachine || machines.length < 2) {
+      return _machineRow(current, opens: false);
+    }
     final visible = machines.take(3).toList();
     if (!visible.any((m) => m.machine.machineId == _machineId)) {
       visible[visible.length - 1] = current;
@@ -390,13 +398,6 @@ class _RunLocalModelDialogState extends State<_RunLocalModelDialog> {
                 // one row whatever the count, so a long list never spreads
                 // through the dialog.
                 _machineLine(machines),
-                const SizedBox(height: 12),
-                _SkipCheck(
-                  value: _skipNextTime,
-                  hovered: _skipHovered,
-                  onHover: (value) => setState(() => _skipHovered = value),
-                  onChanged: (value) => setState(() => _skipNextTime = value),
-                ),
               ],
             ),
           ),
@@ -409,64 +410,13 @@ class _RunLocalModelDialogState extends State<_RunLocalModelDialog> {
             FilledButton(
               key: const Key('run-local-model-start'),
               onPressed: missing == null
-                  ? () => Navigator.of(
-                      context,
-                    ).pop((machineId: _machineId, skipNextTime: _skipNextTime))
+                  ? () => Navigator.of(context).pop((machineId: _machineId))
                   : null,
               child: const Text('Start'),
             ),
           ],
         );
       },
-    );
-  }
-}
-
-/// "Don't show this again", box and label under one tap target — the rule
-/// [AppCheckbox] states for every row that carries one.
-class _SkipCheck extends StatelessWidget {
-  const _SkipCheck({
-    required this.value,
-    required this.hovered,
-    required this.onHover,
-    required this.onChanged,
-  });
-
-  final bool value;
-  final bool hovered;
-  final ValueChanged<bool> onHover;
-  final ValueChanged<bool> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    grid.AppTheme.watch(context);
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      onEnter: (_) => onHover(true),
-      onExit: (_) => onHover(false),
-      child: GestureDetector(
-        key: const Key('run-local-model-skip'),
-        onTap: () => onChanged(!value),
-        behavior: HitTestBehavior.opaque,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 6),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              AppCheckbox(value: value, hovered: hovered, onChanged: onChanged),
-              const SizedBox(width: 10),
-              Text(
-                "Don't show this again",
-                style: TextStyle(
-                  fontFamily: grid.AppFont.sans,
-                  fontSize: 13,
-                  color: grid.AppPalette.textPrimary,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
     );
   }
 }
