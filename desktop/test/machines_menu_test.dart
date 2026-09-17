@@ -27,6 +27,32 @@ class _RecordingApi extends ApiClient {
 }
 
 void main() {
+  test(
+    'shared machines never enter the general machine connection path',
+    () async {
+      var requestedConnections = 0;
+      final app = createApp(
+        connectionForTest: (_) {
+          requestedConnections++;
+          throw StateError('A shared machine requested a full connection');
+        },
+      );
+      const shared = Machine(
+        machineId: 'shared',
+        authMode: MachineAuthMode.remote,
+        isShared: true,
+      );
+      app.machines.add(shared);
+      app.machineStates['shared'] = MachineState(shared);
+      await expectLater(app.listRemoteFolder('shared', '/'), throwsStateError);
+      final restart = await app.restartAgent('shared', 'shared-agent');
+      expect(restart.error, contains('view-only'));
+      await app.gridModels('shared');
+      expect(requestedConnections, 0);
+      app.dispose();
+    },
+  );
+
   testWidgets(
     'shared machines expose only invited agents and carry a view-only owner label',
     (tester) async {

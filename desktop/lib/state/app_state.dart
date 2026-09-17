@@ -3709,6 +3709,9 @@ class AppNotifier extends ChangeNotifier {
   }
 
   WsConn _conn(String machineId) {
+    if (machineStates[machineId]?.machine.isShared == true) {
+      throw StateError('This harness is shared with view-only access.');
+    }
     final testConnection = connectionForTest;
     if (testConnection != null) return testConnection(machineId);
     // The local-manual dev fixture exercises a locally-run backend+node stack directly (no real

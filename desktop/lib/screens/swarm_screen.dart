@@ -505,15 +505,16 @@ class _SwarmScreenState extends State<SwarmScreen> {
   DateTime? _localModelsAt;
 
   Future<void> _refreshLocalModels() async {
-    final machines = app.machines;
+    final machines = app.machines.where((machine) => !machine.isShared).toList();
     if (machines.isEmpty) return;
     // The daemon memoises its answer, so a repeat is nearly free — but this is called on every app
     // change, and an RPC per keystroke-sized notification is not free. One read per window is
     // plenty for a list that changes when someone starts or stops serving a model.
     final now = DateTime.now();
     final last = _localModelsAt;
-    if (last != null && now.difference(last) < const Duration(seconds: 10))
+    if (last != null && now.difference(last) < const Duration(seconds: 10)) {
       return;
+    }
     _localModelsAt = now;
     final preferred = machines.firstWhere(
       (m) => app.stateOf(m.machineId)?.isLocalMachine == true,
