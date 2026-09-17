@@ -15,10 +15,24 @@ Color phoneToneColor(PhoneTone tone) => switch (tone) {
 
 /// A status line: a dot — a small spinner while something is under way — and its label.
 class StatusPill extends StatelessWidget {
-  const StatusPill({super.key, required this.summary, this.fontSize = 13});
+  const StatusPill({
+    super.key,
+    required this.summary,
+    this.fontSize = 13,
+    this.dotSize = StatusDot.defaultSize,
+    this.gap = 7,
+  });
 
   final PhoneSummary summary;
   final double fontSize;
+
+  /// The dot's box. Defaulted rather than derived from [fontSize]: every screen
+  /// but one wants the full-size dot, and tying the two would have shrunk them
+  /// all the day the terminal's foot row asked for a smaller one.
+  final double dotSize;
+
+  /// Between the dot and its label, which narrows with the dot.
+  final double gap;
 
   @override
   Widget build(BuildContext context) {
@@ -28,8 +42,8 @@ class StatusPill extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        StatusDot(summary: summary),
-        const SizedBox(width: 7),
+        StatusDot(summary: summary, size: dotSize),
+        SizedBox(width: gap),
         Flexible(
           child: Text(
             summary.label,
@@ -53,9 +67,22 @@ class StatusPill extends StatelessWidget {
 /// The label is still there for a screen reader, and as a long-press tooltip, so a colour is never
 /// the only way to learn what it means.
 class StatusDot extends StatelessWidget {
-  const StatusDot({super.key, required this.summary, this.ring});
+  const StatusDot({
+    super.key,
+    required this.summary,
+    this.ring,
+    this.size = defaultSize,
+  });
+
+  /// The box every screen but the terminal's foot row draws it at.
+  static const double defaultSize = 10;
 
   final PhoneSummary summary;
+
+  /// The dot's box. The filled circle inside it keeps the same proportion, and
+  /// the spinner's stroke thins with it — a 1.6pt stroke on an 8pt box reads as
+  /// a solid ring rather than as something turning.
+  final double size;
 
   /// A cut-out ring in this colour around the dot, for a dot laid OVER something — a badge on a
   /// mark, the way presence sits on an avatar. It should be the colour behind the mark, so the dot
@@ -68,13 +95,16 @@ class StatusDot extends StatelessWidget {
     final color = phoneToneColor(summary.tone);
     final ring = this.ring;
     Widget dot = SizedBox.square(
-      dimension: 10,
+      dimension: size,
       child: summary.tone == PhoneTone.busy
-          ? CircularProgressIndicator(strokeWidth: 1.6, color: color)
+          ? CircularProgressIndicator(
+              strokeWidth: 1.6 * size / defaultSize,
+              color: color,
+            )
           : Center(
               child: DecoratedBox(
                 decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-                child: const SizedBox.square(dimension: 8),
+                child: SizedBox.square(dimension: size * 0.8),
               ),
             ),
     );

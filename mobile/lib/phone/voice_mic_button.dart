@@ -37,8 +37,8 @@ enum VoiceMicFace {
   cancelling,
 }
 
-/// The one voice control on a terminal page — a small round button at the foot
-/// of the page, beside the machine it is talking to.
+/// The one voice control on a terminal page — a small round button floating
+/// over the terminal's bottom right corner. [VoiceMicFab] is what places it.
 ///
 /// Two ways to work it, chosen by [voiceMicMode] and nothing else:
 ///
@@ -51,9 +51,8 @@ enum VoiceMicFace {
 ///    that gesture is what records.
 ///
 /// ⚠️ **The swell is painted, never laid out.** The breathing ring scales past
-/// the button's box with [Clip.none] rather than growing it: this button's row
-/// sits under the terminal, and a row whose height moved with the animation
-/// would resize the remote shell every frame.
+/// the button's box with [Clip.none] rather than growing it, so nothing around
+/// the button moves while it breathes.
 class VoiceMicButton extends StatefulWidget {
   const VoiceMicButton({
     super.key,
@@ -94,36 +93,33 @@ class VoiceMicButton extends StatefulWidget {
   /// can actually read at that moment.
   final ValueChanged<bool>? onSlipChanged;
 
-  /// The space this button takes in the row, and with it the row's height.
+  /// The space this button asks of its parent's layout.
   ///
-  /// ⚠️ **Raising this makes the terminal shorter, so it is not the knob to
-  /// reach for when the target feels small.** `TerminalFootBar.height` is
-  /// derived from it, and that row's top edge is the terminal's bottom edge —
-  /// every point added here is a point taken off the remote shell, which is then
-  /// resized. [touchExtent] is the one that grew instead: it widens what the
-  /// finger can hit without costing the terminal anything.
-  static const double extent = 52;
+  /// ⚠️ **It no longer sets any row's height.** The mic floats over the terminal
+  /// now (see `voice_mic_fab.dart`), so this is simply the box the `Positioned`
+  /// sizes to — raising it costs the terminal nothing, and the hit area below
+  /// already reaches well past it either way.
+  static const double extent = 60;
 
   /// What the finger may actually land on.
   ///
-  /// ⚠️ **Deliberately LARGER than [extent], and drawn outside the row's
-  /// bounds.** Hold-to-talk asks for a press held through a whole sentence, so
-  /// the target has to forgive a thumb that shifts while somebody talks — but
-  /// the row cannot grow to hold a bigger one without shortening the terminal.
-  /// An [OverflowBox] resolves the two: the hit area reaches up over the
-  /// terminal's last line and down towards the home indicator, neither of which
-  /// has anything tappable to collide with, while the row keeps its height.
-  static const double touchExtent = 76;
+  /// ⚠️ **Deliberately LARGER than [extent], and drawn outside the layout
+  /// box.** Hold-to-talk asks for a press held through a whole sentence, so the
+  /// target has to forgive a thumb that shifts while somebody talks. An
+  /// [OverflowBox] is what allows a child bigger than its parent: the hit area
+  /// reaches out over the terminal on every side, which has nothing tappable to
+  /// collide with.
+  static const double touchExtent = 84;
 
   /// How far the hit area spills past its slot on each side.
   ///
-  /// What anything placed beside this button has to clear: the overhang is
-  /// painted over its neighbour and would swallow the neighbour's presses. See
-  /// the gap before the mic in `terminal_foot_bar.dart`.
+  /// What anything placed beside or above this button has to clear: the
+  /// overhang is painted over its neighbour and would swallow the neighbour's
+  /// presses. See the gap above the mic in `voice_mic_fab.dart`.
   static const double touchOverhang = (touchExtent - extent) / 2;
 
   /// The visible circle.
-  static const double _core = 40;
+  static const double _core = 48;
 
   /// How far past [touchExtent] the thumb may stray and still count as "on" the
   /// button.
@@ -389,9 +385,9 @@ class _Glyph extends StatelessWidget {
   Widget build(BuildContext context) {
     if (face == VoiceMicFace.busy) {
       return SizedBox.square(
-        dimension: 18,
+        dimension: 21,
         child: CircularProgressIndicator(
-          strokeWidth: 2.2,
+          strokeWidth: 2.4,
           color: AppPalette.accent,
         ),
       );
@@ -411,7 +407,7 @@ class _Glyph extends StatelessWidget {
         VoiceMicFace.starting ||
         VoiceMicFace.busy => LucideIcons.mic300,
       },
-      size: 21,
+      size: 25,
       color: lit
           ? Colors.white
           : face == VoiceMicFace.off

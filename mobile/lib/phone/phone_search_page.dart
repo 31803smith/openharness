@@ -87,7 +87,7 @@ class _PhoneSearchPageState extends State<PhoneSearchPage> {
                 onBack: () => Navigator.of(context).maybePop(),
               ),
               Expanded(
-                child: _Results(
+                child: PhoneSearchResults(
                   notifier: widget.notifier,
                   rows: rows,
                   terms: terms,
@@ -103,13 +103,22 @@ class _PhoneSearchPageState extends State<PhoneSearchPage> {
   );
 }
 
-class _Results extends StatelessWidget {
-  const _Results({
+/// The ranked results, drawn — agents under their folders, then machines.
+///
+/// ⚠️ Public because two screens draw it: this page, and the terminal's own
+/// in-place search (see `terminal_search.dart`), which expands out of the header
+/// bar rather than pushing a route. The two must return the same rows in the
+/// same order from the same query, or opening a result would walk a different
+/// pager depending on where the search was started.
+class PhoneSearchResults extends StatelessWidget {
+  const PhoneSearchResults({
+    super.key,
     required this.notifier,
     required this.rows,
     required this.terms,
     required this.query,
     required this.total,
+    this.onOpen,
   });
 
   final AppNotifier notifier;
@@ -117,6 +126,14 @@ class _Results extends StatelessWidget {
   final List<String> terms;
   final String query;
   final int total;
+
+  /// Called the moment a row is tapped, before anything opens.
+  ///
+  /// ⚠️ For the in-place search, which is not a route and so is not popped by
+  /// opening something. Its field still holds the keyboard, and the terminal it
+  /// is covering is about to be replaced underneath it — this is what puts the
+  /// search away first. Null on [PhoneSearchPage], where the pop does it.
+  final VoidCallback? onOpen;
 
   @override
   Widget build(BuildContext context) {
@@ -158,7 +175,10 @@ class _Results extends StatelessWidget {
               row: row,
               terms: terms,
               now: now,
-              onTap: () => _openAgent(context, agents, row),
+              onTap: () {
+                onOpen?.call();
+                _openAgent(context, agents, row);
+              },
             ),
         ],
       ],
