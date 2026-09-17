@@ -1,0 +1,151 @@
+name: Release grid runtime
+
+# Build and publish the managed grid — the grid CLI as a runtime under ~/.harness/runtime, the way
+# Node and tmux already are, so a machine that installs the harness has the `grid` its daemon and
+# its agents run without a second installer. Linux archives WRAP autonomous-grid's own release
+# binaries (verified against the release's SHA256SUMS); macOS archives are BUILT with Nuitka from a
+# checkout of the release tag, because grid publishes no macOS binary. Recipe and reasoning:
+# cli/scripts/build-managed-grid.sh. Publishing: desktop/scripts/publish-managed-grid-runtime.sh,
+# writing harness/runtime/grid/metadata.json — whose version is the PIN every daemon follows on its
+# next start (ensureManagedGrid, cli/src/lib/runtimeInstall.ts).
+#
+#   gh workflow run release-grid-runtime.yml -f grid_version=0.3.47                    # build all four, publish
+#   gh workflow run release-grid-runtime.yml -f grid_version=0.3.47 -f publish=false   # build only, inspect the artifacts
+#   gh workflow run release-grid-runtime.yml -f grid_version=0.3.47 -f platforms=darwin-arm64,linux-x64,linux-arm64
+#
+# Nuitka cannot cross-compile, so darwin-x64 needs an Intel runner (macos-15-intel). Drop it from
+# `platforms` if that label is unavailable: a platform absent from the manifest is not an error on
+# a machine — install.sh says so and goes on, and the daemon falls back to a `grid` on PATH.
+
+on:
+  workflow_dispatch:
+    inputs:
+      grid_version:
+        description: 'grid release to package (its tag without the v, e.g. 0.3.47); must be ≥ GRID_VERSION_FLOOR'
+        required: true
+      platforms:
+        description: 'Comma-separated platforms to build and publish'
+        required: true
+        default: 'darwin-arm64,darwin-x64,linux-x64,linux-arm64'
+      publish:
+        description: 'Upload the archives and rewrite harness/runtime/grid/metadata.json'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+env:
+  GCS_BUCKET: s3-autonomous-upgrade-3
+
+jobs:
+  # Proving the credential first: the builds take minutes, a bad secret costs seconds.
+  preflight:
+    if: ${{ inputs.publish }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Verify GCS write access
+        run: |
+          set -euo pipefail
+          probe="gs://${GCS_BUCKET}/harness/runtime/grid/.ci-preflight/${GITHUB_RUN_ID}"
+          echo "$GITHUB_RUN_ID" | gsutil cp - "$probe"
+          gsutil rm "$probe"
+
+  # The platforms input, as a matrix: one runner per platform, because each builds (or at least
+  # smoke-tests) its own.
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      platforms: ${{ steps.matrix.outputs.platforms }}
+    steps:
+      - id: matrix
+        # Inputs reach the shell through the environment, never by interpolation into the script:
+        # a dispatch input is a maintainer's, but a quoted string is not a place to trust one.
+        env:
+          PLATFORMS: ${{ inputs.platforms }}
+        run: |
+          set -euo pipefail
+          declare -A runner=(
+            [darwin-arm64]=macos-15
+            [darwin-x64]=macos-15-intel
+            [linux-x64]=ubuntu-latest
+            [linux-arm64]=ubuntu-24.04-arm
+          )
+          entries=()
+          spaced=""
+          IFS=',' read -ra wanted <<< "$PLATFORMS"
+          for platform in "${wanted[@]}"; do
+            platform="${platform// /}"
+            [[ -n "${runner[$platform]:-}" ]] || { echo "unknown platform: $platform" >&2; exit 1; }
+            entries+=("{\"platform\":\"$platform\",\"runner\":\"${runner[$platform]}\"}")
+            spaced="${spaced:+$spaced }$platform"
+          done
+          echo "matrix={\"include\":[$(IFS=,; echo "${entries[*]}")]}" >> "$GITHUB_OUTPUT"
+          echo "platforms=$spaced" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: plan
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: true
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v7
+      # The macOS build is grid's own packaging/build_binary.sh, which wants a Homebrew or PATH
+      # Python 3.11–3.13 and installs Nuitka into its own venv.
+      - if: ${{ startsWith(matrix.platform, 'darwin') }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Build grid ${{ inputs.grid_version }} for ${{ matrix.platform }}
+        env:
+          GRID_VERSION: ${{ inputs.grid_version }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          bash cli/scripts/build-managed-grid.sh "$PLATFORM" "$GRID_VERSION" "$RUNNER_TEMP/dist"
+          archive="$RUNNER_TEMP/dist/grid-${GRID_VERSION}-${PLATFORM}.tar.gz"
+          {
+            echo "### grid ${GRID_VERSION} · ${PLATFORM}"
+            echo '```'
+            echo "size    $(wc -c < "$archive" | tr -d ' ') bytes"
+            echo "sha256  $(shasum -a 256 "$archive" | awk '{print $1}')"
+            tar -tzf "$archive"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: grid-${{ inputs.grid_version }}-${{ matrix.platform }}
+          path: ${{ runner.temp }}/dist/grid-${{ inputs.grid_version }}-${{ matrix.platform }}.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    if: ${{ inputs.publish }}
+    needs: [preflight, plan, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: grid-${{ inputs.grid_version }}-*
+          path: dist
+          merge-multiple: true
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Publish archives and manifest
+        env:
+          GRID_VERSION: ${{ inputs.grid_version }}
+          GRID_PLATFORMS: ${{ needs.plan.outputs.platforms }}
+        run: |
+          set -euo pipefail
+          ls -la dist
+          bash desktop/scripts/publish-managed-grid-runtime.sh "$GRID_VERSION" dist
+          echo "Published grid **${GRID_VERSION}** (${GRID_PLATFORMS}) → \`https://storage.googleapis.com/${GCS_BUCKET}/harness/runtime/grid/metadata.json\`" >> "$GITHUB_STEP_SUMMARY"
