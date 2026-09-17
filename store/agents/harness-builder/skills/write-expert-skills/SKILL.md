@@ -12,7 +12,7 @@ and nothing else must work like an expert with the tool, and keep the viewer mov
 "$BUILDER" stage skills active --note "Writing the <tool> workflow"
 ```
 
-## `AGENTS.md` (the harness's, at the package root)
+## `package/AGENTS.md` (the harness's own)
 
 Model it on `$BUILDER_REFERENCE/store/agents/marp/AGENTS.md`, the Store's clearest one. In order:
 
@@ -29,7 +29,7 @@ Model it on `$BUILDER_REFERENCE/store/agents/marp/AGENTS.md`, the Store's cleare
    eight words or fewer; a chart has a title that states the finding). These come from the brief's
    research, not from taste.
 
-## Skills (`skills/<name>/SKILL.md`)
+## Skills (`package/skills/<name>/SKILL.md`)
 
 - One skill per real body of craft, usually one or two: the tool's dialect and patterns, and the
   workflow. Frontmatter `name` (kebab-case, the folder name) and `description` (what it is and when to

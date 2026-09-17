@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-src http://127.0.0.1:*" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Builder Studio</title>
+  <link rel="stylesheet" href="/app/style.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="mark" id="mark">·</div>
+    <div class="titles">
+      <div class="eyebrow">Harness Builder</div>
+      <h1 id="title">Name a tool to build a harness for</h1>
+      <div class="status" id="status"></div>
+    </div>
+    <div class="gates" id="gates"></div>
+  </header>
+
+  <nav class="track" id="track" aria-label="Stages"></nav>
+
+  <main class="body">
+    <section class="stage" id="stage">
+      <div class="tabs" role="tablist" id="tabs"></div>
+      <div class="panel" id="panel"></div>
+    </section>
+    <aside class="side">
+      <h2>Stages</h2>
+      <ol class="stages" id="stages"></ol>
+      <h2>Activity</h2>
+      <ol class="log" id="log"></ol>
+    </aside>
+  </main>
+
+  <div class="lightbox" id="lightbox" hidden>
+    <img id="lightbox-img" alt="" />
+    <div class="lightbox-caption" id="lightbox-caption"></div>
+  </div>
+  <script type="module" src="/app/app.js"></script>
+</body>
+</html>

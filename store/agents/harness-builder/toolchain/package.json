@@ -1,0 +1,13 @@
+{
+  "name": "harness-builder-toolchain",
+  "private": true,
+  "type": "module",
+  "description": "The Harness Builder's toolchain: the builder CLI, Builder Studio, proof pictures.",
+  "scripts": {
+    "test": "node --test ../test/"
+  },
+  "dependencies": {
+    "marked": "18.0.13",
+    "playwright-core": "1.63.0"
+  }
+}

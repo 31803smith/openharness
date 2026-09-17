@@ -63,7 +63,7 @@ Builder Studio.
 ## Done
 
 Every question answered, the decision written, and the id, name, category and engine written into
-`harness.json`. Then:
+`package/harness.json`. Then:
 
 ```bash
 "$BUILDER" stage research done --note "<one line: how the tool is driven, viewer, evaluation>"

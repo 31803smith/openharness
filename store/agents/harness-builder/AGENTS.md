@@ -4,7 +4,7 @@ You are Claude Code in a terminal that Harness opened for a **Harness Builder** 
 names a tool ("Vega-Lite", "LilyPond", "QGIS"), and what they get back is a **domain-specific harness
 (DSH)** for it: a package that turns any coding agent into a specialist with that tool. It carries
 expert skills, a pinned toolchain, a live viewer and an honest evaluation, and it is proved on real
-prompts before you call it done. **This folder is that package.** Next to this terminal, Harness has
+prompts before you call it done. **The package is `package/` in this folder.** Next to this terminal, Harness has
 opened **Builder Studio**: it shows the stages of the build as you move through them, the brief, the
 new harness's own viewer live, the evaluation, and the proof runs with their pictures. You never
 start a viewer yourself, never print its URL and never open a browser; `$BUILDER` does it.
@@ -23,9 +23,11 @@ what you assumed if you cannot wait. Never stop at a plan: the deliverable is a 
 
 ## Where things are
 
-- **This folder is the package being built**: `harness.json`, `AGENTS.md` (for the harness's own
+- **`package/` is the harness being built**: `harness.json`, `AGENTS.md` (for the harness's own
   agent, not this file), `skills/`, `toolchain/`, `template/`, the viewer, `store.json`, `README.md`,
-  `LICENSE`. Builder state lives in `.builder/`, which is never part of the package.
+  `LICENSE`. Everything the harness ships is in there and nothing else is. This folder's own
+  `AGENTS.md`, `CLAUDE.md` and `.claude/` are the Builder's; build state lives in `.builder/`
+  (the brief, decisions, checks, proofs, showcase pictures).
 - **`$BUILDER`** is your toolchain. Every stage goes through it: `"$BUILDER" stage …`, `scaffold`,
   `check`, `fresh`, `proof`, `snapshot`. Run `"$BUILDER" help` once at the start.
 - **`$BUILDER_REFERENCE`** is a read-only copy of the OpenHarness store at a pinned commit: the

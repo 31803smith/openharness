@@ -14,7 +14,7 @@ who pressed Get and will not open a terminal. A harness that answers "brew insta
 
 ## Rules
 
-- **Everything inside the package directory**: a `.venv`, a `node_modules`, a `vendor/` tarball, a
+- **Everything inside `package/`**: a `.venv`, a `node_modules`, a `vendor/` tarball, a
   conda environment. Never `pip install --user`, `npm -g`, `brew`, `sudo`, or the user's shell profile.
 - **Interpreters come from `toolchain/runtimes.sh`** (copy it verbatim from
   `$BUILDER_REFERENCE/store/tools/runtimes.sh`; do not edit the copy):

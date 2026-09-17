@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# "$BUILDER": the Harness Builder's toolchain, on the Node this machine has or Harness's own.
+set -euo pipefail
+HERE="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=runtimes.sh
+. "$HERE/runtimes.sh"
+harness_node 20 >/dev/null || { harness_node 20; exit 1; }
+exec node "$HERE/builder.mjs" "$@"
