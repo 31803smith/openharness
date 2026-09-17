@@ -121,7 +121,8 @@ You do not need permission to build a harness or share its repository. Choose th
   author or upstream project. The catalog publisher generates the listing from those files.
 
 The [publishing examples](store/README.md#publish-a-harness) show the exact metadata for both routes.
-A merge to `main` publishes the live catalog automatically. Running clients pick it up within
+The live catalog is published independently of client releases; see the
+[publication setup](store/README.md#live-catalog). Running clients pick up a published catalog within
 minutes; no app or CLI release is needed for a new harness or viewer that uses the existing
 package format. The catalog describes packages; installation still happens when someone chooses
 Get. Installed packages are not silently replaced.
@@ -168,7 +169,7 @@ Security reports go through [SECURITY.md](SECURITY.md).
    currently run manually through **Actions → CI → Run workflow**; a PR does not automatically
    exercise the app, real engines, or hardware. Report those checks separately.
 5. **Merge and release.** PRs are squash-merged. Rebase on the latest `main` when needed to keep
-   the diff readable. Harness catalog changes publish automatically after merge. App, CLI, and
+   the diff readable. Harness catalog changes use the independent catalog publisher. App, CLI, and
    firmware releases have their own schedules.
 
 ## Conventions across this repository
