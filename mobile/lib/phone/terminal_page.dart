@@ -19,13 +19,13 @@ import 'package:harness_mobile/widgets/terminal_panel.dart';
 import 'agents_page.dart' show openNewAgent;
 import 'delete_agent.dart';
 import 'phone_header.dart';
-import 'phone_input_mode_store.dart';
 import 'phone_navigation.dart' show phoneRoute;
 import 'phone_search_page.dart' show openPhoneSearch;
 import 'phone_sheet.dart';
 import 'phone_status.dart';
 import 'settings_page.dart';
 import 'status_pill.dart';
+import 'terminal_foot_bar.dart';
 import 'terminal_input_dock.dart';
 import 'voice_input_controller.dart';
 
@@ -106,14 +106,14 @@ class _TerminalPageState extends State<TerminalPage>
   /// TerminalPage still sitting in the Agents tab's stack.
   bool _hadPane = false;
 
-  /// Whether the Keyboard button in voice input has asked for the keyboard,
-  /// and it has not risen yet.
+  /// Whether a tap on the terminal has asked for the keyboard, and it has not
+  /// risen yet.
   ///
   /// What makes [TerminalPanel] claim focus at all: arriving on a page raises
-  /// nothing, and a tap on the terminal opens voice input, so this is the one
-  /// way the keyboard is SUMMONED. Spent the moment the keyboard is up — from
-  /// then on [_keyboardIsUp] holds it — so Back or `⌄` can put it away without
-  /// a claim fetching it straight back.
+  /// nothing, and the panel takes the terminal's tap for [_raiseKeyboard], so
+  /// this is the one way the keyboard is SUMMONED. Spent the moment the
+  /// keyboard is up — from then on [_keyboardIsUp] holds it — so Back or `⌄`
+  /// can put it away without a claim fetching it straight back.
   ///
   /// It stays set when no inset ever arrives, which is what a hardware keyboard
   /// looks like: the terminal keeps its focus, and the key bar stays for `esc`.
@@ -203,8 +203,10 @@ class _TerminalPageState extends State<TerminalPage>
     // finish. Spending it this early is the point: it is off long before any
     // Back press can arrive.
     final requested = _keyboardRequested && !up;
-    // One input at a time. Whatever raised the keyboard, voice input yields.
-    if (up && widget.voice.isOpen) widget.voice.close();
+    // One input at a time. Whatever raised the keyboard, voice input yields —
+    // the mic's row is hidden under the key bar, and a take nobody can see is a
+    // microphone left on.
+    if (up && !widget.voice.isIdle) widget.voice.clear();
 
     // Every tick that MOVES the inset is the animation still running; the run
     // ends when one window passes without another move. Gated on a real change
@@ -246,53 +248,33 @@ class _TerminalPageState extends State<TerminalPage>
   bool get _shouldFocus =>
       widget.isActive && (_keyboardIsUp || _keyboardRequested);
 
-  /// A tap on the terminal while no keyboard is up or coming: voice input,
-  /// waiting on its mic button. Null while the keyboard is, so the tap is
-  /// xterm's and the keyboard stays.
+  /// A tap on the terminal while no keyboard is up or coming: the keyboard.
+  /// Voice is the mic at the foot of the page, never this tap — see
+  /// [TerminalFootBar].
   ///
-  /// In [PhoneInputMode.keyboard] the same tap asks for the keyboard instead, the way the phone
-  /// worked before voice input — through [_keyboardRequested], the path the Keyboard button in voice
-  /// input already takes, so the two ways of getting a keyboard behave identically once it is up.
-  VoidCallback? get _onInputTap {
-    if (_shouldFocus) return null;
-    return switch (phoneInputModeStore.value) {
-      PhoneInputMode.voice => widget.voice.open,
-      PhoneInputMode.keyboard => () => setState(
-        () => _keyboardRequested = true,
-      ),
-    };
-  }
-
-  /// The Keyboard button in voice input. What was heard is typed into the
-  /// prompt rather than dropped, so the keyboard picks up where the voice left
-  /// off — to correct a word, or to finish the sentence. A take still being
-  /// recorded is transcribed first: pressing Keyboard mid-sentence is asking to
-  /// fix that sentence, not to lose it.
-  Future<void> _useKeyboard(TerminalSession session) async {
+  /// What was said and not sent is typed into the prompt on the way rather than
+  /// dropped, so the keyboard picks up where the voice left off — to correct a
+  /// word, or to finish the sentence. A take still being recorded is
+  /// transcribed first: tapping the terminal mid-sentence is asking to fix that
+  /// sentence, not to lose it.
+  Future<void> _raiseKeyboard(TerminalSession session) async {
     final heard = await widget.voice.takeTranscript();
     if (!mounted) return;
-    widget.voice.close();
     if (heard.isNotEmpty && session.acceptsInput) {
       session.terminal.textInput(heard);
     }
     setState(() => _keyboardRequested = true);
   }
 
-  /// Puts away whichever input is up without leaving the page — the `⌄` key on
+  /// Puts the keyboard away without leaving the page — the `⌄` key on
   /// [TerminalKeyBar]. Dropping focus is what closes the input connection.
   void _dismissInput() {
-    widget.voice.close();
     FocusManager.instance.primaryFocus?.unfocus();
     if (_keyboardRequested) setState(() => _keyboardRequested = false);
   }
 
-  /// Whether an input on screen is THIS page's — the keyboard, or voice input
-  /// in its place — the question the machine row at the foot of the page asks,
-  /// which [_keyboardUp] alone answers wrongly.
-  ///
-  /// Voice input counts for the same reason the keyboard does: the panel takes
-  /// the keyboard's place, and a status line under it is a row the terminal
-  /// loses while someone is talking to the agent.
+  /// Whether the keyboard on screen is THIS page's — the question the foot row
+  /// asks, which [_keyboardUp] alone answers wrongly.
   ///
   /// ⚠️ [_keyboardUp] means "an inset exists", not "this page raised it". A
   /// pushed page with a text field — search, rename — raises one of its own,
@@ -310,8 +292,7 @@ class _TerminalPageState extends State<TerminalPage>
   /// keyboard ITSELF, which is screen-wide, and a covered page must keep
   /// tracking it to know what to do when it is uncovered.
   bool get _ownsInput =>
-      (_keyboardUp || widget.voice.isOpen) &&
-      (ModalRoute.of(context)?.isCurrent ?? true);
+      _keyboardUp && (ModalRoute.of(context)?.isCurrent ?? true);
 
   /// Guards against a second picker while one is already up.
   ///
@@ -380,15 +361,9 @@ class _TerminalPageState extends State<TerminalPage>
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      // The panel opening or closing hides or shows the machine row — see
-      // [_ownsInput]. Its open STATE only: what it hears repaints the panel.
-      // The input mode too: Settings is pushed over this page, and what a tap opens has to follow a
-      // change made there the moment the person comes back.
-      listenable: Listenable.merge([
-        widget.notifier,
-        widget.voice.openState,
-        phoneInputModeStore,
-      ]),
+      // Not the voice controller: what the mic hears repaints the foot row,
+      // which listens for itself, and never rebuilds the terminal above it.
+      listenable: widget.notifier,
       builder: (context, _) {
         AppTheme.watch(context);
         final pane = widget.notifier.panes
@@ -438,7 +413,8 @@ class _TerminalPageState extends State<TerminalPage>
                     size: 22,
                   ),
                   // ⚠️ No subtitle. The machine and its state moved to
-                  // [_MachineBar] at the foot of the page — see there for why.
+                  // [TerminalFootBar] at the foot of the page — see there for
+                  // why.
                   // A header carrying both a name and a status line spent two
                   // rows on identity and left the filename, the one thing that
                   // says WHICH agent this is, sharing its row with four
@@ -572,19 +548,23 @@ class _TerminalPageState extends State<TerminalPage>
                                 // ⚠️ The tap is taken in the panel, not by a
                                 // `Listener` over it. xterm's own `_onTapDown`
                                 // calls `requestKeyboard()`, so anything that
-                                // merely ALSO reacted to the tap would get the
-                                // keyboard rising under voice input — and a
-                                // re-armed claim on top of it was measured
-                                // asking Android twice per tap, which answers a
-                                // show mid-animation by cancelling and
-                                // restarting it.
-                                onInputTap: _onInputTap,
+                                // merely ALSO reacted to the tap would raise
+                                // the keyboard before the words said were typed
+                                // into the prompt — and a re-armed claim on top
+                                // of it was measured asking Android twice per
+                                // tap, which answers a show mid-animation by
+                                // cancelling and restarting it. Null while the
+                                // keyboard is up or coming, so the tap is
+                                // xterm's and the keyboard stays.
+                                onInputTap: _shouldFocus
+                                    ? null
+                                    : () => unawaited(_raiseKeyboard(session)),
                                 showHeader: false,
                                 // No composer, and so no grip above it: the
                                 // page hands the pane its full height and the
                                 // software keyboard drives the terminal
-                                // directly. Voice input's Send is what kept
-                                // the composer's batched turn.
+                                // directly. The mic's send is what kept the
+                                // composer's batched turn.
                               ),
                       ),
                       // The bottom of this page IS just above the keyboard:
@@ -594,10 +574,8 @@ class _TerminalPageState extends State<TerminalPage>
                       if (session != null)
                         TerminalInputDock(
                           session: session,
-                          voice: widget.voice,
                           keyboardUp: _keyboardUp || _keyboardRequested,
                           onDismiss: _dismissInput,
-                          onUseKeyboard: () => unawaited(_useKeyboard(session)),
                           // Only where the far side can actually take one: an
                           // older CLI never advertises the binary kind, so the
                           // upload would go nowhere silently. Null leaves the
@@ -615,9 +593,10 @@ class _TerminalPageState extends State<TerminalPage>
                                 )
                               : null,
                         ),
-                      // Which computer this is running on, and whether it is
-                      // still answering — the pair that used to sit under the
-                      // filename in the header.
+                      // Which computer this is running on, whether it is still
+                      // answering, and the mic — the pair that used to sit
+                      // under the filename in the header, and the one voice
+                      // control the page has.
                       //
                       // ⚠️ Below the key bar, not above it. The bar is what the
                       // thumb works, and a line that moves every time it
@@ -631,8 +610,10 @@ class _TerminalPageState extends State<TerminalPage>
                       // chrome the terminal loses for nothing — state is not
                       // what is being read mid-typing.
                       if (!_ownsInput)
-                        _MachineBar(
+                        TerminalFootBar(
                           name: machine?.machine.displayName ?? '',
+                          voice: widget.voice,
+                          session: session,
                           // ⚠️ The machine ALONE once the reclaim button is up.
                           // The two say the same fact in different words —
                           // "Taken over" here against "Take control" there,
@@ -898,71 +879,4 @@ class _HeaderAction extends StatelessWidget {
       onPressed: onPressed,
     ),
   );
-}
-
-/// The foot of the page: which computer the agent runs on, and whether that
-/// computer is still answering.
-///
-/// It reads as one fact — *this agent, on that machine, live* — so the machine
-/// and the state share a row rather than stacking. The dot belongs to the
-/// state, not to the name, which is why [StatusPill] draws the pair and this
-/// widget only puts the machine in front of it.
-///
-/// ⚠️ The name is what yields when the row is narrow. A truncated state word
-/// is the bug this layout was moved out of the header to avoid — "Taken over"
-/// ellipsed to "Ta…" there — so [StatusPill] keeps its intrinsic width and the
-/// [Flexible] is on the name alone. A machine called "Macbook Pro của Phát"
-/// loses its tail; "Disconnected" never does.
-class _MachineBar extends StatelessWidget {
-  const _MachineBar({required this.name, required this.status});
-
-  final String name;
-
-  /// Null while the header's reclaim button is saying the state instead — see
-  /// the call site. The row then carries the machine alone, at the same height
-  /// it has with both, so nothing under the terminal moves when a session is
-  /// taken over.
-  final PhoneSummary? status;
-
-  @override
-  Widget build(BuildContext context) {
-    AppTheme.watch(context);
-    final status = this.status;
-    // Nothing to say — the machine has not loaded and the header is carrying
-    // the state. Draw no row rather than an empty one holding its padding
-    // open under the terminal.
-    if (name.isEmpty && status == null) return const SizedBox.shrink();
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 8, 20, 10),
-      child: Row(
-        children: [
-          if (name.isNotEmpty)
-            Flexible(
-              child: Text(
-                name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: AppPalette.textSecondary,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ),
-          if (name.isNotEmpty && status != null)
-            // A separator the eye passes over rather than reads: the two halves
-            // are one sentence, and a heavier mark between them made the row
-            // look like two controls.
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 7),
-              child: Text(
-                '·',
-                style: TextStyle(color: AppPalette.textFaint, fontSize: 12),
-              ),
-            ),
-          if (status != null) StatusPill(fontSize: 12, summary: status),
-        ],
-      ),
-    );
-  }
 }

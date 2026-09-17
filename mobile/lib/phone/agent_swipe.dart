@@ -133,7 +133,7 @@ class _AgentSwipeHostState extends State<AgentSwipeHost> {
   /// and the panes to close are the ones actually opened, not the ones a fresh list would name.
   final Set<({String machineId, String agentId})> _attached = {};
 
-  /// Voice input for every page of this pager: open or closed, and what has been heard so far,
+  /// Voice input for every page of this pager: a take in progress, and what has been heard so far,
   /// survive a swipe the way a keyboard that is up does. Disposed with the pager, which is what
   /// turns the microphone off on the way out.
   ///

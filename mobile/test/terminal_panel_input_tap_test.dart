@@ -8,10 +8,10 @@ import 'package:harness_mobile/terminal/terminal_session.dart';
 import 'package:harness_mobile/widgets/terminal_panel.dart';
 import 'package:xterm/xterm.dart';
 
-/// On the phone a tap on the terminal opens voice input, and the keyboard is
-/// only ever what voice input hands over to. The panel is where that tap is
-/// taken: xterm would otherwise raise the keyboard itself before anyone else
-/// could say otherwise.
+/// On the phone the page decides what a tap on the terminal does — it types
+/// what the mic heard into the prompt before it raises the keyboard. The panel
+/// is where that tap is taken: xterm would otherwise raise the keyboard itself
+/// before anyone else could say otherwise.
 void main() {
   late AppNotifier notifier;
   late TerminalSession session;

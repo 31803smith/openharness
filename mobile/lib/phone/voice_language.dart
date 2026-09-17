@@ -1,7 +1,4 @@
-import 'package:flutter/widgets.dart';
-import 'package:lucide_icons_flutter/lucide_icons.dart';
-
-import 'phone_sheet.dart';
+import 'dart:ui' show Locale;
 
 typedef VoiceLanguage = ({String code, String name});
 
@@ -30,22 +27,10 @@ String defaultVoiceLanguage(List<Locale> preferred) {
   return 'en';
 }
 
-/// Picks the language voice input is transcribed in.
-Future<void> showVoiceLanguagePicker(
-  BuildContext context, {
-  required String current,
-  required ValueChanged<String> onSelected,
-}) => showPhoneSheet(
-  context,
-  title: 'Voice input language',
-  actions: [
-    for (final language in voiceLanguages)
-      PhoneSheetAction(
-        icon: language.code == current
-            ? LucideIcons.check300
-            : LucideIcons.languages300,
-        label: language.name,
-        onTap: () => onSelected(language.code),
-      ),
-  ],
-);
+/// The language's own name, for a code from [voiceLanguages].
+String voiceLanguageName(String code) =>
+    voiceLanguages
+        .where((language) => language.code == code)
+        .firstOrNull
+        ?.name ??
+    code;

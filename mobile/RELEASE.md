@@ -185,9 +185,9 @@ owned by the user's own machine, which is why an account with no paired machine 
 The camera permission is used only when sending a photo into a session (Agents ▸ a session ▸ the
 image button).
 
-The microphone permission is used only for voice input: tapping a session's terminal records what is
-said, and it is transcribed into the message sent to that session (Agents ▸ a session ▸ tap the
-terminal).
+The microphone permission is used only for voice input: the mic button under a session's terminal
+records what is said, and it is transcribed into the message sent to that session (a session ▸ the
+mic at the bottom right).
 ```
 
 ## Submitting

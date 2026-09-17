@@ -1,7 +1,6 @@
 import 'dart:async';
-import 'dart:typed_data';
-import 'dart:ui';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness_mobile/phone/voice_input_controller.dart';
 import 'package:harness_mobile/phone/voice_notice.dart';
@@ -11,55 +10,43 @@ import 'voice_fakes.dart';
 void main() {
   late FakeVoiceRecorder recorder;
   late FakeTranscriber backend;
-  late MemoryKeyValueStore storage;
+  late ValueNotifier<String> language;
   late VoiceInputController voice;
-
-  VoiceInputController controller({List<Locale> locales = const []}) =>
-      VoiceInputController(
-        transcriber: backend.call,
-        recorder: recorder,
-        storage: storage,
-        preferredLocales: locales,
-      );
 
   setUp(() {
     recorder = FakeVoiceRecorder();
     backend = FakeTranscriber();
-    storage = MemoryKeyValueStore();
-    voice = controller();
+    language = ValueNotifier('en');
+    voice = VoiceInputController(
+      transcriber: backend.call,
+      recorder: recorder,
+      language: language,
+    );
   });
 
-  tearDown(() => voice.dispose());
+  tearDown(() {
+    voice.dispose();
+    language.dispose();
+  });
 
-  test('opening puts the panel up and leaves the microphone off', () {
-    voice.open();
-
-    expect(voice.isOpen, isTrue);
-    expect(voice.status, VoiceInputStatus.idle);
+  test('at rest until the mic is pressed', () async {
+    expect(voice.isIdle, isTrue);
     expect(recorder.starts, 0);
-  });
 
-  test('the mic button is what records', () async {
-    voice.open();
-
-    await voice.toggleListening();
+    await voice.startListening();
 
     expect(voice.status, VoiceInputStatus.listening);
     expect(recorder.recording, isTrue);
+    expect(voice.isIdle, isFalse);
   });
 
-  test(
-    'Send has speech only once something was said or is being said',
-    () async {
-      expect(voice.hasSpeech, isFalse);
+  test('an empty take leaves the mic at rest again', () async {
+    await voice.startListening();
 
-      await voice.startListening();
-      expect(voice.hasSpeech, isTrue);
+    await voice.stopListening();
 
-      await voice.stopListening();
-      expect(voice.hasSpeech, isFalse, reason: 'the take came back empty');
-    },
-  );
+    expect(voice.isIdle, isTrue, reason: 'the take came back empty');
+  });
 
   test('stopping sends the take to the backend and keeps its words', () async {
     backend.replies.add('fix the failing test');
@@ -92,15 +79,15 @@ void main() {
   test('a second take adds to what the first one heard', () async {
     backend.replies.addAll(['run the tests', 'then commit']);
     await voice.startListening();
-    await voice.toggleListening();
+    await voice.stopListening();
 
-    await voice.toggleListening();
-    await voice.toggleListening();
+    await voice.startListening();
+    await voice.stopListening();
 
     expect(voice.transcript, 'run the tests then commit');
   });
 
-  test('a refused microphone says so, and the next open asks again', () async {
+  test('a refused microphone says so, and the next press asks again', () async {
     recorder.permitted = false;
     await voice.startListening();
 
@@ -108,17 +95,16 @@ void main() {
     expect(voice.notice, VoiceNotice.unavailable);
 
     recorder.permitted = true;
-    voice.close();
     await voice.startListening();
     expect(voice.status, VoiceInputStatus.listening);
   });
 
-  test('closing while the permission prompt is up records nothing', () async {
+  test('clearing while the permission prompt is up records nothing', () async {
     recorder.pendingPermission = Completer<bool>();
     final opening = voice.startListening();
     expect(voice.status, VoiceInputStatus.starting);
 
-    voice.close();
+    voice.clear();
     recorder.pendingPermission!.complete(true);
     await opening;
 
@@ -169,7 +155,7 @@ void main() {
     expect(voice.notice, VoiceNotice.noSound);
   });
 
-  test('send hands over everything heard and empties the panel', () async {
+  test('send hands over everything heard and empties the transcript', () async {
     backend.replies.add('open a PR');
     await voice.startListening();
     await voice.stopListening();
@@ -227,24 +213,24 @@ void main() {
     expect(voice.isSending, isFalse);
   });
 
-  test('closing mid-transcription drops the words when they arrive', () async {
+  test('clearing mid-transcription drops the words when they arrive', () async {
     backend.pending = Completer<String>();
     await voice.startListening();
     final stopping = voice.stopListening();
     await Future<void>.delayed(Duration.zero);
 
-    voice.close();
+    voice.clear();
     backend.pending!.complete('never mind');
     await stopping;
 
-    expect(voice.isOpen, isFalse);
     expect(voice.transcript, isEmpty);
+    expect(voice.isIdle, isTrue);
   });
 
-  test('closing while recording throws the recording away', () async {
+  test('clearing while recording throws the recording away', () async {
     await voice.startListening();
 
-    voice.close();
+    voice.clear();
 
     expect(recorder.cancels, 1);
     expect(backend.calls, isEmpty);
@@ -263,37 +249,27 @@ void main() {
     },
   );
 
-  test("the phone's language is the default, when the backend serves it", () {
-    final vietnamese = controller(locales: const [Locale('vi', 'VN')]);
-    final german = controller(locales: const [Locale('de'), Locale('fr')]);
-    addTearDown(vietnamese.dispose);
-    addTearDown(german.dispose);
+  test('words already on their way are not handed to the keyboard', () async {
+    backend.replies.add('ship it');
+    await voice.startListening();
+    await voice.stopListening();
+    final delivery = Completer<bool>();
+    final sending = voice.submit((_) => delivery.future);
+    await Future<void>.delayed(Duration.zero);
 
-    expect(vietnamese.language, 'vi');
-    expect(german.language, 'fr');
+    expect(await voice.takeTranscript(), isEmpty);
+
+    delivery.complete(true);
+    await sending;
   });
 
-  test(
-    'a chosen language is used, remembered, and restored next time',
-    () async {
-      await voice.selectLanguage('vi');
-      backend.replies.add('xin chào');
-      await voice.startListening();
-      await voice.stopListening();
+  test('a take is heard in the language chosen by the time it ends', () async {
+    backend.replies.add('xin chào');
+    await voice.startListening();
 
-      expect(backend.calls.single.lang, 'vi');
-      expect(storage.values['voice_input_language'], 'vi');
+    language.value = 'vi';
+    await voice.stopListening();
 
-      final later = controller();
-      addTearDown(later.dispose);
-      await Future<void>.delayed(Duration.zero);
-      expect(later.language, 'vi');
-    },
-  );
-
-  test('a language the backend does not serve is refused', () async {
-    await voice.selectLanguage('de');
-
-    expect(voice.language, 'en');
+    expect(backend.calls.single.lang, 'vi');
   });
 }

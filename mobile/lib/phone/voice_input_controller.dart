@@ -1,13 +1,10 @@
 import 'dart:async';
-import 'dart:ui' show Locale;
 
 import 'package:flutter/foundation.dart';
 
-import 'package:harness_mobile/core/harness_file_store.dart';
-import 'package:harness_mobile/core/local_key_value_store.dart';
 import 'package:harness_mobile/logging/app_log.dart';
 
-import 'voice_language.dart';
+import 'voice_language_store.dart';
 import 'voice_notice.dart';
 import 'voice_recorder.dart';
 
@@ -32,8 +29,8 @@ enum VoiceInputStatus {
   unavailable,
 }
 
-/// Voice input for one pager of terminal pages: whether its panel is open, what
-/// has been heard, and the language it is transcribed in.
+/// Voice input for one pager of terminal pages: what is being recorded, and what
+/// has been heard and not yet sent.
 ///
 /// Record, then transcribe — the dial's shape, and the backend's: its
 /// `/api/voice/stt` takes a finished recording and answers with its words, so
@@ -42,23 +39,14 @@ enum VoiceInputStatus {
 ///
 /// Owned by `AgentSwipeHost`, not by a page, for the reason the keyboard is one
 /// screen-wide fact in `terminal_page.dart`: swiping to the next agent must not
-/// close what is open, nor drop what was said. What is SENT goes to whichever
-/// page is active when Send is pressed.
+/// drop what was said. What is SENT goes to whichever page's mic is pressed.
 class VoiceInputController extends ChangeNotifier {
   VoiceInputController({
     required this.transcriber,
     VoiceRecorder? recorder,
-    LocalKeyValueStore? storage,
-    List<Locale>? preferredLocales,
+    ValueListenable<String>? language,
   }) : _recorder = recorder ?? MicVoiceRecorder(),
-       _storage = storage ?? HarnessFileStore.shared,
-       _language = defaultVoiceLanguage(
-         preferredLocales ?? PlatformDispatcher.instance.locales,
-       ) {
-    unawaited(_loadLanguage());
-  }
-
-  static const _languageKey = 'voice_input_language';
+       _language = language ?? voiceLanguageStore;
 
   /// Below this, a take is silence rather than quiet speech: digital zero, or
   /// the hiss of an input nobody is speaking into. Speech peaks in the
@@ -72,67 +60,43 @@ class VoiceInputController extends ChangeNotifier {
 
   final VoiceTranscriber transcriber;
   final VoiceRecorder _recorder;
-  final LocalKeyValueStore _storage;
 
-  final ValueNotifier<bool> _open = ValueNotifier(false);
+  /// A code from `voiceLanguages`, read when a take is transcribed — so a language picked
+  /// mid-take is the one that take is heard in.
+  final ValueListenable<String> _language;
+
   VoiceInputStatus _status = VoiceInputStatus.idle;
   String _heard = '';
   String? _notice;
-  String _language;
-  bool _languageChosen = false;
   bool _isSending = false;
   bool _disposed = false;
   Timer? _takeLimit;
 
   /// Bumped by everything that abandons a take, so a recording or a
   /// transcription still in flight from it lands nowhere — above all after
-  /// Close, where words arriving late would reopen what was put away.
+  /// [clear], where words arriving late would bring back what was dropped.
   int _take = 0;
 
-  /// Whether the panel is up, as its own listenable: the terminal page watches
-  /// THIS, not the controller, so the panel's own changes repaint the panel and
-  /// never rebuild the terminal above it.
-  ValueListenable<bool> get openState => _open;
-  bool get isOpen => _open.value;
   bool get isSending => _isSending;
   VoiceInputStatus get status => _status;
   String get transcript => _heard;
   String? get notice => _notice;
 
-  /// A code from [voiceLanguages].
-  String get language => _language;
+  /// Nothing being recorded, heard or sent — the mic at rest. A refused
+  /// microphone is at rest too: nothing is in flight.
+  bool get isIdle =>
+      (_status == VoiceInputStatus.idle ||
+          _status == VoiceInputStatus.unavailable) &&
+      _heard.isEmpty &&
+      !_isSending;
 
-  /// Whether Send has speech to send: words already heard, or a take still
-  /// being recorded that Send will finish first.
-  bool get hasSpeech =>
-      _heard.isNotEmpty || _status == VoiceInputStatus.listening;
-
-  /// Opens the panel — what a tap on the terminal does. It does NOT record.
-  ///
-  /// ⚠️ The microphone is the mic button's alone. Opening straight into a
-  /// recording turned every tap on the terminal — to put the caret back, to
-  /// send what was already typed — into a take of room noise that came back
-  /// as "didn't catch that", and a microphone that switches itself on is not
-  /// one anybody asked for.
-  void open() => _open.value = true;
-
-  /// Closes the panel, discarding anything not sent.
-  void close() {
-    _open.value = false;
-    clear();
-  }
-
+  /// Drops the take in progress, the words held from a send that failed, and
+  /// the notice. A send already on its way is not recalled.
   void clear() {
     _abandonTake();
     _heard = '';
     _setStatus(VoiceInputStatus.idle);
   }
-
-  Future<void> toggleListening() => switch (_status) {
-    VoiceInputStatus.starting || VoiceInputStatus.listening => stopListening(),
-    VoiceInputStatus.transcribing => Future.value(),
-    VoiceInputStatus.idle || VoiceInputStatus.unavailable => startListening(),
-  };
 
   Future<void> startListening() async {
     if (_isSending || _disposed) return;
@@ -174,8 +138,8 @@ class VoiceInputController extends ChangeNotifier {
     if (_status == VoiceInputStatus.listening) await _transcribeTake();
   }
 
-  /// Sends everything heard, and empties the panel once it is sent — kept when
-  /// delivery fails, so nothing said has to be said twice.
+  /// Sends everything heard, and empties the transcript once it is sent — kept
+  /// when delivery fails, so nothing said has to be said twice.
   ///
   /// Send while still talking ends the take first: one tap finishes the
   /// sentence and sends it. A take that comes back as nothing sends nothing,
@@ -204,33 +168,22 @@ class VoiceInputController extends ChangeNotifier {
   }
 
   /// Everything heard — the take still being recorded included, once it is
-  /// transcribed — emptied out of the panel, for the keyboard to carry on from.
+  /// transcribed — emptied out of here, for the keyboard to carry on from.
+  ///
+  /// Nothing while a send is on its way: those words are already the message,
+  /// and handing them to the keyboard too would put them in the prompt twice.
   Future<String> takeTranscript() async {
+    if (_isSending) return '';
     if (_status == VoiceInputStatus.listening) await _transcribeTake();
     final text = transcript;
     clear();
     return text;
   }
 
-  /// Transcribes in [code] from now on — the take being recorded included —
-  /// on this phone and in later pagers too.
-  Future<void> selectLanguage(String code) async {
-    if (!isVoiceLanguage(code)) return;
-    _language = code;
-    _languageChosen = true;
-    _notify();
-    try {
-      await _storage.write(_languageKey, code);
-    } on Exception {
-      // Still used for this pager; only remembering it failed.
-    }
-  }
-
   @override
   void dispose() {
     _abandonTake();
     _disposed = true;
-    _open.dispose();
     unawaited(_recorder.dispose());
     super.dispose();
   }
@@ -254,9 +207,10 @@ class VoiceInputController extends ChangeNotifier {
         _setStatus(VoiceInputStatus.idle, notice: VoiceNotice.noSound);
         return false;
       }
-      final words = await transcriber(recording.wav, _language);
+      final language = _language.value;
+      final words = await transcriber(recording.wav, language);
       // The count, never the words: a transcript is what someone said.
-      appLog.info('voice', 'stt[$_language]: ${words.length} chars');
+      appLog.info('voice', 'stt[$language]: ${words.length} chars');
       if (take != _take) return false;
       _heard = _joinWords(_heard, words);
       _setStatus(
@@ -265,7 +219,7 @@ class VoiceInputController extends ChangeNotifier {
       );
       return words.isNotEmpty;
     } on Exception catch (error) {
-      appLog.warn('voice', 'stt[$_language] failed', error: error);
+      appLog.warn('voice', 'stt[${_language.value}] failed', error: error);
       if (take == _take) {
         _setStatus(VoiceInputStatus.idle, notice: VoiceNotice.notTranscribed);
       }
@@ -278,18 +232,6 @@ class VoiceInputController extends ChangeNotifier {
       return await _recorder.allowed();
     } on Exception {
       return false;
-    }
-  }
-
-  Future<void> _loadLanguage() async {
-    try {
-      final saved = await _storage.read(_languageKey);
-      // A choice made while this was loading is newer than the saved one.
-      if (_languageChosen || _disposed || !isVoiceLanguage(saved)) return;
-      _language = saved!;
-      _notify();
-    } on Exception {
-      // The phone's own language still works; only the memory is missing.
     }
   }
 

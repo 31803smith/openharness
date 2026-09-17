@@ -13,11 +13,12 @@ import 'package:harness_mobile/terminal/terminal_font_store.dart';
 import 'package:harness_mobile/terminal/terminal_theme_store.dart';
 
 import 'phone_header.dart';
-import 'phone_input_mode_store.dart';
 import 'phone_sheet.dart';
 import 'settings_row.dart';
 import 'stats_entry.dart';
 import 'usage_entry.dart';
+import 'voice_language.dart';
+import 'voice_language_store.dart';
 
 /// The phone's Settings tab.
 ///
@@ -123,7 +124,7 @@ class _Body extends StatelessWidget {
       const SettingsCaption('Terminal'),
       SettingsGroup(
         children: [
-          _InputModeRow(),
+          _VoiceLanguageRow(),
           _FontRow(),
           _SizeRow(),
           _TerminalThemeRow(),
@@ -193,33 +194,18 @@ class _Avatar extends StatelessWidget {
   }
 }
 
-/// What a tap on the terminal opens: voice input (the default) or the keyboard, as before voice.
-class _InputModeRow extends StatelessWidget {
+/// The language the mic under every terminal transcribes in. A long press on the mic opens the
+/// same picker.
+class _VoiceLanguageRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) => ValueListenableBuilder(
-    valueListenable: phoneInputModeStore,
-    builder: (context, mode, _) {
+    valueListenable: voiceLanguageStore,
+    builder: (context, code, _) {
       AppTheme.watch(context);
       return SettingsRow(
-        title: 'Input',
-        value: mode.label,
-        onTap: () => showPhoneSheet(
-          context,
-          title: 'Tapping the terminal opens',
-          actions: [
-            for (final choice in PhoneInputMode.values)
-              PhoneSheetAction(
-                icon: choice == mode
-                    ? LucideIcons.check300
-                    : switch (choice) {
-                        PhoneInputMode.voice => LucideIcons.mic300,
-                        PhoneInputMode.keyboard => LucideIcons.keyboard300,
-                      },
-                label: choice.label,
-                onTap: () => unawaited(phoneInputModeStore.set(choice)),
-              ),
-          ],
-        ),
+        title: 'Voice language',
+        value: voiceLanguageName(code),
+        onTap: () => unawaited(showVoiceLanguagePicker(context)),
       );
     },
   );

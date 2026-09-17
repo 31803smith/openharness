@@ -92,11 +92,12 @@ class TerminalPanel extends StatefulWidget {
   /// Takes over the tap that would raise the software keyboard. Null leaves it
   /// to xterm, which is what every desktop tile does.
   ///
-  /// Set on the phone, where that tap opens voice input instead
-  /// (`phone/terminal_page.dart`). Claimed on tap DOWN — xterm then neither
-  /// raises the keyboard nor reports the click to a mouse-tracking program —
-  /// but run on tap UP, so a scroll that began as a press opens nothing. A tap
-  /// that clears a selection, or opens a link, is still exactly that.
+  /// Set on the phone, where the page raises the keyboard itself, with what the
+  /// mic heard typed into the prompt first (`phone/terminal_page.dart`).
+  /// Claimed on tap DOWN — xterm then neither raises the keyboard nor reports
+  /// the click to a mouse-tracking program — but run on tap UP, so a scroll
+  /// that began as a press opens nothing. A tap that clears a selection, or
+  /// opens a link, is still exactly that.
   final VoidCallback? onInputTap;
 
   /// Whether this tile's composer textbox is showing. Only consulted for a remote machine.
