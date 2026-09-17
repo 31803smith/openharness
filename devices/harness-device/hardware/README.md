@@ -1,11 +1,25 @@
 # Harness device hardware
 
-Mechanical design files for the harness-device enclosure. Formats are STEP (`.step`), suitable for
-import into any major CAD tool (FreeCAD, SolidWorks, Fusion 360, etc.).
+Mechanical and electrical design files for the harness-device.
 
-PCB/schematic sources are not included yet.
+## PCB (`pcb/`)
+
+Designed in EasyEDA Pro.
+
+| File | Contents |
+|---|---|
+| `ProPrj_Harness_1.75_AMOLED.epro2` | EasyEDA Pro project (schematic + PCB layout source) |
+| `SCH_SCH_Harness_1.75.pdf` | Schematic export (PDF) |
+| `production/Gerber_PCB_Harness.zip` | Gerbers for fabrication |
+| `production/BOM_Harness_1.75_AMOLED_PCB_Harness_1.75.xlsx` | Bill of materials |
+| `production/PickAndPlace_PCB_Harness.xlsx` | Pick-and-place (CPL) data for assembly |
+
+Open the `.epro2` project in [EasyEDA Pro](https://pro.easyeda.com/) to edit the schematic/layout.
 
 ## 3D (`3d/`)
+
+Formats are STEP (`.step`), suitable for import into any major CAD tool (FreeCAD, SolidWorks,
+Fusion 360, etc.).
 
 | File | Part |
 |---|---|
