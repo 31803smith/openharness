@@ -31,6 +31,7 @@ const exec = promisify(execFile)
 const root = await mkdtemp(join(tmpdir(), 'harness-viewer-stack-'))
 const cleanups: Array<() => unknown | Promise<unknown>> = []
 const checks: string[] = []
+let completed = false
 const checkpoint = (message: string) => { checks.push(message); console.log(`PASS ${message}`) }
 console.log(`Artifacts and logs: ${root}`)
 async function until(label: string, check: () => unknown | Promise<unknown>, ms = 45_000) {
@@ -145,7 +146,7 @@ console.log('VIEWER_STACK_READY');
 process.stdin.on('data', chunk => process.stdout.write('ECHO:' + chunk.toString() + '\\r\\n'));
 setInterval(() => {}, 1000);
 `, { mode: 0o700 })
-  const harnesses = ['godogen', 'blender', 'marp', 'manim']
+  const harnesses = ['blender', 'marp', 'manim', 'godogen']
   const packages = [...harnesses.map(name => `agents/${name}`), ...['game', 'model', 'video'].map(name => `viewers/${name}-viewer`)]
   async function machine(name: string, index: number) {
     const dir = join(root, name), data = join(dir, 'data'), auth = join(dir, 'auth')
@@ -201,6 +202,12 @@ setInterval(() => {}, 1000);
   })
   cleanups.push(() => browser.close())
   const context = await browser.newContext({ viewport: { width: 1100, height: 800 } })
+  cleanups.push(async () => {
+    if (!completed) for (const [index, page] of context.pages().entries()) {
+      await page.screenshot({ path: join(root, `failure-${index}.png`), timeout: 5000 }).catch(() => {})
+      await writeFile(join(root, `failure-${index}.html`), await page.content().catch(() => 'page unavailable'))
+    }
+  })
   const agents = new Map<string, { id: string; workspace: string; page: any; localUrl: string; remoteUrl: string }>()
   async function agentUrl(client: Awaited<ReturnType<typeof desktop>>, id: string) {
     let url: string | undefined
@@ -224,6 +231,11 @@ setInterval(() => {}, 1000);
         bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: data.length }],
         accessors: [{ bufferView: 0, componentType: 5126, count: 3, type: 'VEC3', min: [-1, 0, 0], max: [1, 2, 0] }] }))
       await writeFile(join(workspace, 'out/large.bin'), Buffer.alloc(12 * 1024 * 1024 + 17, 0x5a))
+    }
+    if (name === 'manim') {
+      await mkdir(join(workspace, 'out'), { recursive: true })
+      await exec(process.env.HARNESS_E2E_FFMPEG || 'ffmpeg', ['-y', '-f', 'lavfi', '-i', 'testsrc=size=320x180:rate=15',
+        '-t', '3', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', join(workspace, 'out/sample.mp4')], { timeout: 30_000 })
     }
     const created = await remoteDesktop.rpc('agent_create', { engine: 'claude', cwd: workspace,
       dsh: `autonomous/${name}`, creationId: randomUUID() })
@@ -249,7 +261,7 @@ setInterval(() => {}, 1000);
       const frame = page.frames().find((f: any) => f.url() === new URL(activeSrc, page.url()).href)
       assert.ok(await frame.evaluate(() => (window as any).harnessGame.stats().positionX > 0), 'the active game responds to keyboard input')
     } else if (name === 'blender') {
-      await page.waitForFunction(() => document.querySelector('#model-name')?.textContent === 'triangle.gltf' && !!document.querySelector('#tree [role="treeitem"]'), null, { timeout: 45_000 })
+      await page.waitForFunction(() => document.querySelector('#model-name')?.textContent === 'triangle.gltf' && !!document.querySelector('#tree .row'), null, { timeout: 45_000 })
       const expected = createHash('sha256').update(await import('node:fs/promises').then(fs => fs.readFile(join(workspace, 'out/large.bin')))).digest('hex')
       const response = await page.request.get(new URL('/ws/out/large.bin', page.url()).href)
       assert.equal(createHash('sha256').update(await response.body()).digest('hex'), expected)
@@ -262,10 +274,14 @@ setInterval(() => {}, 1000);
       const deck = join(workspace, 'deck.md')
       await writeFile(deck, readFileSync(deck, 'utf8') + '\n---\n\n# Remote edit arrived\n')
       await page.waitForFunction(() => document.body.textContent?.includes('Remote edit arrived'))
-      await page.locator('#next').click()
+      const counter = await page.locator('#counter').innerText()
+      await page.locator('#prev').click()
+      assert.notEqual(await page.locator('#counter').innerText(), counter)
     } else {
-      await page.waitForFunction(() => document.readyState === 'complete' && !!document.querySelector('main'))
+      await page.waitForFunction(() => (document.querySelector('#video') as HTMLVideoElement)?.readyState >= 2)
       assert.equal((await page.request.get(new URL('/api/library', page.url()).href)).status(), 200)
+      await page.evaluate(() => { const video = document.querySelector('#video') as HTMLVideoElement; video.currentTime = 1.5; return video.play() })
+      await page.waitForFunction(() => (document.querySelector('#video') as HTMLVideoElement)?.currentTime > 1.6)
     }
     assert.deepEqual(errors, [], `${name} browser exceptions`)
     await page.screenshot({ path: join(root, `${name}-forwarded.png`) })
@@ -313,9 +329,10 @@ setInterval(() => {}, 1000);
   for (const agent of agents.values()) await directDesktop.rpc('agent_delete', { agentId: agent.id })
   assert.equal((await directDesktop.rpc('agents_list')).agents.length, 0)
   checkpoint('all test agents deleted through real daemon RPC')
+  completed = true
 } finally {
   for (const cleanup of cleanups.reverse()) { try { await cleanup() } catch (error) { console.error('Cleanup:', error) } }
   await writeFile(join(root, 'results.json'), JSON.stringify({ host: hostname(), os: `${process.platform} ${release()}`,
     topology: 'one physical host; two CLIs; two backend instances; real Redis and MongoDB; fixture SSO/model CLI',
-    checks, nativeDesktopTested: false, physicalRemoteTested: false }, null, 2))
+    completed, checks, nativeDesktopTested: false, physicalRemoteTested: false }, null, 2))
 }
