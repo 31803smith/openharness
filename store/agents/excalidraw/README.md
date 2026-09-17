@@ -1,6 +1,6 @@
 # Excalidraw, as a Harness agent
 
-[Harness](https://github.com/autonomous-ai/autonomous-harness) agent package for
+[Harness](https://github.com/autonomous-ai/openharness) agent package for
 [Excalidraw](https://excalidraw.com): describe a diagram in the chat pane, watch it appear
 hand-drawn in the Excalidraw pane as the agent writes the `.excalidraw` file. Runs on Claude Code.
 
@@ -24,7 +24,7 @@ verdict — written by Autonomous to bring Excalidraw into Harness, on the proje
 bootstrap the catalogue.
 
 If you maintain Excalidraw and want to own its Harness package, it is yours: open an issue on
-[autonomous-harness](https://github.com/autonomous-ai/autonomous-harness/issues) and we move this folder into a
+[OpenHarness](https://github.com/autonomous-ai/openharness/issues) and we move this folder into a
 repository of yours and point the registry entry at it. Until then: bugs in Excalidraw belong upstream, bugs in
 the wrapper belong here, and a newer Excalidraw is a bump in `package.json`.
 

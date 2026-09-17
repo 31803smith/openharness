@@ -1,6 +1,6 @@
 # Phaser, as a Harness agent
 
-[Harness](https://github.com/autonomous-ai/autonomous-harness) agent package for
+[Harness](https://github.com/autonomous-ai/openharness) agent package for
 [Phaser](https://phaser.io): describe a game in the terminal pane — a breakout, a platformer, a
 shooter, a puzzle — and play it in the pane beside it while the agent writes it in Phaser 4. Runs on
 **Codex**.
@@ -45,7 +45,7 @@ toolchain, the verdict, the one `harness-phaser` skill — written by Autonomous
 Harness, on the project's behalf, to bootstrap the catalogue. The wrapper is MIT too (`LICENSE`).
 
 If you maintain Phaser and want to own its Harness package, it is yours: open an issue on
-[autonomous-harness](https://github.com/autonomous-ai/autonomous-harness/issues) and we move this folder into a
+[OpenHarness](https://github.com/autonomous-ai/openharness/issues) and we move this folder into a
 repository of yours and point the registry entry at it. Until then: bugs in Phaser belong upstream, bugs in
 the wrapper belong here, and a newer Phaser is a bump of `package.json`, `template/package.json` and
 `VERSIONS` plus a refresh of `skills/` (`PROVENANCE.md` has the commands).

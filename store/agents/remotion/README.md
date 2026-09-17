@@ -1,6 +1,6 @@
 # Remotion, as a Harness agent
 
-[Harness](https://github.com/autonomous-ai/autonomous-harness) agent package for
+[Harness](https://github.com/autonomous-ai/openharness) agent package for
 [Remotion](https://www.remotion.dev): describe a video in the chat pane, watch it play in the Remotion
 Studio pane as the agent writes it in React, then render it to MP4. Runs on Claude Code.
 
@@ -33,7 +33,7 @@ the verdict — written by Autonomous to bring Remotion into Harness, on the pro
 bootstrap the catalogue. The wrapper is MIT; the Remotion License governs Remotion.
 
 If you maintain Remotion and want to own its Harness package, it is yours: open an issue on
-[autonomous-harness](https://github.com/autonomous-ai/autonomous-harness/issues) and we move this folder into a
+[OpenHarness](https://github.com/autonomous-ai/openharness/issues) and we move this folder into a
 repository of yours and point the registry entry at it. Until then: bugs in Remotion belong upstream, bugs in
 the wrapper belong here, and a newer Remotion is a bump of `package.json` and `VERSIONS`.
 

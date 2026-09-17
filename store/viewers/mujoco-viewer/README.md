@@ -1,6 +1,6 @@
 # MuJoCo Viewer, a Harness viewer package
 
-The pane for robots in motion in [Harness](https://github.com/autonomous-ai/autonomous-harness):
+The pane for robots in motion in [Harness](https://github.com/autonomous-ai/openharness):
 MuJoCo's `simulate`, in the browser. The model the agent simulated is compiled and **run live** by
 MuJoCo's own WebAssembly build and drawn with three.js the way `simulate` draws it — the model's
 skybox, its checker floor with reflections and shadows, its lights. It opens on the live simulation,

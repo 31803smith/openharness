@@ -1,6 +1,6 @@
 # Blender, as a Harness agent
 
-[Harness](https://github.com/autonomous-ai/autonomous-harness) agent package for
+[Harness](https://github.com/autonomous-ai/openharness) agent package for
 [Blender](https://www.blender.org): describe an object, a scene, a shot in the chat pane; watch it
 take shape in the 3D Viewer pane — modelled in Blender's Python, exported as glTF on every run and
 shown as a live viewport (outliner, properties in mm, shading modes, measure, section, the scene
@@ -25,7 +25,7 @@ project's behalf, to bootstrap the catalogue. The wrapper's own files are MIT; s
 `bpy` run under Blender's GPL terms, as every Blender add-on does.
 
 If you maintain Blender and want to own its Harness package, it is yours: open an issue on
-[autonomous-harness](https://github.com/autonomous-ai/autonomous-harness/issues) and we move this folder into a
+[OpenHarness](https://github.com/autonomous-ai/openharness/issues) and we move this folder into a
 repository of yours and point the registry entry at it. Until then: bugs in Blender belong upstream, bugs in
 the wrapper belong here, and a newer Blender is a bump of `BPY_VERSION`.
 

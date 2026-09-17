@@ -1,6 +1,6 @@
 # CircuitJS, as a Harness agent
 
-[Harness](https://github.com/autonomous-ai/autonomous-harness) agent package for
+[Harness](https://github.com/autonomous-ai/openharness) agent package for
 [CircuitJS1](https://www.falstad.com/circuit/), Paul Falstad's interactive circuit simulator:
 describe a circuit in the terminal, watch it run in the pane while the agent writes it — charge
 moving along the wires, scope traces drawing, sliders you can turn while it runs. Runs on Codex.
@@ -51,6 +51,6 @@ compiled module from. If that ever changes — a release, a published artefact �
 place to point somewhere better.
 
 If you maintain CircuitJS1 and want to own its Harness package, it is yours: open an issue on
-[autonomous-harness](https://github.com/autonomous-ai/autonomous-harness/issues) and we move this folder into a
+[OpenHarness](https://github.com/autonomous-ai/openharness/issues) and we move this folder into a
 repository of yours and point the registry entry at it. Until then: bugs in CircuitJS1 belong upstream, bugs
 in the wrapper belong here, and a newer CircuitJS1 is a bump in `VERSIONS`.

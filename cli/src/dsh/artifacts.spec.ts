@@ -47,7 +47,7 @@ describe('bundledDshRegistry', () => {
     const ids = bundledDshRegistry().map((entry) => entry.id)
     expect(ids).toEqual(expect.arrayContaining(['autonomous/autonomous-circuit', 'autonomous/autonomous-workshop', 'autonomous/marp']))
     expect(ids).not.toContain('autonomous/copper')
-    expect(resolveInstallSource('autonomous/autonomous-circuit')).toMatchObject({ source: 'https://github.com/autonomous-ai/autonomous-harness', path: 'store/agents/autonomous-circuit', id: 'autonomous/autonomous-circuit' })
+    expect(resolveInstallSource('autonomous/autonomous-circuit')).toMatchObject({ source: 'https://github.com/autonomous-ai/openharness', path: 'store/agents/autonomous-circuit', id: 'autonomous/autonomous-circuit' })
     expect(resolveInstallSource('https://example.com/x.git')).toEqual({ source: 'https://example.com/x.git' })
     expect(resolveInstallSource('bad\nsource')).toBeNull()
   })

@@ -22,7 +22,7 @@ import { DSH_ID_RE } from './manifest.js'
 declare const __DSH_REGISTRY__: string | undefined
 
 /** The repo the built-in shelf lives in; its packages are `store/<agents|viewers>/<name>` folders. */
-export const HARNESS_MONOREPO = 'https://github.com/autonomous-ai/autonomous-harness'
+export const HARNESS_MONOREPO = 'https://github.com/autonomous-ai/openharness'
 
 /** A folder inside a repo: relative, forward slashes, no `.`/`..` segments, no trailing slash. */
 export const PACKAGE_PATH_RE = /^(?!\/)(?!.*\/$)(?!.*\/\/)(?!(?:.*\/)?\.{1,2}(?:\/|$))[A-Za-z0-9._\-/]+$/

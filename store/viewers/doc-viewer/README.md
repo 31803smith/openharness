@@ -1,6 +1,6 @@
 # Doc Viewer, a Harness viewer package
 
-The pane for documents in [Harness](https://github.com/autonomous-ai/autonomous-harness): the PDF a
+The pane for documents in [Harness](https://github.com/autonomous-ai/openharness): the PDF a
 harness is writing, read the way Preview reads it — page thumbnails and the outline, fit and zoom,
 two-page spreads, find, links that work, a present mode — and **live**: every compile slides in at
 the page, offset and zoom you were reading, with the pages that changed marked. A harness points at

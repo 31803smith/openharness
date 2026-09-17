@@ -58,10 +58,8 @@ link remote machines. Your coding engine's own authentication is separate.
 <summary>Build and run from source</summary>
 
 You will need Node.js 20+, tmux, Xcode, and Flutter 3.47+ with Dart 3.13+ for macOS.
-The repository currently lives at the URL below; clone it into a folder called `openharness`.
-
 ```bash
-git clone https://github.com/autonomous-ai/autonomous-harness.git openharness
+git clone https://github.com/autonomous-ai/openharness.git
 cd openharness
 (cd cli && npm ci)
 make install-cli

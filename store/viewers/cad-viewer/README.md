@@ -1,6 +1,6 @@
 # CAD Viewer, as a Harness viewer package
 
-The 3D pane for CAD agents in [Harness](https://github.com/autonomous-ai/autonomous-harness):
+The 3D pane for CAD agents in [Harness](https://github.com/autonomous-ai/openharness):
 Jake's **CAD Viewer** from [earthtojake/text-to-cad](https://github.com/earthtojake/text-to-cad),
 run from the `cadgen` release it ships in, unchanged. Any harness points at it with
 
@@ -35,7 +35,7 @@ Harness. We did that work on the project's behalf, to bootstrap the catalogue; t
 the agent can do belongs upstream.
 
 If you maintain the CAD Viewer and want to own its Harness package, it is yours: open an issue on
-[autonomous-harness](https://github.com/autonomous-ai/autonomous-harness/issues) and we move this folder into a
+[OpenHarness](https://github.com/autonomous-ai/openharness/issues) and we move this folder into a
 repository of yours and point the registry entry at it. Until then: bugs in the CAD Viewer belong upstream, bugs in the
 wrapper belong here, and a newer release is a bump of `CADGEN_VERSION`.
 

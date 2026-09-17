@@ -1,6 +1,6 @@
 # Yosys, as a Harness agent
 
-[Harness](https://github.com/autonomous-ai/autonomous-harness) agent package for the open-source
+[Harness](https://github.com/autonomous-ai/openharness) agent package for the open-source
 FPGA flow — [Yosys](https://yosyshq.net/yosys/), [nextpnr](https://github.com/YosysHQ/nextpnr),
 [Project IceStorm](https://prjicestorm.readthedocs.io) and
 [Icarus Verilog](https://steveicarus.github.io/iverilog/). Describe a digital circuit in the chat
@@ -83,7 +83,7 @@ open-source FPGA flow into Harness. We did that work on the projects' behalf, to
 catalogue.
 
 If you maintain any of these projects and want to own this Harness package, it is yours: open an
-issue on [autonomous-harness](https://github.com/autonomous-ai/autonomous-harness/issues) and we
+issue on [OpenHarness](https://github.com/autonomous-ai/openharness/issues) and we
 transfer this package and point the registry entry at it. Until then: bugs in the tools belong
 upstream, bugs in the wrapper belong here, and a newer toolchain is a `brew upgrade`.
 

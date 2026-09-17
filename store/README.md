@@ -165,10 +165,10 @@ every built-in is, and everything else shows its git URL on install.
 | Harness | Base | What it shows |
 |---|---|---|
 | [Hello World](examples/hello-world/) | Codex | a greeting in plain HTML, with a shared viewer declared in the manifest; no build step |
-| [Marp](https://github.com/autonomous-ai/autonomous-harness/tree/main/store/agents/marp) (Slides) | Claude Code | the smallest complete tier 2: a 110-line viewer with live reload and a present mode, two themes, an offline art generator, a check that writes the verdict, node tests. Start here. |
-| [Blender](https://github.com/autonomous-ai/autonomous-harness/tree/main/store/agents/blender) (3D) | Claude Code | a pinned `bpy` in a venv set up by `setup.sh`, a helper module the skill teaches, and a viewer package it shares through `viewer.use` |
-| [Autonomous Circuit](https://github.com/autonomous-ai/autonomous-harness/tree/main/store/agents/autonomous-circuit) (PCB) | Claude Code | a wrapper of another team's project: setup fetches it at a pinned commit and runs its own setup, doctor, init and board viewer |
-| [Autonomous Workshop](https://github.com/autonomous-ai/autonomous-harness/tree/main/store/agents/autonomous-workshop) (CAD) | Codex | the same shape on a Codex base, with the store's CAD Viewer as its pane, phases Build / Fit / Print / Motion / Review |
+| [Marp](https://github.com/autonomous-ai/openharness/tree/main/store/agents/marp) (Slides) | Claude Code | the smallest complete tier 2: a 110-line viewer with live reload and a present mode, two themes, an offline art generator, a check that writes the verdict, node tests. Start here. |
+| [Blender](https://github.com/autonomous-ai/openharness/tree/main/store/agents/blender) (3D) | Claude Code | a pinned `bpy` in a venv set up by `setup.sh`, a helper module the skill teaches, and a viewer package it shares through `viewer.use` |
+| [Autonomous Circuit](https://github.com/autonomous-ai/openharness/tree/main/store/agents/autonomous-circuit) (PCB) | Claude Code | a wrapper of another team's project: setup fetches it at a pinned commit and runs its own setup, doctor, init and board viewer |
+| [Autonomous Workshop](https://github.com/autonomous-ai/openharness/tree/main/store/agents/autonomous-workshop) (CAD) | Codex | the same shape on a Codex base, with the store's CAD Viewer as its pane, phases Build / Fit / Print / Motion / Review |
 
 Visual harnesses should show work progressively. A terminal-only harness is welcome too. Domain
 behavior stays in the package: adding a harness on a supported engine should not need changes to

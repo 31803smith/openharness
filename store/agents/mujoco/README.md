@@ -1,6 +1,6 @@
 # MuJoCo, as a Harness agent
 
-[Harness](https://github.com/autonomous-ai/autonomous-harness) agent package for
+[Harness](https://github.com/autonomous-ai/openharness) agent package for
 [MuJoCo](https://mujoco.org): describe a robot, a scene, a controller, a policy in the chat pane;
 the MuJoCo Viewer pane runs it — MuJoCo's own WebAssembly build, live in the browser, like
 `simulate`: push the robot, drive its actuators, inspect contacts and sensors, replay the recording
@@ -33,7 +33,7 @@ skill, the helper, the template, the verdict — written by Autonomous to bring 
 on the project's behalf, to bootstrap the catalogue.
 
 If you maintain MuJoCo or the Menagerie and want to own this package, it is yours: open an issue on
-[autonomous-harness](https://github.com/autonomous-ai/autonomous-harness/issues) and we move this folder into a
+[OpenHarness](https://github.com/autonomous-ai/openharness/issues) and we move this folder into a
 repository of yours and point the registry entry at it. Until then: bugs in MuJoCo belong upstream, bugs in the
 wrapper belong here, and a newer MuJoCo or Menagerie is a bump of `VERSIONS`.
 

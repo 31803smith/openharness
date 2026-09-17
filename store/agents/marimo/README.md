@@ -1,6 +1,6 @@
 # marimo, as a Harness agent
 
-[Harness](https://github.com/autonomous-ai/autonomous-harness) agent package for
+[Harness](https://github.com/autonomous-ai/openharness) agent package for
 [marimo](https://marimo.io): describe an analysis, a model, a dashboard in the chat pane; watch the
 reactive notebook come alive in the marimo pane — marimo's own editor on the notebook the agent
 writes, cells re-running as the file changes. Runs on Claude Code.
@@ -27,7 +27,7 @@ written by Autonomous to bring marimo into Harness, on the project's behalf, to 
 catalogue.
 
 If you maintain marimo and want to own its Harness package, it is yours: open an issue on
-[autonomous-harness](https://github.com/autonomous-ai/autonomous-harness/issues) and we move this folder into a
+[OpenHarness](https://github.com/autonomous-ai/openharness/issues) and we move this folder into a
 repository of yours and point the registry entry at it. Until then: bugs in marimo or its skills belong
 upstream, bugs in the wrapper belong here, and a newer marimo is a bump of `MARIMO_VERSION`.
 

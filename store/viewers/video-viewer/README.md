@@ -1,6 +1,6 @@
 # Video Viewer, a Harness viewer package
 
-The pane for renders in [Harness](https://github.com/autonomous-ai/autonomous-harness): an editor-grade
+The pane for renders in [Harness](https://github.com/autonomous-ai/openharness): an editor-grade
 player for the videos a harness makes, that follows the agent while it works. A harness points at it
 with
 

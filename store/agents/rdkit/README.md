@@ -1,6 +1,6 @@
 # RDKit, as a Harness agent
 
-[Harness](https://github.com/autonomous-ai/autonomous-harness) agent package for
+[Harness](https://github.com/autonomous-ai/openharness) agent package for
 [RDKit](https://www.rdkit.org): describe a molecule in the chat pane — a drug, an analogue, a
 scaffold, a series — and watch it appear in the molecule pane: its conformers in 3D, its 2D depiction
 linked atom-for-atom, its properties and rule badges, and the series it belongs to. Runs on Codex.
@@ -39,7 +39,7 @@ the manifest, the pane server, a skill, the helper, the template, the verdict �
 to bring RDKit into Harness, on the project's behalf, to bootstrap the catalogue.
 
 If you maintain RDKit or 3Dmol.js and want to own this package, it is yours: open an issue on
-[autonomous-harness](https://github.com/autonomous-ai/autonomous-harness/issues) and we move this folder into a
+[OpenHarness](https://github.com/autonomous-ai/openharness/issues) and we move this folder into a
 repository of yours and point the registry entry at it. Until then: bugs in RDKit belong upstream, bugs in the
 wrapper belong here, and a newer RDKit is a bump of `VERSIONS`.
 

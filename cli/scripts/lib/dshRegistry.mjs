@@ -7,7 +7,7 @@ import { readdirSync, readFileSync, statSync } from 'fs'
 import { join } from 'path'
 import { fileURLToPath } from 'url'
 
-const HARNESS_MONOREPO = 'https://github.com/autonomous-ai/autonomous-harness'
+const HARNESS_MONOREPO = 'https://github.com/autonomous-ai/openharness'
 
 export function storeEntry(path, manifest, facts) {
   const entry = { id: manifest.id }

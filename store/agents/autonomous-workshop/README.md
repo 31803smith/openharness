@@ -1,6 +1,6 @@
 # Autonomous Workshop, as a Harness agent
 
-[Harness](https://github.com/autonomous-ai/autonomous-harness) agent package for
+[Harness](https://github.com/autonomous-ai/openharness) agent package for
 [Autonomous Workshop](https://github.com/autonomous-ai/autonomous-workshop): describe a part in the chat
 pane and get a validated, printable STEP, with a live 3D view in the pane beside the agent. Runs on Codex.
 

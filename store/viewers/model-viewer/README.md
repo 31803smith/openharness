@@ -1,6 +1,6 @@
 # 3D Viewer, a Harness viewer package
 
-The pane for 3D models in [Harness](https://github.com/autonomous-ai/autonomous-harness): the glTF a
+The pane for 3D models in [Harness](https://github.com/autonomous-ai/openharness): the glTF a
 harness exports, in a viewport that reads like Blender's — without Blender. It is where you *look*;
 changes happen by asking the agent, and every export lands here live, in place, without losing your
 view. A harness points at it with

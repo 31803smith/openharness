@@ -1,6 +1,6 @@
 # Autonomous Circuit, as a Harness agent
 
-[Harness](https://github.com/autonomous-ai/autonomous-harness) agent package for
+[Harness](https://github.com/autonomous-ai/openharness) agent package for
 [Autonomous Circuit](https://github.com/autonomous-ai/autonomous-circuit): describe a board in the chat
 pane and get a fab-ready PCB, with the project's own live board view in the pane beside the agent.
 Runs on Claude Code.

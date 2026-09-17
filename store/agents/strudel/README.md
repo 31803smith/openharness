@@ -1,6 +1,6 @@
 # Strudel, as a Harness agent
 
-[Harness](https://github.com/autonomous-ai/autonomous-harness) agent package for
+[Harness](https://github.com/autonomous-ai/openharness) agent package for
 [Strudel](https://strudel.cc) — TidalCycles in JavaScript: describe a track in the chat pane and
 hear it in the Strudel pane as the agent writes the pattern. Runs on Claude Code.
 
@@ -42,6 +42,6 @@ manifest, the pane server, the skill, the template, the verdict — is MIT (`LIC
 Autonomous to bring Strudel into Harness, on the project's behalf, to bootstrap the catalogue.
 
 If you maintain Strudel and want to own its Harness package, it is yours: open an issue on
-[autonomous-harness](https://github.com/autonomous-ai/autonomous-harness/issues) and we move this folder into a
+[OpenHarness](https://github.com/autonomous-ai/openharness/issues) and we move this folder into a
 repository of yours and point the registry entry at it. Until then: bugs in Strudel belong upstream, bugs in
 the wrapper belong here, and a newer Strudel is a bump in `package.json`.

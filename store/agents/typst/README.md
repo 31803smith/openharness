@@ -1,6 +1,6 @@
 # Typst, as a Harness agent
 
-[Harness](https://github.com/autonomous-ai/autonomous-harness) agent package for
+[Harness](https://github.com/autonomous-ai/openharness) agent package for
 [Typst](https://typst.app): describe a document in the chat pane, watch the PDF take shape in the
 Doc Viewer pane as Typst compiles it on every save. Runs on Claude Code.
 
@@ -20,7 +20,7 @@ toolchain and the verdict — written by Autonomous to bring Typst into Harness.
 the project's behalf, to bootstrap the catalogue.
 
 If you maintain Typst and want to own its Harness package, it is yours: open an issue on
-[autonomous-harness](https://github.com/autonomous-ai/autonomous-harness/issues) and we move this folder into a
+[OpenHarness](https://github.com/autonomous-ai/openharness/issues) and we move this folder into a
 repository of yours and point the registry entry at it. Until then: bugs in Typst belong upstream, bugs in the
 wrapper belong here, and a newer Typst is a bump of `TYPST_VERSION`.
 

@@ -3,7 +3,7 @@
 > Marp is Yuki Hattori's and the Marp team's. This package brings it into Harness; see
 > *Credit and stewardship* below.
 
-A domain-specific harness for [Autonomous Harness](https://github.com/autonomous-ai/autonomous-harness):
+A domain-specific harness for [Autonomous Harness](https://github.com/autonomous-ai/openharness):
 describe a talk in the chat pane, watch a keynote take shape in the viewer pane — black or white,
 huge type, generated art, speaker notes — and export it to PDF, PPTX or HTML. Runs on Claude Code;
 slides are [Marp](https://marp.app) Markdown on the harness's `keynote-dark` / `keynote-light` themes.
@@ -33,6 +33,6 @@ Harness. We did that work on the project's behalf, to bootstrap the catalogue; t
 the agent can do belongs upstream.
 
 If you maintain Marp and want to own its Harness package, it is yours: open an issue on
-[autonomous-harness](https://github.com/autonomous-ai/autonomous-harness/issues) and we move this folder into a
+[OpenHarness](https://github.com/autonomous-ai/openharness/issues) and we move this folder into a
 repository of yours and point the registry entry at it. Until then: bugs in Marp belong upstream, bugs in the
 wrapper belong here, and a newer release is a bump of `toolchain/package.json`.
