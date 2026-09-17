@@ -9,12 +9,17 @@ definitions), Run (the notebook runs top to bottom as a script without an except
 runs. The notebook is the artifact; the pane is marimo's editor on it.
 """
 from __future__ import annotations
-import ast, json, os, subprocess, sys, time
+import ast, json, os, re, subprocess, sys, time
 from pathlib import Path
 
 WS = Path(os.environ.get("HARNESS_WORKSPACE") or os.getcwd()).resolve()
 PY = sys.executable
 MARIMO = os.environ.get("MARIMO") or str(Path(PY).parent / "marimo")
+# `marimo check` prints each issue as `critical[multiple-definitions]: message`, then ` --> file:line:col`
+# and a code excerpt; critical (breaking) and error (runtime) are errors, warning is formatting.
+DIAGNOSTIC = re.compile(r"^(critical|error|warning|info)\[([^\]]+)\]:\s*(.+)$")
+WHERE = re.compile(r"^-->\s*.+:(\d+):(\d+)$")
+EXCERPT = re.compile(r"^(\d+\s*)?\||^\.\.\.$|^hint:|^Found \d+ issues?\.$|^Updated \d+ files?\.$")
 
 
 def count_cells(source: str) -> int:
@@ -24,7 +29,8 @@ def count_cells(source: str) -> int:
         return -1
     n = 0
     for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef):
+        # Cells may be async; @app.class_definition decorates a class.
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             for d in node.decorator_list:
                 name = d.func if isinstance(d, ast.Call) else d
                 if isinstance(name, ast.Attribute) and name.attr in ("cell", "function", "class_definition"):
@@ -36,12 +42,18 @@ def judge(cells: int, check_out: str, check_code: int | None, run_err: str | Non
     findings: list[dict] = []
     if cells < 0:
         findings.append({"severity": "error", "kind": "syntax", "message": f"{rel} does not parse"})
-    for line in check_out.splitlines():
-        line = line.strip()
-        if not line or line.startswith(("Checking", "✓", "All checks")):
-            continue
-        sev = "error" if ("error" in line.lower() or "✗" in line or "MB" in line.split(":")[0]) else "warning"
-        findings.append({"severity": sev, "kind": "check", "message": line[:300]})
+    lines = [line.strip() for line in check_out.splitlines() if line.strip()]
+    other = []  # what check printed besides issues: why it failed when there is no issue to show
+    for i, line in enumerate(lines):
+        issue = DIAGNOSTIC.match(line)
+        if issue:
+            sev = "error" if issue[1] in ("critical", "error") else issue[1]
+            where = WHERE.match(lines[i + 1]) if i + 1 < len(lines) else None
+            findings.append({"severity": sev, "kind": "check", "message": f"{issue[3]} ({issue[2]})"[:300], **({"ref": f"{rel}:{where[1]}:{where[2]}"} if where else {})})
+        elif not WHERE.match(line) and not EXCERPT.match(line):
+            other.append(line)
+    if check_code not in (None, 0) and not any(f["severity"] == "error" and f["kind"] == "check" for f in findings):
+        findings.append({"severity": "error", "kind": "check", "message": (other[-1] if other else f"marimo check exited {check_code}")[:300]})
     if run_code not in (None, 0):
         tail = (run_err or "").strip().splitlines()
         findings.append({"severity": "error", "kind": "run", "message": (tail[-1] if tail else f"the notebook exited {run_code}")[:300]})

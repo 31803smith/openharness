@@ -37,7 +37,7 @@ def tune() -> None:
             return factory(*args, **kwargs).with_overrides(PANE_CONFIG)
 
         start.get_default_config_manager = pane_config_manager
-    except Exception as error:  # pragma: no cover - only on a marimo that moved things
+    except Exception as error:  # only on a marimo that moved things
         print(f"[marimo pane] running with marimo's defaults ({error})", file=sys.stderr)
 
 
