@@ -97,6 +97,7 @@ service-account*.json
 # Local scratch — notes, experiments, throwaway scripts
 scratch/
 tmp/
+mockup/
 notes/
 *.local
 *.local.*
