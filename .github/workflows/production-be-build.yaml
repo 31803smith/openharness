@@ -62,7 +62,6 @@ jobs:
       # The `secrets` context is not readable from a step-level `if:`, so reduce it to a boolean here
       # — job-level `env:` can see it. This holds "true"/"false", never any key material.
       HAS_WIF: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER != '' }}
-      HAS_SA_KEY: ${{ secrets.GCLOUD_DEV_SERVICE_ACCOUNT_JSON != '' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -77,10 +76,10 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Fail early if no GCP credential was supplied
-        if: env.HAS_WIF != 'true' && env.HAS_SA_KEY != 'true'
+        if: env.HAS_WIF != 'true'
         run: |
-          echo "::error::Set GCP_WORKLOAD_IDENTITY_PROVIDER + GCP_SERVICE_ACCOUNT_GCR (preferred)"
-          echo "::error::or the GCLOUD_DEV_SERVICE_ACCOUNT_JSON secret."
+          echo "::error::Set GCP_WORKLOAD_IDENTITY_PROVIDER + GCP_SERVICE_ACCOUNT_GCR."
+          echo "::error::This workflow has no key fallback — federation is the only path."
           exit 1
 
       # NOTE THE `_GCR` SUFFIX on the service account. The registry and the CLI release bucket live in
@@ -94,14 +93,6 @@ jobs:
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT_GCR }}
-
-      # The legacy path. Delete this step (and the secret, and the key itself in GCP) once a tag build
-      # has gone green on federation — an unused key that still authenticates is still a liability.
-      - name: Setup google auth (service-account key — legacy)
-        if: env.HAS_WIF != 'true'
-        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
-        with:
-          credentials_json: ${{ secrets.GCLOUD_DEV_SERVICE_ACCOUNT_JSON }}
 
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
