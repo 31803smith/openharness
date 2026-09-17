@@ -240,7 +240,8 @@ static lv_obj_t *s_no_agents_tile;   // persistent "No agents yet" page, shown a
 static lv_obj_t *s_no_agents_hint_lbl; // the closing line under the command / the local create hint
 static lv_obj_t *s_na_eyebrow;       // machine name above the no-agents headline (remote only)
 static lv_obj_t *s_na_title;         // "Start on your computer" / "No agents yet"
-static lv_obj_t *s_na_cmd_lbl;       // the green command inside its code pill (remote only)
+static lv_obj_t *s_na_cmd_lbl;       // the "New Harness" label inside the action pill (hidden while not connected)
+static lv_obj_t *s_na_marks;         // the engines' marks under the pill: what will appear here
 static lv_obj_t *s_overview_tile;      // persistent leading "overview" tile (ring 0): MACHINE eyebrow + "N agents"
 static lv_obj_t *s_overview_count_lbl; // the "N agents" label inside the overview tile (updated on count change)
 static lv_obj_t *s_overview_working_lbl; // green "<N> <gerund>…" sub-line — count of busy agents + a rotating verb; hidden when 0
@@ -424,7 +425,8 @@ static void update_content_window(void); // (re)materialize the active-tile±win
 static void carousel_scroll_apply(void);   // let the strip scroll, or not on a ring of one (defined below)
 static void rebuild_settings_tile(void); // (re)build the trailing settings tile at the last column
 static void rebuild_machines_tile(void);   // (re)build the Machines carousel tile (ring 1)
-static void no_agents_apply(void);       // switch the empty-state hint between local create and remote tmux
+static void no_agents_apply(void);       // the empty state's two sentences: not connected, or no harnesses yet
+static const lv_image_dsc_t *engine_mark(const char *engine, bool *recolor);   // the engine's product mark (defined with the tiles)
 static void clear_removed_project_transients_locked(const char *project_id, bool voice_aborted);
 static void settings_vlang_tap(lv_event_t *e);   // toggle voice language (defined below)
 static void settings_close_tap(lv_event_t *e);   // the Settings tile's X → back to the Overview (defined below)
@@ -885,26 +887,50 @@ static lv_obj_t *make_label(lv_obj_t *parent, const char *txt, lv_color_t color,
 }
 
 
-// A monospaced-looking pill for a literal the user has to read and type back. Used by the "No agents yet"
-// tile for the shell command that starts one.
-static lv_obj_t *code_pill(lv_obj_t *parent, const char *text)
+// The pill for a thing to PRESS in the app rather than type in a shell: a keycap on the left ("Cmd N", in
+// a darker well with a hairline, the way a key is drawn) and the menu item's words beside it. Same glass
+// as the tab pill (dark fill, hairline rim, full radius). Returns the words' label.
+//
+// "Cmd N", not "⌘N": no face on the device carries U+2318, and a tofu box in a keycap is worse than the
+// word. The faces are generated from Geist with a Latin range — adding the glyph is a font rebuild.
+static lv_obj_t *action_pill(lv_obj_t *parent, const char *key, const char *text)
 {
     lv_obj_t *box = lv_obj_create(parent);
     lv_obj_remove_style_all(box);
     lv_obj_clear_flag(box, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_size(box, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-    lv_obj_set_style_bg_color(box, COL_FG, 0);
-    lv_obj_set_style_bg_opa(box, LV_OPA_10, 0);      // white @10%, per the design
-    lv_obj_set_style_radius(box, 16, 0);
-    lv_obj_set_style_pad_hor(box, 20, 0);
-    lv_obj_set_style_pad_ver(box, 12, 0);
+    lv_obj_set_style_bg_color(box, lv_color_hex(0x23252f), 0);
+    lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(box, 1, 0);
+    lv_obj_set_style_border_color(box, lv_color_hex(0x3a3f4b), 0);
+    lv_obj_set_style_radius(box, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_pad_hor(box, 22, 0);
+    lv_obj_set_style_pad_ver(box, 10, 0);
+    lv_obj_set_flex_flow(box, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(box, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(box, 10, 0);
+
+    lv_obj_t *cap = lv_obj_create(box);
+    lv_obj_remove_style_all(cap);
+    lv_obj_clear_flag(cap, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(cap, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_color(cap, lv_color_hex(0x0e1013), 0);
+    lv_obj_set_style_bg_opa(cap, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(cap, 1, 0);
+    lv_obj_set_style_border_color(cap, lv_color_hex(0x4a5160), 0);
+    lv_obj_set_style_radius(cap, 8, 0);
+    lv_obj_set_style_pad_hor(cap, 10, 0);
+    lv_obj_set_style_pad_ver(cap, 2, 0);
+    lv_obj_t *k = lv_label_create(cap);
+    lv_obj_set_style_text_font(k, &geist_sem_24, 0);
+    lv_obj_set_style_text_color(k, COL_FG, 0);
+    lv_label_set_text(k, key);
+    lv_obj_center(k);
+
     lv_obj_t *l = lv_label_create(box);
-    // The device has no 20px face; reg_25 is the nearest and keeps the design's 16 < 20 < 28 ordering
-    // intact as 20 < 25 < 32.
-    lv_obj_set_style_text_font(l, &geist_reg_25, 0);
-    lv_obj_set_style_text_color(l, COL_VOICE, 0);
+    lv_obj_set_style_text_font(l, &geist_sem_24, 0);
+    lv_obj_set_style_text_color(l, COL_FG, 0);
     lv_label_set_text(l, text);
-    lv_obj_center(l);
     return l;
 }
 
@@ -1746,12 +1772,37 @@ void ui_init(void)
     lv_label_set_text(s_na_eyebrow, "");
     s_na_title = lv_label_create(s_no_agents_tile);
     lv_obj_set_width(s_na_title, SAFE_CONTENT_W);
-    lv_obj_set_style_text_font(s_na_title, &geist_med_32, 0);
+    lv_obj_set_style_text_font(s_na_title, &geist_med_38, 0);   // the tiles' own title face
     lv_obj_set_style_text_color(s_na_title, COL_FG, 0);
     lv_obj_set_style_text_align(s_na_title, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_long_mode(s_na_title, LV_LABEL_LONG_WRAP);
-    lv_label_set_text(s_na_title, "No agents yet");
-    s_na_cmd_lbl = code_pill(s_no_agents_tile, "$ tmux new");
+    lv_label_set_text(s_na_title, "No Harnesses yet");
+    // THE ACTION, spelled the way the app spells it: a keycap and the menu's own words. A thing to press
+    // in OpenHarness, not a thing to type — the old "$ tmux new" was an instruction for a product that
+    // no longer exists (herdr is retired; the daemon starts tmux itself; a harness is made with ⌘N).
+    s_na_cmd_lbl = action_pill(s_no_agents_tile, "Cmd N", "New Harness");
+    // The engines' marks, at their native 20px: a wordless "these are the kinds of thing that will
+    // appear here". Three is enough to read as a set; the row does not try to be the whole catalogue.
+    s_na_marks = lv_obj_create(s_no_agents_tile);
+    lv_obj_remove_style_all(s_na_marks);
+    lv_obj_clear_flag(s_na_marks, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(s_na_marks, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(s_na_marks, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(s_na_marks, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(s_na_marks, 14, 0);
+    lv_obj_set_style_pad_top(s_na_marks, 4, 0);
+    {
+        static const char *const engines[] = { "claude", "codex", "cursor" };
+        for (size_t k = 0; k < sizeof engines / sizeof engines[0]; k++) {
+            bool recolor = false;
+            const lv_image_dsc_t *src = engine_mark(engines[k], &recolor);
+            if (!src) continue;
+            lv_obj_t *im = lv_image_create(s_na_marks);
+            lv_image_set_src(im, src);
+            lv_obj_set_style_image_recolor(im, COL_CLAUDE, 0);
+            lv_obj_set_style_image_recolor_opa(im, recolor ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+        }
+    }
     s_no_agents_hint_lbl = lv_label_create(s_no_agents_tile);
     lv_obj_set_width(s_no_agents_hint_lbl, SAFE_CONTENT_W);
     lv_obj_set_style_text_font(s_no_agents_hint_lbl, &geist_reg_20, 0);
@@ -6267,6 +6318,7 @@ void ui_set_connected(bool connected)
     s_connected = connected;
     refresh_conn_ui();   // recolor dots (green/yellow/muted) + toggle the "Reconnecting…" badge
     overview_actions_apply();
+    no_agents_apply();   // the empty state is a different sentence when nobody is on the wire
     display_unlock();
 }
 
@@ -7549,15 +7601,26 @@ static void no_agents_apply(void)
     // detected the hold and set its flag, nothing ever drained it, and the line sat on screen promising
     // something no code did. The fork itself was already unreachable: the only writer of `remote` that
     // still runs sets it to false, since both backend snapshot paths lost their callers with the socket.
+    // TWO HONEST STATES, one screen each (mockup/empty-state.html, A and B′). The daemon is either on the
+    // cable or it is not; when it is not, the machine's name, the action and the marks are all about a
+    // computer that is not talking to us yet, and the one thing to do is open the app there. When it is,
+    // the tile names the machine and the action.
+    lv_obj_t *pill = s_na_cmd_lbl ? lv_obj_get_parent(s_na_cmd_lbl) : NULL;   // the words' label → the pill
+    if (!s_connected) {
+        set_hidden(s_na_eyebrow, true);   // absent, not "Machine": the row is for a name
+        if (pill) set_hidden(pill, true);
+        if (s_na_marks) set_hidden(s_na_marks, true);
+        lv_label_set_text(s_na_title, "Run OpenHarness\non your computer");
+        lv_label_set_text(s_no_agents_hint_lbl, "The dial follows the app.\nIt connects on its own.");
+        return;
+    }
     set_hidden(s_na_eyebrow, false);
-    if (s_na_cmd_lbl) set_hidden(lv_obj_get_parent(s_na_cmd_lbl), false);   // the pill, not the label
-    // Name as-is, exactly like the Overview eyebrow. The design mock reads "MACBOOK PRO" because the
-    // machine is named that, not because the device upper-cases anything.
-    lv_label_set_text(s_na_eyebrow, name ? name : "Machine");
-    // Both multiplexers are watched, so the line names both. "on your computer" moves out of the title
-    // because the eyebrow above already carries the machine name — and a fourth line does not fit here.
-    lv_label_set_text(s_na_title, "Start tmux or herdr");
-    lv_label_set_text(s_no_agents_hint_lbl, "Then run an agent CLI");
+    if (pill) set_hidden(pill, false);
+    if (s_na_marks) set_hidden(s_na_marks, false);
+    // Name as-is, exactly like the Overview eyebrow: the device never upper-cases anything.
+    lv_label_set_text(s_na_eyebrow, name ? name : "");
+    lv_label_set_text(s_na_title, "No Harnesses yet");
+    lv_label_set_text(s_no_agents_hint_lbl, "Create one in OpenHarness \xE2\x80\x94\nit shows up here the moment it starts.");
 }
 
 // (Re)build the Machines carousel tile (ring 1) from the current model — same vertical scroll-view style as
