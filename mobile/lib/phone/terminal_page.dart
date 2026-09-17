@@ -643,6 +643,13 @@ class _TerminalPageState extends State<TerminalPage>
   /// this one. Popping from here then took down the NEW agent's terminal, the page underneath
   /// surfaced, found its pane gone too and popped again, and the person landed on the list instead
   /// of in the agent they had just made.
+  ///
+  /// ⚠️ **Does nothing at all on the home screen, and that is correct rather than a gap.** The
+  /// terminal is the root of its stack there ([AgentHome]), so `canPop` is false and the guard below
+  /// returns — but the reason this is called is that the agent went away, and [AgentHome] watches
+  /// the same agent list: the agent leaves it, the home screen's target stops matching, and it
+  /// rebuilds onto another agent or onto its empty state. Leaving the route was never what fixed
+  /// this case; it only uncovered the list that did.
   void _leave() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;

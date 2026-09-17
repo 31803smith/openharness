@@ -1,3 +1,5 @@
+// `Timer` — used only by the kept-but-dead landing rules below, which is also why
+// `phone_navigation.dart` and `phone_status.dart` are still imported here.
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -5,8 +7,8 @@ import 'package:flutter/material.dart';
 import 'package:harness_mobile/state/app_state.dart';
 
 import '../p2p/phone_terminal_p2p.dart';
+import 'agent_home.dart';
 import 'agent_index.dart';
-import 'agents_tab.dart';
 import 'machines_tab.dart';
 import 'phone_navigation.dart';
 import 'phone_shell_scope.dart';
@@ -16,19 +18,17 @@ import 'settings_page.dart';
 
 /// Whether the shell draws its tab bar.
 ///
-/// Off because the terminal is where the phone opens: the landing rules below
-/// reopen the last agent, fall back to Machines when nothing answers, and carry
-/// a freshly linked machine through to its first agent — so the app puts itself
-/// where it belongs, and a bar for steering it there by hand is a row of chrome
-/// under every screen paying for the case those rules already cover.
+/// Off because the terminal is where the phone opens and stays: [AgentHome] is
+/// the Agents tab's root, it picks the agent itself, and a bar for steering
+/// between tabs by hand is a row of chrome under every screen paying for a case
+/// that no longer arises.
 ///
 /// ⚠️ It hides the BAR, not the tabs. All three still exist, still hold their
-/// own page stacks, [_PhoneShellState._select] still pops one back to its root,
-/// and the landing rules still choose between them — nothing below this flag
-/// knows it is off. What goes with it is the only way to REACH a tab by hand,
-/// so with it off the app can only be where it was put: fine while that place
-/// is one agent's terminal, and the reason this is a flag rather than a
-/// deletion.
+/// own page stacks, and [_PhoneShellState._select] still pops one back to its
+/// root — nothing below this flag knows it is off. What goes with it is the only
+/// way to REACH a tab by hand, so with it off the app can only be where it was
+/// put: fine while that place is one agent's terminal, and the reason this is a
+/// flag rather than a deletion.
 const bool _showTabBar = false;
 
 /// The signed-in phone app: three tabs, each with its own page stack.
@@ -66,15 +66,12 @@ class _PhoneShellState extends State<PhoneShell> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    widget.notifier.addListener(_onAppChanged);
-    unawaited(_reopenLastAgent());
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    widget.notifier.removeListener(_onAppChanged);
-    _pendingDeadline?.cancel();
+    _linkedMachineId.dispose();
     for (final controller in _heroControllers.values) {
       controller.dispose();
     }
@@ -83,32 +80,84 @@ class _PhoneShellState extends State<PhoneShell> with WidgetsBindingObserver {
 
   // ── Where the app lands ───────────────────────────────────────────────────────────────────────
   //
-  // Three moves the shell makes on its own, each at most once and each abandoned the moment the
-  // person picks a tab themselves — a screen that jumps after somebody has started using it is
-  // worse than one that never jumped at all:
+  // Almost nothing, now — and that is the change. The shell used to reopen the last agent itself,
+  // fall back to Machines when nothing answered, and time the wait out after 45 seconds, because
+  // the thing it was steering towards was a page it had to PUSH over an agents list. There is no
+  // list and no push: [AgentHome] is the Agents tab's root, and it reads the last-agent record,
+  // waits for the machines to answer and picks the agent, all as part of drawing itself.
   //
-  //  - the agent open when the app last closed is opened again ([_reopenLastAgent]);
-  //  - failing that, a phone linked to no machine that answers opens on Machines ([_decideLanding]),
-  //    because the Agents tab would only be an empty list pointing there;
-  //  - a password accepted on the Machines tab carries on to that machine's first agent
-  //    ([_followLinkedMachine]).
+  // One move is left, because it crosses tabs and no page can make it alone: a password accepted on
+  // the Machines tab takes the person back to Agents, where the machine they just opened is about
+  // to bring its agents with it.
+
+  /// The machine whose password was just accepted, for [AgentHome] to open once it answers.
+  ///
+  /// ⚠️ **A notifier and not a field on this State, because a field cannot reach [AgentHome] at
+  /// all.** Each tab's root is built inside `onGenerateRoute`, which a nested [Navigator] runs ONCE
+  /// when it creates that route — so the root keeps forever whatever arguments it was first given,
+  /// and `setState` here rebuilds this widget without ever rebuilding it. A value passed down as a
+  /// constructor field would have been read on the first launch frame, when no machine had been
+  /// linked, and never again.
+  ///
+  /// Handed over once, at construction, and written to afterwards: [AgentHome] listens, so a value
+  /// set at any point reaches it. Never reset here — [AgentHome] spends the request itself, on the
+  /// agent arriving or on a swipe away from it.
+  final _linkedMachineId = ValueNotifier<String?>(null);
+
+  /// A password was accepted: the agent is what the person came for, so the phone points itself at
+  /// that machine and shows the tab an agent lives on.
+  ///
+  /// No waiting and no timeout here, which is what this used to be full of. The machine is still
+  /// connecting at this point and [AgentHome] is already watching for exactly that — it holds
+  /// whatever is on screen while the machine dials, then opens the first agent it reports.
+  void _followLinkedMachine(String machineId) {
+    _linkedMachineId.value = machineId;
+    setState(() {
+      _tab = PhoneTab.agents;
+      _tabCanPop =
+          _navigators[PhoneTab.agents]?.currentState?.canPop() ?? false;
+    });
+  }
+
+  // ── The landing rules this replaced, kept and not called ──────────────────────────────────────
+  //
+  // ⚠️ **Dead on purpose: nothing below this line runs.** It is the shell's old way of deciding
+  // where the app opens, from when the Agents tab's root was a LIST and a terminal had to be pushed
+  // over it — so the shell waited for a machine to answer, pushed the pager itself, gave up after
+  // [_pendingTimeout], and fell back to Machines when no machine answered at all. [AgentHome] now
+  // does all of that as part of drawing itself, without a push and without a timeout, so none of
+  // this is wired up any more.
+  //
+  // Kept because the list screens are kept: `_showTabBar` above and `AgentsTab` are both still here
+  // for the same reason, and bringing them back would need these rules back with them.
+  // [_followLinkedMachine] above is the live one; the copy here is renamed so the two can sit side
+  // by side.
+  //
+  // `ignore_for_file` is deliberately NOT used: the ignores are per-member, so an unused member
+  // added to this class later still gets flagged.
 
   /// An agent waiting for its machine to answer before it can be opened.
+  // ignore: unused_field
   ({String machineId, String? agentId, bool afterLink})? _pending;
+  // ignore: unused_field
   Timer? _pendingDeadline;
 
   /// How long a machine gets to answer. Past this the phone stays where it is — on a list the person
   /// can act on — rather than jumping into a terminal a minute after they stopped expecting it.
+  // ignore: unused_field
   static const _pendingTimeout = Duration(seconds: 45);
 
   /// The last-agent record has not been read yet, so the landing tab cannot be chosen: a reopen
   /// would override it.
+  // ignore: unused_field
   bool _readingLastAgent = true;
 
   /// The landing has been decided — by the shell or by the person — and nothing moves on its own
-  /// again except [_followLinkedMachine], which the person asked for by entering a password.
+  /// again except [_followLinkedMachineLegacy], which the person asked for by entering a password.
+  // ignore: unused_field
   bool _landed = false;
 
+  // ignore: unused_element
   Future<void> _reopenLastAgent() async {
     final last = await widget.notifier.lastOpenedAgent.read();
     if (!mounted) return;
@@ -120,7 +169,8 @@ class _PhoneShellState extends State<PhoneShell> with WidgetsBindingObserver {
     }
   }
 
-  void _followLinkedMachine(String machineId) {
+  // ignore: unused_element
+  void _followLinkedMachineLegacy(String machineId) {
     _landed = true;
     // Straight to Agents, before the machine has finished connecting: the row it lands on says
     // "Connecting…", which is what is actually happening, and the agent opens over it once it can.
@@ -132,6 +182,7 @@ class _PhoneShellState extends State<PhoneShell> with WidgetsBindingObserver {
     _wait(machineId: machineId, agentId: null, afterLink: true);
   }
 
+  // ignore: unused_element
   void _wait({
     required String machineId,
     required String? agentId,
@@ -143,6 +194,7 @@ class _PhoneShellState extends State<PhoneShell> with WidgetsBindingObserver {
     _onAppChanged();
   }
 
+  // ignore: unused_element
   void _dropPending() {
     _pending = null;
     _pendingDeadline?.cancel();
@@ -150,6 +202,7 @@ class _PhoneShellState extends State<PhoneShell> with WidgetsBindingObserver {
     if (mounted) _onAppChanged();
   }
 
+  // ignore: unused_element
   void _onAppChanged() {
     if (!mounted) return;
     final pending = _pending;
@@ -231,6 +284,7 @@ class _PhoneShellState extends State<PhoneShell> with WidgetsBindingObserver {
   /// it, so a phone that IS linked reads exactly like one that is not for the first second or two.
   /// An empty account decides nothing either — until the list arrives, empty is indistinguishable
   /// from not loaded.
+  // ignore: unused_element
   void _decideLanding() {
     if (_landed || _readingLastAgent) return;
     final notifier = widget.notifier;
@@ -258,12 +312,15 @@ class _PhoneShellState extends State<PhoneShell> with WidgetsBindingObserver {
     });
   }
 
+  // ignore: unused_element
   void _afterFrame(VoidCallback action) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) action();
     });
     WidgetsBinding.instance.ensureVisualUpdate();
   }
+
+  // ── End of the kept-but-dead landing rules ────────────────────────────────────────────────────
 
   /// Back in the foreground: a p2p retry waiting out its delay fires now, and so does every machine
   /// socket the phone lost while it was away. Going to the background needs nothing — the OS
@@ -283,9 +340,6 @@ class _PhoneShellState extends State<PhoneShell> with WidgetsBindingObserver {
   NavigatorState? get _currentNavigator => _navigators[_tab]?.currentState;
 
   void _select(PhoneTab tab) {
-    // The person chose where to be: nothing the shell was waiting to open lands on them later.
-    _landed = true;
-    if (_pending != null) _dropPending();
     if (tab == _tab) {
       // A second tap on the tab you are already on pops that tab back to its root — the phone
       // convention, and the only way back out of a deep stack without walking every page.
@@ -301,7 +355,10 @@ class _PhoneShellState extends State<PhoneShell> with WidgetsBindingObserver {
   }
 
   Widget _rootFor(PhoneTab tab) => switch (tab) {
-    PhoneTab.agents => AgentsTab(notifier: widget.notifier),
+    PhoneTab.agents => AgentHome(
+      notifier: widget.notifier,
+      openMachineId: _linkedMachineId,
+    ),
     PhoneTab.machines => MachinesTab(notifier: widget.notifier),
     PhoneTab.settings => SettingsPage(notifier: widget.notifier),
   };
@@ -406,9 +463,8 @@ class _PhoneShellState extends State<PhoneShell> with WidgetsBindingObserver {
                 : PhoneTabBar(
                     current: _tab,
                     onSelect: _select,
-                    waitingCount: waitingAgents(
-                      agentIndex(widget.notifier),
-                    ).length,
+                    waitingCount: waitingAgents(agentIndex(widget.notifier))
+                        .length,
                   ),
           ),
         ),

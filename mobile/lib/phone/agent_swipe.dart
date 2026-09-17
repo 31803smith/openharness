@@ -70,6 +70,7 @@ class AgentSwipeHost extends StatefulWidget {
     required this.machineId,
     required this.agentId,
     required this.neighbours,
+    this.onAgentChanged,
   });
 
   final AppNotifier notifier;
@@ -81,6 +82,14 @@ class AgentSwipeHost extends StatefulWidget {
 
   /// Null for a page opened without neighbours, which is then simply the page.
   final AgentSwipeList? neighbours;
+
+  /// Told which agent a swipe has arrived at, for a host that has to keep up with the pager.
+  ///
+  /// Only [AgentHome] passes it, and it needs it: the pager lives at the ROOT there and is rebuilt
+  /// whenever the account's state moves, so a host still naming the agent this opened on would snap
+  /// the screen back to it mid-session. Every pushed pager is popped rather than rebuilt around a
+  /// different agent, and passes null.
+  final ValueChanged<({String machineId, String agentId})>? onAgentChanged;
 
   @override
   State<AgentSwipeHost> createState() => _AgentSwipeHostState();
@@ -167,9 +176,14 @@ class _AgentSwipeHostState extends State<AgentSwipeHost> {
     _voice.dispose();
     _controller?.dispose();
     _detachAll();
-    // Leaving the terminal means the next launch starts on the list. A process the OS kills never
-    // gets here, which is what leaves the record behind for the reopen.
-    widget.notifier.lastOpenedAgent.forget(_current);
+    // ⚠️ **The record is deliberately NOT cleared here, and it used to be.** The old rule was
+    // "leaving the terminal means the next launch starts on the list" — but there is no list to
+    // start on any more: the terminal IS the home screen (see [AgentHome]), and a pager is disposed
+    // every time the home screen rebuilds around a different agent. Forgetting on the way out would
+    // erase, on an ordinary rebuild, the very record the next launch is supposed to reopen.
+    //
+    // Nothing else has to clear it either. A record naming an agent that no longer exists costs one
+    // lookup that finds nothing, and [AgentHome] falls through to the first reachable agent.
     super.dispose();
   }
 
@@ -254,6 +268,9 @@ class _AgentSwipeHostState extends State<AgentSwipeHost> {
     // and finds none.
     _attached.add(arrived);
     widget.notifier.lastOpenedAgent.remember(arrived);
+    // Before the setState, so a host that rebuilds this pager in response already names the agent
+    // swiped to — told afterwards, it would rebuild still pointing at the previous one.
+    widget.onAgentChanged?.call(arrived);
     setState(() {
       _page = index;
       _current = arrived;
