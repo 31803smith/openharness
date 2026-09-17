@@ -47,6 +47,24 @@ const MAX_CAPTURED_CHARS = 64 * 1024
  *  sign-in path, where a hung child would otherwise hang the command that spawned it. */
 const DEFAULT_TIMEOUT_MS = 30_000
 
+/**
+ * grid's own update check, and the one switch that turns it off.
+ *
+ * A `grid` with a terminal on stderr looks for a newer release and, finding one, prints "run
+ * `grid update`" — and `grid update` replaces the binary IN PLACE, wherever `which grid` found it
+ * (autonomous-grid `cli/update.py`). Under a managed runtime that file is the pin, and the process
+ * most likely to read that line and obey it is an agent in a pane. So the check is off for every
+ * child this daemon spawns ([gridChildEnv]) and in every pane it launches (`engineLaunch.ts`), by
+ * the variable grid honours for it. The daemon's own spawns pipe stderr and would be spared anyway;
+ * saying it explicitly is what makes the pane and the daemon one rule.
+ */
+export const GRID_NO_UPDATE_CHECK_VAR = 'GRID_NO_UPDATE_CHECK'
+
+/** The environment a `grid` child gets: the caller's own, with the update check off. */
+export function gridChildEnv(processEnv: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  return { ...processEnv, [GRID_NO_UPDATE_CHECK_VAR]: '1' }
+}
+
 export type GridCode = 'OK' | 'GRID_CLI_MISSING' | 'GRID_CLI_OUTDATED' | 'GRID_FAILED'
 
 export interface GridResult {
@@ -104,6 +122,22 @@ export function gridAvailable(processEnv: NodeJS.ProcessEnv = process.env): bool
   return binaryOnPath(gridBinaryPath(processEnv), processEnv)
 }
 
+/**
+ * Which `grid` this machine would run, for a desktop that has to say so.
+ *
+ * `managed` is the runtime this daemon owns — the pin. `path` is one the user installed themselves,
+ * or a developer's override: runnable, but not the pin, and not ours to keep current. `missing` is
+ * nothing to run at all, which the picker and the Local model dialog need to know BEFORE they offer
+ * to start an agent whose second step is `grid`.
+ */
+export type GridCliPresence = 'managed' | 'path' | 'missing'
+
+export function gridCliPresence(processEnv: NodeJS.ProcessEnv = process.env): GridCliPresence {
+  const binary = gridBinaryPath(processEnv)
+  if (!binaryOnPath(binary, processEnv)) return 'missing'
+  return binary.startsWith(env.ADAPTER_RUNTIME_DIR + sep) ? 'managed' : 'path'
+}
+
 export interface GridExecOptions {
   /** Written to the child's stdin, which is then closed. For the token hand-off and nothing else. */
   stdin?: string
@@ -125,7 +159,7 @@ export async function gridExec(args: readonly string[], opts: GridExecOptions = 
     return { code: 'GRID_CLI_MISSING', exitCode: 1, stdout: '', stderr: '', message: MISSING_MESSAGE }
   }
   return await new Promise<GridResult>((resolve) => {
-    const child = spawn(binary, [...args], { stdio: ['pipe', 'pipe', 'pipe'] })
+    const child = spawn(binary, [...args], { stdio: ['pipe', 'pipe', 'pipe'], env: gridChildEnv(processEnv) })
     let stdout = ''
     let stderr = ''
     let settled = false

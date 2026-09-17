@@ -23,12 +23,19 @@ async function load() {
 function fakeGrid(dir: string, label: string): string {
   mkdirSync(dir, { recursive: true })
   const bin = join(dir, 'grid')
-  writeFileSync(bin, `#!/bin/sh\nprintf '%s\\n' "$@" > "${join(root, `${label}.args`)}"\nexit 0\n`, { mode: 0o755 })
+  writeFileSync(bin, [
+    '#!/bin/sh',
+    `printf '%s\\n' "$@" > "${join(root, `${label}.args`)}"`,
+    `printf '%s' "\${GRID_NO_UPDATE_CHECK-unset}" > "${join(root, `${label}.update-check`)}"`,
+    'exit 0',
+    '',
+  ].join('\n'), { mode: 0o755 })
   return bin
 }
 
 function ran(label: string): boolean { return existsSync(join(root, `${label}.args`)) }
 function argsOf(label: string): string[] { return readFileSync(join(root, `${label}.args`), 'utf8').trim().split('\n') }
+function updateCheckSeenBy(label: string): string { return readFileSync(join(root, `${label}.update-check`), 'utf8') }
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'grid-logout-'))
@@ -56,6 +63,8 @@ describe('passThroughToGridLogout — which grid it runs', () => {
 
     expect(outcome).toEqual({ ran: true, exitCode: 0 })
     expect(argsOf('override')).toEqual(['logout', '--force'])
+    // Same as the hand-off: a pinned binary must never be told to `grid update` itself.
+    expect(updateCheckSeenBy('override')).toBe('1')
   })
 
   it('prefers the managed runtime over a grid on PATH', async () => {

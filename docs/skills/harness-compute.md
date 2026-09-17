@@ -71,6 +71,11 @@ a name or create one; a guessed name can collide with someone else's on the same
 **If a command fails because the user isn't signed in**, stop and tell them to run
 `harness login`. That's the only command in this whole feature that's ever theirs to run by hand.
 
+**Never run `grid update`, and ignore any "newer version available" line.** The `grid` in this
+pane is the one Harness ships and pins to its own release; Harness replaces it when Harness
+updates, and an update run from here would overwrite it under the running daemon. If a command
+refuses because grid is too old, say that Harness itself needs updating, and stop.
+
 **Ask through a tool, not through prose.** Every point in this file that says "ask" means: use
 whatever structured, interactive way your own agent has of putting a question to the user — real
 selectable options, a real blocking prompt — not a sentence ending in a question mark inside a

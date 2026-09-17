@@ -33,6 +33,7 @@ function fakeGrid(dir: string, label: string): string {
   writeFileSync(bin, [
     '#!/bin/sh',
     `printf '%s\\n' "$@" > "${join(root, `${label}.args`)}"`,
+    `printf '%s' "\${GRID_NO_UPDATE_CHECK-unset}" > "${join(root, `${label}.update-check`)}"`,
     `[ "$1" = login ] && /bin/cat > "${join(root, `${label}.stdin`)}"`,
     'exit 0',
     '',
@@ -42,6 +43,7 @@ function fakeGrid(dir: string, label: string): string {
 
 function ran(label: string): boolean { return existsSync(join(root, `${label}.args`)) }
 function argsOf(label: string): string[] { return readFileSync(join(root, `${label}.args`), 'utf8').trim().split('\n') }
+function updateCheckSeenBy(label: string): string { return readFileSync(join(root, `${label}.update-check`), 'utf8') }
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'grid-handoff-'))
@@ -72,6 +74,9 @@ describe('handOffToGrid — which grid it runs', () => {
     expect(result.code).toBe('OK')
     expect(argsOf('override')).toEqual(['login', '--harness', '--json'])
     expect(readFileSync(join(root, 'override.stdin'), 'utf8')).toBe('tok_1\n')
+    // grid's own "a newer version is out — run `grid update`" must never reach a binary the
+    // harness pins: `update` would overwrite it in place. Off for every child this daemon spawns.
+    expect(updateCheckSeenBy('override')).toBe('1')
   })
 
   it('prefers the managed runtime over a grid on PATH', async () => {

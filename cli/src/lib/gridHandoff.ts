@@ -13,7 +13,7 @@
  */
 import { spawn } from 'node:child_process'
 import { binaryOnPath } from './binaryOnPath.js'
-import { gridBinaryPath } from './gridExec.js'
+import { gridBinaryPath, gridChildEnv } from './gridExec.js'
 
 /** The flag on `grid login` that means "read the token off stdin" (autonomous-grid's `cli/parser.py`).
  *  WHICH `grid` is not decided here: `gridBinaryPath()` (lib/gridExec.ts) answers that for every grid
@@ -94,6 +94,9 @@ export async function handOffToGrid(
   return await new Promise<GridHandoffResult>((resolve) => {
     const child = spawn(binary, args, {
       stdio: ['pipe', opts.json ? 'pipe' : 'inherit', opts.json ? 'pipe' : 'inherit'],
+      // The human path inherits stderr, which is a terminal — exactly where grid would offer
+      // `grid update` for a binary the harness pins. See GRID_NO_UPDATE_CHECK_VAR in gridExec.ts.
+      env: gridChildEnv(),
     })
     let stdout = ''
     let stderr = ''

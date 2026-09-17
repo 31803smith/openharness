@@ -5,6 +5,7 @@ import type { AgentEngine } from '../engines/types.js'
 import { binaryOnPath } from './binaryOnPath.js'
 import { engineBin } from './engineBin.js'
 import type { EngineInstallRecipe } from './engineInstall.js'
+import { GRID_NO_UPDATE_CHECK_VAR, gridBinaryPath } from './gridExec.js'
 import { managedNodePath } from './nodeRuntime.js'
 import { RAISE_OPEN_FILES_SH } from './openFiles.js'
 
@@ -303,6 +304,7 @@ export function buildEngineLaunchArgv(
   opts: LaunchCommandOptions = {},
   shell: string | undefined = undefined,
   runtimeNode: string = managedNodePath(),
+  gridBinary: string = gridBinaryPath(),
 ): string[] {
   const command = buildEngineCommandArgv(engine, opts)
   const interactive = interactiveEngineShell(shell)
@@ -311,7 +313,7 @@ export function buildEngineLaunchArgv(
   // of this shell and inherits what it inherits: `npm` is not going to spend someone's Anthropic key,
   // but an install script that probes for credentials to configure itself would, and the whole point
   // of this launch is that the agent's environment is the one the user asked for.
-  const prelude = clearEnvPrelude(opts.clearEnv)
+  const prelude = clearEnvPrelude(opts.clearEnv) + gridPanePrelude(gridBinary)
   // rc files (notably nvm) call getcwd() before running this command. Start the shell in a safe
   // directory and enter the selected workspace only after those files have loaded: an IDE can replace
   // a workspace inode between the desktop picker resolving it and tmux spawning the pane.
@@ -446,6 +448,31 @@ function npmRuntimePrelude(recipe: EngineInstallRecipe, runtimeNode: string, req
       'fi',
     ] : []),
   ].join('\n')
+}
+
+/**
+ * The `grid` this pane's agent gets is the one the daemon resolved — and stays it.
+ *
+ * `grid` is not only the daemon's subprocess: the Harness Compute skill has the AGENT run it, in
+ * this pane, by name. A managed grid under `~/.harness/runtime` is invisible to a shell's PATH, and
+ * a login file that puts `~/.local/bin` first is ordinary — which is where grid's own installer
+ * (uv, on a Mac) leaves a `grid` of some other version. So the prepend is made HERE, after those
+ * files have run, the way [npmRuntimePrelude] does for the managed Node — never by a symlink in
+ * `~/.local/bin`, which would fight the installer for one file. Two versions of `grid` writing one
+ * `~/.grid` is the outcome this exists to prevent.
+ *
+ * Without an absolute path to prepend — the bare name of the PATH fallback, or an override that is
+ * not one — PATH is left alone. Either way grid's update check is off for the pane —
+ * [GRID_NO_UPDATE_CHECK_VAR]: the agent is the process most likely to read "run `grid update`" and
+ * do it, and under a managed runtime that overwrites the pin.
+ *
+ * Interactive shells only, like the npm prelude: a direct launch has no script to carry this.
+ */
+export function gridPanePrelude(binary: string): string {
+  const onPath = isAbsolute(binary)
+    ? [`PATH=${shellSingleQuote(dirname(binary))}"\${PATH:+:$PATH}"`, 'export PATH', 'hash -r 2>/dev/null || true']
+    : []
+  return [...onPath, `${GRID_NO_UPDATE_CHECK_VAR}=1`, `export ${GRID_NO_UPDATE_CHECK_VAR}`, ''].join('\n')
 }
 
 /**
