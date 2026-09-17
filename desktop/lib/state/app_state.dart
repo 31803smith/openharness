@@ -3514,38 +3514,50 @@ class AppNotifier extends ChangeNotifier {
   /// The one action behind every "Talk to Local model manager" entry: explain once,
   /// then open opencode as the agent that starts one.
   ///
-  /// Runs on the computer the app is on ([MachineState.isLocalMachine]) — a
-  /// local model is about THIS hardware — and falls back to the focused
-  /// machine only when there is no local one, in which case the dialog's
-  /// machine line says so by naming it. With the dialog waved off for good
-  /// ([ConfigStore.runLocalModelSkipDialog]) the agent is created straight
-  /// away; otherwise the dialog decides, and Start is what creates. Nothing
-  /// here reports progress: the pane appearing is the confirmation, and a
-  /// refusal lands in [lastError] like any other create.
+  /// The dialog decides, and Start is what creates. Nothing here reports
+  /// progress: the pane appearing is the confirmation, and a refusal lands in
+  /// [lastError] like any other create.
   ///
   /// Takes the caller's [context] because the dialog needs one and this
   /// notifier holds none — the same shape as every other dialog a door opens.
-  Future<void> runLocalModel(BuildContext context) async {
-    final machine = _localModelMachine();
+  ///
+  /// [machineId] is the computer the manager opens on — the pane's own machine
+  /// from a pane's picker, the one chosen from the Models menu's list. Absent
+  /// (a menu with one machine, or none named), it is this computer's own when
+  /// the app has one, else whatever the person is looking at. Never guessed
+  /// past a named machine: a picker on a remote pane that opened the manager
+  /// on this computer was the bug this argument exists to end.
+  ///
+  /// [chooseMachine] is whether the dialog offers the other machines. A pane's
+  /// picker is a question about THAT pane's computer, so it does not (the
+  /// machine is named, not offered); the Models menu is about the account, so
+  /// it does.
+  Future<void> runLocalModel(
+    BuildContext context, {
+    String? machineId,
+    bool chooseMachine = true,
+  }) async {
+    final machine = machineId != null
+        ? machineStates[machineId]
+        : _localModelMachine();
     if (machine == null) {
-      _lastError = 'Connect a machine before starting a local model.';
+      _lastError = machineId != null
+          ? 'That machine is no longer linked.'
+          : 'Connect a machine before starting a local model.';
       _lastErrorRetryable = false;
       notifyListeners();
       return;
     }
-    final machineId = machine.machine.machineId;
-    if (_store?.runLocalModelSkipDialog != true) {
-      final decision = await showRunLocalModelDialog(context, this, machineId);
-      if (decision == null) return;
-      if (decision.skipNextTime) {
-        try {
-          await _store?.saveRunLocalModelSkipDialog(true);
-        } catch (_) {
-          // A state file that cannot be written costs one more look at the
-          // dialog next time, not the agent being asked for now.
-        }
-      }
-    }
+    machineId = machine.machine.machineId;
+    final decision = await showRunLocalModelDialog(
+      context,
+      this,
+      machineId,
+      chooseMachine: chooseMachine,
+    );
+    if (decision == null) return;
+    // The dialog may list the machines, and the person may have moved the choice.
+    machineId = decision.machineId;
     final error = await _startLocalModelAgent(machineId);
     if (error != null) {
       _lastError = error;
@@ -3578,13 +3590,27 @@ class AppNotifier extends ChangeNotifier {
     if (home == null) {
       return 'Could not find the home folder on ${machine.machine.displayName}.';
     }
-    return createAgent(
+    final error = await createAgent(
       machineId,
       engine: 'opencode',
       folder: home,
       agent: localModelAgent,
       name: localModelAgentName,
     );
+    if (error != null) return error;
+    // A daemon that predates `agent`/`name` does not refuse them — it ignores
+    // them, opens a plain opencode pane and names it itself. The pane exists,
+    // so the person is told what it is rather than left to notice that the
+    // manager never introduces itself: the name coming back is the tell.
+    final created = machine.agents
+        .where((a) => a.name == localModelAgentName)
+        .isNotEmpty;
+    if (!created) {
+      return 'Harness on ${machine.machine.displayName} is too old to open '
+          'Local model manager: it opened a plain opencode pane instead. '
+          'Update Harness there and try again.';
+    }
+    return null;
   }
 
   /// The user's home on [machine]. This computer's is in the environment; a

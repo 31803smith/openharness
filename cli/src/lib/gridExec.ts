@@ -115,11 +115,28 @@ export function managedGridPath(): string | null {
   return null
 }
 
-/** The `grid` this daemon should run: the override, the managed runtime, or the name on PATH. */
+/**
+ * The `grid` this daemon should run: the override, the managed runtime, the name on PATH, or —
+ * last — the directory grid's own public installer uses (`lib/gridInstall.ts`), which a daemon
+ * started from a launcher with launchd's bare PATH does not have. Named absolutely rather than by
+ * extending PATH, so the fallback reaches exactly one known file and never whatever else that
+ * directory holds. The managed runtime outranks it: once the pin is published the installer's
+ * copy is only ever a fallback for a machine the pin could not reach.
+ */
 export function gridBinaryPath(processEnv: NodeJS.ProcessEnv = process.env): string {
   const override = processEnv.HARNESS_GRID_BIN?.trim()
   if (override) return override
-  return managedGridPath() ?? GRID_BINARY
+  const managed = managedGridPath()
+  if (managed) return managed
+  if (binaryOnPath(GRID_BINARY, processEnv)) return GRID_BINARY
+  // Keyed on the environment's HOME rather than `os.homedir()`, so a caller that hands in an
+  // environment (the tests, a deliberately bare one) gets exactly what that environment can see.
+  const home = processEnv.HOME?.trim()
+  if (home) {
+    const installed = join(home, '.local', 'bin', GRID_BINARY)
+    try { accessSync(installed, constants.X_OK); return installed } catch { /* not there either */ }
+  }
+  return GRID_BINARY
 }
 
 /** Is there a `grid` to run at all? Asked by reading rather than by spawning, so a missing binary is

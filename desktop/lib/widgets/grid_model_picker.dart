@@ -8,7 +8,7 @@ import '../state/app_state.dart';
 import '../theme/app_theme.dart';
 import '../usage/models_menu_controller.dart';
 import 'engine_identity.dart';
-import 'transient_menus.dart';
+import 'pane_menu.dart';
 
 /// The engines whose panes carry a model picker.
 ///
@@ -215,10 +215,10 @@ class _GridModelPickerState extends State<GridModelPicker> {
     final chosen = await _showMenu(
       position: position,
       children: (close) => [
-        _header('Subscription'),
-        _item(
+        paneMenuHeader('Subscription'),
+        paneMenuItem(
           onTap: () => close(const _Choice.ownLogin()),
-          child: _Row(
+          child: PaneMenuRow(
             selected: widget.currentModel == null,
             engine: widget.engineLabel,
             title:
@@ -231,13 +231,13 @@ class _GridModelPickerState extends State<GridModelPicker> {
           ),
         ),
         Divider(height: 9, thickness: 1, color: AppColors.border),
-        _header('Local'),
+        paneMenuHeader('Local'),
         // An engine with no way onto a Local model (Cursor talks only to its own API; the daemon
         // refuses the move) is told so here, instead of being offered rows whose click would do
         // nothing. The daemon names the capable engines beside the list; an older daemon names
         // none, and then every row is offered as before.
         if (!_shown!.canRunLocally(widget.engineLabel))
-          _empty(
+          paneMenuEmpty(
             '${engineIdentity(widget.engineLabel).label} can only run on its own login.',
           )
         // Two different facts, two sentences. "We could not ask" and "this account has no grid"
@@ -246,12 +246,12 @@ class _GridModelPickerState extends State<GridModelPicker> {
         // the "Talk to Local model manager" row that ends this section is the answer, and a line saying the
         // list is empty above an empty list is noise.
         else if (_shown!.models.isEmpty && _emptySentence(_shown!) != null)
-          _empty(_emptySentence(_shown!)!),
+          paneMenuEmpty(_emptySentence(_shown!)!),
         if (_shown!.canRunLocally(widget.engineLabel))
           for (final model in _shown!.models)
-            _item(
+            paneMenuItem(
               onTap: () => close(_Choice.model(model)),
-              child: _Row(
+              child: PaneMenuRow(
                 selected: widget.currentModel == model.id,
                 title: model.id,
                 // Which of the user's machines answers it — the part that makes a private grid
@@ -306,91 +306,26 @@ class _GridModelPickerState extends State<GridModelPicker> {
     return null;
   }
 
-  /// Show the menu in an OVERLAY rather than as a modal route.
-  ///
-  /// `showMenu` puts a full-screen modal barrier under its menu, and that barrier EATS the click
-  /// that dismisses it: closing the menu and then clicking what you meant to click took two clicks,
-  /// with the first one going nowhere. A menu is not a decision you have to finish before the app
-  /// will listen again.
-  ///
-  /// So the dismisser is a translucent [Listener] instead. Translucent hit-test behaviour means it
-  /// receives the pointer AND reports no hit, so the overlay below it — the app — is hit-tested next
-  /// and gets the same event. One click closes the menu and lands where it was aimed.
+  /// The pane menu ([showPaneMenu]), with this picker's two hooks: the entry, so a refresh that
+  /// lands while the menu is open can redraw it, and the closer, so a pane going away under an
+  /// open menu can take the menu with it.
   Future<_Choice?> _showMenu({
     required RelativeRect position,
     required List<Widget> Function(void Function(_Choice?) close) children,
-  }) {
-    final overlayState = Overlay.of(context);
-    final completer = Completer<_Choice?>();
-    late final OverlayEntry entry;
-    late final void Function() deregister;
-    var closed = false;
-    void close(_Choice? choice) {
-      // Guarded: a pointer-down outside and a row tap can both arrive for one gesture, and removing
-      // an entry twice throws.
-      if (closed) return;
-      closed = true;
-      deregister();
-      entry.remove();
+  }) => showPaneMenu<_Choice>(
+    context: context,
+    position: position,
+    children: children,
+    onOpen: (entry, close) {
+      _entry = entry;
+      _close = close;
+    },
+    onClose: () {
       _entry = null;
       _shown = null;
-      if (!completer.isCompleted) completer.complete(choice);
-    }
-
-    // A click on the window's NATIVE tab strip is not a pointer event Flutter ever sees, so the
-    // dismisser below cannot fire for it — the menu was left floating over a tab it no longer
-    // belonged to. The titlebar reports its own clicks instead; see [dismissTransientMenus].
-    deregister = registerTransientMenu(() => close(null));
-    _close = () => close(null);
-
-    entry = OverlayEntry(
-      builder: (context) => Stack(
-        children: [
-          Positioned.fill(
-            child: Listener(
-              behavior: HitTestBehavior.translucent,
-              onPointerDown: (_) => close(null),
-              child: const SizedBox.expand(),
-            ),
-          ),
-          Positioned(
-            // Right-aligned to the control, which sits at the right end of a pane header — anchoring
-            // the left edge would push a wide menu off-screen.
-            right: position.right,
-            top: position.top,
-            child: ConstrainedBox(
-              // Wide enough that a status can sit right-aligned against a model id without the two
-              // meeting, and for a full GGUF-style model id beside its node without either cut.
-              constraints: const BoxConstraints(minWidth: 340, maxWidth: 540),
-              // ⚠️ IntrinsicWidth, or the menu is ALWAYS 540 wide. `Positioned` hands down unbounded
-              // width, the ConstrainedBox turns that into "up to 540", and a stretching Column takes
-              // all of it — so a two-line menu wore the width of the longest model id it could ever
-              // hold. This measures the rows and the clamp then applies to what they actually need.
-              child: IntrinsicWidth(
-                child: Material(
-                  color: AppColors.surface,
-                  elevation: 8,
-                  borderRadius: BorderRadius.circular(8),
-                  clipBehavior: Clip.antiAlias,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 6),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: children(close),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-    _entry = entry;
-    overlayState.insert(entry);
-    return completer.future.whenComplete(() => _close = null);
-  }
+      _close = null;
+    },
+  );
 
   /// Redraw the open menu from the fresh memo, if the list changed under it. Nothing to do when
   /// no menu is open, or when the refresh said what the menu already shows — a rebuild for an
@@ -420,55 +355,6 @@ class _GridModelPickerState extends State<GridModelPicker> {
     }
     return true;
   }
-
-  /// One selectable row.
-  ///
-  /// The hover is the SAME rectangle as the selected fill — inset by [_menuInset] and rounded the
-  /// same — so a row looks like one thing whether the pointer is on it or the agent is. An InkWell
-  /// around the whole item painted edge to edge and square, over a selected fill that was neither,
-  /// and the two reading as different shapes made the current row look like the odd one out.
-  Widget _item({required VoidCallback onTap, required Widget child}) => Padding(
-    padding: const EdgeInsets.symmetric(horizontal: _menuInset),
-    child: InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(_rowRadius),
-      child: child,
-    ),
-  );
-
-  /// A line that states something rather than offering it — no hover, no tap.
-  Widget _empty(String text) => Padding(
-    padding: const EdgeInsets.fromLTRB(
-      _menuInset + _rowPadding,
-      5,
-      _menuInset + _rowPadding,
-      6,
-    ),
-    child: Text(
-      text,
-      style: TextStyle(fontSize: 11, color: AppColors.textSoft),
-    ),
-  );
-
-  /// A section label. Non-interactive and short, so the two groups read as groups rather than as
-  /// entries someone failed to make clickable.
-  Widget _header(String label) => Padding(
-    padding: const EdgeInsets.only(top: 3, bottom: 3),
-    child: Padding(
-      // The row's margin plus its internal padding, so a header sits directly above the text it
-      // heads rather than a few pixels to either side of it.
-      padding: const EdgeInsets.only(left: _menuInset + _rowPadding),
-      child: Text(
-        label,
-        style: TextStyle(
-          fontSize: 10.5,
-          fontWeight: FontWeight.w600,
-          letterSpacing: .3,
-          color: AppColors.mutedStrong,
-        ),
-      ),
-    ),
-  );
 
   @override
   Widget build(BuildContext context) {
@@ -531,103 +417,6 @@ class _GridModelPickerState extends State<GridModelPicker> {
   }
 }
 
-/// One menu row: optional engine mark, title, a quiet detail beside it, and a right-aligned
-/// status — filled when it is the current one. The same column order in both sections, so the eye
-/// can run straight down the menu. A [subtitle], when there is one, sits under the title inside
-/// the same fill.
-class _Row extends StatelessWidget {
-  final bool selected;
-  final String? engine;
-  final String title;
-  final String detail;
-  final String? status;
-  final String? subtitle;
-
-  const _Row({
-    required this.selected,
-    required this.title,
-    this.engine,
-    this.detail = '',
-    this.status,
-    this.subtitle,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final row = Row(
-      children: [
-        if (engine != null) ...[
-          EngineMark(engine: engine, size: 14),
-          const SizedBox(width: 7),
-        ],
-        // ⚠️ Expanded on the TITLE, not on the status. The status is a handful of characters and
-        // wants only what it needs; giving it the flexible half truncated
-        // `Qwen3.6-35B-A3B-UD-Q5_K_XL` to `Qwen3.6-35B-A3B-UD-Q5_K…` while empty space sat beside
-        // it. The long string here is the model id, so the model id is what gets the room.
-        Expanded(
-          child: Text(
-            title,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: 12.5,
-              // Stated rather than inherited: a PopupMenuItem's default text style is heavier than
-              // this menu wants, which read as every row being emphasised.
-              fontWeight: FontWeight.w400,
-              color: AppColors.text,
-            ),
-          ),
-        ),
-        if (detail.isNotEmpty) ...[
-          const SizedBox(width: 6),
-          Text(
-            detail,
-            style: TextStyle(fontSize: 11, color: AppColors.mutedStrong),
-          ),
-        ],
-        if (status != null) ...[
-          const SizedBox(width: 14),
-          Text(
-            status!,
-            style: TextStyle(fontSize: 11, color: AppColors.mutedStrong),
-          ),
-        ],
-      ],
-    );
-    return Container(
-      // No margin of its own: the inset is the item's (see `_item`), so that the hover the item
-      // paints and the fill this row paints are one and the same rectangle.
-      padding: const EdgeInsets.symmetric(horizontal: _rowPadding, vertical: 5),
-      decoration: selected
-          // Subtle on purpose: one row in the menu is already the current one, and a mark loud
-          // enough to announce that would compete with the thing a person opened the menu to read.
-          ? BoxDecoration(
-              color: AppColors.selected,
-              borderRadius: BorderRadius.circular(_rowRadius),
-            )
-          : null,
-      // The subtitle sits INSIDE the fill, under the title: it is about this row, and a sentence
-      // hanging below the highlight would read as belonging to the next one.
-      child: subtitle == null
-          ? row
-          : Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                row,
-                Padding(
-                  padding: const EdgeInsets.only(top: 2),
-                  child: Text(
-                    subtitle!,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 10.5, color: AppColors.textSoft),
-                  ),
-                ),
-              ],
-            ),
-    );
-  }
-}
-
 /// The invitation that closes the Local section: a captioned rule, then the one ACTION in this menu.
 ///
 /// Everything above is a destination — pick it and the agent moves. This starts something instead,
@@ -656,9 +445,9 @@ class _ManagerInvitationState extends State<_ManagerInvitation> {
     return Padding(
       // Wider than a row's inset on purpose: this block is not one of them.
       padding: const EdgeInsets.fromLTRB(
-        _menuInset + _rowPadding,
+        kPaneMenuInset + kPaneMenuRowPadding,
         12,
-        _menuInset + _rowPadding,
+        kPaneMenuInset + kPaneMenuRowPadding,
         4,
       ),
       child: Column(
@@ -714,14 +503,6 @@ class _ManagerInvitationState extends State<_ManagerInvitation> {
     );
   }
 }
-
-/// The row's own inset from the menu edge, and the padding inside its highlight. A section header
-/// carries their SUM as a left inset, so header text sits exactly above the row text it heads.
-const double _menuInset = 6;
-const double _rowPadding = 8;
-
-/// One radius for the hover and the selected fill: they are the same shape.
-const double _rowRadius = 5;
 
 /// One row's meaning: a grid model, the engine's own login, or the action that starts a local
 /// model. A sealed set rather than a nullable `GridModel`, because `null` already means "the menu

@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 let root = ''
 let runtimeDir = ''
-const saved = { PATH: process.env.PATH, HARNESS_GRID_BIN: process.env.HARNESS_GRID_BIN, ADAPTER_RUNTIME_DIR: process.env.ADAPTER_RUNTIME_DIR }
+const saved = { PATH: process.env.PATH, HOME: process.env.HOME, HARNESS_GRID_BIN: process.env.HARNESS_GRID_BIN, ADAPTER_RUNTIME_DIR: process.env.ADAPTER_RUNTIME_DIR }
 
 /** `gridExec.ts` reads `env.ADAPTER_RUNTIME_DIR` at import time, so the module is loaded fresh per case. */
 async function load() {
@@ -37,6 +37,9 @@ beforeEach(() => {
   mkdirSync(runtimeDir)
   mkdirSync(join(root, 'empty-bin'))
   process.env.PATH = join(root, 'empty-bin')
+  // The resolver's last fallback is `$HOME/.local/bin/grid` (grid's own installer's path), so a
+  // developer machine that has one must not leak into "nothing to run".
+  process.env.HOME = root
   delete process.env.HARNESS_GRID_BIN
 })
 

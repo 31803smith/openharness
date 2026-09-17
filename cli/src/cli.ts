@@ -54,6 +54,7 @@ import { readOrMintComputerId } from './lib/computerIdentity.js'
 import { renderLoginSuccessHtml } from './lib/loginPage.js'
 import { AuthSessionError, AuthSessionManager, clearAuthSession, readAuthSession, writeAuthSession, type AuthSession } from './lib/authSession.js'
 import { handOffToGrid } from './lib/gridHandoff.js'
+import { ensureGridInstalled } from './lib/gridInstall.js'
 import { ensureHarnessGrid } from './lib/gridEnsure.js'
 import { passThroughToGridLogout } from './lib/gridLogout.js'
 import { clearGridMcpUrlCache } from './lib/gridMcpUrl.js'
@@ -522,6 +523,13 @@ type SignInOutcome =
  */
 async function attachGridToSignIn(token: string, json: boolean): Promise<Record<string, unknown>> {
   const note = (line: string): void => { if (!json) console.error(`  · ${line}`) }
+  // A machine with no `grid` gets one first, from grid's own installer — the sign-in that follows
+  // is what makes it useful, and "install the grid CLI yourself" was the sentence every fresh
+  // machine used to stop at. Best-effort: a failed install is a note, and the hand-off below then
+  // reports the missing binary exactly as before.
+  const install = await ensureGridInstalled()
+  if (install.status === 'installed') note(install.message)
+  else if (install.status !== 'present') note(install.message)
   const handoff = await handOffToGrid(token, { json: true })
   if (handoff.code !== 'OK') {
     note(handoff.message)
@@ -3489,6 +3497,12 @@ async function runForeground(session: AuthSession): Promise<void> {
     installCursorHooks(hookPort)
     installOpencodePlugin(hookPort)
     installOpencodeHarnessComputeSkill()
+    // The `grid` CLI the Harness Compute skill shells out to, for a machine that signed in before
+    // this existed or whose sign-in could not fetch it. In the background: a download must not hold
+    // the daemon's own start, and nothing here waits on it.
+    void ensureGridInstalled().then((result) => {
+      if (result.status !== 'present') console.log(`[grid] ${result.message}`)
+    })
     installKiloPlugin(hookPort)
     installPiExtension(hookPort)
     // A self-update refreshes plugin files here; running engine processes pick them up according to each

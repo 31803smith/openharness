@@ -289,6 +289,9 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     guard entries != machines else { return }
     machines = entries
     rebuildMachinesMenu()
+    // The Models menu's last row lists these too (see `rebuildModelsMenu`), so it is rebuilt on
+    // the same change rather than waiting for the next models push to catch up.
+    rebuildModelsMenu()
   }
 
   private func rebuildMachinesMenu() {
@@ -478,10 +481,28 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     // they want is not there yet, so it sits in the same list rather than in a section of its own.
     // It replaces the `Add Model` placeholder that dispatched nothing, and is wired like Link
     // Machine…, through the guarded channel handler. Present whether or not anything is served.
-    let run = NSMenuItem(title: "Talk to Local model manager", action: #selector(menuAction(_:)), keyEquivalent: "")
-    run.target = self
-    run.representedObject = "runLocalModel"
+    //
+    // The manager opens ON a machine — the one whose models it will manage — and with more than one
+    // linked, this row is the only place the menu can say which. So it becomes a submenu of the
+    // machines, one row each, this computer marked as such; every child dispatches the same command
+    // with the machine's id. With one machine, or none, it stays a plain row and the app picks.
+    let run = NSMenuItem(title: "Talk to Local model manager", action: nil, keyEquivalent: "")
     run.identifier = NSUserInterfaceItemIdentifier(HarnessKeymapMenu.actionPrefix + "runLocalModel")
+    if machines.count > 1 {
+      let pick = NSMenu(title: run.title)
+      for machine in machines {
+        let item = NSMenuItem(title: machine.local ? "\(machine.name) (this computer)" : machine.name,
+          action: #selector(runLocalModelAction(_:)), keyEquivalent: "")
+        item.target = self
+        item.representedObject = machine.id
+        pick.addItem(item)
+      }
+      run.submenu = pick
+    } else {
+      run.target = self
+      run.action = #selector(menuAction(_:))
+      run.representedObject = "runLocalModel"
+    }
     modelsMenu.addItem(run)
   }
 
@@ -600,6 +621,9 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     if menuItem.action == #selector(machineDeleteAction(_:)) {
       return actionsEnabled && machines.contains(where: { $0.id == action && !$0.local })
     }
+    if menuItem.action == #selector(runLocalModelAction(_:)) {
+      return actionsEnabled && machines.contains(where: { $0.id == action })
+    }
     if menuItem.action == #selector(historyAction(_:)) {
       return actionsEnabled && history.contains(where: { $0.id == action })
     }
@@ -620,6 +644,11 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
   @objc private func machineAction(_ sender: NSMenuItem) {
     guard validateMenuItem(sender), let id = sender.representedObject as? String else { return }
     sendTabAction("machineDestination", arguments: ["id": id])
+  }
+
+  @objc private func runLocalModelAction(_ sender: NSMenuItem) {
+    guard validateMenuItem(sender), let id = sender.representedObject as? String else { return }
+    sendTabAction("runLocalModel", arguments: ["machineId": id])
   }
 
   @objc private func machineDeleteAction(_ sender: NSMenuItem) {

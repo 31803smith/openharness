@@ -1,12 +1,14 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../core/models.dart';
 import '../shared/theme/app_theme.dart' as grid;
-import '../shared/widgets/app_checkbox.dart';
 import '../shared/widgets/app_dialog.dart';
 import '../state/app_state.dart';
+import '../theme/app_theme.dart';
+import 'pane_menu.dart';
 
 /// The one place the "Run a local model" flow is explained.
 ///
@@ -16,92 +18,321 @@ import '../state/app_state.dart';
 /// person decided, and the notifier does the rest, so the two doors cannot
 /// drift into two definitions of what Start means.
 ///
-/// Null is Not now (or Escape, or a click outside). A record is Start, with
-/// whether the person asked not to see this again — persisted by the caller,
-/// not here, because the store belongs to the notifier.
-Future<({bool skipNextTime})?> showRunLocalModelDialog(
+/// Null is Not now (or Escape, or a click outside). A record is Start: the
+/// machine the manager opens on.
+///
+/// [machineId] is the door's own answer to "which computer" — the pane's
+/// machine, or the one the menu named — and is what the dialog starts on. With
+/// [chooseMachine] and more than one machine linked, the dialog shows the
+/// others and lets the person move the choice; otherwise the machine is named
+/// and that is that. There is deliberately no "don't show this again": the
+/// dialog is where the machine is chosen, and a dialog that could be waved
+/// off would take the choice with it.
+Future<({String machineId})?> showRunLocalModelDialog(
   BuildContext context,
   AppNotifier notifier,
-  String machineId,
-) => showAppDialog<({bool skipNextTime})>(
+  String machineId, {
+  bool chooseMachine = true,
+}) => showAppDialog<({String machineId})>(
   context: context,
   // Lighter than the app's default veil: this is a two-second yes/no in front
   // of the swarm the person was just looking at, not a screen of its own, and
   // the 90% default read as the window going dark. The blur stays, so what is
   // behind is felt rather than read. Same weight the swarm rename uses.
   veilTint: const Color(0x99000000),
-  builder: (_) =>
-      _RunLocalModelDialog(notifier: notifier, machineId: machineId),
+  builder: (_) => _RunLocalModelDialog(
+    notifier: notifier,
+    machineId: machineId,
+    chooseMachine: chooseMachine,
+  ),
 );
 
-/// Prerequisites are said only when one is missing, as one sentence in the
-/// machine line's place, with Start disabled. Present and satisfied, nothing
-/// is said — a checklist of green ticks would make a two-second decision look
-/// like a setup screen.
-enum _Prerequisite { opencode, gridCli, grid }
+/// Two prerequisites, said only when one is missing, as one sentence with
+/// Start disabled: the machine is reachable (a pane cannot open on a computer
+/// that is not answering — Start used to fail afterwards with "could not find
+/// the home folder", which is the same fact said too late), and it has
+/// opencode, because the manager IS an opencode pane. Whether the account has
+/// local models set up is NOT checked here — the manager itself says so, in
+/// conversation, if it finds nothing; the dialog's job is to let the person
+/// pick a machine and go.
+enum _Prerequisite { unlinked, offline, opencode, gridCli }
 
 class _RunLocalModelDialog extends StatefulWidget {
-  const _RunLocalModelDialog({required this.notifier, required this.machineId});
+  const _RunLocalModelDialog({
+    required this.notifier,
+    required this.machineId,
+    required this.chooseMachine,
+  });
 
   final AppNotifier notifier;
   final String machineId;
+  final bool chooseMachine;
 
   @override
   State<_RunLocalModelDialog> createState() => _RunLocalModelDialogState();
 }
 
 class _RunLocalModelDialogState extends State<_RunLocalModelDialog> {
-  /// Whether the machine has a private grid to serve on. Null until the
-  /// machine answers; the sentence is only earned by an answer, the same rule
-  /// New Agent keeps for a missing engine.
-  bool? _hasGrid;
-
-  /// Which `grid` the machine would run, once it answers — null until then,
-  /// and null from a daemon too old to say, which claims nothing.
-  GridCli? _gridCli;
-
-  bool _skipNextTime = false;
-  bool _skipHovered = false;
+  /// The machine the manager will open on. Starts as the door's answer and
+  /// moves when the person picks another; every read below is about THIS one.
+  late String _machineId = widget.machineId;
 
   @override
   void initState() {
     super.initState();
-    // Two reads, fired on open and not waited for: the dialog is readable at
-    // once, and a missing prerequisite appears as it is found. Deferred a frame
-    // so a probe's first notifyListeners() does not land mid-build. `force` on
-    // the engine probe for the reason New Agent gives — opencode arrives and
-    // leaves through a terminal this app never sees, and a stored answer is
-    // worth nothing here.
+    // One read, fired on open and not waited for: the dialog is readable at
+    // once, and a missing opencode appears as it is found. Deferred a frame
+    // so a probe's first notifyListeners() does not land mid-build. `force`
+    // for the reason New Agent gives — opencode arrives and leaves through a
+    // terminal this app never sees, and a stored answer is worth nothing here.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      unawaited(widget.notifier.probeEngines(widget.machineId, force: true));
-      unawaited(_readGrid());
+      _read(_machineId);
     });
   }
 
-  Future<void> _readGrid() async {
-    final models = await widget.notifier.gridModels(widget.machineId);
+  /// What the daemon said about the machine's `grid` binary, per machine —
+  /// a `missing` here is the one account-independent fact worth stopping on:
+  /// the manager's second step runs it, and an agent with no binary to run
+  /// dies there.
+  final _gridCli = <String, GridCli?>{};
+
+  void _read(String machineId) {
+    unawaited(widget.notifier.probeEngines(machineId, force: true));
+    unawaited(_readGridCli(machineId));
+  }
+
+  Future<void> _readGridCli(String machineId) async {
+    final models = await widget.notifier.gridModels(machineId);
     if (!mounted) return;
-    setState(() {
-      _hasGrid = models.gridName != null;
-      _gridCli = models.gridCli;
+    setState(() => _gridCli[machineId] = models.gridCli);
+  }
+
+  void _pickMachine(String machineId) {
+    if (machineId == _machineId) return;
+    setState(() => _machineId = machineId);
+    _read(machineId);
+  }
+
+  /// The machines the manager could open on: this computer first, then the
+  /// online ones, then the rest — New Agent's order, for the same tiles.
+  List<MachineState> get _machines {
+    final all = widget.notifier.machines
+        .map((m) => widget.notifier.stateOf(m.machineId))
+        .whereType<MachineState>()
+        .toList();
+    int rank(MachineState m) => m.isLocalMachine
+        ? 0
+        : _online(m)
+        ? 1
+        : 2;
+    final index = {for (var i = 0; i < all.length; i++) all[i]: i};
+    all.sort((a, b) {
+      final byRank = rank(a).compareTo(rank(b));
+      return byRank != 0 ? byRank : index[a]!.compareTo(index[b]!);
     });
+    return all;
+  }
+
+  bool _online(MachineState m) =>
+      m.isLocalMachine || (m.nodeOnline == true && !m.needsLink);
+
+  Widget _machineMark(MachineState m, {double size = 14}) => Icon(
+    _online(m)
+        ? (m.isLocalMachine ? LucideIcons.laptop : LucideIcons.monitor)
+        : LucideIcons.monitorOff,
+    size: size,
+    color: _online(m)
+        ? grid.AppPalette.textSecondary
+        : grid.AppPalette.textFaint,
+    semanticLabel: _online(m) ? 'Online' : 'Offline',
+  );
+
+  /// The machine, as one slim two-line row: the mark on the left spanning both
+  /// lines, the name above, what it is below ("This machine", or online /
+  /// offline for another). The row is the select's own trigger when there is
+  /// more than one machine — same row, plus a chevron — and plain otherwise.
+  Widget _machineRow(MachineState m, {required bool opens}) => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      _machineMark(m, size: 22),
+      const SizedBox(width: 10),
+      Flexible(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              m.machine.displayName,
+              key: const Key('run-local-model-machine'),
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontFamily: grid.AppFont.sans,
+                fontSize: 12.5,
+                height: 1.2,
+                color: grid.AppPalette.textPrimary,
+              ),
+            ),
+            Text(
+              _kind(m),
+              style: TextStyle(
+                fontFamily: grid.AppFont.sans,
+                fontSize: 11.5,
+                height: 1.2,
+                color: grid.AppPalette.textSecondary,
+              ),
+            ),
+          ],
+        ),
+      ),
+      if (opens) ...[
+        const SizedBox(width: 6),
+        Icon(
+          LucideIcons.chevronDown,
+          size: 12,
+          color: grid.AppPalette.textSecondary,
+        ),
+      ],
+    ],
+  );
+
+  /// What a machine is, in two words, beside its name.
+  String _kind(MachineState m) => m.isLocalMachine
+      ? 'This machine'
+      : _online(m)
+      ? 'Online'
+      : 'Offline';
+
+  /// One machine: the slim row, nothing to choose. More: a row of small chips
+  /// — up to three, this computer first, the chosen one filled — and a "…"
+  /// that opens the pane menu (the same menu the pane's model picker draws,
+  /// the current row filled rather than ticked) with every machine. One row
+  /// whatever the count; the chosen machine always among the visible chips.
+  Widget _machineLine(List<MachineState> machines) {
+    final current = widget.notifier.stateOf(_machineId) ?? machines.firstOrNull;
+    if (current == null) return const SizedBox.shrink();
+    if (!widget.chooseMachine || machines.length < 2) {
+      return _machineRow(current, opens: false);
+    }
+    final visible = machines.take(3).toList();
+    if (!visible.any((m) => m.machine.machineId == _machineId)) {
+      visible[visible.length - 1] = current;
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Text(
+            'Pick the machine it should work on.',
+            style: TextStyle(
+              fontFamily: grid.AppFont.sans,
+              fontSize: 12.5,
+              color: grid.AppPalette.textSecondary,
+            ),
+          ),
+        ),
+        _chips(visible, machines),
+      ],
+    );
+  }
+
+  Widget _chips(List<MachineState> visible, List<MachineState> machines) => Row(
+    children: [
+      for (final m in visible) ...[
+        Flexible(child: _chip(m)),
+        const SizedBox(width: 8),
+      ],
+      if (machines.length > visible.length)
+        _MoreMachines(
+          key: const Key('run-local-model-machine-more'),
+          onOpen: (context, position) =>
+              _openMachineMenu(context, position, machines),
+        ),
+    ],
+  );
+
+  Widget _chip(MachineState m) {
+    final selected = m.machine.machineId == _machineId;
+    return InkWell(
+      key: ValueKey('run-local-model-machine-${m.machine.machineId}'),
+      onTap: () => _pickMachine(m.machine.machineId),
+      borderRadius: BorderRadius.circular(6),
+      child: Container(
+        height: 30,
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        decoration: BoxDecoration(
+          color: selected ? AppColors.selected : grid.AppSurface.recess,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(
+            color: selected ? AppColors.accent : Colors.transparent,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _machineMark(m),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                m.machine.displayName,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontFamily: grid.AppFont.sans,
+                  fontSize: 12.5,
+                  color: grid.AppPalette.textPrimary,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openMachineMenu(
+    BuildContext anchor,
+    RelativeRect position,
+    List<MachineState> machines,
+  ) async {
+    final picked = await showPaneMenu<String>(
+      context: anchor,
+      position: position,
+      minWidth: 260,
+      children: (close) => [
+        paneMenuHeader('Machines'),
+        for (final m in machines)
+          paneMenuItem(
+            onTap: () => close(m.machine.machineId),
+            child: PaneMenuRow(
+              selected: m.machine.machineId == _machineId,
+              leading: _machineMark(m),
+              title: m.machine.displayName,
+              status: _kind(m),
+            ),
+          ),
+      ],
+    );
+    if (picked != null && mounted) _pickMachine(picked);
   }
 
   /// The first missing prerequisite, or null when nothing has been found
   /// missing — which includes "not answered yet".
   _Prerequisite? get _missing {
-    final machine = widget.notifier.stateOf(widget.machineId);
+    final machine = widget.notifier.stateOf(_machineId);
+    // Two different facts, two sentences: a machine this computer has no
+    // link to is refused by the relay however alive it is, and "offline"
+    // would send the person to wake a computer that is already awake.
+    if (machine != null && machine.needsLink) return _Prerequisite.unlinked;
+    if (machine != null && !_online(machine)) return _Prerequisite.offline;
     if (machine != null && machine.engines.loaded) {
       final opencode = machine.engines['opencode'];
       if (opencode != null && !opencode.installed) {
         return _Prerequisite.opencode;
       }
     }
-    // The machine's own gap before the account's: a sign-in cannot help until
-    // there is a `grid` on this computer to sign in with.
-    if (_gridCli == GridCli.missing) return _Prerequisite.gridCli;
-    if (_hasGrid == false) return _Prerequisite.grid;
+    if (_gridCli[_machineId] == GridCli.missing) return _Prerequisite.gridCli;
     return null;
   }
 
@@ -115,17 +346,29 @@ class _RunLocalModelDialogState extends State<_RunLocalModelDialog> {
         final missing = _missing;
         // Said only when something is missing. Satisfied, the dialog says
         // nothing about the machine: the body is the whole message.
+        final name =
+            widget.notifier.stateOf(_machineId)?.machine.displayName ??
+            'That machine';
         final status = switch (missing) {
+          _Prerequisite.unlinked =>
+            '$name isn’t linked to this computer yet. Link it from the '
+                'Machines menu, then come back.',
+          _Prerequisite.offline =>
+            '$name is offline right now. Wake it up, or pick another machine.',
           _Prerequisite.opencode => 'Needs opencode on this machine first.',
+          // The feature's name, never the binary's; the daemon installs it on
+          // start, so this is a machine whose install did not land.
           _Prerequisite.gridCli =>
             "Harness Compute isn't installed on this machine.",
-          _Prerequisite.grid => 'Sign in to Harness again to set this up.',
           null => null,
         };
+        final machines = _machines;
         return AlertDialog(
           title: const Text('Models that live on your machine'),
           content: SizedBox(
-            width: 440,
+            // Wider than the app's small dialogs: the machine row below wants
+            // three names across before it folds the rest behind "…".
+            width: 520,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -166,13 +409,15 @@ class _RunLocalModelDialogState extends State<_RunLocalModelDialog> {
                     ),
                   ),
                 ],
-                const SizedBox(height: 16),
-                _SkipCheck(
-                  value: _skipNextTime,
-                  hovered: _skipHovered,
-                  onHover: (value) => setState(() => _skipHovered = value),
-                  onChanged: (value) => setState(() => _skipNextTime = value),
-                ),
+                const SizedBox(height: 18),
+                // Which computer, as one slim row at the foot of the message:
+                // the manager looks after ONE machine's models, so the machine
+                // is always named, and never as a control unless there is a
+                // choice. With one machine linked it is a mark and two lines;
+                // with more, the same row opens a list, this computer first —
+                // one row whatever the count, so a long list never spreads
+                // through the dialog.
+                _machineLine(machines),
               ],
             ),
           ),
@@ -185,8 +430,7 @@ class _RunLocalModelDialogState extends State<_RunLocalModelDialog> {
             FilledButton(
               key: const Key('run-local-model-start'),
               onPressed: missing == null
-                  ? () =>
-                        Navigator.of(context).pop((skipNextTime: _skipNextTime))
+                  ? () => Navigator.of(context).pop((machineId: _machineId))
                   : null,
               child: const Text('Start'),
             ),
@@ -197,51 +441,48 @@ class _RunLocalModelDialogState extends State<_RunLocalModelDialog> {
   }
 }
 
-/// "Don't show this again", box and label under one tap target — the rule
-/// [AppCheckbox] states for every row that carries one.
-class _SkipCheck extends StatelessWidget {
-  const _SkipCheck({
-    required this.value,
-    required this.hovered,
-    required this.onHover,
-    required this.onChanged,
-  });
+/// The "…" beside the chips: a small recessed square that opens the machine menu anchored under
+/// itself. Its own widget so it has a context to measure from — the menu is positioned from the
+/// button's box, exactly as the pane's picker positions from its control.
+class _MoreMachines extends StatelessWidget {
+  const _MoreMachines({super.key, required this.onOpen});
 
-  final bool value;
-  final bool hovered;
-  final ValueChanged<bool> onHover;
-  final ValueChanged<bool> onChanged;
+  final void Function(BuildContext context, RelativeRect position) onOpen;
 
   @override
-  Widget build(BuildContext context) {
-    grid.AppTheme.watch(context);
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      onEnter: (_) => onHover(true),
-      onExit: (_) => onHover(false),
-      child: GestureDetector(
-        key: const Key('run-local-model-skip'),
-        onTap: () => onChanged(!value),
-        behavior: HitTestBehavior.opaque,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 6),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              AppCheckbox(value: value, hovered: hovered, onChanged: onChanged),
-              const SizedBox(width: 10),
-              Text(
-                "Don't show this again",
-                style: TextStyle(
-                  fontFamily: grid.AppFont.sans,
-                  fontSize: 13,
-                  color: grid.AppPalette.textPrimary,
-                ),
-              ),
-            ],
+  Widget build(BuildContext context) => Tooltip(
+    message: 'More machines',
+    child: InkWell(
+      onTap: () {
+        final box = context.findRenderObject() as RenderBox?;
+        final overlay =
+            Overlay.of(context).context.findRenderObject() as RenderBox?;
+        if (box == null || overlay == null) return;
+        final origin = box.localToGlobal(Offset.zero, ancestor: overlay);
+        onOpen(
+          context,
+          RelativeRect.fromLTRB(
+            origin.dx,
+            origin.dy + box.size.height + 6,
+            overlay.size.width - origin.dx - box.size.width,
+            0,
           ),
+        );
+      },
+      borderRadius: BorderRadius.circular(6),
+      child: Container(
+        width: 30,
+        height: 30,
+        decoration: BoxDecoration(
+          color: grid.AppSurface.recess,
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Icon(
+          Icons.more_horiz,
+          size: 18,
+          color: grid.AppPalette.textSecondary,
         ),
       ),
-    );
-  }
+    ),
+  );
 }

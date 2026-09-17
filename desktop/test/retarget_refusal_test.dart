@@ -71,7 +71,7 @@ void main() {
     final app = createApp(connectionForTest: (_) => _Refusing('AGENT_BUSY'));
     addTearDown(app.dispose);
     await app.clearAgentGrid('m', 'a1');
-    expect(app.lastError, contains('mid-turn'));
+    expect(app.lastError, contains('still responding'));
   });
 
   test('names the engine that can only run on its own login', () {
@@ -81,12 +81,18 @@ void main() {
     );
   });
 
-  test('a busy agent is asked to finish first', () {
-    expect(
-      retargetRefusalMessage('AGENT_BUSY', engineLabel: 'Claude Code'),
-      contains('finish'),
-    );
-  });
+  test(
+    'a busy agent is told to stop it or let it finish — never "mid-turn"',
+    () {
+      final sentence = retargetRefusalMessage(
+        'AGENT_BUSY',
+        engineLabel: 'Claude Code',
+      );
+      expect(sentence, contains('Stop it'));
+      expect(sentence, contains('finish'));
+      expect(sentence, isNot(contains('mid-turn')));
+    },
+  );
 
   test(
     'every refusal the daemon can raise has a sentence, and none says "grid"',

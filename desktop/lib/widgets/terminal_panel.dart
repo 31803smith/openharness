@@ -1540,8 +1540,7 @@ class _TerminalHeader extends StatelessWidget {
     final showModelPicker =
         status == null && !readOnly && modelPickerSupports(session.engineId);
     final pickerWidth = showModelPicker ? 72.0 : 0.0;
-    final actionsWidth =
-        (remoteComposer == null ? 118.0 : 148.0) + pickerWidth;
+    final actionsWidth = (remoteComposer == null ? 118.0 : 148.0) + pickerWidth;
     final folder =
         project?.cwd
             .split(RegExp(r'[/\\]'))
@@ -1711,11 +1710,16 @@ class _TerminalHeader extends StatelessWidget {
                               ),
                             ),
                             // The pane's own context, because the flow opens a dialog before it
-                            // opens a pane. Which machine it runs on is the notifier's call, not
-                            // this pane's: a local model is about the computer the app is on,
-                            // whatever this agent is on.
-                            onRunLocalModel: () =>
-                                unawaited(notifier.runLocalModel(context)),
+                            // opens a pane — and the pane's own MACHINE, because a picker on a
+                            // remote agent's pane is asking about the models that computer can
+                            // serve, not this one's.
+                            onRunLocalModel: () => unawaited(
+                              notifier.runLocalModel(
+                                context,
+                                machineId: session.machineId,
+                                chooseMachine: false,
+                              ),
+                            ),
                           )
                         : null,
                     zoomed: zoomed,
