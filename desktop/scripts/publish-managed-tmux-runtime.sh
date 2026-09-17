@@ -19,12 +19,35 @@ if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+[a-z]?$ ]] || [[ -z "$ARCHIVES_DIR" ]]; the
 fi
 [[ -d "$ARCHIVES_DIR" ]] || { echo "error: $ARCHIVES_DIR is not a directory" >&2; exit 2; }
 
-for command in gsutil shasum python3; do
+for command in shasum python3; do
   command -v "$command" >/dev/null 2>&1 || {
     echo "error: $command is required" >&2
     exit 1
   }
 done
+
+# --- GCS client: `gcloud storage`, and only `gcloud storage` ---
+# gsutil was retired from this repo on 2026-09-17. It is a standalone Python tool that only
+# understands gcloud's *user* and *service-account-key* credentials: it cannot use the
+# external-account (federated) credential Workload Identity Federation issues, so every call fails
+# under WIF while the identical `gcloud storage` call works — it is the same gcloud binary that
+# performed the token exchange. Every release path here runs on WIF now. Do not reintroduce it.
+command -v gcloud >/dev/null 2>&1 || {
+  echo "error: gcloud not found — install/authenticate the gcloud SDK" >&2
+  exit 1
+}
+gcloud storage --help >/dev/null 2>&1 || {
+  echo "error: this gcloud is too old for 'gcloud storage' — update the gcloud SDK" >&2
+  exit 1
+}
+
+# gcs_cp <src> <dst> [cache-control] [content-type] — either side may be gs:// or a local path or `-`.
+gcs_cp() {
+  local src="$1" dst="$2" cc="${3:-}" ct="${4:-}" args=(storage cp)
+  if [ -n "$cc" ]; then args+=("--cache-control=$cc"); fi
+  if [ -n "$ct" ]; then args+=("--content-type=$ct"); fi
+  gcloud "${args[@]}" "$src" "$dst"
+}
 
 GCS_BUCKET="${GCS_BUCKET:-s3-autonomous-upgrade-3}"
 PUBLIC_BASE="${GCS_PUBLIC_BASE_URL:-https://storage.googleapis.com/${GCS_BUCKET}}"
@@ -55,11 +78,11 @@ for entry in "${ENTRIES[@]}"; do
   IFS='|' read -r platform version archive sha256 size root <<< "$entry"
   object_path="harness/runtime/tmux/v${version}/${archive}"
   echo ">> uploading $archive ($size bytes, sha256 $sha256)"
-  gsutil -h 'Cache-Control:public, max-age=31536000, immutable' cp \
-    "$ARCHIVES_DIR/$archive" "gs://${GCS_BUCKET}/${object_path}"
+  gcs_cp "$ARCHIVES_DIR/$archive" "gs://${GCS_BUCKET}/${object_path}" \
+    'public, max-age=31536000, immutable'
 done
 
-if ! gsutil cp "gs://${GCS_BUCKET}/${METADATA_PATH}" "$SRC" 2>/dev/null; then
+if ! gcs_cp "gs://${GCS_BUCKET}/${METADATA_PATH}" "$SRC" 2>/dev/null; then
   printf '{}' > "$SRC"
 fi
 
@@ -91,9 +114,8 @@ with open(dst, "w") as f:
     f.write("\n")
 PY
 
-gsutil -h 'Content-Type:application/json' \
-       -h 'Cache-Control:no-cache, no-store, must-revalidate' \
-       cp "$DST" "gs://${GCS_BUCKET}/${METADATA_PATH}"
+gcs_cp "$DST" "gs://${GCS_BUCKET}/${METADATA_PATH}" \
+       'no-cache, no-store, must-revalidate' 'application/json'
 
 echo ">> published managed tmux ${VERSION}"
 echo ">> manifest: ${PUBLIC_BASE%/}/${METADATA_PATH}"
