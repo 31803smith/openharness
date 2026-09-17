@@ -52,8 +52,9 @@ function send(res, full, req, fresh = false) {
   res.writeHead(200, { 'content-type': type, 'cache-control': full.startsWith(VENDOR) && !fresh ? 'max-age=3600' : 'no-store' }); res.end(readFileSync(full))
 }
 createServer((req, res) => {
-  const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`)
-  const path = decodeURIComponent(url.pathname)
+  const url = new URL(req.url, `http://127.0.0.1:${port}`)
+  let path
+  try { path = decodeURIComponent(url.pathname) } catch { res.writeHead(400); res.end('bad path'); return }
   if (path === '/') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }); res.end(page()); return }
   if (path.startsWith('/_pane/')) { send(res, safe(PANE, path.slice('/_pane/'.length)), req, true); return }
   if (path === '/_files') { res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end(JSON.stringify(tracks())); return }
@@ -65,7 +66,9 @@ createServer((req, res) => {
 let timer = null
 try {
   watch(workspace, { recursive: true }, (_event, name) => {
-    const n = String(name ?? ''); if (!n || n.startsWith('.harness') || n.includes('node_modules')) return
+    /* c8 ignore next */ // name is null only where fs.watch cannot report file names; macOS FSEvents always does
+    const n = String(name ?? '')
+    if (!n || n.startsWith('.harness') || n.includes('node_modules')) return
     if (timer) clearTimeout(timer)
     timer = setTimeout(() => { for (const c of clients) c.write('event: change\ndata: {}\n\n') }, 200)
   })
