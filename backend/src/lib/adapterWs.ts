@@ -25,7 +25,7 @@ import {
 import { trackSocketLiveness } from './hub.js'
 import { guardedSend, guardedSendJson } from './wsSend.js'
 import { attachNodeRole, PRESENCE_TTL_SEC } from './nodeRole.js'
-import { presenceWriteDue, touchMachineOnlineDay, type PresenceWriteState } from './dailyTracking.js'
+import { presenceWriteDue, recordTurnStarted, touchMachineOnlineDay, type PresenceWriteState } from './dailyTracking.js'
 import { recordCreatedAgent, recordDeletedAgent } from './agentTracker.js'
 import type { Frame } from './tunnel.js'
 import { logger } from '../utils/logger.js'
@@ -81,6 +81,16 @@ const CLIENT_VERSION_RE = /^[A-Za-z0-9._+-]{1,64}$/
 // timer of its own — this is just the floor between two Mongo writes, so a machine that is up all
 // day costs ~300 upserts, not ~6000. Connect and close always write regardless.
 const MACHINE_PRESENCE_WRITE_MS = 5 * 60_000
+
+// `turn_started` tap (agent/machine daily presence). `agentId` is a plain token the CLI derives from
+// its registry (a UUID, or the engine's own session id as fallback), so it is bounded and
+// character-restricted before it becomes a Mongo index key — an oversized or exotic value would
+// otherwise either fail the unique index (>1024-byte key) or let a misbehaving adapter mint an
+// unbounded number of `agent_daily_presence` rows. The per-minute cap is the same idea for volume:
+// a real turn is human-paced (a handful a minute across every agent on one machine), so anything
+// past this is a bug or abuse and is dropped, never written.
+const TURN_AGENT_ID_RE = /^[A-Za-z0-9._:-]{1,128}$/
+const TURN_WRITES_PER_MINUTE = 120
 
 function sanitizeClientVersion(raw: string | null): string | undefined {
   const v = raw?.trim()
@@ -184,6 +194,13 @@ async function attachAdapter(ws: WebSocket, machineId: string, userId: string, c
   // starts with no claim and must re-assert, so a fresh value can never renew a stale one.
   let appState: { engine: string; state: string } | undefined
   const terminalRate = new TerminalRateGuard()
+  // Fixed one-minute window for the `turn_started` tap — two integers, no timer, no allocation.
+  let turnWindowStart = 0
+  let turnWindowCount = 0
+  const allowTurnWrite = (nowMs: number): boolean => {
+    if (nowMs - turnWindowStart >= 60_000) { turnWindowStart = nowMs; turnWindowCount = 0 }
+    return ++turnWindowCount <= TURN_WRITES_PER_MINUTE
+  }
   const p2pSignalRate = new P2pSignalRateGuard()
 
   // Buffer messages from RIGHT NOW, because the real handler cannot be installed until after the
@@ -361,7 +378,7 @@ async function attachAdapter(ws: WebSocket, machineId: string, userId: string, c
       // Hub tap (mirrors managerWs): keep `machine_agents` in sync from the adapter's agent
       // lifecycle frames. Needed so the device voice path's agent-ownership check
       // (deviceWs: `machineAgent.findFirst`) recognizes remote tmux sessions.
-      const f = env.frame as { type?: string; payload?: { agent?: unknown; agentId?: unknown; machineId?: unknown } }
+      const f = env.frame as { type?: string; agentId?: unknown; payload?: { agent?: unknown; agentId?: unknown; machineId?: unknown } }
       if (f.type === 'agent_synced') {
         void recordCreatedAgent(machineId, f.payload?.agent as { id?: unknown; name?: unknown } | undefined)
       } else if (f.type === 'agent_deleted' && typeof f.payload?.agentId === 'string') {
@@ -369,6 +386,20 @@ async function attachAdapter(ws: WebSocket, machineId: string, userId: string, c
         // Reading `machineId` here meant no deletion was EVER recorded, so machine_agents grew a row per
         // agent forever — and that table is what the plan cap counts.
         void recordDeletedAgent(machineId, f.payload.agentId)
+      } else if (f.type === 'turn_started') {
+        // Usage signal for machine_daily_presence / agent_daily_presence. Only the plaintext `type`
+        // and top-level `agentId` (set by the CLI's correlateAgentEvent) are read — the payload is
+        // E2EE ciphertext (cli e2ee/core.ts ENCRYPTED_UP_TYPES) and stays opaque here. The CLI already
+        // dedupes engines that re-announce one turn (cursor/agy/copilot, cli.ts), so one frame == one
+        // turn; the one known over-count is a daemon restarting mid-turn, which re-emits the open
+        // turn's start on attach (cli.ts `resumed`) — rare, and invisible from here. A frame with no
+        // (or a malformed) agentId has nothing to attribute the turn to and is not counted.
+        const now = new Date()
+        const agentId = typeof f.agentId === 'string' && TURN_AGENT_ID_RE.test(f.agentId) ? f.agentId : undefined
+        if (agentId && allowTurnWrite(now.getTime())) {
+          void recordTurnStarted(userId, machineId, agentId, now)
+            .catch((err) => logger.warn('turn tracking failed', { machineId, agentId, error: String(err) }))
+        }
       }
       if (env.userEligible) {
         void publishUserDeviceE2eePair(userId, machineId, env.frame).catch((err) => {

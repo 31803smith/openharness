@@ -1046,10 +1046,12 @@ describe('cable session', () => {
     await session.stop()
   })
 
-  it('sends the new list even when it hashes identically to the old one', async () => {
-    // Two machines whose agents share names and engines produce an EQUAL agentsKey. Without resetting it
-    // on a switch, the dial would keep the previous machine's tiles and nothing would ever correct it.
-    const twin: CableAgent[] = [...AGENTS]
+  it('re-sends neither the list nor the history when a select changes neither', async () => {
+    // The carousel spans every machine: `listAgentsFlat` reads the same agents whichever row wears the ✓,
+    // so moving the ✓ changes the machine wheel and nothing else. This used to force both pushes anyway —
+    // 55 frames of a list and a history the dial already had, down a cable the `focus` the person just
+    // clicked has to share. Measured on the desk: the focus was written in 20 ms and landed 1.7 s later.
+    const everywhere: CableAgent[] = [...AGENTS]
     let selected = 'mac-local'
     const host = makeHost({
       listMachines: async () => ({
@@ -1058,16 +1060,46 @@ describe('cable session', () => {
       }),
       selectedMachine: () => selected,
       selectMachine: async (id: string) => { selected = id; return { ok: true as const } },
-      listAgents: async () => twin,
+      listAgents: async () => everywhere,
+      recentSummaries: async () => [{ recap: 'shipped it', text: 'shipped it' }],
     })
     const { session, port } = await connect(host)
     port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
     await vi.waitFor(() => expect(port.types()).toContain('agents.end'))
+    await vi.waitFor(() => expect(port.types()).toContain('summary'))   // the attach DOES restore
     port.sent.length = 0
 
     port.say({ t: 'machine.select', machineId: 'm2' })
-    await vi.waitFor(() => expect(port.types()).toContain('agents.end'))
-    expect(port.sent.filter((m) => m.t === 'agent')).toHaveLength(2)
+    await vi.waitFor(() => expect(port.types()).toContain('machine.selected'))
+    await settle()
+
+    expect(port.types()).toContain('machines.end')    // the ✓ moved, so the wheel is re-sent
+    expect(port.types()).not.toContain('agent')       // the tiles did not
+    expect(port.types()).not.toContain('summary')     // nor the history behind them
+    await session.stop()
+  })
+
+  it('restores a tile that appears after the attach, and only that one', async () => {
+    // A remote machine's agents reach the cache seconds after the greeting, so the attach's restore ran
+    // before they existed. They must still arrive with their history — without dragging every tile that
+    // already has one back down the cable behind them.
+    let agents: CableAgent[] = [{ id: 'a1', name: 'one' }]
+    const asked: string[] = []
+    const { session, port } = await connect(makeHost({
+      listAgents: async () => agents,
+      recentSummaries: async (agentId: string) => { asked.push(agentId); return [{ recap: 'shipped it', text: '' }] },
+    }))
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
+    await vi.waitFor(() => expect(port.types()).toContain('summary'))
+    port.sent.length = 0
+    asked.length = 0
+
+    agents = [...agents, { id: 'r1', name: 'the remote one' }]   // that machine's list just landed
+    await session.syncAgents()
+    await vi.waitFor(() => expect(port.types()).toContain('summary'))
+
+    expect(asked).toEqual(['r1'])
+    expect(port.sent.filter((m) => m.t === 'summary').map((m) => m.agentId)).toEqual(['r1'])
     await session.stop()
   })
 

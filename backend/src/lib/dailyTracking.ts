@@ -1,10 +1,10 @@
 /**
  * Presence / remote-usage daily tracking — write path for `UserDailyPresence`,
- * `UserDailyRemoteUsage`, `UserDailyDevicePresence` and `MachineDailyPresence`
- * (prisma/schema.prisma). Separate model family and separate module from the opt-in `Analytics*`
- * telemetry in analyticsIngest.ts: these signals are derived directly from the web-ws/device-ws/
- * adapter-ws relays (src/lib/webWs.ts, src/lib/deviceWs.ts, src/lib/adapterWs.ts), not from a
- * collector upload.
+ * `UserDailyRemoteUsage`, `UserDailyDevicePresence`, `MachineDailyPresence` and
+ * `AgentDailyPresence` (prisma/schema.prisma). Separate model family and separate module from the
+ * opt-in `Analytics*` telemetry in analyticsIngest.ts: these signals are derived directly from the
+ * web-ws/device-ws/adapter-ws relays (src/lib/webWs.ts, src/lib/deviceWs.ts, src/lib/adapterWs.ts),
+ * not from a collector upload.
  *
  * Unlike analyticsIngest.ts, none of these rows need last-write-wins ordering (there's no
  * client-supplied revision to defend against), so each touch is a plain atomic `upsert` on the
@@ -97,6 +97,34 @@ export async function touchMachineOnlineDay(
       ...(opts.isNewConnection ? { connections: { increment: 1 } } : {}),
     },
   })
+}
+
+/**
+ * Count one `turn_started` the machine's daemon reported for `agentId` on the UTC day containing
+ * `now`: bumps the machine row's `turnsStarted` and the (machine, agent) row. Both also touch
+ * `lastSeenAt` — a turn is the strongest liveness signal there is. The two upserts are independent
+ * atomic `$inc`s, deliberately not a transaction: a partial failure under-counts one row by one and
+ * the caller's warn log says so, which beats a transaction retry loop on the relay's hot path.
+ */
+export async function recordTurnStarted(
+  userId: string,
+  machineId: string,
+  agentId: string,
+  now: Date,
+): Promise<void> {
+  const dayUtc = utcDayStart(now)
+  await Promise.all([
+    prisma.machineDailyPresence.upsert({
+      where: { machineId_dayUtc: { machineId, dayUtc } },
+      create: { machineId, userId, dayUtc, connections: 0, turnsStarted: 1, firstSeenAt: now, lastSeenAt: now },
+      update: { lastSeenAt: now, turnsStarted: { increment: 1 } },
+    }),
+    prisma.agentDailyPresence.upsert({
+      where: { machineId_agentId_dayUtc: { machineId, agentId, dayUtc } },
+      create: { machineId, agentId, userId, dayUtc, turnsStarted: 1, firstSeenAt: now, lastSeenAt: now },
+      update: { lastSeenAt: now, turnsStarted: { increment: 1 } },
+    }),
+  ])
 }
 
 /** Last SUCCESSFUL presence write for one open socket — `dayKey` null until the first one lands. */

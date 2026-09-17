@@ -1,9 +1,8 @@
 // The message layer: what the daemon and the dial SAY to each other, on top of the bytes serial.ts moves.
 //
-// Written twice — here and in apps/esp32-circle/main/cable_client.c of the autonomous-code repository —
-// with no shared code, because the two halves ship from different repositories. The framing underneath
-// agrees by shared vectors; this layer agrees by docs/cable-protocol.md and by being small enough to read
-// in one sitting.
+// Written twice — here and in device/harness/main/cable_client.c — with no shared code, because one half
+// is TypeScript on a laptop and the other is C on an MCU. The framing underneath agrees by shared vectors;
+// this layer agrees by docs/cable-protocol.md and by being small enough to read in one sitting.
 //
 // THE VOCABULARY IS THE PRODUCT'S: machine → agent → session. The machine is this computer, the agents
 // are what the registry holds, and a session is one conversation underneath an agent.
@@ -1139,6 +1138,11 @@ export class CableSession {
       this.expectedAppFocusEchoUntil = Date.now() + APP_FOCUS_SETTLE_MS
       await this.focusAgent(this.desiredFocus)
     }
+
+    // A tile that has just appeared has no history on the dial. The usual case is a remote machine: its
+    // agents reach the cache seconds after the greeting, long after the attach pushed everyone else's.
+    // Cheap to say on every change — [restored] makes it a no-op for every tile already carrying one.
+    this.restoreInBackground()
   }
 
   /**
@@ -1154,6 +1158,20 @@ export class CableSession {
    * Sent on attach only. The list is re-sent whenever it changes; the history behind it does not, or every
    * rename would replay a week of recaps.
    */
+  /**
+   * Agents whose history the dial has already been given.
+   *
+   * THE DIAL KEEPS WHAT IT IS TOLD. Re-sending a tile's recaps buys nothing and costs 55 frames down a
+   * cable that the `focus` somebody just clicked has to share — measured: a switch every second kept the
+   * link saturated, and the focus, written in 20 ms, reached the glass 1.7 s later.
+   *
+   * Cleared on attach, which is the one moment the dial genuinely has nothing: a replug, a reboot, an OTA.
+   */
+  private readonly restored = new Set<string>()
+
+  /** A background restore already walking the list, so a second trigger joins it rather than racing it. */
+  private restoring = false
+
   async pushRestores(): Promise<void> {
     // READ FIRST, QUEUE SECOND, and the split is the whole point. A remote agent's history is a cloud
     // round trip and there is one per agent; asking for them from INSIDE the push chain holds every frame
@@ -1162,8 +1180,13 @@ export class CableSession {
     // on the first `agent_recent` while the dial sat on the old tile.
     const rows: Array<{ id: string; past: Array<{ recap: string; text: string }> }> = []
     for (const a of await this.host.listAgents()) {
+      // Marked as it is ASKED FOR, not as it is sent: the answer is a cloud round trip, and a tick
+      // arriving mid-loop would otherwise start a second walk over the same agents.
+      if (this.restored.has(a.id)) continue
+      this.restored.add(a.id)
       rows.push({ id: a.id, past: await this.host.recentSummaries(a.id) })
     }
+    if (!rows.length) return
     return this.queued(async () => {
       for (const row of rows) {
         // Oldest first, so the newest ends up on top of the tile's stack.
@@ -1183,14 +1206,28 @@ export class CableSession {
    * no beep, no notification — so nothing about it is worth a second of staring at the old tile.
    */
   private restoreInBackground(): void {
-    void this.pushRestores().catch((err) => this.log(`cable: restores failed (${(err as Error).message})`))
+    if (this.restoring) return
+    this.restoring = true
+    void this.pushRestores()
+      .catch((err) => this.log(`cable: restores failed (${(err as Error).message})`))
+      .finally(() => { this.restoring = false })
   }
 
   /** Attach: tell the dial everything, whether or not any of it looks unchanged from here. */
   async pushAgents(): Promise<void> {
-    await this.syncMachines(true)
-    await this.syncSwarms(true)
-    await this.syncAgents(true)
+    // A dial that has just greeted us has no history at all — it rebooted, or the cable was out. This is
+    // the one place that says so; everywhere else, [restored] is what keeps the link quiet.
+    this.restored.clear()
+    // Attach owns this walk. Held across the list push so the trigger inside it does not start the same
+    // one from the other end and leave the caller awaiting a restore that has nothing left to send.
+    this.restoring = true
+    try {
+      await this.syncMachines(true)
+      await this.syncSwarms(true)
+      await this.syncAgents(true)
+    } finally {
+      this.restoring = false
+    }
     await this.pushRestores()
   }
 
@@ -1263,7 +1300,7 @@ export class CableSession {
     if (!machineId) return
     if (machineId === this.host.selectedMachine()) {
       await this.send({ t: 'machine.selected', machineId })
-      await this.syncAgents(true)
+      await this.syncAgents()
       this.restoreInBackground()
       return
     }
@@ -1274,14 +1311,19 @@ export class CableSession {
       return
     }
     this.log(`cable: machine.select → ${machineId}`)
-    // REQUIRED, not hygiene: two machines whose agents happen to share names and engines produce an equal
-    // agentsKey, and the new machine's list would then never be sent at all.
-    this.lastAgentsKey = ''
     await this.send({ t: 'machine.selected', machineId })
-    await this.syncAgents(true)
-    await this.syncMachines(true)   // the ✓ moved, and the agent counts with it
-    // LAST, AND NOT AWAITED. This is what the caller is blocked on: `followApp` selects the machine and
-    // only then commands the focus, so anything awaited here is time the dial spends on the old tile.
+    // NOT FORCED, and that is the fix for a switch that felt slow at random.
+    //
+    // Forcing both was right when the carousel showed ONE machine at a time: selecting another machine
+    // replaced every tile, so the list and its history had to be re-streamed. The carousel now spans every
+    // machine — `listAgentsFlat` reads the same 22 agents whichever row wears the ✓ — so a forced push
+    // re-sends a list and a history the dial already has, 55 frames of it, and the `focus` the person is
+    // waiting on queues behind them on the wire. Measured: 20 ms to write the focus, 1.7 s to land it.
+    //
+    // The diff still sends anything that GENUINELY changed, including a machine whose agents have only
+    // just arrived in the cache — and [restored] means those, and only those, bring their history along.
+    await this.syncAgents()
+    await this.syncMachines()   // the ✓ moved: `machinesKey` carries the selection, so this pushes
     this.restoreInBackground()
   }
 

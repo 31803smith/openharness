@@ -28,7 +28,7 @@ final _localProject = find.byKey(const Key('new-agent-project-browse'));
 final _newProject = find.byKey(const Key('new-agent-folder-newProject'));
 
 FocusNode _localFocus(WidgetTester tester) =>
-    Focus.of(tester.element(find.text('Local')));
+    Focus.of(tester.element(find.text('Existing folder')));
 
 Future<void> _browseLocal(WidgetTester tester) async {
   await tester.ensureVisible(_localProject);
@@ -164,7 +164,8 @@ void main() {
           .focusNode!;
       Future<void> tabTo(FocusNode node, {bool back = false}) async {
         if (back) await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
-        for (var i = 0; i < 12 && !node.hasPrimaryFocus; i++) {
+        // Include the optional help buttons in the dialog's tab order.
+        for (var i = 0; i < 20 && !node.hasPrimaryFocus; i++) {
           await tester.sendKeyEvent(LogicalKeyboardKey.tab);
           await tester.pump();
         }
@@ -346,11 +347,13 @@ void main() {
       await tester.tap(_newHarness);
       await tester.pump();
       expect(picker.opened, 0);
-      await tester.tap(_localProject);
+      await _browseLocal(tester);
       await tester.pump();
       expect(picker.opened, 1);
       expect(find.text('my-project'), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('new-agent-machine-m')));
+      final localMachine = find.byKey(const ValueKey('new-agent-machine-m'));
+      await tester.ensureVisible(localMachine);
+      await tester.tap(localMachine);
       await tester.pump();
       expect(find.text('my-project'), findsOneWidget);
       expect(
@@ -369,7 +372,7 @@ void main() {
             .options
             .last
             .detail,
-        isNull,
+        'Remote',
       );
       expect(app.launches, isEmpty);
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
@@ -524,8 +527,8 @@ void main() {
         );
         expect(machineField.value, 'm');
         expect(machineField.options.map((option) => option.detail), [
-          'This machine',
-          null,
+          'This computer',
+          'Remote',
         ]);
         expect(machineField.options.map((option) => option.label), [
           'My computer',
@@ -637,8 +640,7 @@ void main() {
       addTearDown(() => FileSelectorPlatform.instance = oldPicker);
       await mount(tester, app);
       await chord(tester, LogicalKeyboardKey.keyN);
-      final field = _localProject;
-      await tester.tap(field);
+      await _browseLocal(tester);
       await tester.pump();
       await tester.pump();
       expect(find.text('my-project'), findsOneWidget);
@@ -699,15 +701,19 @@ void main() {
     expect(engine.value, 'codex');
     expect(find.byKey(const Key('new-agent-machine-field')), findsOneWidget);
     expect(
-      tester.getTopLeft(find.text('Choose an agent')).dy,
+      tester.getTopLeft(find.text('Agent. Choose who you’ll work with.')).dy,
       lessThan(
         tester
-            .getTopLeft(find.text('Which project will this agent work in?'))
+            .getTopLeft(
+              find.text(
+                'Project. Start something new or choose an existing project.',
+              ),
+            )
             .dy,
       ),
     );
     expect(picker.opened, 0);
-    await tester.tap(_localProject);
+    await _browseLocal(tester);
     await tester.pump();
     expect(picker.opened, 1);
     expect(app.probes, 1);

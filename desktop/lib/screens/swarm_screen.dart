@@ -1475,7 +1475,11 @@ class _SwarmScreenState extends State<SwarmScreen> {
 
   Widget _tabStrip() => LayoutBuilder(
     builder: (context, constraints) {
-      final compact = constraints.maxWidth < _labelledStripMinWidth;
+      final compact =
+          constraints.maxWidth <
+          _labelledStripMinWidth *
+              MediaQuery.textScalerOf(context).scale(12) /
+              12;
       return Container(
         height: 52,
         color: grid.AppPalette.swarmTabBar,
