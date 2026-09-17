@@ -52,7 +52,9 @@ function readRegistryDir(root) {
     } catch { continue }
     for (const file of files) {
       if (!file.endsWith('.json')) continue
-      out.push(JSON.parse(readFileSync(join(ownerDir, file), 'utf8')))
+      // Unlike the runtime's dev reader, which skips it, a malformed entry fails the build: say which.
+      const path = join(ownerDir, file)
+      try { out.push(JSON.parse(readFileSync(path, 'utf8'))) } catch (error) { throw new Error(`${path}: ${error.message}`) }
     }
   }
   return out
