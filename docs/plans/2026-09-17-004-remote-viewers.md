@@ -80,5 +80,5 @@ Validation recorded on 2026-09-17:
 - CLI type checking and build passed.
 
 The backend in these tests is an opaque relay fixture, not the hosted production service. The
-browser check exercises Chromium; native WKWebView rendering is covered by the existing app
-integration rather than instantiated by Flutter widget tests.
+browser check exercises Chromium. Flutter widget tests verify viewer state and layout; they do
+not instantiate native WKWebView.
