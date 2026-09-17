@@ -54,54 +54,69 @@ class TerminalFootBar extends StatelessWidget {
   /// ⚠️ Short on purpose, and the whole reason the mic left. Every point here
   /// is a point taken off the terminal above, which is then resized.
   ///
-  /// ⚠️ **20 is what one line of 10.5pt text fits in, and nothing more.** The
-  /// type, the engine mark and the status dot were all cut to match when this
-  /// came down from 26 — a child that kept its old size would overflow rather
-  /// than shrink the row, because the height is fixed above everything in it.
-  static const double height = 20;
+  /// ⚠️ **18 is what one line of 10.5pt text fits in, and nothing more.** The
+  /// type, the engine mark and the status dot were all cut to match — a child
+  /// that kept its old size would overflow rather than shrink the row, because
+  /// the height is fixed above everything in it.
+  ///
+  /// The sums, for whoever comes to change one of these: the system face lays
+  /// 10.5pt out in a line box of about 12.5, the engine mark is the tallest
+  /// thing in the row at 11, and that leaves roughly 3pt of air above and below.
+  /// It is tight on purpose — this row's top edge is the terminal's bottom edge
+  /// — but it is tight enough that the text scale below is no longer optional.
+  static const double height = 18;
 
   @override
   Widget build(BuildContext context) {
     AppTheme.watch(context);
     return SizedBox(
       height: height,
-      child: Padding(
-        // The mic floats over the terminal ABOVE this row rather than over the
-        // row itself, so the right inset is only the screen's own margin — but
-        // it stays generous, because the mic's hit area reaches down to within
-        // a few points of this line and text running right up to it would look
-        // like part of the button.
-        padding: const EdgeInsets.only(left: 16, right: 16),
-        child: ListenableBuilder(
-          listenable: voice,
-          builder: (context, _) => Row(
-            children: [
-              Expanded(
-                child: AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 180),
-                  layoutBuilder: _alignStart,
-                  child:
-                      _voiceLine(voice, slippedOff) ??
-                      _IdentityLine(
-                        key: const ValueKey('identity'),
-                        name: name,
-                        status: status,
-                        agent: agent,
-                      ),
+      // ⚠️ **Text scaling is pinned here, and this row is one of the few places
+      // in the app where that is right.** Its height is fixed — the terminal's
+      // bottom edge sits on it — so type that grew with the system setting would
+      // overflow rather than reflow, and there is no second line for it to take.
+      // The words here are chrome that names the agent; the terminal above,
+      // which is what somebody is actually reading, honours the setting as it
+      // always did.
+      child: MediaQuery.withNoTextScaling(
+        child: Padding(
+          // The mic floats over the terminal ABOVE this row rather than over the
+          // row itself, so the right inset is only the screen's own margin — but
+          // it stays generous, because the mic's hit area reaches down to within
+          // a few points of this line and text running right up to it would look
+          // like part of the button.
+          padding: const EdgeInsets.only(left: 16, right: 16),
+          child: ListenableBuilder(
+            listenable: voice,
+            builder: (context, _) => Row(
+              children: [
+                Expanded(
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 180),
+                    layoutBuilder: _alignStart,
+                    child:
+                        _voiceLine(voice, slippedOff) ??
+                        _IdentityLine(
+                          key: const ValueKey('identity'),
+                          name: name,
+                          status: status,
+                          agent: agent,
+                        ),
+                  ),
                 ),
-              ),
-              // ⚠️ **At the END OF THE LINE it dismisses, not over the mic.**
-              // Stacked above the floating button it sat in the middle of the
-              // terminal with nothing beside it — a lone glyph over streaming
-              // output, which reads as a rendering fault rather than as a
-              // control. Here it is plainly the way to get rid of the words to
-              // its left.
-              //
-              // The mic cannot be shifted by it either, which is what put it
-              // over there in the first place: the mic floats and this is in
-              // the layout, so they no longer share a row.
-              if (_showsDismiss(voice)) _DismissButton(onTap: voice.clear),
-            ],
+                // ⚠️ **At the END OF THE LINE it dismisses, not over the mic.**
+                // Stacked above the floating button it sat in the middle of the
+                // terminal with nothing beside it — a lone glyph over streaming
+                // output, which reads as a rendering fault rather than as a
+                // control. Here it is plainly the way to get rid of the words to
+                // its left.
+                //
+                // The mic cannot be shifted by it either, which is what put it
+                // over there in the first place: the mic floats and this is in
+                // the layout, so they no longer share a row.
+                if (_showsDismiss(voice)) _DismissButton(onTap: voice.clear),
+              ],
+            ),
           ),
         ),
       ),
@@ -183,8 +198,16 @@ class _DismissButton extends StatelessWidget {
 
   final VoidCallback onTap;
 
-  /// What the finger may land on, against the 20pt the row gives it.
+  /// What the finger may land on, against the 18pt the row gives it.
   static const double _touch = 40;
+
+  /// How wide the glyph's own slot is.
+  ///
+  /// ⚠️ **Wider than the row is tall, on purpose.** The row's height came down
+  /// to 18 for the type, but the `×` is round and 18pt of width crowds it hard
+  /// against the words to its left. Width costs the terminal nothing — only the
+  /// height is shared with it.
+  static const double _slot = 24;
 
   @override
   Widget build(BuildContext context) {
@@ -193,7 +216,7 @@ class _DismissButton extends StatelessWidget {
       button: true,
       label: 'Cancel',
       child: SizedBox(
-        width: TerminalFootBar.height,
+        width: _slot,
         height: TerminalFootBar.height,
         child: OverflowBox(
           maxWidth: _touch,
@@ -207,10 +230,17 @@ class _DismissButton extends StatelessWidget {
             onTap: onTap,
             child: SizedBox.square(
               dimension: _touch,
-              child: Center(
+              // ⚠️ **Aligned to the ROW's middle, not the target's.** The hit
+              // box is 40pt pinned to an 18pt row's top edge, so its own centre
+              // sits 11pt BELOW the line of text — a `Center` here drew the
+              // glyph hanging off the bottom of the bar, clear of the words it
+              // belongs to. The fraction puts it back on the text's centreline
+              // while the target it lives in still reaches down past the row.
+              child: Align(
+                alignment: Alignment(0, -1 + (TerminalFootBar.height / _touch)),
                 child: Icon(
                   LucideIcons.x300,
-                  size: 13,
+                  size: 12,
                   color: AppPalette.textSecondary,
                 ),
               ),
@@ -249,12 +279,13 @@ class _IdentityLine extends StatelessWidget {
     return Row(
       children: [
         if (agent != null) ...[
-          // Small enough to read as a mark beside the name rather than as an
-          // avatar — this row is 20pt tall and the mark may not crowd it.
+          // ⚠️ The TALLEST thing in the row, so it is what sets the floor under
+          // [TerminalFootBar.height] — not the text. Small enough to read as a
+          // mark beside the name rather than as an avatar.
           EngineMark(
             engine: agent.engine,
             displayName: agent.engineDisplayName,
-            size: 12,
+            size: 11,
           ),
           const SizedBox(width: 5),
           Flexible(
@@ -302,7 +333,9 @@ class _IdentityLine extends StatelessWidget {
     padding: const EdgeInsets.symmetric(horizontal: 4),
     child: Text(
       '·',
-      style: TextStyle(color: AppPalette.textFaint, fontSize: 12),
+      // Down with everything else in the row: left at 12 it was the tallest
+      // piece of type here and set the line box on its own.
+      style: TextStyle(color: AppPalette.textFaint, fontSize: 10.5),
     ),
   );
 }

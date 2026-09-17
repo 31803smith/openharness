@@ -362,9 +362,41 @@ class _Core extends StatelessWidget {
       border: Border.all(
         color: lit ? Colors.white.withValues(alpha: 0.28) : AppGlass.lift,
       ),
+      // ⚠️ **Two different shadows for two different jobs, and the resting one
+      // is not optional.** Lit, the button glows in its own colour — that is
+      // state, saying the mic is open. At rest it casts a plain drop shadow
+      // instead: it floats over streaming output rather than over a surface, and
+      // without one its edge disappears against every dark line it happens to
+      // sit on. The screenshot that prompted this had it all but invisible.
       boxShadow: lit
-          ? [BoxShadow(color: _tint.withValues(alpha: 0.4), blurRadius: 12)]
-          : null,
+          ? [
+              BoxShadow(color: _tint.withValues(alpha: 0.4), blurRadius: 12),
+              // The lift, under the glow. The glow says "recording"; it does
+              // not separate the circle from the text behind it, because it is
+              // the same brightness as the accent the terminal itself uses.
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.35),
+                blurRadius: 10,
+                offset: const Offset(0, 3),
+              ),
+            ]
+          : [
+              // Cast down and soft: enough to lift the circle off the text
+              // behind it without reading as a second ring around it.
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.45),
+                blurRadius: 12,
+                offset: const Offset(0, 3),
+              ),
+              // A tight, darker core under the edge, which is what keeps the
+              // outline readable where the blur alone washes out over a bright
+              // line of output.
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.3),
+                blurRadius: 3,
+                offset: const Offset(0, 1),
+              ),
+            ],
     ),
     child: Center(
       child: AnimatedSwitcher(

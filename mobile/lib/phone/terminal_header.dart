@@ -17,6 +17,12 @@ import 'package:harness_mobile/shared/theme/app_theme.dart';
 /// `terminal_search.dart`, which draws the same bar at the same geometry so the
 /// two frames line up. That is what the measurements below are public for: the
 /// expanded bar has to land on the pixels the collapsed one left.
+///
+/// ⚠️ **It leaves on a scroll, and its controls carry on without it.** The page
+/// shrinks this row away as the terminal is scrolled forward, and the search
+/// bar, `+` and `⋯` fly out of it to become floating buttons down the right
+/// edge — see `terminal_header_floats.dart`. Nothing here knows about that; the
+/// row is either laid out or it is not.
 class TerminalHeader extends StatelessWidget {
   const TerminalHeader({
     super.key,
@@ -41,6 +47,9 @@ class TerminalHeader extends StatelessWidget {
   /// Inside the bar: the inset before the magnifier, and the magnifier itself.
   static const double barPadding = 10;
   static const double glyphSize = 16;
+
+  /// The hint's type.
+  static const double hintSize = 14;
 
   /// What the bar says it will search.
   ///
@@ -117,7 +126,7 @@ class _SearchBar extends StatelessWidget {
                   softWrap: false,
                   style: TextStyle(
                     color: AppPalette.textFaint,
-                    fontSize: 14,
+                    fontSize: TerminalHeader.hintSize,
                     fontWeight: FontWeight.w500,
                   ),
                 ),
