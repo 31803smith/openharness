@@ -6,8 +6,8 @@
 # no Homebrew and, for most people, no Node on PATH; a package that answers "brew install python@3.11"
 # has failed its install. So:
 #
-#   harness_node 18                 node >= 18 on PATH: the machine's own, else the Node Harness itself
-#                                   runs on (~/.harness/runtime/current-node, laid down with the CLI)
+#   harness_node 18                 node >= 18 on PATH, with npm: the machine's own, else the Node Harness
+#                                   itself runs on (~/.harness/runtime/current-node, laid down with the CLI)
 #   harness_uv                      uv on PATH: the machine's own, else a pinned, checksummed release
 #                                   fetched into ~/.harness/runtime
 #   harness_venv DIR 3.12 [MIN [BELOW]]
@@ -27,6 +27,10 @@
 # `node store/tools/sync-runtimes.mjs` rewrites them and the CLI's store spec fails when one drifts.
 
 HARNESS_RUNTIME="${ADAPTER_RUNTIME_DIR:-${HOME:-}/.harness/runtime}"
+# The Pythons uv downloads live with Harness's other runtimes, not in uv's own ~/.local/share/uv:
+# a package's venv points at its interpreter, and `uv python uninstall` there must not break it.
+UV_PYTHON_INSTALL_DIR="${UV_PYTHON_INSTALL_DIR:-$HARNESS_RUNTIME/python}"
+export UV_PYTHON_INSTALL_DIR
 HARNESS_UV_VERSION=0.12.15
 HARNESS_MICROMAMBA_VERSION=2.9.0-0
 
@@ -67,15 +71,20 @@ _harness_node_at_least() {
 }
 
 harness_node() {
-  local min="${1:-18}" recorded
-  _harness_node_at_least "$min" && return 0
+  local min="${1:-18}" recorded saved="$PATH" own=0
+  _harness_node_at_least "$min" && own=1
+  # A node without npm beside it (a distro's nodejs package) cannot run a setup's `npm ci`.
+  if [ "$own" = 1 ] && command -v npm >/dev/null 2>&1; then return 0; fi
   recorded="$(cat "$HARNESS_RUNTIME/current-node" 2>/dev/null || true)"
   if [ -n "$recorded" ] && [ -x "${recorded%/*}/node" ]; then
     PATH="${recorded%/*}:$PATH"; export PATH; hash -r 2>/dev/null || true
     _harness_node_at_least "$min" && return 0
-    echo "miss node >= $min — this machine's newest is $(node -v), Harness's own; update Harness"
+    PATH="$saved"; export PATH; hash -r 2>/dev/null || true
+    [ "$own" = 1 ] && return 0
+    echo "miss node >= $min — this machine's newest is $("${recorded%/*}/node" -v), Harness's own; update Harness"
     return 1
   fi
+  [ "$own" = 1 ] && return 0
   echo "miss node >= $min, and Harness's own Node is not in $HARNESS_RUNTIME — run \`harness start\` once to lay it down"
   return 1
 }

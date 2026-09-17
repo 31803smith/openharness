@@ -17,6 +17,7 @@
     "skills": ["upstream/skills"],
     "env": {
       "CIRCUIT_TOOLCHAIN": "${dsh}/upstream/toolchain",
+      "CIRCUIT_PYTHON": "${dsh}/toolchain/python",
       "CIRCUIT_SKILLS_DIR": "${workspace}/.claude/skills",
       "DISABLE_AUTOUPDATER": "1"
     }

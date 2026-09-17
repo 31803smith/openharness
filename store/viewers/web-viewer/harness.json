@@ -7,10 +7,10 @@
   "author": "OpenHarness contributors",
   "description": "A live preview for HTML, CSS, and JavaScript in a harness workspace. Reloads when files change.",
   "toolchain": {
-    "doctor": "node -e \"process.exit(Number(process.versions.node.split('.')[0]) >= 20 ? 0 : 1)\""
+    "doctor": "./doctor.sh"
   },
   "viewer": {
-    "command": "node viewer.mjs",
+    "command": "./viewer.sh",
     "url": "http://127.0.0.1:${port}/?file=index.html",
     "artifactExtensions": [".html"]
   }

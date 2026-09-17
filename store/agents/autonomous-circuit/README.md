@@ -16,6 +16,12 @@ run against that copy.
 - `VERSIONS` — the repository, the pinned commit on its main, and the sparse patterns.
 - `toolchain/fetch-upstream.sh` — the read-only, sparse, blob-less fetch; `setup.sh`, `doctor.sh`,
   `init-workspace.sh`, `viewer.sh` hand off to the project's scripts of the same names.
+- `toolchain/runtimes.sh` — the store's shared helper (a copy; `store/tools/sync-runtimes.mjs` writes it).
+  What the project's scripts expect on PATH comes from it, so a machine with no Node and Apple's
+  Python 3.9 installs as well as any: Node >= 22.12 (Harness's own when the machine has none) and a
+  CPython 3.12 `.venv` with numpy for the board pipeline.
+- `toolchain/python` — that `.venv`'s Python with Node on PATH, handed to the agent as `CIRCUIT_PYTHON`:
+  the project's skills start the pipeline with `python3` and re-exec it there when that is too old.
 
 ## Credit and stewardship
 

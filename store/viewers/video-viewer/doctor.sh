@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# Exit 0 when this machine can run the viewer: only Node is needed.
+# Exit 0 when this machine can run the viewer: only Node is needed — this machine's, or Harness's own
+# when it has none or too old a one (runtimes.sh, as viewer.sh finds it).
 set -u
-if command -v node >/dev/null 2>&1 && node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 18 ? 0 : 1)'; then echo "ok   node $(node --version)"; exit 0; fi
-echo "miss node >= 18 on PATH"; exit 1
+# shellcheck source=runtimes.sh
+. "$(dirname "$0")/runtimes.sh"
+harness_node 18 || exit 1
+echo "ok   node $(node --version)"

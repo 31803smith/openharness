@@ -166,7 +166,29 @@ class Node(unittest.TestCase):
     def test_the_machines_own_node_when_new_enough(self):
         box = Box(self)
         box.stub("node", NODE)
+        box.stub("npm")
         self.runtime_node(box, "22.23.2")
+        r = box.run('harness_node 18 && command -v node', NODE_VERSION="20.1.0")
+        self.assertEqual((r.returncode, r.stdout.strip()), (0, str(box.bin / "node")), r.stderr)
+
+    def test_a_node_without_npm_borrows_harness_node_and_its_npm(self):
+        box = Box(self)
+        box.stub("node", NODE)
+        node = self.runtime_node(box, "22.23.2")
+        box.stub("npm", where=node.parent)
+        r = box.run('harness_node 18 && command -v node && command -v npm', NODE_VERSION="20.1.0")
+        self.assertEqual(lines(r), [str(node), str(node.parent / "npm")], r.stderr)
+
+    def test_a_node_without_npm_is_kept_when_harness_node_is_older(self):
+        box = Box(self)
+        box.stub("node", NODE)
+        self.runtime_node(box, "18.0.0")
+        r = box.run('harness_node 20 && command -v node && echo "$PATH"', NODE_VERSION="22.1.0")
+        self.assertEqual(lines(r), [str(box.bin / "node"), str(box.bin)], r.stderr)
+
+    def test_a_node_without_npm_and_no_harness_node_still_serves(self):
+        box = Box(self)
+        box.stub("node", NODE)
         r = box.run('harness_node 18 && command -v node', NODE_VERSION="20.1.0")
         self.assertEqual((r.returncode, r.stdout.strip()), (0, str(box.bin / "node")), r.stderr)
 
@@ -219,6 +241,18 @@ class Node(unittest.TestCase):
         self.assertEqual(box.run(f'_harness_node_at_least {major + 1} || echo "rc=$?"').stdout.strip(), "rc=1")
         self.assertEqual(box.run(f'_harness_node_at_least {major}.999 || echo "rc=$?"').stdout.strip(), "rc=1")
         self.assertEqual(box.run(f"_harness_node_at_least {major - 1}.999").returncode, 0)
+
+
+class PythonInstallDir(unittest.TestCase):
+    def test_uv_pythons_live_in_the_harness_runtime(self):
+        box = Box(self)
+        (box.bin / "sh").symlink_to("/bin/sh")
+        self.assertEqual(box.run('echo "$UV_PYTHON_INSTALL_DIR"; sh -c \'echo "$UV_PYTHON_INSTALL_DIR"\'').stdout.splitlines(),
+                         [f"{box.runtime}/python"] * 2, "exported, so uv and upstream setups see it")
+
+    def test_a_dir_the_person_chose_is_kept(self):
+        box = Box(self)
+        self.assertEqual(box.run('echo "$UV_PYTHON_INSTALL_DIR"', UV_PYTHON_INSTALL_DIR="/opt/pythons").stdout.strip(), "/opt/pythons")
 
 
 class Uv(unittest.TestCase):

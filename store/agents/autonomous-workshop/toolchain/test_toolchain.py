@@ -6,6 +6,12 @@ scripts that print what they were handed. Each test lays out a throwaway install
 scripts linked in and a VERSIONS that keeps the real sparse patterns but pins the stand-in. Git runs with
 GIT_ALLOW_PROTOCOL=file and no user or system config, so nothing here can reach the network, and the
 stand-in is checked byte for byte afterwards: the wrapper only ever reads upstream.
+
+The scripts run on a PATH of their own, as on a new Mac: git and the few coreutils they use, linked in,
+and stubs for what runtimes.sh provides — `uv` (on PATH, as the pinned one a setup fetched into
+~/.harness/runtime, or nowhere, with no curl to fetch it) and `node` (on PATH, as Harness's own through
+current-node, or nowhere). HOME is a temp dir. What runtimes.sh does when it does download uv is
+store/tools/test_runtimes.py's business.
 """
 import hashlib
 import os
@@ -19,10 +25,23 @@ from pathlib import Path
 TOOLCHAIN = Path(__file__).resolve().parent
 PACKAGE = TOOLCHAIN.parent
 NAME = "autonomous-workshop"
-SCRIPTS = ("fetch-upstream.sh", "setup.sh", "doctor.sh", "init-workspace.sh")
+SCRIPTS = ("fetch-upstream.sh", "setup.sh", "doctor.sh", "init-workspace.sh", "runtimes.sh")
 PROJECT_SCRIPTS = ("setup.sh", "doctor.sh", "init-workspace.sh")
 # A project script that says which one ran, with what, where; exits with $STUB_EXIT.
-STUB = '#!/bin/sh\necho "{name} dsh=$HARNESS_DSH_DIR pwd=$(pwd -P)"\nexit "${{STUB_EXIT:-0}}"\n'
+STUB = '#!/bin/sh\necho "{name} dsh=$HARNESS_DSH_DIR uv=$(command -v uv) node=$(command -v node) pwd=$(pwd -P)"\nexit "${{STUB_EXIT:-0}}"\n'
+# Real commands the scripts use, linked into the sandbox's bin/ — curl is not one, so nothing here can
+# download. Never stub one of these names: a stub written over the link would be written through it,
+# onto the real command.
+LINKED = ("bash", "cat", "cut", "dirname", "du", "git", "mkdir", "mktemp", "mv", "rm", "uname")
+# node: `-v` prints NODE_VERSION; `-e SCRIPT MIN` is runtimes.sh's at-least probe, answered in bash.
+NODE = r'''case "$1" in
+  -v) echo "v$NODE_VERSION" ;;
+  -e) IFS=. read -r a b _ <<< "$3.0"; IFS=. read -r x y _ <<< "$NODE_VERSION"
+      if [ "$x" -gt "$a" ] || { [ "$x" -eq "$a" ] && [ "$y" -ge "$b" ]; }; then exit 0; fi; exit 1 ;;
+esac'''
+UV_VERSION = re.search(r"^HARNESS_UV_VERSION=(\S+)$", (TOOLCHAIN / "runtimes.sh").read_text(), re.M).group(1)
+# A bash line tracer (BASH_ENV sourcing a DEBUG trap that appends to SHCOV_OUT) rides along when set.
+TRACER = ("BASH_ENV", "SHCOV_OUT")
 
 
 def versions_value(key: str) -> str:
@@ -95,13 +114,21 @@ class Wrapper(unittest.TestCase):
         shutil.rmtree(cls.class_tmp)
 
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp())
+        self.tmp = Path(tempfile.mkdtemp()).resolve()
         self.addCleanup(shutil.rmtree, self.tmp)
         self.pkg = self.tmp / NAME
         (self.pkg / "toolchain").mkdir(parents=True)
         for name in SCRIPTS:
+            # linked, not copied: a line tracer maps back to the source
             (self.pkg / "toolchain" / name).symlink_to(TOOLCHAIN / name)
         self.pin(self.upstream.first)
+        self.home = self.tmp / "home"
+        self.home.mkdir()
+        self.runtime = self.home / ".harness" / "runtime"
+        self.bin = self.tmp / "bin"
+        self.bin.mkdir()
+        for tool in LINKED:
+            (self.bin / tool).symlink_to(shutil.which(tool))
 
     def tearDown(self):
         self.assertEqual(snapshot(self.upstream.bare), self.pristine, "the upstream repository was written to")
@@ -112,10 +139,35 @@ class Wrapper(unittest.TestCase):
         text = re.sub(r'^UPSTREAM_COMMIT=.*$', f'UPSTREAM_COMMIT="{commit}"', text, flags=re.M)
         (self.pkg / "VERSIONS").write_text(text)
 
+    # the sandbox's commands
+
+    def stub(self, name: str, body: str = "", where: Path | None = None) -> Path:
+        assert where is not None or name not in LINKED, name
+        path = (where or self.bin) / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.unlink(missing_ok=True)  # never write through a link to a real command
+        path.write_text(f"#!/bin/bash\n{body}\n")
+        path.chmod(0o755)
+        return path
+
+    def uv(self) -> Path:
+        """uv on PATH."""
+        return self.stub("uv", 'echo "uv $UV_VERSION"')
+
+    def fetched_uv(self) -> Path:
+        """No uv on PATH; the pinned one a setup fetched into ~/.harness/runtime."""
+        return self.stub("uv", 'echo "uv $UV_VERSION"', where=self.runtime / f"uv-{UV_VERSION}")
+
+    def harness_node(self, version: str = "22.23.2") -> Path:
+        """No node on PATH; Harness's own, named by ~/.harness/runtime/current-node."""
+        node = self.stub("node", f"NODE_VERSION={version}\n{NODE}", where=self.tmp / "harness-node" / "bin")
+        self.runtime.mkdir(parents=True, exist_ok=True)
+        (self.runtime / "current-node").write_text(f"{node}\n")
+        return node
+
     def run_script(self, name: str, cwd: Path | None = None, path: str | None = None, **env: str):
-        full = dict(self.upstream.env, **env)
-        if path is not None:
-            full["PATH"] = path
+        full = {k: v for k, v in self.upstream.env.items() if k not in ("PATH", "HOME") and (k in TRACER or not k.startswith("BASH_"))}
+        full.update(PATH=path or str(self.bin), HOME=str(self.home), UV_VERSION=UV_VERSION, **env)
         return subprocess.run([str(self.pkg / "toolchain" / name)], cwd=cwd or self.pkg, env=full,
                               capture_output=True, text=True, timeout=120)
 
@@ -133,6 +185,9 @@ class Wrapper(unittest.TestCase):
 
     def real(self, path: Path) -> str:
         return os.path.realpath(path)
+
+    def field(self, line: str, key: str) -> str:
+        return re.search(rf"{key}=(\S*)", line).group(1)
 
     # VERSIONS
 
@@ -202,7 +257,7 @@ class Wrapper(unittest.TestCase):
         self.assertFalse((self.pkg / "upstream.partial").exists())
 
     def test_fetch_without_git_says_so(self):
-        bin_ = self.tmp / "bin"
+        bin_ = self.tmp / "bin-no-git"
         bin_.mkdir()
         for tool in ("bash", "cat"):
             (bin_ / tool).symlink_to(shutil.which(tool))
@@ -213,30 +268,56 @@ class Wrapper(unittest.TestCase):
 
     # setup.sh
 
-    def test_setup_fetches_then_runs_the_projects_own_setup_in_its_checkout(self):
+    def test_setup_fetches_then_runs_the_projects_own_setup_in_its_checkout_with_uv_on_path(self):
+        uv = self.uv()
         run = self.run_script("setup.sh", cwd=self.tmp)
         self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
         lines = run.stdout.splitlines()
-        self.assertEqual(len(lines), 3, lines)
+        self.assertEqual(len(lines), 4, lines)
         self.assertIn(f"ok   {NAME} @ {self.upstream.first[:12]} fetched", lines[1])
         self.assertTrue(lines[2].startswith("setup "), lines)
-        self.assertEqual(self.real(Path(self.dsh_dir(lines[2]))), self.real(self.pkg / "upstream"))
+        self.assertEqual(lines[3], "     loading cadgen and OpenCascade once (the first load is slow, the rest are not)")
+        self.assertEqual(self.real(Path(self.field(lines[2], "dsh"))), self.real(self.pkg / "upstream"))
+        self.assertEqual(self.field(lines[2], "uv"), str(uv))
         self.assertTrue(lines[2].endswith(f" pwd={self.real(self.pkg)}"), lines)
 
-    def dsh_dir(self, line: str) -> str:
-        return re.search(r"dsh=(\S+)", line).group(1)
+    def test_setup_on_a_machine_without_uv_hands_the_project_the_pinned_one(self):
+        uv = self.fetched_uv()
+        run = self.run_script("setup.sh")
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        self.assertEqual(self.field(run.stdout.splitlines()[-2], "uv"), str(uv))
+
+    def test_setup_loads_the_projects_cad_stack_once_so_the_doctor_does_not_pay_for_it(self):
+        self.uv()
+        self.fake_fetched(versions_value_for(self.pkg))
+        calls = self.tmp / "python.log"
+        self.stub("python", f'echo "$*" >> "{calls}"; exit "${{IMPORT_EXIT:-0}}"', where=self.pkg / "upstream" / ".venv" / "bin")
+        run = self.run_script("setup.sh")
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(calls.read_text(), "-c import cadgen, build123d\n")
+        # an import that fails is the doctor's to report, not a failed install
+        self.assertEqual(self.run_script("setup.sh", IMPORT_EXIT="1").returncode, 0)
+
+    def test_setup_without_uv_and_no_way_to_fetch_it_is_a_miss_before_the_fetch(self):
+        run = self.run_script("setup.sh")
+        self.assertEqual(run.returncode, 1)
+        self.assertRegex(run.stdout.splitlines()[-1], rf"^miss could not download https://github\.com/astral-sh/uv/releases/download/{re.escape(UV_VERSION)}/")
+        self.assertFalse((self.pkg / "upstream").exists())
 
     def test_setup_fails_with_the_projects_setup(self):
+        self.uv()
         run = self.run_script("setup.sh", STUB_EXIT="3")
         self.assertEqual(run.returncode, 3)
 
     def test_setup_stops_when_the_fetch_fails(self):
+        self.uv()
         self.pin("0123456789abcdef0123456789abcdef01234567")
         run = self.run_script("setup.sh")
         self.assertNotEqual(run.returncode, 0)
         self.assertNotIn("setup dsh=", run.stdout)
 
     def test_setup_says_when_the_project_has_no_setup(self):
+        self.uv()
         self.fake_fetched(versions_value_for(self.pkg), scripts=("doctor.sh",))
         run = self.run_script("setup.sh")
         self.assertEqual(run.returncode, 1)
@@ -252,16 +333,26 @@ class Wrapper(unittest.TestCase):
         self.assertEqual(run.returncode, 1)
         self.assertEqual(run.stdout, f"miss {NAME} is not fetched — run toolchain/setup.sh\n")
 
-    def test_doctor_at_the_pin_hands_over_to_the_projects_doctor(self):
+    def test_doctor_at_the_pin_hands_over_to_the_projects_doctor_with_the_uv_and_node_setup_used(self):
         self.fake_fetched(self.upstream.first)
+        uv = self.fetched_uv()
+        node = self.harness_node()
         run = self.run_script("doctor.sh", cwd=self.tmp)
         self.assertEqual(run.returncode, 0, run.stderr)
         ok, project = run.stdout.splitlines()
         self.assertEqual(ok, f"ok   {NAME} @ {self.upstream.first[:12]}")
         self.assertTrue(project.startswith("doctor "), project)
-        self.assertEqual(self.real(Path(self.dsh_dir(project))), self.real(self.pkg / "upstream"))
+        self.assertEqual(self.real(Path(self.field(project, "dsh"))), self.real(self.pkg / "upstream"))
+        self.assertEqual((self.field(project, "uv"), self.field(project, "node")), (str(uv), str(node)))
         self.assertTrue(project.endswith(f"pwd={self.real(self.pkg)}"), project)
         self.assertEqual(self.run_script("doctor.sh", STUB_EXIT="4").returncode, 4)
+
+    def test_doctor_on_a_machine_with_neither_leaves_saying_so_to_the_project(self):
+        self.fake_fetched(self.upstream.first)
+        run = self.run_script("doctor.sh")
+        self.assertEqual(run.returncode, 0, run.stderr)
+        ok, project = run.stdout.splitlines()  # nothing from runtimes.sh: the project's own lines say it
+        self.assertEqual((self.field(project, "uv"), self.field(project, "node")), ("", ""))
 
     def test_doctor_warns_when_the_copy_is_behind_the_pin(self):
         self.fake_fetched(self.upstream.first)
@@ -287,7 +378,7 @@ class Wrapper(unittest.TestCase):
         run = self.run_script("init-workspace.sh", cwd=ws)
         self.assertEqual(run.returncode, 0, run.stderr)
         self.assertTrue(run.stdout.startswith("init-workspace "), run.stdout)
-        self.assertEqual(self.real(Path(self.dsh_dir(run.stdout))), self.real(self.pkg / "upstream"))
+        self.assertEqual(self.real(Path(self.field(run.stdout, "dsh"))), self.real(self.pkg / "upstream"))
         self.assertTrue(run.stdout.rstrip().endswith(f"pwd={self.real(ws)}"), run.stdout)
         self.assertEqual(self.run_script("init-workspace.sh", cwd=ws, STUB_EXIT="5").returncode, 5)
 

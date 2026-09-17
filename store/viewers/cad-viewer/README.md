@@ -15,7 +15,8 @@ This package is a viewer, not an agent: it has no engine, no workspace and no ve
 never a tile. It is installed once per machine and shared by every harness that uses it.
 
 - `harness.json` — the manifest (spec 1.1, `kind: viewer`).
-- `setup.sh` — one venv with the pinned `cadgen` (see `CADGEN_VERSION`); pulls OpenCascade.
+- `setup.sh` — one venv with the pinned `cadgen` (see `CADGEN_VERSION`); pulls OpenCascade. The venv is on
+  Python 3.12, which uv downloads when the machine has none (`runtimes.sh`, the store's shared copy).
 - `doctor.sh` — can this machine run it.
 - `viewer.sh` — `cadgen viewer --host 127.0.0.1 --port $HARNESS_VIEWER_PORT` in the workspace. The
   viewer already follows the agent: a re-export of the open file redraws in place and keeps the
