@@ -6,15 +6,16 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:harness_mobile/shared/theme/app_theme.dart';
 import 'package:harness_mobile/shared/widgets/empty_state.dart';
 import 'package:harness_mobile/state/app_state.dart';
-import 'package:harness_mobile/widgets/engine_identity.dart';
 
 import 'link_page.dart';
 import 'phone_navigation.dart';
+import 'phone_search_field.dart';
+import 'phone_search_folder_header.dart';
+import 'phone_search_groups.dart';
 import 'phone_search_index.dart';
+import 'phone_search_row.dart';
 import 'phone_sheet.dart';
 import 'phone_status.dart';
-import 'search_result_text.dart';
-import 'status_pill.dart';
 import 'unlink_machine.dart';
 
 /// One query over everything the account can reach — agents and machines
@@ -76,7 +77,7 @@ class _PhoneSearchPageState extends State<PhoneSearchPage> {
           bottom: false,
           child: Column(
             children: [
-              _SearchField(
+              PhoneSearchField(
                 controller: _controller,
                 focus: _focus,
                 onChanged: (value) => setState(() => _query = value),
@@ -87,7 +88,7 @@ class _PhoneSearchPageState extends State<PhoneSearchPage> {
                   // screen — the caret stays where the next query will go.
                   _focus.requestFocus();
                 },
-                onCancel: () => Navigator.of(context).maybePop(),
+                onBack: () => Navigator.of(context).maybePop(),
               ),
               Expanded(
                 child: _Results(
@@ -104,169 +105,6 @@ class _PhoneSearchPageState extends State<PhoneSearchPage> {
       );
     },
   );
-}
-
-/// The field, and the way out beside it.
-///
-/// Drawn here rather than through [PhoneHeader]: this page has no title. The
-/// field IS the header, because nothing else on the screen is worth the 32pt
-/// line a large title would take from the results.
-class _SearchField extends StatelessWidget {
-  const _SearchField({
-    required this.controller,
-    required this.focus,
-    required this.onChanged,
-    required this.onClear,
-    required this.onCancel,
-  });
-
-  final TextEditingController controller;
-  final FocusNode focus;
-  final ValueChanged<String> onChanged;
-  final VoidCallback onClear;
-  final VoidCallback onCancel;
-
-  @override
-  Widget build(BuildContext context) {
-    AppTheme.watch(context);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
-      child: Row(
-        children: [
-          Expanded(
-            // The rim lives on the BOX, never on the TextField inside it — see
-            // the decoration below for why the field draws no border of its own.
-            // Listening to the node here is what lets the box carry the focus
-            // state instead.
-            child: ListenableBuilder(
-              listenable: focus,
-              builder: (context, child) => AnimatedContainer(
-                duration: AppMotion.hover,
-                curve: AppMotion.curve,
-                height: 44,
-                padding: const EdgeInsets.symmetric(horizontal: 13),
-                decoration: BoxDecoration(
-                  color: AppGlass.rowFill,
-                  borderRadius: BorderRadius.circular(AppCard.radius),
-                  // Focus is said once, by the rim of the box the field fills.
-                  // The accent is the same one the caret already uses, so the
-                  // two read as one state rather than as two decorations.
-                  border: Border.all(
-                    color: focus.hasFocus
-                        ? AppPalette.accentOnSurface
-                        : AppGlass.hair,
-                  ),
-                ),
-                child: child,
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    LucideIcons.search300,
-                    size: 18,
-                    color: AppPalette.textFaint,
-                  ),
-                  const SizedBox(width: 9),
-                  Expanded(
-                    child: TextField(
-                      controller: controller,
-                      focusNode: focus,
-                      autofocus: true,
-                      onChanged: onChanged,
-                      // The list is already filtered by the time a key is
-                      // released; there is nothing left for the return key to
-                      // submit, so it stays a plain "done" that drops the
-                      // keyboard and leaves the results up.
-                      textInputAction: TextInputAction.search,
-                      onSubmitted: (_) => focus.unfocus(),
-                      autocorrect: false,
-                      enableSuggestions: false,
-                      // Agent names are ids as often as sentences —
-                      // `Dijkstra-visualization.html` — and a capital forced
-                      // onto the first letter of one is a wrong query.
-                      textCapitalization: TextCapitalization.none,
-                      // With the decoration's padding zeroed below, the field
-                      // is exactly one line tall inside a 44pt box; this is
-                      // what centres that line on the glyph beside it instead
-                      // of letting it sit on the box's top edge.
-                      textAlignVertical: TextAlignVertical.center,
-                      style: TextStyle(
-                        color: AppPalette.textPrimary,
-                        fontSize: 16,
-                      ),
-                      cursorColor: AppPalette.accentOnSurface,
-                      decoration: InputDecoration(
-                        isDense: true,
-                        // ⚠️ **Every** border state, not just `border`.
-                        //
-                        // `border` alone is the wrong half of the fix: it is
-                        // the fallback, and the app's `inputDecorationTheme`
-                        // fills the named states in — `focusedBorder` is a
-                        // 1.5px accent outline at [AppControl.radius] (8).
-                        // This box is [AppCard.radius] (12), so focusing drew
-                        // a second, tighter blue rectangle INSIDE the rim —
-                        // the reported bug. Naming each state is what keeps
-                        // the theme from reaching past `border`.
-                        border: InputBorder.none,
-                        enabledBorder: InputBorder.none,
-                        focusedBorder: InputBorder.none,
-                        errorBorder: InputBorder.none,
-                        focusedErrorBorder: InputBorder.none,
-                        disabledBorder: InputBorder.none,
-                        // The theme also fills these, and both would draw on
-                        // top of the box: a `surfaceContainerHighest` fill over
-                        // the rim's own, and Material's phone-sized padding
-                        // over the 44pt height set above.
-                        filled: false,
-                        contentPadding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(),
-                        hintText: 'Search agents and machines',
-                        hintStyle: TextStyle(
-                          color: AppPalette.textFaint,
-                          fontSize: 16,
-                        ),
-                      ),
-                    ),
-                  ),
-                  // Only once there is something to clear: a button that does
-                  // nothing on an empty field is a button people learn to skip.
-                  ValueListenableBuilder(
-                    valueListenable: controller,
-                    builder: (context, value, _) => value.text.isEmpty
-                        ? const SizedBox(width: 4)
-                        : GestureDetector(
-                            behavior: HitTestBehavior.opaque,
-                            onTap: onClear,
-                            child: Padding(
-                              // Padding, not size: the glyph stays small while
-                              // the target reaches a thumb.
-                              padding: const EdgeInsets.only(left: 8),
-                              child: Icon(
-                                LucideIcons.circleX300,
-                                size: 18,
-                                color: AppPalette.textFaint,
-                              ),
-                            ),
-                          ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          TextButton(
-            onPressed: onCancel,
-            style: TextButton.styleFrom(
-              foregroundColor: AppPalette.accentOnSurface,
-              padding: const EdgeInsets.symmetric(horizontal: 10),
-              minimumSize: const Size(44, 44),
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            ),
-            child: const Text('Cancel', style: TextStyle(fontSize: 15)),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 class _Results extends StatelessWidget {
@@ -301,8 +139,10 @@ class _Results extends StatelessWidget {
       );
     }
 
-    final agents = phoneSearchOfKind(rows, PhoneSearchKind.agent);
+    final groups = phoneSearchGroups(rows);
+    final agents = phoneSearchGroupedRows(groups);
     final machines = phoneSearchOfKind(rows, PhoneSearchKind.machine);
+    final now = DateTime.now();
     return ListView(
       // The keyboard is up and the finger is already on the glass; dragging the
       // list is how somebody reaches a result without putting it away first.
@@ -314,24 +154,26 @@ class _Results extends StatelessWidget {
         MediaQuery.paddingOf(context).bottom + 16,
       ),
       children: [
-        // Grouped by kind rather than interleaved by score. The two kinds open
-        // different things, and a machine row appearing between two agents is
-        // read as another agent until the icon is noticed.
-        if (agents.isNotEmpty) ...[
-          _GroupLabel('Agents', count: agents.length),
-          for (final row in agents)
-            _ResultRow(
+        // Agents under their folders, machines in a section of their own. The
+        // two kinds open different things, and a machine row appearing between
+        // two agents is read as another agent until the icon is noticed.
+        for (final group in groups) ...[
+          PhoneSearchFolderHeader(group: group),
+          for (final row in group.rows)
+            PhoneSearchRow(
               row: row,
               terms: terms,
-              onTap: () => _openAgent(context, row),
+              now: now,
+              onTap: () => _openAgent(context, agents, row),
             ),
         ],
         if (machines.isNotEmpty) ...[
           _GroupLabel('Machines', count: machines.length),
           for (final row in machines)
-            _ResultRow(
+            PhoneSearchRow(
               row: row,
               terms: terms,
+              now: now,
               onTap: () => _openMachine(context, row),
             ),
         ],
@@ -345,7 +187,15 @@ class _Results extends StatelessWidget {
   /// walks exactly what the query returned, which is the list the person was
   /// looking at when they tapped. Handing it the unfiltered index instead would
   /// swipe into agents the query had just excluded.
-  void _openAgent(BuildContext context, PhoneSearchResult row) {
+  ///
+  /// ⚠️ [agents] is the GROUPED order, the one drawn — not the ranked [rows].
+  /// Grouping pulls a folder's rows together, so the ranked list can hold a
+  /// different agent at any given index than the screen does.
+  void _openAgent(
+    BuildContext context,
+    List<PhoneSearchResult> agents,
+    PhoneSearchResult row,
+  ) {
     final entry = row.entry;
     if (entry == null || !entry.agent.terminalAvailable) return;
     // ⚠️ Built from [phoneSearchAgentEntries] rather than by unwrapping each
@@ -353,7 +203,7 @@ class _Results extends StatelessWidget {
     // an agent row ever arrived without its entry, and the pager walks it by
     // index — a shorter list than the one on screen sends a swipe to the wrong
     // agent, with nothing on screen to explain why.
-    openAgentPager(context, notifier, phoneSearchAgentEntries(rows), entry);
+    openAgentPager(context, notifier, phoneSearchAgentEntries(agents), entry);
   }
 
   /// A machine that wants its password opens the form for it. One that is
@@ -442,241 +292,6 @@ class _GroupLabel extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-/// One result: the mark, the two lines, and what a tap will do.
-///
-/// Shorter than the tabs' 70pt [PhoneCard] and without its fill. A result list
-/// is read top to bottom against a query and abandoned the moment the right row
-/// is seen, so it is built for scanning: more rows in a thumb's reach, and the
-/// emphasis carried by the bolded match rather than by a card edge.
-class _ResultRow extends StatefulWidget {
-  const _ResultRow({
-    required this.row,
-    required this.terms,
-    required this.onTap,
-  });
-
-  final PhoneSearchResult row;
-  final List<String> terms;
-  final VoidCallback onTap;
-
-  @override
-  State<_ResultRow> createState() => _ResultRowState();
-}
-
-class _ResultRowState extends State<_ResultRow> {
-  bool _pressed = false;
-
-  /// An agent whose terminal has gone cannot be opened, the same rule
-  /// [AgentRow] applies. A machine opens unless it is offline — a locked one
-  /// opens on its password form, which is the thing to do about it, but a
-  /// switched-off one has nothing to take a password.
-  bool get _openable => switch (widget.row.kind) {
-    PhoneSearchKind.agent => widget.row.entry?.agent.terminalAvailable ?? false,
-    PhoneSearchKind.machine =>
-      widget.row.machine == null ||
-          phoneMachineStatusOf(widget.row.machine!) !=
-              PhoneMachineStatus.offline,
-  };
-
-  void _press(bool pressed) {
-    if (!_openable || _pressed == pressed) return;
-    setState(() => _pressed = pressed);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    AppTheme.watch(context);
-    final row = widget.row;
-    final matches = phoneResultMatches(row, widget.terms);
-    final waiting = row.entry?.isWaiting ?? false;
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTapDown: (_) => _press(true),
-      onTapUp: (_) => _press(false),
-      onTapCancel: () => _press(false),
-      onTap: _openable
-          ? () {
-              // The keyboard goes away with the screen, not a frame after it —
-              // dismissing it first keeps the push from animating over a
-              // collapsing inset.
-              FocusManager.instance.primaryFocus?.unfocus();
-              widget.onTap();
-            }
-          : null,
-      child: AnimatedContainer(
-        duration: AppMotion.press,
-        curve: AppMotion.curve,
-        height: 58,
-        padding: const EdgeInsets.symmetric(horizontal: 10),
-        decoration: BoxDecoration(
-          // No resting fill. The tabs' cards earn one because they are the
-          // screen's content; a result row is a line of an answer, and forty of
-          // them each in their own box is a wall rather than a list.
-          color: _pressed ? AppGlass.rowFill : Colors.transparent,
-          borderRadius: BorderRadius.circular(AppCard.radius),
-        ),
-        child: Opacity(
-          opacity: _openable ? 1 : 0.55,
-          child: Row(
-            children: [
-              _Mark(row: row, waiting: waiting),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SearchResultText(
-                      row.title,
-                      matches: matches,
-                      style: TextStyle(
-                        color: AppPalette.textPrimary,
-                        fontSize: 15.5,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    SearchResultText(
-                      row.subtitle,
-                      matches: matches,
-                      style: TextStyle(
-                        // The subtitle already carries the status in words, and
-                        // a coloured status pill on every row of a result list
-                        // turns the colour into wallpaper. The tone is spent on
-                        // the mark instead, where one row at a time wears it.
-                        color: AppPalette.textFaint,
-                        fontSize: 12.5,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              // Carries its own leading gap, so an agent row that prints
-              // nothing here leaves no gutter behind either.
-              _Action(row: row, openable: _openable),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// The square mark at the head of a result: an agent's engine, a machine's
-/// screen. Smaller than the tabs' 44pt [PhoneCardGlyph], to match the shorter
-/// row.
-class _Mark extends StatelessWidget {
-  const _Mark({required this.row, required this.waiting});
-
-  final PhoneSearchResult row;
-  final bool waiting;
-
-  @override
-  Widget build(BuildContext context) {
-    AppTheme.watch(context);
-    return Container(
-      width: 36,
-      height: 36,
-      decoration: BoxDecoration(
-        color: AppSurface.recess,
-        borderRadius: BorderRadius.circular(10),
-        // The same attention rim the Agents tab puts on a waiting row, so an
-        // agent that has stopped to ask something is findable here too.
-        border: waiting
-            ? Border.all(color: AppPalette.warn.withValues(alpha: 0.42))
-            : null,
-      ),
-      child: Center(
-        child: switch (row.kind) {
-          PhoneSearchKind.agent => EngineMark(
-            engine: row.entry?.agent.engine,
-            displayName: row.entry?.agent.engineDisplayName,
-            size: 18,
-          ),
-          PhoneSearchKind.machine => Icon(
-            LucideIcons.laptopMinimal300,
-            size: 18,
-            color: phoneToneColor(row.summary.tone),
-          ),
-        },
-      ),
-    );
-  }
-}
-
-/// What a tap will do, said in a word.
-///
-/// The desktop's picker labels its rows the same way, and on a list mixing two
-/// kinds the label is what separates "this asks you for a password" from "this
-/// just shows you the machine" before anything is tapped.
-///
-/// ⚠️ Agent rows no longer draw one. Their label only ever said "Open", which is
-/// what tapping any row does — a boxed word repeating that down the whole
-/// Agents section read as a button beside each line rather than a description
-/// of it, and it is the whole row that takes the tap. Machines keep theirs
-/// because theirs distinguishes: Unlock and View are two different destinations.
-///
-/// The exception is an agent whose terminal has gone. Dimming alone leaves the
-/// person tapping a row that cannot answer and reading nothing about why, so
-/// that one keeps its words.
-class _Action extends StatelessWidget {
-  const _Action({required this.row, required this.openable});
-
-  final PhoneSearchResult row;
-  final bool openable;
-
-  /// Null where the row says nothing — an agent that opens, which is every
-  /// agent row bar the ones with no terminal left.
-  ///
-  /// A machine always says something, and an offline one says so rather than
-  /// "No terminal": it is dimmed for a different reason, and the word is the
-  /// only place that reason is given.
-  String? get _label {
-    final machine = row.machine;
-    return switch (row.kind) {
-      PhoneSearchKind.agent => openable ? null : 'No terminal',
-      PhoneSearchKind.machine => switch (machine == null
-          ? null
-          : phoneMachineStatusOf(machine)) {
-        PhoneMachineStatus.offline => 'Offline',
-        PhoneMachineStatus.needsPassword => 'Unlock',
-        // Its state, not a verb: the tap brings a sheet of actions, and "View" promised a screen
-        // that is no longer there.
-        _ => 'Connected',
-      },
-    };
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    AppTheme.watch(context);
-    final label = _label;
-    // ⚠️ The gutter belongs to the label, not to the row. A bare
-    // [SizedBox.shrink] beside a gap the caller kept would leave an 8px column
-    // down the right of every agent row, holding space for a word that is no
-    // longer printed.
-    if (label == null) return const SizedBox.shrink();
-    return Padding(
-      padding: const EdgeInsets.only(left: 8),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: AppGlass.hair),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: AppPalette.textFaint,
-            fontSize: 11,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
       ),
     );
   }
