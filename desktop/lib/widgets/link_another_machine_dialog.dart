@@ -255,7 +255,7 @@ class _WhereChooser extends StatelessWidget {
           child: _WhereCard(
             icon: LucideIcons.monitor300,
             title: 'A computer with a screen',
-            detail: 'Mac or Linux desktop. Install the Harness app there.',
+            detail: 'Mac or Linux desktop. Install the OpenHarness app there.',
             selected: where == _Where.computer,
             onTap: () => onChanged(_Where.computer),
           ),
@@ -379,7 +379,7 @@ class _ComputerSteps extends StatelessWidget {
       children: [
         _Step(
           number: 1,
-          title: 'Install Harness on that computer',
+          title: 'Install OpenHarness on that computer',
           detail: TextSpan(
             children: [
               const TextSpan(text: 'Download from '),

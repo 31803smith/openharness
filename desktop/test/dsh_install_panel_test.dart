@@ -87,7 +87,7 @@ void main() {
     expect(_markOf(tester, 'Check this machine'), _Mark.pending);
     expect(
       find.text(
-        'The first install takes a few minutes. You can keep using Harness.',
+        'The first install takes a few minutes. You can keep using OpenHarness.',
       ),
       findsOneWidget,
     );

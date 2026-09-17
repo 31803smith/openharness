@@ -159,7 +159,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     configured = true
     NSWindow.allowsAutomaticWindowTabbing = false
     window.tabbingMode = .disallowed
-    window.title = "Harness"
+    window.title = "OpenHarness"
     window.titleVisibility = .hidden
     window.titlebarAppearsTransparent = true
     window.styleMask.remove(.fullSizeContentView)
