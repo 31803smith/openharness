@@ -11,6 +11,7 @@ import '../state/pane_arrangement.dart';
 import '../core/engine_availability.dart';
 import '../core/codex_profiles.dart';
 import '../core/dsh_catalog.dart';
+import '../core/first_task.dart';
 import '../core/permission_modes.dart';
 import '../core/project_folder.dart';
 import '../core/repository_clone.dart';
@@ -127,7 +128,24 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   );
   String? get _firstPrompt {
     final task = _task.text.trim();
-    return task.isEmpty ? null : task;
+    return task.isEmpty || !_takesTask || _taskTooLong ? null : task;
+  }
+
+  /// Whether the chosen agent can start on a task at all: only some engines
+  /// can be opened with a first message, and a machine refuses one for the
+  /// rest. The field says so and keeps what was typed, unsent.
+  bool get _takesTask => takesFirstTask(_baseEngine(_engine));
+
+  /// Longer than a machine accepts: Create waits until it is shortened, rather
+  /// than sending something the machine refuses or cutting it.
+  bool get _taskTooLong =>
+      _takesTask && _task.text.trim().length > kFirstTaskMaxLength;
+  late bool _taskWasTooLong = _taskTooLong;
+
+  /// Rebuilds the dialog, not just the field, when Create's answer changes.
+  void _onTaskChanged() {
+    if (_taskTooLong == _taskWasTooLong) return;
+    setState(() => _taskWasTooLong = _taskTooLong);
   }
 
   final _folderFocus = FocusNode(debugLabel: 'Working folder');
@@ -189,6 +207,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   @override
   void initState() {
     super.initState();
+    _task.addListener(_onTaskChanged);
     final remembered = widget.notifier.agentPreference.value;
     final asked = widget.initialEngine;
     if (asked != null &&
@@ -623,6 +642,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                 : _projectFolder != null)) &&
         !_picking &&
         !_submitting &&
+        (_confirmationPending || !_taskTooLong) &&
         (_confirmationPending || !_waitingForCodexProfile);
 
     return CallbackShortcuts(
@@ -714,7 +734,10 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                             SizedBox(height: compactHeight ? 24 : 32),
                             _sectionHeader(
                               'First task',
-                              'What should your agent work on? (Optional)',
+                              _takesTask
+                                  ? 'What should your agent work on? (Optional)'
+                                  : '${_labelOf(_engine)} starts without one. '
+                                        'Tell it once it opens.',
                               null,
                               compactHeight: compactHeight,
                             ),
@@ -1190,9 +1213,20 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
       final radius = BorderRadius.circular(grid.AppControl.radius);
       final line = MediaQuery.textScalerOf(context).scale(16) * 1.45;
       final padding = ((minHeight - line) / 2).clamp(12.0, double.infinity);
+      final tooLong = _taskTooLong;
+      final errorBorder = OutlineInputBorder(
+        borderRadius: radius,
+        borderSide: BorderSide(
+          color: Theme.of(context).colorScheme.error,
+          width: 1.5,
+        ),
+      );
       return TextField(
         key: const Key('new-agent-task'),
         controller: _task,
+        // Kept, not cleared, for an agent that cannot take it: choosing one
+        // that can sends it after all.
+        enabled: _takesTask,
         minLines: 1,
         maxLines: 6,
         keyboardType: TextInputType.multiline,
@@ -1212,6 +1246,13 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
           ),
           // One line, so an empty box is exactly a tile tall at any width.
           hintMaxLines: 1,
+          errorText: tooLong
+              ? 'A first task can be up to $kFirstTaskMaxLength characters. '
+                    'This one is ${_task.text.trim().length}.'
+              : null,
+          errorMaxLines: 2,
+          errorBorder: errorBorder,
+          focusedErrorBorder: errorBorder,
           filled: true,
           fillColor: grid.AppSurface.recess,
           isDense: true,
@@ -1227,6 +1268,10 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
             borderRadius: radius,
             borderSide: BorderSide.none,
           ),
+          disabledBorder: OutlineInputBorder(
+            borderRadius: radius,
+            borderSide: BorderSide.none,
+          ),
           focusedBorder: OutlineInputBorder(
             borderRadius: radius,
             borderSide: BorderSide(
@@ -1234,7 +1279,8 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
               width: 1.5,
             ),
           ),
-          suffixIcon: _task.text.isEmpty
+          // A disabled field takes no clicks, so it offers none.
+          suffixIcon: _task.text.isEmpty || !_takesTask
               ? null
               : Padding(
                   padding: const EdgeInsets.only(right: 8),
