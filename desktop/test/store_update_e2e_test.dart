@@ -63,17 +63,19 @@ void main() {
                   final message = jsonDecode(line);
                   if (message is Map &&
                       message['port'] is int &&
-                      !port.isCompleted)
+                      !port.isCompleted) {
                     port.complete(message['port'] as int);
+                  }
                 } on FormatException {
                   /* Progress also goes to stdout. */
                 }
               },
               onDone: () {
-                if (!port.isCompleted)
+                if (!port.isCompleted) {
                   port.completeError(
                     StateError('Daemon did not start: $diagnostics'),
                   );
+                }
               },
             );
         final localPort = await port.future.timeout(
@@ -88,8 +90,9 @@ void main() {
           onAuthFailure: fail,
           onEvent: (event) => unawaited(app.handleEventForTest('m', event)),
           onStatus: (status) {
-            if (status == ConnectionStatus.connected && !ready.isCompleted)
+            if (status == ConnectionStatus.connected && !ready.isCompleted) {
               ready.complete();
+            }
           },
           transportKind: WsTransportKind.localPlaintext,
           localWsUri: Uri.parse('ws://127.0.0.1:$localPort'),
@@ -181,7 +184,10 @@ void main() {
         () => connection.request('smoke_reopen'),
       );
       expect(reopened!['preview'], 'my finished project');
-      expect(reopened['instructions'], '<!-- harness:dsh acme/thing -->\noriginal instructions\n\nmy custom instructions\n');
+      expect(
+        reopened['instructions'],
+        '<!-- harness:dsh acme/thing -->\noriginal instructions\n\nmy custom instructions\n',
+      );
       expect(reopened['skill'], 'skill version 3');
       expect(reopened['verdict'], {'ready': true, 'summary': 'finished'});
 

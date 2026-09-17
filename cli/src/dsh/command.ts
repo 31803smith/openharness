@@ -1,4 +1,3 @@
-import { updateDsh } from './update.js'
 /**
  * `harness dsh …` — the terminal face of domain-specific harnesses, for a server with no desktop
  * and for the development loop (`--link` a checkout, iterate, no re-clone).
@@ -8,6 +7,7 @@ import { DSH_ID_RE, dshTier } from './manifest.js'
 import { registrySourceUrl } from './registry.js'
 import { catalogEntry, currentDshRegistry, refreshDshRegistry } from './catalog.js'
 import { installDsh, removeDsh, resolveInstallSource, runDshDoctor } from './install.js'
+import { updateDsh } from './update.js'
 import { dshUpdateInfo } from './updates.js'
 import { checkDsh, formatCheck } from './check.js'
 

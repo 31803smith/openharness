@@ -291,7 +291,6 @@ class AppNotifier extends ChangeNotifier {
   final AuthSession session;
   AppConfig config;
   late ApiClient api;
-
   /// Signs in, and says whether this computer is signed in: the harness CLI in a desktop build,
   /// [ViewerServices.login] in a viewer build — which has no CLI — under one name, so every call
   /// site reads the same in both.
@@ -502,9 +501,11 @@ class AppNotifier extends ChangeNotifier {
     final target = swarms.where((s) => s.id == entry.swarmId).firstOrNull;
     return target == null ||
         target.panes.length < maxPanes ||
-        target.panes.any(
-          (p) => p.machineId == entry.machineId && p.agentId == entry.agentId,
-        );
+              target.panes.any(
+                (p) =>
+                    p.machineId == entry.machineId &&
+                    p.agentId == entry.agentId,
+              );
   }
 
   bool _canReopenSwarm(ClosedSwarm saved) {
@@ -2492,8 +2493,7 @@ class AppNotifier extends ChangeNotifier {
       final updater = desktopUpdater ?? DesktopUpdater();
       final staged = await updater.downloadAndStage(info);
       if (staged == null) {
-        updateError =
-            'Could not download and verify OpenHarness ${info.version}.';
+        updateError = 'Could not download and verify OpenHarness ${info.version}.';
         return false;
       }
       final applied = await updater.applyStaged(staged, selfPid: pid);
@@ -3559,10 +3559,7 @@ class AppNotifier extends ChangeNotifier {
     if (decision == null) return;
     // The dialog may list the machines, and the person may have moved the choice.
     machineId = decision.machineId;
-    final error = await _startLocalModelAgent(
-      machineId,
-      prompt: decision.prompt,
-    );
+    final error = await _startLocalModelAgent(machineId, prompt: decision.prompt);
     if (error != null) {
       _lastError = error;
       _lastErrorRetryable = false;
@@ -3594,10 +3591,7 @@ class AppNotifier extends ChangeNotifier {
   /// before this dialog had buttons.
   ///
   /// Null on success, else the sentence for the person.
-  Future<String?> _startLocalModelAgent(
-    String machineId, {
-    String? prompt,
-  }) async {
+  Future<String?> _startLocalModelAgent(String machineId, {String? prompt}) async {
     final machine = machineStates[machineId];
     if (machine == null) return 'Machine not found';
     final home = await _homeFolderOf(machine);

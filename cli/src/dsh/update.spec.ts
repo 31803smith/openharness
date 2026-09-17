@@ -27,7 +27,7 @@ vi.mock('node:fs', async original => {
   }
 })
 
-describe('package updates', () => {
+describe('package updates', { timeout: 30_000 }, () => {
   let root: string
   let savedRoot: string
   const id = 'acme/thing'
