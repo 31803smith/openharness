@@ -51,4 +51,7 @@ and says so.
 harness dsh check .                                # conformance
 harness dsh install "$PWD" --link                  # this checkout as the installed agent
 python3 -m unittest toolchain/test_verdict.py      # the verdict, without rdkit
+python3 -m unittest toolchain/test_scripts.py      # setup, doctor, init and viewer.sh, on stubbed PATHs
+"$RDKIT_PYTHON" -m unittest discover -s toolchain  # the helper on the pinned RDKit, plus the real chemistry checks
+node --test test/*.test.mjs                        # the pane's server, with a fake RDKit worker
 ```

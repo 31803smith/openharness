@@ -89,6 +89,8 @@ class Sandbox:
 
     @staticmethod
     def write(path: Path, text: str) -> Path:
+        # Never through a link: a granted tool or a linked package file is the real one, not the sandbox's.
+        assert not path.is_symlink(), f"{path} is a link; writing or chmod-ing it would change what it points at"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
         path.chmod(0o755)

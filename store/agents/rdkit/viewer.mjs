@@ -38,9 +38,9 @@ function safe(rel) {
 }
 function stat(full) { try { return statSync(full) } catch { return null } }
 function readJson(full) { try { return JSON.parse(readFileSync(full, 'utf8')) } catch { return null } }
-function send(res, code, body, type = 'application/json') {
-  res.writeHead(code, { 'content-type': type, 'cache-control': 'no-store' })
-  res.end(typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body))
+function send(res, code, body) {
+  res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+  res.end(JSON.stringify(body))
 }
 function file(req, res, full, { download = false, cache = false } = {}) {
   const st = full && stat(full)
@@ -48,7 +48,8 @@ function file(req, res, full, { download = false, cache = false } = {}) {
   const headers = { 'content-type': TYPES[extname(full).toLowerCase()] ?? 'application/octet-stream', 'cache-control': cache ? 'max-age=3600' : 'no-store' }
   if (download) headers['content-disposition'] = `attachment; filename="${basename(full).replace(/"/g, '')}"`
   if (req.method === 'HEAD') { res.writeHead(200, { ...headers, 'content-length': st.size }); res.end(); return }
-  res.writeHead(200, headers); res.end(readFileSync(full))
+  const body = readFileSync(full) // before the head: a file that cannot be read is still answered, with a 500
+  res.writeHead(200, headers); res.end(body)
 }
 
 // ---- the Python worker: one long-lived `harness_rdkit.py serve`, started on the first question ----
@@ -81,10 +82,12 @@ function startWorker() {
     }
   })
   child.stderr.on('data', (chunk) => { const text = String(chunk).trim(); if (text) console.log(`[rdkit] worker: ${text.slice(0, 300)}`) })
-  child.on('exit', () => {
+  const stopped = () => {
     if (worker === child) worker = null
     for (const [id, waiter] of pending) { pending.delete(id); waiter.reject(new Error('the RDKit worker stopped')) }
-  })
+  }
+  child.on('exit', stopped)
+  child.on('error', stopped) // a python that is there but cannot be run emits 'error' and no 'exit'
   return child
 }
 function ask(op, payload) {
@@ -176,7 +179,7 @@ function newestStructure() {
 }
 
 function progressIn(dirRel) {
-  const full = safe(`${dirRel || 'out'}/.progress.json`)
+  const full = safe(`${dirRel}/.progress.json`)
   const p = full && readJson(full)
   if (!p) return null
   if (!['done', 'failed'].includes(p.stage)) {
@@ -193,9 +196,9 @@ function molBlock(text) {
 }
 
 createServer(async (req, res) => {
-  const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`)
-  const path = decodeURIComponent(url.pathname)
   try {
+    const url = new URL(req.url, `http://127.0.0.1:${port}`)
+    const path = decodeURIComponent(url.pathname) // throws on a malformed escape: an answer, not a dead pane
     if (PANE[path]) { file(req, res, join(here, 'pane', PANE[path])); return }
     if (path === '/events') {
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' })
@@ -214,12 +217,13 @@ createServer(async (req, res) => {
     if (path === '/api/mol') {
       const full = safe(url.searchParams.get('path'))
       if (!full || !stat(full)?.isFile()) { send(res, 404, { error: 'not found' }); return }
+      const block = molBlock(readFileSync(full, 'utf8'))
       res.writeHead(200, { 'content-type': 'chemical/x-mdl-molfile', 'content-disposition': `attachment; filename="${stemOf(basename(full))}.mol"`, 'cache-control': 'no-store' })
-      res.end(molBlock(readFileSync(full, 'utf8'))); return
+      res.end(block); return
     }
     file(req, res, safe(path), { download: url.searchParams.has('download') })
   } catch (error) {
-    send(res, 500, { error: String(error?.message || error) })
+    send(res, 500, { error: error.message })
   }
 }).listen(port, '127.0.0.1', () => console.log(`[rdkit] listening on http://127.0.0.1:${port}/ (workspace: ${workspace})`))
 
@@ -229,6 +233,7 @@ let timer = null
 function broadcast(event, data) { for (const c of clients) c.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`) }
 try {
   watch(workspace, { recursive: true }, (_event, name) => {
+    /* c8 ignore next */ // fs.watch may pass no filename where the platform gives none; macOS always names it
     const n = String(name ?? '').split(sep).join('/')
     if (!n || n.startsWith('.harness') || n.includes('node_modules') || n.includes('__pycache__') || n.startsWith('.git/')) return
     if (n.endsWith('.progress.json')) {
@@ -243,6 +248,6 @@ try {
   })
 } catch (error) { console.log(`[rdkit] watch failed: ${error.message}`) }
 setInterval(() => { for (const c of clients) c.write(': ping\n\n') }, 20_000).unref()
-function stop() { try { worker?.kill() } catch { /* gone */ } process.exit(0) }
+function stop() { worker?.kill(); process.exit(0) }
 process.on('SIGTERM', stop)
 process.on('SIGINT', stop)
