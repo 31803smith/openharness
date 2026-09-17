@@ -1046,7 +1046,9 @@ class _ProductPageState extends State<_ProductPage> {
                             foregroundColor: grid.AppPalette.windowBg,
                             minimumSize: const Size(148, 50),
                             padding: const EdgeInsets.symmetric(horizontal: 30),
-                            textStyle: const TextStyle(
+                            textStyle: TextStyle(
+                              fontFamily: grid.AppFont.sans,
+                              fontFamilyFallback: grid.AppFont.sansFallback,
                               fontSize: 16,
                               fontWeight: FontWeight.w600,
                             ),
@@ -1069,6 +1071,7 @@ class _ProductPageState extends State<_ProductPage> {
                       const SizedBox(height: 10),
                       Text(
                         'Your projects and files are kept.',
+                        textAlign: TextAlign.center,
                         style: TextStyle(
                           fontSize: 12.5,
                           color: grid.AppPalette.textSecondary,
