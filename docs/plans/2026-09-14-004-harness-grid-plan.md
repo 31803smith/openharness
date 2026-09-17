@@ -457,6 +457,16 @@ runtime is ever adopted, since onefile self-extracts into `{CACHE_DIR}`.
   `runtimeInstall.spec.ts` (7 grid cases), `install.spec.ts` (4), `buildManagedGrid.spec.ts` (3,
   the Linux wrap through a fake release). The Linux wrap was also run against the real v0.3.47
   release, and the macOS build from its tag, on this Mac.
+- Found on the way, outside 2c but on its release path: **the Harness Compute skill never shipped.**
+  `build-bundle.mjs` copied `docs/skills/*.md` to `dist/skills/`, but nothing publishes that directory —
+  `upload-cli.sh` ships `cli.js` + `notify.mjs` only, `install.sh` and the self-updater fetch only
+  those, and so does `install-cli.sh`. A daemon installed from the CDN logged "failed to read Harness
+  Compute skill sources" and installed no skill and no `harness-compute` agent, silently; only a
+  working tree with a hand-copied `skills/` beside its cli.js looked fine. Unreleased (not in
+  `v0.2.48_cli`), so never live. Fixed by embedding both docs into `cli.js` at build time
+  (`__HARNESS_SKILLS__`, an esbuild `define` like `__DSH_REGISTRY__`): they now travel wherever
+  `cli.js` does and cannot lag the code that installs them. `harnessComputeSkill.spec.ts` pins both
+  the embedded branch and the two build scripts.
 
 ---
 
