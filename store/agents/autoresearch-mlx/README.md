@@ -2,6 +2,8 @@
 
 Follow a small idea through a real experiment. Train, compare, and see what the evidence says.
 
+![Research notebook running the local starter](screenshots/studio.png)
+
 ```sh
 harness dsh install autonomous/autoresearch-mlx
 ```

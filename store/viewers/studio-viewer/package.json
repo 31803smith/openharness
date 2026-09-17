@@ -11,7 +11,8 @@
     "coverage:browser": "node test/browser-coverage.mjs",
     "test:workflows": "node test/workflows.mjs",
     "test:workflow-coverage": "node test/workflows.mjs --coverage",
-    "test:result-views": "node test/result-views.e2e.mjs"
+    "test:result-views": "node test/result-views.e2e.mjs",
+    "test:native-coverage": "bash test/native-coverage.sh"
   },
   "devDependencies": {
     "playwright": "1.58.2",
