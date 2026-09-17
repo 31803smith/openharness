@@ -23,6 +23,10 @@ and official Comfy MCP. Godogen and OpenMontage already exist.
 
 ## Verification boundary
 
+The user confirmed: **use this Mac and local simulations**. The end-to-end acceptance matrix
+covers the shipped local workflows on this machine; native service/hardware connections are
+separate optional paths and must not be presented as tested here.
+
 This Mac initially has no Ableton Live, Docker/OpenFOAM, Blender/Bonsai, or robot hardware.
 Local examples must identify their actual engine and provenance. A procedural preview,
 simulation, fixture, or protocol-contract test cannot count as live upstream verification.
