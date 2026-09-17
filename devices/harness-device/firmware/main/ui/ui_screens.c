@@ -4367,11 +4367,18 @@ static char *dup_str(const char *s)
 #define RECAP_FONT        (&geist_med_28)
 #define RECAP_LINE_SPACE  3
 #define RECAP_CARD_PAD_H  18
-#define RECAP_CARD_PAD_V  14
+// 14 → 19 (owner, 2026-09-17): a tenth more height, so the box breathes around two lines instead of
+// gripping them — a recap that wraps close to the edge no longer looks clipped at the bottom.
+#define RECAP_CARD_PAD_V  19
+/** The text column inside the card: the safe width less the padding and the hairline each side. */
+#define RECAP_TEXT_W      (SAFE_CONTENT_W - 2 * RECAP_CARD_PAD_H - 2)
 /** The card's fixed height: two lines of recap, the space between them, the padding, and the 1px edge
  *  on each side. Fixed so the box does not breathe as the carousel moves between tiles. */
 #define RECAP_CARD_H      (2 * lv_font_get_line_height(RECAP_FONT) + RECAP_LINE_SPACE \
                            + 2 * RECAP_CARD_PAD_V + 2)
+
+static void tile_layout_apply(proj_t *p);   // the tile's two layouts, chosen by state — defined with its macros below
+static void shell_name_fit(proj_t *p);       // the name's width and line budget — defined with the header
 
 // The tile after a turn: WHAT it did, in a line. Built into p->list from the model (m_preview is what says
 // there has been a turn at all), shared by the live path and by materialize_content.
@@ -4389,6 +4396,7 @@ static void render_recap_block(proj_t *p)
     char *reader_text = dup_str(p->m_full ? p->m_full : p->m_preview);
     if (!reader_text) return;
     if (p->empty) { lv_obj_delete(p->empty); p->empty = NULL; }
+    tile_layout_apply(p);   // a card needs the room below the name
 
     // The card: flat dark surface, hairline edge. Not a gradient — that version merged into the black face
     // and read as nothing at all — and not a shadow, which costs a temp layer on the tile that is on screen
@@ -4429,7 +4437,26 @@ static void render_recap_block(proj_t *p)
     lv_obj_t *line = lv_label_create(card);
     char cut[RECAP_MAX_CHARS * 4 + 8];
     chip_clip(p->m_preview, cut, sizeof(cut) - 4, RECAP_MAX_CHARS);
-    if (strlen(cut) < strlen(p->m_preview)) strcat(cut, "\xE2\x80\xA6");   // … only when something was cut
+    bool clipped = strlen(cut) < strlen(p->m_preview);
+    // TWO LINES BY MEASUREMENT, not by glyph count. Forty glyphs "cannot need a third line" only when
+    // the words break kindly; a recap of short words with diacritics wrapped onto three, and the card —
+    // pinned to two — sliced the third through the middle of its glyphs. So the text is laid out at the
+    // card's width and trimmed, a glyph at a time, until it fits in two lines with its "…" on the second.
+    const int32_t two_lines = 2 * lv_font_get_line_height(RECAP_FONT) + RECAP_LINE_SPACE;
+    for (;;) {
+        char probe[sizeof(cut) + 4];
+        snprintf(probe, sizeof probe, "%s%s", cut, clipped ? "\xE2\x80\xA6" : "");
+        lv_point_t sz;
+        lv_text_get_size(&sz, probe, RECAP_FONT, 0, RECAP_LINE_SPACE, RECAP_TEXT_W, LV_TEXT_FLAG_NONE);
+        if (sz.y <= two_lines || !cut[0]) break;
+        // Drop the last glyph (UTF-8: back over continuation bytes) and any space it leaves behind.
+        size_t n = strlen(cut);
+        do { n--; } while (n > 0 && ((unsigned char)cut[n] & 0xC0) == 0x80);
+        while (n > 0 && cut[n - 1] == ' ') n--;
+        cut[n] = 0;
+        clipped = true;
+    }
+    if (clipped) strcat(cut, "\xE2\x80\xA6");   // … only when something was cut
     lv_label_set_text(line, cut);
     lv_label_set_long_mode(line, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(line, lv_pct(100));
@@ -4449,18 +4476,7 @@ static void render_recap_block(proj_t *p)
 static void render_busy_row(proj_t *p)
 {
     if (!p->body || p->busy) return;
-    // Centre the [name + busy] group vertically for the working screen (recap keeps top-anchored name).
-    if (p->tile) {
-        lv_obj_set_flex_align(p->tile, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-        // Reserve the chip band. The row floats above the name, so flex does NOT count it when centring:
-        // at a 0 top pad the visible block ([chips][name][status]) would sit half a band low, and a tall
-        // turn (tool line + todo) could push the row clean off the top edge. Padding by exactly the band
-        // makes flex centre the remainder, which lands the block — chips included — on the centre line.
-        lv_obj_set_style_pad_top(p->tile, ctl_row_shown(p) ? ctl_band_h() : 0, 0);
-        // The 14px engine subtitle is inside the header. Zero outer gap grows the centred busy group by
-        // only the few pixels the old 8px name→body gap did not already reserve.
-        lv_obj_set_style_pad_row(p->tile, 0, 0);
-    }
+    tile_layout_apply(p);
     p->busy = lv_obj_create(p->body);
     lv_obj_remove_style_all(p->busy);
     lv_obj_clear_flag(p->busy, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
@@ -4488,6 +4504,36 @@ static void render_busy_row(proj_t *p)
 // it at y=191 and ends it at y=302 — 20px clear of the action arc at y=322. It went 27 → 25 → 32 → 16 →
 // 11 → 21 as what sits under the name changed shape and then asked for more air around it.
 #define TILE_NAME_GAP   21
+
+// THE TILE HAS TWO LAYOUTS, and the state picks one — nobody sets the alignment by hand.
+//
+// CENTRED when the tile is a name with one line under it: a turn in flight ("Working… 5s") or nothing
+// yet ("No activity yet"). Both are the same shape and belong on the same line of the glass; the second
+// used to keep the recap layout and sat a band too high, which read as a different screen from the
+// first. TOP-ANCHORED when there is a recap card, which needs the room below the name.
+//
+// The tab pill floats above the name, so flex does NOT count it when centring: at a 0 top pad the
+// visible block ([tab][name][status]) would sit half a band low, and a tall turn (tool line + todo)
+// could push the pill clean off the top edge. Padding by exactly the band makes flex centre the
+// remainder, which lands the block — pill included — on the centre line.
+static void tile_layout_apply(proj_t *p)
+{
+    if (!p->tile) return;
+    const bool centred = p->busy_model || !p->m_preview;
+    if (centred) {
+        lv_obj_set_flex_align(p->tile, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_set_style_pad_top(p->tile, ctl_row_shown(p) ? ctl_band_h() : 0, 0);
+        // Working: the status hugs the name (the old 8px gap is already inside the busy group).
+        // Nothing yet: the same gap the recap layout uses, so the placeholder sits where a status would.
+        lv_obj_set_style_pad_row(p->tile, p->busy_model ? 0 : TILE_NAME_GAP, 0);
+    } else {
+        lv_obj_set_flex_align(p->tile, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_set_style_pad_top(p->tile, TILE_PAD_TOP, 0);
+        lv_obj_set_style_pad_row(p->tile, TILE_NAME_GAP, 0);
+    }
+    shell_name_fit(p);   // the name's line budget follows the same state
+}
+
 
 // Create the empty tile container for an agent (UNpositioned — update_content_window places it at its
 // current ring column). Called by materialize_content on window entry; free_content deletes the whole tile
@@ -4544,14 +4590,49 @@ static const lv_image_dsc_t *engine_mark(const char *engine, bool *recolor)
 // the width of the row would put the mark at the row's left edge and the name in the middle of what was
 // left, and the two would read as unrelated. LONG_DOT needs a real width to elide against, which is why
 // the text is measured rather than left to LV_SIZE_CONTENT.
+//
+// HOW MANY LINES the name may take is the tile's state's to say, not the name's. LONG_DOT elides against
+// the label's BOX, and a content-sized box grows to hold every line first — a long name wrapped onto two
+// lines and only then got its "…", with the status pushed a line down under it. So the height is set
+// here, to a whole number of lines: ONE when there is something under the name (a turn in flight, a recap
+// card — the line below is the point of the tile and the name must not eat into it), TWO when there is
+// nothing yet, where the glass has the room and a name cut at 14 glyphs says less than one that wraps.
+// The header row grows with it, so the mark keeps centring on the name as a block.
 static void shell_name_fit(proj_t *p)
 {
     if (!p->name_lbl) return;
     bool mark = p->engine_lbl && !lv_obj_has_flag(p->engine_lbl, LV_OBJ_FLAG_HIDDEN);
     int32_t cap = SAFE_CONTENT_W - (mark ? SHELL_MARK + SHELL_MARK_GAP : 0);
+    const char *text = lv_label_get_text(p->name_lbl);
     lv_point_t sz;
-    lv_text_get_size(&sz, lv_label_get_text(p->name_lbl), &geist_med_38, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-    lv_obj_set_width(p->name_lbl, sz.x < cap ? sz.x : cap);
+    lv_text_get_size(&sz, text, &geist_med_38, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+
+    const int32_t lh = lv_font_get_line_height(&geist_med_38);
+    const int32_t allowed = (!p->busy_model && !p->m_preview) ? 2 : 1;
+    lv_point_t wrapped;   // what the text takes wrapping at the cap: its widest line, and its height
+    lv_text_get_size(&wrapped, text, &geist_med_38, 0, 0, cap, LV_TEXT_FLAG_NONE);
+    int32_t lines = lh > 0 ? (wrapped.y + lh / 2) / lh : 1;
+    if (lines < 1) lines = 1;
+    if (lines > allowed) lines = allowed;
+
+    // ONE LINE: the pair [mark][name] is centred as a unit, the name box no wider than its text.
+    // TWO LINES: the box is the WIDEST LINE, not the cap, so the mark sits right beside the text rather
+    // than at the row's left edge with the text in the middle of what was left (which read as "the icon
+    // dropped a line"). Lines are centred inside that box — the widest one touches both edges, the
+    // shorter one sits centred under it — and the mark sits on the FIRST line, centred on it, rather than
+    // floating between the two.
+    const bool multi = lines > 1;
+    lv_obj_set_width(p->name_lbl, multi ? wrapped.x : (sz.x < cap ? sz.x : cap));
+    lv_obj_set_height(p->name_lbl, lines * lh);
+    lv_obj_set_style_text_align(p->name_lbl, LV_TEXT_ALIGN_CENTER, 0);
+    if (p->header) {
+        lv_obj_set_height(p->header, lines * lh);
+        lv_obj_set_flex_align(p->header, LV_FLEX_ALIGN_CENTER,
+                              multi ? LV_FLEX_ALIGN_START : LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    }
+    if (p->engine_lbl) {
+        lv_obj_set_style_margin_top(p->engine_lbl, multi && mark ? (lh - SHELL_MARK) / 2 : 0, 0);
+    }
 }
 
 static void apply_engine_label(proj_t *p)
@@ -4612,7 +4693,7 @@ static void build_shell(proj_t *p)
     lv_obj_set_style_text_color(p->name_lbl, COL_FG, 0);
     lv_obj_set_style_text_font(p->name_lbl, &geist_med_38, 0);   // agent name — Medium for emphasis
     lv_obj_set_style_text_align(p->name_lbl, LV_TEXT_ALIGN_CENTER, 0);
-    lv_label_set_long_mode(p->name_lbl, LV_LABEL_LONG_DOT);
+    lv_label_set_long_mode(p->name_lbl, LV_LABEL_LONG_DOT);   // height — one line or two — is shell_name_fit's
     lv_label_set_text(p->name_lbl, p->name[0] ? p->name : "\xE2\x80\xA6");  // model name, or "…" placeholder
 
     // THE TAB LINE, floating in the band above the name where the [mark][Model][Effort] chips were. It
@@ -4697,6 +4778,7 @@ static void materialize_content(int i)
         lv_obj_add_flag(p->list, LV_OBJ_FLAG_HIDDEN);
         render_busy_row(p);
     }
+    tile_layout_apply(p);
     p->content_live = true;
 }
 
@@ -6307,11 +6389,7 @@ static void clear_busy(proj_t *p)
     p->busy_verb = NULL; p->busy_meta = NULL; p->busy_icon = NULL; p->busy_tokens = 0; p->busy_last_ms = 0;
     if (p->todo) { lv_obj_delete(p->todo); p->todo = NULL; p->todo_active = NULL; }  // drop the checklist
     if (p->list) { lv_obj_clear_flag(p->list, LV_OBJ_FLAG_HIDDEN); lv_obj_set_style_opa(p->list, LV_OPA_COVER, 0); }
-    if (p->tile) {   // restore the recap layout: top-anchored name + block (render_busy_row had centred it)
-        lv_obj_set_flex_align(p->tile, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-        lv_obj_set_style_pad_top(p->tile, TILE_PAD_TOP, 0);
-        lv_obj_set_style_pad_row(p->tile, TILE_NAME_GAP, 0);
-    }
+    tile_layout_apply(p);   // a recap card takes the top-anchored layout; nothing yet stays centred
     overview_working_apply();   // this agent stopped working → refresh the Overview "N working" count
     agent_actions_apply();      // …and the actions come back on the tile
 }
@@ -6826,6 +6904,7 @@ void ui_project_clear_event(const char *project_id)
             lv_obj_clear_flag(p->list, LV_OBJ_FLAG_HIDDEN);
             p->empty = make_label(p->list, "No activity yet", lv_color_hex(0x585863), &geist_reg_38);
         }
+        tile_layout_apply(p);
     }
     display_unlock();
 }
@@ -8314,4 +8393,27 @@ void ui_log_state_if_changed(void)
              display_is_asleep() ? " asleep" : "",
              dimmed ? " dimmed" : "");
     if (page == 4) ESP_LOGI(TAG, "face: agent %d of %d%s", s_active_idx, s_proj_count, s_connected ? "" : " (not connected)");
+    // The tile's geometry, in numbers a log can check: where the name and the line under it sit against
+    // the glass's centre, and how tall the name is (one line, or a wrap that should not happen). This is
+    // how a layout change is verified from the daemon's dial log without eyes on the device.
+    if (page == 4 && s_active_idx >= 0 && s_active_idx < s_proj_count) {
+        proj_t *p = &s_proj[s_active_idx];
+        if (p->tile && p->name_lbl && p->body) {
+            lv_obj_update_layout(p->tile);
+            lv_area_t t, n, b;
+            lv_obj_get_coords(p->tile, &t);
+            lv_obj_get_coords(p->name_lbl, &n);
+            lv_obj_get_coords(p->body, &b);
+            const int32_t mid = (t.y1 + t.y2) / 2;
+            lv_area_t m = {0, 0, 0, 0};
+            const bool mark = p->engine_lbl && !lv_obj_has_flag(p->engine_lbl, LV_OBJ_FLAG_HIDDEN);
+            if (mark) lv_obj_get_coords(p->engine_lbl, &m);
+            ESP_LOGI(TAG, "tile: name x=%d y=%d w=%d h=%d · mark x=%d y=%d · body y=%d h=%d · block mid=%d vs glass mid=%d · %s",
+                     (int)(n.x1 - t.x1), (int)(n.y1 - t.y1), (int)lv_area_get_width(&n), (int)lv_area_get_height(&n),
+                     mark ? (int)(m.x1 - t.x1) : -1, mark ? (int)(m.y1 - t.y1) : -1,
+                     (int)(b.y1 - t.y1), (int)lv_area_get_height(&b),
+                     (int)((n.y1 + b.y2) / 2 - t.y1), (int)(mid - t.y1),
+                     p->busy_model ? "working" : p->m_preview ? "recap" : "nothing yet");
+        }
+    }
 }
