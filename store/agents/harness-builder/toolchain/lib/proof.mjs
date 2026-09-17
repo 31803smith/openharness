@@ -85,13 +85,44 @@ export async function openProof(workspace, id, { engine, reset = false } = {}) {
 }
 
 /** `proof run`: a fresh workspace, the viewer, and a detached runner for the agent. */
+/**
+ * What the harness was when a proof started. A proof is only evidence about ONE harness: editing
+ * `package/` while an agent works on it proves a mixture that never existed — and a module saved
+ * half-written takes the run down with it. The runner compares this at the end and calls a changed
+ * run void rather than letting its result stand.
+ */
+export function packageFingerprint(pkg) {
+  let count = 0
+  let sum = 0
+  const walk = (dir, depth) => {
+    let entries = []
+    try { entries = readdirSync(dir, { withFileTypes: true }) } catch { return }
+    for (const e of entries) {
+      if (['node_modules', '.playwright', '.venv', '.conda', 'vendor', 'upstream', '.git', '__pycache__', 'showcase'].includes(e.name)) continue
+      const p = join(dir, e.name)
+      if (e.isDirectory()) { if (depth < 6) walk(p, depth + 1); continue }
+      try { const s = statSync(p); count++; sum += Math.round(s.mtimeMs) + s.size } catch { /* raced */ }
+    }
+  }
+  walk(pkg, 0)
+  return `${count}:${sum}`
+}
+
 export async function startProof(workspace, id, prompt, { engine, every = 15, timeoutMinutes = 45, builderScript }) {
   if (!prompt?.trim()) throw new Error('a proof needs --prompt "…"')
   const opened = await openProof(workspace, id, { engine, reset: true })
   const build = readBuild(workspace)
   const base = build.proofs[id].engine
   if (!ENGINE_COMMANDS[base]) throw new Error(`no proof runner for engine "${base}" yet; use claude or codex`)
-  build.proofs[id] = { ...build.proofs[id], prompt: prompt.trim(), state: 'running', startedAt: new Date().toISOString(), every, timeoutMinutes }
+  build.proofs[id] = {
+    ...build.proofs[id],
+    prompt: prompt.trim(),
+    state: 'running',
+    startedAt: new Date().toISOString(),
+    every,
+    timeoutMinutes,
+    packageAt: packageFingerprint(paths(workspace).package),
+  }
   log(build, `Proof ${id}: a fresh ${base} agent started`)
   saveBuild(workspace, build)
   const runner = spawn(process.execPath, [builderScript, 'proof', '_runner', id], {
@@ -227,10 +258,14 @@ export async function runProof(workspace, id) {
   }
 
   const verdict = readJson(join(ws, '.harness', 'verdict.json'), null)
+  // The harness must be the same one the agent started with, or this run is not evidence about it.
+  const packageNow = packageFingerprint(paths(workspace).package)
+  const packageChanged = Boolean(proof.packageAt) && packageNow !== proof.packageAt
   const result = {
     id,
     prompt: proof.prompt,
     engine: proof.engine,
+    packageChanged,
     exit: done.code,
     signal: done.signal,
     timedOut: done.signal === 'timeout',
@@ -245,8 +280,11 @@ export async function runProof(workspace, id) {
   writeJsonAtomic(join(dir, 'result.json'), result)
   writeJsonAtomic(join(dir, 'activity.json'), { running: false, seconds: result.seconds, activity: activity.slice(-40), frames })
   const next = readBuild(workspace)
-  next.proofs[id] = { ...next.proofs[id], state: result.timedOut || done.code !== 0 ? 'errored' : 'ran', finishedAt: new Date().toISOString(), seconds: result.seconds, verdict: verdict ? { ready: verdict.ready, summary: verdict.summary } : null, frames: frames.length, runnerPid: null }
-  log(next, `Proof ${id}: agent finished in ${Math.round(result.seconds / 60)} min${result.timedOut ? ' (timed out)' : ''} · ${frames.length} frames · verdict ${verdict ? (verdict.ready ? 'ready' : 'not ready') : 'none'}`)
+  const state = packageChanged ? 'void' : result.timedOut || done.code !== 0 ? 'errored' : 'ran'
+  next.proofs[id] = { ...next.proofs[id], state, finishedAt: new Date().toISOString(), seconds: result.seconds, verdict: verdict ? { ready: verdict.ready, summary: verdict.summary } : null, frames: frames.length, runnerPid: null }
+  log(next, packageChanged
+    ? `Proof ${id}: void — package/ changed while it ran, so it proves nothing; run it again on the harness as it stands`
+    : `Proof ${id}: agent finished in ${Math.round(result.seconds / 60)} min${result.timedOut ? ' (timed out)' : ''} · ${frames.length} frames · verdict ${verdict ? (verdict.ready ? 'ready' : 'not ready') : 'none'}`)
   saveBuild(workspace, next)
   return result
 }
@@ -254,6 +292,11 @@ export async function runProof(workspace, id) {
 export function markProof(workspace, id, state, note) {
   const build = readBuild(workspace)
   if (!build.proofs[id]) throw new Error(`no proof "${id}"; run it first`)
+  // A run whose harness changed underneath it is not evidence, and a pass on it would be a claim
+  // about a harness that never existed.
+  if (build.proofs[id].state === 'void' && state === 'passed') {
+    throw new Error(`proof "${id}" is void: package/ changed while it ran. Run it again on the harness as it stands.`)
+  }
   build.proofs[id] = { ...build.proofs[id], state, note: note ?? build.proofs[id].note ?? '', reviewedAt: new Date().toISOString() }
   log(build, `Proof ${id}: ${state}${note ? ` — ${note}` : ''}`)
   saveBuild(workspace, build)

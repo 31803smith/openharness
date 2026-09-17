@@ -9,7 +9,7 @@ import { after, describe, it } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { checkPackage, evaluationFindings, privateDataIn } from '../toolchain/lib/check.mjs'
 import { launchEnv, materialize } from '../toolchain/lib/materialize.mjs'
-import { agentEnv, fingerprint } from '../toolchain/lib/proof.mjs'
+import { agentEnv, fingerprint, markProof, packageFingerprint } from '../toolchain/lib/proof.mjs'
 import { scaffold, slug } from '../toolchain/lib/scaffold.mjs'
 import { STAGES, ensureWorkspace, readBuild, saveBuild, setStage, verdictFor } from '../toolchain/lib/state.mjs'
 import { currentArtifact, viewerUrl } from '../toolchain/lib/viewer.mjs'
@@ -165,6 +165,26 @@ describe('the quality bar', () => {
     assert.deepEqual(kinds([checks], [reported]), ['error:store_evaluation_unproved', 'warning:store_evaluation_missing'])
     assert.deepEqual(kinds([tool], [{ ready: true }]), ['warning:verdict_evaluation'])
     assert.deepEqual(kinds([{ method: 'none' }], [{ ready: true, evaluation: [{ method: 'none', passed: null }] }]), [])
+  })
+
+  it('notices the harness changing under a proof, and refuses to pass a void run', () => {
+    const ws = tmp()
+    const build = ensureWorkspace(ws)
+    const pkg = join(ws, 'package')
+    scaffold(pkg, { id: 'example/tool', tool: 'Tool', reference: join(REPO_STORE, '..') })
+    const before = packageFingerprint(pkg)
+    writeFileSync(join(pkg, 'skills', 'tool', 'SKILL.md'), '---\nname: tool\ndescription: changed mid-run\n---\n')
+    assert.notEqual(packageFingerprint(pkg), before)
+    // node_modules is the toolchain's, not the harness's: installing does not void a proof.
+    mkdirSync(join(pkg, 'node_modules', 'left-pad'), { recursive: true })
+    writeFileSync(join(pkg, 'node_modules', 'left-pad', 'index.js'), 'module.exports = 1\n')
+    assert.equal(packageFingerprint(pkg), packageFingerprint(pkg))
+
+    build.proofs.easy = { id: 'easy', state: 'void' }
+    saveBuild(ws, build)
+    assert.throws(() => markProof(ws, 'easy', 'passed', 'looked fine'), /void/)
+    markProof(ws, 'easy', 'failed', 'run again')
+    assert.equal(readBuild(ws).proofs.easy.state, 'failed')
   })
 
   it('refuses a store picture the Store cannot show', () => {

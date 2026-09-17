@@ -43,6 +43,12 @@ final verdict, the agent's last message, timings, the frame list) and `viewer.pn
 `"$BUILDER" proof run` takes minutes. Run the three proofs one at a time, reviewing each before
 starting the next, so a fix learned from `easy` improves `medium`.
 
+**Do not touch `package/` while a proof runs.** The agent is using that harness as you edit it: a
+half-written module takes its run down, and the result belongs to a harness that never existed. The
+runner fingerprints the package at the start, and a run whose package changed is marked `void` —
+it cannot be passed, only run again. Keep the fixes in your head (or in `.builder/decisions.md`)
+until the run ends.
+
 ## Review a proof, as the person watching
 
 Read `result.json`, the agent's log (`agent.log`), and **look at the frames in order** (read the PNGs):
