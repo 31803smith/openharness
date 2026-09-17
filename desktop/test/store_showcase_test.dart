@@ -41,6 +41,15 @@ const _blender = DshEntry(
   examples: [_lamp, _gear],
 );
 
+const _builder = DshEntry(
+  id: 'autonomous/harness-builder',
+  name: 'Harness Builder',
+  engine: 'codex',
+  installed: true,
+  category: 'Harnesses',
+  tier: 2,
+);
+
 class _Folders extends FileSelectorPlatform {
   @override
   Future<String?> getDirectoryPath({
@@ -464,4 +473,91 @@ void main() {
       app.dispose();
     },
   );
+
+  testWidgets(
+    'Build a harness asks for a tool and opens New Harness on the Builder with it',
+    (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(1400, 1000);
+      addTearDown(tester.view.reset);
+      final app = createApp();
+      final state = app.machineStates['m']!
+        ..localOnly = true
+        ..nodeOnline = true
+        ..connectionStatus = ConnectionStatus.connected;
+      state.dsh.replace(const [_blender, _builder]);
+      await app.addAgentToSwarm('m', 'a0');
+      app.newSwarm(name: 'Other work');
+      app.openStore();
+      final storeTab = app.activeSwarm;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: grid.buildAppTheme(brightness: Brightness.dark),
+          home: SwarmScreen(notifier: app, nativeTabs: false),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final build = find.byKey(const ValueKey('store-build-harness'));
+      expect(build, findsOneWidget);
+      await tester.tap(build);
+      await tester.pumpAndSettle();
+
+      final next = find.byKey(const ValueKey('store-build-continue'));
+      expect(
+        tester.widget<FilledButton>(next).onPressed,
+        isNull,
+        reason: 'no tool, nothing to build',
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('store-build-example:LilyPond')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(next);
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('create-agent-submit')),
+        findsOneWidget,
+        reason: 'New Harness is open',
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('new-agent-first-message')),
+          matching: find.text('Build a harness for LilyPond.'),
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Harness Builder'), findsWidgets);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(app.activeSwarm, same(storeTab), reason: 'back on the store');
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+    },
+  );
+
+  testWidgets('no Builder in the catalog, no button', (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(1400, 1000);
+    addTearDown(tester.view.reset);
+    final app = createApp();
+    app.machineStates['m']!
+      ..localOnly = true
+      ..nodeOnline = true
+      ..connectionStatus = ConnectionStatus.connected
+      ..dsh.replace(const [_blender]);
+    app.openStore();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: grid.buildAppTheme(brightness: Brightness.dark),
+        home: SwarmScreen(notifier: app, nativeTabs: false),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('store-build-harness')), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+    app.dispose();
+  });
 }

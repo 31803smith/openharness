@@ -292,6 +292,40 @@ class _StoreTabState extends State<StoreTab> {
     _shelf = query.trim().isEmpty ? const _Discover() : _Search(query);
   });
 
+  /// Whether this computer can open the Builder now: it has it, or can get it.
+  bool get _canBuild {
+    final builder = _builder;
+    final local = widget.notifier.localMachineState;
+    if (builder == null || local == null) return false;
+    return _installedOnMachine(local, builder.id) ||
+        _canGetOnMachine(local, builder);
+  }
+
+  /// The Harness Builder as this computer's catalog lists it, or null when the
+  /// daemon does not offer it (an older CLI) — then there is no button.
+  DshEntry? get _builder => _catalog[harnessBuilderId];
+
+  /// "Build a harness": ask which tool, then New Harness on the Builder with
+  /// "Build a harness for `<tool>`." as the first message. New Harness installs
+  /// the Builder first when this computer does not have it yet.
+  Future<void> _buildHarness() async {
+    final builder = _builder;
+    final local = widget.notifier.localMachineState;
+    if (builder == null || local == null) return;
+    final tool = await showAppDialog<String>(
+      context: context,
+      builder: (context) => const _BuildHarnessDialog(),
+    );
+    if (tool == null || !mounted) return;
+    await _openStoreAgent(
+      context,
+      widget.notifier,
+      builder,
+      local.machine.machineId,
+      prompt: 'Build a harness for $tool.',
+    );
+  }
+
   void _takeAction(DshEntry entry) {
     final local = widget.notifier.localMachineState;
     if (local == null || !_installedOnMachine(local, entry.id)) {
@@ -322,6 +356,10 @@ class _StoreTabState extends State<StoreTab> {
                 onSelect: _show,
                 search: _search,
                 onSearch: _searchChanged,
+                onBuild: _builder == null
+                    ? null
+                    : () => unawaited(_buildHarness()),
+                canBuild: _canBuild,
               ),
               VerticalDivider(width: 1, color: grid.AppPalette.divider),
               Expanded(
@@ -416,6 +454,8 @@ class _StoreNav extends StatelessWidget {
     required this.onSelect,
     required this.search,
     required this.onSearch,
+    this.onBuild,
+    this.canBuild = false,
   });
 
   final _Shelf shelf;
@@ -423,6 +463,12 @@ class _StoreNav extends StatelessWidget {
   final ValueChanged<_Shelf> onSelect;
   final TextEditingController search;
   final ValueChanged<String> onSearch;
+
+  /// Opens the Harness Builder; null when this computer's catalog has none.
+  final VoidCallback? onBuild;
+
+  /// This computer has the Builder or can get it (online, catalog loaded).
+  final bool canBuild;
 
   @override
   Widget build(BuildContext context) {
@@ -493,6 +539,11 @@ class _StoreNav extends StatelessWidget {
               ],
             ),
           ),
+          if (onBuild case final build?)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+              child: _BuildHarnessButton(onPressed: canBuild ? build : null),
+            ),
           Padding(
             padding: const EdgeInsets.fromLTRB(18, 10, 18, 16),
             child: Align(
@@ -508,6 +559,207 @@ class _StoreNav extends StatelessWidget {
                 onPressed: () => onSelect(const _Viewers()),
               ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The Harness Builder's id: the harness that builds harnesses.
+const harnessBuilderId = 'autonomous/harness-builder';
+
+/// The rail's way out of browsing: make the harness the store does not have.
+/// Quiet until the pointer is on it, like the rows above, but framed, because
+/// it is an action rather than a shelf.
+class _BuildHarnessButton extends StatefulWidget {
+  const _BuildHarnessButton({required this.onPressed});
+
+  final VoidCallback? onPressed;
+
+  @override
+  State<_BuildHarnessButton> createState() => _BuildHarnessButtonState();
+}
+
+class _BuildHarnessButtonState extends State<_BuildHarnessButton> {
+  var _hovering = false;
+
+  @override
+  Widget build(BuildContext context) {
+    grid.AppTheme.watch(context);
+    final enabled = widget.onPressed != null;
+    final color = !enabled
+        ? grid.AppPalette.textFaint
+        : _hovering
+        ? grid.AppPalette.textPrimary
+        : grid.AppPalette.textSecondary;
+    return Tooltip(
+      message: enabled
+          ? 'Name a tool; the Harness Builder makes a harness for it'
+          : 'Connect this computer to build a harness',
+      waitDuration: const Duration(milliseconds: 500),
+      child: MouseRegion(
+        cursor: enabled ? SystemMouseCursors.click : MouseCursor.defer,
+        onEnter: (_) => setState(() => _hovering = true),
+        onExit: (_) => setState(() => _hovering = false),
+        child: Semantics(
+          button: true,
+          enabled: enabled,
+          label: 'Build a harness',
+          child: GestureDetector(
+            key: const ValueKey('store-build-harness'),
+            behavior: HitTestBehavior.opaque,
+            onTap: widget.onPressed,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 120),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: _hovering && enabled
+                    ? grid.AppSurface.recessHover
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: grid.AppPalette.divider),
+              ),
+              child: Row(
+                children: [
+                  Icon(LucideIcons.hammer300, size: 16, color: color),
+                  const SizedBox(width: 10),
+                  Flexible(
+                    child: Text(
+                      'Build a harness',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                        color: color,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Which tool: the one question the Builder needs before it starts. The rest —
+/// research, toolchain, skills, viewer, evaluation, proofs — is its job.
+class _BuildHarnessDialog extends StatefulWidget {
+  const _BuildHarnessDialog();
+
+  @override
+  State<_BuildHarnessDialog> createState() => _BuildHarnessDialogState();
+}
+
+class _BuildHarnessDialogState extends State<_BuildHarnessDialog> {
+  final _tool = TextEditingController();
+
+  static const _examples = ['LilyPond', 'QGIS', 'KiCad', 'OpenSCAD'];
+
+  @override
+  void dispose() {
+    _tool.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final tool = _tool.text.trim();
+    if (tool.isEmpty) return;
+    Navigator.of(context).pop(tool.length > 80 ? tool.substring(0, 80) : tool);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    grid.AppTheme.watch(context);
+    return _DialogCard(
+      width: 460,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            'Build a harness',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: grid.AppPalette.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Name a tool. The Harness Builder researches it, pins its toolchain, writes the '
+            'expert skills, builds a live viewer, decides how its work is checked, and proves '
+            'the harness on three real prompts — and you watch each step in the pane.',
+            style: TextStyle(
+              fontSize: 13,
+              height: 1.45,
+              color: grid.AppPalette.textSecondary,
+            ),
+          ),
+          const SizedBox(height: 16),
+          ListenableBuilder(
+            listenable: _tool,
+            builder: (context, _) => TextField(
+              key: const ValueKey('store-build-tool'),
+              controller: _tool,
+              autofocus: true,
+              maxLength: 80,
+              onSubmitted: (_) => _submit(),
+              style: TextStyle(
+                fontSize: 14,
+                color: grid.AppPalette.textPrimary,
+              ),
+              decoration: const InputDecoration(
+                hintText: 'A tool, like LilyPond or QGIS',
+                counterText: '',
+                isDense: true,
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final example in _examples)
+                ActionChip(
+                  key: ValueKey('store-build-example:$example'),
+                  label: Text(example),
+                  labelStyle: TextStyle(
+                    fontSize: 12,
+                    color: grid.AppPalette.textSecondary,
+                  ),
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () => _tool
+                    ..text = example
+                    ..selection = TextSelection.collapsed(
+                      offset: example.length,
+                    ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Cancel'),
+              ),
+              const SizedBox(width: 8),
+              ListenableBuilder(
+                listenable: _tool,
+                builder: (context, _) => FilledButton(
+                  key: const ValueKey('store-build-continue'),
+                  onPressed: _tool.text.trim().isEmpty ? null : _submit,
+                  child: const Text('Continue'),
+                ),
+              ),
+            ],
           ),
         ],
       ),
