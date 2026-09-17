@@ -83,7 +83,8 @@ export async function dshCommand(verb: string | undefined, rest: readonly string
       const target = args[0] ?? '.'
       const result = checkDsh(target)
       console.log(formatCheck(result))
-      console.log(result.ok ? `${result.manifest?.id ?? target} conforms to spec 1` : `${result.manifest?.id ?? target} does not conform`)
+      const name = result.manifest?.id ?? target
+      console.log(result.ok ? `${name} conforms to spec 1` : `${name} does not conform`)
       return result.ok ? 0 : 1
     }
     case 'remove': {
