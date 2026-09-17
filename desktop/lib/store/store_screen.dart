@@ -1096,6 +1096,17 @@ class _MachineRow extends StatelessWidget {
     final run = state.dsh.runs[entry.id];
     final installing = run != null && run.inProgress;
     final installed = row?.installed == true;
+    // Why a machine cannot take this package right now, when it cannot. An
+    // offline or unlinked machine answers nothing, so without these the row
+    // said "Asking…" forever; a machine whose CLI predates the package lists
+    // no row for it, and a Get there would only fail.
+    final unavailable = state.needsLink
+        ? 'Link required'
+        : state.nodeOnline == false
+        ? 'Offline'
+        : state.dsh.loaded && state.dsh.error == null && row == null
+        ? 'Update Harness CLI on this machine to get it'
+        : null;
     final String status;
     if (installing) {
       status = switch (run.phase) {
@@ -1112,6 +1123,8 @@ class _MachineRow extends StatelessWidget {
       status = row?.linked == true
           ? 'Installed · linked to a checkout'
           : 'Installed';
+    } else if (unavailable != null) {
+      status = unavailable;
     } else if (!state.dsh.loaded) {
       status = state.dsh.error ?? 'Asking…';
     } else {
@@ -1180,7 +1193,7 @@ class _MachineRow extends StatelessWidget {
           ] else
             FilledButton.tonal(
               key: ValueKey('store-get:${state.machine.machineId}'),
-              onPressed: state.dsh.loaded ? onGet : null,
+              onPressed: state.dsh.loaded && unavailable == null ? onGet : null,
               style: FilledButton.styleFrom(
                 minimumSize: const Size(72, 32),
                 shape: const StadiumBorder(),
@@ -1202,7 +1215,11 @@ extension on _MachineRow {
     final loaded = state.engines.loaded;
     final installed = probe?.installed == true;
     final String status;
-    if (!loaded) {
+    if (!installed && state.needsLink) {
+      status = 'Link required';
+    } else if (!installed && state.nodeOnline == false) {
+      status = 'Offline';
+    } else if (!loaded) {
       status = 'Asking…';
     } else if (installed) {
       status = 'Installed';
@@ -1252,7 +1269,10 @@ extension on _MachineRow {
               onPressed: onOpen,
               child: const Text('Open'),
             )
-          else if (loaded && probe?.installable == true)
+          else if (loaded &&
+              probe?.installable == true &&
+              !state.needsLink &&
+              state.nodeOnline != false)
             FilledButton.tonal(
               key: ValueKey('store-get:${state.machine.machineId}'),
               onPressed: onGet,

@@ -250,7 +250,11 @@ void main() {
       final (notifier, _) = await open(tester);
       final state = notifier.machineStates['machine-1']!;
       expect(state.connectionStatus, ConnectionStatus.disconnected);
-      expect(notifier.probes, 1, reason: 'asked once on open, before it connected');
+      expect(
+        notifier.probes,
+        1,
+        reason: 'asked once on open, before it connected',
+      );
 
       // The launch race: the store tab was restored first, the machine connects later.
       state.connectionStatus = ConnectionStatus.connected;
@@ -272,6 +276,80 @@ void main() {
       notifier.notifyListeners();
       await tester.pump();
       expect(notifier.probes, 3);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'a machine that is offline, unlinked or on an older CLI says so instead of offering Get',
+    (tester) async {
+      final notifier = _Notifier();
+      addTearDown(notifier.dispose);
+      // This computer knows Typst; a second machine runs an older CLI that does not.
+      notifier.machineStates['machine-1'] = MachineState(_machine)
+        ..localOnly = true
+        ..dsh.replace(const [_marp, _typst]);
+      final other = MachineState(
+        const Machine(
+          machineId: 'machine-2',
+          authMode: MachineAuthMode.remote,
+          name: 'office-imac',
+        ),
+      )..dsh.replace(const [_marp]);
+      notifier.machineStates['machine-2'] = other;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: StoreTab(
+              notifier: notifier,
+              api: _FakeStore(),
+              source: 'test',
+              initialHarness: 'autonomous/typst',
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      Finder status(String text) => find.descendant(
+        of: find.byKey(const ValueKey('store-machine:machine-2')),
+        matching: find.text(text),
+      );
+      FilledButton? get() => tester
+          .widgetList<FilledButton>(
+            find.byKey(const ValueKey('store-get:machine-2')),
+          )
+          .firstOrNull;
+
+      expect(
+        status('Update Harness CLI on this machine to get it'),
+        findsOneWidget,
+      );
+      expect(get()?.onPressed, isNull);
+
+      // Offline: it cannot answer, so it is not "Asking…" forever.
+      other.nodeOnline = false;
+      notifier.notifyListeners();
+      await tester.pumpAndSettle();
+      expect(status('Offline'), findsOneWidget);
+      expect(status('Asking…'), findsNothing);
+      expect(get()?.onPressed, isNull);
+
+      // Unlinked wins over offline.
+      other.needsLink = true;
+      notifier.notifyListeners();
+      await tester.pumpAndSettle();
+      expect(status('Link required'), findsOneWidget);
+      expect(get()?.onPressed, isNull);
+
+      // Back online, linked, and knowing the package: Get again.
+      other
+        ..needsLink = false
+        ..nodeOnline = true
+        ..dsh.replace(const [_marp, _typst]);
+      notifier.notifyListeners();
+      await tester.pumpAndSettle();
+      expect(status('Not installed'), findsOneWidget);
+      expect(get()?.onPressed, isNotNull);
       expect(tester.takeException(), isNull);
     },
   );
