@@ -78,6 +78,32 @@ void main() {
     expect(tester.testTextInput.hasAnyClients, isFalse);
   });
 
+  testWidgets('only a tap on the prompt runs the host; the output swallows it', (
+    tester,
+  ) async {
+    await pumpPanel(tester, onInputTap: () => inputTaps++);
+    session.terminal.write(
+      '${List.generate(60, (i) => 'output $i').join('\r\n')}\r\n\r\n› prompt',
+    );
+    await tester.pump();
+    // Aimed through the render box, not the widget: the widget's padding is no
+    // row at all, and a tap there never reaches the terminal's gestures.
+    final render = tester
+        .state<TerminalViewState>(find.byType(TerminalView))
+        .renderTerminal;
+
+    await tester.tapAt(render.localToGlobal(const Offset(20, 4)));
+    await tester.pump(kDoubleTapTimeout);
+    expect(inputTaps, 0, reason: 'reading the output raises nothing');
+    expect(tester.testTextInput.hasAnyClients, isFalse);
+
+    await tester.tapAt(
+      render.localToGlobal(Offset(20, render.size.height - 4)),
+    );
+    await tester.pump(kDoubleTapTimeout);
+    expect(inputTaps, 1);
+  });
+
   testWidgets('without a host the tap is still xterm\'s, keyboard and all', (
     tester,
   ) async {

@@ -21,6 +21,7 @@ import '../terminal/terminal_font_store.dart';
 import '../terminal/terminal_link_opener.dart';
 import '../terminal/remote_media_download.dart';
 import '../terminal/terminal_links.dart';
+import '../terminal/terminal_prompt_zone.dart';
 import '../terminal/terminal_session.dart';
 import '../terminal/terminal_theme.dart';
 import '../terminal/terminal_theme_store.dart';
@@ -98,6 +99,10 @@ class TerminalPanel extends StatefulWidget {
   /// the click to a mouse-tracking program — but run on tap UP, so a scroll
   /// that began as a press opens nothing. A tap that clears a selection, or
   /// opens a link, is still exactly that.
+  ///
+  /// Run only for a tap on the prompt ([isPromptTap]). Every other claimed tap
+  /// is swallowed: somebody tapping the output is reading it, and a keyboard
+  /// jumping up would cover half of what they were reading.
   final VoidCallback? onInputTap;
 
   /// Whether this tile's composer textbox is showing. Only consulted for a remote machine.
@@ -1188,6 +1193,7 @@ class _TerminalPanelState extends State<TerminalPanel>
       return;
     }
     _inputTapClaimed = false;
+    if (!isPromptTap(_viewTerminal.buffer, cell.y)) return;
     widget.onInputTap?.call();
   }
 
