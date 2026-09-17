@@ -15,6 +15,7 @@ import '../core/project_folder.dart';
 import '../core/repository_clone.dart';
 import '../shared/theme/app_theme.dart' as grid;
 import '../shared/widgets/app_checkbox.dart';
+import '../shared/widgets/app_icon_button.dart';
 import '../shared/widgets/app_choice_picker.dart';
 import '../shared/widgets/app_dialog.dart';
 import '../shared/widgets/app_select_field.dart';
@@ -65,6 +66,8 @@ Future<NewAgentDialogResult?> showNewAgentDialog(
   /// Open with this engine or harness already chosen — the store's Get and
   /// Open buttons, which know exactly which one the person is looking at.
   String? initialEngine,
+  /// The harness's first message, sent as it starts — the store's "Try this prompt".
+  String? initialPrompt,
 }) {
   // Reported here rather than at each call site: the doors are four and
   // growing, and one that forgets to track is a hole in the funnel that only
@@ -77,6 +80,7 @@ Future<NewAgentDialogResult?> showNewAgentDialog(
     builder: (context) => _NewAgentDialog(
       notifier: notifier,
       initialEngine: initialEngine,
+      initialPrompt: initialPrompt,
       machineId: machineId,
       initialFolder: initialFolder,
       swarmId: swarmId ?? notifier.activeSwarmId,
@@ -108,17 +112,25 @@ class _NewAgentDialog extends StatefulWidget {
     required this.offerFindExisting,
     required this.offerBackToSearch,
     this.initialEngine,
+    this.initialPrompt,
   });
 
   /// An engine or harness to open on, chosen elsewhere (the store); null lets
   /// the remembered or first installed engine win.
   final String? initialEngine;
 
+  /// A first message to start the harness with (the store's "Try this prompt").
+  final String? initialPrompt;
+
   @override
   State<_NewAgentDialog> createState() => _NewAgentDialogState();
 }
 
 class _NewAgentDialogState extends State<_NewAgentDialog> {
+  /// Sent as the harness's first message; the person can drop it before creating.
+  late String? _firstPrompt = widget.initialPrompt?.trim().isEmpty == true
+      ? null
+      : widget.initialPrompt?.trim();
   final _folderFocus = FocusNode(debugLabel: 'Working folder');
   final _actionFocus = FocusNode(debugLabel: 'Create or check agent');
   GitHubRepository? _repository;
@@ -510,6 +522,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
       // The notifier must reject a now-remote target, never use its default login.
       codexHome: engine == 'codex' ? profile?.path : null,
       dsh: harness,
+      prompt: _firstPrompt,
       attempt: _creation,
     );
     if (!mounted) return;
@@ -650,6 +663,10 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                         ),
                       ),
                     ),
+                    if (_firstPrompt case final prompt?) ...[
+                      const SizedBox(height: _gapBlock),
+                      _firstMessage(prompt),
+                    ],
                     // Under everything chosen, and OUTSIDE the AbsorbPointer
                     // above: the choices lock while the install runs, and a
                     // panel inside that lock cannot be clicked (owner,
@@ -1056,6 +1073,62 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
           style: Theme.of(context).textTheme.bodySmall,
         ),
     ],
+  );
+
+  /// The message the harness starts on, quoted, with a way to start without it.
+  Widget _firstMessage(String prompt) => Container(
+    key: const Key('new-agent-first-message'),
+    padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+    decoration: BoxDecoration(
+      color: grid.AppPalette.cardBg,
+      borderRadius: BorderRadius.circular(12),
+    ),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Icon(
+            LucideIcons.messageSquareText300,
+            size: 16,
+            color: grid.AppPalette.accentOnSurface,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Starts with',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: grid.AppPalette.textSecondary,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                prompt,
+                style: TextStyle(
+                  fontSize: 14,
+                  height: 1.45,
+                  color: grid.AppPalette.textPrimary,
+                ),
+              ),
+            ],
+          ),
+        ),
+        AppIconButton(
+          key: const Key('new-agent-first-message-remove'),
+          icon: LucideIcons.x300,
+          tooltip: 'Start without this message',
+          onPressed: _choicesLocked
+              ? null
+              : () => setState(() => _firstPrompt = null),
+        ),
+      ],
+    ),
   );
 
   Widget _settingsRow(String? bypassFlag) => Wrap(

@@ -25,6 +25,19 @@ declare const __DSH_REGISTRY__: string | undefined
 /** The repo the built-in shelf lives in; its packages are `store/<agents|viewers>/<name>` folders. */
 export const HARNESS_MONOREPO = 'https://github.com/autonomous-ai/openharness'
 
+/**
+ * One example on a package's product page: the prompt a person types and a picture of what the harness
+ * made from it, with a line naming the result ("Desk lamp · 9 parts · glTF"). The picture is an HTTPS
+ * URL — a built-in's lives under store/showcase/ — so a catalog carries it without carrying bytes.
+ */
+export const StoreExampleSchema = z.object({
+  prompt: z.string().trim().min(1).max(600),
+  image: z.string().url().max(2048).refine((url) => url.startsWith('https://'), 'an example image is an https URL').optional(),
+  caption: z.string().trim().min(1).max(120).optional(),
+})
+
+export type StoreExample = z.infer<typeof StoreExampleSchema>
+
 /** A folder inside a repo: relative, forward slashes, no `.`/`..` segments, no trailing slash. */
 export const PACKAGE_PATH_RE = /^(?!\/)(?!.*\/$)(?!.*\/\/)(?!(?:.*\/)?\.{1,2}(?:\/|$))[A-Za-z0-9._\-/]+$/
 
@@ -57,6 +70,8 @@ export const DshRegistryEntrySchema = z.strictObject({
   license: z.string().min(1).max(40).optional(),
   /** Pictures for the product page, in order; absent while a package has none yet. */
   screenshots: z.array(z.string().url().max(2048)).max(8).optional(),
+  /** What a person types and what comes out, for the product page — see StoreExampleSchema. */
+  examples: z.array(StoreExampleSchema).max(8).optional(),
 }).refine((entry) => entry.kind === 'viewer' || entry.engine !== undefined, { path: ['engine'], message: 'an agent entry needs an engine' })
 
 export type DshRegistryEntry = z.infer<typeof DshRegistryEntrySchema>
@@ -67,6 +82,7 @@ export const StoreFactsSchema = z.strictObject({
   upstream: z.string().url().max(2048).optional(),
   license: z.string().min(1).max(40).optional(),
   screenshots: z.array(z.string().url().max(2048)).max(8).optional(),
+  examples: z.array(StoreExampleSchema.strict()).max(8).optional(),
 })
 
 export type StoreFacts = z.infer<typeof StoreFactsSchema>
@@ -86,7 +102,7 @@ export function storeEntry(path: string, manifest: Record<string, unknown>, fact
   if (manifest.kind !== undefined) entry.kind = manifest.kind
   for (const key of ['name', 'category', 'author', 'description']) if (manifest[key] !== undefined) entry[key] = manifest[key]
   Object.assign(entry, { repo: HARNESS_MONOREPO, ref: 'main', path })
-  for (const key of ['homepage', 'upstream', 'license', 'screenshots']) if (facts[key] !== undefined) entry[key] = facts[key]
+  for (const key of ['homepage', 'upstream', 'license', 'screenshots', 'examples']) if (facts[key] !== undefined) entry[key] = facts[key]
   if (manifest.engine !== undefined) entry.engine = manifest.engine
   const viewer = manifest.viewer as { use?: unknown } | undefined
   if (typeof viewer?.use === 'string') entry.viewerUse = viewer.use

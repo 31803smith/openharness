@@ -29,6 +29,7 @@ export function dshListRows(
       upstream: known?.upstream ?? null,
       license: known?.license ?? null,
       screenshots: known?.screenshots ?? [],
+      examples: known?.examples ?? [],
     }
   }
   const seen = new Set<string>()

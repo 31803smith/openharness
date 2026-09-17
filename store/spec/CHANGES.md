@@ -139,3 +139,18 @@ Initial contract. Lifted from the `.board.json` (Circuit) and `.episode.json` (T
   and clients accept catalogs from older daemons without dependency information.
 - **Mechanism:** the registry builder and runtime reader, `backendSocket.ts`, and the desktop
   `DshEntry` model. Viewer install, sharing, and launch behavior are unchanged.
+
+## 2026-09-17 — `examples` on the store page
+
+- **Change:** registry entries and `store.json` may include `examples` (≤ 8):
+  `[{ prompt, image?, caption? }]` — a prompt (≤ 600 chars), an https picture of what the harness made
+  from it, and a line naming the result (≤ 120). `dsh_list` forwards them like `screenshots`; the
+  product page leads with them, and "Try this prompt" opens New Harness with the prompt as its first
+  message.
+- **Why:** a list of features says what a harness is; a prompt beside its real output shows what it
+  does, which is what makes someone try it.
+- **Backward compatible:** yes. The field is optional; an app that predates it ignores it, and a page
+  without examples keeps its editorial prompt list. A daemon that predates it forwards none.
+- **Mechanism:** `StoreExampleSchema` in `cli/src/dsh/registry.ts`, `cli/scripts/lib/dshRegistry.mjs`,
+  `cli/src/dsh/wire.ts`, the publisher's checks in `store/tools/catalog.mjs`, and the desktop
+  `StoreExample` / `StoreShowcase`.

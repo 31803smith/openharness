@@ -19,6 +19,7 @@ import 'store_controller.dart';
 import 'store_discover.dart';
 import 'store_editorial.dart';
 import 'store_models.dart';
+import 'store_showcase.dart';
 import 'store_viewers.dart';
 
 /// The Harness Store, the content of its tab: every harness the registry
@@ -677,8 +678,9 @@ Future<void> _openStoreAgent(
   BuildContext context,
   AppNotifier notifier,
   DshEntry entry,
-  String machineId,
-) async {
+  String machineId, {
+  String? prompt,
+}) async {
   final origin = notifier.activeSwarmId;
   notifier.newSwarm(draft: true);
   final target = notifier.activeSwarmId;
@@ -688,6 +690,7 @@ Future<void> _openStoreAgent(
     machineId,
     source: 'store',
     initialEngine: entry.id,
+    initialPrompt: prompt,
     swarmId: target,
   );
   if (result != null) return;
@@ -788,12 +791,19 @@ class _ProductPageState extends State<_ProductPage> {
 
   /// Open (or Get) from the store: the harness needs a tab of its own, since
   /// a pane never lands in the store tab. A draft tab is opened for it and
-  /// abandoned — back to the store — if the dialog is dismissed.
-  Future<void> _open(String machineId) async {
+  /// abandoned — back to the store — if the dialog is dismissed. [prompt] is
+  /// an example's, and becomes the new harness's first message.
+  Future<void> _open(String machineId, {String? prompt}) async {
     if (widget.notifier.localMachineState?.machine.machineId != machineId) {
       return;
     }
-    await _openStoreAgent(context, widget.notifier, widget.entry, machineId);
+    await _openStoreAgent(
+      context,
+      widget.notifier,
+      widget.entry,
+      machineId,
+      prompt: prompt,
+    );
   }
 
   Future<void> _review() async {
@@ -830,13 +840,23 @@ class _ProductPageState extends State<_ProductPage> {
         ? entry.engine
         : (knownHarnessBase[entry.id] ?? '');
     final baseLabel = base.isEmpty ? null : engineIdentity(base).label;
+    // New Harness installs a harness the machine lacks before it creates, so
+    // an example can be tried from here whether or not Get was pressed.
+    final canTry =
+        !entry.isViewerPackage &&
+        local != null &&
+        !_busy.contains(local.machine.machineId) &&
+        local.dsh.runs[entry.id]?.inProgress != true &&
+        (localInstalled || _canGetOnMachine(local, entry));
 
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(32, 12, 32, 48),
       child: Align(
         alignment: Alignment.topLeft,
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 820),
+          constraints: BoxConstraints(
+            maxWidth: entry.examples.isEmpty ? 820 : 1080,
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -935,6 +955,17 @@ class _ProductPageState extends State<_ProductPage> {
                     ),
                 ],
               ),
+              if (entry.examples.isNotEmpty) ...[
+                const SizedBox(height: 28),
+                StoreShowcase(
+                  entry: entry,
+                  examples: entry.examples,
+                  onTry: canTry
+                      ? (prompt) =>
+                            _open(local.machine.machineId, prompt: prompt)
+                      : null,
+                ),
+              ],
               const SizedBox(height: 24),
               if (entry.description != null)
                 Text(
@@ -945,10 +976,11 @@ class _ProductPageState extends State<_ProductPage> {
                     color: grid.AppPalette.textPrimary,
                   ),
                 ),
-              if (storeStories[entry.id] case final story?) ...[
-                const SizedBox(height: 24),
-                StoreProductStory(story: story),
-              ],
+              if (entry.examples.isEmpty)
+                if (storeStories[entry.id] case final story?) ...[
+                  const SizedBox(height: 24),
+                  StoreProductStory(story: story),
+                ],
               if (entry.screenshots.isNotEmpty) ...[
                 const SizedBox(height: 20),
                 SizedBox(

@@ -131,8 +131,16 @@ that a manifest does not know. The catalog publisher lists every such folder; th
 
 ```json
 { "homepage": "https://typst.app", "upstream": "https://github.com/typst/typst", "license": "MIT",
-  "screenshots": [] }
+  "screenshots": [],
+  "examples": [{ "prompt": "A one-page invoice for Studio Nord, due in 30 days.",
+                 "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/typst/invoice.jpg",
+                 "caption": "Invoice · 1 page PDF" }] }
 ```
+
+`examples` (≤ 8) is what the product page leads with: a prompt, a picture of what the harness really
+made from it, and a line naming the result. The page types the prompt out, reveals the picture, and
+"Try this prompt" opens New Harness with the prompt as the first message. Pictures live in
+`store/showcase/<name>/`, 1600×1000 JPEG under 350 KB, and are real output — never a mock-up.
 
 **In a repository of its own**: add `store/registry/<owner>/<name>.json` in a pull request.
 
@@ -250,7 +258,8 @@ its own and gets an entry in `registry/` instead. Nothing changes for the people
 
 The app's start page has a door to the store: every harness as a card, and a page per harness — its
 mark, who made it (`author`), its category and description, where it lives (`repo` and `path`,
-`homepage`, `upstream`), what it is licensed under (`license`), pictures (`screenshots`), ratings and
+`homepage`, `upstream`), what it is licensed under (`license`), prompts beside what they made
+(`examples`), pictures (`screenshots`), ratings and
 reviews, and a row per machine with Get, Open or Remove. Installing is still what it always was — a
 clone (for a built-in package, of its one folder) under `~/.harness/dsh` on one machine, its toolchain
 set up beside it — so the page is honest about that: a harness is on a machine, not on an account.
