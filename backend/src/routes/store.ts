@@ -14,13 +14,15 @@ export const STORE_RATINGS_PATH = '/api/store/ratings'
 export const STORE_REVIEWS_PATH = '/api/store/harnesses/:owner/:name/reviews'
 export const STORE_REVIEW_PATH = '/api/store/harnesses/:owner/:name/review'
 
-/** `owner/name` — the same shape the CLI's DSH_ID_RE accepts. */
-const segment = z.string().regex(/^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/i)
+/** One half of `owner/name` — the same shape the CLI's DSH_ID_RE (and the spec's `id` pattern) accepts:
+ *  lowercase only, so one harness cannot collect a second review from the same person under another spelling. */
+const segment = z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/)
 const harnessParams = z.object({ owner: segment, name: segment })
 const reviewBody = z.object({
   rating: z.number().int().min(1).max(5),
-  title: z.string().trim().max(80).optional(),
-  body: z.string().trim().max(2000).optional(),
+  // Nullable as well as optional: a review is read back with `title: null`, and must be writable as read.
+  title: z.string().trim().max(80).nullish(),
+  body: z.string().trim().max(2000).nullish(),
 })
 export type ReviewBody = z.infer<typeof reviewBody>
 
@@ -49,10 +51,11 @@ const MAX_REVIEWS = 200
 function summarize(harnessId: string, ratings: number[]): RatingSummary {
   const histogram: RatingSummary['histogram'] = [0, 0, 0, 0, 0]
   let total = 0
+  let count = 0
   for (const r of ratings) {
-    if (r >= 1 && r <= 5) { histogram[r - 1] += 1; total += r }
+    // The database cannot forbid a stored 0 or 7; such a row is not a vote, or count and histogram would disagree.
+    if (r >= 1 && r <= 5) { histogram[r - 1] += 1; total += r; count += 1 }
   }
-  const count = ratings.length
   return { harnessId, average: count ? Math.round((total / count) * 100) / 100 : 0, count, histogram }
 }
 
@@ -65,7 +68,10 @@ export async function ratingSummaries(): Promise<RatingSummary[]> {
     list.push(row.rating)
     byId.set(row.harnessId, list)
   }
-  return [...byId.entries()].map(([id, ratings]) => summarize(id, ratings)).sort((a, b) => a.harnessId.localeCompare(b.harnessId))
+  return [...byId.entries()]
+    .map(([id, ratings]) => summarize(id, ratings))
+    .filter((summary) => summary.count > 0)
+    .sort((a, b) => a.harnessId.localeCompare(b.harnessId))
 }
 
 function row(review: { id: string; harnessId: string; rating: number; title: string | null; body: string | null; authorName: string; userId: string; createdAt: Date; updatedAt: Date }, userId: string): ReviewRow {
@@ -102,18 +108,24 @@ export async function storeRoutes(app: FastifyInstance): Promise<void> {
     async (req: HarnessReq, reply) => {
       const harnessId = `${req.params.owner}/${req.params.name}`
       const userId = req.user!.sub
-      const reviews = await prisma.harnessReview.findMany({
-        where: { harnessId },
-        orderBy: { updatedAt: 'desc' },
-        take: MAX_REVIEWS,
-      })
-      const rows = reviews.map((r) => row(r, userId))
+      // Only the list is capped. The summary reads every rating and the reader's own review is read by
+      // key, so a harness past MAX_REVIEWS still shows the rating /ratings shows, and its reader's review.
+      const [ratings, own, others] = await Promise.all([
+        prisma.harnessReview.findMany({ where: { harnessId }, select: { rating: true } }),
+        prisma.harnessReview.findUnique({ where: { harnessId_userId: { harnessId, userId } } }),
+        prisma.harnessReview.findMany({
+          where: { harnessId, userId: { not: userId } },
+          orderBy: { updatedAt: 'desc' },
+          take: MAX_REVIEWS,
+        }),
+      ])
+      const mine = own ? row(own, userId) : null
       // Mine first: the one review a person can edit is the one they look for.
-      rows.sort((a, b) => Number(b.mine) - Number(a.mine))
+      const rows = [...(mine ? [mine] : []), ...others.map((r) => row(r, userId))].slice(0, MAX_REVIEWS)
       sendSuccess(reply, {
-        rating: summarize(harnessId, reviews.map((r) => r.rating)),
+        rating: summarize(harnessId, ratings.map((r) => r.rating)),
         reviews: rows,
-        mine: rows.find((r) => r.mine) ?? null,
+        mine,
       })
     },
   )
