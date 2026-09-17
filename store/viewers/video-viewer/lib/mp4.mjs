@@ -24,13 +24,13 @@ function topLevel(fd, fileSize) {
   const boxes = []
   let pos = 0
   while (pos + 8 <= fileSize) {
-    const h = readAt(fd, pos, 16)
-    if (h.length < 8) break
+    const h = readAt(fd, pos, 16) // at least the 8 bytes the loop condition leaves
     let size = h.readUInt32BE(0)
     const type = h.toString('latin1', 4, 8)
     let header = 8
     if (size === 1) {
-      if (h.length < 16) break
+      // a 64-bit header not all written yet: the box is still being written, whatever moov says
+      if (h.length < 16) { boxes.push({ type, start: pos, size: 16, header: 16, truncated: true }); break }
       size = Number(h.readBigUInt64BE(8)); header = 16
     } else if (size === 0) {
       size = fileSize - pos
@@ -144,15 +144,16 @@ export function probe(path) {
       width: video.width ?? null,
       height: video.height ?? null,
       fps,
-      frames: video.frames ?? (fps && video.duration ? Math.round(video.duration * fps) : null),
+      frames: video.frames ?? null, // a track has a rate only where it has a frame count (stts)
       audio: tracks.some((t) => t.handler === 'soun'),
       codec: video.codec ?? null,
     }
   } catch {
-    return { complete: false }
+    // unreadable, or cut short where a header was expected: not complete
   } finally {
-    if (fd !== undefined) try { closeSync(fd) } catch {}
+    if (fd !== undefined) closeSync(fd)
   }
+  return { complete: false }
 }
 
 /** GIF: logical screen size, frame count and total delay, from the blocks. */
@@ -189,10 +190,11 @@ export function probeGif(path) {
     }
     return { complete: ended, width, height, frames, duration: centis / 100, fps: frames && centis ? niceFps(frames / (centis / 100)) : null }
   } catch {
-    return { complete: false }
+    // unreadable, or cut short where a header was expected: not complete
   } finally {
-    if (fd !== undefined) try { closeSync(fd) } catch {}
+    if (fd !== undefined) closeSync(fd)
   }
+  return { complete: false }
 }
 
 /** PNG: IHDR size. */
@@ -203,11 +205,12 @@ export function probePng(path) {
     const size = fstatSync(fd).size
     const buf = readAt(fd, 0, 32)
     if (buf.length < 24 || buf.readUInt32BE(12) !== 0x49484452) return { complete: false }
-    const tail = size >= 12 ? readAt(fd, size - 8, 4).toString('latin1') : ''
+    const tail = readAt(fd, size - 8, 4).toString('latin1')
     return { complete: tail === 'IEND', width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) }
   } catch {
-    return { complete: false }
+    // unreadable, or cut short where a header was expected: not complete
   } finally {
-    if (fd !== undefined) try { closeSync(fd) } catch {}
+    if (fd !== undefined) closeSync(fd)
   }
+  return { complete: false }
 }
