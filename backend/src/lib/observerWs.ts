@@ -39,7 +39,6 @@ export async function attachObserver(ws: WebSocket, user: AuthUser, share: NonNu
   let opened = false
   const down = (type: string, payload: unknown) => publishDown(share.machineId, { connId, frame: { type, payload } })
   const close = () => {
-    if (closed) return
     closed = true
     for (const dispose of disposers.splice(0)) dispose()
     void down('observer_close', {}).catch(() => {})

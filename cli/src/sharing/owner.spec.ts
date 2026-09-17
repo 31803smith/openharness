@@ -221,4 +221,24 @@ describe('owner authority and read-only observation', () => {
     expect(frames.at(-1)?.payload).toMatchObject({ reason: 'Owner disconnected', retry: true })
     owner.close('observer:already-gone')
   })
+  it('keeps valid observers alive, retries on its clock and recovers from a local persistence error', async () => {
+    await invite(['ken@example.com', 'diego@example.com'])
+    const ken = await connect(); await connect('diego@example.com', 'observer:diego')
+    await vi.advanceTimersByTimeAsync(30000)
+    expect(frames.filter(f => f.type === 'observer_closed')).toHaveLength(0)
+    await owner.manage('harness_share_remove', { agentId: 'agent', id: ken.grant.id })
+    expect((await owner.manage('harness_share_list', { agentId: 'agent' })).shares).toEqual([expect.objectContaining({ watching: 1 })])
+    vi.spyOn(store, 'invite').mockImplementationOnce(() => { throw new Error('Disk full') })
+    await expect(invite()).rejects.toThrow('Disk full')
+    expect((await owner.manage('harness_share_list', { agentId: 'agent' })).shares).toHaveLength(1)
+    const other = store.all().find(g => g.recipientEmail === 'diego@example.com')!
+    store.failed(other.id, 'not published')
+    expect(store.all().find(g => g.id === ken.grant.id)?.publicationError).toBeNull()
+    store.invite(other)
+    let finish!: (result: { status: number; body: {} }) => void
+    publish.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    const sync = owner.sync()
+    store.revoke(other.id, 'machine', 'agent'); finish({ status: 403, body: {} }); await sync
+    expect(store.all().find(g => g.id === other.id)).toMatchObject({ revoked: true, publicationError: null, pending: true })
+  })
 })

@@ -60,6 +60,8 @@ describe('recipient relay', () => {
     expect(sink.sendBinary).toHaveBeenCalledWith(Buffer.from('output'))
     frame(ws, 'observer_frame', owner.cipher.seal({ type: 'observer_viewer', payload: { state: 'live', data: 'pixels' } }))
     expect(sink.sendFrame).toHaveBeenCalledWith({ type: 'observer_viewer', payload: { state: 'live', data: 'pixels' } })
+    frame(ws, 'unrelated_broadcast')
+    ws.emit('error', new Error('socket closing'))
     frame(ws, 'observer_frame', owner.cipher.seal({ type: 'observer_binary', payload: { bytes: 5 } }))
     expect(sink.sendBinary).toHaveBeenCalledTimes(1)
     await session.sendBinary({} as never)

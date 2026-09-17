@@ -129,4 +129,28 @@ describe('isolated observer WebSocket boundary', () => {
     handleObserverUpgrade(req(`/api/observer-ws?share=${share.id}`) as never, socket as never, Buffer.alloc(0)); await flush()
     expect(m.upgrade).toHaveBeenCalledTimes(2)
   })
+  it('cleans up upgrade failures, synchronous relay faults, closed inboxes and excessive queued messages', async () => {
+    const socket = { destroyed: false, destroy: vi.fn() }
+    handleObserverUpgrade({ headers: { 'sec-websocket-protocol': 'fixture' } } as never, socket as never, Buffer.alloc(0))
+    await flush(); expect(socket.destroy).toHaveBeenCalledTimes(1)
+    const req = { url: `/api/observer-ws?share=${share.id}`, headers: { 'sec-websocket-protocol': 'fixture' } }
+    m.changed.mockRejectedValueOnce(new Error('subscription down'))
+    handleObserverUpgrade(req as never, socket as never, Buffer.alloc(0)); await flush()
+    expect(ws.close).toHaveBeenCalledWith(1013, 'Sharing temporarily unavailable')
+    socket.destroyed = true; m.auth.mockRejectedValueOnce(new Error('auth down'))
+    handleObserverUpgrade(req as never, socket as never, Buffer.alloc(0)); await flush()
+    expect(socket.destroy).toHaveBeenCalledTimes(1)
+    ws = new Socket(); await attach()
+    m.down.mockImplementationOnce(() => { throw new Error('relay not initialized') })
+    hello(); await flush()
+    expect(ws.close).toHaveBeenCalledWith(1013, 'Sharing temporarily unavailable')
+    ws = new Socket(); await attach()
+    let release!: () => void
+    m.down.mockImplementationOnce(() => new Promise(resolve => { release = () => resolve(1) }))
+    hello(); await flush()
+    m.down.mockRejectedValueOnce(new Error('cleanup relay down'))
+    for (let i = 0; i < 257; i++) ws.message('observer_frame', { __e2e: {} })
+    expect(ws.close).toHaveBeenCalledWith(1008, 'Too many observer messages')
+    release(); await flush(); await vi.advanceTimersByTimeAsync(1)
+  })
 })

@@ -873,11 +873,12 @@ class _AgentTree extends StatelessWidget {
       // nobody finds who does not already know it. Put where a new row would actually appear, it needs no
       // discovering. It joins `rows` rather than being appended after the loop so the guide's trunk runs
       // down to it and closes there, exactly as it would on a real last agent.
-      if (!state.machine.isShared) _NewAgentRow(
-        notifier: notifier,
-        machineId: state.machine.machineId,
-        source: 'rail_tail',
-      ),
+      if (!state.machine.isShared)
+        _NewAgentRow(
+          notifier: notifier,
+          machineId: state.machine.machineId,
+          source: 'rail_tail',
+        ),
     ];
 
     return Column(

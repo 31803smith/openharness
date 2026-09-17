@@ -290,8 +290,8 @@ class _ShareHarnessDialogState extends State<ShareHarnessDialog> {
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: const Text(
-                    'They’ll find this harness in Machines → Shared with you when they sign in with the invited email.\n\n'
-                    'Viewers can see terminal output and the viewer. Your machine needs to stay online. You can remove access at any time.',
+                    'They’ll find this harness in Machines → Shared with you using the invited email. '
+                    'Keep your machine online while they watch. You can remove access at any time.',
                     style: TextStyle(fontSize: 12, height: 1.5),
                   ),
                 ),

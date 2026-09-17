@@ -70,7 +70,7 @@ class Peer {
         if (!frame) return
         this.binary.push(frame)
         this.text += (frame.compressed ? inflateSync(frame.bytes) : Buffer.from(frame.bytes)).toString()
-        this.send('terminal_ack', { streamId: frame.streamId, seq: frame.seq })
+        this.send('terminal_ack', { streamId: frame.streamId, lastSeq: frame.seq })
       } else {
         const frame = JSON.parse(raw.toString()); this.frames.push(frame)
         if (frame.type === 'terminal_ready') { this.stream = frame.payload.streamId; this.inputSequence = 0 }

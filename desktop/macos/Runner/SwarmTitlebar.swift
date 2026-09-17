@@ -297,8 +297,9 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
   private func rebuildMachinesMenu() {
     machinesMenu.removeAllItems()
     machinesMenu.minimumWidth = 0
-    let labels = machines.map { machine -> (name: String, presence: String, status: String, count: String) in
+    let labels = machines.map { machine -> (name: String, owner: String, presence: String, status: String, count: String) in
       (name: SwarmMenuText.fitted(machine.name, width: 200),
+       owner: machine.shared && !machine.ownerName.isEmpty ? " · " + SwarmMenuText.fitted(machine.ownerName, width: 140) : "",
        // Node presence ("Online"/"Offline"), shown grey right after the name,
        // independent of the link state on the trailing edge.
        presence: machine.presence,
@@ -309,7 +310,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     // Leading text = name + presence; trailing column = the agent count, or the
     // status word ("Link required"/"Offline"/…) when there is no count.
     let compactEdge = SwarmMenuText.trailingEdge(labels.map {
-      ($0.presence.isEmpty ? $0.name : $0.name + "  " + $0.presence,
+      ($0.name + $0.owner + ($0.presence.isEmpty ? "" : "  " + $0.presence),
        $0.count.isEmpty ? $0.status : $0.count)
     })
     let trailingEdge = ceil((compactEdge + 62) * 1.2) - 62
@@ -339,8 +340,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
       // right): the agent count, or the link/offline status when there is no
       // count. The two are independent slots, so a machine can read
       // "Online … Link required".
-      let owner = machine.shared && !machine.ownerName.isEmpty ? " · " + machine.ownerName : ""
-      let afterName = owner + (parts.presence.isEmpty ? "" : "  " + parts.presence)
+      let afterName = parts.owner + (parts.presence.isEmpty ? "" : "  " + parts.presence)
       let trailing = parts.count.isEmpty ? parts.status : parts.count
       label.append(NSAttributedString(string: afterName + "\t" + trailing,
         attributes: [.font: NSFont.menuFont(ofSize: 0), .paragraphStyle: paragraph,
@@ -506,9 +506,9 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     modelsMenu.addItem(caption)
     let run = NSMenuItem(title: "Talk to Model manager", action: nil, keyEquivalent: "")
     run.identifier = NSUserInterfaceItemIdentifier(HarnessKeymapMenu.actionPrefix + "runLocalModel")
-    if machines.count > 1 {
+    if machines.filter({ !$0.shared }).count > 1 {
       let pick = NSMenu(title: run.title)
-      for machine in machines {
+      for machine in machines where !machine.shared {
         let item = NSMenuItem(title: machine.local ? "\(machine.name) (this computer)" : machine.name,
           action: #selector(runLocalModelAction(_:)), keyEquivalent: "")
         item.target = self

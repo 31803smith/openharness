@@ -38,7 +38,6 @@ export class HarnessShareRelay {
       await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => { reject(new Error('The owner’s machine is not responding.')); detach() }, 15_000)
         const ready = () => {
-          if (settled) return
           settled = true; clearTimeout(timeout)
           sink.sendFrame({ type: 'connected', payload: { machineId, e2ee: false, readOnly: true } })
           resolve()
