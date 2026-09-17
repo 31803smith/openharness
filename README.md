@@ -166,12 +166,12 @@ The [architecture docs](docs/architecture.md) describe transport, identity, and 
 
 ## Device firmware
 
-[`device/harness/`](device/harness/) contains ESP32-S3 firmware for a round USB companion display.
+[`device/harness-device/firmware/`](device/harness-device/firmware/) contains ESP32-S3 firmware for a round USB companion display.
 It shows agent status and supports responses and voice input through the host daemon.
 The device connects over USB; it doesn't need Wi-Fi credentials.
 
 Build and flash it onto a supported board, or add a board port. Schematics and enclosure designs
-are not in the repository yet. The [hardware guide](device/harness/README.md) lists the current
+are not in the repository yet. The [hardware guide](device/harness-device/firmware/README.md) lists the current
 boards and build commands.
 
 https://github.com/user-attachments/assets/97848065-61c6-40df-be66-a8247f69aa4c
