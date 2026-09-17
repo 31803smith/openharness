@@ -144,8 +144,8 @@ void main() {
     await tester.ensureVisible(find.byKey(const Key('new-agent-advanced')));
     await tester.tap(find.byKey(const Key('new-agent-advanced')));
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('Bypass approvals'));
-    await tester.tap(find.text('Bypass approvals'));
+    await tester.ensureVisible(find.text('Auto-approve'));
+    await tester.tap(find.text('Auto-approve'));
     await tester.pump();
     final retry = find.byKey(const Key('new-agent-retry-check'));
     await tester.ensureVisible(retry);

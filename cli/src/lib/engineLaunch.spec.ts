@@ -209,9 +209,9 @@ describe('buildEngineLaunchArgv', () => {
 
   it('appends the confirmed flag for engines with a known bypass flag', () => {
     expect(buildEngineCommandArgv('claude', { bypassPermission: true }))
-      .toEqual([engineBin('claude'), '--dangerously-skip-permissions'])
+      .toEqual([engineBin('claude'), '--permission-mode', 'auto'])
     expect(buildEngineCommandArgv('codex', { bypassPermission: true }))
-      .toEqual([engineBin('codex'), '--dangerously-bypass-approvals-and-sandbox'])
+      .toEqual([engineBin('codex'), '--approve-for-me'])
     expect(buildEngineCommandArgv('cursor', { bypassPermission: true }))
       .toEqual([engineBin('cursor'), '--force'])
     expect(buildEngineCommandArgv('opencode', { bypassPermission: true }))
@@ -240,14 +240,14 @@ describe('buildEngineLaunchArgv', () => {
     expect(buildEngineCommandArgv('codex', { resumeSessionId: 'abc-123' }))
       .toEqual([engineBin('codex'), 'resume', 'abc-123'])
     expect(buildEngineCommandArgv('codex', { resumeSessionId: 'abc-123', bypassPermission: true }))
-      .toEqual([engineBin('codex'), 'resume', 'abc-123', '--dangerously-bypass-approvals-and-sandbox'])
+      .toEqual([engineBin('codex'), 'resume', 'abc-123', '--approve-for-me'])
     expect(buildEngineCommandArgv('amp', { resumeSessionId: 'T-1' }))
       .toEqual([engineBin('amp'), 'threads', 'continue', 'T-1'])
   })
 
   it('still applies bypassPermission with no resume requested (regression)', () => {
     expect(buildEngineCommandArgv('claude', { bypassPermission: true }))
-      .toEqual([engineBin('claude'), '--dangerously-skip-permissions'])
+      .toEqual([engineBin('claude'), '--permission-mode', 'auto'])
   })
 
   it('is a no-op when resumeSessionId is set but the engine has no known launch resume flag', () => {
@@ -278,7 +278,7 @@ describe('a first prompt on launch', () => {
 
   it('puts the text LAST, after every flag, so a positional is never read as an option value', () => {
     expect(buildEngineCommandArgv('claude', { firstPrompt: PROMPT, bypassPermission: true, extraArgs: ['--allowedTools=WebSearch'] }))
-      .toEqual([engineBin('claude'), '--dangerously-skip-permissions', '--allowedTools=WebSearch', PROMPT])
+      .toEqual([engineBin('claude'), '--permission-mode', 'auto', '--allowedTools=WebSearch', PROMPT])
     expect(buildEngineCommandArgv('opencode', { firstPrompt: PROMPT, bypassPermission: true, extraArgs: ['-m', 'local/qwen'] }))
       .toEqual([engineBin('opencode'), '--auto', '-m', 'local/qwen', '--prompt', PROMPT])
   })

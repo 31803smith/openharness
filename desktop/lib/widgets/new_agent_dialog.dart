@@ -32,8 +32,8 @@ import 'dsh_install_panel.dart';
 /// is the actual enforcement point. An engine absent here shows no checkbox at all rather than
 /// guessing a flag for a CLI we haven't verified. Keep both maps in sync.
 const Map<String, String> kEngineBypassPermissionFlag = {
-  'claude': '--dangerously-skip-permissions',
-  'codex': '--dangerously-bypass-approvals-and-sandbox',
+  'claude': '--permission-mode auto',
+  'codex': '--approve-for-me',
   'cursor': '--force',
   'opencode': '--auto',
 };
@@ -1218,7 +1218,7 @@ class _BypassCheck extends StatelessWidget {
               AppCheckbox(value: value, hovered: hovered, onChanged: onChanged),
               const SizedBox(width: 10),
               Text(
-                'Bypass approvals',
+                'Auto-approve',
                 style: TextStyle(
                   fontSize: 13,
                   color: onChanged == null

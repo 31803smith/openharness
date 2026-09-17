@@ -241,8 +241,8 @@ void main() {
       await tester.pumpAndSettle();
       // Its base engine's bypass flag is the one offered: a harness has no
       // flag of its own, and without the base's it would say "Managed by".
-      await tester.ensureVisible(find.text('Bypass approvals'));
-      expect(find.text('Bypass approvals'), findsOneWidget);
+      await tester.ensureVisible(find.text('Auto-approve'));
+      expect(find.text('Auto-approve'), findsOneWidget);
       expect(find.textContaining('Managed by'), findsNothing);
 
       await create(tester);

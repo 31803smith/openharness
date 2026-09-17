@@ -256,13 +256,13 @@ void main() {
       await tester.ensureVisible(advanced);
       await tester.tap(advanced);
       await tester.pumpAndSettle();
-      await tester.ensureVisible(find.text('Bypass approvals'));
+      await tester.ensureVisible(find.text('Auto-approve'));
       expect(find.text('Permissions'), findsNothing);
       expect(find.text('Add'), findsOneWidget);
       if (size.width >= 900 && scale == 1) {
         final settingsCenter = tester.getCenter(advanced).dy;
         for (final control in [
-          find.text('Bypass approvals'),
+          find.text('Auto-approve'),
           find.byKey(const Key('new-agent-codex-profile-field')),
           find.text('Add'),
         ]) {
@@ -273,7 +273,7 @@ void main() {
       await tester.ensureVisible(advanced);
       await tester.tap(advanced);
       await tester.pumpAndSettle();
-      expect(find.text('Bypass approvals'), findsNothing);
+      expect(find.text('Auto-approve'), findsNothing);
       expect(find.text('Add'), findsNothing);
       final recent = find.byKey(const Key('new-agent-project-recent'));
       await tester.ensureVisible(recent);

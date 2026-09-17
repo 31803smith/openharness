@@ -14,8 +14,11 @@ import { RAISE_OPEN_FILES_SH } from './openFiles.js'
  * `null` = no known/safe flag — callers must hide the option rather than guess one.
  */
 export const BYPASS_PERMISSION_FLAGS: Readonly<Record<AgentEngine, string[] | null>> = {
-  claude: ['--dangerously-skip-permissions'],
-  codex: ['--dangerously-bypass-approvals-and-sandbox'],
+  // The engines' own auto modes, not their "skip every check" switches: Claude Code's auto mode
+  // approves routine actions and still runs its safety checks on risky ones, and Codex routes each
+  // approval to its automatic review and keeps commands in the workspace sandbox.
+  claude: ['--permission-mode', 'auto'],
+  codex: ['--approve-for-me'],
   cursor: ['--force'],
   opencode: ['--auto'],
   // No permission-prompt system to bypass (pi), or config-file based rather than a flag (hermes).
