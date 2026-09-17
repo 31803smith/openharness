@@ -8,7 +8,7 @@
       "author": "Autonomous",
       "description": "Describe a board; get a fab-ready PCB with a live board view, ordered from JLCPCB in a click.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "620f963083a1ac19518807ea3d2cd6ee92991cef",
+      "ref": "7ecd53a4dea95cc1f75951a80d70295eb3c34574",
       "path": "store/agents/autonomous-circuit",
       "upstream": "https://github.com/autonomous-ai/autonomous-circuit",
       "license": "MIT",
@@ -23,7 +23,7 @@
       "author": "Autonomous",
       "description": "Describe a part; get a validated, printable STEP with a live 3D view.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "620f963083a1ac19518807ea3d2cd6ee92991cef",
+      "ref": "7ecd53a4dea95cc1f75951a80d70295eb3c34574",
       "path": "store/agents/autonomous-workshop",
       "upstream": "https://github.com/autonomous-ai/autonomous-workshop",
       "license": "MIT",
@@ -39,11 +39,23 @@
       "author": "Blender Foundation",
       "description": "Describe an object, a scene, a shot — and watch it take shape: modelled in Blender's Python, rendered headless, exported as glTF you can orbit and zoom in the pane.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "620f963083a1ac19518807ea3d2cd6ee92991cef",
+      "ref": "7ecd53a4dea95cc1f75951a80d70295eb3c34574",
       "path": "store/agents/blender",
       "homepage": "https://www.blender.org",
       "upstream": "https://projects.blender.org/blender/blender",
       "license": "MIT",
+      "examples": [
+        {
+          "prompt": "Make a cozy isometric reading nook: a cut-away corner of a room with an armchair, a floor lamp glowing warm, a bookshelf full of colourful books, a round rug and a monstera, with evening sun through the window and a cat asleep on the rug.",
+          "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/blender/cozy-reading-nook.jpg",
+          "caption": "Isometric reading nook · 122 named objects, 35 materials · glTF + Cycles render"
+        },
+        {
+          "prompt": "Model a small desk robot toy: a rounded body, a head with two round eyes, two arms that rotate at the shoulders, an antenna, and a round base. Separate named objects in collections, real sizes in millimetres, and nice materials.",
+          "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/blender/desk-robot-toy.jpg",
+          "caption": "Desk robot toy · 29 named parts, 10 materials · glTF + Cycles render"
+        }
+      ],
       "engine": "claude",
       "viewerUse": "autonomous/model-viewer",
       "tier": 2,
@@ -57,7 +69,7 @@
       "author": "Jake Fitzgerald",
       "description": "Jake Fitzgerald's CAD Viewer (earthtojake/text-to-cad) as a Harness pane: STEP, GLB, STL, 3MF, DXF, URDF, SRDF and SDF, with MoveIt2 inverse kinematics.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "620f963083a1ac19518807ea3d2cd6ee92991cef",
+      "ref": "7ecd53a4dea95cc1f75951a80d70295eb3c34574",
       "path": "store/viewers/cad-viewer",
       "upstream": "https://github.com/earthtojake/text-to-cad",
       "license": "MIT",
@@ -71,11 +83,23 @@
       "author": "Paul Falstad",
       "description": "Describe a circuit — an RC filter, a 555 flasher, an amplifier — and watch it run in the pane: charge animating along the wires, scope traces drawing, every value still yours to poke at.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "620f963083a1ac19518807ea3d2cd6ee92991cef",
+      "ref": "7ecd53a4dea95cc1f75951a80d70295eb3c34574",
       "path": "store/agents/circuitjs",
       "homepage": "https://www.falstad.com/circuit/",
       "upstream": "https://github.com/pfalstad/circuitjs1",
       "license": "MIT",
+      "examples": [
+        {
+          "prompt": "Build a two-transistor flasher that alternates three red and three blue LEDs like a police light, about twice a second, with a scope on each side and a knob for each side's on-time.",
+          "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/circuitjs/police-light-flasher.jpg",
+          "caption": "Police-light flasher · two-transistor astable, ~2.2 Hz · 2 scopes + 2 timing knobs"
+        },
+        {
+          "prompt": "Build a 555 astable LED flasher with a potentiometer that sets the rate, and scopes on the capacitor and the output.",
+          "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/circuitjs/555-led-flasher.jpg",
+          "caption": "555 LED flasher · running live, ~1.1 Hz · rate knob + 2 scopes"
+        }
+      ],
       "engine": "codex",
       "tier": 2,
       "verified": true
@@ -88,7 +112,7 @@
       "author": "Autonomous",
       "description": "A reader for the PDF a harness is writing: thumbnails, the outline, find, zoom and two-page spreads on pdf.js — redrawn in place on every compile, changed pages marked, compile errors shown over the last good pages.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "620f963083a1ac19518807ea3d2cd6ee92991cef",
+      "ref": "7ecd53a4dea95cc1f75951a80d70295eb3c34574",
       "path": "store/viewers/doc-viewer",
       "upstream": "https://github.com/mozilla/pdf.js",
       "license": "MIT",
@@ -102,11 +126,23 @@
       "author": "Excalidraw",
       "description": "Describe a diagram — an architecture, a flow, a whiteboard sketch — and watch it appear hand-drawn in the pane, as an .excalidraw file you can open anywhere.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "620f963083a1ac19518807ea3d2cd6ee92991cef",
+      "ref": "7ecd53a4dea95cc1f75951a80d70295eb3c34574",
       "path": "store/agents/excalidraw",
       "homepage": "https://excalidraw.com",
       "upstream": "https://github.com/excalidraw/excalidraw",
       "license": "MIT",
+      "examples": [
+        {
+          "prompt": "Map an online store's checkout as a flowchart: cart, sign-in or guest checkout, shipping, payment with a declined-card retry loop, a fraud check that can send orders to manual review, then order confirmed and the email receipt. Diamonds for decisions, one frame per stage.",
+          "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/excalidraw/checkout-flowchart.jpg",
+          "caption": "Checkout flowchart · 3 decisions, retry loop, 3 frames · .excalidraw"
+        },
+        {
+          "prompt": "Draw the architecture of a URL shortener: browser, CDN, API service, Postgres, Redis cache, a click-tracking worker on a queue, and an analytics dashboard. Frame the backend and label the arrows.",
+          "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/excalidraw/url-shortener-architecture.jpg",
+          "caption": "URL shortener architecture · 10 shapes, 8 labeled arrows · .excalidraw"
+        }
+      ],
       "engine": "claude",
       "tier": 2,
       "verified": true
@@ -119,7 +155,7 @@
       "author": "OpenHarness contributors",
       "description": "A screening room for OpenMontage productions: live storyboards, a film player, render versions, and notes tied to a moment in the cut.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "620f963083a1ac19518807ea3d2cd6ee92991cef",
+      "ref": "7ecd53a4dea95cc1f75951a80d70295eb3c34574",
       "path": "store/viewers/film-viewer",
       "homepage": "https://github.com/autonomous-ai/openharness",
       "upstream": "https://github.com/calesthio/OpenMontage",
@@ -139,7 +175,7 @@
       "author": "OpenHarness contributors",
       "description": "A live game studio: playable previews, real build progress, versions, and an uninterrupted last working game while the next one takes shape.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "620f963083a1ac19518807ea3d2cd6ee92991cef",
+      "ref": "7ecd53a4dea95cc1f75951a80d70295eb3c34574",
       "path": "store/viewers/game-viewer",
       "homepage": "https://github.com/autonomous-ai/openharness",
       "license": "MIT",
@@ -154,7 +190,7 @@
       "author": "Alex Ermolov",
       "description": "Build a world you can play. Watch your game take shape in a live studio, explore each version, and play while the agent keeps creating.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "620f963083a1ac19518807ea3d2cd6ee92991cef",
+      "ref": "7ecd53a4dea95cc1f75951a80d70295eb3c34574",
       "path": "store/agents/godogen",
       "homepage": "https://github.com/htdt/godogen",
       "upstream": "https://github.com/htdt/godogen",
@@ -175,11 +211,23 @@
       "author": "Manim Community",
       "description": "Describe an explanation — a proof, a transform, an algorithm, a graph — and watch it animate: scenes in Python, rendered by Manim, playing in the pane.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "620f963083a1ac19518807ea3d2cd6ee92991cef",
+      "ref": "7ecd53a4dea95cc1f75951a80d70295eb3c34574",
       "path": "store/agents/manim",
       "homepage": "https://www.manim.community",
       "upstream": "https://github.com/ManimCommunity/manim",
       "license": "MIT",
+      "examples": [
+        {
+          "prompt": "Draw a chess knight using nothing but spinning circles: a Fourier series of 120 epicycles, tip to tail, tracing its silhouette in gold.",
+          "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/manim/fourier-knight.jpg",
+          "caption": "Fourier knight · 120 epicycles · 17 s 1080p60 MP4, 4 chapters"
+        },
+        {
+          "prompt": "Animate the Pythagorean theorem in about 20 seconds: draw a 3-4-5 right triangle, grow squares on its three sides with their areas labelled, then show 9 + 16 = 25.",
+          "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/manim/pythagorean-theorem.jpg",
+          "caption": "Pythagorean theorem · 20 s animation · 1080p MP4"
+        }
+      ],
       "engine": "claude",
       "viewerUse": "autonomous/video-viewer",
       "tier": 2,
@@ -192,7 +240,7 @@
       "author": "marimo",
       "description": "Describe an analysis, a model, a dashboard — and watch the reactive notebook come alive in the pane: marimo's own editor on the notebook the agent writes, cells re-running as it types.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "620f963083a1ac19518807ea3d2cd6ee92991cef",
+      "ref": "7ecd53a4dea95cc1f75951a80d70295eb3c34574",
       "path": "store/agents/marimo",
       "homepage": "https://marimo.io",
       "upstream": "https://github.com/marimo-team/marimo",
@@ -208,7 +256,7 @@
       "author": "Yuki Hattori",
       "description": "Describe a talk; get a keynote — huge type, generated art, speaker notes — live in the pane, exported to PDF, PPTX or HTML.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "620f963083a1ac19518807ea3d2cd6ee92991cef",
+      "ref": "7ecd53a4dea95cc1f75951a80d70295eb3c34574",
       "path": "store/agents/marp",
       "homepage": "https://marp.app",
       "upstream": "https://github.com/marp-team/marp-cli",
@@ -225,7 +273,7 @@
       "author": "Autonomous",
       "description": "A Blender-style viewport for the glTF a harness exports — outliner, properties in mm, shading modes, measure, section, explode, scene camera, timeline — live on every export.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "620f963083a1ac19518807ea3d2cd6ee92991cef",
+      "ref": "7ecd53a4dea95cc1f75951a80d70295eb3c34574",
       "path": "store/viewers/model-viewer",
       "homepage": "https://threejs.org",
       "upstream": "https://github.com/mrdoob/three.js",
@@ -240,11 +288,23 @@
       "author": "Google DeepMind",
       "description": "Describe a robot, a scene, a controller — a Unitree quadruped standing, a humanoid learning to walk — and watch the rollout play: MuJoCo physics, Menagerie robots, MJX for training.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "620f963083a1ac19518807ea3d2cd6ee92991cef",
+      "ref": "7ecd53a4dea95cc1f75951a80d70295eb3c34574",
       "path": "store/agents/mujoco",
       "homepage": "https://mujoco.org",
       "upstream": "https://github.com/google-deepmind/mujoco",
       "license": "MIT",
+      "examples": [
+        {
+          "prompt": "Make the Unitree G1 humanoid say hello: stand, raise its right hand and wave three times, then lower it and take a small bow. Record it.",
+          "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/mujoco/g1-humanoid-hello.jpg",
+          "caption": "Unitree G1 humanoid · wave hello + bow · 29 servos, 11 s rollout, live in the MuJoCo Viewer"
+        },
+        {
+          "prompt": "Load the Unitree Go2, make it stand, then do three slow squats and wave the front left leg. Record it.",
+          "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/mujoco/go2-squats-and-wave.jpg",
+          "caption": "Unitree Go2 · 3 squats + a wave · 21 s rollout, live in the MuJoCo Viewer"
+        }
+      ],
       "engine": "claude",
       "viewerUse": "autonomous/mujoco-viewer",
       "tier": 2,
@@ -258,7 +318,7 @@
       "author": "Autonomous",
       "description": "MuJoCo's own simulate, in the pane: live physics you can push, pull and pause, every actuator on a slider, contacts and forces drawn, sensors plotted, and the agent's recording replayed frame by frame — on MuJoCo's WebAssembly build.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "620f963083a1ac19518807ea3d2cd6ee92991cef",
+      "ref": "7ecd53a4dea95cc1f75951a80d70295eb3c34574",
       "path": "store/viewers/mujoco-viewer",
       "upstream": "https://github.com/google-deepmind/mujoco",
       "license": "MIT",
@@ -272,7 +332,7 @@
       "author": "calesthio",
       "description": "Direct a film from the first idea to the final cut. Watch the script, shots, and edits arrive in a live studio; play each version and leave notes right on the film.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "620f963083a1ac19518807ea3d2cd6ee92991cef",
+      "ref": "7ecd53a4dea95cc1f75951a80d70295eb3c34574",
       "path": "store/agents/openmontage",
       "homepage": "https://github.com/calesthio/OpenMontage",
       "upstream": "https://github.com/calesthio/OpenMontage",
@@ -293,11 +353,23 @@
       "author": "Phaser Studio",
       "description": "Describe a game — a breakout, a platformer, a shooter, a puzzle — and play it in the pane as the agent writes it in Phaser 4, reloading on every save.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "620f963083a1ac19518807ea3d2cd6ee92991cef",
+      "ref": "7ecd53a4dea95cc1f75951a80d70295eb3c34574",
       "path": "store/agents/phaser",
       "homepage": "https://phaser.io",
       "upstream": "https://github.com/phaserjs/phaser",
       "license": "MIT",
+      "examples": [
+        {
+          "prompt": "Make a side-scrolling platformer at sunset: a little fox runs and double-jumps across floating islands, collects glowing berries, stomps hedgehogs and races to a lantern at the end. Parallax mountains, procedural art only.",
+          "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/phaser/sunset-fox-platformer.jpg",
+          "caption": "Sunset Fox · parallax platformer, 48 berries, double jump · playable in the pane"
+        },
+        {
+          "prompt": "Make a small brick breaker game with a title screen, three levels, power-ups that widen the paddle, and a score.",
+          "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/phaser/brick-breaker.jpg",
+          "caption": "Brick by Brick · 3 levels, wide-paddle power-ups · playable in the pane"
+        }
+      ],
       "engine": "codex",
       "tier": 2,
       "verified": true
@@ -309,7 +381,7 @@
       "author": "RDKit",
       "description": "Describe a molecule — a drug, an analogue, a scaffold — and get it designed, its properties computed and a 3D conformer you can rotate in the pane.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "620f963083a1ac19518807ea3d2cd6ee92991cef",
+      "ref": "7ecd53a4dea95cc1f75951a80d70295eb3c34574",
       "path": "store/agents/rdkit",
       "homepage": "https://www.rdkit.org",
       "upstream": "https://github.com/rdkit/rdkit",
@@ -325,11 +397,23 @@
       "author": "Remotion",
       "description": "Describe a video — a product launch, an explainer, a data story — and watch it play in Remotion Studio as the agent writes it in React, then render it to MP4.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "620f963083a1ac19518807ea3d2cd6ee92991cef",
+      "ref": "7ecd53a4dea95cc1f75951a80d70295eb3c34574",
       "path": "store/agents/remotion",
       "homepage": "https://www.remotion.dev",
       "upstream": "https://github.com/remotion-dev/remotion",
       "license": "MIT",
+      "examples": [
+        {
+          "prompt": "Make a 12-second \"my year in running\" recap video: total kilometres counting up, a glowing route line drawing itself across a city map, and monthly distance bars rising one by one with the best month lit up. Bold type, sunset colours.",
+          "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/remotion/year-in-running.jpg",
+          "caption": "Year in running recap · 12 s 1080p MP4 · count-up, route, 12 bars"
+        },
+        {
+          "prompt": "Make a 12 second launch video for the Harness Store with three beats: the store opens, a card flips to Get, and a spinning 3D cube lands in a pane. Bold type, smooth motion. Render it to MP4.",
+          "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/remotion/harness-store-launch.jpg",
+          "caption": "Harness Store launch · 12 s 1080p MP4 · 3 beats"
+        }
+      ],
       "engine": "claude",
       "tier": 2,
       "verified": true
@@ -341,11 +425,23 @@
       "author": "Strudel",
       "description": "Describe a track — a groove, a bassline, a break — and hear it in the pane. The agent writes one Strudel pattern file; Strudel's own REPL plays it live and hot-swaps on every save.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "620f963083a1ac19518807ea3d2cd6ee92991cef",
+      "ref": "7ecd53a4dea95cc1f75951a80d70295eb3c34574",
       "path": "store/agents/strudel",
       "homepage": "https://strudel.cc",
       "upstream": "https://github.com/tidalcycles/strudel",
       "license": "MIT",
+      "examples": [
+        {
+          "prompt": "Make an 80s synthwave track at 100 bpm: gated drums, a driving octave bassline, a pulsing 16th-note arpeggio, a wide supersaw pad, and a soaring lead that takes over after 8 bars.",
+          "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/strudel/synthwave-night-drive.jpg",
+          "caption": "Synthwave \"Night drive\" · 100 bpm, 8 voices, 16 bars · playing live in the pane"
+        },
+        {
+          "prompt": "Write a 90 bpm lo-fi house groove: a kick and hats from bar 1, a bassline, warm chords, a hook that enters at bar 9, and a break at bar 17.",
+          "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/strudel/lofi-house-groove.jpg",
+          "caption": "Lo-fi house groove · 90 bpm, 9 voices, 32 bars · playing live in the pane"
+        }
+      ],
       "engine": "claude",
       "tier": 2,
       "verified": true
@@ -357,7 +453,7 @@
       "author": "Jake Fitzgerald",
       "description": "Jake Fitzgerald's text-to-cad skills (earthtojake/text-to-cad), pinned: describe a part, get STEP with mesh exports, drawings, robot files and G-code, live in the CAD Viewer.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "620f963083a1ac19518807ea3d2cd6ee92991cef",
+      "ref": "7ecd53a4dea95cc1f75951a80d70295eb3c34574",
       "path": "store/agents/text-to-cad",
       "homepage": "https://github.com/earthtojake/text-to-cad",
       "upstream": "https://github.com/earthtojake/text-to-cad",
@@ -374,11 +470,23 @@
       "author": "Typst GmbH",
       "description": "Describe a document — a paper, a spec sheet, a report, a letter — and watch the PDF take shape as Typst compiles it on every save.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "620f963083a1ac19518807ea3d2cd6ee92991cef",
+      "ref": "7ecd53a4dea95cc1f75951a80d70295eb3c34574",
       "path": "store/agents/typst",
       "homepage": "https://typst.app",
       "upstream": "https://github.com/typst/typst",
       "license": "MIT",
+      "examples": [
+        {
+          "prompt": "Make a two-page orbital mechanics cheat sheet: Kepler's three laws, the vis-viva equation, a labelled diagram of an elliptical orbit, a Hohmann transfer from Earth to Mars worked out step by step, and a table of planet data. Two columns, dense but beautiful.",
+          "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/typst/orbital-mechanics-guide.jpg",
+          "caption": "Orbital mechanics field guide · 2-page PDF, 3 figures, 3 tables"
+        },
+        {
+          "prompt": "Write a one-page spec sheet for a 20 mm M3 aluminium hex standoff: a title, a two-sentence description, a table of dimensions (length, across-flats, thread, mass), materials and finish, and a tolerances note. Keep it to one page.",
+          "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/typst/hex-standoff-spec-sheet.jpg",
+          "caption": "Hex standoff spec sheet · 1-page PDF with drawing and dimension table"
+        }
+      ],
       "engine": "claude",
       "viewerUse": "autonomous/doc-viewer",
       "tier": 2,
@@ -392,7 +500,7 @@
       "author": "Autonomous",
       "description": "An editor-grade player for what a harness renders: every render listed, chapters on the timeline, frame-accurate scrubbing with a filmstrip, loops and stills — and the render in progress playable as it is made.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "620f963083a1ac19518807ea3d2cd6ee92991cef",
+      "ref": "7ecd53a4dea95cc1f75951a80d70295eb3c34574",
       "path": "store/viewers/video-viewer",
       "license": "MIT",
       "tier": 2,
@@ -406,7 +514,7 @@
       "author": "OpenHarness contributors",
       "description": "A live preview for HTML, CSS, and JavaScript in a harness workspace. Reloads when files change.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "620f963083a1ac19518807ea3d2cd6ee92991cef",
+      "ref": "7ecd53a4dea95cc1f75951a80d70295eb3c34574",
       "path": "store/viewers/web-viewer",
       "license": "MIT",
       "tier": 2,
@@ -419,11 +527,23 @@
       "author": "YosysHQ",
       "description": "Describe a digital circuit — a counter, a UART, a state machine — and get Verilog, a simulation with waveforms, a synthesized gate-level schematic and an FPGA bitstream for an iCE40 board. Prompt to silicon.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "620f963083a1ac19518807ea3d2cd6ee92991cef",
+      "ref": "7ecd53a4dea95cc1f75951a80d70295eb3c34574",
       "path": "store/agents/yosys",
       "homepage": "https://yosyshq.net",
       "upstream": "https://github.com/YosysHQ/yosys",
       "license": "MIT",
+      "examples": [
+        {
+          "prompt": "Build a tiny 8-bit CPU for the iCEBreaker that runs a Fibonacci program from ROM and prints every number over the USB serial port at 115200 baud; the button runs it again. Simulate it, check the serial output in the testbench and build the bitstream.",
+          "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/yosys/fibonacci-cpu.jpg",
+          "caption": "Tiny 8-bit CPU printing Fibonacci over UART · 8 checks pass · 294 LCs, 26.1 MHz · iCE40 bitstream"
+        },
+        {
+          "prompt": "Design a UART transmitter at 115200 baud from the 12 MHz clock that sends the text HELLO followed by newline each time the button is pressed (debounced), plus a breathing PWM on the green LED. Testbench must decode the serial frames and check the bytes. Run the whole flow, keep Fmax above 12 MHz, and report LUTs and Fmax.",
+          "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/yosys/uart-hello.jpg",
+          "caption": "HELLO over UART + breathing LED · 25 checks pass · 226 LCs, 51.9 MHz · iCE40 bitstream"
+        }
+      ],
       "engine": "claude",
       "tier": 2,
       "verified": true
