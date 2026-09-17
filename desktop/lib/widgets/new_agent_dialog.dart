@@ -119,10 +119,17 @@ class _NewAgentDialog extends StatefulWidget {
 }
 
 class _NewAgentDialogState extends State<_NewAgentDialog> {
-  /// Sent as the harness's first message; the person can drop it before creating.
-  late String? _firstPrompt = widget.initialPrompt?.trim().isEmpty == true
-      ? null
-      : widget.initialPrompt?.trim();
+  /// The task: sent, exactly as written, as the harness's first message. Empty
+  /// starts the harness with nothing sent. The Store's "Try this prompt" fills
+  /// it, and the person can change it before creating.
+  late final _task = TextEditingController(
+    text: widget.initialPrompt?.trim() ?? '',
+  );
+  String? get _firstPrompt {
+    final task = _task.text.trim();
+    return task.isEmpty ? null : task;
+  }
+
   final _folderFocus = FocusNode(debugLabel: 'Working folder');
   final _agentSearchFocus = FocusNode(debugLabel: 'Agent search');
   final _actionFocus = FocusNode(debugLabel: 'Create or check agent');
@@ -171,6 +178,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
 
   @override
   void dispose() {
+    _task.dispose();
     _folderFocus.dispose();
     _agentSearchFocus.dispose();
     _actionFocus.dispose();
@@ -682,10 +690,39 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                         ),
                       ),
                     ),
-                    if (_firstPrompt case final prompt?) ...[
-                      const SizedBox(height: _gapBlock),
-                      _firstMessage(prompt),
-                    ],
+                    // Last: who, where and which folder are chosen, then what
+                    // to do, said right beside the button that starts it.
+                    //
+                    // Outside the choices' traversal group, and locked the
+                    // same way: that group orders Tab by when a focus node
+                    // attached, and choosing a machine rebuilds the project
+                    // tiles — inside the group they would come AFTER this
+                    // field, and Shift-Tab would bounce between the two.
+                    AbsorbPointer(
+                      absorbing: _choicesLocked,
+                      child: ExcludeFocus(
+                        excluding: _choicesLocked,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            SizedBox(height: compactHeight ? 24 : 32),
+                            _sectionHeader(
+                              'First task',
+                              'What should your agent work on? (Optional)',
+                              null,
+                              compactHeight: compactHeight,
+                            ),
+                            _taskField(
+                              minHeight: _tileHeight(
+                                MediaQuery.textScalerOf(context),
+                                compactHeight: compactHeight,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
                     // Under everything chosen, and OUTSIDE the AbsorbPointer
                     // above: the choices lock while the install runs, and a
                     // panel inside that lock cannot be clicked (owner,
@@ -769,17 +806,21 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                       focusNode: _actionFocus,
                       onPressed: canCreate ? _submit : null,
                       style: FilledButton.styleFrom(
-                        minimumSize: const Size(192, 56),
+                        // Taller and larger type, in proportion with the
+                        // tile-tall rows above it; no wider at rest, so the
+                        // settings beside it keep their one line at 900.
+                        minimumSize: const Size(192, 64),
+                        maximumSize: const Size(420, double.infinity),
                         padding: const EdgeInsets.symmetric(
                           horizontal: 32,
-                          vertical: 16,
+                          vertical: 18,
                         ),
                         backgroundColor: grid.AppPalette.accent,
                         foregroundColor: Colors.white,
                         textStyle: TextStyle(
                           fontFamily: grid.AppFont.sans,
                           fontFamilyFallback: grid.AppFont.sansFallback,
-                          fontSize: 16,
+                          fontSize: 18,
                           fontWeight: FontWeight.w600,
                         ),
                         shape: const StadiumBorder(),
@@ -802,16 +843,23 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                                     ),
                                   ),
                                   const SizedBox(width: 8),
-                                  Text(
-                                    _checkingCreation
-                                        ? 'Checking status…'
-                                        : _folderSource ==
-                                                  _FolderSource.remote &&
-                                              _preparedFolder == null
-                                        ? 'Cloning and starting…'
-                                        : _installing
-                                        ? 'Installing ${_labelOf(_engine)}…'
-                                        : 'Creating harness…',
+                                  // A long harness name ends in an ellipsis
+                                  // rather than pushing the button past the
+                                  // footer.
+                                  Flexible(
+                                    child: Text(
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      _checkingCreation
+                                          ? 'Checking status…'
+                                          : _folderSource ==
+                                                    _FolderSource.remote &&
+                                                _preparedFolder == null
+                                          ? 'Cloning and starting…'
+                                          : _installing
+                                          ? 'Installing ${_labelOf(_engine)}…'
+                                          : 'Creating harness…',
+                                    ),
                                   ),
                                 ],
                               ),
@@ -898,6 +946,22 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     ),
   );
 
+  /// A tile's height, which depends on the text size and the window's height
+  /// but never on its width — so the task field, laid out outside the tiles'
+  /// LayoutBuilder, can be the same height as they are.
+  static double _tileHeight(TextScaler scaler, {required bool compactHeight}) {
+    final labelLine =
+        scaler.scale(AppChoiceTileContent.labelSize) *
+        AppChoiceTileContent.lineHeight;
+    final detailLine =
+        scaler.scale(AppChoiceTileContent.detailSize) *
+        AppChoiceTileContent.lineHeight;
+    return math.max(
+      compactHeight ? 96 : 100,
+      math.max(labelLine * 2 + detailLine, labelLine + detailLine * 2) + 38,
+    );
+  }
+
   Widget _choices() => LayoutBuilder(
     builder: (context, constraints) {
       final scaler = MediaQuery.textScalerOf(context);
@@ -919,18 +983,9 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
       // line at this width, and on one it arrived as "Documents · Typst Gm…".
       // Which line is spent where is decided per tile, against the name it
       // actually holds: AppChoiceTileContent.linesFor.
-      final labelLine =
-          scaler.scale(AppChoiceTileContent.labelSize) *
-          AppChoiceTileContent.lineHeight;
-      final detailLine =
-          scaler.scale(AppChoiceTileContent.detailSize) *
-          AppChoiceTileContent.lineHeight;
       final tileSize = Size(
         (constraints.maxWidth - AppChoiceTile.gap * (columns - 1)) / columns,
-        math.max(
-          compactHeight ? 96 : 100,
-          math.max(labelLine * 2 + detailLine, labelLine + detailLine * 2) + 38,
-        ),
+        _tileHeight(scaler, compactHeight: compactHeight),
       );
       return Column(
         mainAxisSize: MainAxisSize.min,
@@ -1114,60 +1169,75 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     ],
   );
 
-  /// The message the harness starts on, quoted, with a way to start without it.
-  Widget _firstMessage(String prompt) => Container(
-    key: const Key('new-agent-first-message'),
-    padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
-    decoration: BoxDecoration(
-      color: grid.AppPalette.cardBg,
-      borderRadius: BorderRadius.circular(12),
-    ),
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(top: 2),
-          child: Icon(
-            LucideIcons.messageSquareText300,
-            size: 16,
-            color: grid.AppPalette.accentOnSurface,
-          ),
+  /// The task field: what the harness is told first, exactly as typed, with no
+  /// guessing about it (owner, 2026-09-17: "you just pick exactly what you want
+  /// and enter the exact task"). One line tall at rest — as tall as the agent
+  /// box and the tiles above it, [minHeight] — and taller as lines are added.
+  /// Return adds a line; ⌘Return creates, as it does anywhere in the dialog.
+  Widget _taskField({required double minHeight}) => ListenableBuilder(
+    listenable: _task,
+    builder: (context, _) {
+      final radius = BorderRadius.circular(grid.AppControl.radius);
+      final line = MediaQuery.textScalerOf(context).scale(16) * 1.45;
+      final padding = ((minHeight - line) / 2).clamp(12.0, double.infinity);
+      return TextField(
+        key: const Key('new-agent-task'),
+        controller: _task,
+        minLines: 1,
+        maxLines: 6,
+        keyboardType: TextInputType.multiline,
+        textInputAction: TextInputAction.newline,
+        style: TextStyle(
+          fontSize: 16,
+          height: 1.45,
+          color: grid.AppPalette.textPrimary,
         ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Starts with',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: grid.AppPalette.textSecondary,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                prompt,
-                style: TextStyle(
-                  fontSize: 14,
-                  height: 1.45,
-                  color: grid.AppPalette.textPrimary,
-                ),
-              ),
-            ],
+        decoration: InputDecoration(
+          hintText: 'Tell your agent what to do first.',
+          // Readable, not faint: the hint says what the field is for.
+          hintStyle: TextStyle(
+            fontSize: 16,
+            height: 1.45,
+            color: grid.AppPalette.textSecondary,
           ),
-        ),
-        AppIconButton(
-          key: const Key('new-agent-first-message-remove'),
-          icon: LucideIcons.x300,
-          tooltip: 'Start without this message',
-          onPressed: _choicesLocked
+          // One line, so an empty box is exactly a tile tall at any width.
+          hintMaxLines: 1,
+          filled: true,
+          fillColor: grid.AppSurface.recess,
+          isDense: true,
+          // One line fills exactly [minHeight]: the padding is what a line of
+          // text at this size leaves. A minimum height on the decoration would
+          // reserve the space but paint the fill only around the text.
+          contentPadding: EdgeInsets.fromLTRB(18, padding, 8, padding),
+          border: OutlineInputBorder(
+            borderRadius: radius,
+            borderSide: BorderSide.none,
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: radius,
+            borderSide: BorderSide.none,
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: radius,
+            borderSide: BorderSide(
+              color: grid.AppPalette.swarmAccent.withValues(alpha: .7),
+              width: 1.5,
+            ),
+          ),
+          suffixIcon: _task.text.isEmpty
               ? null
-              : () => setState(() => _firstPrompt = null),
+              : Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: AppIconButton(
+                    key: const Key('new-agent-task-clear'),
+                    icon: LucideIcons.x300,
+                    tooltip: 'Clear the task',
+                    onPressed: _choicesLocked ? null : _task.clear,
+                  ),
+                ),
         ),
-      ],
-    ),
+      );
+    },
   );
 
   Widget _settingsRow() => Wrap(
