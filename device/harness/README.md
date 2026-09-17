@@ -42,7 +42,7 @@ fall back to `:8085`).
 ## Build & flash
 
 ```bash
-cd device/esp32-circle
+cd device/harness
 idf.py set-target esp32s3
 idf.py build
 idf.py -p <PORT> flash monitor      # e.g. -p /dev/cu.usbmodem1101
