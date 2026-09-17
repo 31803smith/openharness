@@ -221,6 +221,18 @@ class Main(Workspace):
         code, _, v = self.run_main(["verdict.py", str(self.ws / "out" / "gone.sdf")])
         self.assertEqual((code, v["phases"][1]["state"]), (1, "active"))
 
+    def test_a_named_sdf_outside_the_workspace_is_refused_not_a_crash(self):
+        with tempfile.TemporaryDirectory() as elsewhere:
+            outside = Path(elsewhere) / "stray.sdf"
+            outside.write_text(WATER_3D)
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                code = verdict.main(["verdict.py", str(outside)])
+        self.assertEqual(code, 2)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertEqual(stderr.getvalue(), f"not judged · {outside} is outside the workspace ({self.ws})\n")
+        self.assertFalse((self.ws / ".harness" / "verdict.json").exists())  # the header keeps what it had
+
     def test_run_as_a_script_it_judges_harness_workspace(self):
         stdout = io.StringIO()
         with mock.patch.dict(os.environ, {"HARNESS_WORKSPACE": str(self.ws)}), \
