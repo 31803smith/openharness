@@ -9,7 +9,7 @@
   "workspace": {
     "template": "template",
     "marker": "studio.json",
-    "init": "toolchain/init-workspace.mjs"
+    "init": "toolchain/init-workspace.sh"
   },
   "agent": {
     "instructions": "AGENTS.md",
