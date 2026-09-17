@@ -99,6 +99,18 @@ void ui_service_model_picker(void);
 
 // Remove a project's tile (session ended / tmux pane gone). No-op if the id isn't shown.
 void ui_project_remove(const char *project_id);
+
+// Bracket a WHOLE-LIST rebuild (a cable reconnect drops every tile and adds them all back).
+//
+// Between these two calls the add/remove paths touch the model only: no re-anchor, no window rebuild, no
+// trailing-tile rebuild. The view catches up once, at bulk_end, and comes back to whichever page was
+// centred when bulk_begin ran. Nested calls are counted, so only the outermost pair paints.
+//
+// This is not an optimisation to be dropped when convenient. Painting per agent held the display lock for
+// about ten seconds on a 78-agent reconcile, which is the task watchdog's timeout with panic enabled, and
+// the dial rebooted in the middle of the refresh. See the block comment above the implementation.
+void ui_projects_bulk_begin(void);
+void ui_projects_bulk_end(void);
 // Copy the id of the project tile at index i into buf; false if out of range (poll reconcile).
 bool ui_project_id_at(int i, char *buf, size_t n);
 // Number of project tiles currently shown (for naming "Project N").

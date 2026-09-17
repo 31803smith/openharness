@@ -5017,6 +5017,92 @@ static void voice_overlay_set(bool on)
 // Remove a project's tile (its session ended and the tmux pane is gone). Deletes the tile's LVGL
 // subtree, shifts the model over the hole, re-columns the remaining tiles so the swipe stays
 // gap-free, rebuilds the trailing settings tile, and re-focuses a valid tile. Safe if id is unknown.
+
+// ── ONE RE-ANCHOR PER RECONCILE, NOT ONE PER AGENT ──────────────────────────────────────────────────
+//
+// add_proj and ui_project_remove each end with the same tail: re-assert the scroll range, rebuild the
+// trailing tiles, re-anchor the carousel under the new ring length, and re-materialise the content
+// window. For a single agent arriving or leaving that is right, and it is what keeps the tile under the
+// thumb from sliding when N changes.
+//
+// It is wrong for a WHOLE-LIST rebuild. A cable reconnect empties the list and refills it, so a dial
+// holding 78 agents runs that tail 156 times, and each run frees and re-materialises the window because
+// growing the ring by one remaps every column. Measured on the dial: ~130ms apiece, ~10s for the
+// reconcile, inside the single display_lock that refresh_projects takes. CONFIG_ESP_TASK_WDT_TIMEOUT_S
+// is 10 and CONFIG_ESP_TASK_WDT_PANIC is on, so the device did not merely stutter — it rebooted
+// mid-reconcile with `reset reason: TASK WATCHDOG` (owner, 2026-09-17).
+//
+// So a bulk edit sets a flag, the per-agent tails become bookkeeping only, and the tail runs ONCE at the
+// end. Capturing the centred page at BEGIN is also more honest than re-capturing it 156 times through
+// intermediate ring lengths that were never on screen: the person was looking at one agent the whole
+// time, and that is the agent to come back to.
+//
+// Nested because a caller may reconcile inside a reconcile; the depth counter means only the outermost
+// pair paints. Outside a batch every path below behaves exactly as it did before.
+static int  s_bulk_depth;
+static bool s_bulk_dirty;                 // did anything in this batch actually change the list?
+static char s_bulk_keep_id[ID_MAX];       // the agent centred when the batch opened ("" = none)
+static bool s_bulk_keep_settings, s_bulk_keep_machines;
+
+// True while a bulk edit is open: the per-agent tails skip their paint and mark the batch dirty instead.
+static bool bulk_defer_paint(void)
+{
+    if (s_bulk_depth <= 0) return false;
+    s_bulk_dirty = true;
+    return true;
+}
+
+// The shared tail. Caller holds the lock. `keep_*` name the page to come back to, captured under the
+// ring length that was on screen before the edit.
+static void projects_reanchor_locked(bool keep_settings, bool keep_machines, const char *keep_id)
+{
+    resize_spacer();           // the scroll range follows the agent count
+    rebuild_settings_tile();
+    rebuild_overview_tile();
+    rebuild_page_dots();
+    int target_ring;
+    if (keep_settings)          target_ring = ring_settings();
+    else if (keep_machines)     target_ring = ring_machines_home();
+    else if (s_proj_count == 0) target_ring = ring_of_agent(0);   // the "No agents" page
+    else {
+        // The agent by id, under its NEW index. One that left the list during the batch has no column of
+        // its own any more, and the first tile is the only answer that is always valid.
+        int ni = (keep_id && keep_id[0]) ? find_proj(keep_id) : -1;
+        target_ring = ring_of_agent(agent_on_ring(ni) ? ni : 0);
+    }
+    carousel_goto(col_for_ring_near(carousel_col(), target_ring), LV_ANIM_OFF);
+    apply_active_from_col();
+    update_content_window();
+}
+
+void ui_projects_bulk_begin(void)
+{
+    display_lock();
+    if (s_bulk_depth++ == 0) {
+        s_bulk_dirty = false;
+        s_bulk_keep_id[0] = '\0';
+        s_bulk_keep_settings = s_bulk_keep_machines = false;
+        if (s_proj_count > 0) {
+            int cc_ring = ring_of_col(carousel_col());
+            s_bulk_keep_settings = is_settings_ring(cc_ring);
+            s_bulk_keep_machines = is_machines_ring(cc_ring);
+            if (!s_bulk_keep_settings && !s_bulk_keep_machines && agent_of_ring(cc_ring) >= 0)
+                snprintf(s_bulk_keep_id, sizeof s_bulk_keep_id, "%s", s_proj[agent_of_ring(cc_ring)].id);
+        }
+    }
+    display_unlock();
+}
+
+void ui_projects_bulk_end(void)
+{
+    display_lock();
+    if (s_bulk_depth > 0 && --s_bulk_depth == 0 && s_bulk_dirty) {
+        s_bulk_dirty = false;
+        projects_reanchor_locked(s_bulk_keep_settings, s_bulk_keep_machines, s_bulk_keep_id);
+    }
+    display_unlock();
+}
+
 /**
  * Put the tiles in the order the daemon sent them.
  *
@@ -5161,6 +5247,11 @@ void ui_project_remove(const char *project_id)
     s_proj_count--;
     memset(&s_proj[s_proj_count], 0, sizeof(proj_t));
 
+    // In a bulk reconcile the paint belongs to ui_projects_bulk_end — see the note above it. The model is
+    // already correct here; everything below is the view catching up, and doing that once per removed
+    // agent is what walked the display lock past the task watchdog.
+    if (bulk_defer_paint()) { display_unlock(); return; }
+
     resize_spacer();           // scroll range shrank by one column
     rebuild_settings_tile();
     rebuild_overview_tile();
@@ -5244,10 +5335,18 @@ static int add_proj(const char *id)
     // this agent is inside the active window, and the whole tile is deleted when it leaves. A far-off agent
     // therefore holds ZERO LVGL objects; the spacer (resize_spacer) reserves its scroll column so scroll
     // positions stay absolute. The 64KB pool is bounded at ANY agent count → truly unlimited.
-    resize_spacer();           // (re)assert the huge fixed scroll range
-    rebuild_settings_tile();
-    rebuild_overview_tile();
-    rebuild_page_dots();
+
+    // Bulk reconcile: hold the paint for ui_projects_bulk_end. The first-agent jump below still runs — it
+    // is one carousel_goto with no tile work, and it is what puts the strip in the middle of the huge
+    // range rather than at column zero.
+    const bool deferred = bulk_defer_paint();
+
+    if (!deferred) {
+        resize_spacer();           // (re)assert the huge fixed scroll range
+        rebuild_settings_tile();
+        rebuild_overview_tile();
+        rebuild_page_dots();
+    }
     // First agent → jump scroll to the MIDDLE of the huge range (on agent0) BEFORE windowing, so the window
     // materializes around where we actually are (not around column 0). During an offline→online reload,
     // preserve Machine/Settings (or the Overview behind the E2EE screen) when the user left Overview before
@@ -5257,10 +5356,11 @@ static int add_proj(const char *id)
             ? (reload_on_settings ? ring_settings() : reload_on_machines ? ring_machines_home() : ring_overview())
             : ring_of_agent(0);
         carousel_goto(col_for_ring_near(CAROUSEL_M / 2, tr), LV_ANIM_OFF);
-    } else {
+    } else if (!deferred) {
         int tr = on_settings ? ring_settings() : on_machines ? ring_machines_home() : (on_agent >= 0 ? ring_of_agent(on_agent) : ring_settings());
         carousel_goto(col_for_ring_near(carousel_col(), tr), LV_ANIM_OFF);
     }
+    if (deferred) return i;
     apply_active_from_col();
     update_content_window();   // materialize the window at the current scroll column
     return i;
