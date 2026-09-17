@@ -26,7 +26,7 @@ Each part is provided in two formats, one per subfolder:
 
 | Part | STEP | STL |
 |---|---|---|
-| Full assembled harness | `step/Harness.step` | `stl/Harness.stl` |
+| Full assembled harness | `step/Harness_assembly.step` | `stl/Harness_assembly.stl` |
 | Main enclosure housing | `step/Housing.step` | `stl/Housing.stl` |
 | Iron counterweight block (keeps the device from tipping/sliding on a desk) | `step/Iron_base.step` | `stl/Iron_base.stl` |
 | Clamp that holds the USB-C port PCB in place | `step/USB_clamp.step` | `stl/USB_clamp.stl` |
