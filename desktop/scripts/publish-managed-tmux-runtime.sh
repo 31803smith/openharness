@@ -65,7 +65,10 @@ for platform in darwin-arm64 darwin-x64; do
   archive_path="$ARCHIVES_DIR/$archive"
   [[ -f "$archive_path" ]] || { echo "error: missing $archive_path" >&2; exit 1; }
   root="tmux-${VERSION}-${platform}"
-  tar -tzf "$archive_path" | grep -qx "${root}/bin/tmux" || {
+  # Captured, not piped into `grep -q`: under `pipefail` grep closing the pipe early fails the whole
+  # pipeline on a fine archive — seen on the grid publisher's larger archives, latent here.
+  listing="$(tar -tzf "$archive_path")"
+  grep -qx "${root}/bin/tmux" <<< "$listing" || {
     echo "error: $archive has no ${root}/bin/tmux" >&2
     exit 1
   }
