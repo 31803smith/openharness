@@ -148,7 +148,7 @@ import {
   type Poller, type UpdateEntry,
 } from './lib/selfUpdate.js'
 import { managedNodePath } from './lib/nodeRuntime.js'
-import { ensureLauncher, ensureManagedRuntime } from './lib/runtimeInstall.js'
+import { ensureLauncher, ensureManagedGrid, ensureManagedRuntime } from './lib/runtimeInstall.js'
 import { stat } from 'fs/promises'
 import { CodexNormalizer, codexTaskError, lastCodexTurnText } from './engines/codex/normalizer.js'
 import { codexSubagentResolverFor } from './engines/codex/subagent.js'
@@ -1094,6 +1094,14 @@ async function runForeground(session: AuthSession): Promise<void> {
   process.on('uncaughtException', (err) => {
     console.error('[fatal-guard] uncaughtException:', err instanceof Error ? (err.stack ?? err.message) : err)
   })
+
+  // The managed grid follows its pin on EVERY daemon start — this one, and the restart a self-update
+  // ends in — not only on `--repair`: the pin is expected to move, and a machine installed last month
+  // has to notice. Not awaited: a download must never hold the control port back, and every grid
+  // call resolves the binary afresh (`gridBinaryPath`), so whatever lands is picked up as it lands.
+  // Best-effort by construction — it returns rather than throws — and the fatal guard above is the
+  // net under the promise itself.
+  void ensureManagedGrid((m) => console.log(`[grid-runtime] ${m}`))
 
   registry.load()
   // Persisted locators are hints until this process has observed their terminal root and PID/start marker.
@@ -4943,6 +4951,11 @@ async function launch(foreground: boolean, repair: boolean = false): Promise<voi
       runtimeNode = repaired
       ensureLauncher(repaired, (m) => console.log(m))
     }
+    // The managed grid too, in the open, for the daemon this command is about to spawn: it follows
+    // its pin quietly on every start (runForeground), and `--repair` is where a person watches it
+    // happen. A FOREGROUND start becomes the daemon itself and runForeground's own call prints to
+    // this same terminal — once is enough.
+    if (!foreground) await ensureManagedGrid((m) => console.log(m))
   }
   // Foreground mode (supervisor) OR dev/tsx (can't cleanly spawn a .ts detached) → run inline.
   if (foreground || SCRIPT_PATH.endsWith('.ts')) {

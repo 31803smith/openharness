@@ -406,6 +406,14 @@ const envSchema = z.object({
   ADAPTER_RUNTIME_METADATA_URL: z
     .string()
     .default('https://storage.googleapis.com/s3-autonomous-upgrade-3/harness/runtime/metadata.json'),
+  // The managed grid's manifest — its own document, as tmux's is (harness/runtime/tmux/metadata.json):
+  // install.sh slices a manifest by the FIRST platform key it finds, and Node's already has one. The
+  // same entry shape (version/url/sha256/size/archiveRoot), and its version is the PIN: the grid this
+  // build of the CLI drives, moved on purpose by a release and never by grid's own updater — see
+  // ensureManagedGrid() in lib/runtimeInstall.ts, which follows it on every daemon start.
+  ADAPTER_GRID_RUNTIME_METADATA_URL: z
+    .string()
+    .default('https://storage.googleapis.com/s3-autonomous-upgrade-3/harness/runtime/grid/metadata.json'),
   // Where the `harness` launcher lives. Same name (and default) `scripts/install-cli.sh` uses, so a
   // sandboxed install and this process agree on which launcher they are talking about.
   HARNESS_BIN_DIR: z.string().default(adapterBinDir),

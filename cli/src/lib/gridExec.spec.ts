@@ -102,6 +102,10 @@ describe('gridCliPresence', () => {
 
     process.env.HARNESS_GRID_BIN = fakeGrid(join(root, 'elsewhere'))
     expect(gridCliPresence()).toBe('path')
+
+    // Wherever the override lives — even under the runtime dir — it is the developer's, not the pin.
+    process.env.HARNESS_GRID_BIN = fakeGrid(join(runtimeDir, 'grid-dev-build'))
+    expect(gridCliPresence()).toBe('path')
   })
 
   it('is `missing` when there is nothing to run at all', async () => {

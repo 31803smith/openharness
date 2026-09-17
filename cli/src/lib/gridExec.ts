@@ -94,15 +94,15 @@ function capped(sofar: string, chunk: Buffer): string {
 }
 
 /**
- * The `grid` this daemon should run.
+ * The managed grid — the runtime `current-grid` names — or null when there is none this daemon
+ * would trust.
  *
  * Containment-checked exactly like `nodeRuntime.managedNodePath`: a pointer file is only trusted
  * when it names something INSIDE the runtime directory we own, so a corrupted or hostile pointer
- * cannot turn this into "run any executable on the box".
+ * cannot turn this into "run any executable on the box". `runtimeInstall.ts` writes the pointer and
+ * asks this to learn what is already laid down.
  */
-export function gridBinaryPath(processEnv: NodeJS.ProcessEnv = process.env): string {
-  const override = processEnv.HARNESS_GRID_BIN?.trim()
-  if (override) return override
+export function managedGridPath(): string | null {
   try {
     const recorded = readFileSync(join(env.ADAPTER_RUNTIME_DIR, 'current-grid'), 'utf-8').trim()
     if (recorded && recorded.startsWith(env.ADAPTER_RUNTIME_DIR + sep)) {
@@ -110,9 +110,16 @@ export function gridBinaryPath(processEnv: NodeJS.ProcessEnv = process.env): str
       return recorded
     }
   } catch {
-    // absent, unreadable, or not executable → fall through to PATH
+    // absent, unreadable, or not executable → there is no managed grid
   }
-  return GRID_BINARY
+  return null
+}
+
+/** The `grid` this daemon should run: the override, the managed runtime, or the name on PATH. */
+export function gridBinaryPath(processEnv: NodeJS.ProcessEnv = process.env): string {
+  const override = processEnv.HARNESS_GRID_BIN?.trim()
+  if (override) return override
+  return managedGridPath() ?? GRID_BINARY
 }
 
 /** Is there a `grid` to run at all? Asked by reading rather than by spawning, so a missing binary is
@@ -135,6 +142,9 @@ export type GridCliPresence = 'managed' | 'path' | 'missing'
 export function gridCliPresence(processEnv: NodeJS.ProcessEnv = process.env): GridCliPresence {
   const binary = gridBinaryPath(processEnv)
   if (!binaryOnPath(binary, processEnv)) return 'missing'
+  // An override is the developer's wherever it lives — under the runtime dir included. Only what the
+  // pointer names is the pin.
+  if (processEnv.HARNESS_GRID_BIN?.trim()) return 'path'
   return binary.startsWith(env.ADAPTER_RUNTIME_DIR + sep) ? 'managed' : 'path'
 }
 
