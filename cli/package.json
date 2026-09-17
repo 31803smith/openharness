@@ -31,6 +31,7 @@
   "devDependencies": {
     "@types/node": "^20.14.10",
     "@types/ws": "^8.18.1",
+    "@vitest/coverage-v8": "4.1.10",
     "esbuild": "^0.27.2",
     "tsx": "^4.16.2",
     "typescript": "^5.5.3",
@@ -40,10 +41,10 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/autonomous-ai/autonomous-harness.git",
+    "url": "git+https://github.com/autonomous-ai/openharness.git",
     "directory": "cli"
   },
-  "homepage": "https://github.com/autonomous-ai/autonomous-harness/tree/main/cli",
+  "homepage": "https://github.com/autonomous-ai/openharness/tree/main/cli",
   "engines": {
     "node": ">=20"
   }

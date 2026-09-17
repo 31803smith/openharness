@@ -6,8 +6,13 @@ import { readDshRegistry } from './scripts/lib/dshRegistry.mjs'
 // Bake the version in so `node dist/cli.js version` works in the dev/per-file build too (parity with
 // build-bundle.mjs). The bundle build overrides this from ADAPTER_VERSION at release time.
 const version = JSON.parse(readFileSync('package.json', 'utf8')).version
-// The bundled DSH registry (dsh/registry/**/*.json at the repo root) — see src/dsh/registry.ts.
-const dshRegistry = JSON.stringify(readDshRegistry(join('..', 'dsh', 'registry')))
+// The bundled registry (the store/ folders and store/registry at the repo root) — see src/dsh/registry.ts.
+const dshRegistry = JSON.stringify(readDshRegistry(join('..', 'store')))
+// The Harness Compute skill docs, embedded as build-bundle.mjs embeds them — see src/lib/harnessComputeSkill.ts.
+const harnessSkills = JSON.stringify(Object.fromEntries(
+  ['harness-compute.md', 'harness-compute.agent.md']
+    .map((name) => [name, readFileSync(join('..', 'docs', 'skills', name), 'utf8')]),
+))
 
 function getAllTsFiles(dir, fileList = []) {
   const files = readdirSync(dir)
@@ -36,7 +41,11 @@ try {
     target: 'node20',
     sourcemap: true,
     outExtension: { '.js': '.js' },
-    define: { __ADAPTER_VERSION__: JSON.stringify(version), __DSH_REGISTRY__: JSON.stringify(dshRegistry) },
+    define: {
+      __ADAPTER_VERSION__: JSON.stringify(version),
+      __DSH_REGISTRY__: JSON.stringify(dshRegistry),
+      __HARNESS_SKILLS__: JSON.stringify(harnessSkills),
+    },
     logLevel: 'info',
   })
 

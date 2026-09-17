@@ -51,6 +51,47 @@ class ApiClient {
     return unwrapApiResponse(res) as Map<String, dynamic>?;
   }
 
+  // -- the Harness Store: ratings and reviews (control plane, proxied by the local CLI) --
+  Future<Map<String, dynamic>?> storeRatings() async {
+    final res = await _dio.get('/api/store/ratings');
+    return unwrapApiResponse(res) as Map<String, dynamic>?;
+  }
+
+  Future<Map<String, dynamic>?> storeReviews(String harnessId) async {
+    final res = await _dio.get('/api/store/harnesses/$harnessId/reviews');
+    return unwrapApiResponse(res) as Map<String, dynamic>?;
+  }
+
+  /// Write (or rewrite) the signed-in person's review of [harnessId].
+  Future<Map<String, dynamic>?> putStoreReview(
+    String harnessId, {
+    required int rating,
+    String? title,
+    String? body,
+  }) async {
+    final res = await _dio.put(
+      '/api/store/harnesses/$harnessId/review',
+      data: {
+        'rating': rating,
+        if (title != null && title.trim().isNotEmpty) 'title': title.trim(),
+        if (body != null && body.trim().isNotEmpty) 'body': body.trim(),
+      },
+      // The CLI accepts a write only from this app on this computer, as it does
+      // for renaming a machine. Without the header every review was refused
+      // with 403, which the store worded as "Sign in".
+      options: Options(headers: {'x-adapter-local': '1'}),
+    );
+    return unwrapApiResponse(res) as Map<String, dynamic>?;
+  }
+
+  Future<void> deleteStoreReview(String harnessId) async {
+    final res = await _dio.delete(
+      '/api/store/harnesses/$harnessId/review',
+      options: Options(headers: {'x-adapter-local': '1'}),
+    );
+    unwrapApiResponse(res);
+  }
+
   // -- machines (control plane, proxied by the local CLI) --
   /// Whether the last [machines] answer came from the daemon's cache rather than the backend.
   ///

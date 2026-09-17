@@ -22,8 +22,8 @@ Map<String, dynamic> _frame(
   'id': id,
   'name': 'Agent $id',
   'engine': 'claude',
-  'dsh': 'autonomous/copper',
-  'dshName': 'Copper',
+  'dsh': 'autonomous/autonomous-circuit',
+  'dshName': 'Autonomous Circuit',
   'viewerUrl': ?viewerUrl,
   'verdict': ?verdict,
   'terminal': {
@@ -287,4 +287,50 @@ void main() {
     expect(_viewers(app), isEmpty);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'a working agent\'s viewer says Working, keeps the last check for its tooltip, and goes back when the turn ends',
+    (tester) async {
+      final app = createApp();
+      addTearDown(app.dispose);
+      app.stateOf('m')!.nodeOnline = true;
+      final input = <TerminalBinaryFrame>[];
+      app.adoptSessionForTest(terminal('a0', input));
+      await mount(tester, app);
+      await _synced(
+        app,
+        'a0',
+        viewerUrl: 'http://127.0.0.1:4179/',
+        verdict: {'ready': true, 'summary': 'deck.pdf · 5 slides'},
+      );
+      await tester.pump();
+      final status = find.byKey(const ValueKey('pane-status'));
+      expect(find.descendant(of: status, matching: find.text('Ready')), findsOneWidget);
+
+      Future<void> turn(String type) => app.handleEventForTest('m', {
+        'type': type,
+        'agentId': 'a0',
+        'payload': {'agentId': 'a0'},
+      });
+      await turn('turn_started');
+      await tester.pump();
+      expect(find.descendant(of: status, matching: find.text('Working')), findsOneWidget);
+      expect(find.descendant(of: status, matching: find.text('Ready')), findsNothing);
+      expect(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is Tooltip &&
+              widget.message == 'The agent is working · last check: deck.pdf · 5 slides',
+        ),
+        findsOneWidget,
+      );
+
+      await turn('turn_ended');
+      await tester.pump();
+      expect(find.descendant(of: status, matching: find.text('Ready')), findsOneWidget);
+      // Let the tile's working ring wind down.
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(tester.takeException(), isNull);
+    },
+  );
 }

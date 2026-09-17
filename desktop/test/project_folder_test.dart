@@ -34,6 +34,27 @@ void main() {
     },
   );
   test(
+    'a new project is numbered past the names agents already answer to',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'harness-new-project-names-test-',
+      );
+      addTearDown(() => root.delete(recursive: true));
+      await Directory(p.join(root.path, 'harness-42')).create();
+      const request = ProjectFolderRequest.newProject();
+      // The agent in harness-41 answers to harness-42, the one in harness-42 to harness-43.
+      final folder = await request.prepareLocal(
+        projectHome: root.path,
+        namesInUse: const ['harness-42', 'harness-43', 'Lamp', 'agent-7x'],
+      );
+      expect(p.basename(folder), 'harness-44');
+      expect(
+        p.basename(await request.prepareLocal(projectHome: root.path)),
+        'harness-45',
+      );
+    },
+  );
+  test(
     'remote repository uses the existing safe clone on this computer',
     () async {
       final root = await Directory.systemTemp.createTemp(

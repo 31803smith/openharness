@@ -92,6 +92,19 @@ function fakeGridBin(root: string, state: GridOnPath): string {
   return dir
 }
 
+/** The same fake, somewhere PATH does not reach, for the case where the harness is TOLD where
+ *  `grid` is. Its shebang names this process's Node by absolute path, because that case runs with
+ *  an empty PATH — where `#!/usr/bin/env node` would fail for a reason that is not the one under
+ *  test. */
+function fakeGridOutsidePath(root: string): string {
+  const dir = join(root, 'elsewhere')
+  mkdirSync(dir, { recursive: true })
+  const script = join(dir, 'grid')
+  writeFileSync(script, FAKE_GRID.replace('#!/usr/bin/env node', `#!${process.execPath}`))
+  chmodSync(script, 0o755)
+  return script
+}
+
 function recordFile(root: string): string { return join(root, 'grid-invocation.json') }
 
 function readRecord(root: string): { args: string[]; stdin: string; env: Record<string, string> } {
@@ -115,12 +128,18 @@ function seedSession(root: string, overrides: Record<string, unknown> = {}): voi
 }
 
 function envFor(root: string, backendUrl?: string, extra: NodeJS.ProcessEnv = {}, grid: GridOnPath = 'runnable'): NodeJS.ProcessEnv {
+  // The harness resolves `grid` as HARNESS_GRID_BIN → the managed runtime → PATH (lib/gridExec.ts).
+  // The fake below is put on PATH, so the two answers that would outrank it are taken away: a
+  // developer's own override never reaches the child, and the runtime dir is one with no
+  // `current-grid` in it — not this machine's `~/.harness/runtime`.
+  const { HARNESS_GRID_BIN: _developersOwn, ...inherited } = process.env
   return {
-    ...process.env,
+    ...inherited,
     HOME: root,
     HARNESS_AUTH_DIR: join(root, 'auth'),
     ADAPTER_DATA_DIR: join(root, 'data'),
     ADAPTER_CLI_DIR: join(root, 'cli'),
+    ADAPTER_RUNTIME_DIR: join(root, 'runtime'),
     ADAPTER_COMPUTER_ID_FILE: join(root, 'computer-id'),
     ADAPTER_UPDATE_DISABLE: 'true',
     // The fake goes FIRST so it wins over any real `grid` this machine has. Unless it is meant to be
@@ -458,6 +477,26 @@ describe('harness grid login — when the hand-off fails', () => {
     expect(ndjson(result.stdout)).toEqual([
       { type: 'result', status: 'error', code: 'GRID_CLI_MISSING', message: expect.any(String) },
     ])
+  }, 20_000)
+})
+
+describe('harness grid login — which `grid` it runs', () => {
+  /** The hand-off carries the token, so it has to run the binary every other grid call resolves to
+   *  (`gridExec.ts`: override → managed runtime → PATH), never a PATH lookup of its own. The
+   *  resolution order itself is pinned in `gridHandoff.spec.ts`; what this drives through the real
+   *  CLI is that the override is read off THIS process's environment, which is the seam a unit test
+   *  of the module cannot see. */
+  it('runs the grid HARNESS_GRID_BIN names when PATH has none', async () => {
+    const root = tempRoot()
+    seedSession(root)
+    const { base } = await signedInBackend()
+    const elsewhere = fakeGridOutsidePath(root)
+
+    const result = await run(root, ['grid', 'login', '--json'], base, { HARNESS_GRID_BIN: elsewhere }, 'absent')
+
+    expect(result.status).toBe(0)
+    expect(readRecord(root).args).toEqual(['login', '--harness', '--json'])
+    expect(readRecord(root).stdin.trim()).toBe('tok_seeded')
   }, 20_000)
 })
 

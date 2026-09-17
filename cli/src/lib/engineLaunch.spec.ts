@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, it } from 'vitest'
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -14,6 +15,8 @@ import {
   buildEngineLaunchArgv,
   commandAvailableInInteractiveShell,
   firstPromptArgs,
+  gridPanePrelude,
+  harnessNodePrelude,
   namedAgentArgs,
   supportsFirstPrompt,
   supportsNamedAgent,
@@ -24,16 +27,27 @@ import { engineBin } from './engineBin.js'
 import type { EngineInstallRecipe } from './engineInstall.js'
 import { MIN_OPEN_FILES, RAISE_OPEN_FILES_SH } from './openFiles.js'
 
+// The launch script names the `grid` the daemon resolved, and a developer's own HARNESS_GRID_BIN
+// would resolve to THEIR grid. The suite's runtime dir is already a throwaway (vitest.setup.ts), so
+// with the override gone every case below resolves to the bare name.
+const developersOwnGridBin = process.env.HARNESS_GRID_BIN
+beforeEach(() => { delete process.env.HARNESS_GRID_BIN })
+afterAll(() => { if (developersOwnGridBin !== undefined) process.env.HARNESS_GRID_BIN = developersOwnGridBin })
+
+/** The prelude every case below gets by default: no managed grid on this machine, so PATH is left
+ *  alone and only grid's update check is turned off. */
+const GRID_PRELUDE = gridPanePrelude('grid')
+
 describe('buildEngineLaunchArgv', () => {
   it('wraps zsh in its interactive login form and execs the resolved binary', () => {
     expect(buildEngineLaunchArgv('claude', {}, '/bin/zsh')).toEqual([
-      '/bin/zsh', '-lic', `${RAISE_OPEN_FILES_SH}exec "$@"`, 'harness-engine', engineBin('claude'),
+      '/bin/zsh', '-lic', `${RAISE_OPEN_FILES_SH}${GRID_PRELUDE}exec "$@"`, 'harness-engine', engineBin('claude'),
     ])
   })
 
   it('uses Ubuntu bash interactive startup files without making it a login shell', () => {
     expect(buildEngineLaunchArgv('claude', {}, '/bin/bash')).toEqual([
-      '/bin/bash', '-ic', `${RAISE_OPEN_FILES_SH}exec "$@"`, 'harness-engine', engineBin('claude'),
+      '/bin/bash', '-ic', `${RAISE_OPEN_FILES_SH}${GRID_PRELUDE}exec "$@"`, 'harness-engine', engineBin('claude'),
     ])
   })
 
@@ -41,7 +55,7 @@ describe('buildEngineLaunchArgv', () => {
     const argv = buildEngineLaunchArgv('claude', { cwd: '/work/project' }, '/bin/zsh')
     expect(argv).toEqual([
       '/bin/zsh', '-lic',
-      `${RAISE_OPEN_FILES_SH}if ! cd -- "$1"; then printf '%s\\n' 'harness: the selected working directory is unavailable.' >&2; exit 1; fi\n${unreadableCwdGuard(process.platform)}shift\nexec "$@"`,
+      `${RAISE_OPEN_FILES_SH}${GRID_PRELUDE}if ! cd -- "$1"; then printf '%s\\n' 'harness: the selected working directory is unavailable.' >&2; exit 1; fi\n${unreadableCwdGuard(process.platform)}shift\nexec "$@"`,
       'harness-engine', '/work/project', engineBin('claude'),
     ])
   })
@@ -153,6 +167,39 @@ describe('buildEngineLaunchArgv', () => {
       expect(firstHint.length).toBeGreaterThan(0)
       expect(firstHint.length).toBeLessThanOrEqual(120)
     })
+  })
+
+  it('a DSH agent gets Harness\'s Node at the end of a PATH that has none; a plain launch is unchanged', () => {
+    const argv = buildEngineLaunchArgv('claude', { harnessNode: true }, '/bin/zsh', '/opt/harness runtime/bin/node')
+    // On this branch every pane script opens with the open-files raise and the grid prelude; the Node
+    // line lands after them, and a launch without `harnessNode` is exactly the baseline above.
+    expect(argv[2]).toBe(`${RAISE_OPEN_FILES_SH}${GRID_PRELUDE}${harnessNodePrelude('/opt/harness runtime/bin/node')}exec "$@"`)
+    expect(harnessNodePrelude('/opt/harness runtime/bin/node')).toBe(
+      'if ! command -v node >/dev/null 2>&1; then PATH="${PATH:+$PATH:}"\'/opt/harness runtime/bin\'; export PATH; fi\n')
+    expect(buildEngineLaunchArgv('claude', { harnessNode: false }, '/bin/zsh')[2]).toBe(`${RAISE_OPEN_FILES_SH}${GRID_PRELUDE}exec "$@"`)
+  })
+
+  it('the DSH prelude, run by a real shell, reaches the engine\'s PATH only when node is missing', () => {
+    const home = mkdtempSync(join(tmpdir(), 'harness-node-prelude-'))
+    try {
+      const runtimeBin = join(home, 'runtime', 'bin')
+      mkdirSync(runtimeBin, { recursive: true })
+      writeFileSync(join(runtimeBin, 'node'), '#!/bin/sh\n', { mode: 0o755 })
+      const run = (path: string) => {
+        const argv = buildEngineLaunchArgv('claude', { harnessNode: true }, '/bin/sh', join(runtimeBin, 'node'))
+        const script = argv[2]
+        return execFileSync('/bin/sh', ['-c', script, 'harness-engine', '/bin/sh', '-c', 'echo "$PATH"; command -v node'], {
+          env: { HOME: home, PATH: path }, encoding: 'utf8',
+        }).trim().split('\n')
+      }
+      expect(run('/usr/bin:/bin')).toEqual([`/usr/bin:/bin:${runtimeBin}`, join(runtimeBin, 'node')])
+      const own = join(home, 'own')
+      mkdirSync(own)
+      writeFileSync(join(own, 'node'), '#!/bin/sh\n', { mode: 0o755 })
+      expect(run(`${own}:/usr/bin:/bin`)).toEqual([`${own}:/usr/bin:/bin`, join(own, 'node')])
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
   })
 
   it('falls back to direct execution when no absolute shell is available', () => {
@@ -375,6 +422,70 @@ describe('commandAvailableInInteractiveShell', () => {
   })
 })
 
+describe('buildEngineLaunchArgv — the grid the pane finds', () => {
+  /** A runnable `grid` at `dir/grid`. Which one the pane's shell resolves is the assertion. */
+  function gridAt(dir: string): string {
+    mkdirSync(dir, { recursive: true })
+    return executable(dir, 'grid')
+  }
+
+  it('puts the resolved grid first on PATH and turns its update check off, before the engine', () => {
+    const managed = '/opt/harness/runtime/grid-0.3.47-darwin-arm64/grid'
+    const script = buildEngineLaunchArgv('claude', {}, '/bin/zsh', undefined, managed)[2]
+
+    expect(script).toContain(`PATH='/opt/harness/runtime/grid-0.3.47-darwin-arm64'"\${PATH:+:$PATH}"\nexport PATH\n`)
+    expect(script).toContain('GRID_NO_UPDATE_CHECK=1\nexport GRID_NO_UPDATE_CHECK\n')
+    expect(script.indexOf('export GRID_NO_UPDATE_CHECK')).toBeLessThan(script.indexOf('exec "$@"'))
+  })
+
+  it('leaves PATH alone when grid is only a name on it, but still turns the update check off', () => {
+    const script = buildEngineLaunchArgv('claude', {}, '/bin/zsh', undefined, 'grid')[2]
+
+    expect(script).not.toContain('export PATH')
+    expect(script).toContain('GRID_NO_UPDATE_CHECK=1')
+  })
+
+  /** What the engine's own `command -v grid` answers, and what it sees in GRID_NO_UPDATE_CHECK.
+   *
+   *  The pane is the user's login shell, and a `.zshrc` that puts `~/.local/bin` first is ordinary —
+   *  which is where grid's own installer (uv, on a Mac) leaves a `grid`. The prelude runs AFTER the
+   *  startup files, so that one cannot get ahead of the grid the daemon resolved. `bashProbeShell()`
+   *  plays the startup file: it resets PATH to HARNESS_ENGINE_TEST_PATH before the script runs. */
+  async function gridSeenByEngine(gridBinary: string): Promise<{ which: string; updateCheck: string }> {
+    const [shell, flag, script] = buildEngineLaunchArgv('claude', {}, bashProbeShell(), undefined, gridBinary)
+    const { execFile } = await import('node:child_process')
+    const out = await new Promise<string>((resolve, reject) => {
+      execFile(
+        shell,
+        [flag, script, 'harness-engine', '/bin/sh', '-c', 'command -v grid; printf "%s" "$GRID_NO_UPDATE_CHECK"'],
+        { timeout: 10_000 },
+        (error, stdout, stderr) => (error ? reject(new Error(`${error.message}\n${stderr}`)) : resolve(stdout)),
+      )
+    })
+    const [which, updateCheck] = out.split('\n')
+    return { which, updateCheck }
+  }
+
+  it('wins over a grid the shell\'s own startup files put first on PATH', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'harness-pane-grid-'))
+    dirs.push(root)
+    gridAt(join(root, 'users-own'))
+    const managed = gridAt(join(root, 'runtime', 'grid-0.3.47-darwin-arm64'))
+    process.env.HARNESS_ENGINE_TEST_PATH = `${join(root, 'users-own')}:/usr/bin:/bin`
+
+    await expect(gridSeenByEngine(managed)).resolves.toEqual({ which: managed, updateCheck: '1' })
+  })
+
+  it('leaves the user\'s own grid in charge when the daemon resolved nothing better', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'harness-pane-grid-'))
+    dirs.push(root)
+    const own = gridAt(join(root, 'users-own'))
+    process.env.HARNESS_ENGINE_TEST_PATH = `${join(root, 'users-own')}:/usr/bin:/bin`
+
+    await expect(gridSeenByEngine('grid')).resolves.toEqual({ which: own, updateCheck: '1' })
+  })
+})
+
 describe('buildEngineLaunchArgv with installFirst', () => {
   // Everything here is about ONE rule: the engine must not be exec'd after an install that failed.
   // Doing so reproduces the `command not found` this feature exists to replace, with a screenful of
@@ -383,7 +494,7 @@ describe('buildEngineLaunchArgv with installFirst', () => {
     buildEngineLaunchArgv('opencode', { installFirst: install }, '/bin/zsh')[2]
 
   it('leaves the plain launch alone when nothing has to be installed', () => {
-    expect(buildEngineLaunchArgv('opencode', {}, '/bin/zsh')[2]).toBe(`${RAISE_OPEN_FILES_SH}exec "$@"`)
+    expect(buildEngineLaunchArgv('opencode', {}, '/bin/zsh')[2]).toBe(`${RAISE_OPEN_FILES_SH}${GRID_PRELUDE}exec "$@"`)
   })
 
   it('keeps the engine argv positional, so the shell never re-parses a path or a flag', () => {

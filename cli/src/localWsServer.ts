@@ -33,6 +33,8 @@ export interface LocalWsBackend {
   handleLocalBinary: (connId: string, frame: TerminalBinaryClear) => Promise<void>
 }
 
+export type AppPresenceKind = 'open' | 'ping'
+
 export interface LocalWsServerOptions {
   machineId: string
   backend: LocalWsBackend
@@ -47,6 +49,12 @@ export interface LocalWsServerOptions {
   onAppFocus?: (machineId: string, agentId: string) => void
   /** Every agent the window currently has a tile for, across all its machines. */
   onAppPanes?: (agentIds: string[]) => void
+  /**
+   * The window is open: `open` once when it connects this socket, `ping` every 30s after. The one fact
+   * about this desk the backend does want (it is how a person's day gets counted, see backendSocket
+   * sendAppPresence) — so it is the daemon's to forward, throttled, and never the machine's to see.
+   */
+  onAppPresence?: (kind: AppPresenceKind) => void
   /**
    * The window's swarms — its named groups of agents, one of them on screen. The whole list each time,
    * and `null` when the window goes away, so the daemon never keeps describing tabs nobody can see.
@@ -411,6 +419,13 @@ export function attachLocalWsServer(server: http.Server, options: LocalWsServerO
               if (agentId) options.onAppFocus?.(boundMachineId, agentId)
             }
             // Focus is local desk state and must never be forwarded to a remote machine.
+            return
+          }
+          if (parsed?.type === 'app_presence') {
+            const kind = (parsed.payload as Record<string, unknown> | undefined)?.kind
+            if (kind === 'open' || kind === 'ping') options.onAppPresence?.(kind)
+            // Like app_focus: about this desk, never the machine's business — a remote daemon would
+            // only drop it as an unknown frame anyway.
             return
           }
           // Preserve the old dial fallback; terminal streams never establish voice focus.

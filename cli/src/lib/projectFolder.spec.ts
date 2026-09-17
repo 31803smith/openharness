@@ -35,6 +35,14 @@ describe('project folder preparation', () => {
     expect(await readFile(join(root, 'agent-4'), 'utf8')).toBe('keep')
   })
 
+  it('numbers past the agent names in use, so the next agent answers to its own folder', async () => {
+    await mkdir(join(root, 'harness-42'))
+    // The agent in harness-41 is named harness-42 (the old drift) and one agent was renamed.
+    const folder = await prepareProjectFolder({ source: 'new' }, { root, namesInUse: ['harness-42', 'harness-43', 'Lamp', null, undefined, 'agent-7x'] })
+    expect(folder).toBe(join(root, 'harness-44'))
+    expect(await prepareProjectFolder({ source: 'new' }, { root, namesInUse: [] })).toBe(join(root, 'harness-45'))
+  })
+
   it('publishes a complete clone and never replaces existing files or starts a second clone', async () => {
     const project = parseProjectFolder({ projectSource: 'remote', repositoryUrl: 'owner/repo' })!
     const clone = vi.fn(async (url: string, destination: string) => {

@@ -25,7 +25,7 @@ import {
 import { trackSocketLiveness } from './hub.js'
 import { guardedSend, guardedSendJson } from './wsSend.js'
 import { attachNodeRole, PRESENCE_TTL_SEC } from './nodeRole.js'
-import { presenceWriteDue, recordTurnStarted, touchMachineOnlineDay, type PresenceWriteState } from './dailyTracking.js'
+import { presenceWriteDue, recordTurnStarted, touchMachineOnlineDay, touchUserOnlineDay, type PresenceWriteState } from './dailyTracking.js'
 import { recordCreatedAgent, recordDeletedAgent } from './agentTracker.js'
 import type { Frame } from './tunnel.js'
 import { logger } from '../utils/logger.js'
@@ -81,6 +81,20 @@ const CLIENT_VERSION_RE = /^[A-Za-z0-9._+-]{1,64}$/
 // timer of its own — this is just the floor between two Mongo writes, so a machine that is up all
 // day costs ~300 upserts, not ~6000. Connect and close always write regardless.
 const MACHINE_PRESENCE_WRITE_MS = 5 * 60_000
+
+// Daily presence of the PERSON (`user_daily_presence`): the desktop app pings its local daemon every
+// 30s while its loopback socket is up, the daemon forwards at most one `app_presence` up-frame a
+// minute, and this is the floor between two Mongo writes for the `ping` kind. `open` (the app just
+// connected its local socket) always writes — it is what `connections` counts. The web-ws upgrade
+// used to be the source, but the desktop app never dials web-ws directly (only the daemon does, and
+// only to relay a foreign machine), so a single-machine user was invisible there.
+const USER_PRESENCE_WRITE_MS = 5 * 60_000
+// `open` is not floored by the interval above (each one IS a session), but it is floored on its own:
+// the window reconnects its local socket a few times a minute at worst during a daemon restart, and
+// an adapter sending more than that is looping or lying — either way not a session per frame, and
+// not a Mongo upsert per frame.
+const USER_PRESENCE_OPEN_MS = 10_000
+const APP_PRESENCE_KINDS = new Set(['open', 'ping'])
 
 // `turn_started` tap (agent/machine daily presence). `agentId` is a plain token the CLI derives from
 // its registry (a UUID, or the engine's own session id as fallback), so it is bounded and
@@ -264,6 +278,25 @@ async function attachAdapter(ws: WebSocket, machineId: string, userId: string, c
       .catch((err) => logger.warn('machine presence tracking failed', { machineId, kind, error: String(err) }))
       .finally(() => { machinePresenceInFlight = false })
   }
+  // Same shape for the person behind the app: `open` bypasses the interval the way `connect` does
+  // above, `ping` is rate-floored. `userId` is the machine's owner — the only person a desktop app
+  // on this computer can be signed in as.
+  const lastUserPresence: PresenceWriteState = { dayKey: null, wroteAt: 0 }
+  let userPresenceInFlight = false
+  let lastUserOpenAt = 0
+  const touchUserPresence = (kind: 'open' | 'ping'): void => {
+    const now = new Date()
+    if (kind === 'ping' && (userPresenceInFlight || !presenceWriteDue(lastUserPresence, now, USER_PRESENCE_WRITE_MS))) return
+    if (kind === 'open') {
+      if (now.getTime() - lastUserOpenAt < USER_PRESENCE_OPEN_MS) return
+      lastUserOpenAt = now.getTime()
+    }
+    userPresenceInFlight = true
+    touchUserOnlineDay(userId, now, { isNewConnection: kind === 'open' })
+      .then(() => { lastUserPresence.dayKey = utcDayKey(now); lastUserPresence.wroteAt = now.getTime() })
+      .catch((err) => logger.warn('user presence tracking failed', { machineId, userId, kind, error: String(err) }))
+      .finally(() => { userPresenceInFlight = false })
+  }
 
   // The node role — down subscription, presence, `__clients` resync, node_status — is shared with
   // every other backer of a machine and lives in nodeRole.ts. Only the delivery and teardown are
@@ -379,6 +412,15 @@ async function attachAdapter(ws: WebSocket, machineId: string, userId: string, c
           commanderEligible: false,
           frame: { type: 'machine_app_status', payload: { engine, state } } as unknown as Frame,
         })
+        return
+      }
+      // The desktop app's own presence ping, relayed by the daemon (cli localWsServer → backendSocket
+      // sendAppPresence). Bookkeeping only — absorbed here, never published: no client has any use for
+      // it and an unknown frame type must not reach the firmware.
+      if (app.type === 'app_presence') {
+        const kind = (app.payload as { kind?: unknown } | undefined)?.kind
+        if (typeof kind !== 'string' || !APP_PRESENCE_KINDS.has(kind)) return
+        touchUserPresence(kind as 'open' | 'ping')
         return
       }
       // Hub tap (mirrors managerWs): keep `machine_agents` in sync from the adapter's agent

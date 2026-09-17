@@ -18,7 +18,7 @@ import 'package:harness/ws/ws_conn.dart';
 /// rather than the dialog. Anything else asked of it (a terminal open after the create, say) is
 /// left pending, which is what a machine that has not answered yet looks like.
 class _Conn extends WsConn {
-  _Conn({required this.engines, required this.gridName})
+  _Conn({required this.engines, required this.gridName, this.gridCli})
     : super(
         wsBaseUrl: 'ws://fixture.invalid',
         autonomousEnv: 'test',
@@ -31,6 +31,10 @@ class _Conn extends WsConn {
 
   final List<Map<String, Object?>> engines;
   final String? gridName;
+
+  /// The daemon's word on the machine's `grid` binary (`managed`/`path`/`missing`); null = an
+  /// older daemon that sends no such field.
+  final String? gridCli;
 
   /// What the daemon names the created agent. A daemon that knows `name` echoes it; one that
   /// predates the field names the pane itself — the shape of an old Harness on that machine.
@@ -49,7 +53,11 @@ class _Conn extends WsConn {
       case 'engines_probe':
         return Future.value({'engines': engines});
       case 'grid_models_list':
-        return Future.value({'gridName': gridName, 'models': <Object?>[]});
+        return Future.value({
+          'gridName': gridName,
+          'models': <Object?>[],
+          if (gridCli != null) 'gridCli': gridCli,
+        });
       case 'fs_list_dir':
         return Future.value({
           'path': '/home/remote',
@@ -80,10 +88,11 @@ void main() {
   void build({
     List<Map<String, Object?>> engines = _installed,
     String? gridName = 'someone-7f3a91c4',
+    String? gridCli,
     ConfigStore? configStore,
     bool local = true,
   }) {
-    conn = _Conn(engines: engines, gridName: gridName);
+    conn = _Conn(engines: engines, gridName: gridName, gridCli: gridCli);
     notifier = AppNotifier(
       config: AppConfig.dev,
       authSession: AuthSession(),
@@ -316,6 +325,25 @@ void main() {
       'pane instead. Update Harness there and try again.',
     );
   });
+
+  testWidgets(
+    'a machine with no Harness Compute binary is said, and disables Start',
+    (tester) async {
+      // `gridCli: missing` is the daemon saying there is no `grid` on this computer to serve with —
+      // the daemon installs one on start, so this is a machine whose install did not land. Said as
+      // the feature's name, never the binary's; the account's grid is not the dialog's business.
+      build(gridCli: 'missing', gridName: null);
+      await open(tester);
+
+      expect(
+        statusText(tester),
+        "Harness Compute isn't installed on this machine.",
+      );
+      expect(find.textContaining('grid'), findsNothing);
+      expect(find.textContaining('sign in'), findsNothing);
+      expect(startEnabled(tester), isFalse);
+    },
+  );
 
   testWidgets('Not now creates nothing', (tester) async {
     await open(tester);

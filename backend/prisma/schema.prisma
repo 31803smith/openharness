@@ -429,8 +429,12 @@ model AnalyticsMachineState {
 /// collector-reported; derived directly from the relays: web-ws in src/lib/webWs.ts, device-ws in
 /// src/lib/deviceWs.ts, adapter-ws in src/lib/adapterWs.ts).
 
-/// Per-day record of whether a user's desktop app was connected to the web-ws relay. One row per
-/// (user, UTC day). A connection spanning midnight produces a row for each day it touches.
+/// Per-day record of whether a user had the desktop app open. One row per (user, UTC day). The
+/// source is the app's own `app_presence` ping to its local `harness` daemon, which the daemon
+/// forwards over adapter-ws (src/lib/adapterWs.ts) — NOT the web-ws upgrade, which the app never
+/// performs itself (only the daemon does, per foreign machine it relays) and which therefore missed
+/// every single-machine user. `connections` = times the app opened its local socket that day; a
+/// session spanning midnight produces a row for each day it touches with `connections: 0`.
 model UserDailyPresence {
   id          String   @id @default(auto()) @map("_id") @db.ObjectId
   userId      String
@@ -528,4 +532,26 @@ model AgentDailyPresence {
   @@index([machineId, dayUtc])
   @@index([userId, dayUtc])
   @@map("agent_daily_presence")
+}
+
+/// One person's review of one harness in the Harness Store — a star rating and, optionally, a title
+/// and some words. One row per (harness, user): writing again replaces it, so a rating cannot be
+/// stacked. `harnessId` is the registry id (`owner/name`), never validated against the registry here
+/// — the registry lives in the CLI, and a review of a harness the backend has not heard of is still a
+/// review. `authorName` is a snapshot of the user's name at write time; the store shows it, never
+/// the email.
+model HarnessReview {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  harnessId  String
+  userId     String // User.id
+  authorName String
+  rating     Int // 1..5
+  title      String?
+  body       String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([harnessId, userId])
+  @@index([harnessId])
+  @@map("harness_reviews")
 }

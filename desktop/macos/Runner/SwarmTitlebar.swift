@@ -15,7 +15,6 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
   private var canReopen = false
   private var canFind = false
   private var canClosePane = false
-  private var canCreateSwarm = false
   private let historyMenu = NSMenu(title: "History")
   private var canGoBack = false
   private var canGoForward = false
@@ -53,8 +52,6 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
         self.canClosePane = state["canClosePane"] as? Bool == true
         self.canGoBack = state["canGoBack"] as? Bool == true
         self.canGoForward = state["canGoForward"] as? Bool == true
-        self.canCreateSwarm = state["canOpenNewTab"] as? Bool
-          ?? ((state["tabs"] as? [Any] ?? []).count < 24)
         self.updateHistory(state["history"] as? [[String: Any]] ?? [], closed: state["closedHistory"] as? [[String: Any]] ?? [])
         self.strip.update(state)
         self.window?.backgroundColor = self.strip.palette.tabBar
@@ -635,7 +632,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     }
     return actionsEnabled && (action != "reopen" || canReopen) &&
       (action != "historyBack" || canGoBack) && (action != "historyForward" || canGoForward) &&
-      (action != "new" || canCreateSwarm) && (action != "closePane" || canClosePane) &&
+      (action != "closePane" || canClosePane) &&
       (!["findTerminal", "findNext", "findPrevious", "splitRight", "splitDown", "zoomPane", "pinPane"].contains(action) || canFind)
   }
 
@@ -1182,10 +1179,28 @@ private final class SwarmActionButton: NSButton {
   }
 }
 
+/// The strip's scroller. A mouse wheel turns vertically, the strip runs sideways: turn the one into the
+/// other while there are more tabs than fit, as Safari and Chrome do over their tab bars.
+private final class SwarmStripScrollView: NSScrollView {
+  override func scrollWheel(with event: NSEvent) {
+    let dx = event.scrollingDeltaX, dy = event.scrollingDeltaY
+    guard abs(dy) > abs(dx), let document = documentView,
+          document.frame.width > contentView.bounds.width + 0.5 else {
+      super.scrollWheel(with: event)
+      return
+    }
+    var origin = contentView.bounds.origin
+    let step = event.hasPreciseScrollingDeltas ? dy : dy * 18
+    origin.x = min(max(0, origin.x - step), document.frame.width - contentView.bounds.width)
+    contentView.scroll(to: origin)
+    reflectScrolledClipView(contentView)
+  }
+}
+
 private final class SwarmTabStrip: NSView {
   private(set) var palette = SwarmNativePalette()
   var emit: ((String, Any?) -> Void)?
-  private let scroll = NSScrollView()
+  private let scroll = SwarmStripScrollView()
   private let document = NSView()
   fileprivate let newButton = SwarmIconButton()
   fileprivate let notificationButton = SwarmNotificationButton()
@@ -1315,7 +1330,11 @@ private final class SwarmTabStrip: NSView {
       tab.palette = palette
       tab.name = row["name"] as? String ?? "New Tab"
       let count = row["agentCount"] as? Int ?? 0
-      tab.icon = count == 1
+      // The Harness Store tab holds no agents; without its own mark it would wear New Tab's plus.
+      let store = row["kind"] as? String == "store"
+      tab.icon = store
+        ? icons.image(engine: "store", asset: row["iconAsset"] as? String)
+        : count == 1
         ? icons.image(engine: row["engine"] as? String, asset: row["iconAsset"] as? String)
         : count > 1
         ? SwarmIdentity.menuIcon
@@ -1337,7 +1356,7 @@ private final class SwarmTabStrip: NSView {
     applyShortcutBadges()
     // Moving frames alone leaves AppKit's child traversal in insertion order.
     document.setAccessibilityChildren(tabs)
-    newButton.isEnabled = actionsEnabled && (state["canOpenNewTab"] as? Bool ?? (tabs.count < 24))
+    newButton.isEnabled = actionsEnabled
     notificationButton.isEnabled = actionsEnabled
     openButton.isEnabled = actionsEnabled
     createButton.isEnabled = actionsEnabled
@@ -1376,7 +1395,9 @@ private final class SwarmTabStrip: NSView {
     // (owner, 2026-09-15); tabs shrink and then scroll instead of taking it.
     let grip: CGFloat = spacious ? 84 : 44
     let available = max(32, bounds.width - leading - actionsWidth - (newButton.isHidden ? 0 : 36) - grip)
-    let width = min(220, max(min(132, available), available / CGFloat(max(1, tabs.count))))
+    // As in Chrome, tabs keep shrinking until they are only their mark, so thirty tabs still sit in
+    // one strip with nothing hidden; only past that does the strip scroll (the wheel scrolls it).
+    let width = min(220, max(min(SwarmTabButton.minimumWidth, available), available / CGFloat(max(1, tabs.count))))
     let occupied = min(available, CGFloat(tabs.count) * width)
     scroll.frame = NSRect(x: leading, y: 0, width: occupied, height: bounds.height)
     document.frame = NSRect(x: 0, y: 0, width: max(occupied, CGFloat(tabs.count) * width), height: bounds.height)
@@ -1527,11 +1548,21 @@ private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidati
     updateAccessibility()
   }
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+  /// Narrowest a tab gets before the strip scrolls: its mark alone, like a Chrome tab among dozens.
+  static let minimumWidth: CGFloat = 44
+  /// Below this a tab shows only its mark: no name, no close button (⌘W and the tab's menu still close it).
+  static let compactWidth: CGFloat = 96
+  private var compact: Bool { bounds.width < SwarmTabButton.compactWidth }
   override func layout() {
     super.layout()
-    iconView.frame = NSRect(x: 22, y: contentCenterY - 8, width: 16, height: 16)
-    selectButton.frame = NSRect(x: 0, y: 0, width: max(0, bounds.width - 36), height: bounds.height)
+    let compact = self.compact
+    iconView.frame = compact
+      ? NSRect(x: ((bounds.width - 16) / 2).rounded(), y: contentCenterY - 8, width: 16, height: 16)
+      : NSRect(x: 22, y: contentCenterY - 8, width: 16, height: 16)
+    closeButton.isHidden = compact
+    selectButton.frame = NSRect(x: 0, y: 0, width: max(0, compact ? bounds.width : bounds.width - 36), height: bounds.height)
     closeButton.frame = NSRect(x: bounds.width - 36, y: contentCenterY - 12, width: 24, height: 24)
+    toolTip = compact ? name : nil
   }
   override func updateTrackingAreas() {
     super.updateTrackingAreas()
@@ -1594,15 +1625,21 @@ private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidati
       NSBezierPath(roundedRect: NSRect(x: bounds.width - 0.5, y: contentCenterY - 8, width: 1, height: 16),
         xRadius: 0.5, yRadius: 0.5).fill()
     }
-    let label = self.label
-    let labelHeight = label.size().height
-    label.draw(in: NSRect(x: 46, y: contentCenterY - labelHeight / 2,
-      width: bounds.width - 88, height: labelHeight))
+    let compact = self.compact
+    if !compact {
+      let label = self.label
+      let labelHeight = label.size().height
+      label.draw(in: NSRect(x: 46, y: contentCenterY - labelHeight / 2,
+        width: bounds.width - 88, height: labelHeight))
+    }
     if attention {
       NSColor.systemOrange.setFill()
-      NSBezierPath(ovalIn: NSRect(x: 13, y: contentCenterY - 2, width: 4, height: 4)).fill()
+      let dot = compact
+        ? NSRect(x: iconView.frame.maxX - 1, y: iconView.frame.maxY - 3, width: 5, height: 5)
+        : NSRect(x: 13, y: contentCenterY - 2, width: 4, height: 4)
+      NSBezierPath(ovalIn: dot).fill()
     }
-    if let shortcut {
+    if let shortcut, !compact {
       let paragraph = NSMutableParagraphStyle()
       paragraph.alignment = .right
       let badge = NSAttributedString(string: "⌘\(shortcut)",

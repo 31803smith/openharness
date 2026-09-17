@@ -10,6 +10,7 @@ import { registry, type RegisteredSession } from './lib/registry.js'
 import * as mediaPreview from './lib/mediaPreview.js'
 import * as projectFolder from './lib/projectFolder.js'
 import * as projectPreview from './lib/projectPreview.js'
+import * as storeCatalog from './dsh/catalog.js'
 import { randomUUID } from 'node:crypto'
 import { fakeGridAnswers, installFakeGrid, type FakeGrid } from './lib/__fixtures__/fakeGrid.js'
 import { clearGridMcpUrlCache } from './lib/gridMcpUrl.js'
@@ -659,6 +660,48 @@ describe('BackendSocket outbound queue', () => {
     await socket.stop()
   })
 
+  it('dsh_remove uninstalls through the daemon and refuses a malformed id', async () => {
+    const socket = new BackendSocket('token')
+    const frames: Array<Record<string, unknown>> = []
+    socket.registerLocalClient('local:store', { sendFrame: (frame) => { frames.push(frame); return true }, sendBinary: () => true })
+    const removed: string[] = []
+    socket.onDshRemove = (id) => { removed.push(id); return id === 'autonomous/marp' ? { ok: true } : { ok: false, error: 'NOT_INSTALLED', detail: `${id} is not installed` } }
+
+    socket.handleLocalFrame('local:store', { type: 'dsh_remove', payload: { requestId: 'rm-1', id: 'autonomous/marp' } })
+    socket.handleLocalFrame('local:store', { type: 'dsh_remove', payload: { requestId: 'rm-2', id: 'autonomous/none' } })
+    socket.handleLocalFrame('local:store', { type: 'dsh_remove', payload: { requestId: 'rm-3', id: '../../etc' } })
+
+    await vi.waitFor(() => expect(frames.filter((f) => f.type === 'dsh_remove_result')).toHaveLength(3))
+    const results = frames.filter((f) => f.type === 'dsh_remove_result').map((f) => f.payload as Record<string, unknown>)
+    expect(results).toEqual([
+      expect.objectContaining({ requestId: 'rm-1', ok: true, id: 'autonomous/marp' }),
+      expect.objectContaining({ requestId: 'rm-2', error: 'NOT_INSTALLED' }),
+      expect.objectContaining({ requestId: 'rm-3', error: 'INVALID_DSH' }),
+    ])
+    expect(removed).toEqual(['autonomous/marp', 'autonomous/none'])
+    await socket.unregisterLocalClient('local:store')
+    await socket.stop()
+  })
+
+  it('serves live catalog entries without making unrelated RPCs wait for catalog I/O', async () => {
+    let finish!: (entries: Awaited<ReturnType<typeof storeCatalog.refreshDshRegistry>>) => void
+    vi.spyOn(storeCatalog, 'refreshDshRegistry').mockImplementation(() => new Promise(resolve => { finish = resolve }))
+    const socket = new BackendSocket('token')
+    socket.runtimeModelsProvider = async () => []
+    const frames: Array<Record<string, unknown>> = []
+    socket.registerLocalClient('local:catalog', { sendFrame: frame => { frames.push(frame); return true }, sendBinary: () => true })
+    socket.handleLocalFrame('local:catalog', { type: 'dsh_list', payload: { requestId: 'catalog' } })
+    socket.handleLocalFrame('local:catalog', { type: 'models_list', payload: { requestId: 'models' } })
+    await vi.waitFor(() => expect(frames.some(frame => frame.type === 'models_list_result')).toBe(true))
+    expect(frames.some(frame => frame.type === 'dsh_list_result')).toBe(false)
+    finish([{ id: 'acme/published-today', name: 'Published today', engine: 'claude', repo: 'https://example.test/project', tier: 2, viewerUse: 'acme/viewer' }])
+    await vi.waitFor(() => expect(frames).toContainEqual({
+      type: 'dsh_list_result', payload: { requestId: 'catalog', dsh: [expect.objectContaining({ id: 'acme/published-today', installed: false, viewerUse: 'acme/viewer' })] },
+    }))
+    await socket.unregisterLocalClient('local:catalog')
+    await socket.stop()
+  })
+
   it('does not let a slow engines_probe block agent_create on the same connection', async () => {
     const socket = new BackendSocket('token')
     const frames: Array<Record<string, unknown>> = []
@@ -946,6 +989,35 @@ describe('BackendSocket outbound queue', () => {
 
     await socket.unregisterLocalClient('local:terminal')
     expect(closeConnection).toHaveBeenCalledWith('local:terminal', 'local client disconnected', false)
+    await socket.stop()
+  })
+
+  it('forwards the window\'s presence: open at once, ping once a minute, nothing while offline', async () => {
+    vi.useFakeTimers()
+    const socket = new BackendSocket('token')
+    const presence = (ws: InstanceType<typeof wsMock.MockWebSocket>) => parseSent(ws)
+      .filter((m) => (m.frame as { type?: string } | undefined)?.type === 'app_presence')
+
+    // Signed out / not yet dialed: dropped, never queued behind real frames.
+    expect(socket.sendAppPresence('open')).toBe(false)
+    socket.connect()
+    const ws = wsMock.instances[0]
+    expect(socket.sendAppPresence('ping')).toBe(false)
+    ws.open()
+    expect(ws.sent.filter((s) => s.includes('app_presence'))).toHaveLength(0)
+
+    expect(socket.sendAppPresence('open')).toBe(true)
+    // 30s later the window pings again — inside the floor, held back.
+    vi.advanceTimersByTime(30_000)
+    expect(socket.sendAppPresence('ping')).toBe(false)
+    vi.advanceTimersByTime(30_000)
+    expect(socket.sendAppPresence('ping')).toBe(true)
+    // A second window opening is a session in its own right, floor or not.
+    expect(socket.sendAppPresence('open')).toBe(true)
+    expect(presence(ws).map((m) => (m.frame as { payload: { kind: string } }).payload.kind)).toEqual(['open', 'ping', 'open'])
+    // Bookkeeping about the person, for the backend alone: never fanned out to a client.
+    expect(presence(ws)[0]).toMatchObject({ t: 'up', webEligible: false, commanderEligible: false })
+
     await socket.stop()
   })
 
@@ -1466,6 +1538,45 @@ describe('agent_create with a prompt, a name and a named agent', () => {
       expect(reply).toMatchObject({ error: 'INVALID_AGENT' })
       expect(seen).toHaveLength(0)
     }
+  })
+})
+
+/**
+ * The picker and the Local model dialog gate on `gridName` — whether the ACCOUNT has a grid — and
+ * had nothing to tell them whether the MACHINE has a `grid` to run at all. A user with no CLI got a
+ * dialog that started an agent, which died at the skill's second step. The answer travels beside
+ * the list, as `localModelEngines` does, and says which grid it is: the managed runtime, one found
+ * on PATH, or none.
+ */
+describe('grid_models_list says whether this machine has a grid CLI', () => {
+  const { gridName: GRID_NAME, plan } = fakeGridAnswers()
+
+  let fake: FakeGrid | null = null
+  afterEach(async () => {
+    fake?.dispose()
+    fake = null
+    wsMock.instances.length = 0
+  })
+
+  async function listModels(): Promise<Record<string, unknown> | undefined> {
+    const socket = new BackendSocket('token')
+    socket.connect()
+    const ws = wsMock.instances[0]
+    ws.open()
+    ws.message({ t: 'down', connId: 'web-1', frame: { type: 'machine_meta', payload: { name: 'mac', gridName: GRID_NAME } } })
+    ws.message({ t: 'down', connId: 'web-1', frame: { type: 'grid_models_list', payload: { requestId: 'r' } } })
+    await vi.waitFor(() => expect(parseSent(ws).some((item) => (item.frame as { type?: string } | undefined)?.type === 'grid_models_list_result')).toBe(true), { timeout: 10_000 })
+    const reply = parseSent(ws)
+      .map((item) => item.frame as { type?: string; payload?: Record<string, unknown> } | undefined)
+      .find((frame) => frame?.type === 'grid_models_list_result')
+    await socket.stop()
+    return reply?.payload
+  }
+
+  it('names the grid it would run — the fixture is a developer override, so `path`', async () => {
+    fake = installFakeGrid(plan)
+
+    expect(await listModels()).toMatchObject({ gridName: GRID_NAME, gridCli: 'path' })
   })
 })
 

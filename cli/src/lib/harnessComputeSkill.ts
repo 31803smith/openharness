@@ -22,16 +22,31 @@ import { env } from '../config/env.js'
 
 const cliDir = dirname(fileURLToPath(import.meta.url))
 
-// Same dual-path pattern hooks.ts uses for notify.mjs (import.meta.url is the REAL executing
-// file at runtime):
-//  - packaged/bundled: cli.js at ~/.harness/cli/cli.js → the docs ship as a SIBLING `skills/` dir
-//    (build-bundle.mjs copies them there, same as it copies notify.mjs).
-//  - dev/per-file: hooks live at <appRoot>/cli/src/lib/ → the docs are three levels up, at
-//    <appRoot>/docs/skills/.
-function skillSourcePath(name: string): string {
-  const packaged = join(cliDir, 'skills', name)
-  const dev = join(cliDir, '..', '..', '..', 'docs', 'skills', name)
-  return [packaged, dev].find(existsSync) ?? dev
+/**
+ * The docs as the build embedded them — a JSON object of file name → text, injected by esbuild
+ * `define` in build-bundle.mjs and build.mjs the way `__DSH_REGISTRY__` is (dsh/registry.ts).
+ *
+ * INSIDE cli.js rather than shipped as files beside it, because nothing ships files beside cli.js:
+ * upload-cli.sh publishes `cli.js` and `notify.mjs` and nothing else, install.sh fetches those two,
+ * the self-updater swaps those two. The `dist/skills/` the bundle used to lay down reached no
+ * machine — a daemon installed from the CDN logged "failed to read Harness Compute skill sources"
+ * and installed nothing, silently, while a working tree that happened to have a `skills/` beside its
+ * cli.js looked fine. Embedded, the docs travel wherever cli.js does and can never be a version
+ * behind the code that installs them.
+ */
+declare const __HARNESS_SKILLS__: string | undefined
+
+function embeddedSkill(name: string): string | null {
+  if (typeof __HARNESS_SKILLS__ === 'undefined') return null
+  const skills = JSON.parse(__HARNESS_SKILLS__) as Record<string, unknown>
+  const text = skills[name]
+  return typeof text === 'string' ? text : null
+}
+
+/** Dev, per-file (tsx, vitest): this file runs from <appRoot>/cli/src/lib/, and the docs are three
+ *  levels up, at <appRoot>/docs/skills/. Nothing is embedded there, and nothing needs to be. */
+function devSkillPath(name: string): string {
+  return join(cliDir, '..', '..', '..', 'docs', 'skills', name)
 }
 
 const SKILL_PATH = join(env.OPENCODE_SKILL_DIR, 'harness-compute', 'SKILL.md')
@@ -72,10 +87,12 @@ function installFile(label: string, target: string, source: string): void {
   }
 }
 
-/** The doc at `name` under docs/skills/, or null (logged) when it cannot be read. */
+/** The doc `name`: what the build embedded, else the file under docs/skills/ (dev), else null (logged). */
 function readSkillSource(label: string, name: string): string | null {
+  const embedded = embeddedSkill(name)
+  if (embedded !== null) return embedded
   try {
-    return readFileSync(skillSourcePath(name), 'utf-8')
+    return readFileSync(devSkillPath(name), 'utf-8')
   } catch (err) {
     // Best-effort, same posture as every other engine install in hooks.ts: a missing or unreadable
     // source must never fail `harness start`, only skip this one file.

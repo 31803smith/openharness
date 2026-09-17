@@ -79,8 +79,9 @@ import { prepareCodexResume } from './engines/codex/portableHistory.js'
 import { buildHarnessSessionLabel } from './lib/harnessSessionLabel.js'
 import { installedDsh } from './dsh/installed.js'
 import { dshVerdictPath } from './dsh/manifest.js'
-import { registryEntry } from './dsh/registry.js'
-import { installDsh, resolveInstallSource } from './dsh/install.js'
+import { catalogEntry, refreshDshRegistry } from './dsh/catalog.js'
+import { installDsh, resolveInstallSource, removeDsh } from './dsh/install.js'
+import { preTrustClaudeProject, preTrustCodexProject } from './lib/claudeTrust.js'
 import { materializeWorkspace } from './dsh/materialize.js'
 import { dshLaunch } from './dsh/launch.js'
 import { DshViewerManager } from './dsh/viewer.js'
@@ -149,7 +150,7 @@ import {
   type Poller, type UpdateEntry,
 } from './lib/selfUpdate.js'
 import { managedNodePath } from './lib/nodeRuntime.js'
-import { ensureLauncher, ensureManagedRuntime } from './lib/runtimeInstall.js'
+import { ensureLauncher, ensureManagedGrid, ensureManagedRuntime } from './lib/runtimeInstall.js'
 import { stat } from 'fs/promises'
 import { CodexNormalizer, codexTaskError, lastCodexTurnText } from './engines/codex/normalizer.js'
 import { codexSubagentResolverFor } from './engines/codex/subagent.js'
@@ -1103,6 +1104,14 @@ async function runForeground(session: AuthSession): Promise<void> {
     console.error('[fatal-guard] uncaughtException:', err instanceof Error ? (err.stack ?? err.message) : err)
   })
 
+  // The managed grid follows its pin on EVERY daemon start — this one, and the restart a self-update
+  // ends in — not only on `--repair`: the pin is expected to move, and a machine installed last month
+  // has to notice. Not awaited: a download must never hold the control port back, and every grid
+  // call resolves the binary afresh (`gridBinaryPath`), so whatever lands is picked up as it lands.
+  // Best-effort by construction — it returns rather than throws — and the fatal guard above is the
+  // net under the promise itself.
+  void ensureManagedGrid((m) => console.log(`[grid-runtime] ${m}`))
+
   registry.load()
   // Persisted locators are hints until this process has observed their terminal root and PID/start marker.
   // Mark them dormant before the backend socket can publish anything; the first authoritative reconcile
@@ -1445,7 +1454,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     return {
       // The current id, so a face drawn by id survives a rename the agent predates.
       id: installed?.id ?? s.dsh,
-      name: installed?.manifest.name ?? registryEntry(s.dsh)?.name ?? null,
+      name: installed?.manifest.name ?? catalogEntry(s.dsh)?.name ?? null,
       viewerUrl: state?.viewerUrl ?? null,
       verdict: state?.verdict ?? null,
     }
@@ -2179,7 +2188,10 @@ async function runForeground(session: AuthSession): Promise<void> {
   }
   backend.runtimeProfileProvider = (session) => runtimeProfiles.selectedModel(session)
   backend.dshFrameProvider = dshFrameContext
+  backend.onDshRemove = (id) => removeDsh(id)
   backend.onDshInstall = async ({ id, url, ref }, progress) => {
+    const catalog = new Map((await refreshDshRegistry(!!id && !catalogEntry(id))).map(entry => [entry.id, entry]))
+    if (id && !catalog.has(id)) return { ok: false, error: 'INVALID_DSH', detail: `${id} is not in this machine's Store catalog` }
     const resolved = id ? resolveInstallSource(id) : url ? { source: url, ref } : null
     if (!resolved) return { ok: false, error: 'INVALID_DSH', detail: `${id ?? url} is not a known harness` }
     // NARRATE THE LINES, NOT ONLY THE PHASES. A toolchain setup is minutes of npm and uv output, and
@@ -2198,7 +2210,10 @@ async function runForeground(session: AuthSession): Promise<void> {
     }
     const result = await installDsh({
       source: resolved.source,
+      expectedId: id,
+      registry: dependencyId => catalog.get(dependencyId),
       ref: ref ?? resolved.ref,
+      path: 'path' in resolved ? resolved.path : undefined,
       onProgress: (p) => {
         if (timer) { clearTimeout(timer); timer = null }
         pendingLine = null
@@ -3223,6 +3238,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     onMachineRename: (machineId, name) => proxyBackend('PATCH', `/api/machines/${encodeURIComponent(machineId)}`, { name }),
     onMachineDelete: (machineId) => proxyBackend('DELETE', `/api/machines/${encodeURIComponent(machineId)}`),
     onAuthMe: () => proxyBackend('GET', '/api/auth/me'),
+    onStore: (method, path, body) => proxyBackend(method, path, body),
   })
   // Claim the pid file for OURSELVES, and only now that the control port is bound. It used to be
   // written by whoever spawned us — so a parent that died mid-handover left a daemon nothing could
@@ -3281,6 +3297,9 @@ async function runForeground(session: AuthSession): Promise<void> {
     // The window's swarms. Relayed to the dial as its own list — the dial names the one on screen above
     // the agent and offers the rest — and, through setSwarms, what makes the desk strict: a present
     // window with an empty swarm is an empty carousel, not the whole machine.
+    // The window's "I am open" — the only desk fact that goes UP. Throttled and dropped-when-offline
+    // inside sendAppPresence, so a guest daemon costs nothing here.
+    onAppPresence: (kind) => { backend.sendAppPresence(kind) },
     onAppSwarms: (swarms) => {
       cableHostRef?.setSwarms(swarms)
       void cableRef?.syncSwarms()
@@ -3689,6 +3708,7 @@ async function runForeground(session: AuthSession): Promise<void> {
           ...(entry.cwd ? { cwd: entry.cwd } : {}),
           ...(extraArgs.length ? { extraArgs } : {}),
           ...(clearEnv.length ? { clearEnv } : {}),
+          ...(launchEnv.HARNESS_DSH ? { harnessNode: true } : {}),
         })
         return { argv, ...(Object.keys(launchEnv).length ? { env: launchEnv } : {}) }
       },
@@ -3873,6 +3893,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     if (dsh) {
       const installed = installedDsh(dsh)
       if (!installed) return { ok: false, error: 'INVALID_DSH', detail: `${dsh} is not installed on this machine` }
+      if (installed.manifest.kind === 'viewer') return { ok: false, error: 'INVALID_DSH', detail: `${dsh} is a viewer package, not an agent` }
       if (installed.manifest.engine !== engine) {
         return { ok: false, error: 'INVALID_DSH', detail: `${dsh} runs on ${installed.manifest.engine}, not ${engine}` }
       }
@@ -3887,6 +3908,13 @@ async function runForeground(session: AuthSession): Promise<void> {
         const materialized = await materializeWorkspace(installed, cwd)
         for (const warning of materialized.warnings) console.warn(`[dsh] ${dsh} materialize · ${warning}`)
         console.log(`[dsh] ${dsh} materialized ${cwd} · created ${materialized.created.length} · kept ${materialized.kept.length}`)
+        // The template just went in: the folder is the harness's, and Claude Code need not ask.
+        if (materialized.created.some((item) => item.startsWith('template'))) {
+          try {
+            if (engine === 'claude') preTrustClaudeProject(cwd)
+            if (engine === 'codex') preTrustCodexProject(cwd)
+          } catch (error) { console.warn(`[dsh] pre-trust ${cwd} · ${error instanceof Error ? error.message : error}`) }
+        }
       } catch (error) {
         const detail = `could not prepare the workspace for ${dsh} · ${error instanceof Error ? error.message : error}`
         console.warn(`[agent] create ${dsh} refused · ${detail}`)
@@ -3960,7 +3988,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     const extraArgs = [...(gridLaunch?.args ?? []), ...dshArgs, ...(agent ? namedAgentArgs(engine, agent) : [])]
     // The first prompt is a launch option only — never part of `extraArgs`, which the registry row
     // carries into a relaunch (engineLaunch.ts, `firstPrompt`).
-    const launchOptions = { bypassPermission, extraArgs: extraArgs.length ? extraArgs : undefined, installIfMissing, clearEnv, cwd, ...(prompt ? { firstPrompt: prompt } : {}) }
+    const launchOptions = { bypassPermission, extraArgs: extraArgs.length ? extraArgs : undefined, installIfMissing, clearEnv, cwd, harnessNode: dsh ? true : undefined, ...(prompt ? { firstPrompt: prompt } : {}) }
     const command = buildEngineCommandArgv(engine, launchOptions)
     const argv = buildEngineLaunchArgv(engine, launchOptions)
     // A tmux route is enough to stream its screen. Register it before looking for a process so both
@@ -4115,6 +4143,7 @@ async function runForeground(session: AuthSession): Promise<void> {
       // a swap that sets no grid — back to the engine's own login, or a Codex profile's CODEX_HOME —
       // clears nothing. There the user's own variables are the point.
       ...(launch.clearEnv?.length ? { clearEnv: launch.clearEnv } : {}),
+      ...(launch.env?.HARNESS_DSH ? { harnessNode: true } : {}),
     }),
     log: (message) => console.log(message),
   })
@@ -4957,6 +4986,11 @@ async function launch(foreground: boolean, repair: boolean = false): Promise<voi
       runtimeNode = repaired
       ensureLauncher(repaired, (m) => console.log(m))
     }
+    // The managed grid too, in the open, for the daemon this command is about to spawn: it follows
+    // its pin quietly on every start (runForeground), and `--repair` is where a person watches it
+    // happen. A FOREGROUND start becomes the daemon itself and runForeground's own call prints to
+    // this same terminal — once is enough.
+    if (!foreground) await ensureManagedGrid((m) => console.log(m))
   }
   // Foreground mode (supervisor) OR dev/tsx (can't cleanly spawn a .ts detached) → run inline.
   if (foreground || SCRIPT_PATH.endsWith('.ts')) {

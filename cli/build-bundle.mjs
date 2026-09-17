@@ -10,15 +10,24 @@
  * `require` via the banner so ws's try/catch fallback works without them.
  */
 import * as esbuild from 'esbuild'
-import { readFileSync, copyFileSync, rmSync, mkdirSync } from 'fs'
+import { readFileSync, copyFileSync, rmSync } from 'fs'
 import { readDshRegistry } from './scripts/lib/dshRegistry.mjs'
 
 const version =
   process.env.ADAPTER_VERSION ||
   JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version
 
-// The bundled DSH registry (dsh/registry/**/*.json at the repo root) — see src/dsh/registry.ts.
-const dshRegistry = JSON.stringify(readDshRegistry(new URL('../dsh/registry', import.meta.url)))
+// The bundled registry (the store/ folders and store/registry at the repo root) — see src/dsh/registry.ts.
+const dshRegistry = JSON.stringify(readDshRegistry(new URL('../store', import.meta.url)))
+
+// The Harness Compute skill and its opencode agent definition, embedded the same way — see
+// src/lib/harnessComputeSkill.ts. INSIDE cli.js, not beside it: this build ships one file (plus
+// notify.mjs), and a `dist/skills/` laid down next to it reached no machine — upload-cli.sh,
+// install.sh and the self-updater all move cli.js and notify.mjs and nothing else.
+const harnessSkills = JSON.stringify(Object.fromEntries(
+  ['harness-compute.md', 'harness-compute.agent.md']
+    .map((name) => [name, readFileSync(new URL(`../docs/skills/${name}`, import.meta.url), 'utf8')]),
+))
 
 // Start clean so no stale per-file `dist/*.js` / sourcemaps leak into the release artifact.
 rmSync('dist', { recursive: true, force: true })
@@ -31,12 +40,16 @@ await esbuild.build({
   format: 'esm',
   target: 'node20',
   external: ['bufferutil', 'utf-8-validate'],
-  define: { __ADAPTER_VERSION__: JSON.stringify(version), __DSH_REGISTRY__: JSON.stringify(dshRegistry) },
+  define: {
+    __ADAPTER_VERSION__: JSON.stringify(version),
+    __DSH_REGISTRY__: JSON.stringify(dshRegistry),
+    __HARNESS_SKILLS__: JSON.stringify(harnessSkills),
+  },
   // The copyright line is MIT's one condition — it has to travel with the copy the user actually
   // receives, and the published bundle IS that copy (upload-cli.sh ships `cli.js` and `notify.mjs`,
   // nothing else). `legalComments: 'eof'` below appends the dependencies' own notices; this is ours.
   banner: {
-    js: `/*! harness v${version} — Copyright (c) 2026 Autonomous, Inc. — MIT (https://github.com/autonomous-ai/autonomous-harness) */\n`
+    js: `/*! harness v${version} — Copyright (c) 2026 Autonomous, Inc. — MIT (https://github.com/autonomous-ai/openharness) */\n`
       + 'import{createRequire as ___cr}from"module";const require=___cr(import.meta.url);',
   },
   sourcemap: false,
@@ -48,12 +61,4 @@ await esbuild.build({
 
 copyFileSync('hook/notify.mjs', 'dist/notify.mjs')
 
-// harnessComputeSkill.ts reads this doc at runtime, as a SIBLING `skills/` dir next to cli.js —
-// same layout notify.mjs uses, and the same "the doc is the source, install just ships it" split
-// the source file documents.
-mkdirSync('dist/skills', { recursive: true })
-copyFileSync('../docs/skills/harness-compute.md', 'dist/skills/harness-compute.md')
-// The `harness-compute` agent definition the same module installs beside the skill (opencode `--agent`).
-copyFileSync('../docs/skills/harness-compute.agent.md', 'dist/skills/harness-compute.agent.md')
-
-console.log(`✓ Bundled dist/cli.js (v${version}) + dist/notify.mjs + dist/skills/`)
+console.log(`✓ Bundled dist/cli.js (v${version}, Harness Compute skill embedded) + dist/notify.mjs`)

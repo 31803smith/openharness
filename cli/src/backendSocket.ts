@@ -27,6 +27,7 @@ import { registry, projectDisplayName, type RegisteredSession } from './lib/regi
 import { ENGINES, type AgentEngine } from './engines/types.js'
 import { listDir } from './lib/fsBrowse.js'
 import { linkCodexProfile, listCodexProfiles } from './lib/codexProfiles.js'
+import { gridCliPresence } from './lib/gridExec.js'
 import { gridCapableEngines, parseGridLaunchOverride, type GridLaunchOverride } from './lib/gridLaunch.js'
 import { listGridModels, resolveGridTarget } from './lib/gridModels.js'
 import { deriveHarnessGridName } from './lib/gridDerive.js'
@@ -36,12 +37,14 @@ import { probeEngines } from './lib/engineProbe.js'
 import { AgentCreationReceipts, AgentCreationReceiptError, creationFingerprint, validCreationId, type AgentCreationStatus } from './lib/agentCreationReceipt.js'
 import { engineInstallRecipe } from './lib/engineInstall.js'
 import { parseProjectFolder, prepareProjectFolder, ProjectFolderError } from './lib/projectFolder.js'
+import { preTrustClaudeProject, preTrustCodexProject } from './lib/claudeTrust.js'
 import { projectPreview } from './lib/projectPreview.js'
 import { agentFrame, type AgentDshContext, type AgentFrame } from './lib/agentFrame.js'
-import { installedDsh, listInstalledDsh } from './dsh/installed.js'
-import { DSH_ID_RE, dshTier } from './dsh/manifest.js'
-import { bundledDshRegistry } from './dsh/registry.js'
+import { installedDsh } from './dsh/installed.js'
+import { DSH_ID_RE } from './dsh/manifest.js'
+import { refreshDshRegistry } from './dsh/catalog.js'
 import type { DshInstallProgress } from './dsh/install.js'
+import { dshInstallReply, dshInstallRequest, dshInstallStatus, dshListRows, dshRemoveId, dshRemoveReply } from './dsh/wire.js'
 import { routeVoiceTask } from './lib/voiceRouter.js'
 import { tailFile } from './lib/sessions.js'
 import { messagesToEvents, windowRawLines, subagentStatsFromRawLines, type SessionEvent } from './lib/normalize.js'
@@ -104,6 +107,10 @@ export type RecentProvider = (sessionId: string, n: number) => Array<{ kind: str
 
 
 const APP_PING_MS = 15_000
+// Floor between two `app_presence` up-frames. The window pings this daemon every 30s; the backend
+// only needs to hear about it about once a minute (it floors its own Mongo write at five). `open`
+// is never held back — it is the one that counts as a session in `user_daily_presence`.
+const APP_PRESENCE_UP_MS = 60_000
 // How long the opening handshake may take before the attempt is abandoned and retried. `ws` waits
 // forever by default, and the heartbeat below only starts on 'open' — so a TCP connection that came
 // up while the network was flapping but never got its upgrade answered sat in CONNECTING for hours,
@@ -307,6 +314,7 @@ export class BackendSocket {
   private droppedSinceLog = 0
   private heartbeat: LivenessWatch | null = null
   private appPing: NodeJS.Timeout | null = null
+  private lastAppPresenceUpAt = 0
   private readonly downChains = new Map<string, Promise<void>>()
   private readonly localClients = new Map<string, LocalClientSink>()
   private terminalStreams: TerminalStreamManager | null = null
@@ -357,6 +365,8 @@ export class BackendSocket {
   /** Called on `dsh_install` — cli.ts clones/sets up/doctors the harness and reports each phase. */
   onDshInstall: ((input: { id?: string; url?: string; ref?: string }, progress: (p: DshInstallProgress) => void) =>
     Promise<{ ok: true; id: string } | { ok: false; error: string; detail: string }>) | null = null
+  /** Called on `dsh_remove` — cli.ts uninstalls the harness from this machine. */
+  onDshRemove: ((id: string) => { ok: true } | { ok: false; error: string; detail: string }) | null = null
   /** What the daemon knows about an agent's DSH companions (viewer URL, verdict); null when nothing. */
   dshFrameProvider: ((session: RegisteredSession) => AgentDshContext | null) | null = null
   private readonly agentCreations = new AgentCreationReceipts(join(env.ADAPTER_DATA_DIR, 'agent-creations'))
@@ -633,6 +643,8 @@ export class BackendSocket {
 
       // App-level ping refreshes the backend's presence key (TTL 30s).
       this.appPing = setInterval(() => this.sendBestEffort({ t: 'ping' }), APP_PING_MS)
+      // A fresh socket knows nothing about the window; let its next ping through at once.
+      this.lastAppPresenceUpAt = 0
     })
 
     ws.on('message', (raw, isBinary) => {
@@ -845,6 +857,26 @@ export class BackendSocket {
     this.onOutboundCommander?.(frame)
     if (env.LOG_FRAMES) logFrame('→', 'device', frame)
     this.enqueue({ t: 'up', webEligible: false, commanderEligible: true, frame: this.e2ee.wrapCommander(frame) })
+  }
+
+  /**
+   * The desktop window is open on this computer (localWsServer `app_presence`): tell the backend, which
+   * turns it into the person's `user_daily_presence` row. `open` goes up at once, `ping` at most once
+   * per APP_PRESENCE_UP_MS. Best-effort and plaintext on purpose: it is bookkeeping about the person,
+   * not data, and a daemon that is signed out (no backend dial) or between reconnects simply drops it
+   * rather than queueing a stale "was open" behind real frames. Returns whether a frame went up.
+   */
+  sendAppPresence(kind: 'open' | 'ping'): boolean {
+    const now = Date.now()
+    if (kind === 'ping' && now - this.lastAppPresenceUpAt < APP_PRESENCE_UP_MS) return false
+    const sent = this.sendBestEffort({
+      t: 'up',
+      webEligible: false,
+      commanderEligible: false,
+      frame: { type: 'app_presence', payload: { kind } },
+    })
+    if (sent) this.lastAppPresenceUpAt = now
+    return sent
   }
 
   /** Attach one authenticated loopback desktop client to the same RPC and event plane as cloud web. */
@@ -1498,6 +1530,11 @@ export class BackendSocket {
             // whose retarget the daemon would refuse. An older app ignores the field; an older
             // daemon omits it, which the app reads as "offer everything", as before.
             localModelEngines: gridCapableEngines(),
+            // Whether this MACHINE has a `grid` to run at all — `managed`, `path` or `missing` —
+            // as distinct from `gridName`, which is about the account. The Local model dialog was
+            // gating on the account alone and starting an agent whose second step is `grid`; this
+            // is what lets it, and the picker, say so first. An older app ignores the field.
+            gridCli: gridCliPresence(),
           })
           return
         }
@@ -1521,40 +1558,22 @@ export class BackendSocket {
         }
 
         case 'dsh_list': {
-          // Which domain-specific harnesses this machine has, plus what the bundled registry offers —
-          // answered here, on the machine in question, for the same reason `engines_probe` is.
-          const installed = listInstalledDsh()
-          const seen = new Set<string>()
-          const rows: Record<string, unknown>[] = []
-          for (const entry of installed) {
-            seen.add(entry.id)
-            rows.push({
-              id: entry.id,
-              name: entry.manifest.name,
-              description: entry.manifest.description ?? null,
-              category: entry.manifest.category ?? null,
-              engine: entry.manifest.engine,
-              installed: true,
-              viewer: !!entry.manifest.viewer,
-              tier: dshTier(entry.manifest),
-              verified: bundledDshRegistry().some((known) => known.id === entry.id && known.verified === true),
-            })
-          }
-          for (const entry of bundledDshRegistry()) {
-            if (seen.has(entry.id)) continue
-            rows.push({
-              id: entry.id,
-              name: entry.name,
-              description: entry.description ?? null,
-              category: entry.category ?? null,
-              engine: entry.engine,
-              installed: false,
-              viewer: (entry.tier ?? 0) >= 2,
-              tier: entry.tier ?? 0,
-              verified: entry.verified === true,
-            })
-          }
-          reply(type, requestId, { dsh: rows })
+          // Keep catalog I/O off this connection's ordered RPC queue.
+          void refreshDshRegistry()
+            .then(catalog => reply(type, requestId, { dsh: dshListRows(undefined, catalog) }))
+            .catch(error => reply(type, requestId, { error: 'INTERNAL', detail: error instanceof Error ? error.message : String(error) }))
+          return
+        }
+
+        case 'dsh_remove': {
+          // Uninstall a harness from THIS machine: the clone under ~/.harness/dsh goes (a linked
+          // install loses only its link), the index forgets it, and a `dsh_list` after this no
+          // longer says installed. Agents already running from it keep running — their processes
+          // hold what they need — and the store is what asks; it refreshes the list itself.
+          if (!this.onDshRemove) { reply(type, requestId, { error: 'UNSUPPORTED_ON_REMOTE' }); return }
+          const id = dshRemoveId(payload)
+          if (!id) { reply(type, requestId, { error: 'INVALID_DSH', detail: 'dsh_remove needs an id' }); return }
+          reply(type, requestId, dshRemoveReply(id, this.onDshRemove(id)))
           return
         }
 
@@ -1563,12 +1582,10 @@ export class BackendSocket {
           // it is detached from the ordered RPC chain like `engines_probe`, and progress travels as
           // `dsh_install_status` pushes the app renders in the create dialog.
           if (!this.onDshInstall) { reply(type, requestId, { error: 'UNSUPPORTED_ON_REMOTE' }); return }
-          const id = typeof payload.id === 'string' && DSH_ID_RE.test(payload.id) ? payload.id : undefined
-          const url = typeof payload.url === 'string' && payload.url.length <= 2048 && !/[\x00-\x1f\x7f]/.test(payload.url) ? payload.url : undefined
-          const ref = typeof payload.ref === 'string' && payload.ref.length <= 200 ? payload.ref : undefined
-          if (!id && !url) { reply(type, requestId, { error: 'INVALID_DSH', detail: 'dsh_install needs an id or a url' }); return }
-          void this.onDshInstall({ id, url, ref }, (p) => this.send({ type: 'dsh_install_status', payload: { ...p, id: p.id ?? id ?? null } }))
-            .then((result) => reply(type, requestId, result.ok ? { ok: true, id: result.id } : { error: result.error, detail: result.detail }))
+          const request = dshInstallRequest(payload)
+          if (!request) { reply(type, requestId, { error: 'INVALID_DSH', detail: 'dsh_install needs an id or a url' }); return }
+          void this.onDshInstall(request, (p) => this.send({ type: 'dsh_install_status', payload: dshInstallStatus(p, request) }))
+            .then((result) => reply(type, requestId, dshInstallReply(result)))
             .catch((error) => reply(type, requestId, { error: 'INTERNAL', detail: error instanceof Error ? error.message : String(error) }))
           return
         }
@@ -1750,6 +1767,9 @@ export class BackendSocket {
             if (!installed) {
               reply(type, requestId, { error: 'INVALID_DSH', detail: `${payload.dsh} is not installed on this machine` }); return
             }
+            if (installed.manifest.kind === 'viewer') {
+              reply(type, requestId, { error: 'INVALID_DSH', detail: `${payload.dsh} is a viewer package, not an agent` }); return
+            }
             if (installed.manifest.engine !== engine) {
               reply(type, requestId, { error: 'INVALID_DSH', detail: `${payload.dsh} runs on ${installed.manifest.engine}, not ${engine}` }); return
             }
@@ -1806,11 +1826,16 @@ export class BackendSocket {
               void this.agentCreations.run(creationId, creationFingerprint(projectFolder ? { ...input, projectFolder } : input), async () => {
                 let preparedFolder: string | undefined
                 if (projectFolder) {
-                  try { preparedFolder = await prepareProjectFolder(projectFolder) }
+                  try { preparedFolder = await prepareProjectFolder(projectFolder, { namesInUse: registry.agentNamesInUse() }) }
                   catch (error) {
                     return { state: 'failed', error: error instanceof ProjectFolderError ? error.code : 'PROJECT_PREPARATION_FAILED',
                       detail: error instanceof ProjectFolderError ? error.message : 'Could not prepare the project folder.' }
                   }
+                  // A folder this daemon just made is one Claude Code need not ask about.
+                  try {
+                    if (input.engine === 'claude') preTrustClaudeProject(preparedFolder)
+                    if (input.engine === 'codex') preTrustCodexProject(preparedFolder)
+                  } catch (error) { console.warn(`[agent] pre-trust ${preparedFolder} · ${error instanceof Error ? error.message : error}`) }
                 }
                 const result = await create(preparedFolder ? { ...input, cwd: preparedFolder } : input)
                 if (result.ok) return { state: 'created', agentId: result.session.agentId }

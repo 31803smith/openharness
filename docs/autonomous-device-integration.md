@@ -77,6 +77,13 @@ The CLI then removes that exact device identity and its reconnect metadata. A so
 this request remains `offline`, rather than being treated as a revoke, so transient LAN failures do
 not unpair the device.
 
+Revoke is bidirectional. When the app removes the device (`harness unpair`, `harness unpair --all`,
+`harness autonomous-device revoke`, or the dashboard) while the device's direct session is open, the
+CLI seals `{type:"pair.revoke",machineId:<this computer's machineId>}` as an `autonomous_device_event`
+over that same E2EE session, then closes the socket gracefully and deletes local trust. It is
+best-effort: a send failure never blocks local removal. A device that is offline at that moment
+learns it on reconnect, when its pinned `e2e_hello` is answered with `e2e_denied` (`unpaired`).
+
 ## Existing encrypted wire, unchanged
 
 Client identity and session use `cli/src/lib/e2ee/core.ts` and `manager.ts` exactly:

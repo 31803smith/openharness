@@ -179,7 +179,7 @@ void main() {
             'cursor.png',
             'kilo.png',
             'solid.png',
-            'copper.png',
+            'autonomous-circuit.png',
             'marp.png',
           ]) {
             await precacheImage(

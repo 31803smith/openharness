@@ -40,6 +40,13 @@ Khi device tự revoke trust cục bộ, nó gửi application request đã xác
 identity đó cùng metadata reconnect. Socket chỉ đóng mà không có request này vẫn là `offline`, không
 được hiểu là revoke, để lỗi mạng thoáng qua không unpair device.
 
+Revoke là hai chiều. Khi app gỡ device (`harness unpair`, `harness unpair --all`,
+`harness autonomous-device revoke`, hoặc dashboard) trong lúc session direct của device đang mở, CLI
+seal `{type:"pair.revoke",machineId:<machineId của máy này>}` dưới dạng `autonomous_device_event` trên
+chính session E2EE đó, rồi đóng socket nhẹ nhàng và xóa trust local. Best-effort: gửi lỗi không chặn
+việc gỡ local. Device đang offline lúc đó sẽ biết khi reconnect: `e2e_hello` với pin cũ bị trả
+`e2e_denied` (`unpaired`).
+
 Wire dùng nguyên e2e_* gốc role device, CI b:device. App outer autonomous_device_request/result/event
 vẫn pairwise encrypted với empty dbSessionId AAD; helper relay.ts chỉ là adapter ứng dụng dùng chung
 crypto, không kết nối backend. Request agents.list/status/recap/turn.send/turn.stop/question.answer/

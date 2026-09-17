@@ -1024,6 +1024,30 @@ describe('agent identity: the process owns the agent, the session is bound to it
     expect(registry.list()).toHaveLength(1)
   })
 
+  it('an agent started in a new project folder harness-N is named harness-N, and a second one there is not', async () => {
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    const early = registry.openPendingAgent({ engine: 'claude', runtimes: [{ backend: 'tmux', paneId: '%3' }], cwd: '/tmp/elsewhere' })!
+    expect(registry.displayName(early)).toBe('harness-1')
+    const inFolder = registry.openPendingAgent({ engine: 'claude', runtimes: [{ backend: 'tmux', paneId: '%4' }], cwd: '/Users/u/harnesses/harness-41' })!
+    expect(registry.displayName(inFolder)).toBe('harness-41')
+    const sameFolder = registry.openPendingAgent({ engine: 'codex', runtimes: [{ backend: 'tmux', paneId: '%5' }], cwd: '/Users/u/harnesses/harness-41' })!
+    expect(registry.displayName(sameFolder)).toBe('harness-42')
+    const named = registry.openPendingAgent({ engine: 'codex', runtimes: [{ backend: 'tmux', paneId: '%6' }], cwd: '/Users/u/code/harness-app' })!
+    expect(registry.displayName(named)).toBe('harness-43')
+  })
+
+  it('lists every name in use, so a new project folder can be numbered past them', async () => {
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    const a = registry.openPendingAgent({ engine: 'claude', runtimes: [{ backend: 'tmux', paneId: '%11' }], cwd: '/Users/u/harnesses/harness-41' })!
+    registry.openPendingAgent({ engine: 'claude', runtimes: [{ backend: 'tmux', paneId: '%12' }], cwd: '/Users/u/harnesses/harness-41' })
+    registry.rename(a.agentId, 'Lamp')
+    const names = registry.agentNamesInUse()
+    expect(names).toEqual(expect.arrayContaining(['harness-41', 'harness-42', 'Lamp']))
+    expect(names.every((name) => typeof name === 'string' && name.length > 0)).toBe(true)
+  })
+
   it('gives new agents stable numbered names across binding and reload without changing custom names', async () => {
     const { registry } = await loadRegistryModule()
     registry.load()

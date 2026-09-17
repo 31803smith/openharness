@@ -62,6 +62,9 @@ Future<NewAgentDialogResult?> showNewAgentDialog(
   Future<void>? initialEngineProbe,
   bool offerFindExisting = false,
   bool offerBackToSearch = false,
+  /// Open with this engine or harness already chosen — the store's Get and
+  /// Open buttons, which know exactly which one the person is looking at.
+  String? initialEngine,
 }) {
   // Reported here rather than at each call site: the doors are four and
   // growing, and one that forgets to track is a hole in the funnel that only
@@ -73,6 +76,7 @@ Future<NewAgentDialogResult?> showNewAgentDialog(
     veilBlur: 0,
     builder: (context) => _NewAgentDialog(
       notifier: notifier,
+      initialEngine: initialEngine,
       machineId: machineId,
       initialFolder: initialFolder,
       swarmId: swarmId ?? notifier.activeSwarmId,
@@ -103,7 +107,12 @@ class _NewAgentDialog extends StatefulWidget {
     this.initialEngineProbe,
     required this.offerFindExisting,
     required this.offerBackToSearch,
+    this.initialEngine,
   });
+
+  /// An engine or harness to open on, chosen elsewhere (the store); null lets
+  /// the remembered or first installed engine win.
+  final String? initialEngine;
 
   @override
   State<_NewAgentDialog> createState() => _NewAgentDialogState();
@@ -155,7 +164,14 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   void initState() {
     super.initState();
     final remembered = widget.notifier.agentPreference.value;
-    if (_knownChoice(remembered)) {
+    final asked = widget.initialEngine;
+    if (asked != null &&
+        (isHarnessId(asked) || allEngines.any((identity) => identity.id == asked))) {
+      // Chosen before the dialog opened: counts as the person's choice, so no
+      // probe or remembered preference moves it.
+      _engine = asked;
+      _engineChosenByUser = true;
+    } else if (_knownChoice(remembered)) {
       _engine = remembered!;
       _engineChosenByUser = true;
     } else {
@@ -179,6 +195,9 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
         // actionable control once the route and its focus tree are mounted.
         _folderFocus.requestFocus();
         unawaited(_probeEngines(initialProbe: widget.initialEngineProbe));
+        // And the harnesses, whatever is selected: a package installed from
+        // a terminal since the last answer is otherwise missing from More.
+        unawaited(_probeHarnesses());
         unawaited(_loadAgentPreference());
       }
     });
@@ -230,6 +249,18 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     return entry != null && !entry.installed;
   }
 
+  /// What it makes and whose it is — "CAD · Autonomous" — the
+  /// machine's words first, this build's when the machine has not answered,
+  /// the description when there is nothing else.
+  String? _harnessDetail(DshEntry harness) {
+    final identity = engineIdentity(harness.id);
+    final parts = [
+      harness.category ?? identity.category,
+      harness.author ?? identity.creator,
+    ].whereType<String>().where((s) => s.isNotEmpty);
+    return parts.isEmpty ? harness.description : parts.join(' · ');
+  }
+
   /// The harnesses to list after the engines: what the machine named when it
   /// has answered, else the ones this build ships a face for.
   List<DshEntry> get _harnessOptions {
@@ -237,7 +268,12 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     if (machine != null &&
         machine.dsh.loaded &&
         machine.dsh.entries.isNotEmpty) {
-      return machine.dsh.entries;
+      // A viewer package is installed beside the harnesses that use it; it is
+      // not something to create.
+      return [
+        for (final entry in machine.dsh.entries)
+          if (!entry.isViewerPackage) entry,
+      ];
     }
     return [
       for (final identity in knownHarnesses)
@@ -245,6 +281,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
           id: identity.id,
           name: identity.label,
           category: identity.category,
+          author: identity.creator,
           engine: knownHarnessBase[identity.id] ?? 'claude',
         ),
     ];
@@ -429,7 +466,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
       if (!mounted) return;
       // A machine whose Harness CLI predates harnesses refuses `dsh_list`
       // and would take `dsh` on `agent_create` in silence — creating a plain
-      // Claude Code where Copper was picked. Say so and stop here instead.
+      // Claude Code where Autonomous Circuit was picked. Say so and stop here instead.
       final catalog = widget.notifier.stateOf(_machineId)?.dsh;
       if (catalog != null && !catalog.loaded && catalog.error != null) {
         setState(() {
@@ -833,11 +870,26 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
           : constraints.maxWidth >= minimumTileWidth * 2 + AppChoiceTile.gap
           ? 2
           : 1;
+      // Three lines of text, and the 38 the tile spends on its own padding and
+      // the gap between them. Three because the name and the detail under it
+      // each want two and the tile can afford one second line between them:
+      // sized for whichever of those two shapes is taller, so either can
+      // happen without the column overflowing its box. The detail is the one
+      // that usually takes it — "Documents · Typst GmbH" does not fit on one
+      // line at this width, and on one it arrived as "Documents · Typst Gm…".
+      // Which line is spent where is decided per tile, against the name it
+      // actually holds: AppChoiceTileContent.linesFor.
+      final labelLine =
+          scaler.scale(AppChoiceTileContent.labelSize) *
+          AppChoiceTileContent.lineHeight;
+      final detailLine =
+          scaler.scale(AppChoiceTileContent.detailSize) *
+          AppChoiceTileContent.lineHeight;
       final tileSize = Size(
         (constraints.maxWidth - AppChoiceTile.gap * (columns - 1)) / columns,
         math.max(
           compactHeight ? 96 : 100,
-          scaler.scale(16) * 2.5 + scaler.scale(14) * 1.25 + 38,
+          math.max(labelLine * 2 + detailLine, labelLine + detailLine * 2) + 38,
         ),
       );
       return Column(
@@ -859,7 +911,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                 SelectOption(
                   value: identity.id,
                   label: identity.label,
-                  detail: identity.category,
+                  detail: identity.detail,
                   leading: () => EngineMark(engine: identity.id, size: 14),
                 ),
               // The domain harnesses, after the engines they run on. What the
@@ -872,10 +924,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                   // detail (owner, 2026-09-15) — the settings row says it.
                   // What it makes, in a word or two; the machine's word first,
                   // this build's when the machine has not answered.
-                  detail:
-                      harness.category ??
-                      engineIdentity(harness.id).category ??
-                      harness.description,
+                  detail: _harnessDetail(harness),
                   leading: () => EngineMark(
                     engine: harness.id,
                     displayName: harness.name,

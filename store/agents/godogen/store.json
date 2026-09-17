@@ -1,0 +1,9 @@
+{
+  "homepage": "https://github.com/htdt/godogen",
+  "upstream": "https://github.com/htdt/godogen",
+  "license": "MIT",
+  "screenshots": [
+    "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/agents/godogen/screenshots/explore.png",
+    "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/agents/godogen/screenshots/play.png"
+  ]
+}

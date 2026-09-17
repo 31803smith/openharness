@@ -1065,7 +1065,7 @@ class Registry {
       schemaVersion: 2,
       active: true,
       launch: { state: 'starting' },
-      defaultName: normalizedDefaultName(input.defaultName) ?? this.nextAgentName(),
+      defaultName: normalizedDefaultName(input.defaultName) ?? this.nextAgentName(input.cwd),
       agentId,
       sessionId: '',
       boundAt: null,
@@ -1100,12 +1100,23 @@ class Registry {
     return entry
   }
 
-  private nextAgentName(): string {
-    let next = 1n
-    const names = [
+  /** Every name an agent on this machine answers to: default names, project names, renames. */
+  agentNamesInUse(): string[] {
+    return [
       ...this.list().flatMap(agent => [agent.defaultName, projectDisplayName(agent)]),
       ...NAME_OVERRIDES.values(),
-    ]
+    ].filter((name): name is string => typeof name === 'string' && name.length > 0)
+  }
+
+  private nextAgentName(cwd?: string | null): string {
+    let next = 1n
+    const names = this.agentNamesInUse()
+    // A new project is the folder `~/harnesses/harness-N`, numbered by its own counter. An agent
+    // started in it answers to the same N rather than to this counter, which drifts from that one
+    // (the tab said harness-42 over a terminal in ~/harnesses/harness-41). Taken already — a second
+    // agent in the same folder — it falls back to the next free number.
+    const folder = cwd ? basename(cwd) : null
+    if (folder && /^harness-[1-9]\d*$/.test(folder) && !names.includes(folder)) return folder
     for (const name of names) {
       // `agent-N` is the name this daemon gave sessions before the rename; the count carries on
       const match = name && /^(?:harness|agent)-([1-9]\d*)$/.exec(name)
@@ -1735,7 +1746,7 @@ const SELF_NAMES: ReadonlySet<string> = (() => {
  * about the machine, not the engine, so it is refused by what it SAYS rather than by who sent it —
  * any engine that adopts the same convention is covered without a table to keep in step.
  */
-function titleDisplayName(title: string | null | undefined): string | null {
+export function titleDisplayName(title: string | null | undefined): string | null {
   const cleaned = title
     ?.trim()
     .replace(/^[\s\p{Mark}\p{Punctuation}\p{Symbol}]+/u, '')

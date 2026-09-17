@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../core/models.dart';
 import '../shared/theme/app_theme.dart' as grid;
 import '../shared/widgets/app_dialog.dart';
 import '../state/app_state.dart';
@@ -54,7 +55,7 @@ Future<({String machineId})?> showRunLocalModelDialog(
 /// local models set up is NOT checked here — the manager itself says so, in
 /// conversation, if it finds nothing; the dialog's job is to let the person
 /// pick a machine and go.
-enum _Prerequisite { unlinked, offline, opencode }
+enum _Prerequisite { unlinked, offline, opencode, gridCli }
 
 class _RunLocalModelDialog extends StatefulWidget {
   const _RunLocalModelDialog({
@@ -90,8 +91,22 @@ class _RunLocalModelDialogState extends State<_RunLocalModelDialog> {
     });
   }
 
-  void _read(String machineId) =>
-      unawaited(widget.notifier.probeEngines(machineId, force: true));
+  /// What the daemon said about the machine's `grid` binary, per machine —
+  /// a `missing` here is the one account-independent fact worth stopping on:
+  /// the manager's second step runs it, and an agent with no binary to run
+  /// dies there.
+  final _gridCli = <String, GridCli?>{};
+
+  void _read(String machineId) {
+    unawaited(widget.notifier.probeEngines(machineId, force: true));
+    unawaited(_readGridCli(machineId));
+  }
+
+  Future<void> _readGridCli(String machineId) async {
+    final models = await widget.notifier.gridModels(machineId);
+    if (!mounted) return;
+    setState(() => _gridCli[machineId] = models.gridCli);
+  }
 
   void _pickMachine(String machineId) {
     if (machineId == _machineId) return;
@@ -317,6 +332,7 @@ class _RunLocalModelDialogState extends State<_RunLocalModelDialog> {
         return _Prerequisite.opencode;
       }
     }
+    if (_gridCli[_machineId] == GridCli.missing) return _Prerequisite.gridCli;
     return null;
   }
 
@@ -340,6 +356,10 @@ class _RunLocalModelDialogState extends State<_RunLocalModelDialog> {
           _Prerequisite.offline =>
             '$name is offline right now. Wake it up, or pick another machine.',
           _Prerequisite.opencode => 'Needs opencode on this machine first.',
+          // The feature's name, never the binary's; the daemon installs it on
+          // start, so this is a machine whose install did not land.
+          _Prerequisite.gridCli =>
+            "Harness Compute isn't installed on this machine.",
           null => null,
         };
         final machines = _machines;
