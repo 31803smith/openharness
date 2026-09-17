@@ -323,6 +323,105 @@ and write the same files. That is fine while they are close, and it makes a grid
 a **coordination point** rather than a grid-side detail: the pin has to move before or with it. Track
 grid's releases rather than pinning and forgetting.
 
+### Review 2026-09-17 — this section against the code
+
+A read-only audit of Change 2c against harness, autonomous-grid and grid-src, plus one experiment on a
+Mac (macOS 26.6 arm64, Nuitka 4.2.1, grid 0.3.46 source). Two findings were fixed in the same pass;
+the rest are for the implementation.
+
+**What holds, what does not**
+
+| Claim | Status | Evidence |
+|---|---|---|
+| Linux ships a self-contained Nuitka onefile (x86_64 + arm64), no Python/uv/pip | Holds | grid `packaging/README.md:12-13`, `release.yml:55-56`; assets `grid-linux-{x86_64,arm64}` + `SHA256SUMS`, ~35–38 MB at v0.3.47. Unchanged since 2026-09-04. |
+| `runtimeInstall.ts` + `downloadVerified` reusable as-is | Partly | `downloadVerified` (`selfUpdate.ts:93-102`) is fetch + sha256 of ONE buffer; tar + `archiveRoot` live in `ensureManagedRuntime` (`runtimeInstall.ts:85-100`). A single-file executable needs a write path of its own. ⚠️ It installs only when ABSENT (`runtimeInstall.ts:65-66`, no version compare) and runs only on `harness start --repair` (`cli.ts:298,856`); `selfUpdate.ts` never passes `repair`. A pin bump would not reach an installed machine. |
+| README: "ad-hoc onefile is SIGKILL'd on macOS 26; needs Developer ID + notarization" | Verbatim — but the diagnosis is wrong | `packaging/README.md:15-19`. See the experiment: the QUARANTINE xattr kills an ad-hoc binary, onefile or not. |
+| Harness signs with Developer ID + `--options runtime` and notarizes | Holds for the app only | `publish-macos-variant.sh:43,127-128`, `upload-desktop.sh:226-236`, `.github/actions/macos-signing`. No non-app artifact is Developer-ID-signed or notarized today: managed Node is nodejs.org's (`publish-managed-node-runtime.sh:26,43`); managed tmux is built on `macos-15` and **ad-hoc** signed (`build-managed-tmux.sh:152`), never notarized — and ships. |
+| `build_binary.sh` already builds macOS locally | Holds | `--standalone --onefile --deployment` (`:76-78`); no sign identity, no entitlements file; `--product-version="0.1.0"` stale. A standalone-not-onefile build needs a knob upstream. |
+| Every spawn resolves through `gridBinaryPath()` | Did not — fixed | `gridHandoff.ts` and `gridLogout.ts` looked `grid` up on PATH themselves: sign-in on one binary, models on another. |
+| `~/.grid` shared; harness locates it as grid does | Holds | `gridCredentials.ts:23-27,41-45` ↔ grid `shared/paths.py:22`; lockstep test on grid's side. `gridExec.ts` spawns with the daemon's env, so `GRID_HOME` reaches the child. |
+
+**Experiment — is notarization what fixes the SIGKILL?** `packaging/build_binary.sh`'s flags, with and
+without `--onefile`, built and run on this Mac:
+
+| Build | Size | Signature | Run, no xattr | Run with `com.apple.quarantine` |
+|---|---|---|---|---|
+| `--standalone` tree | 79 MB, 59 Mach-O | ad-hoc on every file (Nuitka does it); `codesign --verify --deep --strict` OK | `--version`, `--help`, `device-info --json` all exit 0 | SIGKILL (137) |
+| `--standalone --onefile` | 19 MB | ad-hoc | all exit 0 | SIGKILL (137) |
+
+The kill is Gatekeeper on a **quarantined** ad-hoc binary — not a property of onefile. What the
+harness fetches itself (`fetch` in `runtimeInstall.ts`, `curl` in `install.sh`) carries no quarantine
+xattr, which is exactly why the ad-hoc managed tmux runs on every Mac today. **Decided (2026-09-17):**
+ship the managed grid ad-hoc-signed, like tmux, and build no notarization pipeline for it; that
+becomes necessary only if the artifact is ever offered as a browser download. `--standalone` vs onefile is
+then a size/startup choice, not a signing one — the tree is still the shape to keep if a hardened
+runtime is ever adopted, since onefile self-extracts into `{CACHE_DIR}`.
+
+**Missed — for the implementation**, ranked
+
+- ⚠️ **C1 — the PANE, not the daemon, is where `grid` runs for local models.** Change 3 shipped as a
+  skill (`docs/skills/harness-compute.md:142,154,175,234`) that has the agent type `grid device-info`,
+  `grid pull`, `grid join --serve` in its tmux pane. A runtime under `~/.harness/runtime` is invisible
+  to that shell: "the pinned runtime wins over PATH" only covers daemon spawns. And the dialog
+  (`run_local_model_dialog.dart:40-93`) checks `gridName != null`, never that a binary exists — a user
+  with no `grid` gets an agent that dies at the skill's step 2. On a Mac `~/.local/bin/grid` is a
+  symlink `uv tool` owns (grid's own installer), so a harness symlink there would fight uv. Options:
+  (A) never touch `~/.local/bin`; the daemon prepends the managed runtime's dir to PATH of every pane
+  it launches — where `gridLaunch.ts` already sets the grid env — and sets `GRID_NO_UPDATE_CHECK=1`
+  there, which closes C2 as well; (B) symlink `~/.local/bin/grid` only when nothing is there, as tmux
+  does — an existing uv link, and its version, stays in charge; (C) both. **Decided (2026-09-17): A** —
+  the managed grid is a harness-internal runtime, like Node: visible to the daemon and to the panes
+  it launches, and to nothing else. The user's own terminal keeps whichever `grid` they installed.
+- ⚠️ **C2 — `grid update` overwrites the pin in place.** The stale-version notice is suppressed only
+  for `--json`, a non-TTY stderr, or `GRID_NO_UPDATE_CHECK` (grid `cli/update.py:208-225`). Daemon
+  spawns are piped and safe; the pane's stderr IS a TTY, so the agent sees "Run `grid update`"
+  (`update.py:296-300`), and `_update_binary` resolves `argv[0]` → `which grid` → `os.replace` over
+  the managed file (`update.py:382-394,439`). Set `GRID_NO_UPDATE_CHECK=1` in every spawn and pane,
+  forbid `grid update` in the skill, and lay the runtime down 0555 so `os.replace` fails loudly.
+- **H1 — pin propagation.** A version-aware ensure (compare the `current-grid` dir name with the
+  manifest pin) on daemon start and on the post-update restart — not only in `install.sh` and
+  `--repair`. Add a test that the manifest pin ≥ `GRID_VERSION_FLOOR` (`gridExec.ts:36`).
+- **H2 — hardened runtime × native extensions**, only if `--options runtime` is ever adopted:
+  `pydantic-core` (a Rust `.so`) is in the runtime dep graph (grid `uv.lock:2255-2270`), so library
+  validation needs every Mach-O signed with one Team ID (per file, not `--deep`) or
+  `com.apple.security.cs.disable-library-validation`. Serving does NOT need mlx (train-only):
+  `grid join --serve` execs `llama-server` from `~/.grid/engines` (`shared/engine/launcher.py:144-150`)
+  and re-execs itself for `__server` via resolved argv0 (`local/runtime.py:560-579`), so a managed
+  binary run by absolute path serves.
+- **H3 — darwin-x64 has no builder.** Node and tmux are published for darwin-x64; Nuitka cannot
+  cross-compile and `macos-15` is arm64. An Intel runner, or decide "arm64 only; x64 falls back to PATH".
+- **H4 — the suite read the developer's real managed runtime.** `vitest.setup.ts` isolated only
+  `ADAPTER_DATA_DIR`; with the pin outranking PATH, a real `current-grid` would have hijacked every
+  fake-`grid` spec. Fixed in this pass.
+- **H5 — the two PATH bypasses** (sign-in, sign-out). Fixed in this pass.
+- **M2 — manifest shape.** `install.sh` slices a manifest by its FIRST platform key
+  (`publish-managed-tmux-runtime.sh:5-6`): grid gets its own `harness/runtime/grid/metadata.json`, not
+  a `grid` key inside Node's. Publishing is a manual `workflow_dispatch`; name who bumps.
+- **M3 — grid source in harness CI.** Nothing exists. Cleanest: a `release-grid-runtime.yml` cloned
+  from `release-tmux-runtime.yml` that checks out `autonomous-ai/autonomous-grid@v<pin>` and runs
+  `packaging/build_binary.sh` (after an upstream `--onefile` opt-out). Linux can simply download the
+  published onefile and verify it against `SHA256SUMS`.
+- **M4 — `install.sh` placement.** `--host` stops after step 1 and `--desktop` skips it
+  (`install.sh:11-12,45-53`): grid lands in the step-2/3 region. Cold start was not timed above;
+  measure it against `gridExec`'s 30 s timeout (`gridExec.ts:43`).
+- **M5 — no desktop surface for a missing CLI.** Only `grid.webSearch` reaches the frame
+  (`registry.ts:118`, `models.dart:120`); `GRID_CLI_MISSING` reaches nothing. A
+  `gridCli: managed | path | missing` field on `machine_meta` lets the picker and the local-model
+  dialog say "install grid".
+- Low: Windows is no gap (both Darwin/Linux only). The `current-grid` containment check is satisfied by
+  `~/.harness/runtime/grid-<ver>-<key>/grid`; a `~/.local/bin` link is for PATH only, never the
+  pointer. Pin against the release tag (0.3.47), not the checkout (0.3.46).
+
+**Done in this pass** (on `feat/harness-grid`)
+
+- `gridHandoff.ts` and `gridLogout.ts` resolve through `gridBinaryPath()`; `GRID_BINARY` moved to
+  `gridExec.ts`. Specs: `gridHandoff.spec.ts`, `gridLogout.spec.ts`, one integration case in
+  `gridCommand.spec.ts`.
+- `vitest.setup.ts` isolates `ADAPTER_RUNTIME_DIR`; `config/envIsolation.spec.ts` pins it;
+  `gridCommand.spec.ts` strips `HARNESS_GRID_BIN` from the inherited env.
+- cli: tsc clean; 2514 passed. The two failures in `install.spec.ts` (`brew install tmux` vs the
+  script's `--force-bottle`) fail identically on HEAD — pre-existing, not from this pass.
+
 ---
 
 ## Change 3 — a node serves a local model (step 3)
@@ -590,3 +689,8 @@ None. Every decision this plan waited on is recorded above:
 | Grid version | **Pinned** in the harness manifest; no self-update underneath it |
 | `auto` / grid-router model | Excluded from the picker until the grid path is E2EE |
 | Local mode | Out of scope; every call passes `--remote` |
+| macOS signing of the managed grid | **Decided (2026-09-17)**: ad-hoc, like managed tmux — what the harness fetches is never quarantined, and quarantine is what kills an ad-hoc binary. Notarize only if it is ever a browser download |
+| Where the agent PANE finds `grid` (C1) | **Decided (2026-09-17): A** — the daemon prepends the managed runtime's dir to PATH of every pane it launches; `~/.local/bin/grid` stays grid's / uv's |
+| `grid update` under the pin (C2) | **Decided (2026-09-17)**: `GRID_NO_UPDATE_CHECK=1` on every spawn and pane; runtime laid down 0555; the skill forbids `grid update` |
+| How a pin bump reaches installed machines (H1) | **Decided (2026-09-17)**: version-aware ensure on daemon start and the post-update restart, not only `install.sh` / `--repair` |
+| Which binary signs in and out | **Done (2026-09-17)** — `gridHandoff.ts` and `gridLogout.ts` resolve through `gridBinaryPath()` |
