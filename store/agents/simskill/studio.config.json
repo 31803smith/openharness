@@ -15,7 +15,7 @@
       "min": 120,
       "max": 900,
       "step": 60,
-      "integer": false,
+      "integer": true,
       "unit": "vehicles/hour/approach",
       "hint": ""
     },
@@ -27,7 +27,7 @@
       "min": 10,
       "max": 70,
       "step": 5,
-      "integer": false,
+      "integer": true,
       "unit": "s",
       "hint": ""
     },
@@ -39,7 +39,7 @@
       "min": 120,
       "max": 480,
       "step": 60,
-      "integer": false,
+      "integer": true,
       "unit": "s",
       "hint": ""
     },

@@ -1,7 +1,7 @@
 import array
 import json
 import math
-import random
+import os
 import re
 import struct
 import sys
@@ -12,14 +12,20 @@ SCALES = {"minor": [0, 3, 5, 7, 10], "major": [0, 4, 5, 7, 11], "pentatonic": [0
 
 
 def notes(p):
-    rng = random.Random(p["seed"])
     if p["pattern"]:
         if not re.fullmatch('[01]{16}',p["pattern"]):
             raise ValueError('A custom rhythm must contain sixteen steps')
         slots=[i for i,v in enumerate(p["pattern"]) if v=='1']
     else:
-        slots = sorted(rng.sample(range(16), p["density"]))
-    return [{"step": s, "note": 48 + rng.choice(SCALES[p["scale"]]), "velocity": rng.randint(75, 110),
+        # The browser uses this same integer LCG and Fisher–Yates shuffle.
+        state = p["seed"]
+        slots = list(range(16))
+        for i in range(15, 0, -1):
+            state = (state * 1664525 + 1013904223) & 0xffffffff
+            j = state * (i + 1) // 4294967296
+            slots[i], slots[j] = slots[j], slots[i]
+        slots = sorted(slots[:p["density"]])
+    return [{"step": s, "note": 48 + SCALES[p["scale"]][(s+p["seed"]) % 5], "velocity": 75 + (s*17+p["seed"]*13) % 36,
              "beat": s / 4 + (p["swing"] / 4 if s % 2 else 0), "length": .22} for s in slots]
 
 
@@ -70,7 +76,7 @@ def live(p,out):
     from ableton_ai.connection import AbletonConnection
     from ableton_ai.config import Settings
     try:
-        with AbletonConnection(Settings(max_connect_attempts=1,recv_timeout=3,command_delay=0)) as connection:
+        with AbletonConnection(Settings(host=os.environ.get('ABLETON_HOST','localhost'),port=int(os.environ.get('ABLETON_PORT','9877')),max_connect_attempts=1,recv_timeout=3,read_cmd_timeout=3,command_delay=0)) as connection:
             snapshot=connection.send_command('get_session_info',retry=False)
     except Exception as exc:
         raise RuntimeError('Open Ableton Live and enable its AbletonAI Control Surface on port 9877. '+str(exc)) from exc

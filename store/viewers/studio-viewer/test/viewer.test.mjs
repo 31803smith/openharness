@@ -1,6 +1,9 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,mkdir,writeFile,readFile,symlink,rm,realpath} from 'node:fs/promises';
+import {mkdtemp,mkdir,writeFile,readFile,symlink,rm,realpath,open} from 'node:fs/promises';
+import {spawn} from 'node:child_process';
+import {once} from 'node:events';
+import {fileURLToPath} from 'node:url';
 import http from 'node:http';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -8,7 +11,7 @@ import {createStudio,confined,validateParameters} from '../server.mjs';
 
 const config={title:'Test studio',controls:[{id:'speed',label:'Speed',type:'number',value:2,min:1,max:5,integer:true},{id:'mode',label:'Mode',type:'select',value:'a',options:[{value:'a'},{value:'b'}]},{id:'name',label:'Name',type:'text',value:'hello',maxLength:20}],actions:[{id:'run',label:'Make'}]};
 const project={spec:1,parameters:{speed:2,mode:'a',name:'hello'}};
-async function fixture(t,script='exit 0',jobTimeout=1000){
+async function fixture(t,script='exit 0',jobTimeout=10000){
   const root=await realpath(await mkdtemp(join(tmpdir(),'studio-test-'))),workspace=join(root,'workspace'),packageDir=join(root,'package');
   await mkdir(workspace);await mkdir(join(packageDir,'toolchain'),{recursive:true});
   await writeFile(join(workspace,'studio.json'),JSON.stringify(project));
@@ -26,16 +29,16 @@ async function until(get,predicate){for(let i=0;i<150;i++){const v=await get();i
 
 test('controls reject invalid input, retain defaults, and enforce native types',()=>{
   assert.deepEqual(validateParameters(config,{}),project.parameters);
-  for(const p of [null,[],2,{extra:1},{speed:NaN},{speed:'2'},{speed:0},{speed:1.2},{mode:'c'},{name:2},{name:'x'.repeat(21)}])assert.throws(()=>validateParameters(config,p),e=>e.status===400);
+  for(const p of [null,[],2,{extra:1},{speed:NaN},{speed:null},{speed:'2'},{speed:0},{speed:1.2},{mode:'c'},{name:2},{name:'x'.repeat(21)}])assert.throws(()=>validateParameters(config,p),e=>e.status===400);
   assert.deepEqual(validateParameters(config,{speed:3,mode:'b',name:'there'}),{speed:3,mode:'b',name:'there'});
   const simple={controls:[{id:'v',label:'Value',type:'text',value:''}]};
   assert.throws(()=>validateParameters(simple,{v:'x'.repeat(501)}));
 });
 test('serves the complete local UI and only the installed domain module',async t=>{
   const f=await fixture(t);
-  for(const path of ['/','/studio.css','/tokens.css','/studio.mjs','/graphics.mjs','/domain.mjs'])assert.equal((await f.req(path)).status,200,path);
+  for(const path of ['/','/studio.css','/tokens.css','/studio.mjs','/graphics.mjs','/music.mjs','/domain.mjs'])assert.equal((await f.req(path)).status,200,path);
   assert.equal((await f.req('/not-present')).status,404);
-  assert.equal((await f.req('/%E0%A4%A')).status,500);
+  assert.equal((await f.req('/%E0%A4%A')).status,400);
   const s=await f.state();assert.deepEqual(s.project,project);assert.deepEqual(s.history,[]);assert.equal(s.result,null);
   const head=await fetch(f.studio.url+'/',{method:'HEAD'});assert.equal(await head.text(),'');
 });
@@ -45,6 +48,7 @@ test('rejects cross-site requests, unsupported methods, invalid JSON, unknown ac
   const wrongHost=await new Promise((ok,fail)=>{const r=http.get(f.studio.url,{headers:{Host:'evil.example'}},res=>{res.resume();res.on('end',()=>ok(res.statusCode));});r.on('error',fail);});
   assert.equal(wrongHost,403);
   assert.equal((await f.req('/api/run','abc')).status,400);
+  for(const input of ['null','[]','2'])assert.equal((await f.req('/api/run',input)).status,400);
   assert.equal((await f.req('/api/run','x'.repeat(17000))).status,413);
   assert.equal((await f.req('/api/run',{}, {'Content-Type':'text/plain'})).status,415);
   assert.equal((await f.req('/api/run',{action:'bad'})).status,400);
@@ -70,7 +74,16 @@ test('failed, cancelled, and timed-out jobs retain the previous artifact',async 
 test('records successful history, reads chosen runs, ignores incomplete results',async t=>{
   const f=await fixture(t);await mkdir(join(f.workspace,'out/runs/first'),{recursive:true});await mkdir(join(f.workspace,'out/runs/incomplete'));await mkdir(join(f.workspace,'out/runs/broken'));
   await writeFile(join(f.workspace,'out/runs/first/result.json'),JSON.stringify({id:'first',title:'My run',metrics:[],engine:'actual'}));await writeFile(join(f.workspace,'out/runs/broken/result.json'),'not json');
-  assert.equal((await f.state()).history.length,1);assert.equal((await f.req('/api/run?id=first')).status,200);assert.equal((await f.req('/api/run?id=../studio')).status,400);assert.equal((await f.req('/api/run?id=missing')).status,404);
+  assert.equal((await f.state()).history.length,1);assert.equal((await f.req('/api/run?id=first')).status,200);assert.equal((await f.req('/api/run')).status,400);assert.equal((await f.req('/api/run?id=../studio')).status,400);assert.equal((await f.req('/api/run?id=missing')).status,404);
+  await writeFile(join(f.workspace,'out/latest.json'),'unfinished');assert.equal((await f.req('/api/state')).status,500);
+});
+
+test('cancellation also works when the platform cannot signal a process group',async t=>{
+  const f=await fixture(t,'sleep 10');await f.run();
+  const kill=process.kill;
+  t.mock.method(process,'kill',(pid,signal)=>{if(pid<0)throw Error('process groups unavailable');return kill(pid,signal);});
+  assert.equal((await f.req('/api/cancel',{})).status,200);
+  await until(f.state,s=>s.job.status==='cancelled');
 });
 test('confines files after symlink resolution and serves artifact downloads',async t=>{
   const f=await fixture(t);await mkdir(join(f.workspace,'out'));await writeFile(join(f.root,'secret.txt'),'private');await symlink(join(f.root,'secret.txt'),join(f.workspace,'out/escape.txt'));
@@ -82,4 +95,42 @@ test('confines files after symlink resolution and serves artifact downloads',asy
 });
 test('rejects oversized and malformed state without disclosing filesystem paths',async t=>{
   const f=await fixture(t);await writeFile(join(f.workspace,'studio.json'),'x'.repeat(8*1024*1024+1));assert.equal((await f.req('/api/state')).status,413);await writeFile(join(f.workspace,'studio.json'),'broken');const r=await f.req('/api/state');assert.equal(r.status,500);assert.ok(!r.data.includes(f.workspace));
+});
+
+test('simultaneous submissions start exactly one process',async t=>{
+  const f=await fixture(t,'echo started; sleep 0.5');
+  const revision=(await f.state()).revision;
+  const results=await Promise.all(Array.from({length:8},()=>f.req('/api/run',{action:'run',parameters:project.parameters,revision})));
+  assert.equal(results.filter(r=>r.status===202).length,1);
+  assert.equal(results.filter(r=>r.status===409).length,7);
+  await until(f.state,s=>s.job.status==='done');
+  assert.equal((await f.state()).job.log.trim(),'started');
+});
+
+test('missing executable and corrupt history surface errors and retain the workspace',async t=>{
+  const f=await fixture(t);
+  await writeFile(join(f.packageDir,'toolchain/run.sh'),'#!/definitely-not-an-interpreter\n');
+  assert.equal((await f.run()).status,202);
+  const failed=await until(f.state,s=>s.job.status==='failed');assert.match(failed.job.message,/ENOENT/);
+  assert.deepEqual(JSON.parse(await readFile(join(f.workspace,'studio.json'),'utf8')),project);
+  await mkdir(join(f.root,'outside'));await mkdir(join(f.workspace,'out'));
+  await symlink(join(f.root,'outside'),join(f.workspace,'out/runs'));
+  assert.equal((await f.req('/api/state')).status,403);
+});
+
+test('bounds output size and handles JSON HEAD downloads',async t=>{
+  const f=await fixture(t);await mkdir(join(f.workspace,'out'));
+  const file=await open(join(f.workspace,'out/large.bin'),'w');await file.truncate(256*1024*1024+1);await file.close();
+  assert.equal((await f.req('/artifacts/out/large.bin')).status,413);
+  await writeFile(join(f.workspace,'out/record.json'),'{"answer":42}');
+  const head=await fetch(f.studio.url+'/artifacts/out/record.json',{method:'HEAD'});assert.equal(head.status,200);assert.equal(await head.text(),'');
+});
+
+test('manifest server entry point starts, serves a workspace, and stops cleanly',async t=>{
+  const f=await fixture(t);
+  const child=spawn(process.execPath,[fileURLToPath(new URL('../server.mjs',import.meta.url))],{env:{...process.env,HARNESS_WORKSPACE:f.workspace,HARNESS_DSH_DIR:f.packageDir,HARNESS_VIEWER_PORT:'0'},stdio:['ignore','pipe','pipe']});
+  t.after(()=>child.kill());
+  const [data]=await once(child.stdout,'data');const url=data.toString().match(/http:\/\/127\.0\.0\.1:\d+/)[0];
+  assert.equal((await fetch(url+'/api/state')).status,200);
+  const exited=once(child,'exit');child.kill('SIGTERM');assert.deepEqual(await exited,[0,null]);
 });

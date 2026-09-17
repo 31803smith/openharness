@@ -24,7 +24,7 @@ export function mount(stage,api){
       }
     }
     const names=p.use==='studio'?['Studio','Reading room']:['Living room','Bedroom'];words(ctx,`${names[selected%2]} · level ${Math.floor(selected/2)+1}`,24,h-70,'#dcebc1',13);
-    words(ctx,plan?'PLAN VIEW':'DRAG TO ORBIT',24,24,'#93af85',9);
+    
   },api.signal);screen.element.setAttribute('aria-label','Interactive building schematic; drag or use arrow keys to orbit');screen.element.tabIndex=0;
   screen.element.addEventListener('pointerdown',e=>{drag={x:e.clientX,y:e.clientY,startX:e.clientX,startY:e.clientY};screen.element.setPointerCapture(e.pointerId);});
   screen.element.addEventListener('pointermove',e=>{if(!drag||plan)return;angle+=(e.clientX-drag.x)*.008;drag.x=e.clientX;});
