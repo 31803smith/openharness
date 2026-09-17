@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -u; cd "$(dirname "$0")"
 fail=0
-if command -v node >/dev/null 2>&1; then echo "ok   node $(node --version)"; else echo "miss node on PATH"; fail=1; fi
+# The same Node setup.sh requires: a doctor that passes where setup fails helps no one.
+if command -v node >/dev/null 2>&1 && node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 18 ? 0 : 1)'; then echo "ok   node $(node --version)"; else echo "miss node >= 18 on PATH"; fail=1; fi
 if [ -f node_modules/three/build/three.module.js ] && [ -f node_modules/three/examples/jsm/loaders/GLTFLoader.js ]; then
   echo "ok   three $(node -p "require('./node_modules/three/package.json').version")"
 else

@@ -81,7 +81,8 @@ Nothing renders while nothing moves.
 ```sh
 ./setup.sh      # npm ci + the smoke test
 ./doctor.sh
-npm test        # the server end to end: shell, three, state, ranges, sandbox, live events
+npm run smoke   # the server end to end: shell, three, state, ranges, sandbox, live events
+npm test        # the smoke test, then every branch of the server and the scripts (test/*.test.mjs)
 ```
 
 ## Credit and stewardship
