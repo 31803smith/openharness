@@ -357,7 +357,8 @@ void main() {
       find.byKey(const ValueKey('store-page:autonomous/blender')),
       findsOneWidget,
     );
-    expect(find.text('Start with an idea'), findsOneWidget);
+    // Before Blender ships its own examples, its editorial prompts lead the page.
+    expect(find.byKey(const ValueKey('store-example:0')), findsOneWidget);
     await _capture(tester, key, 'blender-detail');
     final copy = find.byKey(const ValueKey('store-copy-prompt:0'));
     await tester.ensureVisible(copy);

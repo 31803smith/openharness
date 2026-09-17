@@ -399,11 +399,10 @@ void main() {
     expect(older.requests, isEmpty);
     expect(relay.requests, isEmpty);
 
-    await tester.tap(find.byKey(const ValueKey('store-get:local')));
+    await tester.tap(find.byKey(const ValueKey('store-primary-action')));
     await tester.pumpAndSettle();
     expect(installed, {'autonomous/typst'});
     expect(says('local', 'Installed'), findsOneWidget);
-    expect(find.byKey(const ValueKey('store-open:local')), findsOneWidget);
     expect(
       find.descendant(
         of: find.byKey(const ValueKey('store-primary-action')),

@@ -8,244 +8,51 @@ import '../shared/theme/app_theme.dart' as grid;
 import '../shared/widgets/app_icon_button.dart';
 import '../widgets/engine_identity.dart';
 
-/// The product page's centrepiece: what you ask, and what the harness makes of it.
+/// The body of a store page: what you ask, and what comes out — one after another, down the page.
 ///
-/// A store page that lists features tells a person what a harness is; this shows them what it does.
-/// One example at a time fills a stage — the prompt types itself out on the left, a line sweeps
-/// across while the harness "works", and the picture of the real output settles in on the right —
-/// then the next example follows. A strip under the stage picks one directly, and "Try this prompt"
-/// opens New Harness with that prompt as its first message, so the thing that made someone lean in is
-/// one click from happening on their own machine.
+/// Nothing competes with the examples. Each is a prompt set large and centred, the button that
+/// tries it, a thread of light, and the real output at full width with one quiet line naming it.
+/// The next follows after a breath of space; a person scrolls through what the harness does rather
+/// than reading about it. An example without a picture (an editorial prompt, before the package
+/// ships its own) is the prompt and its button alone.
 ///
-/// Reduce Motion (and `flutter test`) shows each example whole and does not advance on its own.
-class StoreShowcase extends StatefulWidget {
-  const StoreShowcase({
+/// Each block rises into place the first time it scrolls into view — unless Reduce Motion is on, or
+/// under `flutter test`, where everything is simply there.
+class StoreExampleFlow extends StatelessWidget {
+  const StoreExampleFlow({
     super.key,
     required this.entry,
     required this.examples,
     this.onTry,
-    this.autoAdvance,
+    this.animate,
   });
 
   final DshEntry entry;
   final List<StoreExample> examples;
 
-  /// Opens New Harness with the prompt; null when there is no machine to open it on.
+  /// Opens New Harness with the prompt as its first message; null when there is nowhere to open it.
   final ValueChanged<String>? onTry;
 
-  /// Types, reveals and moves on to the next example; off under `flutter test` unless asked for.
-  final bool? autoAdvance;
-
-  @override
-  State<StoreShowcase> createState() => _StoreShowcaseState();
-}
-
-class _StoreShowcaseState extends State<StoreShowcase>
-    with TickerProviderStateMixin {
-  static const _dwell = Duration(seconds: 7);
-
-  late final AnimationController _type = AnimationController(vsync: this);
-  late final AnimationController _reveal = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 650),
-  );
-  late final AnimationController _dwellClock = AnimationController(
-    vsync: this,
-    duration: _dwell,
-  );
-  var _index = 0;
-  var _hovering = false;
-
-  bool get _animate =>
-      (widget.autoAdvance ?? !kUnderTest) &&
-      !(MediaQuery.maybeDisableAnimationsOf(context) ?? false);
-
-  StoreExample get _example => widget.examples[_index];
-
-  @override
-  void initState() {
-    super.initState();
-    _type.addStatusListener((status) {
-      if (status == AnimationStatus.completed) _reveal.forward(from: 0);
-    });
-    _reveal.addStatusListener((status) {
-      if (status == AnimationStatus.completed && _animate && !_hovering) {
-        _dwellClock.forward(from: 0);
-      }
-    });
-    _dwellClock.addStatusListener((status) {
-      if (status == AnimationStatus.completed && mounted) {
-        _select((_index + 1) % widget.examples.length);
-      }
-    });
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _play();
-    });
-  }
-
-  @override
-  void didUpdateWidget(StoreShowcase old) {
-    super.didUpdateWidget(old);
-    if (_index >= widget.examples.length) _select(0);
-  }
-
-  @override
-  void dispose() {
-    _type.dispose();
-    _reveal.dispose();
-    _dwellClock.dispose();
-    super.dispose();
-  }
-
-  void _select(int index) {
-    setState(() => _index = index);
-    _play();
-  }
-
-  /// Type the prompt, then reveal the output; shown whole at once when nothing may move.
-  void _play() {
-    _dwellClock.stop();
-    _dwellClock.value = 0;
-    if (!_animate) {
-      _type.value = 1;
-      _reveal.value = 1;
-      return;
-    }
-    final chars = _example.prompt.length;
-    _type.duration = Duration(milliseconds: (chars * 22).clamp(600, 2600));
-    _reveal.value = 0;
-    _type.forward(from: 0);
-  }
-
-  void _hover(bool hovering) {
-    _hovering = hovering;
-    if (!_animate) return;
-    if (hovering) {
-      _dwellClock.stop();
-    } else if (_reveal.isCompleted) {
-      _dwellClock.forward();
-    }
-  }
+  /// Rise into view on first sight; defaults to on outside tests.
+  final bool? animate;
 
   @override
   Widget build(BuildContext context) {
     grid.AppTheme.watch(context);
-    if (widget.examples.isEmpty) return const SizedBox.shrink();
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final wide = constraints.maxWidth >= 760;
-        final prompt = _PromptPane(
-          entry: widget.entry,
-          example: _example,
-          typing: _type,
-          large: wide,
-          onTry: widget.onTry,
-        );
-        final output = _OutputPane(
-          entry: widget.entry,
-          example: _example,
-          typing: _type,
-          reveal: _reveal,
-        );
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            MouseRegion(
-              onEnter: (_) => _hover(true),
-              onExit: (_) => _hover(false),
-              child: Container(
-                key: const ValueKey('store-showcase-stage'),
-                padding: EdgeInsets.all(wide ? 28 : 20),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(22),
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      grid.AppPalette.cardBg,
-                      Color.alphaBlend(
-                        grid.AppPalette.accent.withValues(alpha: 0.10),
-                        grid.AppPalette.cardBg,
-                      ),
-                    ],
-                  ),
-                  border: Border.all(color: grid.AppPalette.divider),
-                ),
-                child: wide
-                    ? Row(
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          SizedBox(
-                            width: constraints.maxWidth * 0.34,
-                            child: prompt,
-                          ),
-                          const SizedBox(width: 28),
-                          Expanded(child: output),
-                        ],
-                      )
-                    : Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [prompt, const SizedBox(height: 20), output],
-                      ),
-              ),
-            ),
-            if (widget.examples.length > 1) ...[
-              const SizedBox(height: 14),
-              SizedBox(
-                height: 72,
-                child: ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  itemCount: widget.examples.length,
-                  separatorBuilder: (_, _) => const SizedBox(width: 10),
-                  itemBuilder: (context, i) => _ExampleChip(
-                    key: ValueKey('store-example:$i'),
-                    entry: widget.entry,
-                    example: widget.examples[i],
-                    selected: i == _index,
-                    progress: _dwellClock,
-                    onTap: i == _index ? null : () => _select(i),
-                  ),
-                ),
-              ),
-            ],
-          ],
-        );
-      },
-    );
-  }
-}
-
-class _Eyebrow extends StatelessWidget {
-  const _Eyebrow(this.text, {this.trailing});
-  final String text;
-  final String? trailing;
-
-  @override
-  Widget build(BuildContext context) {
-    // Const where it is used, so it must ask for the theme itself to follow a flip.
-    grid.AppTheme.watch(context);
-    return Row(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(
-          text,
-          style: TextStyle(
-            fontSize: 11,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 1.4,
-            color: grid.AppPalette.accentOnSurface,
-          ),
-        ),
-        if (trailing != null) ...[
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              trailing!,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 12.5,
-                color: grid.AppPalette.textSecondary,
-              ),
+        for (final (i, example) in examples.indexed) ...[
+          if (i > 0) const SizedBox(height: 132),
+          _Reveal(
+            animate: animate ?? !kUnderTest,
+            child: _ExampleBlock(
+              key: ValueKey('store-example:$i'),
+              index: i,
+              count: examples.length,
+              entry: entry,
+              example: example,
+              onTry: onTry,
             ),
           ),
         ],
@@ -254,223 +61,211 @@ class _Eyebrow extends StatelessWidget {
   }
 }
 
-class _PromptPane extends StatelessWidget {
-  const _PromptPane({
+class _ExampleBlock extends StatefulWidget {
+  const _ExampleBlock({
+    super.key,
+    required this.index,
+    required this.count,
     required this.entry,
     required this.example,
-    required this.typing,
-    required this.large,
     required this.onTry,
   });
 
+  final int index;
+  final int count;
   final DshEntry entry;
   final StoreExample example;
-  final Animation<double> typing;
-  final bool large;
   final ValueChanged<String>? onTry;
 
   @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      const _Eyebrow('YOU ASK'),
-      const SizedBox(height: 14),
-      AnimatedBuilder(
-        animation: typing,
-        builder: (context, _) {
-          final prompt = example.prompt;
-          final shown = (prompt.length * typing.value).round().clamp(
-            0,
-            prompt.length,
-          );
-          final typingNow = shown < prompt.length;
-          return Semantics(
-            label: prompt,
-            excludeSemantics: true,
-            child: Text.rich(
-              key: const ValueKey('store-showcase-prompt'),
-              TextSpan(
-                children: [
-                  TextSpan(text: '“${prompt.substring(0, shown)}'),
-                  // The rest is laid out but unseen, so the pane does not grow as it types.
-                  TextSpan(
-                    text: '${prompt.substring(shown)}”',
-                    style: TextStyle(
-                      color: typingNow
-                          ? Colors.transparent
-                          : grid.AppPalette.textPrimary,
-                    ),
-                  ),
-                ],
-              ),
-              style: TextStyle(
-                fontSize: large ? 24 : 20,
-                height: 1.32,
-                fontWeight: FontWeight.w600,
-                letterSpacing: -0.3,
-                color: grid.AppPalette.textPrimary,
-              ),
-            ),
-          );
-        },
-      ),
-      const SizedBox(height: 18),
-      Row(
-        children: [
-          EngineMark(engine: entry.id, displayName: entry.name, size: 18),
-          const SizedBox(width: 8),
-          Flexible(
-            child: Text(
-              '${entry.name} harness',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-                color: grid.AppPalette.textSecondary,
-              ),
-            ),
-          ),
-          const SizedBox(width: 6),
-          Icon(
-            LucideIcons.arrowRight300,
-            size: 14,
-            color: grid.AppPalette.textFaint,
-          ),
-        ],
-      ),
-      const SizedBox(height: 22),
-      Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: [
-          FilledButton.icon(
-            key: const ValueKey('store-try-prompt'),
-            onPressed: onTry == null ? null : () => onTry!(example.prompt),
-            icon: const Icon(LucideIcons.sparkles300, size: 16),
-            label: const Text('Try this prompt'),
-            style: FilledButton.styleFrom(
-              backgroundColor: grid.AppPalette.accent,
-              foregroundColor: Colors.white,
-              minimumSize: const Size(0, 40),
-              padding: const EdgeInsets.symmetric(horizontal: 18),
-              shape: const StadiumBorder(),
-            ),
-          ),
-          AppIconButton(
-            key: const ValueKey('store-copy-prompt'),
-            icon: LucideIcons.copy300,
-            tooltip: 'Copy prompt',
-            onPressed: () async {
-              await Clipboard.setData(ClipboardData(text: example.prompt));
-              if (context.mounted) {
-                ScaffoldMessenger.of(
-                  context,
-                ).showSnackBar(const SnackBar(content: Text('Prompt copied')));
-              }
-            },
-          ),
-        ],
-      ),
-    ],
-  );
+  State<_ExampleBlock> createState() => _ExampleBlockState();
 }
 
-class _OutputPane extends StatelessWidget {
-  const _OutputPane({
-    required this.entry,
-    required this.example,
-    required this.typing,
-    required this.reveal,
-  });
-
-  final DshEntry entry;
-  final StoreExample example;
-  final Animation<double> typing;
-  final Animation<double> reveal;
+class _ExampleBlockState extends State<_ExampleBlock> {
+  var _hovering = false;
 
   @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.stretch,
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      _Eyebrow('IT MAKES', trailing: example.caption),
-      const SizedBox(height: 14),
-      AspectRatio(
-        aspectRatio: 16 / 10,
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(14),
-          child: DecoratedBox(
-            decoration: const BoxDecoration(color: Color(0xFF111316)),
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                AnimatedBuilder(
-                  animation: reveal,
-                  builder: (context, child) => Opacity(
-                    opacity: Curves.easeOut.transform(reveal.value),
-                    child: Transform.scale(
-                      scale:
-                          1.04 -
-                          0.04 * Curves.easeOutCubic.transform(reveal.value),
-                      child: child,
-                    ),
-                  ),
-                  child: _OutputPicture(entry: entry, example: example),
+  Widget build(BuildContext context) {
+    grid.AppTheme.watch(context);
+    final example = widget.example;
+    final i = widget.index;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final wide = constraints.maxWidth >= 820;
+        final radius = BorderRadius.circular(wide ? 28 : 18);
+        return Column(
+          children: [
+            Text(
+              '${(i + 1).toString().padLeft(2, '0')} / ${widget.count.toString().padLeft(2, '0')}',
+              style: TextStyle(
+                fontFamily: grid.AppFont.mono,
+                fontSize: 12,
+                letterSpacing: 2,
+                color: grid.AppPalette.accentOnSurface,
+              ),
+            ),
+            const SizedBox(height: 20),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 880),
+              child: Text(
+                '“${example.prompt}”',
+                key: ValueKey('store-example-prompt:$i'),
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: wide ? 34 : 24,
+                  height: 1.24,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: wide ? -0.8 : -0.4,
+                  color: grid.AppPalette.textPrimary,
                 ),
-                // The harness at work: a light sweeping across while the prompt is still arriving.
-                AnimatedBuilder(
-                  animation: Listenable.merge([typing, reveal]),
-                  builder: (context, _) {
-                    final working = typing.value > 0 && reveal.value == 0;
-                    if (!working) return const SizedBox.shrink();
-                    return Align(
-                      alignment: Alignment(-1.2 + 2.4 * typing.value, 0),
-                      child: FractionallySizedBox(
-                        widthFactor: 0.35,
-                        heightFactor: 1,
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              colors: [
-                                Colors.transparent,
-                                grid.AppPalette.accent.withValues(alpha: 0.18),
-                                Colors.transparent,
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
+              ),
+            ),
+            const SizedBox(height: 28),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                FilledButton.icon(
+                  key: ValueKey('store-try-prompt:$i'),
+                  onPressed: widget.onTry == null
+                      ? null
+                      : () => widget.onTry!(example.prompt),
+                  icon: const Icon(LucideIcons.sparkles300, size: 17),
+                  label: const Text('Try this prompt'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: grid.AppPalette.accent,
+                    foregroundColor: Colors.white,
+                    minimumSize: const Size(0, 46),
+                    padding: const EdgeInsets.symmetric(horizontal: 22),
+                    textStyle: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    shape: const StadiumBorder(),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                AppIconButton(
+                  key: ValueKey('store-copy-prompt:$i'),
+                  icon: LucideIcons.copy300,
+                  tooltip: 'Copy prompt',
+                  onPressed: () async {
+                    await Clipboard.setData(
+                      ClipboardData(text: example.prompt),
                     );
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Prompt copied')),
+                      );
+                    }
                   },
                 ),
               ],
             ),
-          ),
-        ),
-      ),
-    ],
-  );
+            if (example.image != null) ...[
+              // The prompt becoming the thing: a thread of the accent running down into the picture.
+              Container(
+                width: 1.5,
+                height: 64,
+                margin: const EdgeInsets.symmetric(vertical: 18),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      grid.AppPalette.accent.withValues(alpha: 0),
+                      grid.AppPalette.accent.withValues(alpha: 0.8),
+                    ],
+                  ),
+                ),
+              ),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 1120),
+                child: MouseRegion(
+                  onEnter: (_) => setState(() => _hovering = true),
+                  onExit: (_) => setState(() => _hovering = false),
+                  child: AnimatedScale(
+                    scale: _hovering ? 1.012 : 1,
+                    duration: const Duration(milliseconds: 420),
+                    curve: Curves.easeOutCubic,
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 420),
+                      curve: Curves.easeOutCubic,
+                      decoration: BoxDecoration(
+                        borderRadius: radius,
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(
+                              alpha: _hovering ? 0.34 : 0.2,
+                            ),
+                            blurRadius: _hovering ? 60 : 40,
+                            offset: const Offset(0, 24),
+                          ),
+                        ],
+                      ),
+                      child: ClipRRect(
+                        borderRadius: radius,
+                        child: AspectRatio(
+                          aspectRatio: 16 / 10,
+                          child: ColoredBox(
+                            color: const Color(0xFF111316),
+                            child: _Output(
+                              key: ValueKey('store-example-image:$i'),
+                              entry: widget.entry,
+                              example: example,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              if (example.caption != null) ...[
+                const SizedBox(height: 22),
+                Text(
+                  example.caption!,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 13,
+                    height: 1.4,
+                    color: grid.AppPalette.textSecondary,
+                  ),
+                ),
+              ],
+            ],
+          ],
+        );
+      },
+    );
+  }
 }
 
-class _OutputPicture extends StatelessWidget {
-  const _OutputPicture({required this.entry, required this.example});
+class _Output extends StatelessWidget {
+  const _Output({super.key, required this.entry, required this.example});
   final DshEntry entry;
   final StoreExample example;
 
   @override
   Widget build(BuildContext context) {
-    final image = example.image;
-    final placeholder = _OutputPlaceholder(entry: entry);
-    if (image == null) return placeholder;
+    final placeholder = Center(
+      child: Opacity(
+        opacity: 0.5,
+        child: EngineMark(engine: entry.id, displayName: entry.name, size: 72),
+      ),
+    );
     return Image.network(
-      image,
-      key: ValueKey('store-showcase-image:$image'),
-      fit: BoxFit.contain,
+      example.image!,
+      fit: BoxFit.cover,
       filterQuality: FilterQuality.medium,
       semanticLabel: example.caption ?? 'What ${entry.name} made',
+      frameBuilder: (context, child, frame, synchronous) => synchronous
+          ? child
+          : AnimatedOpacity(
+              opacity: frame == null ? 0 : 1,
+              duration: const Duration(milliseconds: 500),
+              curve: Curves.easeOut,
+              child: child,
+            ),
       loadingBuilder: (context, child, progress) =>
           progress == null ? child : placeholder,
       errorBuilder: (_, _, _) => placeholder,
@@ -478,125 +273,76 @@ class _OutputPicture extends StatelessWidget {
   }
 }
 
-class _OutputPlaceholder extends StatelessWidget {
-  const _OutputPlaceholder({required this.entry});
-  final DshEntry entry;
+/// Rises into place the first time any of it is on screen, and stays.
+class _Reveal extends StatefulWidget {
+  const _Reveal({required this.animate, required this.child});
+  final bool animate;
+  final Widget child;
 
   @override
-  Widget build(BuildContext context) => Center(
-    child: Opacity(
-      opacity: 0.55,
-      child: EngineMark(engine: entry.id, displayName: entry.name, size: 64),
-    ),
-  );
+  State<_Reveal> createState() => _RevealState();
 }
 
-class _ExampleChip extends StatelessWidget {
-  const _ExampleChip({
-    super.key,
-    required this.entry,
-    required this.example,
-    required this.selected,
-    required this.progress,
-    required this.onTap,
-  });
-
-  final DshEntry entry;
-  final StoreExample example;
-  final bool selected;
-  final Animation<double> progress;
-  final VoidCallback? onTap;
+class _RevealState extends State<_Reveal> with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 700),
+  );
+  ScrollPosition? _position;
 
   @override
-  Widget build(BuildContext context) => Semantics(
-    button: true,
-    selected: selected,
-    label: example.prompt,
-    excludeSemantics: true,
-    child: InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        width: 240,
-        padding: const EdgeInsets.all(8),
-        decoration: BoxDecoration(
-          color: selected
-              ? grid.AppSurface.selectedFill
-              : grid.AppPalette.cardBg,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: selected
-                ? grid.AppPalette.accent.withValues(alpha: 0.6)
-                : grid.AppPalette.divider,
-          ),
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final still = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+    if (!widget.animate || still) {
+      _controller.value = 1;
+      return;
+    }
+    final position = Scrollable.maybeOf(context)?.position;
+    if (position != _position) {
+      _position?.removeListener(_check);
+      _position = position?..addListener(_check);
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) => _check());
+  }
+
+  /// Starts the rise once the block's top edge is inside the viewport.
+  void _check() {
+    if (!mounted || _controller.value > 0 || _controller.isAnimating) return;
+    final box = context.findRenderObject() as RenderBox?;
+    final scrollable = Scrollable.maybeOf(context);
+    final viewport = scrollable?.context.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize || viewport == null || !viewport.hasSize) {
+      _controller.forward();
+      return;
+    }
+    final top = box.localToGlobal(Offset.zero, ancestor: viewport).dy;
+    if (top < viewport.size.height * 0.9) {
+      _position?.removeListener(_check);
+      _controller.forward();
+    }
+  }
+
+  @override
+  void dispose() {
+    _position?.removeListener(_check);
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: _controller,
+    builder: (context, child) {
+      final t = Curves.easeOutCubic.transform(_controller.value);
+      return Opacity(
+        opacity: t,
+        child: Transform.translate(
+          offset: Offset(0, 36 * (1 - t)),
+          child: child,
         ),
-        child: Stack(
-          children: [
-            Row(
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: SizedBox(
-                    width: 72,
-                    height: 54,
-                    child: ColoredBox(
-                      color: const Color(0xFF111316),
-                      child: example.image == null
-                          ? Center(
-                              child: EngineMark(
-                                engine: entry.id,
-                                displayName: entry.name,
-                                size: 22,
-                              ),
-                            )
-                          : Image.network(
-                              example.image!,
-                              fit: BoxFit.cover,
-                              errorBuilder: (_, _, _) => Center(
-                                child: EngineMark(
-                                  engine: entry.id,
-                                  displayName: entry.name,
-                                  size: 22,
-                                ),
-                              ),
-                            ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    example.prompt,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 12.5,
-                      height: 1.35,
-                      color: selected
-                          ? grid.AppPalette.textPrimary
-                          : grid.AppPalette.textSecondary,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            if (selected)
-              Positioned(
-                left: 0,
-                right: 0,
-                bottom: -8,
-                child: AnimatedBuilder(
-                  animation: progress,
-                  builder: (context, _) => FractionallySizedBox(
-                    alignment: Alignment.centerLeft,
-                    widthFactor: progress.value,
-                    child: Container(height: 2, color: grid.AppPalette.accent),
-                  ),
-                ),
-              ),
-          ],
-        ),
-      ),
-    ),
+      );
+    },
+    child: widget.child,
   );
 }

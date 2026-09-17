@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:harness/api/api_client.dart';
 import 'package:harness/auth/auth_session.dart';
 import 'package:harness/core/config.dart';
@@ -261,13 +262,11 @@ void main() {
       );
       final local = app.machineStates['machine-1']!;
       void expectEnabled(bool enabled) {
-        for (final key in ['store-primary-action', 'store-get:machine-1']) {
-          expect(
-            tester.widget<FilledButton>(_key(key)).onPressed != null,
-            enabled,
-            reason: key,
-          );
-        }
+        expect(
+          tester.widget<FilledButton>(_key('store-primary-action')).onPressed !=
+              null,
+          enabled,
+        );
       }
 
       expectEnabled(false);
@@ -312,7 +311,7 @@ void main() {
         app.installGate = Completer<String?>();
         expect(_in('store-primary-action', find.text('Get')), findsOneWidget);
         await tester.tap(_key('store-primary-action'));
-        await tester.tap(_key('store-get:machine-1'));
+        await tester.tap(_key('store-primary-action'), warnIfMissed: false);
         expect(app.installs, [('machine-1', 'autonomous/typst')]);
         await tester.pump();
         expect(
@@ -327,12 +326,12 @@ void main() {
           ),
           findsOneWidget,
         );
-        expect(_key('store-get:machine-1'), findsNothing);
+        expect(_in('store-primary-action', find.text('Get')), findsNothing);
 
         app.installGate!.complete('kicad-cli is not on studio-mac');
         await tester.pumpAndSettle();
         expect(find.text('kicad-cli is not on studio-mac'), findsOneWidget);
-        expect(_key('store-get:machine-1'), findsOneWidget);
+        expect(_in('store-primary-action', find.text('Get')), findsOneWidget);
         expect(
           tester.widget<FilledButton>(_key('store-primary-action')).onPressed,
           isNotNull,
@@ -345,7 +344,7 @@ void main() {
     ) async {
       final (app, _) = await _open(tester, initialHarness: 'autonomous/typst');
       app.installGate = Completer<String?>();
-      await tester.tap(_key('store-get:machine-1'));
+      await tester.tap(_key('store-primary-action'));
       await tester.pump();
       await tester.tap(_key('store-back'));
       await tester.pumpAndSettle();
@@ -445,7 +444,7 @@ void main() {
     );
 
     testWidgets(
-      'Open, from the page or a machine row, opens New Harness on that machine in a tab of its own',
+      'Open opens New Harness on this machine in a tab of its own, and a dismissed dialog leaves none',
       (tester) async {
         final (app, _) = await _open(tester, initialHarness: 'autonomous/marp');
         final tabs = app.swarms.length;
@@ -464,16 +463,6 @@ void main() {
           tabs,
           reason: 'a dismissed dialog leaves no tab',
         );
-
-        await tester.tap(_key('store-open:machine-1'));
-        await tester.pumpAndSettle();
-        expect(
-          find.byKey(const ValueKey('create-agent-submit')),
-          findsOneWidget,
-        );
-        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-        await tester.pumpAndSettle();
-        expect(app.swarms.length, tabs);
       },
     );
   });
@@ -499,7 +488,6 @@ void main() {
         _in('store-machine:machine-1', find.text(status)),
         findsOneWidget,
       );
-      expect(find.text('On this computer'), findsOneWidget);
       expect(_key('store-machine:remote'), findsNothing);
       says('studio-mac · this computer');
       says('Not installed');
@@ -549,7 +537,7 @@ void main() {
         isNot(quietColor),
       );
       expect(
-        _in('store-get:machine-1', find.text('Try again')),
+        _in('store-primary-action', find.text('Try again')),
         findsOneWidget,
       );
 
@@ -565,7 +553,7 @@ void main() {
       app.changed();
       await tester.pumpAndSettle();
       says('miss typst-cli (cargo install typst-cli)');
-      await tester.tap(_key('store-get:machine-1'));
+      await tester.tap(_key('store-primary-action'));
       await tester.pumpAndSettle();
       expect(app.installs, [('machine-1', _typst.id)]);
 
@@ -587,10 +575,6 @@ void main() {
         await tester.pumpAndSettle();
         says(label);
         expect(
-          tester.widget<FilledButton>(_key('store-get:machine-1')).onPressed,
-          isNull,
-        );
-        expect(
           tester.widget<FilledButton>(_key('store-primary-action')).onPressed,
           isNull,
         );
@@ -607,7 +591,7 @@ void main() {
       app.changed();
       await tester.pumpAndSettle();
       says('Installed · linked to a checkout');
-      expect(_key('store-open:machine-1'), findsOneWidget);
+      expect(_in('store-primary-action', find.text('Open')), findsOneWidget);
       expect(_key('store-remove:machine-1'), findsOneWidget);
     },
   );
@@ -717,7 +701,6 @@ void main() {
       app.changed();
       await tester.pumpAndSettle();
       expect(_in('store-primary-action', find.text('Open')), findsOneWidget);
-      expect(_key('store-open:machine-1'), findsOneWidget);
     },
   );
 
@@ -792,8 +775,8 @@ void main() {
         ),
       );
       expect(find.text('Website'), findsNothing);
-      expect(find.text('Package source'), findsNothing);
-      await tester.tap(find.text('Upstream project'));
+      expect(find.text('Package'), findsNothing);
+      await tester.tap(find.text('Source'));
       await tester.pump();
       expect(launched, ['https://github.com/marp-team/marp-cli']);
 
@@ -816,17 +799,24 @@ void main() {
   );
 
   testWidgets(
-    'every link the registry names is a chip, the licence without an arrow',
+    'every link the registry names is under the name, the licence without an arrow',
     (tester) async {
       await _open(tester, initialHarness: 'autonomous/marp');
-      for (final label in [
-        'Website',
-        'Upstream project',
-        'Package source',
-        'Licence · MIT',
-      ]) {
+      for (final label in ['Website', 'Source', 'Package', 'MIT licence']) {
         expect(find.text(label), findsOneWidget, reason: label);
       }
+      expect(
+        find.descendant(
+          of: find
+              .ancestor(
+                of: find.text('MIT licence'),
+                matching: find.byType(Row),
+              )
+              .first,
+          matching: find.byIcon(LucideIcons.arrowUpRight300),
+        ),
+        findsNothing,
+      );
     },
   );
 

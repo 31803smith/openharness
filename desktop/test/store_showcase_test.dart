@@ -1,5 +1,6 @@
-// A store product page shows what a harness does: an example's prompt beside a picture of what it
-// made, and "Try this prompt" opens New Harness with that prompt as the first message.
+// A store product page shows what a harness does: its examples one after another down the page, each
+// a prompt, the picture of what came of it and "Try this prompt", which opens New Harness with that
+// prompt as the first message.
 import 'package:file_selector_platform_interface/file_selector_platform_interface.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -26,6 +27,7 @@ const _lamp = StoreExample(
 );
 const _gear = StoreExample(
   prompt: 'A planetary gearbox, 5:1, printable without supports.',
+  image: 'https://example.com/gear.jpg',
   caption: 'Gearbox · STEP',
 );
 
@@ -91,42 +93,26 @@ class _Notifier extends AppNotifier {
   }
 }
 
-String _promptText(WidgetTester tester) => tester
-    .widget<Text>(find.byKey(const ValueKey('store-showcase-prompt')))
-    .textSpan!
-    .toPlainText();
-
-/// What has been typed so far: the rest of the prompt is laid out but transparent.
-String _typedText(WidgetTester tester) =>
-    (tester
-                .widget<Text>(
-                  find.byKey(const ValueKey('store-showcase-prompt')),
-                )
-                .textSpan!
-            as TextSpan)
-        .children!
-        .first
-        .toPlainText();
-
-Future<void> _pumpShowcase(
+Future<void> _pumpFlow(
   WidgetTester tester, {
   ValueChanged<String>? onTry,
-  bool? autoAdvance,
+  bool animate = false,
   List<StoreExample> examples = const [_lamp, _gear],
+  Size size = const Size(1200, 900),
 }) async {
   tester.view.devicePixelRatio = 1;
-  tester.view.physicalSize = const Size(1200, 900);
+  tester.view.physicalSize = size;
   addTearDown(tester.view.reset);
   await tester.pumpWidget(
     MaterialApp(
       theme: grid.buildAppTheme(brightness: Brightness.dark),
       home: Scaffold(
         body: SingleChildScrollView(
-          child: StoreShowcase(
+          child: StoreExampleFlow(
             entry: _blender,
             examples: examples,
             onTry: onTry,
-            autoAdvance: autoAdvance,
+            animate: animate,
           ),
         ),
       ),
@@ -191,45 +177,55 @@ void main() {
     });
   });
 
-  testWidgets('shows the first example whole, and a strip picks another', (
+  testWidgets('every example is on the page, in order, prompt over picture', (
     tester,
   ) async {
-    await _pumpShowcase(tester);
-    expect(_promptText(tester), '“${_lamp.prompt}”');
+    await _pumpFlow(tester);
+    expect(find.text('“${_lamp.prompt}”'), findsOneWidget);
+    expect(find.text('“${_gear.prompt}”'), findsOneWidget);
+    expect(find.text('01 / 02'), findsOneWidget);
+    expect(find.text('02 / 02'), findsOneWidget);
     expect(find.text('Desk lamp · 9 parts'), findsOneWidget);
-    expect(find.text('YOU ASK'), findsOneWidget);
-    expect(find.text('IT MAKES'), findsOneWidget);
-    expect(find.text('Blender harness'), findsOneWidget);
-
-    await tester.tap(find.byKey(const ValueKey('store-example:1')));
-    await tester.pumpAndSettle();
-    expect(_promptText(tester), '“${_gear.prompt}”');
     expect(find.text('Gearbox · STEP'), findsOneWidget);
+    final first = tester.getRect(
+      find.byKey(const ValueKey('store-example-prompt:0')),
+    );
+    final picture = tester.getRect(
+      find.byKey(const ValueKey('store-example-image:0')),
+    );
+    final second = tester.getRect(
+      find.byKey(const ValueKey('store-example-prompt:1')),
+    );
+    expect(picture.top, greaterThan(first.bottom));
+    expect(second.top, greaterThan(picture.bottom));
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('one example needs no strip', (tester) async {
-    await _pumpShowcase(tester, examples: const [_lamp]);
-    expect(find.byKey(const ValueKey('store-example:0')), findsNothing);
-  });
-
-  testWidgets('Try this prompt hands over the prompt on screen', (
+  testWidgets('an example with no picture is its prompt and its button', (
     tester,
   ) async {
+    await _pumpFlow(
+      tester,
+      examples: const [StoreExample(prompt: 'Start a slide deck.')],
+    );
+    expect(find.text('“Start a slide deck.”'), findsOneWidget);
+    expect(find.byKey(const ValueKey('store-try-prompt:0')), findsOneWidget);
+    expect(find.byKey(const ValueKey('store-example-image:0')), findsNothing);
+  });
+
+  testWidgets('each Try hands over its own prompt', (tester) async {
     final tried = <String>[];
-    await _pumpShowcase(tester, onTry: tried.add);
-    await tester.tap(find.byKey(const ValueKey('store-try-prompt')));
-    await tester.tap(find.byKey(const ValueKey('store-example:1')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('store-try-prompt')));
-    expect(tried, [_lamp.prompt, _gear.prompt]);
+    await _pumpFlow(tester, onTry: tried.add, size: const Size(1200, 4000));
+    await tester.tap(find.byKey(const ValueKey('store-try-prompt:1')));
+    await tester.tap(find.byKey(const ValueKey('store-try-prompt:0')));
+    expect(tried, [_gear.prompt, _lamp.prompt]);
   });
 
   testWidgets('Try this prompt is off with nowhere to open it', (tester) async {
-    await _pumpShowcase(tester);
+    await _pumpFlow(tester);
     final button = tester.widget<ButtonStyleButton>(
       find.ancestor(
-        of: find.text('Try this prompt'),
+        of: find.text('Try this prompt').first,
         matching: find.bySubtype<ButtonStyleButton>(),
       ),
     );
@@ -253,51 +249,52 @@ void main() {
         null,
       ),
     );
-    await _pumpShowcase(tester);
-    await tester.tap(find.byKey(const ValueKey('store-copy-prompt')));
+    await _pumpFlow(tester);
+    await tester.tap(find.byKey(const ValueKey('store-copy-prompt:0')));
     await tester.pump();
     expect(copied, _lamp.prompt);
   });
 
-  testWidgets(
-    'playing, it types the prompt, then moves on to the next example',
-    (tester) async {
-      await _pumpShowcase(tester, autoAdvance: true);
-      await tester.pump(const Duration(milliseconds: 300));
-      final typing = _typedText(tester);
-      expect(
-        typing.length,
-        lessThan('“${_lamp.prompt}”'.length),
-        reason: 'still typing',
-      );
-      expect(typing, startsWith('“A desk'));
+  testWidgets('an example rises into view when it is scrolled to, once', (
+    tester,
+  ) async {
+    await _pumpFlow(tester, animate: true, size: const Size(1200, 700));
+    await tester.pump(const Duration(seconds: 1));
+    double opacityOf(int i) => tester
+        .widget<Opacity>(
+          find
+              .ancestor(
+                of: find.byKey(ValueKey('store-example:$i')),
+                matching: find.byType(Opacity),
+              )
+              .first,
+        )
+        .opacity;
+    expect(opacityOf(0), 1, reason: 'the first is on screen');
+    expect(opacityOf(1), 0, reason: 'the second is still below the fold');
+    await tester.drag(
+      find.byType(SingleChildScrollView),
+      const Offset(0, -1600),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    expect(opacityOf(1), 1);
+  });
 
-      await tester.pump(const Duration(seconds: 3)); // typed and revealed
-      await tester.pump(const Duration(seconds: 1));
-      expect(_promptText(tester), '“${_lamp.prompt}”');
-      await tester.pump(const Duration(seconds: 7)); // seen for a while
-      await tester.pump(const Duration(seconds: 3));
-      await tester.pump(const Duration(seconds: 1));
-      expect(_promptText(tester), '“${_gear.prompt}”');
-
-      await tester.pumpWidget(const SizedBox());
-    },
-  );
-
-  testWidgets('Reduce Motion shows it whole and stays put', (tester) async {
+  testWidgets('Reduce Motion shows every example at once', (tester) async {
     tester.view.devicePixelRatio = 1;
-    tester.view.physicalSize = const Size(1200, 900);
+    tester.view.physicalSize = const Size(1200, 700);
     addTearDown(tester.view.reset);
     await tester.pumpWidget(
-      MaterialApp(
+      const MaterialApp(
         home: MediaQuery(
-          data: const MediaQueryData(disableAnimations: true),
+          data: MediaQueryData(disableAnimations: true),
           child: Scaffold(
             body: SingleChildScrollView(
-              child: StoreShowcase(
+              child: StoreExampleFlow(
                 entry: _blender,
-                examples: const [_lamp, _gear],
-                autoAdvance: true,
+                examples: [_lamp, _gear],
+                animate: true,
               ),
             ),
           ),
@@ -305,31 +302,14 @@ void main() {
       ),
     );
     await tester.pump();
-    expect(_promptText(tester), '“${_lamp.prompt}”');
-    await tester.pump(const Duration(seconds: 30));
-    expect(_promptText(tester), '“${_lamp.prompt}”');
-  });
-
-  testWidgets('narrow, the prompt sits above the picture', (tester) async {
-    tester.view.devicePixelRatio = 1;
-    tester.view.physicalSize = const Size(520, 1200);
-    addTearDown(tester.view.reset);
-    await tester.pumpWidget(
-      const MaterialApp(
-        home: Scaffold(
-          body: SingleChildScrollView(
-            child: StoreShowcase(entry: _blender, examples: [_lamp, _gear]),
-          ),
-        ),
+    for (final opacity in tester.widgetList<Opacity>(
+      find.ancestor(
+        of: find.byKey(const ValueKey('store-example:1')),
+        matching: find.byType(Opacity),
       ),
-    );
-    await tester.pump();
-    final prompt = tester.getRect(
-      find.byKey(const ValueKey('store-showcase-prompt')),
-    );
-    final picture = tester.getRect(find.text('IT MAKES'));
-    expect(picture.top, greaterThan(prompt.bottom));
-    expect(tester.takeException(), isNull);
+    )) {
+      expect(opacity.opacity, 1);
+    }
   });
 
   group('New Harness with a first message', () {
@@ -420,7 +400,7 @@ void main() {
   });
 
   testWidgets(
-    'the product page leads with the examples and tries one in New Harness',
+    'the product page scrolls through the examples and tries one in New Harness',
     (tester) async {
       tester.view.devicePixelRatio = 1;
       tester.view.physicalSize = const Size(1400, 1000);
@@ -453,18 +433,12 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(
-        find.byKey(const ValueKey('store-showcase-stage')),
-        findsOneWidget,
-      );
-      expect(
-        find.text('Start with an idea'),
-        findsNothing,
-        reason: 'the examples replace the bare prompt list',
-      );
-      await tester.tap(find.byKey(const ValueKey('store-example:1')));
+      expect(find.byKey(const ValueKey('store-example:0')), findsOneWidget);
+      expect(find.byKey(const ValueKey('store-example:1')), findsOneWidget);
+      final tryGear = find.byKey(const ValueKey('store-try-prompt:1'));
+      await tester.ensureVisible(tryGear);
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('store-try-prompt')));
+      await tester.tap(tryGear);
       await tester.pumpAndSettle();
       expect(
         find.byKey(const ValueKey('create-agent-submit')),

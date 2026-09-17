@@ -473,7 +473,7 @@ void main() {
       expect(find.text('studio-mac · this computer'), findsOneWidget);
       expect(find.text('Not installed'), findsOneWidget);
 
-      await tester.tap(find.byKey(const ValueKey('store-get:machine-1')));
+      await tester.tap(find.byKey(const ValueKey('store-primary-action')));
       await tester.pumpAndSettle();
       expect(notifier.installs, [('machine-1', 'autonomous/typst')]);
     },
@@ -501,7 +501,7 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('Website'), findsOneWidget);
-      expect(find.text('Licence · MIT'), findsOneWidget);
+      expect(find.text('MIT licence'), findsOneWidget);
 
       await tester.ensureVisible(
         find.byKey(const ValueKey('store-remove:machine-1')),
@@ -600,7 +600,13 @@ void main() {
       expect(find.text('OpenAI · Code · Coding agent'), findsOneWidget);
       expect(find.textContaining('npm install'), findsNothing);
       expect(find.text('Not installed'), findsOneWidget);
-      expect(find.byKey(const ValueKey('store-get:machine-1')), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('store-primary-action')),
+          matching: find.text('Get'),
+        ),
+        findsOneWidget,
+      );
       expect(
         find.byKey(const ValueKey('store-remove:machine-1')),
         findsNothing,

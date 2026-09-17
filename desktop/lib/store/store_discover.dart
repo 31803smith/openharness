@@ -1,10 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../core/dsh_catalog.dart';
 import '../shared/theme/app_theme.dart' as grid;
-import '../shared/widgets/app_icon_button.dart';
 import '../shared/widgets/skeleton.dart';
 import '../widgets/engine_identity.dart';
 import 'store_editorial.dart';
@@ -610,79 +608,5 @@ class _ProductRow extends StatelessWidget {
         ),
       ),
     ),
-  );
-}
-
-class StoreProductStory extends StatelessWidget {
-  const StoreProductStory({super.key, required this.story});
-  final StoreStory story;
-
-  @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.stretch,
-    children: [
-      if (story.asset != null) ...[
-        ClipRRect(
-          borderRadius: BorderRadius.circular(14),
-          child: Image.asset(
-            story.asset!,
-            fit: BoxFit.cover,
-            semanticLabel: story.caption,
-          ),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          story.caption!,
-          style: TextStyle(fontSize: 11, color: grid.AppPalette.textFaint),
-        ),
-        const SizedBox(height: 24),
-      ],
-      Text(
-        'Start with an idea',
-        style: TextStyle(
-          fontSize: 18,
-          fontWeight: FontWeight.w600,
-          color: grid.AppPalette.textPrimary,
-        ),
-      ),
-      const SizedBox(height: 10),
-      for (final (i, prompt) in story.prompts.indexed)
-        Container(
-          margin: const EdgeInsets.only(bottom: 8),
-          padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),
-          decoration: BoxDecoration(
-            color: grid.AppPalette.cardBg,
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  prompt,
-                  style: TextStyle(
-                    fontSize: 13,
-                    height: 1.4,
-                    color: grid.AppPalette.textPrimary,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              AppIconButton(
-                key: ValueKey('store-copy-prompt:$i'),
-                icon: LucideIcons.copy300,
-                tooltip: 'Copy prompt',
-                onPressed: () async {
-                  await Clipboard.setData(ClipboardData(text: prompt));
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Prompt copied')),
-                    );
-                  }
-                },
-              ),
-            ],
-          ),
-        ),
-    ],
   );
 }
