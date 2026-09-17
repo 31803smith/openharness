@@ -2,6 +2,8 @@
 
 Find a sound that feels like you. Shape a synth, play a little, and take the recording with you.
 
+![Instrument maker running the local starter](screenshots/studio.png)
+
 ```sh
 harness dsh install autonomous/juce-agent-toolkit
 ```

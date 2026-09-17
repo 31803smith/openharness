@@ -2,6 +2,8 @@
 
 Send a little rover on a small adventure. Pick a destination, watch it find a way, and replay the journey.
 
+![Mission control running the local starter](screenshots/studio.png)
+
 ```sh
 harness dsh install autonomous/dimos
 ```

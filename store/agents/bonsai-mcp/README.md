@@ -2,6 +2,8 @@
 
 Make room for a new idea. Shape a small building, inspect its spaces, and open the real IFC model anywhere.
 
+![House of ideas running the local starter](screenshots/studio.png)
+
 ```sh
 harness dsh install autonomous/bonsai-mcp
 ```

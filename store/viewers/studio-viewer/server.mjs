@@ -175,6 +175,7 @@ export async function createStudio({workspace, packageDir, port = 0, jobTimeout 
       const data = req.method === 'HEAD' ? Buffer.alloc(0):await readFile(target);
       return send(200,data,type,true);
     } catch(error) {
+      res.removeHeader('Content-Length');
       const status = error.status ?? (error.code === 'ENOENT' ? 404:500);
       return send(status,{error:status === 500 ? 'The studio could not read the project. Check studio.json and the latest result.':error.message});
     }

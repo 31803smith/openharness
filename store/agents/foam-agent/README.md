@@ -2,6 +2,8 @@
 
 Give the wind something to move around. Explore shapes, trace the currents, and compare your experiments.
 
+![Wind tunnel running the local starter](screenshots/studio.png)
+
 ```sh
 harness dsh install autonomous/foam-agent
 ```

@@ -2,6 +2,8 @@
 
 Follow a visual thread. Explore a family of forms, collect your favourites, and keep the recipe with every image.
 
+![Variation garden running the local starter](screenshots/studio.png)
+
 ```sh
 harness dsh install autonomous/comfy-mcp
 ```

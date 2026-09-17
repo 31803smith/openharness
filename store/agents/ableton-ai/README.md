@@ -2,6 +2,8 @@
 
 A small pattern can become a whole mood. Make a loop, play with its pulse, and keep the happy accidents.
 
+![Loop room running the local starter](screenshots/studio.png)
+
 ```sh
 harness dsh install autonomous/ableton-ai
 ```

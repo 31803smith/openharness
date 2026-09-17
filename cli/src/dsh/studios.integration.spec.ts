@@ -1,6 +1,7 @@
 // Explicit opt-in: these checks run the real package installers and native local simulations.
 // All index entries and workspaces stay in disposable directories.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { execFileSync } from 'node:child_process'
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -32,7 +33,7 @@ describe.runIf(process.env.HARNESS_STUDIO_INTEGRATION === '1')('specialist studi
     await manager?.stopAll()
     const output = join(store, 'viewers/studio-viewer/test-results')
     mkdirSync(output, { recursive: true })
-    writeFileSync(join(output, 'lifecycle-report.json'), JSON.stringify(report, null, 2))
+    if (report.length) writeFileSync(join(output, 'lifecycle-report.json'), JSON.stringify(report, null, 2))
     env.DSH_DIR = savedRoot
     invalidateInstalledDsh()
     if (root) rmSync(root, { recursive: true, force: true })
@@ -83,4 +84,28 @@ describe.runIf(process.env.HARNESS_STUDIO_INTEGRATION === '1')('specialist studi
     report.push({ name, checks: ['install', 'setup', 'doctor', 'index', 'materialize', 'skill discovery', 'verdict',
       'viewer launch', 'run', 'artifact downloads', 'stop', 'idempotent materialization', 'restore', 'remove'] })
   }, 900_000)
+  it.runIf(process.env.HARNESS_STUDIO_FRESH_INSTALL === '1')('clean sparse install fetches the package and its viewer from the pushed branch', async () => {
+    expect(removeDsh('autonomous/studio-viewer')).toEqual({ ok: true })
+    const source = process.env.HARNESS_STUDIO_INSTALL_SOURCE ?? 'https://github.com/autonomous-ai/openharness.git'
+    const ref = process.env.HARNESS_STUDIO_INSTALL_REF ?? execFileSync('git', ['rev-parse', 'HEAD'], { cwd: store, encoding: 'utf8' }).trim()
+    const result = await installDsh({ source, ref, path: 'store/agents/ableton-ai', expectedId: 'autonomous/ableton-ai',
+      registry: id => id === 'autonomous/studio-viewer' ? { id, kind: 'viewer', name: 'Studio Viewer', repo: source, ref,
+        path: 'store/viewers/studio-viewer', tier: 2 } : undefined })
+    expect(result.ok, JSON.stringify(result)).toBe(true)
+    if (!result.ok) return
+    expect(result.installed.linked).toBe(false)
+    expect(installedDsh('autonomous/studio-viewer')?.linked).toBe(false)
+    const workspace = join(root, 'fresh music workspace')
+    mkdirSync(workspace)
+    expect((await materializeWorkspace(result.installed, workspace)).warnings).toEqual([])
+    await manager.start('fresh', result.installed, workspace)
+    const state = await (await fetch(`${manager.url('fresh')}api/state`)).json()
+    expect(state.result.engine).toBe('Local MIDI + synthesized audio')
+    expect(state.result.artifacts).toHaveLength(3)
+    await manager.stop('fresh')
+    const output = join(store, 'viewers/studio-viewer/test-results')
+    writeFileSync(join(output, 'fresh-install-report.json'), JSON.stringify({ status: 'passed', source, ref,
+      commit: result.installed.commit, package: result.installed.id, viewer: 'autonomous/studio-viewer',
+      checks: ['sparse clone', 'locked dependencies', 'upstream fetch', 'viewer dependency install', 'doctor', 'materialize', 'viewer launch', 'real artifacts'] }, null, 2))
+  }, 600_000)
 })

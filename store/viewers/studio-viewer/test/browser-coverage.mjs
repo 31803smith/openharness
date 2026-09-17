@@ -37,3 +37,7 @@ await mkdir(join(viewer,'coverage'),{recursive:true});
 await writeFile(join(viewer,'coverage/browser-summary.json'),JSON.stringify(summary,null,2));
 await writeFile(join(viewer,'coverage/browser-final.json'),JSON.stringify(map.toJSON()));
 console.log('Browser total:',summary.total);
+if(map.files().length!==11)throw Error('Coverage must include all eight domain views and the three shared browser modules.');
+for(const metric of ['lines','statements','functions','branches']){
+  if(summary.total[metric].pct!==100)throw Error(`Browser ${metric} coverage is below 100%.`);
+}

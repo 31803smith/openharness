@@ -2,6 +2,8 @@
 
 Make a little city flow better. Change the lights, watch the streets, and measure what happens.
 
+![City lab running the local starter](screenshots/studio.png)
+
 ```sh
 harness dsh install autonomous/simskill
 ```

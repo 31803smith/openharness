@@ -6,3 +6,4 @@
 @media(prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
 
 .domain-dialog::backdrop{background:#14241d99;backdrop-filter:blur(5px)}
+.domain-toolbar button[aria-pressed=true]:hover{background:var(--stage-accent);color:var(--stage)}
