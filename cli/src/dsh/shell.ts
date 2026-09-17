@@ -5,7 +5,9 @@
  * same shell selection) `engineLaunch.ts` uses to exec an engine in a pane.
  */
 import { spawn, type ChildProcess } from 'node:child_process'
-import { interactiveEngineShell } from '../lib/engineLaunch.js'
+import { dirname } from 'node:path'
+import { interactiveEngineShell, shellSingleQuote } from '../lib/engineLaunch.js'
+import { managedNodePath } from '../lib/nodeRuntime.js'
 
 export interface DshCommandOptions {
   cwd: string
@@ -45,11 +47,25 @@ export function isShellNoise(line: string): boolean {
  */
 export function dshShellArgv(script: string): { path: string; args: string[] } {
   const shell = interactiveEngineShell()
+  const body = `${dshNodeFallback()}\n${script}`
   if (shell) {
     const args = shell.args.map((a) => (a === '-ic' ? '-lic' : a))
-    return { path: shell.path, args: [...args, script] }
+    return { path: shell.path, args: [...args, body] }
   }
-  return { path: '/bin/sh', args: ['-c', script] }
+  return { path: '/bin/sh', args: ['-c', body] }
+}
+
+/**
+ * The line run before a DSH's command: when the login shell's PATH has no `node`, the Node this
+ * daemon runs on joins the END of it. Since the product moved to a private runtime, a machine with no
+ * node on PATH is the normal case (see nodeRuntime.ts), and a package whose setup says `npm ci` or
+ * whose viewer is `node viewer.mjs` would otherwise fail on exactly the machines Harness set up
+ * itself. Appended, not prepended, so a node the person installed always wins; and run after the rc
+ * files, so a profile that assigns PATH outright cannot drop it.
+ */
+export function dshNodeFallback(): string {
+  const bin = shellSingleQuote(dirname(managedNodePath()))
+  return `if ! command -v node >/dev/null 2>&1; then PATH="\${PATH:+$PATH:}"${bin}; export PATH; fi`
 }
 
 export function spawnDshCommand(script: string, opts: { cwd: string; env?: Record<string, string> }): ChildProcess {

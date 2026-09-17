@@ -9,7 +9,7 @@
 //   node store/tools/sync-runtimes.mjs --check    exit 1, naming each copy that differs or is missing
 //
 // "Missing" means a script in the package sources runtimes.sh and the package has no copy of it.
-import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -38,7 +38,7 @@ export function sourcesRuntimes(dir) {
       const p = join(d, e.name)
       if (e.isDirectory()) { if (depth < 2 && walk(p, depth + 1)) return true; continue }
       if (!e.name.endsWith('.sh') || e.name === 'runtimes.sh') continue
-      if (/^\s*(\.|source)\s+\S*runtimes\.sh/m.test(readFileSync(p, 'utf8'))) return true
+      if (/^\s*(\.|source)\s+.*runtimes\.sh/m.test(readFileSync(p, 'utf8'))) return true
     }
     return false
   }
@@ -64,13 +64,15 @@ export function sync(root = store) {
   for (const { dir, copy } of packages(root)) {
     if (!existsSync(copy) && !sourcesRuntimes(dir)) continue
     if (existsSync(copy) && readFileSync(copy, 'utf8') === canonical) continue
+    mkdirSync(dirname(copy), { recursive: true })
     writeFileSync(copy, canonical)
     written.push(relative(root, copy))
   }
   return written
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+// Run as a command (not imported): argv[1] may reach this file through a symlink, /var → /private/var.
+if (process.argv[1] && fileURLToPath(import.meta.url) === realpathSync(process.argv[1])) {
   if (process.argv.includes('--check')) {
     const problems = check()
     for (const p of problems) console.error(p)

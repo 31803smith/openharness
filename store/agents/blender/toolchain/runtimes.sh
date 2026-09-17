@@ -67,7 +67,7 @@ _harness_node_at_least() {
 }
 
 harness_node() {
-  local min="${1:-18}" recorded dir
+  local min="${1:-18}" recorded
   _harness_node_at_least "$min" && return 0
   recorded="$(cat "$HARNESS_RUNTIME/current-node" 2>/dev/null || true)"
   if [ -n "$recorded" ] && [ -x "${recorded%/*}/node" ]; then
@@ -105,7 +105,8 @@ harness_uv() {
     tar -xzf "$tmp/uv.tar.gz" -C "$tmp" && chmod +x "$tmp/$asset/uv" "$tmp/$asset/uvx" \
       || { rm -rf "$tmp"; echo "miss the uv archive would not unpack"; return 1; }
     # Two installs at once both get here; whichever renames first wins and the other's copy goes.
-    mv "$tmp/$asset" "$dir" 2>/dev/null || true
+    # (mv onto a directory that exists would nest the copy inside it, hence the test.)
+    [ -e "$dir" ] || mv "$tmp/$asset" "$dir" 2>/dev/null || true
     rm -rf "$tmp"
     [ -x "$dir/uv" ] || { echo "miss uv did not land in $dir"; return 1; }
   fi
@@ -156,7 +157,8 @@ harness_micromamba() {
     echo "     fetching micromamba $HARNESS_MICROMAMBA_VERSION into $HARNESS_RUNTIME (native libraries PyPI has no wheel for)"
     mkdir -p "$dir" || { echo "miss cannot write $dir"; return 1; }
     _harness_fetch "https://github.com/mamba-org/micromamba-releases/releases/download/$HARNESS_MICROMAMBA_VERSION/$asset" "$dir/micromamba.$$" "$sum" || return 1
-    chmod +x "$dir/micromamba.$$" && mv -f "$dir/micromamba.$$" "$dir/micromamba"
+    chmod +x "$dir/micromamba.$$" && mv -f "$dir/micromamba.$$" "$dir/micromamba" \
+      || { rm -f "$dir/micromamba.$$"; echo "miss micromamba would not install into $dir"; return 1; }
   fi
   HARNESS_MICROMAMBA="$dir/micromamba"
   export HARNESS_MICROMAMBA

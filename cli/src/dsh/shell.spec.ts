@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import type { ChildProcess } from 'node:child_process'
 
 // Two switches, both off by default: `sh` makes commands run under plain `/bin/sh -c` (as when no user
@@ -18,7 +18,8 @@ vi.mock('node:child_process', async (importOriginal) => {
   return { ...actual, spawn, default: { ...actual, spawn } }
 })
 
-const { dshShellArgv, isShellNoise, killProcessGroup, runDshCommand, spawnDshCommand } = await import('./shell.js')
+const { managedNodePath } = await import('../lib/nodeRuntime.js')
+const { dshNodeFallback, dshShellArgv, isShellNoise, killProcessGroup, runDshCommand, spawnDshCommand } = await import('./shell.js')
 
 describe('dshShellArgv', () => {
   const original = process.env.SHELL
@@ -26,21 +27,47 @@ describe('dshShellArgv', () => {
 
   it('runs a bash user\'s setup and doctor as a LOGIN shell, where .bash_profile (and nvm) live', () => {
     process.env.SHELL = '/bin/bash'
-    expect(dshShellArgv('./doctor.sh')).toEqual({ path: '/bin/bash', args: ['-lic', './doctor.sh'] })
+    expect(dshShellArgv('./doctor.sh')).toEqual({ path: '/bin/bash', args: ['-lic', `${dshNodeFallback()}\n./doctor.sh`] })
   })
 
   it('keeps zsh as it already was', () => {
     process.env.SHELL = '/bin/zsh'
-    expect(dshShellArgv('./doctor.sh')).toEqual({ path: '/bin/zsh', args: ['-lic', './doctor.sh'] })
+    expect(dshShellArgv('./doctor.sh')).toEqual({ path: '/bin/zsh', args: ['-lic', `${dshNodeFallback()}\n./doctor.sh`] })
   })
 
   it('falls back to /bin/sh -c when no user shell is known', () => {
     seams.sh = true
     try {
-      expect(dshShellArgv('./doctor.sh')).toEqual({ path: '/bin/sh', args: ['-c', './doctor.sh'] })
+      expect(dshShellArgv('./doctor.sh')).toEqual({ path: '/bin/sh', args: ['-c', `${dshNodeFallback()}\n./doctor.sh`] })
     } finally {
       seams.sh = false
     }
+  })
+})
+
+describe('dshNodeFallback', () => {
+  let dir: string
+  beforeEach(() => { seams.sh = true; dir = realpathSync(mkdtempSync(join(tmpdir(), 'dsh-node-'))) })
+  afterEach(() => { seams.sh = false; rmSync(dir, { recursive: true, force: true }) })
+
+  it('puts the Node this daemon runs on at the END of a PATH that has no node', async () => {
+    const result = await runDshCommand('echo "$PATH"; command -v node', { cwd: dir, env: { PATH: '/usr/bin:/bin' } })
+    const runtimeBin = dirname(managedNodePath())
+    expect(result.lines).toEqual([`/usr/bin:/bin:${runtimeBin}`, join(runtimeBin, 'node')])
+  })
+
+  it('leaves a PATH that already has a node alone', async () => {
+    const own = join(dir, 'bin')
+    mkdirSync(own)
+    writeFileSync(join(own, 'node'), '#!/bin/sh\n', { mode: 0o755 })
+    const result = await runDshCommand('echo "$PATH"; command -v node', { cwd: dir, env: { PATH: `${own}:/usr/bin:/bin` } })
+    expect(result.lines).toEqual([`${own}:/usr/bin:/bin`, join(own, 'node')])
+  })
+
+  it('is one line, run before the command, that keeps an empty PATH from starting with a colon', () => {
+    const line = dshNodeFallback()
+    expect(line).toContain('"${PATH:+$PATH:}"\'')
+    expect(line.startsWith('if ! command -v node >/dev/null 2>&1; then PATH=')).toBe(true)
   })
 })
 

@@ -243,7 +243,7 @@ function installThenExecScript(install: string): string {
   ].join('\n')
 }
 
-function shellSingleQuote(value: string): string {
+export function shellSingleQuote(value: string): string {
   return `'${value.replace(/'/g, `'"'"'`)}'`
 }
 

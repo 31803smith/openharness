@@ -114,4 +114,11 @@ describe('the built-in shelf (store/)', () => {
       resetBundledDshRegistry()
     }
   })
+
+  it('every package that sources runtimes.sh carries the canonical copy', async () => {
+    // A package installs alone, so each carries store/tools/runtimes.sh; a stale copy is a package
+    // that still asks a fresh machine for an interpreter the helper has since learnt to fetch.
+    const { check } = await import(join(STORE, 'tools', 'sync-runtimes.mjs')) as { check: (root?: string) => string[] }
+    expect(check(STORE), 'run: node store/tools/sync-runtimes.mjs').toEqual([])
+  })
 })
