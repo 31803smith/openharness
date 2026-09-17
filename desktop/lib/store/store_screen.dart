@@ -1157,7 +1157,14 @@ class _MachineRow extends StatelessWidget {
     } else if (unavailable != null) {
       status = unavailable;
     } else if (!state.dsh.loaded) {
-      status = state.dsh.error ?? 'Asking…';
+      // `dsh_list` refused by a CLI that predates it arrives as the bare wire
+      // code; the row says what to do about it instead.
+      status = switch (state.dsh.error) {
+        null => 'Asking…',
+        'UNSUPPORTED' || 'UNSUPPORTED_ON_REMOTE' =>
+          'Update the harness CLI on this machine to install harnesses',
+        final error => error,
+      };
     } else {
       status = 'Not installed';
     }
