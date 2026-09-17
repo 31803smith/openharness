@@ -12,7 +12,8 @@ physics, in the browser, where the user can push the robot, drive its actuators 
 
 - `rollout.qpos.json` — what the pane opens: the model's path, and per frame the time, `qpos`,
   `qvel`, `ctrl` (and `act`). Written while the rollout runs (`"status": "recording"`), so the pane
-  shows the run in progress, then `"status": "done"`. With `ctrl` recorded the pane re-simulates the
+  shows the run in progress, then `"status": "done"` (`"diverged"`; `"failed"`, with the `error`, when
+  the script raised mid-rollout). With `ctrl` recorded the pane re-simulates the
   run live instead of only replaying it.
 - `rollout.model.xml` — the compiled model as MJCF, when it was built or edited with `MjSpec`, so
   the pane simulates the model you simulated and not the file it started from. Runtime edits to the
@@ -25,7 +26,7 @@ physics, in the browser, where the user can push the robot, drive its actuators 
 moves while the rollout runs.
 """
 from __future__ import annotations
-import contextlib, io, json, os, sys, time, weakref
+import contextlib, io, json, math, os, sys, time, traceback, weakref
 from pathlib import Path
 from typing import Callable
 
@@ -156,7 +157,10 @@ def load_menagerie(robot: str, scene: str = "scene.xml", *, servos: tuple[float,
         return load_xml(path)
     kp, kv = servos
     spec = mujoco.MjSpec.from_file(str(path))
-    joint_range = {j.name: j.range.copy() for j in spec.joints}
+    # A servo's ctrl is the joint's own coordinate, radians for a hinge; the spec keeps a hinge's range
+    # in the MJCF's unit, which is degrees unless the file says <compiler angle="radian"/>.
+    degree = math.pi / 180 if spec.compiler.degree else 1.0
+    joint_range = {j.name: j.range * (degree if j.type == mujoco.mjtJoint.mjJNT_HINGE else 1.0) for j in spec.joints}
     for act in spec.actuators:
         if act.trntype != mujoco.mjtTrn.mjTRN_JOINT or act.target not in joint_range:
             continue
@@ -167,6 +171,9 @@ def load_menagerie(robot: str, scene: str = "scene.xml", *, servos: tuple[float,
         lo, hi = joint_range[act.target]
         if hi > lo:
             act.ctrlrange = [lo, hi]
+        else:                                          # an unlimited joint: a torque rating is no angle to clamp to
+            act.ctrlrange = [0, 0]
+            act.ctrllimited = mujoco.mjtLimited.mjLIMITED_FALSE
         if torque[1] > torque[0]:
             act.forcerange = torque
     model = spec.compile()
@@ -220,13 +227,11 @@ def _model_patch(model: mujoco.MjModel, reference: mujoco.MjModel) -> dict:
     return patch
 
 
-def _compile_snapshot(xml: str, source_dir: Path | None) -> mujoco.MjModel:
+def _compile_snapshot(xml: str, source_dir: Path) -> mujoco.MjModel:
     spec = mujoco.MjSpec.from_string(xml)
-    if source_dir is not None:
-        for attr in ("meshdir", "texturedir"):
-            current = getattr(spec, attr, "") or ""
-            if not os.path.isabs(current):
-                setattr(spec, attr, str(source_dir / current))
+    for attr in ("meshdir", "texturedir"):
+        # Relative to the MJCF the model came from; an absolute dir stays itself (Path / "/x" is "/x").
+        setattr(spec, attr, str(source_dir / (getattr(spec, attr, "") or "")))
     return _plain_compile(spec)
 
 
@@ -269,7 +274,7 @@ def _describe_model(model: mujoco.MjModel, source: str | None, out_dir: Path) ->
         except Exception as error:               # noqa: BLE001 — a spec MuJoCo cannot write back is still simulatable
             print(f"note: could not save the compiled model for the pane ({error}); it will load {source}", file=sys.stderr)
             snapshot.unlink(missing_ok=True)
-            info["model_xml"] = None
+            info["model"], info["model_xml"] = source, None   # never the snapshot just removed
     else:
         snapshot.unlink(missing_ok=True)
     if reference is None and source_file is not None and source_file.exists():
@@ -284,6 +289,14 @@ def _describe_model(model: mujoco.MjModel, source: str | None, out_dir: Path) ->
         except Exception:                        # noqa: BLE001
             info["model_patch"] = {}
     return info
+
+
+_UNSTABLE = (mujoco.mjtWarning.mjWARN_BADQPOS, mujoco.mjtWarning.mjWARN_BADQVEL, mujoco.mjtWarning.mjWARN_BADQACC)
+
+
+def _unstable_warnings(data: mujoco.MjData) -> int:
+    """How many times MuJoCo has found this state NaN, infinite or huge (and reset it)."""
+    return sum(int(data.warning[int(w)].number) for w in _UNSTABLE)
 
 
 def _write_json_atomic(path: Path, value: dict) -> None:
@@ -335,11 +348,14 @@ def record(model: mujoco.MjModel, data: mujoco.MjData, controller: Controller | 
             # The offscreen framebuffer is 640×480 unless the model says otherwise; a video wants more.
             model.vis.global_.offwidth = max(int(model.vis.global_.offwidth), width)
             model.vis.global_.offheight = max(int(model.vis.global_.offheight), height)
-            renderer = mujoco.Renderer(model, height, width)
             cam = mujoco.MjvCamera()
+            # An id of -1 is not an error until the first frame renders, and then MuJoCo exits the
+            # whole process mid-rollout: a name that is not in the model means no video, said now.
             if isinstance(camera, str):
                 cam.type = mujoco.mjtCamera.mjCAMERA_FIXED
                 cam.fixedcamid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, camera)
+                if cam.fixedcamid < 0:
+                    raise ValueError(f"no camera named {camera!r} in the model")
             else:
                 mujoco.mjv_defaultFreeCamera(model, cam)
                 cam.distance = max(1.5, float(model.stat.extent) * 1.6)
@@ -348,6 +364,9 @@ def record(model: mujoco.MjModel, data: mujoco.MjData, controller: Controller | 
                 if track:
                     cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
                     cam.trackbodyid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, track)
+                    if cam.trackbodyid < 0:
+                        raise ValueError(f"no body named {track!r} to track")
+            renderer = mujoco.Renderer(model, height, width)
             writer = imageio.get_writer(str(out), fps=fps, codec="libx264", quality=8, macro_block_size=None)
             video_path = out
         except Exception as error:               # noqa: BLE001 — no GL on this machine: the trajectory still works
@@ -375,9 +394,7 @@ def record(model: mujoco.MjModel, data: mujoco.MjData, controller: Controller | 
         if model.na:
             rollout["act"].append([round(float(a), 5) for a in data.act])
 
-    def publish(status: str) -> None:
-        if not replayable:
-            return
+    def publish(status: str) -> None:            # only for a replayable rollout: every caller checks
         rollout["status"] = status
         rollout["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         _write_json_atomic(traj_path, rollout)
@@ -386,23 +403,21 @@ def record(model: mujoco.MjModel, data: mujoco.MjData, controller: Controller | 
     max_qvel = 0.0
     t0 = time.time()
     last_publish = 0.0
+    unstable = _unstable_warnings(data)
     if replayable:
         publish("recording")
         _refresh_verdict()
     try:
-        for frame in range(frames + 1):
-            ctrl_row: list[float] | None = None
-            if frame == frames:                  # the final state has no step after it; its ctrl is the last one applied
-                snapshot_state([round(float(c), 6) for c in data.ctrl])
-                break
+        for _ in range(frames):
             for step in range(steps_per_frame):
                 if controller is not None:
                     controller(model, data, data.time)
                 if step == 0:
-                    ctrl_row = [round(float(c), 6) for c in data.ctrl]
-                    snapshot_state(ctrl_row)
+                    snapshot_state([round(float(c), 6) for c in data.ctrl])
                 mujoco.mj_step(model, data)
-            if not np.all(np.isfinite(data.qpos)):
+            # MuJoCo resets a state that went NaN or huge (unless autoreset is disabled) and only warns,
+            # so a finite qpos proves nothing: the warning counter moving is the divergence.
+            if not np.all(np.isfinite(data.qpos)) or _unstable_warnings(data) > unstable:
                 nan = True
                 break
             max_qvel = max(max_qvel, float(np.max(np.abs(data.qvel))) if model.nv else 0.0)
@@ -413,6 +428,16 @@ def record(model: mujoco.MjModel, data: mujoco.MjData, controller: Controller | 
             if replayable and now - last_publish > 0.5:
                 publish("recording")
                 last_publish = now
+        if not nan:                              # the final state has no step after it; its ctrl is the last one applied
+            snapshot_state([round(float(c), 6) for c in data.ctrl])
+    except BaseException as error:
+        # A controller that raised, or Ctrl-C: left at "recording", the pane and the header would
+        # wait for this rollout forever. What was recorded stays replayable.
+        if replayable:
+            rollout["error"] = traceback.format_exception_only(type(error), error)[-1].strip()
+            publish("failed")
+            _refresh_verdict()
+        raise
     finally:
         if writer is not None:
             writer.close()
