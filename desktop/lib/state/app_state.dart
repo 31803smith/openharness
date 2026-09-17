@@ -3510,9 +3510,9 @@ class AppNotifier extends ChangeNotifier {
 
   /// What the pane is called before, and if never, the engine names its
   /// session.
-  static const localModelAgentName = 'Local model manager';
+  static const localModelAgentName = 'Model manager';
 
-  /// The one action behind every "Talk to Local model manager" entry: explain once,
+  /// The one action behind every "Talk to Model manager" entry: explain once,
   /// then open opencode as the agent that starts one.
   ///
   /// The dialog decides, and Start is what creates. Nothing here reports
@@ -3608,7 +3608,7 @@ class AppNotifier extends ChangeNotifier {
         .isNotEmpty;
     if (!created) {
       return 'Harness on ${machine.machine.displayName} is too old to open '
-          'Local model manager: it opened a plain opencode pane instead. '
+          'Model manager: it opened a plain opencode pane instead. '
           'Update Harness there and try again.';
     }
     return null;

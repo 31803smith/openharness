@@ -194,7 +194,7 @@ void main() {
       await open(tester);
       expect(find.text('Nothing is being served yet.'), findsNothing);
       expect(find.text('Could not reach this machine.'), findsNothing);
-      expect(find.text('Talk to model manager'), findsOneWidget);
+      expect(find.text('Talk to Model manager'), findsOneWidget);
     },
   );
 
@@ -526,7 +526,7 @@ void main() {
       final caption = tester.getTopLeft(
         find.text('Want to manage local models?'),
       );
-      final button = tester.getTopLeft(find.text('Talk to model manager'));
+      final button = tester.getTopLeft(find.text('Talk to Model manager'));
       final model = tester.getBottomLeft(find.text('Qwen-Test'));
 
       // Under the list, not among it: the models are places this agent can go and this starts
@@ -555,7 +555,7 @@ void main() {
       final captionBottom = tester.getBottomLeft(
         find.text('Want to manage local models?'),
       );
-      final button = tester.getTopLeft(find.text('Talk to model manager'));
+      final button = tester.getTopLeft(find.text('Talk to Model manager'));
       expect(caption.dy - model.dy, greaterThan(8));
       expect(button.dy - captionBottom.dy, greaterThan(8));
     });
@@ -569,7 +569,7 @@ void main() {
       final box = tester.getSize(
         find
             .ancestor(
-              of: find.text('Talk to model manager'),
+              of: find.text('Talk to Model manager'),
               matching: find.byType(Container),
             )
             .first,
@@ -583,7 +583,7 @@ void main() {
       (tester) async {
         // A person with no Local models is exactly who needs it, so it does not wait for a list.
         await open(tester);
-        expect(find.text('Talk to model manager'), findsOneWidget);
+        expect(find.text('Talk to Model manager'), findsOneWidget);
         // Never the plumbing's name, in this block as in the rest of the menu.
         expect(find.textContaining('grid'), findsNothing);
       },
@@ -608,7 +608,7 @@ void main() {
         final button = tester.widget<Container>(
           find
               .ancestor(
-                of: find.text('Talk to model manager'),
+                of: find.text('Talk to Model manager'),
                 matching: find.byType(Container),
               )
               .first,
@@ -631,7 +631,7 @@ void main() {
         onOwnLogin: () => logins++,
         onSelected: (m) => picked = m,
       );
-      await tester.tap(find.text('Talk to model manager'));
+      await tester.tap(find.text('Talk to Model manager'));
       await tester.pumpAndSettle();
       expect(runs, 1);
       // Not a move: the agent stays where it was. `currentModel` is set so a stray own-login call
@@ -639,7 +639,7 @@ void main() {
       expect(logins, 0);
       expect(picked, isNull);
       // The menu closed on the press, as it does on any choice.
-      expect(find.text('Talk to model manager'), findsNothing);
+      expect(find.text('Talk to Model manager'), findsNothing);
     });
   });
 

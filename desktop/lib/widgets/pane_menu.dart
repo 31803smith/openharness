@@ -9,7 +9,7 @@ import 'transient_menus.dart';
 /// The pane header's menu, as one shape for every list that wants to look like it.
 ///
 /// Born in the model picker and shared from here so a second list (the machine chooser in the
-/// Local model manager dialog) is the same menu rather than a second drawing of it: the same
+/// Model manager dialog) is the same menu rather than a second drawing of it: the same
 /// overlay, the same rows, the same quiet fill on the current row instead of a tick.
 ///
 /// Shown in an OVERLAY rather than as a modal route. `showMenu` puts a full-screen modal barrier

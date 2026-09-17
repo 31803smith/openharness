@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../core/models.dart';
@@ -375,7 +376,7 @@ class _RunLocalModelDialogState extends State<_RunLocalModelDialog> {
                   TextSpan(
                     children: [
                       const TextSpan(
-                        text: 'Local model manager',
+                        text: 'Model manager',
                         style: TextStyle(fontWeight: FontWeight.w600),
                       ),
                       const TextSpan(
@@ -396,6 +397,12 @@ class _RunLocalModelDialogState extends State<_RunLocalModelDialog> {
                     color: grid.AppPalette.textPrimary,
                   ),
                 ),
+                const SizedBox(height: 14),
+                // Two things a person could say first, with a copy button each:
+                // an empty composer is where most people stall, and a prompt they
+                // can paste is a start they cannot get wrong. Copy rather than
+                // send, because the pane does not exist until Start.
+                _StarterPrompts(key: const Key('run-local-model-prompts')),
                 if (status != null) ...[
                   const SizedBox(height: 16),
                   Text(
@@ -483,5 +490,108 @@ class _MoreMachines extends StatelessWidget {
         ),
       ),
     ),
+  );
+}
+
+/// Example first messages for the manager, each with a copy button.
+class _StarterPrompts extends StatefulWidget {
+  const _StarterPrompts({super.key});
+
+  static const prompts = [
+    'Set up a model for my coding work, just for me on this machine',
+    'I want a model for chat and writing. What fits this machine?',
+  ];
+
+  @override
+  State<_StarterPrompts> createState() => _StarterPromptsState();
+}
+
+class _StarterPromptsState extends State<_StarterPrompts> {
+  int? _copied;
+  Timer? _reset;
+
+  @override
+  void dispose() {
+    _reset?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _copy(int index) async {
+    try {
+      await Clipboard.setData(
+        ClipboardData(text: _StarterPrompts.prompts[index]),
+      );
+    } catch (_) {
+      // No clipboard (a headless test, a locked-down session): the text is
+      // on screen to type out, so nothing is said.
+      return;
+    }
+    if (!mounted) return;
+    setState(() => _copied = index);
+    _reset?.cancel();
+    _reset = Timer(const Duration(seconds: 2), () {
+      if (mounted) setState(() => _copied = null);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Text(
+        'Try saying',
+        style: TextStyle(
+          fontFamily: grid.AppFont.sans,
+          fontSize: 12.5,
+          color: grid.AppPalette.textSecondary,
+        ),
+      ),
+      const SizedBox(height: 6),
+      for (var i = 0; i < _StarterPrompts.prompts.length; i++) ...[
+        if (i > 0) const SizedBox(height: 6),
+        Container(
+          padding: const EdgeInsets.fromLTRB(10, 6, 6, 6),
+          decoration: BoxDecoration(
+            color: grid.AppSurface.recess,
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  _StarterPrompts.prompts[i],
+                  key: ValueKey('run-local-model-prompt-$i'),
+                  style: TextStyle(
+                    fontFamily: grid.AppFont.sans,
+                    fontSize: 12.5,
+                    color: grid.AppPalette.textPrimary,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Tooltip(
+                message: _copied == i ? 'Copied' : 'Copy',
+                child: InkWell(
+                  key: ValueKey('run-local-model-prompt-copy-$i'),
+                  onTap: () => _copy(i),
+                  borderRadius: BorderRadius.circular(4),
+                  child: Padding(
+                    padding: const EdgeInsets.all(4),
+                    child: Icon(
+                      _copied == i ? LucideIcons.check : LucideIcons.copy,
+                      size: 14,
+                      color: _copied == i
+                          ? grid.AppPalette.accentOnSurface
+                          : grid.AppPalette.textSecondary,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ],
   );
 }
