@@ -482,8 +482,7 @@ class _TerminalPageState extends State<TerminalPage>
                     // tab puts on its fab: creating needs the machine to list
                     // its folders and name its engines, so one that is offline
                     // or still wants its password cannot host a new agent.
-                    if (!_ownsKeyboard &&
-                        machine != null &&
+                    if (machine != null &&
                         phoneMachineStatusOf(machine) ==
                             PhoneMachineStatus.ready)
                       _HeaderAction(
@@ -508,25 +507,30 @@ class _TerminalPageState extends State<TerminalPage>
                     // [openPhoneSearch] is the same search that spans agents
                     // and machines.
                     //
-                    // ⚠️ Hidden while the keyboard is up, with `+`. The header
-                    // is one row, and a terminal being typed into is the one
-                    // moment neither is what the thumb is reaching for — the
-                    // key bar directly under it is.
+                    // ⚠️ Shown while the keyboard is up, and so is `+`. Both
+                    // were once hidden on `!_ownsKeyboard`, to spare a one-row
+                    // header while typing — but the row is not what was short.
+                    // The title ellipses at the same width either way, so
+                    // hiding them bought the title nothing and only left a gap,
+                    // while the header's controls jumped position on every
+                    // keyboard raise. A header that holds still is worth more
+                    // than two columns of unused space.
+                    //
                     // ⚠️ Not [PhoneSearchButton], which pushes and forgets. A
                     // page that pops back onto the top gets no rebuild of its
-                    // own, so [_ownsKeyboard] would keep answering with what
-                    // was true while the search was covering it. Awaiting the
-                    // push is what turns "the search closed" into a frame.
-                    if (!_ownsKeyboard)
-                      _HeaderAction(
-                        icon: LucideIcons.search300,
-                        size: 21,
-                        tooltip: 'Search',
-                        onPressed: () async {
-                          await openPhoneSearch(context, widget.notifier);
-                          if (mounted) setState(() {});
-                        },
-                      ),
+                    // own, so anything read from [_ownsKeyboard] — the machine
+                    // bar below still does — would keep answering with what was
+                    // true while the search was covering it. Awaiting the push
+                    // is what turns "the search closed" into a frame.
+                    _HeaderAction(
+                      icon: LucideIcons.search300,
+                      size: 21,
+                      tooltip: 'Search',
+                      onPressed: () async {
+                        await openPhoneSearch(context, widget.notifier);
+                        if (mounted) setState(() {});
+                      },
+                    ),
                     // Null while the agent is not loaded: there is nothing to act on yet, and a
                     // menu of actions that all fail is worse than no menu.
                     if (agent != null)
