@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:harness_mobile/state/app_state.dart';
 
 import 'agent_index.dart';
+import 'agent_neighbour_warmer.dart';
 import 'terminal_page.dart';
 import 'voice_input_controller.dart';
 
@@ -126,12 +127,25 @@ class _AgentSwipeHostState extends State<AgentSwipeHost> {
   /// ⚠️ **Without this the pager leaks terminals.** The phone's old rule was one pane, enforced by
   /// closing every other one on the way in; a pager has to keep its neighbours attached, so nothing
   /// would ever close them. Each pane left behind is a remote stream with a 10,000-line scrollback
-  /// and a heartbeat, held for a screen that is gone — and swiping through ten agents and going back
-  /// would leave ten of them.
+  /// and a heartbeat, held for a screen that is gone.
   ///
   /// Recorded rather than recomputed: by the time this page is disposed the list may have moved on,
   /// and the panes to close are the ones actually opened, not the ones a fresh list would name.
+  /// [_warmer] adds to it and prunes it as the pager moves — see [AgentNeighbourWarmer].
   final Set<({String machineId, String agentId})> _attached = {};
+
+  /// Opens the agents either side of the one on screen once it is live. Null for a pager with nothing
+  /// to swipe to.
+  late final AgentNeighbourWarmer? _warmer = widget.neighbours?.wraps == true
+      ? AgentNeighbourWarmer(
+          notifier: widget.notifier,
+          list: widget.neighbours!,
+          attached: _attached,
+        )
+      : null;
+
+  /// The only signal that the agent on screen has gone live — see [AgentNeighbourWarmer.check].
+  void _checkNeighbours() => _warmer?.check(page: _page, current: _current);
 
   /// Voice input for every page of this pager: a take in progress, and what has been heard so far,
   /// survive a swipe the way a keyboard that is up does. Disposed with the pager, which is what
@@ -169,10 +183,14 @@ class _AgentSwipeHostState extends State<AgentSwipeHost> {
         ? _origin * neighbours.entries.length + start
         : start;
     _controller = PageController(initialPage: _page);
+    widget.notifier.addListener(_checkNeighbours);
+    _checkNeighbours();
   }
 
   @override
   void dispose() {
+    widget.notifier.removeListener(_checkNeighbours);
+    _warmer?.dispose();
     _voice.dispose();
     _controller?.dispose();
     _detachAll();
@@ -292,10 +310,13 @@ class _AgentSwipeHostState extends State<AgentSwipeHost> {
     // Before the setState, so a host that rebuilds this pager in response already names the agent
     // swiped to — told afterwards, it would rebuild still pointing at the previous one.
     widget.onAgentChanged?.call(arrived);
+    // Warm-up for the page just left is abandoned; the page arrived at is warmed once it is live.
+    _warmer?.cancel();
     setState(() {
       _page = index;
       _current = arrived;
     });
+    _checkNeighbours();
     // Attaching is what makes the terminal live, and it only happens once the page has SETTLED —
     // `onPageChanged` fires at the halfway point of a settled swipe, not on every dragged pixel, so
     // flicking across five agents attaches the ones passed through rather than all of them at once.
