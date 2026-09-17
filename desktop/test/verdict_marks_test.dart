@@ -110,6 +110,17 @@ void main() {
         'Build',
         AppColors.success,
       ),
+      (
+        const AgentVerdict(
+          ready: false,
+          phases: [
+            build,
+            AgentPhase(id: 'fab', name: 'Fab', state: AgentPhaseState.failed),
+          ],
+        ),
+        'Fab',
+        AppColors.danger,
+      ),
       (const AgentVerdict(ready: false), 'Checked', AppColors.mutedStrong),
     ];
     final status = find.byKey(const ValueKey('pane-status'));
