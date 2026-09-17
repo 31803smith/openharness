@@ -46,14 +46,26 @@ async function exists(path: string): Promise<boolean> {
 
 export async function prepareProjectFolder(
   project: ProjectFolder,
-  options: { root?: string; clone?: (url: string, destination: string) => Promise<void> } = {},
+  options: {
+    root?: string
+    clone?: (url: string, destination: string) => Promise<void>
+    /**
+     * Agent names already taken on this machine. An agent started in `harness-N` answers to
+     * `harness-N` only while that name is free (registry.ts, nextAgentName); numbered from the
+     * folders alone, one folder once named off by one kept every later one off by one — the tab said
+     * harness-43 over a terminal in ~/harnesses/harness-42. Counting the names too puts the next
+     * folder past both, where its agent's name is free and the two agree again.
+     */
+    namesInUse?: Iterable<string | null | undefined>
+  } = {},
 ): Promise<string> {
   const root = options.root ?? join(homedir(), 'harnesses')
   let staging: string | undefined
   try {
     await mkdir(root, { recursive: true })
     if (project.source === 'new') {
-      const numbers = (await readdir(root)).map(name => /^(?:harness|agent)-([1-9]\d*)$/.exec(name)?.[1])
+      const numbers = [...await readdir(root), ...(options.namesInUse ?? [])]
+        .map(name => (name ? /^(?:harness|agent)-([1-9]\d*)$/.exec(name)?.[1] : undefined))
       let next = numbers.reduce((max, value) => value && BigInt(value) > max ? BigInt(value) : max, 0n) + 1n
       for (;;) {
         const folder = join(root, `harness-${next++}`)

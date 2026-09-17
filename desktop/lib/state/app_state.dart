@@ -4483,8 +4483,10 @@ class AppNotifier extends ChangeNotifier {
   /// Starts an agent, or recovers this form's earlier request after a lost reply.
   /// Returns null on success, or an inline message; [attempt] tells the form
   /// whether to offer Check status instead of inviting another creation.
-  Future<String> prepareLocalProjectFolder(ProjectFolderRequest request) =>
-      request.prepareLocal();
+  Future<String> prepareLocalProjectFolder(
+    ProjectFolderRequest request, {
+    Iterable<String> namesInUse = const [],
+  }) => request.prepareLocal(namesInUse: namesInUse);
 
   Future<String?> createAgent(
     String machineId, {
@@ -4615,7 +4617,10 @@ class AppNotifier extends ChangeNotifier {
         final project = repository is String
             ? ProjectFolderRequest.remote(GitHubRepository.parse(repository)!)
             : const ProjectFolderRequest.newProject();
-        creation._preparedFolder ??= await prepareLocalProjectFolder(project);
+        creation._preparedFolder ??= await prepareLocalProjectFolder(
+          project,
+          namesInUse: machine.agents.map((agent) => agent.name),
+        );
       } on RepositoryCloneException catch (error) {
         return creation._complete(error.message);
       } catch (_) {

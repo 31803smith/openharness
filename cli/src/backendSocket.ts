@@ -1704,7 +1704,7 @@ export class BackendSocket {
               void this.agentCreations.run(creationId, creationFingerprint(projectFolder ? { ...input, projectFolder } : input), async () => {
                 let preparedFolder: string | undefined
                 if (projectFolder) {
-                  try { preparedFolder = await prepareProjectFolder(projectFolder) }
+                  try { preparedFolder = await prepareProjectFolder(projectFolder, { namesInUse: registry.agentNamesInUse() }) }
                   catch (error) {
                     return { state: 'failed', error: error instanceof ProjectFolderError ? error.code : 'PROJECT_PREPARATION_FAILED',
                       detail: error instanceof ProjectFolderError ? error.message : 'Could not prepare the project folder.' }

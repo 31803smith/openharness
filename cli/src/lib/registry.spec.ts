@@ -1037,6 +1037,17 @@ describe('agent identity: the process owns the agent, the session is bound to it
     expect(registry.displayName(named)).toBe('harness-43')
   })
 
+  it('lists every name in use, so a new project folder can be numbered past them', async () => {
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    const a = registry.openPendingAgent({ engine: 'claude', runtimes: [{ backend: 'tmux', paneId: '%11' }], cwd: '/Users/u/harnesses/harness-41' })!
+    registry.openPendingAgent({ engine: 'claude', runtimes: [{ backend: 'tmux', paneId: '%12' }], cwd: '/Users/u/harnesses/harness-41' })
+    registry.rename(a.agentId, 'Lamp')
+    const names = registry.agentNamesInUse()
+    expect(names).toEqual(expect.arrayContaining(['harness-41', 'harness-42', 'Lamp']))
+    expect(names.every((name) => typeof name === 'string' && name.length > 0)).toBe(true)
+  })
+
   it('gives new agents stable numbered names across binding and reload without changing custom names', async () => {
     const { registry } = await loadRegistryModule()
     registry.load()

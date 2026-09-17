@@ -18,9 +18,15 @@ class ProjectFolderRequest {
     if (repository != null) 'repositoryUrl': repository!.url,
   };
 
+  /// [namesInUse] are the names this computer's agents already answer to. The daemon names an agent
+  /// started in `harness-N` after its folder only while `harness-N` is free, so folders numbered
+  /// from the disk alone drifted: once one agent was named a number ahead, every later tab said
+  /// harness-43 over a terminal in ~/harnesses/harness-42. Numbering past the names as well puts
+  /// the next folder where its agent's name is free, and the two agree again.
   Future<String> prepareLocal({
     String? projectHome,
     RepositoryClone Function()? createClone,
+    Iterable<String> namesInUse = const [],
   }) async {
     final home =
         Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
@@ -39,13 +45,17 @@ class ProjectFolderRequest {
         );
       }
       var next = BigInt.one;
-      await for (final entry in root.list(followLinks: false)) {
-        final match = RegExp(r'^(?:harness|agent)-([1-9]\d*)$')
-            .firstMatch(p.basename(entry.path));
-        if (match == null) continue;
+      final numbered = RegExp(r'^(?:harness|agent)-([1-9]\d*)$');
+      void count(String name) {
+        final match = numbered.firstMatch(name);
+        if (match == null) return;
         final number = BigInt.parse(match.group(1)!);
         if (number >= next) next = number + BigInt.one;
       }
+      await for (final entry in root.list(followLinks: false)) {
+        count(p.basename(entry.path));
+      }
+      namesInUse.forEach(count);
       for (;;) {
         final folder = p.join(root.path, 'harness-$next');
         next += BigInt.one;
