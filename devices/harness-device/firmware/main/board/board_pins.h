@@ -1,7 +1,6 @@
-// Pin map for the Waveshare ESP32-S3-Touch-AMOLED-1.75(C).
+// Pin map for the Harness device (ESP32-S3, 466x466 round AMOLED).
 //
-// Verified against Waveshare's official BSP:
-// github.com/waveshareteam/Waveshare-ESP32-components → bsp/esp32_s3_touch_amoled_1_75.
+// Verified on both shipped boards — see board/board.c for how the two are told apart at boot.
 // The AMOLED is powered directly (no AXP2101 rail gating needed for display),
 // reset is a real GPIO, and the panel uses the espressif/esp_lcd_co5300 driver.
 #pragma once
@@ -32,8 +31,8 @@
 #define BSP_AXP2101_I2C_ADDR 0x34         // present only when board()->has_pmic
 
 // ---- Audio: dual-mic → ES7210 ADC (capture) + ES8311 codec, on the shared I2C; I2S bus ----
-// Pins from the Waveshare BSP (bsp/esp32_s3_touch_amoled_1_75). Mic capture (ES7210) only in v1.
-#define BSP_I2S_MCLK         16           // 1.75C variant: MCLK is GPIO16 (NOT 42 as on 1.75)
+// Mic capture (ES7210) only in v1.
+#define BSP_I2S_MCLK         16           // MCLK is GPIO16 on the shipped board (not 42)
 #define BSP_I2S_BCLK         9
 #define BSP_I2S_WS           45
 #define BSP_I2S_DOUT         8            // codec → ESP (mic data in to ESP)

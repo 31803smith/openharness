@@ -1,6 +1,6 @@
 // Harness dial — entry point and boot.
 //
-// Board: Waveshare ESP32-S3-Touch-AMOLED-1.75C.
+// Board: the Harness device (ESP32-S3, 466x466 round AMOLED).
 //
 //   BOOT ─▶ display ─▶ UI ─▶ USB cable link ─▶ the daemon's agent list ─▶ tileview
 //

@@ -1,6 +1,6 @@
 # Top-level ESP-IDF project file for the Interns commander device.
 #
-# Board: Waveshare ESP32-S3-Touch-AMOLED-1.75C (ESP32-S3R8, 466x466 AMOLED CO5300).
+# Board: the Harness device (ESP32-S3R8, 466x466 round AMOLED, CO5300).
 # Requires ESP-IDF >= 5.5. Build with:  idf.py set-target esp32s3 && idf.py build
 cmake_minimum_required(VERSION 3.16)
 

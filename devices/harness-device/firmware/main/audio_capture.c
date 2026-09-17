@@ -155,7 +155,7 @@ bool audio_capture_init(void)
 
     es7210_codec_cfg_t es_cfg = {
         .ctrl_if = s_ctrl_if,
-        // Match the Waveshare BSP: leave mic_selected at the driver default (the board's mics
+        // Match the vendor BSP: leave mic_selected at the driver default (the board's mics
         // aren't necessarily MIC1/MIC2; an explicit wrong selection captures silence).
     };
     s_es7210 = es7210_codec_new(&es_cfg);

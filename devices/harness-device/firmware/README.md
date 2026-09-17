@@ -12,8 +12,8 @@ Schematics and enclosure designs are coming; they are not included in this repos
 
 ## Supported hardware
 
-The current board family is the Waveshare ESP32-S3-Touch-AMOLED-1.75C: an ESP32-S3 with a 466 × 466
-CO5300 AMOLED display, touch, microphones, and audio output. The firmware detects two touch/board
+The Harness device is an ESP32-S3 with a 466 × 466 CO5300 AMOLED display, touch, microphones, and
+audio output. The firmware detects two touch/board
 variants on the I²C bus:
 
 | Variant | Touch | Power management | Display / touch reset pins |

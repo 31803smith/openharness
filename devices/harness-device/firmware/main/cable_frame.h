@@ -33,7 +33,7 @@
 
 // ⚠️ THE SECOND BYTE NAMES THE PRODUCT, AND IT IS NOT DECORATION.
 //
-// This board is also the board a SIBLING product ships — same Waveshare 466x466 round panel, same
+// This board is also the board a SIBLING product ships — same 466x466 round panel, same
 // ESP32-S3, and so the same USB identity (303a:1001, a ROM peripheral whose descriptor cannot be changed
 // without giving up the console this port also carries). Its firmware speaks a protocol descended from
 // the same ancestor as this one: same framing, and a `hello` carrying the same three fields under the

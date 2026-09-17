@@ -18,9 +18,9 @@
 #include "esp_task_wdt.h"
 #include "lvgl.h"
 
-// CO5300 power-on / init register sequence, taken verbatim from Waveshare's
-// official BSP (bsp/esp32_s3_touch_amoled_1_75). The leading 0xFE/0x19/0x1C
-// block is what was missing before — without it the panel never lights up.
+// CO5300 power-on / init register sequence, taken verbatim from the panel
+// vendor's reference BSP. The leading 0xFE/0x19/0x1C block is what was missing
+// before — without it the panel never lights up.
 static const co5300_lcd_init_cmd_t s_co5300_init_cmds[] = {
     {0xFE, (uint8_t[]){0x20}, 1, 0},
     {0x19, (uint8_t[]){0x10}, 1, 0},
@@ -138,7 +138,7 @@ static void lvgl_task(void *arg)
 }
 
 // CO5300 addresses pixels in 2px units, so partial-update areas must start on an
-// even coordinate and end on an odd one (matches Waveshare's BSP rounder).
+// even coordinate and end on an odd one (matches the vendor BSP's rounder).
 static void rounder_cb(lv_event_t *e)
 {
     lv_area_t *area = lv_event_get_param(e);
