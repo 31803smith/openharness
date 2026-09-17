@@ -53,8 +53,8 @@ make upload-circle ARGS="--no-bump"   # keep version.txt as-is, build + upload
 make upload-circle ARGS="--no-commit" # don't git-commit the version.txt bump
 ```
 
-`make upload-circle` just runs `device/harness-device/firmware/scripts/upload-firmware.sh` (a full pipeline: bump
-`version.txt` → `idf.py -C device/harness-device/firmware build` → upload `.bin` + merge `metadata.json` to GCS → **git
+`make upload-circle` just runs `devices/harness-device/firmware/scripts/upload-firmware.sh` (a full pipeline: bump
+`version.txt` → `idf.py -C devices/harness-device/firmware build` → upload `.bin` + merge `metadata.json` to GCS → **git
 commit + push** the `version.txt` bump). You can call the script directly too. It auto-sources the ESP-IDF env
 from `IDF_PATH` or `~/esp/esp-idf`; if a step fails before publishing, it reverts the `version.txt`
 bump so a failed run leaves no dangling version.
@@ -66,9 +66,9 @@ devices can download without credentials.
 Notes:
 
 - The version baked **into the binary** (`esp_app_desc.version`) and the version in the **manifest**
-  both come from the same `device/harness-device/firmware/version.txt`, so the device's equality check is exact. Keep them
+  both come from the same `devices/harness-device/firmware/version.txt`, so the device's equality check is exact. Keep them
   in sync by only ever changing the version there.
-- If a rebuild doesn't seem to pick up the new version, `touch device/harness-device/firmware/version.txt` before step 3
+- If a rebuild doesn't seem to pick up the new version, `touch devices/harness-device/firmware/version.txt` before step 3
   to force the app-descriptor to regenerate.
 - GCS layout (all overridable via env in `scripts/upload-firmware.sh`): bucket
   `s3-autonomous-upgrade-3`, binary `harness/esp32/bin/<version>.bin`, manifest

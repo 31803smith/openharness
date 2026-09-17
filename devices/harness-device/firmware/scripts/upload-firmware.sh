@@ -19,7 +19,7 @@
 # must be public-read so devices can download without credentials. `idf.py` on PATH (or IDF_PATH set).
 set -euo pipefail
 
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"    # device/harness-device/firmware
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"    # devices/harness-device/firmware
 VER_FILE="$HERE/version.txt"
 # A DEDICATED prod build dir + DEVICE_FORCE_PROD so a published binary is always production (ignores any
 # local provisioned_config.h) WITHOUT moving the header, and without clobbering the interactive `build/`
@@ -157,7 +157,7 @@ if [ "$DO_BUILD" -eq 1 ]; then
   # 10 KiB landed, producing firmware that crashed mid-OTA and could not update itself.
   #
   # Deleting it costs a reconfigure (~10s) per release and makes the published binary a function of the
-  # tracked defaults alone. The developer's interactive device/harness-device/firmware/sdkconfig is left untouched.
+  # tracked defaults alone. The developer's interactive devices/harness-device/firmware/sdkconfig is left untouched.
   RELEASE_SDKCONFIG="$BUILD_DIR/sdkconfig.release"
   rm -f "$RELEASE_SDKCONFIG"
   echo ">> building… (prod: -DDEVICE_FORCE_PROD=1, build dir $BUILD_DIR, fresh config from sdkconfig.defaults)"
