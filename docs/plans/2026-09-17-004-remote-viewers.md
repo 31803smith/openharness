@@ -92,22 +92,22 @@ three forwarding modules; it is not whole-application coverage or a guarantee fo
 
 | Local client | Harness host | Relay | What was exercised |
 | --- | --- | --- | --- |
-| iMac Home (`violet4.lan`, Intel/x64), Chrome | Same host, direct viewer URLs | None | Blender, Marp, Manim and Godogen viewer pages and assets |
-| iMac Home, two independent CLI processes | Same host, disposable workspaces | Two repository backend processes, real MongoDB and Redis | Real password linking; four store viewer commands; interactions; agent restart; backend-process outage/recovery; trust revocation |
-| iMac Home, Chrome and native WKWebView | M2 (`mac.lan`, Apple Silicon/arm64), separate daemon built from this branch | Hosted `https://harness-api.autonomous.ai` | All four store viewers loaded in both browser engines; interactions in Chrome; concurrent terminal traffic; large files and ranges |
+| Intel/x64 Mac, Chrome | Same host, direct viewer URLs | None | Blender, Marp, Manim and Godogen viewer pages and assets |
+| Intel/x64 Mac, two independent CLI processes | Same host, disposable workspaces | Two repository backend processes, real MongoDB and Redis | Real password linking; four store viewer commands; interactions; agent restart; backend-process outage/recovery; trust revocation |
+| Intel/x64 Mac, Chrome and native WKWebView | Apple Silicon M2/arm64 Mac, separate daemon built from this branch | Hosted encrypted relay | All four store viewers loaded in both browser engines; interactions in Chrome; concurrent terminal traffic; large files and ranges |
 
 The physical run used the existing M2 installation's store packages with new test workspaces and a
 separate machine registration, identity, registry, auth directory and tmux socket. Its existing daemon,
-projects and trust relationships were not replaced. iMac Office was reachable and inventoried through
-Harness, but no viewer test was run there. The physical direction tested was **M2 → iMac Home**.
+projects and trust relationships were not replaced. A third Mac was reachable and inventoried through
+Harness, but no viewer test was run there. The physical direction tested was **M2 → Intel Mac**.
 Both disposable M2 machine registrations returned HTTP 200 on deletion after their peers stopped.
 The test bootstrap harness was deleted and a subsequent agent listing confirmed that both bootstrap
 IDs were absent. Logs, screenshots and fixture workspaces were retained for review.
 
-Godogen running on M2, rendered on iMac Home by the native WKWebView probe through the hosted
+Godogen running on M2, rendered on the Intel Mac by the native WKWebView probe through the hosted
 encrypted relay (viewer content only; this is not a capture of the complete Flutter app):
 
-![Godogen forwarded from M2 to iMac Home in native WKWebView](assets/remote-viewer-m2-godogen-webkit.png)
+![Godogen forwarded from M2 to an Intel Mac in native WKWebView](assets/remote-viewer-m2-godogen-webkit.png)
 
 Specific assertions:
 
@@ -127,7 +127,7 @@ Specific assertions:
   The separate local deployment test revoked trust, removed the client's persisted pin, closed the
   gateway, and deleted its test agents.
 - Revoking the disposable identity on M2 through its local owner API interrupted an active SSE
-  response at iMac Home, closed the local gateway and removed the persisted pin. A fresh handshake
+  response at the Intel Mac, closed the local gateway and removed the persisted pin. A fresh handshake
   using the revoked identity was refused by the hosted path with `NO_PEER_LINK`.
 
 These are **viewer transport tests**. Model CLIs are deterministic echo fixtures; Blender geometry and
