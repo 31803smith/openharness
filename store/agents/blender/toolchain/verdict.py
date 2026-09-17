@@ -67,6 +67,8 @@ def main(argv: list[str]) -> int:
         try:
             report = json.loads(rp.read_text())
         except ValueError:
+            pass
+        if not isinstance(report, dict):  # half-written, or JSON that is not an object: no report
             report = None
     ok = lambda p: bool(p) and (WS / p).is_file() and (WS / p).stat().st_size > 500
     verdict = judge(bool(has_script), report, bool(glb_path(report, ok)), ok("out/preview.png"), ok("out/turntable.mp4"), glb_path(report, ok) or "out/model.glb")
