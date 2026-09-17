@@ -46,8 +46,9 @@ function serveFile(req, res, full) {
   const type = TYPES[extname(full).toLowerCase()] ?? 'application/octet-stream'
   const base = { 'content-type': type, 'accept-ranges': 'bytes', 'cache-control': 'no-cache', 'last-modified': st.mtime.toUTCString() }
   if (req.method === 'HEAD') { res.writeHead(200, { ...base, 'content-length': size }); return res.end() }
+  // `bytes=-` names no byte at all; like any Range this server cannot satisfy, it gets the whole file.
   const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range ?? '')
-  if (range && size > 0) {
+  if (range && (range[1] || range[2]) && size > 0) {
     let start = range[1] ? Number(range[1]) : NaN, end = range[2] ? Number(range[2]) : NaN
     if (Number.isNaN(start)) { start = Math.max(0, size - end); end = size - 1 } else end = Number.isNaN(end) ? size - 1 : Math.min(end, size - 1)
     if (start > end || start >= size) { res.writeHead(416, { 'content-range': `bytes */${size}` }); return res.end() }
@@ -59,8 +60,7 @@ function serveFile(req, res, full) {
 }
 
 function publish() {
-  let next
-  try { next = library.scan() } catch (error) { console.log(`[video-viewer] scan failed: ${error.message}`); return }
+  const next = library.scan()
   const json = JSON.stringify(next)
   if (json === currentJson) return
   current = next; currentJson = json
@@ -68,11 +68,13 @@ function publish() {
 }
 
 const server = createServer((req, res) => {
-  const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`)
-  const path = url.pathname
+  // A request line that is not a URL (`GET http://a:99999/`) or a path that is not UTF-8 (`/%zz`) is the
+  // client's mistake: answer it, never throw out of the handler and take the pane down.
+  let url, path
+  try { url = new URL(req.url, `http://127.0.0.1:${port}`); path = decodeURIComponent(url.pathname) } catch { return send(res, 400, 'bad request') }
   if (path === '/' || path === '/index.html') return serveFile(req, res, join(here, 'ui', 'index.html'))
   if (path.startsWith('/ui/')) {
-    const full = inside(join(here, 'ui'), decodeURIComponent(path.slice(4)))
+    const full = inside(join(here, 'ui'), path.slice(4))
     return full ? serveFile(req, res, full) : send(res, 404, 'not found')
   }
   if (path === '/api/library') return send(res, 200, currentJson, { 'content-type': 'application/json' })
@@ -102,7 +104,7 @@ const server = createServer((req, res) => {
     })
     return
   }
-  const rel = decodeURIComponent(path.startsWith('/ws/') ? path.slice(4) : path.slice(1))
+  const rel = path.startsWith('/ws/') ? path.slice(4) : path.slice(1)
   const full = inside(workspace, rel)
   if (!full) return send(res, 403, 'outside the workspace')
   serveFile(req, res, full)
@@ -131,6 +133,6 @@ try {
   setInterval(publish, 1500).unref()
 }
 // While a render is running, time alone changes the answer (a render that stops writing is stalled).
-setInterval(() => { if (current.live.some((l) => l.state === 'rendering' || Date.now() - (l.updatedAtMs ?? 0) < STALL_MS + 5000)) publish() }, 2000).unref()
+setInterval(() => { if (current.live.some((l) => l.state === 'rendering' || Date.now() - l.updatedAtMs < STALL_MS + 5000)) publish() }, 2000).unref()
 setInterval(() => { for (const c of clients) c.write(': ping\n\n') }, 20_000).unref()
 for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => { for (const c of clients) c.end(); server.close(); process.exit(0) })
