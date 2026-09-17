@@ -29,6 +29,9 @@ void main() {
       authSession: AuthSession(),
       configStore: null,
     );
+    // A signed-in footer: the profile alone is not the account (it loads
+    // after), and a window without one is a guest with a Sign in row instead.
+    notifier.signedIn = true;
     notifier.currentUser = const CurrentUserProfile(
       name: 'Avery Example',
       email: 'avery@example.com',

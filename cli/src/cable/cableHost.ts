@@ -800,7 +800,9 @@ export class DaemonCableHost implements CableHost {
    */
   async transcribe(pcm: Buffer, sampleRate: number, lang: string): Promise<string> {
     const session = readAuthSession()
-    if (!session) throw new Error('Voice needs a signed-in harness — run `harness login`')
+    // The text reaches the dial's glass as a toast, so it is addressed to the person holding it, not to a
+    // terminal: signing in happens on the computer, and that is the one thing they need to know.
+    if (!session) throw new Error('Sign in on your computer to use voice')
 
     const auth = new AuthSessionManager(this.backendHttpBase())
     const url = `${this.backendHttpBase()}${env.CABLE_STT_PATH}?lang=${encodeURIComponent(lang)}`

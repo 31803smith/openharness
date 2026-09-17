@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../auth/cli_link.dart';
+import '../screens/login_screen.dart';
 import '../shared/widgets/app_dialog.dart';
 import '../state/app_state.dart';
 import '../shared/widgets/skeleton.dart';
@@ -12,7 +13,22 @@ import '../theme/app_theme.dart';
 /// with `harness link connect` — no code to copy/paste. To link a specific machine FROM here
 /// instead, select it in the sidebar (see `machine_rail.dart`'s `selectMachineForSetup`), not
 /// duplicated here — that flow lives in `link_machine_screen.dart`.
-Future<void> showLinkMachineDialog(BuildContext context, AppNotifier notifier) {
+Future<void> showLinkMachineDialog(
+  BuildContext context,
+  AppNotifier notifier,
+) async {
+  // A remote password is published under the account, for machines on the
+  // same account to prove knowledge of. Without an account there is nowhere to
+  // publish it and nobody who could connect — so the sheet comes first.
+  if (notifier.isGuest) {
+    final signedIn = await showSignInSheet(
+      context,
+      notifier,
+      reason: 'Sign in to let your other machines connect to this one.',
+    );
+    if (!signedIn || !context.mounted) return;
+  }
+  if (!context.mounted) return;
   return showAppDialog<void>(
     context: context,
     builder: (context) => _LinkMachineDialog(notifier: notifier),

@@ -288,6 +288,7 @@ class AppNotifier extends ChangeNotifier {
   final AuthSession session;
   AppConfig config;
   late ApiClient api;
+
   /// Signs in, and says whether this computer is signed in: the harness CLI in a desktop build,
   /// [ViewerServices.login] in a viewer build — which has no CLI — under one name, so every call
   /// site reads the same in both.
@@ -460,6 +461,23 @@ class AppNotifier extends ChangeNotifier {
   );
 
   AppStatus status = AppStatus.bootstrapping;
+
+  /// Whether this computer holds an account. Guest is the ABSENCE of one, not a
+  /// state of its own: everything on this computer works without it — agents,
+  /// terminals, tabs, the dial — and the account buys the other machines. The
+  /// window opens either way; see [isGuest] for what a guest is asked to sign
+  /// in for, and [_rebindAuth] for what changes when the answer changes.
+  ///
+  /// Presumed until the CLI says otherwise (`bootstrap` asks, and every change
+  /// after that goes through [_rebindAuth]): nothing gated on it is on screen
+  /// before that answer lands, and a fixture that sets [status] straight to
+  /// `authenticated` is a signed-in window unless it says it is not.
+  bool signedIn = true;
+
+  /// A desktop window running without an account. A viewer is never a guest:
+  /// it has no local daemon, so there is nothing it could show signed out.
+  bool get isGuest => viewer == null && !signedIn;
+
   CurrentUserProfile? currentUser;
   List<Machine> machines = [];
   final Map<String, MachineState> machineStates = {};
@@ -498,11 +516,9 @@ class AppNotifier extends ChangeNotifier {
     final target = swarms.where((s) => s.id == entry.swarmId).firstOrNull;
     return target == null ||
         target.panes.length < maxPanes ||
-              target.panes.any(
-                (p) =>
-                    p.machineId == entry.machineId &&
-                    p.agentId == entry.agentId,
-              );
+        target.panes.any(
+          (p) => p.machineId == entry.machineId && p.agentId == entry.agentId,
+        );
   }
 
   bool _canReopenSwarm(ClosedSwarm saved) {
@@ -1972,11 +1988,17 @@ class AppNotifier extends ChangeNotifier {
     try {
       final authStatus = await cliLogin.checkStatus();
       if (!_authWorkCurrent(revision)) return;
+      signedIn = authStatus.loggedIn;
       if (!authStatus.loggedIn) {
         currentUser = null;
-        status = AppStatus.unauthenticated;
-        notifyListeners();
-        return;
+        // A viewer has nothing to show without an account. A desktop window
+        // has this computer, and opens on it — the sign-in is a sheet it
+        // raises when the person reaches for another machine, not a wall.
+        if (viewer != null) {
+          status = AppStatus.unauthenticated;
+          notifyListeners();
+          return;
+        }
       }
       status = AppStatus.bootstrapping;
       notifyListeners();
@@ -2227,16 +2249,54 @@ class AppNotifier extends ChangeNotifier {
     if (status == AppStatus.unauthenticated) return;
     status = AppStatus.authenticated;
     notifyListeners();
-    // The CLI has confirmed sign-in and daemon readiness. Display-name/avatar
-    // metadata is independent of machine discovery and must not delay work.
-    unawaited(_loadProfile());
+    // The CLI has confirmed daemon readiness. Display-name/avatar metadata is
+    // independent of machine discovery and must not delay work — and a guest
+    // has none to load.
+    if (signedIn) unawaited(_loadProfile());
     try {
       await refreshMachines();
     } catch (error) {
       if (!_authWorkCurrent(revision)) return;
       _reportMachineLoadError(error);
     }
+    if (!_authWorkCurrent(revision)) return;
+    await _followLocalMachineId(revision);
     if (_authWorkCurrent(revision)) notifyListeners();
+  }
+
+  /// This computer's machine id, against the one the saved desk was keyed by.
+  ///
+  /// The account can change while the app is closed — `harness logout` in a
+  /// terminal, a session that expired — and then the tiles restored a moment
+  /// ago name a machine the daemon no longer serves under that id. Re-seat
+  /// them under the one it does, and remember it for next time.
+  Future<void> _followLocalMachineId(int revision) async {
+    final store = _paneLayout;
+    final current = localMachineState?.machine.machineId;
+    if (store == null || current == null) return;
+    final remembered = await store.loadLocalMachineId();
+    if (!_authWorkCurrent(revision)) return;
+    var from = remembered != null && remembered != current ? remembered : null;
+    // A guest's list is this computer and nothing else, so a tile waiting for
+    // a machine the list does not have can only be this computer under the
+    // account it left — if every such tile names the SAME one. That reading
+    // beats the remembered id: a desk saved before the id was remembered, or
+    // remembered by a launch that could not re-seat, still comes home. Signed
+    // in, an unknown id is a machine that was deleted, and nothing is inferred.
+    if (isGuest) {
+      final unknown = {
+        for (final pane in allPanes)
+          if (!machineStates.containsKey(pane.machineId)) pane.machineId,
+      };
+      if (unknown.length == 1 && unknown.single != current) {
+        from = unknown.single;
+      }
+    }
+    if (from != null) {
+      await _reseatDesk(from: from, to: current, dropOthers: isGuest);
+      if (!_authWorkCurrent(revision)) return;
+    }
+    await store.saveLocalMachineId(current);
   }
 
   /// The local daemon (`harness start`) must be up before any local REST/WS call can work — unlike
@@ -2306,15 +2366,14 @@ class AppNotifier extends ChangeNotifier {
         );
       case LocalCliProbeState.down:
         _daemonGateFailed = true;
-        // Before blaming the environment, check whether the daemon is missing because it signed itself
-        // out. "Try running `harness start` yourself" is advice that cannot work in that case — the
-        // session file is gone, so every start exits again — and it is the advice this branch used to
-        // give unconditionally.
+        // A daemon that is missing because its session ended is not an environment problem — but it
+        // is no longer a reason to stop either: the daemon starts without a session and serves this
+        // computer. So the window is told it is a guest now (a banner, the sheet on the next reach
+        // for another machine) and the supervisor below goes on bringing the daemon back.
         final authStatus = await cliLogin.checkStatus();
         if (!_authWorkCurrent(revision)) return;
-        if (!authStatus.loggedIn) {
+        if (!authStatus.loggedIn && signedIn) {
           _signedOutAtRuntime(_signedOutMessage);
-          return;
         }
         throw StateError(
           'The local Harness daemon did not start. Try running `harness start` yourself, then reopen the app.',
@@ -2331,7 +2390,9 @@ class AppNotifier extends ChangeNotifier {
     _daemonSupervisionTimer ??= discovery.startSupervising(
       spawnAllowedAt: inSpawnSlot,
       stillSignedIn: () async => (await cliLogin.checkStatus()).loggedIn,
-      onSignedOut: () => _signedOutAtRuntime(_signedOutMessage),
+      onSignedOut: () {
+        if (signedIn) _signedOutAtRuntime(_signedOutMessage);
+      },
       onSnapshot: _updateLocalProjectSnapshot,
       onReady: (endpoint) {
         // Back (or here for the first time). If the app is sitting on the error strip from a boot
@@ -2401,23 +2462,165 @@ class AppNotifier extends ChangeNotifier {
   /// fills is the app that was ALREADY authenticated when the session disappeared underneath it,
   /// where nothing re-checked and the daemon supervisor simply respawned `harness start` forever.
   void _signedOutAtRuntime(String message) {
-    if (status == AppStatus.unauthenticated) {
+    if (status == AppStatus.unauthenticated || (viewer == null && !signedIn)) {
       return; // idempotent: several sources can race here
     }
+    // A viewer has nowhere to be but the login screen.
+    if (viewer != null) {
+      _invalidateAuthWork();
+      currentUser = null;
+      signingIn = false;
+      pendingAuthorizeUrl = null;
+      _awaitingFirstMessage = null;
+      analyticsAccount.clear();
+      _daemonSupervisionTimer?.cancel();
+      _daemonSupervisionTimer = null;
+      _cliEndpoint = null;
+      unawaited(_pool?.closeAll());
+      _pool = null;
+      _lastError = message;
+      _lastErrorRetryable = true;
+      status = AppStatus.unauthenticated;
+      notifyListeners();
+      return;
+    }
+    // A desktop window becomes a guest: this computer's tiles stay, the other machines' leave, and the
+    // banner says why the rail just got shorter.
     _invalidateAuthWork();
-    currentUser = null;
     signingIn = false;
     pendingAuthorizeUrl = null;
     _awaitingFirstMessage = null;
-    analyticsAccount.clear();
+    _closedHistory.clear();
+    unawaited(_rebindAuth(signedIn: false, banner: message));
+  }
+
+  /// The account under this window changed — a sign-in from the sheet, a sign-out from the footer, or
+  /// a session that ended underneath us — and the desk has to be sat back down on the machine ids the
+  /// daemon serves now.
+  ///
+  /// The daemon takes its identity ONCE, at boot: this computer's own id signed out, the account's
+  /// machineId signed in. `harness login` and `harness logout` restart it on the other one, so this
+  /// side waits for that daemon to come back, reads the machine list it now serves, and re-seats every
+  /// tile that was open on the OLD local id under the new one. Remote tiles ride along on a sign-in and
+  /// leave on a sign-out — a guest has no machine to attach them to, and a tile waiting forever for one
+  /// reads as broken rather than as signed out.
+  ///
+  /// The whole desk goes through the saved layout and back (see [_reseatDesk]) rather than being
+  /// rekeyed live: a tile's machine id is set at birth, and every other path that changes which agent
+  /// a tile shows already goes through the store. Reusing the cold-start restore is what keeps this
+  /// from being a second, subtly different way to build a grid.
+  ///
+  /// [revision] is the sign-in's own: `login` has already invalidated the
+  /// previous work and holds `_loginAuthorized` for the sheet, and a second
+  /// invalidation here would drop that flag mid-wait. A sign-out passes none
+  /// and invalidates for itself — its in-flight work belongs to the account
+  /// that just left.
+  Future<void> _rebindAuth({
+    required bool signedIn,
+    String? banner,
+    int? revision,
+  }) async {
+    revision ??= _invalidateAuthWork();
+    final before = localMachineState?.machine.machineId;
+    // A sign-out is a fact the moment it is known; a sign-in is announced only
+    // once the desk is sat down on the account (at the end), so the sheet that
+    // started it keeps its spinner until there is something to come back to.
+    if (!signedIn) {
+      this.signedIn = false;
+      currentUser = null;
+      analyticsAccount.clear();
+    }
+    _stopAllOfflineRetries();
+    _stopAllLinkRetries();
+    _stopAllAgentSyncTimers();
     _daemonSupervisionTimer?.cancel();
     _daemonSupervisionTimer = null;
+    _daemonGateFailed = false;
     _cliEndpoint = null;
-    unawaited(_pool?.closeAll());
+    _clearAllTurnActivity();
+    // Every connection goes: the daemon this window was talking to is being replaced by one with a
+    // different identity, and a remote lane was borrowed from the account that is changing hands.
+    await _pool?.closeAll();
+    if (!_authWorkCurrent(revision)) return;
     _pool = null;
-    _lastError = message;
-    _lastErrorRetryable = true;
-    status = AppStatus.unauthenticated;
+    machines = [];
+    machineStates.clear();
+    sessionPreviews.clear();
+    expandedMachines.clear();
+    selectedMachineId = null;
+    _ensurePool();
+    notifyListeners();
+    try {
+      await ensureCliDaemonReady();
+    } catch (error) {
+      if (!_authWorkCurrent(revision)) return;
+      _lastError = '$error';
+      _lastErrorRetryable = true;
+      notifyListeners();
+      return;
+    }
+    if (!_authWorkCurrent(revision)) return;
+    // The profile rides beside the machine list, as it does on a cold boot:
+    // display-name metadata must not delay the desk, and needs only the daemon.
+    if (signedIn) unawaited(_loadProfile());
+    try {
+      await refreshMachines();
+    } catch (error) {
+      if (!_authWorkCurrent(revision)) return;
+      _reportMachineLoadError(error);
+    }
+    if (!_authWorkCurrent(revision)) return;
+    final after = localMachineState?.machine.machineId;
+    if (after != null && (before != after || !signedIn)) {
+      await _reseatDesk(
+        from: before ?? after,
+        to: after,
+        dropOthers: !signedIn,
+      );
+      if (!_authWorkCurrent(revision)) return;
+    }
+    if (after != null) await _paneLayout?.saveLocalMachineId(after);
+    if (!_authWorkCurrent(revision)) return;
+    this.signedIn = signedIn;
+    // A rebind ends on the desk, whichever screen it started from.
+    status = AppStatus.authenticated;
+    if (banner != null) {
+      _lastError = banner;
+      _lastErrorRetryable = true;
+    }
+    notifyListeners();
+  }
+
+  /// Rebuild the grid from the saved layout with this computer's tiles re-keyed from [from] to [to],
+  /// and — with [dropOthers] — every other machine's tiles left out.
+  ///
+  /// The live tiles are closed WITHOUT persisting (their ids are the old ones), the file is rewritten,
+  /// and the cold-start restore reads it back; tiles whose machines are already connected are attached
+  /// straight away rather than waiting for a connect event that already happened.
+  Future<void> _reseatDesk({
+    required String from,
+    required String to,
+    required bool dropOthers,
+  }) async {
+    final store = _paneLayout;
+    if (store == null) return;
+    _persistLayout();
+    await store.flushSwarms();
+    await store.rekeyMachine(from: from, to: to, dropOthers: dropOthers);
+    if (_disposed) return;
+    await _closeAllPanes(persist: false);
+    if (_disposed) return;
+    _closedHistory.clear();
+    swarms
+      ..clear()
+      ..add(Swarm(id: 'swarm-1'));
+    _activeSwarmId = 'swarm-1';
+    await _restorePaneLayout();
+    if (_disposed) return;
+    for (final machine in machineStates.values) {
+      _attachPendingPanes(machine);
+    }
+    _announceAppFocus();
     notifyListeners();
   }
 
@@ -2512,9 +2715,14 @@ class AppNotifier extends ChangeNotifier {
   Future<void> login() async {
     if (_disposed || signingIn) return;
     final revision = _invalidateAuthWork();
-    _closedHistory.clear();
     _lastError = null;
-    status = AppStatus.bootstrapping;
+    // A viewer signs in on a screen of its own; a desktop window signs in on a
+    // sheet over the desk it is already showing, and the desk stays where it is
+    // — including its history — until the account has actually changed hands.
+    if (viewer != null) {
+      _closedHistory.clear();
+      status = AppStatus.bootstrapping;
+    }
     signingIn = true;
     pendingAuthorizeUrl = null;
     notifyListeners();
@@ -2538,6 +2746,18 @@ class AppNotifier extends ChangeNotifier {
       pendingAuthorizeUrl = null;
       _resetLoginBrowser();
       notifyListeners();
+      if (viewer == null) {
+        // The CLI has restarted the daemon on the account's machineId by the
+        // time `harness login` returns; the desk follows it there. `signingIn`
+        // holds until it has, so the sheet's spinner covers the whole wait.
+        await _rebindAuth(signedIn: true, revision: revision);
+        if (!_authWorkCurrent(revision)) return;
+        signingIn = false;
+        notifyListeners();
+        analytics.signedIn();
+        _armFirstMessage('sign_in');
+        return;
+      }
       await _finishBootstrapSignedIn();
       if (!_authWorkCurrent(revision) || status != AppStatus.authenticated) {
         return;
@@ -2549,7 +2769,9 @@ class AppNotifier extends ChangeNotifier {
       _armFirstMessage('sign_in');
     } catch (error) {
       if (!_authWorkCurrent(revision)) return;
-      status = AppStatus.unauthenticated;
+      // A desktop window is still on its desk, as a guest; only a viewer has
+      // a login screen to fall back to.
+      if (viewer != null) status = AppStatus.unauthenticated;
       _lastError = error.toString();
       _lastErrorRetryable = true;
       // A short code, never `error.toString()` — a CLI failure carries paths
@@ -2633,7 +2855,7 @@ class AppNotifier extends ChangeNotifier {
     _invalidateAuthWork();
     signingIn = false;
     pendingAuthorizeUrl = null;
-    status = AppStatus.unauthenticated;
+    if (viewer != null) status = AppStatus.unauthenticated;
     _lastError = null;
     _lastErrorRetryable = false;
     cliLogin.cancel();
@@ -2641,10 +2863,45 @@ class AppNotifier extends ChangeNotifier {
   }
 
   Future<void> logout() async {
-    final revision = _invalidateAuthWork();
+    // Nothing to leave: a guest holds no account, and `harness logout` would
+    // only restart a daemon that is already serving this computer alone.
+    if (isGuest) return;
     cliLogin.cancel();
     signingIn = false;
     pendingAuthorizeUrl = null;
+    if (viewer == null) {
+      // The account is gone the moment this returns: what it owned — the
+      // profile, the history (a remote tile in it could be reopened by whoever
+      // signs in next), the connections to its machines — goes now. The desk
+      // follows in the background, once `harness logout` has restarted the
+      // daemon signed out: the rebind has to find THAT daemon, the one serving
+      // this computer under its own id, not the one going away. This computer's
+      // tiles stay; the other machines' leave with the account.
+      final revision = _invalidateAuthWork();
+      signedIn = false;
+      currentUser = null;
+      _closedHistory.clear();
+      _awaitingFirstMessage = null;
+      analyticsAccount.clear();
+      analytics.signedOut();
+      _stopAllOfflineRetries();
+      _stopAllLinkRetries();
+      _stopAllAgentSyncTimers();
+      _daemonSupervisionTimer?.cancel();
+      _daemonSupervisionTimer = null;
+      _cliEndpoint = null;
+      unawaited(_pool?.closeAll());
+      _pool = null;
+      notifyListeners();
+      unawaited(
+        cliLogin.logout().then((_) {
+          if (_disposed || !_authWorkCurrent(revision)) return null;
+          return _rebindAuth(signedIn: false, revision: revision);
+        }),
+      );
+      return;
+    }
+    final revision = _invalidateAuthWork();
     _closedHistory.clear();
     // Best-effort and fire-and-forget: local state is cleared below regardless of whether the CLI
     // process could be reached, but a real `harness logout` clears its saved session so the NEXT
