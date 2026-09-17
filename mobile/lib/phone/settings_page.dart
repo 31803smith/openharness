@@ -52,6 +52,19 @@ import 'voice_language_store.dart';
 ///
 /// What a phone adds instead is the account and the machine links, which the desktop keeps in its
 /// rail footer — on a phone there is no rail, so this is the only way to reach either.
+
+/// Whether the Terminal section offers the voice language.
+///
+/// Off: the mic transcribes in whatever [voiceLanguageStore] already holds, and there is no longer
+/// anywhere in the app to change it by hand.
+///
+/// ⚠️ **That is the whole of the setting, so turning this back on is the only way back to it.**
+/// The mic's long-press used to open the same picker, and hold-to-talk took that gesture for
+/// recording (see `voice_mic_mode.dart`) — so with this off, the stored language is whatever it was
+/// last set to, or the default for a phone that never set one. [_VoiceLanguageRow] and
+/// [showVoiceLanguagePicker] are both still here and still work; nothing but this flag was changed.
+const bool _showVoiceLanguage = false;
+
 class SettingsPage extends StatelessWidget {
   const SettingsPage({super.key, required this.notifier, this.large = true});
 
@@ -124,7 +137,11 @@ class _Body extends StatelessWidget {
       const SettingsCaption('Terminal'),
       SettingsGroup(
         children: [
-          _VoiceLanguageRow(),
+          // ⚠️ Voice language is hidden, not removed — flip [_showVoiceLanguage]
+          // to bring the row back. [_VoiceLanguageRow] and the picker behind it
+          // are untouched and still work; this is the only thing that was
+          // drawing them.
+          if (_showVoiceLanguage) _VoiceLanguageRow(),
           _FontRow(),
           _SizeRow(),
           _TerminalThemeRow(),

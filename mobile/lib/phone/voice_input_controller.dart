@@ -58,6 +58,16 @@ class VoiceInputController extends ChangeNotifier {
   /// 25 MB; five minutes of 16 kHz mono is under 10.
   static const maxTake = Duration(minutes: 5);
 
+  /// Under this, a take is a slip of the thumb rather than a sentence.
+  ///
+  /// ⚠️ **Push-to-talk needs this and tap-to-toggle never did.** Two taps are
+  /// hard to do inside a third of a second; a press and release is the easiest
+  /// thing in the world, and every accidental brush of the button used to go all
+  /// the way to the backend and come back empty — reported as "Didn't catch
+  /// that", which blames the speaking rather than the length. Caught here it is
+  /// silent: nothing was said, so nothing is announced.
+  static const minTake = Duration(milliseconds: 350);
+
   final VoiceTranscriber transcriber;
   final VoiceRecorder _recorder;
 
@@ -138,6 +148,63 @@ class VoiceInputController extends ChangeNotifier {
     if (_status == VoiceInputStatus.listening) await _transcribeTake();
   }
 
+  /// A push-to-talk hold has begun. Pairs with [finishHold].
+  ///
+  /// ⚠️ **Exists because a hold cannot be expressed as start-then-stop, and
+  /// trying broke hold-to-talk outright.** [startListening] takes two awaits to
+  /// reach [VoiceInputStatus.listening] — the permission check, then the
+  /// microphone actually opening, which is hundreds of milliseconds of hardware
+  /// on a real phone. A release landing inside that window found the status on
+  /// `starting` and abandoned the take, while the `startListening` still in
+  /// flight went on to open the microphone and set `listening` — a recording
+  /// nobody was holding and nothing would stop, whose audio then joined the NEXT
+  /// take. What came back was the tail of one sentence glued to the head of
+  /// another, which transcribes to nothing and reads as "Didn't catch that".
+  ///
+  /// So the hold is a fact of its own, held here, and the release is applied to
+  /// whatever state the start has reached by then — including a start that has
+  /// not finished yet, which [_holdReleased] makes it check for itself.
+  Future<void> startHold(Future<bool> Function(String text) deliver) async {
+    _holdReleased = false;
+    await startListening();
+    // Let go while the microphone was still opening: the take that just became
+    // live has no thumb on it, so it is ended and sent from here — the release
+    // could not do it itself, because at that moment there was no take to end.
+    if (_holdReleased && _status == VoiceInputStatus.listening) {
+      _holdReleased = false;
+      await submit(deliver);
+    }
+  }
+
+  /// A push-to-talk hold has ended, and what was said should be sent.
+  ///
+  /// Returns at once when the microphone is still opening — [startHold] is
+  /// mid-flight and owns the take, and this call has already recorded that the
+  /// thumb is up, which is what makes it finish and send as soon as there is
+  /// something to send.
+  Future<void> finishHold(Future<bool> Function(String text) deliver) async {
+    _holdReleased = true;
+    if (_status == VoiceInputStatus.starting) return;
+    _holdReleased = false;
+    await submit(deliver);
+  }
+
+  /// Drops a push-to-talk take without sending it — the thumb slid off the
+  /// button.
+  ///
+  /// ⚠️ Clears the flag as well, and that is not tidying: leaving it set would
+  /// let a [startHold] still in flight reach its own send branch and deliver the
+  /// very take this just threw away. [clear] bumps the take counter, so the
+  /// recording itself is already abandoned; this closes the other half.
+  void cancelHold() {
+    _holdReleased = false;
+    clear();
+  }
+
+  /// Whether the thumb has come up while a hold's [startListening] is still on
+  /// its way to `listening`. See [startHold].
+  bool _holdReleased = false;
+
   /// Sends everything heard, and empties the transcript once it is sent — kept
   /// when delivery fails, so nothing said has to be said twice.
   ///
@@ -203,6 +270,13 @@ class VoiceInputController extends ChangeNotifier {
             : 'take: ${recording.length.inMilliseconds}ms '
                   '${recording.wav.length}B peak=${recording.peak}',
       );
+      // Too short to be speech — a brushed button. Silent on purpose: there is
+      // no failure to report, and a notice would be the app talking back about
+      // something the person did not mean to do.
+      if (recording != null && recording.length < minTake) {
+        _setStatus(VoiceInputStatus.idle);
+        return false;
+      }
       if (recording == null || recording.peak < silencePeak) {
         _setStatus(VoiceInputStatus.idle, notice: VoiceNotice.noSound);
         return false;
