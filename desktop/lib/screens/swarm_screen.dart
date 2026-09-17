@@ -33,6 +33,7 @@ import '../state/swarm.dart';
 import '../widgets/transient_menus.dart';
 import '../widgets/layout_palette.dart';
 import '../widgets/engine_identity.dart';
+import '../store/store_mark.dart';
 import '../store/store_screen.dart';
 import '../widgets/harness_start_page.dart';
 import '../widgets/link_machine_screen.dart';
@@ -329,9 +330,12 @@ class _SwarmScreenState extends State<SwarmScreen> {
             'machineName': entry.machineLabel,
             'detail': entry.detail,
             'swarm': entry.isSwarm,
+            'store': entry.isStore,
             'agentCount': entry.isSwarm ? entry.members.length : 1,
-            'engine': entry.engine,
-            'iconAsset': engineIdentity(entry.engine).asset,
+            'engine': entry.isStore ? 'store' : entry.engine,
+            'iconAsset': entry.isStore
+                ? kStoreMarkAsset
+                : engineIdentity(entry.engine).asset,
             'canReopen': app.canReopenClosed(entry.id),
           },
       ],
@@ -344,9 +348,12 @@ class _SwarmScreenState extends State<SwarmScreen> {
             'machineName': entry.machineLabel,
             'detail': entry.detail,
             'swarm': entry.isSwarm,
+            'store': entry.isStore,
             'agentCount': entry.isSwarm ? entry.members.length : 1,
-            'engine': entry.engine,
-            'iconAsset': engineIdentity(entry.engine).asset,
+            'engine': entry.isStore ? 'store' : entry.engine,
+            'iconAsset': entry.isStore
+                ? kStoreMarkAsset
+                : engineIdentity(entry.engine).asset,
             'current': entry.current,
           },
       ],
@@ -1626,12 +1633,8 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                   child: Row(
                                     children: [
                                       if (swarm.isStore)
-                                        // The Store shares the app's icon.
-                                        Image.asset(
-                                          kStoreMarkAsset,
+                                        StoreMark(
                                           key: ValueKey('tab-store:${swarm.id}'),
-                                          width: 16,
-                                          height: 16,
                                         )
                                       else if (_tabAgents(swarm).length == 1)
                                         EngineMark(

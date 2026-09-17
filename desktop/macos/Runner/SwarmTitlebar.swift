@@ -554,7 +554,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
       item.target = self
       item.representedObject = entry.id
       item.state = entry.current ? .on : .off
-      item.image = entry.swarm && entry.agentCount != 1
+      item.image = entry.swarm && !entry.store && entry.agentCount != 1
         ? SwarmIdentity.menuIcon
         : historyIcons.image(engine: entry.engine, asset: entry.iconAsset)
       historyMenu.addItem(item)
@@ -898,6 +898,8 @@ private struct SwarmHistoryEntry: Equatable {
   let detail: String
   let machineName: String
   let swarm: Bool
+  /// The Harness Store's tab: no agents, but not an empty group either.
+  let store: Bool
   let agentCount: Int?
   let current: Bool
   let engine: String?
@@ -924,6 +926,7 @@ private struct SwarmHistoryEntry: Equatable {
     detail = row["detail"] as? String ?? ""
     machineName = row["machineName"] as? String ?? ""
     swarm = row["swarm"] as? Bool == true
+    store = row["store"] as? Bool == true
     agentCount = row["agentCount"] as? Int
     current = row["current"] as? Bool == true
     engine = (row["engine"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -936,6 +939,15 @@ private struct SwarmHistoryEntry: Equatable {
 /// decoded once to at most 32 pixels, rather than retaining a full-size bitmap
 /// or reopening assets on every history/focus update.
 private final class SwarmHistoryIcons {
+  /// The Flutter assets this opens: engine and harness artwork, and the app
+  /// icon the Harness Store's tab wears (`kStoreMarkAsset` in
+  /// lib/store/store_mark.dart). Any other path draws the engine's initial,
+  /// which is how the store tab once read "S".
+  static func opens(_ asset: String) -> Bool {
+    !asset.contains("..") && (asset == "assets/app_icon.png"
+      || asset.hasPrefix("assets/engine-icons/") && asset.hasSuffix(".png"))
+  }
+
   private let cache = NSCache<NSString, NSImage>()
   private let assetURL: (String) -> URL?
 
@@ -957,8 +969,7 @@ private final class SwarmHistoryIcons {
     if let image = cache.object(forKey: key) { return image }
     let size = NSSize(width: 16, height: 16)
     let image: NSImage
-    if let asset, asset.hasPrefix("assets/engine-icons/"),
-       asset.hasSuffix(".png"), !asset.contains(".."),
+    if let asset, SwarmHistoryIcons.opens(asset),
        let url = assetURL(asset),
        let source = CGImageSourceCreateWithURL(url as CFURL, nil),
        let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, [
@@ -973,6 +984,12 @@ private final class SwarmHistoryIcons {
       let height = CGFloat(thumbnail.height) * scale
       image = NSImage(size: size, flipped: false) { _ in
         bitmap.draw(in: NSRect(x: (16 - width) / 2, y: (16 - height) / 2, width: width, height: height))
+        return true
+      }
+    } else if id == "store", let appIcon = NSApp.applicationIconImage {
+      // The bundled copy did not load; the Dock's icon is the same mark.
+      image = NSImage(size: size, flipped: false) { _ in
+        appIcon.draw(in: NSRect(origin: .zero, size: size))
         return true
       }
     } else if id == "claude" {

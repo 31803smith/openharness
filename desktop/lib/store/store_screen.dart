@@ -21,9 +21,6 @@ import 'store_editorial.dart';
 import 'store_models.dart';
 import 'store_viewers.dart';
 
-/// Store tabs reuse the app icon.
-const String kStoreMarkAsset = 'assets/app_icon.png';
-
 /// The Harness Store, the content of its tab: every harness the registry
 /// knows and every built-in engine, as a shelf of cards; one becomes its page
 /// — what it is, whose it is, where it is installed, what people think of it —
