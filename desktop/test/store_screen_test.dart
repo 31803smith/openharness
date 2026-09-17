@@ -244,6 +244,38 @@ void main() {
     },
   );
 
+  testWidgets(
+    'a machine that connects after the store opened is asked for its harnesses then',
+    (tester) async {
+      final (notifier, _) = await open(tester);
+      final state = notifier.machineStates['machine-1']!;
+      expect(state.connectionStatus, ConnectionStatus.disconnected);
+      expect(notifier.probes, 1, reason: 'asked once on open, before it connected');
+
+      // The launch race: the store tab was restored first, the machine connects later.
+      state.connectionStatus = ConnectionStatus.connected;
+      notifier.notifyListeners();
+      await tester.pump();
+      expect(notifier.probes, 2);
+      expect(notifier.engineProbes, 2);
+
+      // Once per connection, not on every change while it stays connected.
+      notifier.notifyListeners();
+      await tester.pump();
+      expect(notifier.probes, 2);
+
+      // A reconnect asks again.
+      state.connectionStatus = ConnectionStatus.reconnecting;
+      notifier.notifyListeners();
+      await tester.pump();
+      state.connectionStatus = ConnectionStatus.connected;
+      notifier.notifyListeners();
+      await tester.pump();
+      expect(notifier.probes, 3);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('the catalog keeps real ratings and hides viewer dependencies', (
     tester,
   ) async {

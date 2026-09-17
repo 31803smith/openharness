@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../analytics/analytics.dart';
 import '../core/dsh_catalog.dart';
+import '../core/models.dart' show ConnectionStatus;
 import '../core/test_run.dart';
 import '../shared/layouts/widgets/sidebar_item.dart';
 import '../shared/theme/app_theme.dart' as grid;
@@ -113,17 +114,57 @@ class _StoreTabState extends State<StoreTab> {
       // per-machine fact, and an install started from a terminal is exactly
       // what a stored answer misses.
       for (final machine in widget.notifier.machineStates.values) {
-        final id = machine.machine.machineId;
-        unawaited(widget.notifier.probeDsh(id, force: true));
-        // The engine rows read the same probe the New Harness dialog does; a
-        // machine that has never been asked would show Claude Code as absent.
-        unawaited(widget.notifier.probeEngines(id, force: true));
+        _ask(machine);
+      }
+      widget.notifier.addListener(_onAppChanged);
+    });
+  }
+
+  /// Machines asked since they last connected.
+  ///
+  /// A store tab restored when the app launches is built before any machine
+  /// has connected: the first ask fails, and nothing asked again — the shelf
+  /// showed the three engines, each offering Get, over a machine with 21
+  /// harnesses installed. So a machine is asked again each time it connects.
+  final _askedWhileConnected = <String>{};
+
+  void _ask(MachineState machine) {
+    final id = machine.machine.machineId;
+    if (machine.connectionStatus == ConnectionStatus.connected) {
+      _askedWhileConnected.add(id);
+    }
+    unawaited(widget.notifier.probeDsh(id, force: true));
+    // The engine rows read the same probe the New Harness dialog does; a
+    // machine that has never been asked would show Claude Code as absent.
+    unawaited(widget.notifier.probeEngines(id, force: true));
+  }
+
+  void _onAppChanged() {
+    final connecting = <MachineState>[];
+    for (final machine in widget.notifier.machineStates.values) {
+      final id = machine.machine.machineId;
+      if (machine.connectionStatus != ConnectionStatus.connected) {
+        _askedWhileConnected.remove(id);
+      } else if (!_askedWhileConnected.contains(id)) {
+        connecting.add(machine);
+      }
+    }
+    if (connecting.isEmpty) return;
+    // Out of the notification: asking notifies the same listeners again.
+    scheduleMicrotask(() {
+      if (!mounted) return;
+      for (final machine in connecting) {
+        if (machine.connectionStatus == ConnectionStatus.connected &&
+            !_askedWhileConnected.contains(machine.machine.machineId)) {
+          _ask(machine);
+        }
       }
     });
   }
 
   @override
   void dispose() {
+    widget.notifier.removeListener(_onAppChanged);
     _search.dispose();
     _store.dispose();
     super.dispose();
