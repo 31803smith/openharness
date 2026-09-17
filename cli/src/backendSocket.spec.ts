@@ -992,31 +992,56 @@ describe('BackendSocket outbound queue', () => {
     await socket.stop()
   })
 
-  it('forwards the window\'s presence: open at once, ping once a minute, nothing while offline', async () => {
+  it('reports the window itself: open when it attaches, ping once a minute while it stays, nothing while offline', async () => {
     vi.useFakeTimers()
     const socket = new BackendSocket('token')
-    const presence = (ws: InstanceType<typeof wsMock.MockWebSocket>) => parseSent(ws)
+    const sink = { sendFrame: () => true, sendBinary: () => true }
+    const kinds = (ws: InstanceType<typeof wsMock.MockWebSocket>) => parseSent(ws)
       .filter((m) => (m.frame as { type?: string } | undefined)?.type === 'app_presence')
+      .map((m) => (m.frame as { payload: { kind: string } }).payload.kind)
 
-    // Signed out / not yet dialed: dropped, never queued behind real frames.
-    expect(socket.sendAppPresence('open')).toBe(false)
+    // A window attaching to a not-yet-dialed daemon (the cold start): nothing can be sent yet, and
+    // nothing is queued behind real frames — but the session is owed to the link that comes up.
+    expect(socket.registerLocalClient('local:1', sink)).toBe(true)
     socket.connect()
     const ws = wsMock.instances[0]
-    expect(socket.sendAppPresence('ping')).toBe(false)
+    expect(kinds(ws)).toEqual([])
     ws.open()
-    expect(ws.sent.filter((s) => s.includes('app_presence'))).toHaveLength(0)
+    expect(kinds(ws)).toEqual(['open'])
 
-    expect(socket.sendAppPresence('open')).toBe(true)
-    // 30s later the window pings again — inside the floor, held back.
-    vi.advanceTimersByTime(30_000)
-    expect(socket.sendAppPresence('ping')).toBe(false)
-    vi.advanceTimersByTime(30_000)
-    expect(socket.sendAppPresence('ping')).toBe(true)
-    // A second window opening is a session in its own right, floor or not.
-    expect(socket.sendAppPresence('open')).toBe(true)
-    expect(presence(ws).map((m) => (m.frame as { payload: { kind: string } }).payload.kind)).toEqual(['open', 'ping', 'open'])
+    // While the window stays: once a minute on the app-ping tick, not once a tick.
+    vi.advanceTimersByTime(45_000)
+    expect(kinds(ws)).toEqual(['open'])
+    vi.advanceTimersByTime(15_000)
+    expect(kinds(ws)).toEqual(['open', 'ping'])
+
+    // A second window is a session in its own right — up at once, floor or not.
+    expect(socket.registerLocalClient('local:2', sink)).toBe(true)
+    expect(kinds(ws)).toEqual(['open', 'ping', 'open'])
+    // Registering the same window twice is refused, and says nothing.
+    expect(socket.registerLocalClient('local:2', sink)).toBe(false)
+    expect(kinds(ws)).toHaveLength(3)
+
+    // Every window gone: the tick falls silent.
+    await socket.unregisterLocalClient('local:1')
+    await socket.unregisterLocalClient('local:2')
+    vi.advanceTimersByTime(120_000)
+    expect(kinds(ws)).toHaveLength(3)
+
+    // A window that came and went while the link was down was never a session the backend can hear
+    // about — the next link is told nothing. Both remaining windows gone first, so the count is clean.
+    ws.close()
+    expect(socket.registerLocalClient('local:3', sink)).toBe(true)
+    await socket.unregisterLocalClient('local:3')
+    vi.advanceTimersByTime(60_000)
+    const ws2 = wsMock.instances[1]
+    ws2.open()
+    vi.advanceTimersByTime(15_000)
+    expect(kinds(ws2)).toEqual([])
+
     // Bookkeeping about the person, for the backend alone: never fanned out to a client.
-    expect(presence(ws)[0]).toMatchObject({ t: 'up', webEligible: false, commanderEligible: false })
+    expect(parseSent(ws).find((m) => (m.frame as { type?: string } | undefined)?.type === 'app_presence'))
+      .toMatchObject({ t: 'up', webEligible: false, commanderEligible: false })
 
     await socket.stop()
   })

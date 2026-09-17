@@ -107,9 +107,10 @@ export type RecentProvider = (sessionId: string, n: number) => Array<{ kind: str
 
 
 const APP_PING_MS = 15_000
-// Floor between two `app_presence` up-frames. The window pings this daemon every 30s; the backend
-// only needs to hear about it about once a minute (it floors its own Mongo write at five). `open`
-// is never held back — it is the one that counts as a session in `user_daily_presence`.
+// Floor between two `app_presence` up-frames while a window is attached. Rides the 15s app-ping
+// tick; the backend only needs to hear about it about once a minute (it floors its own Mongo write
+// at five). `open` is never held back — it is the one that counts as a session in
+// `user_daily_presence`.
 const APP_PRESENCE_UP_MS = 60_000
 // How long the opening handshake may take before the attempt is abandoned and retried. `ws` waits
 // forever by default, and the heartbeat below only starts on 'open' — so a TCP connection that came
@@ -315,6 +316,10 @@ export class BackendSocket {
   private heartbeat: LivenessWatch | null = null
   private appPing: NodeJS.Timeout | null = null
   private lastAppPresenceUpAt = 0
+  // A window attached while there was no link to tell (cold start: the app dials this daemon before
+  // the daemon has dialed the backend; or a daemon restart under an open window). The session is
+  // real and must be counted once, so it is owed to the next link — not turned into a `ping`.
+  private appOpenOwed = false
   private readonly downChains = new Map<string, Promise<void>>()
   private readonly localClients = new Map<string, LocalClientSink>()
   private terminalStreams: TerminalStreamManager | null = null
@@ -641,10 +646,14 @@ export class BackendSocket {
         onIdle: (idleMs) => console.log(`[backend] no traffic for ${Math.round(idleMs / 1000)}s — terminating the link`),
       })
 
-      // App-level ping refreshes the backend's presence key (TTL 30s).
-      this.appPing = setInterval(() => this.sendBestEffort({ t: 'ping' }), APP_PING_MS)
-      // A fresh socket knows nothing about the window; let its next ping through at once.
+      // App-level ping refreshes the backend's presence key (TTL 30s). The window's presence rides
+      // the same tick — a fresh socket knows nothing about the window, so its first tick goes through.
       this.lastAppPresenceUpAt = 0
+      if (this.appOpenOwed && this.localClients.size > 0) this.sendAppPresence('open')
+      this.appPing = setInterval(() => {
+        this.sendBestEffort({ t: 'ping' })
+        if (this.localClients.size > 0) this.sendAppPresence('ping')
+      }, APP_PING_MS)
     })
 
     ws.on('message', (raw, isBinary) => {
@@ -860,11 +869,13 @@ export class BackendSocket {
   }
 
   /**
-   * The desktop window is open on this computer (localWsServer `app_presence`): tell the backend, which
-   * turns it into the person's `user_daily_presence` row. `open` goes up at once, `ping` at most once
-   * per APP_PRESENCE_UP_MS. Best-effort and plaintext on purpose: it is bookkeeping about the person,
-   * not data, and a daemon that is signed out (no backend dial) or between reconnects simply drops it
-   * rather than queueing a stale "was open" behind real frames. Returns whether a frame went up.
+   * The desktop window is open on this computer: tell the backend, which turns it into the person's
+   * `user_daily_presence` row. The window itself says nothing — its loopback socket IS the fact, so
+   * this daemon reports it: `open` the moment a window registers (registerLocalClient), `ping` on the
+   * app-ping tick while any window is attached, at most once per APP_PRESENCE_UP_MS. Best-effort and
+   * plaintext on purpose: it is bookkeeping about the person, not data, and a daemon that is signed
+   * out (no backend dial) or between reconnects simply drops it rather than queueing a stale "was
+   * open" behind real frames. Returns whether a frame went up.
    */
   sendAppPresence(kind: 'open' | 'ping'): boolean {
     const now = Date.now()
@@ -876,6 +887,7 @@ export class BackendSocket {
       frame: { type: 'app_presence', payload: { kind } },
     })
     if (sent) this.lastAppPresenceUpAt = now
+    if (kind === 'open') this.appOpenOwed = !sent
     return sent
   }
 
@@ -883,12 +895,16 @@ export class BackendSocket {
   registerLocalClient(connId: string, sink: LocalClientSink): boolean {
     if (!isLocalClientId(connId) || this.localClients.has(connId)) return false
     this.localClients.set(connId, sink)
+    this.sendAppPresence('open')
     return true
   }
 
   /** Release all connection-scoped state when the loopback WebSocket closes. */
   async unregisterLocalClient(connId: string): Promise<void> {
     if (!this.localClients.delete(connId)) return
+    // The window left before any link could hear it attach: nothing happened, as far as the backend
+    // is concerned, and a later link must not be told otherwise.
+    if (this.localClients.size === 0) this.appOpenOwed = false
     this.downChains.delete(connId)
     await this.terminalStreams?.closeConnection(connId, 'local client disconnected', false)
   }

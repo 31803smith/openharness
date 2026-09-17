@@ -608,7 +608,7 @@ class _EnvironmentSetupScreenState extends State<EnvironmentSetupScreen> {
       ],
     );
     final next = Text(
-      'Next: sign in and start an agent.',
+      'Next: sign in and start a harness.',
       style: TextStyle(color: AppColors.textSoft, fontSize: 11),
     );
     return Container(

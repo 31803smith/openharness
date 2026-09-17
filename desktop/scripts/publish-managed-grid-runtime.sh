@@ -78,7 +78,11 @@ for platform in $PLATFORMS; do
   archive_path="$ARCHIVES_DIR/$archive"
   [[ -f "$archive_path" ]] || { echo "error: missing $archive_path" >&2; exit 1; }
   root="grid-${VERSION}-${platform}"
-  tar -tzf "$archive_path" | grep -qx "${root}/bin/grid" || {
+  # The listing is captured, not piped into `grep -q`: under `pipefail`, grep closing the pipe as soon
+  # as it matches gives tar a write error, and the whole pipeline — and this check — fails on an
+  # archive that is fine. It did, on the first publish, on the fourth and largest archive.
+  listing="$(tar -tzf "$archive_path")"
+  grep -qx "${root}/bin/grid" <<< "$listing" || {
     echo "error: $archive has no ${root}/bin/grid" >&2
     exit 1
   }

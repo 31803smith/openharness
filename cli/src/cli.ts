@@ -39,6 +39,7 @@ import { MachineListCache, machineListCachePath, withStaleMarker } from './devic
 import { DeviceLink } from './device/deviceLink.js'
 import { DeviceFleet } from './device/deviceFleet.js'
 import { registry, projectDisplayName, type RegisteredSession } from './lib/registry.js'
+import { engineSessionTitle } from './lib/sessionTitle.js'
 import { installAmpPlugin, installCodexHooks, installCommandCodeHooks, installCursorHooks, installDevinHooks, installGrokHooks, installAgyHooks, installCopilotHooks, installHermesHooks, installKiloPlugin, installOpencodePlugin, installPiExtension, installSessionHooks } from './lib/hooks.js'
 import { installOpencodeHarnessComputeSkill } from './lib/harnessComputeSkill.js'
 import { PID_FILE, daemonPort, isAlive, readPid } from './lib/daemonState.js'
@@ -117,7 +118,7 @@ import {
   type TmuxRuntimeRef,
 } from './lib/terminalTypes.js'
 import { readTerminalConfigSnapshot, writeTerminalConfigSnapshot } from './lib/terminalConfigSnapshot.js'
-import { Watcher, type LineEvent } from './watcher/watcher.js'
+import { Watcher, type HistoryEvent, type LineEvent } from './watcher/watcher.js'
 import { chooseHookAgent, startHookServer } from './hookServer.js'
 import { BackendSocket, isLocalClientId } from './backendSocket.js'
 import { AutonomousDeviceService } from './lib/autonomous-device/service.js'
@@ -1514,7 +1515,8 @@ async function runForeground(session: AuthSession): Promise<void> {
     const titles = await terminals.titles()
     if (titles.size === 0) return
     for (const session of registry.list()) {
-      const title = terminals.titleFor(session, titles)
+      // Codex's own thread name when it has one; otherwise what the engine put on its terminal.
+      const title = engineSessionTitle(session, terminals.titleFor(session, titles))
       if (!title) continue
       const before = projectDisplayName(session)
       const updated = registry.updateTitle(session.sessionId, title)
@@ -1624,19 +1626,37 @@ async function runForeground(session: AuthSession): Promise<void> {
   const hermesReaders = new Map<string, HermesReader>()
   const devinReaders = new Map<string, DevinReader>()
   const commandcodeNormalizers = new Map<string, CommandCodeNormalizer>()
+  /** Whether this session's engine state says a turn is open right now, whichever engine it is. */
+  const sessionTurnOpen = (sessionId: string): boolean =>
+    turnStates.get(sessionId)?.turnOpen
+      ?? codexNormalizers.get(sessionId)?.turnOpen
+      ?? cursorNormalizers.get(sessionId)?.turnOpen
+      ?? opencodeReaders.get(sessionId)?.turnOpen
+      ?? kiloReaders.get(sessionId)?.turnOpen
+      ?? piNormalizers.get(sessionId)?.turnOpen
+      ?? museNormalizers.get(sessionId)?.turnOpen
+      ?? ampNormalizers.get(sessionId)?.turnOpen
+      ?? grokNormalizers.get(sessionId)?.turnOpen
+      ?? agyNormalizers.get(sessionId)?.turnOpen
+      ?? copilotNormalizers.get(sessionId)?.turnOpen
+      ?? hermesReaders.get(sessionId)?.turnOpen
+      ?? devinReaders.get(sessionId)?.turnOpen
+      ?? commandcodeNormalizers.get(sessionId)?.turnOpen
+      ?? false
   const watcher = new Watcher()
   const queuedSessionEvents: Array<{
     sessionId: string
     events: ReturnType<CursorNormalizer['ingest']>
+    opts?: { resumed?: boolean; replay?: boolean }
   }> = []
   // Hook registration can race the rest of daemon initialization immediately after the localhost
   // server binds. Queue those first records until input/mirror/heartbeat dependencies are ready.
   let emitSessionEvents = (
     sessionId: string,
     events: ReturnType<CursorNormalizer['ingest']>,
-    _opts?: { resumed?: boolean },
+    opts?: { resumed?: boolean; replay?: boolean },
   ): void => {
-    if (events.length) queuedSessionEvents.push({ sessionId, events })
+    if (events.length) queuedSessionEvents.push({ sessionId, events, opts })
   }
   /**
    * A turn died inside the engine instead of finishing. Neither devin nor commandcode has a StopFailure
@@ -2264,21 +2284,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     stopHeartbeat(sessionId) // restart → guarantee a single timer per session
     const timer = setInterval(() => {
       if (!registry.has(sessionId)) { stopHeartbeat(sessionId); return }
-      const turnOpen =
-        turnStates.get(sessionId)?.turnOpen
-        ?? codexNormalizers.get(sessionId)?.turnOpen
-        ?? cursorNormalizers.get(sessionId)?.turnOpen
-        ?? opencodeReaders.get(sessionId)?.turnOpen
-        ?? kiloReaders.get(sessionId)?.turnOpen
-        ?? piNormalizers.get(sessionId)?.turnOpen
-        ?? museNormalizers.get(sessionId)?.turnOpen
-        ?? ampNormalizers.get(sessionId)?.turnOpen
-        ?? grokNormalizers.get(sessionId)?.turnOpen
-        ?? agyNormalizers.get(sessionId)?.turnOpen
-        ?? copilotNormalizers.get(sessionId)?.turnOpen
-        ?? hermesReaders.get(sessionId)?.turnOpen
-        ?? devinReaders.get(sessionId)?.turnOpen
-        ?? commandcodeNormalizers.get(sessionId)?.turnOpen
+      const turnOpen = sessionTurnOpen(sessionId)
       // A TURN THAT IS OPEN GETS ITS TRANSCRIPT RE-READ, every beat.
       //
       // The engines whose turn ends in a FILE — codex writes `task_complete`,
@@ -2307,11 +2313,18 @@ async function runForeground(session: AuthSession): Promise<void> {
     heartbeats.set(sessionId, timer)
   }
 
-  emitSessionEvents = (sessionId: string, events: ReturnType<CursorNormalizer['ingest']>, opts?: { resumed?: boolean }): void => {
+  emitSessionEvents = (sessionId: string, events: ReturnType<CursorNormalizer['ingest']>, opts?: { resumed?: boolean; replay?: boolean }): void => {
     if (!events.length || !registry.bySession(sessionId)?.active) return
     for (const event of events) {
       const agentId = agentIdFor(sessionId)
-      backend.send(correlateAgentEvent(event, sessionId, agentId))
+      const frame = correlateAgentEvent(event, sessionId, agentId)
+      // A `turn_started` that is not a turn starting NOW — a turn picked back up at attach, or a prompt
+      // re-read from a transcript that was already on disk — says so in the clear, beside `agentId`
+      // (the payload is E2EE; the backend can only read the envelope). The backend's daily turn count
+      // skips these; every other consumer ignores an unknown field. Measured before this existed: one
+      // agent credited with 42 turns in a single second, all re-reads.
+      if (event.type === 'turn_started' && (opts?.resumed || opts?.replay)) frame.replay = true
+      backend.send(frame)
       if (event.type === 'turn_started') {
         turnStartedAt.set(sessionId, Date.now())
         console.log(`[turn] ${sid(sessionId)} started · engine=${registry.bySession(sessionId)?.engine ?? 'claude'} · bytes=${Buffer.byteLength(event.payload.userMessage, 'utf8')}`)
@@ -2346,7 +2359,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     }
     mirror.ingest(events, sessionId)
   }
-  for (const queued of queuedSessionEvents.splice(0)) emitSessionEvents(queued.sessionId, queued.events)
+  for (const queued of queuedSessionEvents.splice(0)) emitSessionEvents(queued.sessionId, queued.events, queued.opts)
   const cursorSubagents = new CursorSubagentManager(env.CURSOR_HOME, emitSessionEvents)
   const cursorTaskHooks = new CursorTaskHookQueue({
     drainTranscript: (sessionId) => watcher.pollSession(sessionId),
@@ -3297,9 +3310,6 @@ async function runForeground(session: AuthSession): Promise<void> {
     // The window's swarms. Relayed to the dial as its own list — the dial names the one on screen above
     // the agent and offers the rest — and, through setSwarms, what makes the desk strict: a present
     // window with an empty swarm is an empty carousel, not the whole machine.
-    // The window's "I am open" — the only desk fact that goes UP. Throttled and dropped-when-offline
-    // inside sendAppPresence, so a guest daemon costs nothing here.
-    onAppPresence: (kind) => { backend.sendAppPresence(kind) },
     onAppSwarms: (swarms) => {
       cableHostRef?.setSwarms(swarms)
       void cableRef?.syncSwarms()
@@ -3510,74 +3520,111 @@ async function runForeground(session: AuthSession): Promise<void> {
 
   // JSONL watcher → normalize each appended line → stream up. ONE lineToEvents pass feeds BOTH
   // audiences: web (send, ServerEvents) and device (mirror.ingest → curated commander_event cards).
+  /** One transcript line through its engine's normalizer. The events, not yet emitted — the two
+   *  callers below differ only in what they know about the line's age. */
+  const ingestLine = (evt: LineEvent): ReturnType<CursorNormalizer['ingest']> | null => {
+    if (!registry.has(evt.sessionId)) return null // scope to terminal-registered sessions
+    const session = registry.bySession(evt.sessionId)
+    if (!session || session.engine !== evt.engine) return null
+    runtimeProfiles.ingest(session, evt.text)
+    let events
+    if (session.engine === 'codex') {
+      let normalizer = codexNormalizers.get(evt.sessionId)
+      if (!normalizer) { normalizer = new CodexNormalizer('live', codexSubagentResolverFor(session.codexHome)); codexNormalizers.set(evt.sessionId, normalizer) }
+      events = normalizer.ingest(evt.text)
+      // Codex rides its failure ON task_complete, so the turn closes by itself — but with no text and
+      // no reason, which reads as "the agent answered nothing". Announce the reason ahead of the
+      // turn_ended that `events` carries.
+      const taskError = codexTaskError(evt.text)
+      if (taskError !== null) announceTurnAborted(evt.sessionId, 'codex', taskError)
+    } else if (session.engine === 'cursor') {
+      let normalizer = cursorNormalizers.get(evt.sessionId)
+      if (!normalizer) {
+        normalizer = new CursorNormalizer('live', evt.sessionId)
+        cursorNormalizers.set(evt.sessionId, normalizer)
+      }
+      events = normalizer.ingest(evt.text)
+    } else if (session.engine === 'muse') {
+      let normalizer = museNormalizers.get(evt.sessionId)
+      if (!normalizer) { normalizer = new MuseNormalizer(); museNormalizers.set(evt.sessionId, normalizer) }
+      events = normalizer.ingest(evt.text)
+    } else if (session.engine === 'amp') {
+      let normalizer = ampNormalizers.get(evt.sessionId)
+      if (!normalizer) { normalizer = new AmpNormalizer(); ampNormalizers.set(evt.sessionId, normalizer) }
+      events = normalizer.ingest(evt.text)
+    } else if (session.engine === 'grok') {
+      let normalizer = grokNormalizers.get(evt.sessionId)
+      if (!normalizer) { normalizer = new GrokNormalizer(); grokNormalizers.set(evt.sessionId, normalizer) }
+      events = normalizer.ingest(evt.text)
+    } else if (session.engine === 'agy') {
+      let normalizer = agyNormalizers.get(evt.sessionId)
+      if (!normalizer) { normalizer = new AgyNormalizer(); agyNormalizers.set(evt.sessionId, normalizer) }
+      events = normalizer.ingest(evt.text)
+    } else if (session.engine === 'copilot') {
+      let normalizer = copilotNormalizers.get(evt.sessionId)
+      if (!normalizer) { normalizer = new CopilotNormalizer(); copilotNormalizers.set(evt.sessionId, normalizer) }
+      events = normalizer.ingest(evt.text)
+    } else if (session.engine === 'pi') {
+      let normalizer = piNormalizers.get(evt.sessionId)
+      if (!normalizer) { normalizer = new PiNormalizer('live'); piNormalizers.set(evt.sessionId, normalizer) }
+      events = normalizer.ingest(evt.text)
+    } else if (session.engine === 'commandcode') {
+      let normalizer = commandcodeNormalizers.get(evt.sessionId)
+      if (!normalizer) { normalizer = new CommandCodeNormalizer('live'); commandcodeNormalizers.set(evt.sessionId, normalizer) }
+      events = normalizer.ingest(evt.text)
+      // Command Code fires no Stop hook for a failed turn: this record IS the notification. `ingest`
+      // already closed the turn (its turn_ended is in `events`, emitted just below) — announce the
+      // reason first so the web/device show the error ahead of the turn closing.
+      const runError = commandCodeRunError(evt.text)
+      if (runError !== null) {
+        announceTurnAborted(evt.sessionId, 'commandcode', runError, commandCodeRunErrorSummary(runError))
+      }
+    } else {
+      let st = turnStates.get(evt.sessionId)
+      if (!st) { st = newTurnState(); turnStates.set(evt.sessionId, st) }
+      events = lineToEvents(evt.text, st)
+    }
+    return events
+    return events
+  }
   watcher.on('line', (evt: LineEvent) => {
     // This runs from a void-discarded async read, so a throw here would be an unhandledRejection. A
     // single malformed line must never take the daemon down — contain it per line and move on.
     try {
-      if (!registry.has(evt.sessionId)) return // scope to terminal-registered sessions
-      const session = registry.bySession(evt.sessionId)
-      if (!session || session.engine !== evt.engine) return
-      runtimeProfiles.ingest(session, evt.text)
-      let events
-      if (session.engine === 'codex') {
-        let normalizer = codexNormalizers.get(evt.sessionId)
-        if (!normalizer) { normalizer = new CodexNormalizer('live', codexSubagentResolverFor(session.codexHome)); codexNormalizers.set(evt.sessionId, normalizer) }
-        events = normalizer.ingest(evt.text)
-        // Codex rides its failure ON task_complete, so the turn closes by itself — but with no text and
-        // no reason, which reads as "the agent answered nothing". Announce the reason ahead of the
-        // turn_ended that `events` carries.
-        const taskError = codexTaskError(evt.text)
-        if (taskError !== null) announceTurnAborted(evt.sessionId, 'codex', taskError)
-      } else if (session.engine === 'cursor') {
-        let normalizer = cursorNormalizers.get(evt.sessionId)
-        if (!normalizer) {
-          normalizer = new CursorNormalizer('live', evt.sessionId)
-          cursorNormalizers.set(evt.sessionId, normalizer)
-        }
-        events = normalizer.ingest(evt.text)
-      } else if (session.engine === 'muse') {
-        let normalizer = museNormalizers.get(evt.sessionId)
-        if (!normalizer) { normalizer = new MuseNormalizer(); museNormalizers.set(evt.sessionId, normalizer) }
-        events = normalizer.ingest(evt.text)
-      } else if (session.engine === 'amp') {
-        let normalizer = ampNormalizers.get(evt.sessionId)
-        if (!normalizer) { normalizer = new AmpNormalizer(); ampNormalizers.set(evt.sessionId, normalizer) }
-        events = normalizer.ingest(evt.text)
-      } else if (session.engine === 'grok') {
-        let normalizer = grokNormalizers.get(evt.sessionId)
-        if (!normalizer) { normalizer = new GrokNormalizer(); grokNormalizers.set(evt.sessionId, normalizer) }
-        events = normalizer.ingest(evt.text)
-      } else if (session.engine === 'agy') {
-        let normalizer = agyNormalizers.get(evt.sessionId)
-        if (!normalizer) { normalizer = new AgyNormalizer(); agyNormalizers.set(evt.sessionId, normalizer) }
-        events = normalizer.ingest(evt.text)
-      } else if (session.engine === 'copilot') {
-        let normalizer = copilotNormalizers.get(evt.sessionId)
-        if (!normalizer) { normalizer = new CopilotNormalizer(); copilotNormalizers.set(evt.sessionId, normalizer) }
-        events = normalizer.ingest(evt.text)
-      } else if (session.engine === 'pi') {
-        let normalizer = piNormalizers.get(evt.sessionId)
-        if (!normalizer) { normalizer = new PiNormalizer('live'); piNormalizers.set(evt.sessionId, normalizer) }
-        events = normalizer.ingest(evt.text)
-      } else if (session.engine === 'commandcode') {
-        let normalizer = commandcodeNormalizers.get(evt.sessionId)
-        if (!normalizer) { normalizer = new CommandCodeNormalizer('live'); commandcodeNormalizers.set(evt.sessionId, normalizer) }
-        events = normalizer.ingest(evt.text)
-        // Command Code fires no Stop hook for a failed turn: this record IS the notification. `ingest`
-        // already closed the turn (its turn_ended is in `events`, emitted just below) — announce the
-        // reason first so the web/device show the error ahead of the turn closing.
-        const runError = commandCodeRunError(evt.text)
-        if (runError !== null) {
-          announceTurnAborted(evt.sessionId, 'commandcode', runError, commandCodeRunErrorSummary(runError))
-        }
-      } else {
-        let st = turnStates.get(evt.sessionId)
-        if (!st) { st = newTurnState(); turnStates.set(evt.sessionId, st) }
-        events = lineToEvents(evt.text, st)
-      }
-      emitSessionEvents(evt.sessionId, events)
+      const events = ingestLine(evt)
+      if (events) emitSessionEvents(evt.sessionId, events)
     } catch (err) {
       console.error(`[cli] line handler error (session ${evt.sessionId}):`, err instanceof Error ? err.message : err)
+    }
+  })
+  // Lines that were on disk before the tail began (watcher.ts `HistoryEvent`). They still stream — the
+  // clients render them the way they always have — but every `turn_started` among them is a prompt
+  // already answered, except the last one if the batch ends inside a turn: that turn is running now,
+  // and it is the one an `unseen` re-attach exists to catch (its first prompt landed before the path
+  // was known). Everything else is marked `replay` so the backend does not count it as a turn today.
+  watcher.on('history', (batch: HistoryEvent) => {
+    try {
+      type Events = ReturnType<CursorNormalizer['ingest']>
+      const all: Events = []
+      for (const evt of batch.lines) {
+        const events = ingestLine(evt)
+        if (events) all.push(...events)
+      }
+      if (!all.length) return
+      const liveTail = sessionTurnOpen(batch.sessionId)
+        ? all.map((e) => e.type).lastIndexOf('turn_started')
+        : -1
+      const starts = all.filter((e, i) => e.type === 'turn_started' && i !== liveTail).length
+      if (starts) console.log(`[watcher] ${sid(batch.sessionId)} re-read ${batch.lines.length} lines already on disk · ${starts} past turn_started marked replay${liveTail >= 0 ? ' · last turn still open, kept live' : ''}`)
+      // Order is preserved: the live tail (if any) is emitted in place, between what surrounds it.
+      if (liveTail < 0) { emitSessionEvents(batch.sessionId, all, { replay: true }); return }
+      const before = all.slice(0, liveTail)
+      const after = all.slice(liveTail + 1)
+      if (before.length) emitSessionEvents(batch.sessionId, before, { replay: true })
+      emitSessionEvents(batch.sessionId, [all[liveTail]])
+      if (after.length) emitSessionEvents(batch.sessionId, after, { replay: true })
+    } catch (err) {
+      console.error(`[cli] history handler error (session ${batch.sessionId}):`, err instanceof Error ? err.message : err)
     }
   })
   for (const session of registry.list()) {
@@ -3588,24 +3635,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     if (!session.active || !session.sessionId) continue
     if (!await attachSession(session)) registry.setActive(session.agentId, false)
     else {
-      input.setTurnOpen(
-        session.agentId,
-        turnStates.get(session.sessionId)?.turnOpen
-          ?? codexNormalizers.get(session.sessionId)?.turnOpen
-          ?? cursorNormalizers.get(session.sessionId)?.turnOpen
-          ?? opencodeReaders.get(session.sessionId)?.turnOpen
-          ?? kiloReaders.get(session.sessionId)?.turnOpen
-          ?? piNormalizers.get(session.sessionId)?.turnOpen
-          ?? museNormalizers.get(session.sessionId)?.turnOpen
-          ?? ampNormalizers.get(session.sessionId)?.turnOpen
-          ?? grokNormalizers.get(session.sessionId)?.turnOpen
-          ?? agyNormalizers.get(session.sessionId)?.turnOpen
-          ?? copilotNormalizers.get(session.sessionId)?.turnOpen
-          ?? hermesReaders.get(session.sessionId)?.turnOpen
-          ?? devinReaders.get(session.sessionId)?.turnOpen
-          ?? commandcodeNormalizers.get(session.sessionId)?.turnOpen
-          ?? false,
-      )
+      input.setTurnOpen(session.agentId, sessionTurnOpen(session.sessionId))
     }
   }
   /**

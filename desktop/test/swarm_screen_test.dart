@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
@@ -11,6 +12,7 @@ import 'package:harness/state/app_state.dart';
 import 'package:harness/state/swarm_catalog.dart';
 import 'package:harness/state/swarm_navigation.dart';
 import 'package:harness/state/terminal_pane.dart';
+import 'package:harness/store/store_mark.dart';
 import 'package:harness/terminal/terminal_binary.dart';
 import 'package:harness/terminal/terminal_session.dart';
 import 'package:harness/widgets/engine_identity.dart';
@@ -43,6 +45,24 @@ Future<void> mount(
     ),
   );
   await tester.pump(const Duration(milliseconds: 100));
+}
+
+/// Whether the native icon loader (`SwarmHistoryIcons` in
+/// macos/Runner/SwarmTitlebar.swift) opens [asset]: an exact path it names, or
+/// one under a folder it names. Read from the source because no Dart test can
+/// run the Swift, and the channel carrying a path the loader then refuses is
+/// exactly the break this guards.
+bool nativeIconLoaderOpens(String asset) {
+  final swift = File('macos/Runner/SwarmTitlebar.swift').readAsStringSync();
+  final start = swift.indexOf('class SwarmHistoryIcons');
+  expect(start, isNonNegative, reason: 'SwarmHistoryIcons moved');
+  final body = swift.substring(start, swift.indexOf('\n}\n', start));
+  final exact = RegExp(r'asset == "([^"]+)"').allMatches(body).map((m) => m[1]!);
+  final folders = RegExp(
+    r'hasPrefix\("([^"]+/)"\)',
+  ).allMatches(body).map((m) => m[1]!);
+  return !asset.contains('..') &&
+      (exact.contains(asset) || folders.any(asset.startsWith));
 }
 
 TerminalSession terminal(String id, List<TerminalBinaryFrame> input) =>
@@ -165,9 +185,31 @@ void main() {
         final row = (updates.last['tabs'] as List).single as Map;
         expect(row['kind'], 'store');
         expect(row['agentCount'], 0);
-        expect(row['iconAsset'], 'assets/app_icon.png');
+        expect(row['engine'], 'store');
+        expect(row['iconAsset'], kStoreMarkAsset);
+        // Sending the path is half of it: SwarmTitlebar.swift draws an initial
+        // for any asset its loader does not open, which is how the native
+        // strip came to show an "S" beside Harness Store.
+        expect(
+          nativeIconLoaderOpens(kStoreMarkAsset),
+          isTrue,
+          reason: 'SwarmHistoryIcons must open $kStoreMarkAsset',
+        );
+        expect(nativeIconLoaderOpens('assets/engine-icons/codex.png'), isTrue);
+        expect(nativeIconLoaderOpens('assets/harness_device.png'), isFalse);
       } else {
-        expect(find.byKey(ValueKey('tab-store:${tab.id}')), findsOneWidget);
+        final mark = find.byKey(ValueKey('tab-store:${tab.id}'));
+        expect(mark, findsOneWidget);
+        final image = tester.widget<Image>(
+          find.descendant(
+            of: mark,
+            matching: find.byType(Image),
+            matchRoot: true,
+          ),
+        );
+        expect((image.image as AssetImage).assetName, kStoreMarkAsset);
+        expect(image.width, 16);
+        expect(image.height, 16);
       }
     });
 

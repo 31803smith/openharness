@@ -82,10 +82,10 @@ const CLIENT_VERSION_RE = /^[A-Za-z0-9._+-]{1,64}$/
 // day costs ~300 upserts, not ~6000. Connect and close always write regardless.
 const MACHINE_PRESENCE_WRITE_MS = 5 * 60_000
 
-// Daily presence of the PERSON (`user_daily_presence`): the desktop app pings its local daemon every
-// 30s while its loopback socket is up, the daemon forwards at most one `app_presence` up-frame a
-// minute, and this is the floor between two Mongo writes for the `ping` kind. `open` (the app just
-// connected its local socket) always writes — it is what `connections` counts. The web-ws upgrade
+// Daily presence of the PERSON (`user_daily_presence`): the daemon reports its own loopback clients —
+// `open` the moment a desktop window attaches, `ping` on its 15s app-ping tick while one stays, at
+// most once a minute (cli backendSocket sendAppPresence) — and this is the floor between two Mongo
+// writes for the `ping` kind. `open` always writes — it is what `connections` counts. The web-ws upgrade
 // used to be the source, but the desktop app never dials web-ws directly (only the daemon does, and
 // only to relay a foreign machine), so a single-machine user was invisible there.
 const USER_PRESENCE_WRITE_MS = 5 * 60_000
@@ -414,9 +414,9 @@ async function attachAdapter(ws: WebSocket, machineId: string, userId: string, c
         })
         return
       }
-      // The desktop app's own presence ping, relayed by the daemon (cli localWsServer → backendSocket
-      // sendAppPresence). Bookkeeping only — absorbed here, never published: no client has any use for
-      // it and an unknown frame type must not reach the firmware.
+      // The daemon saying a desktop window is attached to it (cli backendSocket sendAppPresence).
+      // Bookkeeping only — absorbed here, never published: no client has any use for it and an
+      // unknown frame type must not reach the firmware.
       if (app.type === 'app_presence') {
         const kind = (app.payload as { kind?: unknown } | undefined)?.kind
         if (typeof kind !== 'string' || !APP_PRESENCE_KINDS.has(kind)) return
@@ -426,7 +426,7 @@ async function attachAdapter(ws: WebSocket, machineId: string, userId: string, c
       // Hub tap (mirrors managerWs): keep `machine_agents` in sync from the adapter's agent
       // lifecycle frames. Needed so the device voice path's agent-ownership check
       // (deviceWs: `machineAgent.findFirst`) recognizes remote tmux sessions.
-      const f = env.frame as { type?: string; agentId?: unknown; payload?: { agent?: unknown; agentId?: unknown; machineId?: unknown } }
+      const f = env.frame as { type?: string; agentId?: unknown; replay?: unknown; payload?: { agent?: unknown; agentId?: unknown; machineId?: unknown } }
       if (f.type === 'agent_synced') {
         void recordCreatedAgent(machineId, f.payload?.agent as { id?: unknown; name?: unknown } | undefined)
       } else if (f.type === 'agent_deleted' && typeof f.payload?.agentId === 'string') {
@@ -434,14 +434,16 @@ async function attachAdapter(ws: WebSocket, machineId: string, userId: string, c
         // Reading `machineId` here meant no deletion was EVER recorded, so machine_agents grew a row per
         // agent forever — and that table is what the plan cap counts.
         void recordDeletedAgent(machineId, f.payload.agentId)
-      } else if (f.type === 'turn_started') {
-        // Usage signal for machine_daily_presence / agent_daily_presence. Only the plaintext `type`
-        // and top-level `agentId` (set by the CLI's correlateAgentEvent) are read — the payload is
-        // E2EE ciphertext (cli e2ee/core.ts ENCRYPTED_UP_TYPES) and stays opaque here. The CLI already
-        // dedupes engines that re-announce one turn (cursor/agy/copilot, cli.ts), so one frame == one
-        // turn; the one known over-count is a daemon restarting mid-turn, which re-emits the open
-        // turn's start on attach (cli.ts `resumed`) — rare, and invisible from here. A frame with no
-        // (or a malformed) agentId has nothing to attribute the turn to and is not counted.
+      } else if (f.type === 'turn_started' && f.replay !== true) {
+        // Usage signal for machine_daily_presence / agent_daily_presence. Only the plaintext `type`,
+        // top-level `agentId` and `replay` (set by the CLI's correlateAgentEvent / emitSessionEvents)
+        // are read — the payload is E2EE ciphertext (cli e2ee/core.ts ENCRYPTED_UP_TYPES) and stays
+        // opaque here. The CLI already dedupes engines that re-announce one turn (cursor/agy/copilot,
+        // cli.ts), so one frame == one turn. `replay: true` is the CLI saying this one did NOT start
+        // now — a turn resumed at attach, or a prompt re-read from a transcript already on disk
+        // (measured 2026-09-17: 42 such frames in one second credited to one agent). It still relays,
+        // it is just not a turn today. A frame with no (or a malformed) agentId has nothing to
+        // attribute the turn to and is not counted.
         const now = new Date()
         const agentId = typeof f.agentId === 'string' && TURN_AGENT_ID_RE.test(f.agentId) ? f.agentId : undefined
         if (agentId && allowTurnWrite(now.getTime())) {
