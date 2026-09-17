@@ -269,6 +269,14 @@ class _WebPanePanelState extends State<WebPanePanel> {
   }
 
   Widget _body(BuildContext context) {
+    if (widget.pane.viewerError case final error?) {
+      return _Notice(
+        key: const ValueKey('web-pane-error'),
+        icon: LucideIcons.unplug,
+        title: 'Viewer unavailable',
+        detail: error,
+      );
+    }
     final controller = _controller;
     final url = widget.pane.url;
     if (controller == null) {

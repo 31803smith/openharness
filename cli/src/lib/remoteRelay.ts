@@ -31,6 +31,9 @@ import {
   type TerminalP2pPolicy,
 } from './terminalP2p.js'
 import { warmStunUrls } from './stunSelect.js'
+import { RemoteViewerProxy } from './remoteViewerProxy.js'
+import { VIEWER_UP_TYPES } from './viewerWire.js'
+import { isWrapped } from './e2ee/core.js'
 
 const CONNECT_TIMEOUT_MS = 15_000
 const LINGER_MS = 30_000
@@ -88,6 +91,7 @@ function binaryBytes(raw: RawData): Uint8Array {
 }
 
 interface Entry {
+  viewers?: RemoteViewerProxy
   ws: WebSocket
   crypto: RelaySessionCrypto
   sink: LocalClientSink | null
@@ -188,6 +192,7 @@ export class RemoteRelayPool {
     const entry = this.entries.get(machineId)
     if (!entry) return
     this.entries.delete(machineId)
+    entry.viewers?.close()
     entry.heartbeat?.stop()
     if (entry.lingerTimer) clearTimeout(entry.lingerTimer)
     if (entry.p2pRetryTimer) clearTimeout(entry.p2pRetryTimer)
@@ -289,6 +294,14 @@ export class RemoteRelayPool {
       upgradeOrphan: null,
       upgradeDone: false,
     }
+    entry.viewers = new RemoteViewerProxy({
+      supported: () => crypto.viewerForwardingVersion === 1,
+      deliver: (frame) => { entry.sink?.sendFrame(frame) },
+      send: (type, payload) => {
+        if (!crypto.ready || ws.readyState !== WebSocket.OPEN) return false
+        try { ws.send(JSON.stringify(crypto.wrapOutgoing({ type, payload }))); return true } catch { return false }
+      },
+    })
     // Two phases before this connection is usable: (1) machine_select ack, (2) this daemon's own
     // e2e_hello/e2e_welcome as the "client" role — see lib/e2ee/relayClient.ts. Only once BOTH are done
     // does the app's onOutgoing/sink start receiving anything, so it never sees a half-encrypted stream.
@@ -409,6 +422,9 @@ export class RemoteRelayPool {
           try { ws.close(4404, 'peer revoked trust') } catch { ws.terminate() }
           return
         }
+        // The relay cannot inject response bytes/headers into a local browser in plaintext.
+        if (typeof frame.type === 'string' && VIEWER_UP_TYPES.has(frame.type)
+          && (!isWrapped(frame.payload) || frame.payload.__e2e?.k !== 'p')) return
         const plain = crypto.unwrapIncoming(frame)
         if (!plain) return
         const type = typeof plain.type === 'string' ? plain.type : ''
@@ -438,6 +454,7 @@ export class RemoteRelayPool {
         // synchronously inside it) must arrive after, or the app-side stream-id match silently drops it
         // (streamId is still null at that point, since terminal_ready — the thing that sets it — has
         // not been delivered yet).
+        if (entry.sink && entry.viewers?.receive(plain)) return
         entry.sink?.sendFrame(plain)
         this.noteTerminalResponse(entry, plain, 'relay')
       })
@@ -454,6 +471,7 @@ export class RemoteRelayPool {
     try {
       await handshake
     } catch (err) {
+      entry.viewers?.close()
       // A rejected handshake MUST take the socket down with it. Only `e2e_denied` used to; the timeout
       // (peer never answered e2e_hello) and `machine_select_error` just dropped their reference, leaving
       // an OPEN socket nothing could reach — not in `entries`, no heartbeat, but still auto-answering
@@ -470,6 +488,7 @@ export class RemoteRelayPool {
     }
     // Handshake done — from here on, a close is the entry's real end-of-life, not a handshake failure.
     ws.on('close', (code, reasonBuf) => {
+      entry.viewers?.close()
       entry.heartbeat?.stop()
       if (entry.p2pRetryTimer) clearTimeout(entry.p2pRetryTimer)
       if (entry.upgradeTimer) clearTimeout(entry.upgradeTimer)
@@ -547,6 +566,7 @@ export class RemoteRelayPool {
         if (p2pFailed) this.demoteP2p(machineId, entry, 'send_failed')
       },
       detach: () => {
+        entry.viewers?.reset()
         entry.sink = null
         entry.onClosed = null
         entry.lingerTimer = setTimeout(() => {

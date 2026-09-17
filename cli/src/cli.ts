@@ -1480,6 +1480,7 @@ async function runForeground(session: AuthSession): Promise<void> {
   const dshViewers = new DshViewerManager({
     onUrl: (agentId, url) => {
       dshFrameFor(agentId).viewerUrl = url
+      backendRef?.viewerForwarder.refresh(agentId)
       syncCompanion(agentId)
     },
     log: (line) => console.log(line),
@@ -1551,6 +1552,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     })
   }, computerId())
   backendRef = backend
+  backend.viewerTargetProvider = (agentId) => dshViewers.forwardingUrl(agentId)
 
   /**
    * Is ANY device surface watching this machine?
