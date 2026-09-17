@@ -8,7 +8,7 @@ flash a supported board, or contribute a hardware port.
 the cable. The current firmware has no Wi-Fi setup, backend connection, account credentials, or
 pairing code. Plugging the device into the host establishes the connection.
 
-Schematics and enclosure designs are coming; they are not included in this repository yet.
+The schematic, PCB and enclosure designs are in [`../hardware/`](../hardware/).
 
 ## Supported hardware
 
