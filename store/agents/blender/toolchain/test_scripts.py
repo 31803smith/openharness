@@ -44,6 +44,7 @@ class Sandbox:
         for name in COREUTILS:
             real = next(p for p in (Path("/bin") / name, Path("/usr/bin") / name) if p.exists())
             (self.bin / name).symlink_to(real)
+        self.platform("Darwin", "arm64")
 
     def stub(self, name: str, body: str = "", where: Path | None = None) -> Path:
         path = (where or self.bin) / name
@@ -52,6 +53,13 @@ class Sandbox:
         path.write_text(f'#!/bin/bash\necho "{name} $*" >> "$CALLS"\n{body}\n')
         path.chmod(0o755)
         return path
+
+    def platform(self, system: str, machine: str) -> None:
+        """uname, unlogged: which machine setup believes it is on."""
+        path = self.bin / "uname"
+        path.unlink(missing_ok=True)
+        path.write_text(f'#!/bin/bash\ncase "$1" in -s) echo {system} ;; -m) echo {machine} ;; esac\n')
+        path.chmod(0o755)
 
     def uv(self) -> Path:
         """uv on PATH: `uv venv … DIR` makes a venv of stubs; `uv pip install` answers PIP_EXIT."""
@@ -146,12 +154,33 @@ class Setup(unittest.TestCase):
 
     def test_no_uv_and_no_network_is_a_miss(self):
         box = Sandbox(self)
-        box.stub("uname", 'case "$1" in -s) echo Darwin ;; -m) echo arm64 ;; esac')
         box.stub("curl", "exit 6")
         r = box.run("setup.sh", ADAPTER_RUNTIME_DIR=str(box.root / "runtime"))
         self.assertEqual(r.returncode, 1)
         self.assertEqual(r.stdout.splitlines()[-1], "miss could not download https://github.com/astral-sh/uv/releases/download/"
                          "0.12.15/uv-aarch64-apple-darwin.tar.gz — check this machine's internet connection")
+
+    def test_an_intel_mac_gets_the_lts_that_still_builds_for_it(self):
+        box = Sandbox(self)
+        shutil.copy(PACKAGE / "BPY_VERSION_INTEL_MAC", box.install / "BPY_VERSION_INTEL_MAC")
+        intel = (PACKAGE / "BPY_VERSION_INTEL_MAC").read_text().strip()
+        box.platform("Darwin", "x86_64")
+        box.uv()
+        r = box.run("setup.sh")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.splitlines()[0], f"     an Intel Mac: bpy {intel} LTS, the newest Blender built for one")
+        self.assertIn(f"uv pip install --quiet --python .venv/bin/python bpy=={intel} numpy imageio-ffmpeg", box.logged())
+
+    def test_linux_on_arm_is_a_miss_before_anything_downloads(self):
+        for machine in ("aarch64", "arm64"):
+            with self.subTest(machine=machine):
+                box = Sandbox(self)
+                box.platform("Linux", machine)
+                box.uv()
+                r = box.run("setup.sh")
+                self.assertEqual((r.returncode, r.stdout.splitlines()), (1, [
+                    "miss Blender publishes no bpy for Linux on ARM — this harness runs on a Mac or on x86-64 Linux"]))
+                self.assertEqual(box.logged(), [])
 
     def test_a_failed_install_stops_setup(self):
         box = Sandbox(self)

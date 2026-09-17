@@ -8,6 +8,11 @@ cd "$(dirname "$0")/.."
 # shellcheck source=runtimes.sh
 . toolchain/runtimes.sh
 VERSION="$(cat BPY_VERSION)"
+case "$(uname -s)-$(uname -m)" in
+  # Blender 5 dropped Intel Macs; 4.5 is the LTS that still ships them, and the toolchain's tests pass on it.
+  Darwin-x86_64) VERSION="$(cat BPY_VERSION_INTEL_MAC)"; echo "     an Intel Mac: bpy ${VERSION} LTS, the newest Blender built for one" ;;
+  Linux-aarch64 | Linux-arm64) echo "miss Blender publishes no bpy for Linux on ARM — this harness runs on a Mac or on x86-64 Linux"; exit 1 ;;
+esac
 harness_venv .venv 3.11 3.11 3.12 || exit 1
 echo "     installing bpy ${VERSION} (Blender as a module, ~300 MB, a few minutes the first time)"
 harness_pip .venv "bpy==${VERSION}" numpy imageio-ffmpeg

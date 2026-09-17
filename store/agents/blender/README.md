@@ -9,7 +9,7 @@ Runs on Claude Code.
 
 - `harness.json` — engine, template, skill, toolchain, `viewer.use: autonomous/model-viewer`.
 - `toolchain/setup.sh` — one venv with `bpy` (Blender as a Python module) at the pinned version
-  (`BPY_VERSION`; the wheel needs Python 3.11 exactly); `harness_blender.py` gives a script the
+  (`BPY_VERSION`, or `BPY_VERSION_INTEL_MAC` — 4.5 LTS — on an Intel Mac, which Blender 5 no longer builds for; the wheel needs Python 3.11 exactly, which setup fetches through uv when the machine has none); `harness_blender.py` gives a script the
   scene, camera, glTF export (names, collections, materials, camera, lights, animation and per-object
   facts as extras, written atomically), renders and report, and keeps `.harness/build.json` current
   while it runs; `verdict.py` judges what `out/` holds and names the glTF as the artifact.
