@@ -18,7 +18,6 @@ import 'package:harness_mobile/widgets/terminal_panel.dart';
 
 import 'agents_page.dart' show openNewAgent;
 import 'delete_agent.dart';
-import 'phone_fab.dart';
 import 'phone_header.dart';
 import 'phone_search_page.dart' show openPhoneSearch;
 import 'phone_sheet.dart';
@@ -425,48 +424,10 @@ class _TerminalPageState extends State<TerminalPage>
         final reclaim = phoneReclaimAction(session);
         return Scaffold(
           backgroundColor: AppPalette.windowBg,
-          // New agent, moved out of the header and onto the terminal as the
-          // one filled thing on the page — see the note beside search for why
-          // it left the row.
-          //
-          // ⚠️ Unlike the Agents tab, this does NOT ask which machine to
-          // create on: this page knows, and it is the machine the agent on
-          // screen runs on. The tab has to ask because it lists every
-          // machine's agents at once and a guess would put an agent on a
-          // computer nobody named — see `agents_tab.dart`'s `_pickMachine`.
-          // Here that question is already answered, so asking it again is a
-          // step with one possible answer.
-          //
-          // Gated on the machine ANSWERING, the same gate the Agents tab puts
-          // on its own fab: creating needs the machine to list its folders and
-          // name its engines, so one that is offline or still wants its
-          // password cannot host a new agent. Null rather than disabled, the
-          // convention [PhoneFab] documents.
-          //
-          // ⚠️ Gone while the keyboard is up, for the reason the header
-          // controls are: a Scaffold's fab floats over the body, so it would
-          // sit on top of [TerminalKeyBar] — the one row the thumb is actually
-          // aiming at while typing.
-          floatingActionButton:
-              !_ownsKeyboard &&
-                  machine != null &&
-                  phoneMachineStatusOf(machine) == PhoneMachineStatus.ready
-              ? PhoneFab(
-                  icon: LucideIcons.plus300,
-                  tooltip: 'New agent',
-                  // Awaited for the same reason search is: the form may be
-                  // backed out of rather than completed, and this page gets no
-                  // rebuild when it lands back on top.
-                  onPressed: () async {
-                    await openNewAgent(
-                      context,
-                      widget.notifier,
-                      widget.machineId,
-                    );
-                    if (mounted) setState(() {});
-                  },
-                )
-              : null,
+          // ⚠️ No fab. New agent is the `+` in the header — see the note there.
+          // A Scaffold fab floats over the body, and the body here is the
+          // terminal: it covered the newest line of output, which on a page
+          // that streams is the line being read.
           // ⚠️ Plain `SafeArea`. A `bottom: !keyboardUp` toggle was here,
           // computed from `MediaQuery.viewInsetsOf(context).bottom > 0` — and
           // that value is pinned at ZERO inside this page (see
@@ -475,7 +436,7 @@ class _TerminalPageState extends State<TerminalPage>
             child: Column(
               children: [
                 PhoneHeader(
-                  title: agent?.name ?? 'Agent',
+                  title: _clipTitle(agent?.name ?? 'Agent'),
                   leading: EngineMark(
                     engine: agent?.engine,
                     displayName: agent?.engineDisplayName,
@@ -501,34 +462,66 @@ class _TerminalPageState extends State<TerminalPage>
                           widget.agentId,
                         ),
                       ),
+                    // New agent, search and the actions menu: the three the
+                    // page offers, in the order they are reached for — create,
+                    // find, then everything else.
+                    //
+                    // ⚠️ They are spaced by [_HeaderAction], not drawn bare.
+                    // [AppIconButton] is a fixed 24px box whatever glyph size
+                    // it is given, so a 22px search glyph fills its box edge to
+                    // edge while a 20px ellipsis sits inside one — three
+                    // buttons butted together then read as unevenly spaced
+                    // when the gaps are in fact identical. One glyph size and
+                    // one padding across the three is what evens the rhythm.
+                    //
+                    // ⚠️ `+` here rather than floating over the terminal. A fab
+                    // covers the last line of output — the line being read —
+                    // and this page has no list to scroll it clear of.
+                    //
+                    // Gated on the machine ANSWERING, the same gate the Agents
+                    // tab puts on its fab: creating needs the machine to list
+                    // its folders and name its engines, so one that is offline
+                    // or still wants its password cannot host a new agent.
+                    if (!_ownsKeyboard &&
+                        machine != null &&
+                        phoneMachineStatusOf(machine) ==
+                            PhoneMachineStatus.ready)
+                      _HeaderAction(
+                        icon: LucideIcons.plus300,
+                        size: 21,
+                        tooltip: 'New agent',
+                        // Awaited for the same reason search is: the form may
+                        // be backed out of rather than completed, and this page
+                        // gets no rebuild when it lands back on top.
+                        onPressed: () async {
+                          await openNewAgent(
+                            context,
+                            widget.notifier,
+                            widget.machineId,
+                          );
+                          if (mounted) setState(() {});
+                        },
+                      ),
                     // Search is here because this page is where the phone now
                     // opens, so what the list screens offered has to be
                     // reachable without going back to them first:
                     // [openPhoneSearch] is the same search that spans agents
                     // and machines.
                     //
-                    // ⚠️ `+` is NOT beside it any more — it is the [PhoneFab]
-                    // over the terminal. Two bare glyphs at the end of a row
-                    // whose other end is a whole back band gave the corner
-                    // three targets and told the eye nothing about which one
-                    // creates something; the fab says that by being the only
-                    // filled thing on the page.
-                    //
-                    // ⚠️ Still hidden while the keyboard is up. The header is
-                    // one row, and a terminal being typed into is the one
-                    // moment search is not what the thumb is reaching for —
-                    // the key bar directly under it is.
+                    // ⚠️ Hidden while the keyboard is up, with `+`. The header
+                    // is one row, and a terminal being typed into is the one
+                    // moment neither is what the thumb is reaching for — the
+                    // key bar directly under it is.
                     // ⚠️ Not [PhoneSearchButton], which pushes and forgets. A
                     // page that pops back onto the top gets no rebuild of its
                     // own, so [_ownsKeyboard] would keep answering with what
                     // was true while the search was covering it. Awaiting the
                     // push is what turns "the search closed" into a frame.
                     if (!_ownsKeyboard)
-                      AppIconButton(
+                      _HeaderAction(
                         icon: LucideIcons.search300,
-                        size: 22,
+                        size: 21,
                         tooltip: 'Search',
-                        color: AppPalette.textSecondary,
                         onPressed: () async {
                           await openPhoneSearch(context, widget.notifier);
                           if (mounted) setState(() {});
@@ -537,11 +530,13 @@ class _TerminalPageState extends State<TerminalPage>
                     // Null while the agent is not loaded: there is nothing to act on yet, and a
                     // menu of actions that all fail is worse than no menu.
                     if (agent != null)
-                      AppIconButton(
+                      _HeaderAction(
                         icon: LucideIcons.ellipsis300,
-                        size: 20,
+                        size: 21,
                         tooltip: 'Agent actions',
-                        color: AppPalette.textSecondary,
+                        // Last in the row, so its padding stops at the header's
+                        // own right inset rather than adding to it.
+                        last: true,
                         onPressed: () => _showActions(
                           machineName: machine?.machine.displayName ?? '',
                           agentName: agent.name,
@@ -796,6 +791,86 @@ class _Attaching extends StatelessWidget {
           style: TextStyle(color: AppPalette.textSecondary, fontSize: 14),
         ),
       ],
+    ),
+  );
+}
+
+/// The longest agent name the header will print before it cuts.
+///
+/// An agent's name is usually a filename, and the header row has to hold three
+/// controls beside it. Left to the width alone, a long name pushed right up
+/// against `+` with no gap; cutting by COUNT keeps a fixed, predictable stretch
+/// of chrome whatever the name and whatever the screen.
+const int _titleMaxChars = 20;
+
+/// The name as the header prints it: cut to [_titleMaxChars] with an ellipsis
+/// when it is longer.
+///
+/// ⚠️ Counts runes, not code units. `String.length` counts UTF-16 units, so an
+/// emoji or a decomposed Vietnamese vowel costs two and a name cuts early —
+/// short of the 20 the design asks for, and at a different point per name.
+///
+/// ⚠️ The width ellipsis in [PhoneHeader] stays as well. This one bounds the
+/// string; that one still catches a 20-character name on a narrow screen, and
+/// neither makes the other redundant.
+String _clipTitle(String name) {
+  final runes = name.runes.toList();
+  if (runes.length <= _titleMaxChars) return name;
+  // Trailing space before the ellipsis reads as a typo, so it goes.
+  return '${String.fromCharCodes(runes.take(_titleMaxChars)).trimRight()}…';
+}
+
+/// One of the header's trailing controls, padded so the three sit evenly.
+///
+/// ⚠️ The padding is what makes the row look right, and the reason is that
+/// [AppIconButton] is a fixed 24px box for every glyph size. A 22px glyph fills
+/// that box to its edges while a 20px one floats inside it, so equal gaps
+/// BETWEEN the boxes read as unequal gaps between the marks. Giving every
+/// action the same glyph size and the same padding puts the marks on an even
+/// pitch.
+///
+/// ⚠️ It does NOT widen the tap target. [AppIconButton] takes its tap on a
+/// 24px `GestureDetector` with no `HitTestBehavior.opaque`, so the padding is
+/// dead space either side and the three stay 24px each — under the 44 iOS asks
+/// for. Fixing that belongs in the shared button, where every screen's header
+/// would get it, not in a wrapper one page defines.
+class _HeaderAction extends StatelessWidget {
+  const _HeaderAction({
+    required this.icon,
+    required this.tooltip,
+    required this.onPressed,
+    this.size = 21,
+    this.last = false,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onPressed;
+  final double size;
+
+  /// The rightmost action, whose trailing padding is dropped: [PhoneHeader]
+  /// already insets the row's right edge, and keeping it here would push the
+  /// last mark further from the edge than the others are from each other.
+  final bool last;
+
+  /// Half the gap between two marks — each neighbour contributes one, so the
+  /// boxes end up 14 apart.
+  ///
+  /// 14 because that is [PhoneHeader]'s own right inset: the gap between two
+  /// actions and the gap from the last one to the screen edge are then the
+  /// same measure, and the three read as evenly placed rather than as a group
+  /// shoved against the corner.
+  static const double _gap = 7;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: EdgeInsets.fromLTRB(_gap, 0, last ? 0 : _gap, 0),
+    child: AppIconButton(
+      icon: icon,
+      size: size,
+      tooltip: tooltip,
+      color: AppPalette.textSecondary,
+      onPressed: onPressed,
     ),
   );
 }
