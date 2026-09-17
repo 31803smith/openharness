@@ -10,7 +10,7 @@ Designed in EasyEDA Pro.
 |---|---|
 | `ProPrj_Harness_1.75_AMOLED.epro2` | EasyEDA Pro project (schematic + PCB layout source) |
 | `SCH_SCH_Harness_1.75.pdf` | Schematic export (PDF) |
-| `production/Gerber_PCB_Harness.zip` | Gerbers for fabrication |
+| `production/Gerber_PCB_Harness/` | Gerbers + drill files for fabrication (RS-274X / Excellon) |
 | `production/BOM_Harness_1.75_AMOLED_PCB_Harness_1.75.xlsx` | Bill of materials |
 | `production/PickAndPlace_PCB_Harness.xlsx` | Pick-and-place (CPL) data for assembly |
 
