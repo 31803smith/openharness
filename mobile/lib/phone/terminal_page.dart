@@ -83,6 +83,23 @@ class TerminalPage extends StatefulWidget {
 /// inset, so they all write the same value.
 bool _keyboardIsUp = false;
 
+/// Set while a swipe has asked the keyboard to go and the platform has not
+/// finished taking it away.
+///
+/// ⚠️ **Without this, dismissing on a swipe silently does nothing.** The
+/// keyboard leaves over an animation, so for the ~250ms after `unfocus()` the
+/// inset is still above zero — and every mounted page's [didChangeMetrics] is
+/// firing on every frame of that animation, each one writing `_keyboardIsUp =
+/// true` again. The page being swiped to then reads the flag it was supposed to
+/// have lost, passes `focused: true` to [TerminalPanel], and the panel's
+/// `didUpdateWidget` claims the input connection back. The keyboard never goes,
+/// and nothing in the code looks wrong.
+///
+/// So the writes are held off until the inset actually reaches zero, which is
+/// the platform confirming the keyboard is gone. From that tick on, the flag
+/// tracks the truth again as it always did.
+bool _keyboardDismissing = false;
+
 /// Forgets what the keyboard did during the last run of terminal pages.
 ///
 /// Called when a pager opens. A pager popped with the keyboard up is disposed
@@ -90,6 +107,22 @@ bool _keyboardIsUp = false;
 /// pager would otherwise open believing the keyboard is up, and summon it.
 void resetKeyboardSession() {
   _keyboardIsUp = false;
+  _keyboardDismissing = false;
+}
+
+/// Puts the keyboard away for a swipe between agents, and keeps it away.
+///
+/// ⚠️ **Dropping focus alone does nothing here, and neither does clearing the
+/// flag.** [_keyboardIsUp] exists to HOLD the keyboard across a swipe — that is
+/// what it was written for — so the incoming page reads it and claims the
+/// keyboard straight back. Clearing it is therefore necessary, but not enough on
+/// its own: the inset is still falling, and the metrics ticks of that fall put
+/// it back. [_keyboardDismissing] is what makes the clear stick until the
+/// platform agrees.
+void dismissKeyboardForSwipe() {
+  _keyboardIsUp = false;
+  _keyboardDismissing = true;
+  FocusManager.instance.primaryFocus?.unfocus();
 }
 
 class _TerminalPageState extends State<TerminalPage>
@@ -198,7 +231,16 @@ class _TerminalPageState extends State<TerminalPage>
     final up = inset > 0;
     // Every mounted page writes it, and they all see the same inset — so a page
     // that was parked while the keyboard came and went still reads the truth.
-    _keyboardIsUp = up;
+    //
+    // ⚠️ Except while a swipe is putting the keyboard away: the inset is still
+    // falling then, and writing `true` from those ticks is exactly what used to
+    // undo the dismissal. See [_keyboardDismissing]. Zero is the platform
+    // saying the keyboard has finished leaving, which ends the hold-off.
+    if (_keyboardDismissing) {
+      if (!up) _keyboardDismissing = false;
+    } else {
+      _keyboardIsUp = up;
+    }
     // The FIRST frame of the keyboard rising spends the request — it need not
     // finish. Spending it this early is the point: it is off long before any
     // Back press can arrive.

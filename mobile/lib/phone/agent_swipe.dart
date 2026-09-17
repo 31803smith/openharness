@@ -222,38 +222,53 @@ class _AgentSwipeHostState extends State<AgentSwipeHost> {
         isActive: true,
       );
     }
-    return PageView.builder(
-      controller: controller,
-      // The terminal below scrolls vertically and selects text only with a mouse, so the horizontal
-      // axis is free — and here it is the pager's ALONE. The route's own edge-swipe back used to
-      // compete for it and win at the left margin, being registered above this in the tree: a drag
-      // started near the edge to reach the previous AGENT left the screen instead. The route is
-      // pushed without that gesture now (see `phoneRoute`'s `swipeToGoBack`), so going back is the
-      // header's back band, or Android's back button.
-      physics: const PageScrollPhysics(),
-      // No count is what makes it endless: the builder answers for any page, and the modulo below
-      // wraps it back onto the list. A one-agent list keeps its single page instead — see
-      // [AgentSwipeList.wraps].
-      itemCount: neighbours.wraps ? null : neighbours.entries.length,
-      onPageChanged: _onPageChanged,
-      itemBuilder: (context, i) {
-        final entry = neighbours.entries[i % neighbours.entries.length];
-        return TerminalPage(
-          // ⚠️ Keyed by PAGE, not by agent, and the difference only shows once the pager wraps: an
-          // endless run holds several pages for the same agent — the lap before and the lap after —
-          // and an agent-shaped key would make Flutter treat two live pages as one widget, which
-          // throws on a duplicate key the moment both are mounted. Each page then learns its own
-          // `_hadPane`, which is what that flag wants anyway: it is about this page's attach, not
-          // about the agent.
-          key: ValueKey(i),
-          notifier: widget.notifier,
-          machineId: entry.machineId,
-          agentId: entry.agent.id,
-          voice: _voice,
-          // Exactly one mounted page, by page number — see [_page].
-          isActive: i == _page,
-        );
+    // ⚠️ **The keyboard goes at the START of the drag, not at [_onPageChanged].**
+    // That callback fires at the halfway point of a SETTLED swipe, so a keyboard
+    // dismissed there would sit over the terminal for the whole gesture and then
+    // vanish once the new agent had already arrived — and it would never go at
+    // all for a drag that was pulled part way and let go.
+    //
+    // [ScrollStartNotification] is the first frame of the finger's movement,
+    // which is the moment the person has shown they are leaving this terminal.
+    return NotificationListener<ScrollStartNotification>(
+      onNotification: (_) {
+        dismissKeyboardForSwipe();
+        // Let it bubble: the pager's own scroll machinery is listening too.
+        return false;
       },
+      child: PageView.builder(
+        controller: controller,
+        // The terminal below scrolls vertically and selects text only with a mouse, so the horizontal
+        // axis is free — and here it is the pager's ALONE. The route's own edge-swipe back used to
+        // compete for it and win at the left margin, being registered above this in the tree: a drag
+        // started near the edge to reach the previous AGENT left the screen instead. The route is
+        // pushed without that gesture now (see `phoneRoute`'s `swipeToGoBack`), so going back is the
+        // header's back band, or Android's back button.
+        physics: const PageScrollPhysics(),
+        // No count is what makes it endless: the builder answers for any page, and the modulo below
+        // wraps it back onto the list. A one-agent list keeps its single page instead — see
+        // [AgentSwipeList.wraps].
+        itemCount: neighbours.wraps ? null : neighbours.entries.length,
+        onPageChanged: _onPageChanged,
+        itemBuilder: (context, i) {
+          final entry = neighbours.entries[i % neighbours.entries.length];
+          return TerminalPage(
+            // ⚠️ Keyed by PAGE, not by agent, and the difference only shows once the pager wraps: an
+            // endless run holds several pages for the same agent — the lap before and the lap after —
+            // and an agent-shaped key would make Flutter treat two live pages as one widget, which
+            // throws on a duplicate key the moment both are mounted. Each page then learns its own
+            // `_hadPane`, which is what that flag wants anyway: it is about this page's attach, not
+            // about the agent.
+            key: ValueKey(i),
+            notifier: widget.notifier,
+            machineId: entry.machineId,
+            agentId: entry.agent.id,
+            voice: _voice,
+            // Exactly one mounted page, by page number — see [_page].
+            isActive: i == _page,
+          );
+        },
+      ),
     );
   }
 
@@ -268,6 +283,12 @@ class _AgentSwipeHostState extends State<AgentSwipeHost> {
     // and finds none.
     _attached.add(arrived);
     widget.notifier.lastOpenedAgent.remember(arrived);
+    // ⚠️ A second dismissal, and not a redundant one. The [ScrollStartNotification] above catches
+    // the finger, which is the usual way here and the one that matters for how it looks — but a page
+    // reached any other way never raised that notification, and the incoming terminal would claim
+    // the keyboard the moment it built. Landing on a new agent is the invariant; the drag is only
+    // where it is felt. Both are cheap: clearing a flag and unfocusing what is already unfocused.
+    dismissKeyboardForSwipe();
     // Before the setState, so a host that rebuilds this pager in response already names the agent
     // swiped to — told afterwards, it would rebuild still pointing at the previous one.
     widget.onAgentChanged?.call(arrived);
