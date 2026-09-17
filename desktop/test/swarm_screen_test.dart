@@ -10,6 +10,7 @@ import 'package:harness/shared/theme/app_theme.dart' as grid;
 import 'package:harness/state/app_state.dart';
 import 'package:harness/state/swarm_catalog.dart';
 import 'package:harness/state/swarm_navigation.dart';
+import 'package:harness/state/terminal_pane.dart';
 import 'package:harness/terminal/terminal_binary.dart';
 import 'package:harness/terminal/terminal_session.dart';
 import 'package:harness/widgets/pane_grid.dart';
@@ -100,6 +101,75 @@ void main() {
   });
 
   for (final native in [false, true]) {
+    testWidgets('New Tab keeps opening tabs past two dozen, as Chrome does (native=$native)', (
+      tester,
+    ) async {
+      const channel = MethodChannel('harness/swarm_tabs');
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (_) async => true);
+      addTearDown(() => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, null));
+      final app = createApp();
+      for (var i = 1; i < 30; i++) {
+        app.newSwarm(name: 'Project $i');
+      }
+      app.selectSwarm(app.swarms.first.id);
+      await app.addAgentToSwarm('m', 'a0');
+      expect(app.swarms, hasLength(30));
+      await mount(tester, app, nativeTabs: native);
+      if (native) {
+        // What Swift sends for File ▸ New Tab, ⌘T and the strip's plus. Not awaited: the handler
+        // waits on a frame, which only the pumps below produce.
+        tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+          'harness/swarm_tabs',
+          const StandardMethodCodec().encodeMethodCall(const MethodCall('new')),
+          (_) {},
+        );
+      } else {
+        await chord(tester, LogicalKeyboardKey.keyT);
+      }
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(app.swarms, hasLength(31));
+      expect(app.activeSwarm.name, 'New Tab');
+      expect(app.panes, isEmpty);
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+    });
+  }
+
+  for (final native in [false, true]) {
+    testWidgets('the store tab uses the app icon (native=$native)', (
+      tester,
+    ) async {
+      const channel = MethodChannel('harness/swarm_tabs');
+      final updates = <Map>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (
+        call,
+      ) async {
+        if (call.method == 'update') updates.add(call.arguments as Map);
+        return true;
+      });
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          channel,
+          null,
+        ),
+      );
+      final app = createApp();
+      final tab = app.activeSwarm;
+      await mount(tester, app, nativeTabs: native);
+      app.openStore();
+      await tester.pump();
+      expect(tab.isStore, isTrue);
+      if (native) {
+        final row = (updates.last['tabs'] as List).single as Map;
+        expect(row['kind'], 'store');
+        expect(row['agentCount'], 0);
+        expect(row['iconAsset'], 'assets/app_icon.png');
+      } else {
+        expect(find.byKey(ValueKey('tab-store:${tab.id}')), findsOneWidget);
+      }
+    });
+
     testWidgets('tab identity follows its agent count (native=$native)', (
       tester,
     ) async {
@@ -136,6 +206,22 @@ void main() {
       } else {
         expect(find.byKey(ValueKey('tab-engine:${tab.id}')), findsOneWidget);
       }
+
+      // A harness's viewer beside its agent is the same agent: still its mark, not a group.
+      tab.panes.add(
+        TerminalPane(id: 900, machineId: 'm', kind: PaneKind.web, ownerAgentId: 'a0', url: 'http://127.0.0.1:1/'),
+      );
+      app.renameSwarm(tab.id, 'New Tab');
+      await tester.pump();
+      if (native) {
+        final row = (updates.last['tabs'] as List).single as Map;
+        expect(row['agentCount'], 1);
+        expect(row['engine'], 'codex');
+      } else {
+        expect(find.byKey(ValueKey('tab-engine:${tab.id}')), findsOneWidget);
+        expect(find.byKey(ValueKey('tab-group:${tab.id}')), findsNothing);
+      }
+      tab.panes.removeWhere((pane) => pane.id == 900);
 
       await app.addAgentToSwarm('m', 'a1');
       await tester.pump();

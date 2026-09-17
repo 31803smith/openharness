@@ -5,6 +5,7 @@ import 'dart:async';
 
 import 'package:file_selector_platform_interface/file_selector_platform_interface.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/auth/auth_session.dart';
 import 'package:harness/core/config.dart';
@@ -14,6 +15,7 @@ import 'package:harness/core/models.dart';
 import 'package:harness/core/project_folder.dart';
 import 'package:harness/state/app_state.dart';
 import 'package:harness/state/pane_arrangement.dart';
+import 'package:harness/shared/widgets/app_menu.dart';
 import 'package:harness/shared/widgets/app_select_field.dart';
 import 'package:harness/widgets/new_agent_dialog.dart';
 
@@ -28,8 +30,8 @@ class _Folders extends FileSelectorPlatform {
 }
 
 const _circuit = DshEntry(
-  id: 'autonomous/copper',
-  name: 'Copper',
+  id: 'autonomous/autonomous-circuit',
+  name: 'Autonomous Circuit',
   engine: 'claude',
   description: 'Chat with AI → a board you can order',
   installed: false,
@@ -217,17 +219,17 @@ void main() {
       );
       expect(
         app.harnessProbes,
-        0,
-        reason: 'not asked until a harness is chosen',
+        1,
+        reason: 'asked once on open, so More is never stale',
       );
-      await pick(tester, 'Copper');
-      expect(app.harnessProbes, 1);
-      expect(engineField(tester), 'autonomous/copper');
+      await pick(tester, 'Autonomous Circuit');
+      expect(app.harnessProbes, 2);
+      expect(engineField(tester), 'autonomous/autonomous-circuit');
       // Chosen, it is what the More tile shows.
       expect(
         find.descendant(
           of: find.byKey(const Key('new-agent-engine-field')),
-          matching: find.text('Copper'),
+          matching: find.text('Autonomous Circuit'),
         ),
         findsOneWidget,
       );
@@ -245,7 +247,7 @@ void main() {
       expect(app.launches.single, {
         'machine': 'machine-1',
         'engine': 'claude',
-        'dsh': 'autonomous/copper',
+        'dsh': 'autonomous/autonomous-circuit',
         'folder': '',
         'bypass': false,
       });
@@ -261,17 +263,17 @@ void main() {
         seed: (state) => state.dsh.replace([_circuit]),
       );
       app.pendingInstall = Completer<String?>();
-      await pick(tester, 'Copper');
+      await pick(tester, 'Autonomous Circuit');
       // Quiet until Create: the install is a step of the create, not a warning.
       expect(find.textContaining('Installing'), findsNothing);
       await create(tester);
-      expect(app.installs, ['autonomous/copper']);
+      expect(app.installs, ['autonomous/autonomous-circuit']);
       expect(
         app.launches,
         isEmpty,
         reason: 'no create until the install lands',
       );
-      expect(find.text('Installing Copper…'), findsOneWidget);
+      expect(find.text('Installing Autonomous Circuit…'), findsOneWidget);
       expect(
         find.textContaining('Setting up the toolchain…'),
         findsOneWidget,
@@ -280,7 +282,7 @@ void main() {
       app.pendingInstall!.complete(null);
       await tester.pump();
       await tester.pump();
-      expect(app.launches.single['dsh'], 'autonomous/copper');
+      expect(app.launches.single['dsh'], 'autonomous/autonomous-circuit');
       expect(app.launches.single['engine'], 'claude');
       expect(tester.takeException(), isNull);
     },
@@ -292,7 +294,7 @@ void main() {
       seed: (state) => state.dsh.replace([_circuit]),
     );
     app.pendingInstall = Completer<String?>();
-    await pick(tester, 'Copper');
+    await pick(tester, 'Autonomous Circuit');
     await create(tester);
     app.pendingInstall!.complete('kicad-cli is not on harness-remote-box');
     await tester.pump();
@@ -308,8 +310,8 @@ void main() {
     'a machine that has not answered offers the tiles without a verdict',
     (tester) async {
       final app = await open(tester, seed: (_) {});
-      await pick(tester, 'Solid');
-      expect(engineField(tester), 'autonomous/solid');
+      await pick(tester, 'Autonomous Workshop');
+      expect(engineField(tester), 'autonomous/autonomous-workshop');
       await tester.ensureVisible(find.byKey(const Key('new-agent-advanced')));
       await tester.tap(find.byKey(const Key('new-agent-advanced')));
       await tester.pumpAndSettle();
@@ -317,7 +319,7 @@ void main() {
       // The machine never answered, so nothing can be called missing.
       expect(app.installs, isEmpty);
       expect(app.launches.single['engine'], 'codex');
-      expect(app.launches.single['dsh'], 'autonomous/solid');
+      expect(app.launches.single['dsh'], 'autonomous/autonomous-workshop');
       expect(tester.takeException(), isNull);
     },
   );
@@ -327,14 +329,14 @@ void main() {
   ) async {
     final app = await open(tester, seed: (_) {});
     app.probeRefusal = 'unknown request: dsh_list';
-    await pick(tester, 'Copper');
+    await pick(tester, 'Autonomous Circuit');
     await create(tester);
     await tester.pump();
     expect(app.installs, isEmpty);
     expect(app.launches, isEmpty, reason: 'never a plain agent in silence');
     expect(
       find.text(
-        'Update Harness CLI on harness-remote-box to create a Copper agent.',
+        'Update Harness CLI on harness-remote-box to create a Autonomous Circuit agent.',
       ),
       findsOneWidget,
     );
@@ -357,7 +359,7 @@ void main() {
     expect(app.launches.single['dsh'], isNull);
   });
 
-  testWidgets('More lists the machine\'s harnesses after the engines', (
+  testWidgets('More lists the machine\'s harnesses before the engines', (
     tester,
   ) async {
     await open(
@@ -374,10 +376,14 @@ void main() {
     await tester.ensureVisible(find.byKey(const Key('new-agent-engine-field')));
     await tester.tap(find.byKey(const Key('new-agent-engine-field')));
     await tester.pumpAndSettle();
-    // Far down a list of fourteen engines: scrolled into view first, or the
-    // tap lands on the menu's edge and quietly selects nothing.
-    await tester.ensureVisible(find.text('Robot Arm').last);
-    await tester.pumpAndSettle();
+    // The three tiles already offered three coding engines; the eleven behind
+    // them are more of the same, and the harnesses are what More is FOR.
+    final rows = tester
+        .widgetList<AppMenuItem>(find.byType(AppMenuItem))
+        .map((row) => row.label)
+        .toList();
+    expect(rows.take(2), ['Autonomous Circuit', 'Robot Arm']);
+    expect(rows.skip(2), contains('Cursor'));
     expect(find.text('Robot Arm'), findsWidgets);
     expect(find.text('on Codex'), findsNothing, reason: 'backend detail');
     await tester.tap(find.text('Robot Arm').last);
@@ -386,6 +392,34 @@ void main() {
     await tester.ensureVisible(find.byKey(const Key('new-agent-advanced')));
     await tester.tap(find.byKey(const Key('new-agent-advanced')));
     await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('More is searched by name, not scrolled through', (tester) async {
+    await open(
+      tester,
+      seed: (state) => state.dsh.replace([
+        _circuit,
+        const DshEntry(
+          id: 'someone/robot-arm',
+          name: 'Robot Arm',
+          engine: 'codex',
+        ),
+      ]),
+    );
+    await tester.ensureVisible(find.byKey(const Key('new-agent-engine-field')));
+    await tester.tap(find.byKey(const Key('new-agent-engine-field')));
+    await tester.pumpAndSettle();
+    // Thirteen rows behind the three tiles — past the point where reading the
+    // list beats typing at it.
+    final filter = find.byKey(const Key('app-select-filter'));
+    expect(filter, findsOneWidget);
+    await tester.enterText(filter, 'robot');
+    await tester.pumpAndSettle();
+    expect(find.byType(AppMenuItem), findsOneWidget);
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    expect(engineField(tester), 'someone/robot-arm');
     expect(tester.takeException(), isNull);
   });
 }

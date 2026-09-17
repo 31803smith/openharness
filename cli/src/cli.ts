@@ -74,7 +74,8 @@ import { buildHarnessSessionLabel } from './lib/harnessSessionLabel.js'
 import { installedDsh } from './dsh/installed.js'
 import { dshVerdictPath } from './dsh/manifest.js'
 import { registryEntry } from './dsh/registry.js'
-import { installDsh, resolveInstallSource } from './dsh/install.js'
+import { installDsh, resolveInstallSource, removeDsh } from './dsh/install.js'
+import { preTrustClaudeProject, preTrustCodexProject } from './lib/claudeTrust.js'
 import { materializeWorkspace } from './dsh/materialize.js'
 import { dshLaunch } from './dsh/launch.js'
 import { DshViewerManager } from './dsh/viewer.js'
@@ -2107,6 +2108,7 @@ async function runForeground(session: AuthSession): Promise<void> {
   }
   backend.runtimeProfileProvider = (session) => runtimeProfiles.selectedModel(session)
   backend.dshFrameProvider = dshFrameContext
+  backend.onDshRemove = (id) => removeDsh(id)
   backend.onDshInstall = async ({ id, url, ref }, progress) => {
     const resolved = id ? resolveInstallSource(id) : url ? { source: url, ref } : null
     if (!resolved) return { ok: false, error: 'INVALID_DSH', detail: `${id ?? url} is not a known harness` }
@@ -2127,6 +2129,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     const result = await installDsh({
       source: resolved.source,
       ref: ref ?? resolved.ref,
+      path: 'path' in resolved ? resolved.path : undefined,
       onProgress: (p) => {
         if (timer) { clearTimeout(timer); timer = null }
         pendingLine = null
@@ -3151,6 +3154,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     onMachineRename: (machineId, name) => proxyBackend('PATCH', `/api/machines/${encodeURIComponent(machineId)}`, { name }),
     onMachineDelete: (machineId) => proxyBackend('DELETE', `/api/machines/${encodeURIComponent(machineId)}`),
     onAuthMe: () => proxyBackend('GET', '/api/auth/me'),
+    onStore: (method, path, body) => proxyBackend(method, path, body),
   })
   // Claim the pid file for OURSELVES, and only now that the control port is bound. It used to be
   // written by whoever spawned us — so a parent that died mid-handover left a daemon nothing could
@@ -3768,6 +3772,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     if (dsh) {
       const installed = installedDsh(dsh)
       if (!installed) return { ok: false, error: 'INVALID_DSH', detail: `${dsh} is not installed on this machine` }
+      if (installed.manifest.kind === 'viewer') return { ok: false, error: 'INVALID_DSH', detail: `${dsh} is a viewer package, not an agent` }
       if (installed.manifest.engine !== engine) {
         return { ok: false, error: 'INVALID_DSH', detail: `${dsh} runs on ${installed.manifest.engine}, not ${engine}` }
       }
@@ -3782,6 +3787,13 @@ async function runForeground(session: AuthSession): Promise<void> {
         const materialized = await materializeWorkspace(installed, cwd)
         for (const warning of materialized.warnings) console.warn(`[dsh] ${dsh} materialize · ${warning}`)
         console.log(`[dsh] ${dsh} materialized ${cwd} · created ${materialized.created.length} · kept ${materialized.kept.length}`)
+        // The template just went in: the folder is the harness's, and Claude Code need not ask.
+        if (materialized.created.some((item) => item.startsWith('template'))) {
+          try {
+            if (engine === 'claude') preTrustClaudeProject(cwd)
+            if (engine === 'codex') preTrustCodexProject(cwd)
+          } catch (error) { console.warn(`[dsh] pre-trust ${cwd} · ${error instanceof Error ? error.message : error}`) }
+        }
       } catch (error) {
         const detail = `could not prepare the workspace for ${dsh} · ${error instanceof Error ? error.message : error}`
         console.warn(`[agent] create ${dsh} refused · ${detail}`)
