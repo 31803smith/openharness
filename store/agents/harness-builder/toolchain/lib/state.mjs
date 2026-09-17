@@ -92,14 +92,32 @@ export function setStage(build, id, state, note) {
   const stage = build.stages.find((s) => s.id === id)
   if (!stage) throw new Error(`unknown stage "${id}"; stages are ${STAGES.map((s) => s.id).join(', ')}`)
   if (!STATES.has(state)) throw new Error(`unknown state "${state}"; use ${[...STATES].join(', ')}`)
-  // One stage is active at a time: starting a stage settles the one before it as it stood.
+  // One stage is active at a time: starting a stage settles the one before it as it stood. Going back to
+  // an earlier stage to fix something a later one found (a proof shows a skill gap) remembers where the
+  // work was, and finishing the fix returns there — so the track never shows Proof as not started.
+  const order = (sid) => build.stages.findIndex((s) => s.id === sid)
   if (state === 'active') {
-    for (const other of build.stages) if (other.id !== id && other.state === 'active') other.state = 'pending'
+    for (const other of build.stages) {
+      if (other.id === id || other.state !== 'active') continue
+      other.state = 'pending'
+      if (order(other.id) > order(id)) build.returnTo = other.id
+    }
   }
   stage.state = state
   if (note !== undefined) stage.note = note
   stage.updatedAt = new Date().toISOString()
   log(build, `${stage.name}: ${state}${note ? ` — ${note}` : ''}`)
+  if (state === 'done' && build.returnTo && order(build.returnTo) > order(id)) {
+    const back = build.stages.find((s) => s.id === build.returnTo)
+    delete build.returnTo
+    if (back && back.state === 'pending' && !build.stages.some((s) => s.state === 'active')) {
+      back.state = 'active'
+      back.updatedAt = stage.updatedAt
+      log(build, `${back.name}: active — back after the ${stage.name.toLowerCase()} fix`)
+    }
+  } else if (state === 'active' && build.returnTo === id) {
+    delete build.returnTo
+  }
   return stage
 }
 

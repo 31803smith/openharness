@@ -51,6 +51,23 @@ describe('the build record', () => {
     assert.equal(verdict.artifact, 'package/harness.json')
   })
 
+  it('returns to the later stage once a fix it sent the work back for is done', () => {
+    const build = ensureWorkspace(tmp())
+    for (const id of ['research', 'toolchain', 'skills', 'viewer', 'evaluation']) setStage(build, id, 'done')
+    setStage(build, 'proof', 'active', 'three proofs')
+    setStage(build, 'skills', 'active', 'a proof found a gap')
+    assert.equal(build.stages.find((s) => s.id === 'proof').state, 'pending')
+    setStage(build, 'skills', 'done')
+    const proof = build.stages.find((s) => s.id === 'proof')
+    assert.equal(proof.state, 'active')
+    assert.equal(proof.note, 'three proofs')
+    assert.equal(build.returnTo, undefined)
+    // Moving forward is not a fix: nothing to return to.
+    setStage(build, 'store', 'active')
+    setStage(build, 'store', 'done')
+    assert.equal(build.stages.find((s) => s.id === 'proof').state, 'pending')
+  })
+
   it('refuses a stage or state that does not exist', () => {
     const build = ensureWorkspace(tmp())
     assert.throws(() => setStage(build, 'polish', 'active'), /unknown stage/)

@@ -182,6 +182,15 @@ async function main() {
         return
       }
       if (sub === 'run') {
+        // A proof on its way means the proof stage is under way, whatever the track last said.
+        if (PROOF_IDS.includes(id)) {
+          const build = readBuild(WORKSPACE)
+          const stage = build.stages.find((s) => s.id === 'proof')
+          if (stage && stage.state !== 'active' && !build.stages.some((s) => s.state === 'active')) {
+            setStage(build, 'proof', 'active')
+            saveBuild(WORKSPACE, build)
+          }
+        }
         const started = await startProof(WORKSPACE, id, typeof a.prompt === 'string' ? a.prompt : '', {
           engine: typeof a.engine === 'string' ? a.engine : process.env.BUILDER_PROOF_ENGINE || undefined,
           every: Number(a.every ?? 15),
