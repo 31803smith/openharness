@@ -83,7 +83,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
   final _navigation = SwarmNavigationHistory();
   final _searchCatalog = SwarmSearchCatalog();
   final _searchText = TextEditingController();
-  final _searchFocus = FocusNode(debugLabel: 'Find an agent');
+  final _searchFocus = FocusNode(debugLabel: 'Find a harness');
   SwarmSearchController? _search;
   OverlayEntry? _searchOverlay;
   (String, bool)? _searchHeaderState;
@@ -424,13 +424,27 @@ class _SwarmScreenState extends State<SwarmScreen> {
                         )),
                   },
               ],
-              'status': machine.needsLink
-                  ? 'Link required'
+              // Two independent slots. `presence` is the node's own state
+              // (is `harness` running/reachable?), shown after the name — a
+              // definite "Online"/"Offline", or blank while unknown. `status`
+              // /`linkRequired` is the trailing slot: the peer link/trust
+              // between this computer and the machine. They are orthogonal, so
+              // an unlinked machine whose node is up reads BOTH "Online" and
+              // "Link required" instead of the link state masking presence.
+              'presence': machine.nodeOnline == true
+                  ? 'Online'
                   : machine.nodeOnline == false
                   ? 'Offline'
-                  : machine.nodeOnline == true
-                  ? 'Online'
-                  : 'Connecting…',
+                  : '',
+              'linkRequired': machine.needsLink,
+              // Trailing word. Offline/Online live in `presence` now, so they
+              // drop out here (the agent count fills the slot). Only the link
+              // state and the still-connecting case need the trailing edge.
+              'status': machine.needsLink
+                  ? 'Link required'
+                  : machine.nodeOnline == null
+                  ? 'Connecting…'
+                  : '',
             },
         ],
       }),
@@ -1030,7 +1044,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
               ),
             ),
           Semantics(
-            label: commandsOnly ? 'Search commands' : 'Find an agent',
+            label: commandsOnly ? 'Search commands' : 'Find a harness',
             child: SwarmSearchInput(
               inputKey: const ValueKey('swarm-search-input'),
               controller: _searchText,
@@ -1042,13 +1056,13 @@ class _SwarmScreenState extends State<SwarmScreen> {
               showClose: true,
               rounded: true,
               prominent: !commandsOnly,
-              hintText: commandsOnly ? null : 'Find an agent',
+              hintText: commandsOnly ? null : 'Find a harness',
               trailing: !commandsOnly && search.split != null
                   ? KeymapRegion(
                       contextKind: KeymapContext.workspace,
                       child: IconButton(
                         key: const ValueKey('harness-picker-new'),
-                        tooltip: 'New Agent',
+                        tooltip: 'New Harness',
                         onPressed: search.canCreate
                             ? () => _runShortcut('agent.new')
                             : null,
@@ -1524,134 +1538,190 @@ class _SwarmScreenState extends State<SwarmScreen> {
     },
   );
 
-  Widget _tabStrip() => Container(
-    height: 52,
-    color: grid.AppPalette.swarmTabBar,
-    child: Row(
-      children: [
-        IconButton(
-          key: const ValueKey('swarm-notifications-button'),
-          onPressed: _notifications,
-          icon: Badge(
-            isLabelVisible: _attention > 0,
-            child: Icon(
-              Icons.notifications_none,
-              size: 20,
-              semanticLabel: _attention > 0
-                  ? '$_attention agents need input'
-                  : 'Notifications',
+  /// Below this the strip's fixed furniture does not fit: the notification and new-tab buttons are
+  /// ~48 each, the two harness buttons ~150 each once icon and padding are counted, plus 32 of gaps —
+  /// about 430 before the tab list gets a single pixel. Rather than let the Row overflow, the two
+  /// labelled buttons drop to their icons, which is what their tooltips are for.
+  static const double _labelledStripMinWidth = 560;
+
+  Widget _tabStrip() => LayoutBuilder(
+    builder: (context, constraints) {
+      final compact =
+          constraints.maxWidth <
+          _labelledStripMinWidth *
+              MediaQuery.textScalerOf(context).scale(12) /
+              12;
+      return Container(
+        height: 52,
+        color: grid.AppPalette.swarmTabBar,
+        child: Row(
+          children: [
+            IconButton(
+              key: const ValueKey('swarm-notifications-button'),
+              onPressed: _notifications,
+              icon: Badge(
+                isLabelVisible: _attention > 0,
+                child: Icon(
+                  Icons.notifications_none,
+                  size: 20,
+                  semanticLabel: _attention > 0
+                      ? '$_attention agents need input'
+                      : 'Notifications',
+                ),
+              ),
             ),
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: ReorderableListView.builder(
-            scrollDirection: Axis.horizontal,
-            shrinkWrap: true,
-            buildDefaultDragHandles: false,
-            itemCount: app.swarms.length,
-            onReorderItem: (old, to) =>
-                app.reorderSwarm(app.swarms[old].id, to),
-            itemBuilder: (context, index) {
-              final swarm = app.swarms[index];
-              return ReorderableDragStartListener(
-                key: ValueKey(swarm.id),
-                index: index,
-                child: GestureDetector(
-                  onDoubleTap: () => _rename(swarm.id),
-                  child: _TabActionsReveal(
-                    builder: (showClose) => Container(
-                      width: 186,
-                      margin: const EdgeInsets.only(top: 6, right: 2),
-                      decoration: BoxDecoration(
-                        color: app.activeSwarmId == swarm.id
-                            ? grid.AppPalette.swarmField
-                            : Colors.transparent,
-                        borderRadius: const BorderRadius.vertical(
-                          top: Radius.circular(9),
+            const SizedBox(width: 10),
+            Expanded(
+              child: ReorderableListView.builder(
+                scrollDirection: Axis.horizontal,
+                shrinkWrap: true,
+                buildDefaultDragHandles: false,
+                itemCount: app.swarms.length,
+                onReorderItem: (old, to) =>
+                    app.reorderSwarm(app.swarms[old].id, to),
+                itemBuilder: (context, index) {
+                  final swarm = app.swarms[index];
+                  return ReorderableDragStartListener(
+                    key: ValueKey(swarm.id),
+                    index: index,
+                    child: GestureDetector(
+                      onDoubleTap: () => _rename(swarm.id),
+                      child: _TabActionsReveal(
+                        builder: (showClose) => Container(
+                          width: 186,
+                          margin: const EdgeInsets.only(top: 6, right: 2),
+                          decoration: BoxDecoration(
+                            color: app.activeSwarmId == swarm.id
+                                ? grid.AppPalette.swarmField
+                                : Colors.transparent,
+                            borderRadius: const BorderRadius.vertical(
+                              top: Radius.circular(9),
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: TextButton(
+                                  onPressed: () => app.selectSwarm(swarm.id),
+                                  style: TextButton.styleFrom(
+                                    animationDuration: Duration.zero,
+                                    foregroundColor:
+                                        app.activeSwarmId == swarm.id
+                                        ? Colors.white
+                                        : Colors.white70,
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      if (swarm.panes.length == 1)
+                                        EngineMark(
+                                          key: ValueKey(
+                                            'tab-engine:${swarm.id}',
+                                          ),
+                                          engine: _tabEngine(swarm),
+                                          size: 16,
+                                        )
+                                      else if (swarm.panes.length > 1)
+                                        SwarmIcon(
+                                          key: ValueKey(
+                                            'tab-group:${swarm.id}',
+                                          ),
+                                          size: 16,
+                                          color: Colors.white70,
+                                        )
+                                      else
+                                        const Icon(Icons.add, size: 16),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Text(
+                                          swarm.name,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(fontSize: 13),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                              Opacity(
+                                key: ValueKey('tab-close:${swarm.id}'),
+                                opacity: showClose ? 1 : 0,
+                                alwaysIncludeSemantics: true,
+                                child: IconButton(
+                                  onPressed: () => app.closeSwarm(swarm.id),
+                                  icon: Icon(
+                                    Icons.close,
+                                    size: 13,
+                                    semanticLabel: 'Close ${swarm.name}',
+                                  ),
+                                  constraints: const BoxConstraints.tightFor(
+                                    width: 30,
+                                    height: 30,
+                                  ),
+                                  padding: EdgeInsets.zero,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: TextButton(
-                              onPressed: () => app.selectSwarm(swarm.id),
-                              style: TextButton.styleFrom(
-                                animationDuration: Duration.zero,
-                                foregroundColor: app.activeSwarmId == swarm.id
-                                    ? Colors.white
-                                    : Colors.white70,
-                              ),
-                              child: Row(
-                                children: [
-                                  if (swarm.panes.length == 1)
-                                    EngineMark(
-                                      key: ValueKey('tab-engine:${swarm.id}'),
-                                      engine: _tabEngine(swarm),
-                                      size: 16,
-                                    )
-                                  else if (swarm.panes.length > 1)
-                                    SwarmIcon(
-                                      key: ValueKey('tab-group:${swarm.id}'),
-                                      size: 16,
-                                      color: Colors.white70,
-                                    )
-                                  else
-                                    const Icon(Icons.add, size: 16),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: Text(
-                                      swarm.name,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(fontSize: 13),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                          Opacity(
-                            key: ValueKey('tab-close:${swarm.id}'),
-                            opacity: showClose ? 1 : 0,
-                            alwaysIncludeSemantics: true,
-                            child: IconButton(
-                              onPressed: () => app.closeSwarm(swarm.id),
-                              icon: Icon(
-                                Icons.close,
-                                size: 13,
-                                semanticLabel: 'Close ${swarm.name}',
-                              ),
-                              constraints: const BoxConstraints.tightFor(
-                                width: 30,
-                                height: 30,
-                              ),
-                              padding: EdgeInsets.zero,
-                            ),
-                          ),
-                        ],
-                      ),
                     ),
-                  ),
-                ),
-              );
-            },
-          ),
+                  );
+                },
+              ),
+            ),
+            IconButton(
+              key: const ValueKey('swarm-new-tab-button'),
+              onPressed: app.canOpenNewTab ? _newTab : null,
+              icon: const Icon(Icons.add, size: 18, semanticLabel: 'New Tab'),
+            ),
+            _harnessButton(create: true, compact: compact),
+            SizedBox(width: compact ? 4 : 10),
+            _harnessButton(create: false, compact: compact),
+            SizedBox(width: compact ? 6 : 12),
+          ],
         ),
-        IconButton(
-          key: const ValueKey('swarm-new-tab-button'),
-          onPressed: app.canOpenNewTab ? _newTab : null,
-          icon: const Icon(Icons.add, size: 18, semanticLabel: 'New Tab'),
-        ),
-        _harnessButton(create: true),
-        const SizedBox(width: 10),
-        _harnessButton(create: false),
-        const SizedBox(width: 12),
-      ],
-    ),
+      );
+    },
   );
 
-  Widget _harnessButton({required bool create}) {
+  Widget _harnessButton({required bool create, bool compact = false}) {
+    final label = create ? 'New Harness' : 'Open Harness';
+    final icon = Icon(
+      create ? AgentActionIcons.create : AgentActionIcons.open,
+      size: 16,
+    );
+    if (compact) {
+      // Same key, same action, same words — carried by the tooltip instead of a label there is no
+      // room for. A strip that overflows shows the user nothing at all.
+      return Tooltip(
+        message: label,
+        child: TextButton(
+          key: ValueKey(
+            create ? 'swarm-new-agent-button' : 'swarm-open-agent-button',
+          ),
+          onPressed: create ? _newAgent : _addAgent,
+          style: TextButton.styleFrom(
+            enabledMouseCursor: SystemMouseCursors.click,
+            minimumSize: const Size(40, 34),
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            backgroundColor: create
+                ? grid.AppPalette.swarmAccent
+                : Colors.transparent,
+            foregroundColor: create
+                ? grid.AppPalette.swarmTabBar
+                : grid.AppPalette.textPrimary,
+            shape: StadiumBorder(
+              side: create
+                  ? BorderSide.none
+                  : const BorderSide(color: Colors.white24),
+            ),
+          ),
+          child: icon,
+        ),
+      );
+    }
     return TextButton.icon(
       key: ValueKey(
         create ? 'swarm-new-agent-button' : 'swarm-open-agent-button',
@@ -1676,11 +1746,8 @@ class _SwarmScreenState extends State<SwarmScreen> {
               : const BorderSide(color: Colors.white24),
         ),
       ),
-      icon: Icon(
-        create ? AgentActionIcons.create : AgentActionIcons.open,
-        size: 16,
-      ),
-      label: Text(create ? 'New Agent' : 'Open Agent'),
+      icon: icon,
+      label: Text(label),
     );
   }
 }

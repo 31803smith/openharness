@@ -275,10 +275,16 @@ case "$(uname -s)" in
       fi
       if command -v brew >/dev/null 2>&1; then
         echo "▸ Installing tmux via Homebrew"
-        brew install tmux || echo "▸ Homebrew could not install tmux; using the managed build instead."
+        # --force-bottle: use Homebrew's prebuilt bottle if there is one, and fail FAST if there is
+        # not, rather than dragging the person into a from-source build. Homebrew stopped shipping
+        # Intel (x86_64) bottles in 2025, so on an Intel Mac `brew install tmux` would otherwise
+        # compile tmux + its deps and demand the Command Line Tools — the exact slow, password-and-
+        # compiler path the managed build exists to avoid. When no bottle is available this returns
+        # non-zero and the managed download below takes over.
+        brew install --force-bottle tmux || echo "▸ No Homebrew tmux bottle for this Mac; using the managed build instead."
       fi
-      # No Homebrew, or a Homebrew that could not: the managed build. Nothing to compile, nothing
-      # to ask a password for — the same checksum-verified download Node gets in step 2.
+      # No Homebrew, or a Homebrew that could not (no bottle): the managed build. Nothing to compile,
+      # nothing to ask a password for — the same checksum-verified download Node gets in step 2.
       tmux_runs || install_managed_tmux
     fi
     ;;

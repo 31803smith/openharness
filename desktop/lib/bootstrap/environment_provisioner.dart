@@ -1,3 +1,4 @@
+import '../core/host_platform.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -353,7 +354,7 @@ class EnvironmentProvisioner {
     if (home != null && home.isNotEmpty) return home;
     final profile = Platform.environment['USERPROFILE'];
     if (profile != null && profile.isNotEmpty) return profile;
-    return null;
+    return containerHome;
   }
 
   static String _defaultHarnessHome() {

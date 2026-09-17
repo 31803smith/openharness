@@ -113,7 +113,7 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
             mainAxisSize: MainAxisSize.min,
             children: [
               Semantics(
-                label: 'Find an agent',
+                label: 'Find a harness',
                 child: SwarmSearchInput(
                   inputKey: const ValueKey('harness-start-search'),
                   controller: _query,
@@ -126,7 +126,7 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
                   groupId: _searchGroup,
                   autofocus: true,
                   showClose: _showResults,
-                  hintText: 'Find an agent',
+                  hintText: 'Find a harness',
                   rounded: true,
                   prominent: true,
                 ),

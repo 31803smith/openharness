@@ -452,6 +452,12 @@ export class TmuxControlStream implements TerminalStreamHandle<TmuxRuntimeRef> {
       },
     })
     child.stdout.on('data', (chunk: Buffer) => this.onStdout(chunk))
+    // Pipe failures are emitted asynchronously by stdin, not by ChildProcess.
+    // A control client that exits during a write must only end this stream.
+    child.stdin.on('error', (error) => {
+      this.notifyClose(this.closed ? 'closed' : `tmux control input failed: ${error.message}`)
+      void this.close()
+    })
     child.once('error', (error) => this.notifyClose(`tmux control client error: ${error.message}`))
     child.once('close', (code) => this.notifyClose(this.closed ? 'closed' : `tmux control client exited (${code ?? 'signal'})`))
   }
@@ -764,7 +770,9 @@ export class TmuxControlStream implements TerminalStreamHandle<TmuxRuntimeRef> {
     // makes agent switching shrink and immediately re-expand the pane; TUIs
     // such as Grok preserve those intermediate repaint fragments in the live
     // screen. The next controller will resize only if its grid truly differs.
-    try { this.child.stdin.write('detach-client\n') } catch { /* ignore */ }
+    if (this.child.stdin.writable) {
+      try { this.child.stdin.write('detach-client\n') } catch { /* ignore */ }
+    }
     const exited = await new Promise<boolean>((resolve) => {
       if (this.child.exitCode != null || this.child.signalCode != null) { resolve(true); return }
       const timer = setTimeout(() => resolve(false), 500)

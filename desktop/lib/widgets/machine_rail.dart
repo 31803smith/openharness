@@ -631,27 +631,36 @@ class _MachineNodeState extends State<_MachineNode> {
                         // _AgentTree's own "OFFLINE WINS").
                         if (state.nodeOnline == false)
                           const _OfflineWord()
-                        else if (state.needsLink)
-                          // Not known to be off, and never linked with this app
-                          // instance — the one click that fixes it, ALWAYS
-                          // visible rather than hidden behind hover like
-                          // _CaptionActions: that was the whole reason an
-                          // unlinked-but-alive machine read as unreachable in
-                          // the first place. Same gate as _LinkMachineRow.
-                          Padding(
-                            padding: const EdgeInsets.only(left: 6),
-                            child: AppIconButton(
-                              key: const ValueKey('machine-link-affordance'),
-                              icon: LucideIcons.link2300,
-                              size: 13,
-                              color: grid.AppPalette.accentOnSurface,
-                              hoverColor: grid.AppPalette.accentOnSurface,
-                              tooltip: 'Link this machine…',
-                              onPressed: () => notifier.selectMachineForSetup(
-                                machine.machineId,
+                        else ...[
+                          // Presence and link state are two independent slots,
+                          // the same split the native Machines menu uses.
+                          // "Online" is said for every reachable machine, so an
+                          // unlinked-but-running one reads "Online" AND still
+                          // offers the link beside it — the link state no longer
+                          // masks the fact that the computer is up. Offline,
+                          // above, still wins (a daemon that is not running
+                          // cannot shake hands — see "OFFLINE WINS").
+                          if (state.nodeOnline == true) const _OnlineWord(),
+                          if (state.needsLink)
+                            // The one click that fixes it, ALWAYS visible rather
+                            // than hidden behind hover like _CaptionActions: that
+                            // was the whole reason an unlinked-but-alive machine
+                            // read as unreachable. Same gate as _LinkMachineRow.
+                            Padding(
+                              padding: const EdgeInsets.only(left: 6),
+                              child: AppIconButton(
+                                key: const ValueKey('machine-link-affordance'),
+                                icon: LucideIcons.link2300,
+                                size: 13,
+                                color: grid.AppPalette.accentOnSurface,
+                                hoverColor: grid.AppPalette.accentOnSurface,
+                                tooltip: 'Link this machine…',
+                                onPressed: () => notifier.selectMachineForSetup(
+                                  machine.machineId,
+                                ),
                               ),
                             ),
-                          ),
+                        ],
                         // How many agents are inside something you have closed.
                         // Only when closed: with the list open you can count
                         // them, and a number beside a list you can see is noise.
@@ -808,7 +817,7 @@ class _AgentTree extends StatelessWidget {
           return _AgentStatusRow(
             icon: Icons.sync,
             label: state.connectionStatus == ConnectionStatus.connected
-                ? 'preparing agent list…'
+                ? 'preparing harness list…'
                 : 'connecting…',
           );
         case AgentLoadStatus.needsLink:
@@ -1195,7 +1204,7 @@ class _AgentRowState extends State<_AgentRow> {
                 const AppMenuDivider(),
                 AppMenuItem(
                   icon: LucideIcons.refreshCw300,
-                  label: 'Restart Agent',
+                  label: 'Restart Harness',
                   onPressed: () {
                     _agentMenu.close();
                     _restartAgent();
@@ -1204,7 +1213,7 @@ class _AgentRowState extends State<_AgentRow> {
                 const AppMenuDivider(),
                 AppMenuItem(
                   icon: Icons.stop_rounded,
-                  label: 'Stop Agent',
+                  label: 'Stop Harness',
                   danger: true,
                   onPressed: () {
                     _agentMenu.close();
@@ -1488,6 +1497,30 @@ class _OfflineWord extends StatelessWidget {
       padding: const EdgeInsets.only(left: 8),
       child: Text(
         'offline',
+        style: TextStyle(
+          color: grid.AppPalette.textFaint,
+          fontFamily: grid.AppFont.sans,
+          fontSize: 10,
+          letterSpacing: 0.2,
+        ),
+      ),
+    );
+  }
+}
+
+/// The counterpart to [_OfflineWord]: the machine's node is up. Same quiet
+/// treatment so online/offline read as the same kind of thing — the green
+/// connection dot beside the name already carries the colour; this is the word.
+class _OnlineWord extends StatelessWidget {
+  const _OnlineWord();
+
+  @override
+  Widget build(BuildContext context) {
+    grid.AppTheme.watch(context);
+    return Padding(
+      padding: const EdgeInsets.only(left: 8),
+      child: Text(
+        'online',
         style: TextStyle(
           color: grid.AppPalette.textFaint,
           fontFamily: grid.AppFont.sans,

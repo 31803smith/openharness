@@ -164,7 +164,7 @@ export interface RegisteredSession {
   launcherId?: string
   transcriptPath: string | null
   projectDir: string
-  /** Stable default for agents created by Harness — the next `agent-N`, or the name the creator asked
+  /** Stable default for agents created by Harness — the next `harness-N`, or the name the creator asked
    *  for (`agent_create`'s `name`). Discovered agents keep their existing names. */
   defaultName?: string
   cwd: string | null
@@ -1052,7 +1052,7 @@ class Registry {
     /** The engine's named agent the pane was opened as (`agent_create`'s `agent`), validated upstream. */
     agent?: string | null
     bypassPermission?: boolean
-    /** The name the creator asked for, instead of the next `agent-N`. Blank means "number it". */
+    /** The name the creator asked for, instead of the next `harness-N`. Blank means "number it". */
     defaultName?: string | null
   }): RegisteredSession | null {
     if (this.writeBlocked) return null
@@ -1107,10 +1107,11 @@ class Registry {
       ...NAME_OVERRIDES.values(),
     ]
     for (const name of names) {
-      const match = name && /^agent-([1-9]\d*)$/.exec(name)
+      // `agent-N` is the name this daemon gave sessions before the rename; the count carries on
+      const match = name && /^(?:harness|agent)-([1-9]\d*)$/.exec(name)
       if (match && BigInt(match[1]!) >= next) next = BigInt(match[1]!) + 1n
     }
-    return `agent-${next}`
+    return `harness-${next}`
   }
 
   /** Discovered process agents that have no engine session bound yet. */

@@ -134,7 +134,7 @@ void main() {
     'New swarm',
     'New tab',
     'New Tab',
-    'New Agent',
+    'New Harness',
     'New Tab',
   ]) {
     test(

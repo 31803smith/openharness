@@ -316,4 +316,74 @@ void main() {
     app.dispose();
     projects.dispose();
   });
+
+  testWidgets('machinesState reports presence and link state independently', (
+    tester,
+  ) async {
+    const channel = MethodChannel('harness/swarm_tabs');
+    final messenger = tester.binding.defaultBinaryMessenger;
+    final messages = <MethodCall>[];
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      messages.add(call);
+      return true;
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+    final app = createApp();
+    final state = app.machineStates['m']!;
+    final projects = SwarmProjectStore();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SwarmScreen(
+          notifier: app,
+          nativeTabs: true,
+          projectStore: projects,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    Map machine() =>
+        ((messages.lastWhere((c) => c.method == 'machinesState').arguments
+                    as Map)['machines']
+                as List)
+            .single
+        as Map;
+
+    // Online + linked: presence shows "Online", trailing status drops out so
+    // the agent count can fill the slot.
+    state
+      ..needsLink = false
+      ..nodeOnline = true;
+    app.notifyListeners();
+    await tester.pump();
+    expect(machine()['presence'], 'Online');
+    expect(machine()['linkRequired'], isFalse);
+    expect(machine()['status'], '');
+
+    // Unlinked but the node is up: BOTH indicators are set — the whole point of
+    // splitting them. Link state no longer masks presence.
+    state.needsLink = true;
+    app.notifyListeners();
+    await tester.pump();
+    expect(machine()['presence'], 'Online');
+    expect(machine()['linkRequired'], isTrue);
+    expect(machine()['status'], 'Link required');
+
+    // Offline while agents are still cached (agentCount stays non-null): the
+    // "Offline" presence must survive rather than being masked by the count in
+    // the trailing slot.
+    state
+      ..needsLink = false
+      ..nodeOnline = false;
+    app.notifyListeners();
+    await tester.pump();
+    expect(machine()['presence'], 'Offline');
+    expect(machine()['linkRequired'], isFalse);
+    expect(machine()['status'], '');
+    expect(machine()['agentCount'], 70); // cached agents remain
+
+    await tester.pumpWidget(const SizedBox());
+    app.dispose();
+    projects.dispose();
+  });
 }

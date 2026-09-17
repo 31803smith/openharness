@@ -141,7 +141,7 @@ void main() {
   // it already has. Only the middle one is about the ACCOUNT, and folding the first two together is
   // what told a signed-in user to "sign in again" when the real problem was a daemon that had not
   // answered: advice that was wrong, and useless even if the diagnosis had been right. The third
-  // says nothing: the "Talk to Local model manager" row under Local is what a person does about it.
+  // says nothing: the invitation that closes the Local section is what a person does about it.
   testWidgets(
     'a machine that did not answer says so, and does not blame the account',
     (tester) async {
@@ -169,7 +169,7 @@ void main() {
       await open(tester);
       expect(find.text('Nothing is being served yet.'), findsNothing);
       expect(find.text('Could not reach this machine.'), findsNothing);
-      expect(find.text('Talk to Local model manager'), findsOneWidget);
+      expect(find.text('Talk to model manager'), findsOneWidget);
     },
   );
 
@@ -449,55 +449,143 @@ void main() {
     },
   );
 
-  group('the last row under Local starts a local model', () {
+  group('which engines are offered a picker at all', () {
+    test('the three whose switching has been driven end to end', () {
+      // Not the daemon's `localModelEngines`, which is the wider "could a Local model be handed to
+      // this engine" — seven carry a launch contract. This is which ones a person is OFFERED the
+      // switch on, and it is the three that have been watched work: Claude Code and Codex move by
+      // environment, OpenCode by a config file plus its own `/models` picker.
+      expect(kModelPickerEngines, {'claude', 'codex', 'opencode'});
+      for (final engine in ['claude', 'codex', 'opencode']) {
+        expect(modelPickerSupports(engine), isTrue, reason: engine);
+      }
+    });
+
+    test('everything else keeps the header it had', () {
+      // A picker on an engine whose move has never been watched work is a menu that looks like a
+      // choice and may not be one — and the cost of finding out is an agent answering on a model
+      // nobody asked for.
+      for (final engine in ['cursor', 'hermes', 'grok', 'pi', 'kilo', 'amp', 'devin']) {
+        expect(modelPickerSupports(engine), isFalse, reason: engine);
+      }
+      // Unknown and absent are NO, not "probably fine".
+      expect(modelPickerSupports(null), isFalse);
+      expect(modelPickerSupports(''), isFalse);
+      expect(modelPickerSupports('something-new'), isFalse);
+    });
+
+    test('an engine id is matched however it is spelled', () {
+      expect(modelPickerSupports('Claude'), isTrue);
+      expect(modelPickerSupports('  OpenCode '), isTrue);
+    });
+  });
+
+  group('the invitation that closes the Local section', () {
     const served = [
       {'id': 'Qwen-Test', 'node': 'macbook-m1max'},
     ];
 
-    testWidgets('is there after the served models', (tester) async {
+    testWidgets('a captioned rule, then the button, under the models', (
+      tester,
+    ) async {
       build(models: served);
       await open(tester);
-      expect(find.text('Talk to Local model manager'), findsOneWidget);
-      // After the models, not among them: it is the way to get another one, and a row that
-      // started something sitting between two places the agent could go would read as a third.
-      final row = tester.getTopLeft(find.text('Talk to Local model manager'));
-      final model = tester.getTopLeft(find.text('Qwen-Test'));
-      expect(row.dy, greaterThan(model.dy));
+      final caption = tester.getTopLeft(
+        find.text('Want to manage local models?'),
+      );
+      final button = tester.getTopLeft(find.text('Talk to model manager'));
+      final model = tester.getBottomLeft(find.text('Qwen-Test'));
+
+      // Under the list, not among it: the models are places this agent can go and this starts
+      // something, so the rule is what says a different question begins here.
+      expect(caption.dy, greaterThan(model.dy));
+      expect(button.dy, greaterThan(caption.dy));
+      // And the rule is a rule — a line either side of the caption, not just a label.
+      expect(
+        find.descendant(
+          of: find.byType(Row),
+          matching: find.byType(Container),
+        ),
+        findsWidgets,
+      );
+    });
+
+    testWidgets('has room to breathe, above and below the caption', (
+      tester,
+    ) async {
+      // The gaps are the point as much as the parts: a rule tight against the last model reads as a
+      // separator between two rows rather than the end of a list, and a button pressed against its
+      // own caption reads as one block of chrome. Both were tried.
+      build(models: served);
+      await open(tester);
+      final model = tester.getBottomLeft(find.text('Qwen-Test'));
+      final caption = tester.getTopLeft(
+        find.text('Want to manage local models?'),
+      );
+      final captionBottom = tester.getBottomLeft(
+        find.text('Want to manage local models?'),
+      );
+      final button = tester.getTopLeft(find.text('Talk to model manager'));
+      expect(caption.dy - model.dy, greaterThan(8));
+      expect(button.dy - captionBottom.dy, greaterThan(8));
+    });
+
+    testWidgets('spans the menu, so it reads as the section action', (
+      tester,
+    ) async {
+      build(models: served);
+      await open(tester);
+      final surface = tester.getSize(find.byType(Material).last).width;
+      final box = tester.getSize(
+        find
+            .ancestor(
+              of: find.text('Talk to model manager'),
+              matching: find.byType(Container),
+            )
+            .first,
+      );
+      // Full width less its own inset — a button the width of its label would read as a row.
+      expect(box.width, greaterThan(surface - 40));
     });
 
     testWidgets(
       'is there when nothing is served, and when there is no grid at all',
       (tester) async {
-        // The empty-state sentence is the sentence this row answers, so the row is under it — and it
-        // is there even with no grid, because a person with no Local models is exactly who needs it.
+        // A person with no Local models is exactly who needs it, so it does not wait for a list.
         await open(tester);
-        expect(find.text('Talk to Local model manager'), findsOneWidget);
-        final row = tester.getTopLeft(find.text('Talk to Local model manager'));
-        final sentence = tester.getTopLeft(
-          find.text('No local models on this account yet.'),
-        );
-        expect(row.dy, greaterThan(sentence.dy));
-        // Never the plumbing's name, in this row as in the rest of the menu.
+        expect(find.text('Talk to model manager'), findsOneWidget);
+        // Never the plumbing's name, in this block as in the rest of the menu.
         expect(find.textContaining('grid'), findsNothing);
       },
     );
 
     testWidgets(
-      'is never filled: an action is nowhere, so it cannot be the current row',
+      'is a button, not a row: it can never wear the current-model fill',
       (tester) async {
         build(models: served);
         await open(tester, currentModel: 'Qwen-Test');
         expect(find.byIcon(Icons.check), findsNothing);
-        Container rowFor(String text) => tester.widget<Container>(
+        final model = tester.widget<Container>(
           find
-              .ancestor(of: find.text(text), matching: find.byType(Container))
+              .ancestor(
+                of: find.text('Qwen-Test'),
+                matching: find.byType(Container),
+              )
               .first,
         );
-        expect(
-          (rowFor('Qwen-Test').decoration as BoxDecoration?)?.color,
-          isNotNull,
+        expect((model.decoration as BoxDecoration?)?.color, isNotNull);
+        // Its own shape — a border, no fill — so the eye does not read it as the selected row.
+        final button = tester.widget<Container>(
+          find
+              .ancestor(
+                of: find.text('Talk to model manager'),
+                matching: find.byType(Container),
+              )
+              .first,
         );
-        expect(rowFor('Talk to Local model manager').decoration, isNull);
+        final decoration = button.decoration as BoxDecoration?;
+        expect(decoration?.border, isNotNull);
+        expect(decoration?.color, Colors.transparent);
       },
     );
 
@@ -513,15 +601,15 @@ void main() {
         onOwnLogin: () => logins++,
         onSelected: (m) => picked = m,
       );
-      await tester.tap(find.text('Talk to Local model manager'));
+      await tester.tap(find.text('Talk to model manager'));
       await tester.pumpAndSettle();
       expect(runs, 1);
       // Not a move: the agent stays where it was. `currentModel` is set so a stray own-login call
       // would have fired — the case where it is silent for its own reason is not the one tested.
       expect(logins, 0);
       expect(picked, isNull);
-      // The menu closed on the choice, like any other row.
-      expect(find.text('Talk to Local model manager'), findsNothing);
+      // The menu closed on the press, as it does on any choice.
+      expect(find.text('Talk to model manager'), findsNothing);
     });
   });
 

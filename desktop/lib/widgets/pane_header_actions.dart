@@ -19,6 +19,7 @@ class PaneHeaderActions extends StatelessWidget {
     this.viewerVisible = false,
     this.viewerColor,
     this.details,
+    this.modelPicker,
   });
 
   final bool zoomed, composerVisible;
@@ -36,6 +37,14 @@ class PaneHeaderActions extends StatelessWidget {
   /// Folder, branch and machine share the controls' space while idle. Both
   /// layers keep their size so hovering never changes the title's width.
   final Widget? details;
+
+  /// Where this agent runs, shown with the controls rather than beside the name.
+  ///
+  /// It belongs here for the same reason the icons do: a header this narrow has room for the agent's
+  /// NAME or for what you can do to it, not both, and what you can do to it is worth reading only
+  /// when you are reaching for it. Parked on the left of the cluster, so the four icons a person
+  /// aims at by muscle memory keep the right edge they have always had.
+  final Widget? modelPicker;
 
   @override
   Widget build(BuildContext context) {
@@ -81,6 +90,10 @@ class PaneHeaderActions extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (modelPicker != null) ...[
+              modelPicker!,
+              const SizedBox(width: 4),
+            ],
             if (onToggleViewer != null) ...[
               _ViewerToggle(
                 key: const ValueKey('pane-viewer-toggle'),
@@ -106,9 +119,9 @@ class PaneHeaderActions extends StatelessWidget {
               onZoom,
             ),
             const SizedBox(width: 2),
-            action('Restart Agent', LucideIcons.refreshCw, onRestart),
+            action('Restart Harness', LucideIcons.refreshCw, onRestart),
             const SizedBox(width: 2),
-            action('Stop Agent', Icons.stop_rounded, onDelete),
+            action('Stop Harness', Icons.stop_rounded, onDelete),
             const SizedBox(width: 2),
             action('Close Pane', LucideIcons.x, onClose),
           ],

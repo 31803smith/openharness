@@ -394,8 +394,10 @@ export const ENCRYPTED_DOWN_TYPES = new Set<string>([
   // it outright as TERMINAL_FRAME_REJECTED — indistinguishable from a real protocol violation.
   'terminal_chunked_upload_begin', 'terminal_chunked_upload_cancel',
   // WebRTC signaling reveals both peers' network candidates. Keep it inside the already-authenticated
-  // pairwise session; the backend needs only the outer type + connId to route it.
-  'p2p_offer', 'p2p_answer', 'p2p_ice_candidate', 'p2p_abort',
+  // pairwise session; the backend needs only the outer type + connId to route it. p2p_promote is the
+  // TURN-to-direct cutover (remoteRelay.ts promoteToDirect()) — missing here it went out in the clear
+  // and the backend's isEncryptedP2pFrame() rejected it, so no upgrade ever got its ack.
+  'p2p_offer', 'p2p_answer', 'p2p_ice_candidate', 'p2p_abort', 'p2p_promote',
 ])
 export function isEncryptedUpType(t: string): boolean { return ENCRYPTED_UP_TYPES.has(t) }
 export function isEncryptedRpcResultType(t: string): boolean { return ENCRYPTED_RPC_RESULT_TYPES.has(t) }

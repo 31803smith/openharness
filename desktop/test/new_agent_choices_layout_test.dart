@@ -9,8 +9,10 @@ import 'package:harness/auth/auth_session.dart';
 import 'package:harness/core/config.dart';
 import 'package:harness/core/engine_availability.dart';
 import 'package:harness/core/models.dart';
+import 'package:harness/core/project_folder.dart';
 import 'package:harness/shared/theme/app_theme.dart' as grid;
 import 'package:harness/state/app_state.dart';
+import 'package:harness/state/pane_arrangement.dart';
 import 'package:harness/widgets/new_agent_dialog.dart';
 import 'package:harness/shared/widgets/app_choice_picker.dart';
 
@@ -46,6 +48,28 @@ class _ChoicesApp extends AppNotifier {
           ),
         ]);
     }
+  }
+
+  int createCalls = 0;
+
+  @override
+  Future<String?> createAgent(
+    String machineId, {
+    required String engine,
+    required String folder,
+    ProjectFolderRequest? projectFolder,
+    bool bypassPermission = false,
+    String? codexHome,
+    String? swarmId,
+    PaneSplitRequest? split,
+    String? dsh,
+    String? prompt,
+    String? name,
+    String? agent,
+    AgentCreationAttempt? attempt,
+  }) async {
+    createCalls++;
+    return null;
   }
 
   @override
@@ -94,6 +118,7 @@ void main() {
 
   for (final (size, scale) in [
     (const Size(1280, 1000), 1.0),
+    (const Size(1024, 768), 1.0),
     (const Size(900, 720), 1.0),
     (const Size(880, 560), 1.0),
     (const Size(600, 700), 2.0),
@@ -149,7 +174,14 @@ void main() {
         final output = Platform.environment['HARNESS_CHOICES_CAPTURE_DIR'];
         if (output == null) return;
         await tester.runAsync(() async {
-          for (final asset in ['codex.png', 'cursor.png', 'kilo.png']) {
+          for (final asset in [
+            'codex.png',
+            'cursor.png',
+            'kilo.png',
+            'solid.png',
+            'copper.png',
+            'marp.png',
+          ]) {
             await precacheImage(
               AssetImage('assets/engine-icons/$asset'),
               boundaryKey.currentContext!,
@@ -197,7 +229,27 @@ void main() {
       }
 
       expectUniformTiles();
-      expect(find.text('This machine'), findsOneWidget);
+      if (size.width >= 900 && size.height >= 720 && scale == 1) {
+        // The common desktop sizes should show every choice before scrolling.
+        final form = find.ancestor(
+          of: find.byKey(const ValueKey('new-agent-quick-codex')),
+          matching: find.byType(SingleChildScrollView),
+        );
+        final visible = tester.getRect(form);
+        for (final key in [
+          'new-agent-quick-codex',
+          'new-agent-machine-local',
+          'new-agent-folder-newProject',
+          'new-agent-project-recent',
+        ]) {
+          final choice = find.byKey(ValueKey(key));
+          final bounds = tester.getRect(choice);
+          expect(bounds.top, greaterThanOrEqualTo(visible.top));
+          expect(bounds.bottom, lessThanOrEqualTo(visible.bottom));
+          expect(choice.hitTestable(), findsOneWidget);
+        }
+      }
+      expect(find.text('This computer'), findsOneWidget);
       expect(find.text('Cancel'), findsNothing);
       expect(find.widgetWithText(FilledButton, 'Create'), findsOneWidget);
       final advanced = find.byKey(const Key('new-agent-advanced'));
@@ -243,6 +295,75 @@ void main() {
       await capture('repository');
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pumpAndSettle();
+
+      // Help is a separate route: it must keep the current choices and scroll
+      // position, contain keyboard shortcuts, and return focus to its trigger.
+      for (final (topic, lastTitle) in [
+        ('agent', 'Marp · Slides'),
+        ('machine', 'Remote machine'),
+        ('project', 'Recent'),
+      ]) {
+        final help = find.byKey(ValueKey('harness-help-$topic'));
+        await tester.ensureVisible(help);
+        await tester.pumpAndSettle();
+        final position = Scrollable.of(tester.element(help)).position;
+        final scrollBefore = position.pixels;
+        await tester.tap(help);
+        await tester.pumpAndSettle();
+        final guide = find.byKey(ValueKey('harness-help-guide-$topic'));
+        expect(guide, findsOneWidget);
+        await capture('help-$topic');
+        for (final modifier in [
+          LogicalKeyboardKey.metaLeft,
+          LogicalKeyboardKey.controlLeft,
+        ]) {
+          await tester.sendKeyDownEvent(modifier);
+          await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+          await tester.sendKeyUpEvent(modifier);
+          await tester.pumpAndSettle();
+          expect(guide, findsOneWidget);
+          expect(app.createCalls, 0);
+        }
+        final lastSection = find.descendant(
+          of: guide,
+          matching: find.text(lastTitle),
+        );
+        await tester.ensureVisible(lastSection);
+        await tester.pumpAndSettle();
+        expect(tester.getRect(lastSection).bottom, lessThan(size.height));
+        expect(tester.takeException(), isNull);
+        if (topic == 'agent') {
+          await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+        } else if (topic == 'machine') {
+          await tester.tap(find.byKey(const Key('harness-help-close')));
+        } else {
+          await tester.tapAt(const Offset(2, 2));
+        }
+        await tester.pumpAndSettle();
+        expect(guide, findsNothing);
+        expect(position.pixels, closeTo(scrollBefore, 1));
+        expect(tester.widget<TextButton>(help).focusNode!.hasFocus, isTrue);
+        await capture('help-$topic-closed');
+        final selected = tester.widget<AppChoiceTile>(git);
+        expect(selected.selected, isTrue);
+        expect(selected.detail, 'repo');
+        expect(
+          tester
+              .widget<AppChoiceTile>(
+                find.byKey(const ValueKey('new-agent-quick-codex')),
+              )
+              .selected,
+          isTrue,
+        );
+        expect(
+          tester
+              .widget<AppChoicePicker<String>>(
+                find.byKey(const Key('new-agent-machine-field')),
+              )
+              .value,
+          'local',
+        );
+      }
       final moreMachines = find.byKey(const Key('new-agent-machine-more'));
       await tester.ensureVisible(moreMachines);
       await tester.tap(moreMachines);

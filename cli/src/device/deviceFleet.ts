@@ -50,6 +50,8 @@ export class DeviceFleet implements MachineFleet {
   private readonly recapCache = new Map<string, RecentTurn[]>()
   /** Filled by the same `agent_recent` round trip the recaps come from — see recentSummaries. */
   private readonly askCache = new Map<string, string[]>()
+  /** `agent_recent` round trips in flight, so two callers asking at once share one — see recentSummaries. */
+  private readonly recapInFlight = new Map<string, Promise<RecentTurn[]>>()
   private readonly listeners = new Set<(e: FleetEvent) => void>()
   /**
    * How the last round trip to each machine went.
@@ -252,6 +254,21 @@ export class DeviceFleet implements MachineFleet {
     const key = `${machineId}:${agentId}`
     const cached = this.recapCache.get(key)
     if (cached) return cached
+    // ONE round trip per agent, however many callers want it. Selecting a machine starts a prefetch AND a
+    // restore push, and both walk the same agents: without this the cold list is asked for twice, in two
+    // serial loops, and the second loop is the one the dial is waiting on.
+    const inflight = this.recapInFlight.get(key)
+    if (inflight) return inflight
+    const round = this.fetchRecent(machineId, agentId, key)
+    this.recapInFlight.set(key, round)
+    try {
+      return await round
+    } finally {
+      this.recapInFlight.delete(key)
+    }
+  }
+
+  private async fetchRecent(machineId: string, agentId: string, key: string): Promise<RecentTurn[]> {
     try {
       const res = await this.rpc(machineId, 'agent_recent', { agentId, n: 3 })
 

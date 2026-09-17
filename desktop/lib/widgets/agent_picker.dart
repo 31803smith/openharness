@@ -44,15 +44,19 @@ class AgentPicker extends StatelessWidget {
           label: option.value == 'claude' ? 'Claude Code' : option.label,
           note: option.note,
           detail: option.detail,
-          leading: () => EngineMark(engine: option.value, size: 18),
+          leading: () => EngineMark(
+            engine: option.value,
+            size: tileSize == null ? 18 : 22,
+          ),
           trailing: option.trailing,
         ),
     ],
     preferredValues: quickAgents,
     onChanged: onChanged,
+    notifyOnReselect: true,
     optionKey: (id) => ValueKey('new-agent-quick-$id'),
     moreKey: const Key('new-agent-engine-field'),
     moreLabel: 'More agents',
-    moreLeading: const Icon(LucideIcons.layoutGrid, size: 18),
+    moreLeading: Icon(LucideIcons.layoutGrid, size: tileSize == null ? 18 : 22),
   );
 }

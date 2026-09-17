@@ -53,6 +53,13 @@ class _NewAgentProjectPickerState extends State<NewAgentProjectPicker> {
   late String? _folder = widget.initialFolder;
   GitHubRepository? _repository;
   bool _chosen = false, _browsing = false;
+  final _localFocus = FocusNode();
+
+  @override
+  void dispose() {
+    _localFocus.dispose();
+    super.dispose();
+  }
 
   @override
   void initState() {
@@ -153,6 +160,7 @@ class _NewAgentProjectPickerState extends State<NewAgentProjectPicker> {
 
   Future<void> _browse() async {
     if (_browsing || widget.locked) return;
+    final restoreFocus = _localFocus.hasFocus;
     _chosen = true;
     setState(() => _browsing = true);
     try {
@@ -161,7 +169,14 @@ class _NewAgentProjectPickerState extends State<NewAgentProjectPicker> {
         _select(_ProjectSource.local, folder: path);
       }
     } finally {
-      if (mounted) setState(() => _browsing = false);
+      if (mounted) {
+        setState(() => _browsing = false);
+        if (restoreFocus) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && !widget.locked) _localFocus.requestFocus();
+          });
+        }
+      }
     }
   }
 
@@ -187,15 +202,15 @@ class _NewAgentProjectPickerState extends State<NewAgentProjectPicker> {
       mainAxisSize: MainAxisSize.min,
       children: [
         Wrap(
-          spacing: 10,
-          runSpacing: 10,
+          spacing: AppChoiceTile.gap,
+          runSpacing: AppChoiceTile.gap,
           children: [
             AppChoiceTile(
               key: const Key('new-agent-folder-newProject'),
               size: widget.tileSize,
               focusNode: widget.focusNode,
               label: 'New project',
-              leading: const Icon(LucideIcons.folderPlus, size: 18),
+              leading: const Icon(LucideIcons.folderPlus, size: 22),
               selected: _source == _ProjectSource.newProject,
               onPressed: widget.locked
                   ? null
@@ -204,11 +219,12 @@ class _NewAgentProjectPickerState extends State<NewAgentProjectPicker> {
             AppChoiceTile(
               key: const Key('new-agent-project-browse'),
               size: widget.tileSize,
-              label: 'Local',
+              focusNode: _localFocus,
+              label: 'Existing folder',
               detail: _source == _ProjectSource.local && _folder != null
                   ? p.basename(_folder!)
                   : null,
-              leading: const Icon(LucideIcons.folderOpen, size: 18),
+              leading: const Icon(LucideIcons.folderOpen, size: 22),
               selected: _source == _ProjectSource.local,
               onPressed: widget.locked || _browsing ? null : _browse,
             ),
@@ -217,7 +233,7 @@ class _NewAgentProjectPickerState extends State<NewAgentProjectPicker> {
               size: widget.tileSize,
               label: 'Git',
               detail: _repository?.name,
-              leading: const Icon(LucideIcons.gitBranch, size: 18),
+              leading: const Icon(LucideIcons.gitBranch, size: 22),
               selected: _source == _ProjectSource.git,
               onPressed: widget.locked ? null : _git,
             ),
@@ -230,6 +246,7 @@ class _NewAgentProjectPickerState extends State<NewAgentProjectPicker> {
                 options: recent,
                 width: widget.tileSize.width,
                 height: widget.tileSize.height,
+                padding: AppChoiceTile.padding,
                 selected: selectedRecent,
                 fillColor: selectedRecent
                     ? grid.AppPalette.swarmAccent.withValues(alpha: .16)
@@ -242,7 +259,7 @@ class _NewAgentProjectPickerState extends State<NewAgentProjectPicker> {
                   detail: selectedRecent && _folder != null
                       ? p.basename(_folder!)
                       : null,
-                  leading: const Icon(LucideIcons.history, size: 18),
+                  leading: const Icon(LucideIcons.history, size: 22),
                   trailing: const Icon(Icons.keyboard_arrow_down, size: 18),
                 ),
               ),
