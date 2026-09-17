@@ -951,10 +951,12 @@ def load_structure(path: "str | Path") -> Chem.Mol:
     base = Chem.Mol(records[0])
     elements = [a.GetAtomicNum() for a in base.GetAtoms()]
     energies: list[float] = []
+    kept = records[:1]  # the records whose conformer base carries, so each energy stays with its conformer
     for extra in records[1:]:
         if [a.GetAtomicNum() for a in extra.GetAtoms()] == elements and extra.GetNumConformers():
             base.AddConformer(Chem.Conformer(extra.GetConformer()), assignId=True)
-    for k, record in enumerate(records[: base.GetNumConformers()]):
+            kept.append(extra)
+    for record in kept:
         if record.HasProp("energy"):
             try:
                 energies.append(float(record.GetProp("energy")))
