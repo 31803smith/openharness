@@ -4836,6 +4836,8 @@ class AppNotifier extends ChangeNotifier {
               '${detail ?? 'Install it there, then try again.'}',
         'PROMPT_UNSUPPORTED' =>
           'This engine cannot be opened with a first message on $machine.',
+        'PROMPT_TOO_LONG' =>
+          'This first task is too long for $machine. Shorten it and try again.',
         'AGENT_UNSUPPORTED' =>
           'This engine cannot be opened as a named agent on $machine.',
         _ => 'Create harness failed: ${detail ?? code}',
@@ -4953,6 +4955,8 @@ class AppNotifier extends ChangeNotifier {
         'INVALID_CODEX_HOME',
         'INVALID_DSH',
         'PROMPT_UNSUPPORTED',
+        'PROMPT_TOO_LONG',
+        'INVALID_PROMPT',
         'AGENT_UNSUPPORTED',
         'TMUX_UNAVAILABLE',
         'TMUX_TOO_OLD_FOR_GRID',
