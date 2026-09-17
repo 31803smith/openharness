@@ -151,7 +151,7 @@ export function routeSegments(routing) {
     const at = [Number(pm[1]), Number(pm[2])]
     drivenAt.set(wire, at)
     const [src] = pm[3].split('.->.')
-    const sm = PIP_WIRE.exec(src ?? '')
+    const sm = PIP_WIRE.exec(src)
     if (sm) edges.push([`X${sm[1]}/Y${sm[2]}/${sm[3]}`, at, [Number(sm[1]), Number(sm[2])]])
   }
   const segs = []

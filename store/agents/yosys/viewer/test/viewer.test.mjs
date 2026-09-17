@@ -1,13 +1,15 @@
 // The pane's readers, without a browser or a toolchain: `npm test` (or node --test viewer/test/*.test.mjs).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { extendBits, parseVcd, tickFs, vcdMeta, vcdSignal } from '../lib/vcd.mjs'
 import { buildChip, moduleOf, routeSegments, tilesFromText } from '../lib/chip.mjs'
-import { cleanModuleName, hierarchy, moduleForRender, moduleIndex, paramsOf } from '../lib/netlist.mjs'
-import { errorLine, findTop, flowState, parsePcf } from '../lib/workspace.mjs'
+import { cleanModuleName, hierarchy, moduleForRender, moduleIndex, paramsOf, topModule } from '../lib/netlist.mjs'
+import { errorLine, fileInfo, findTop, flowState, parsePcf, readText, sources, topPorts } from '../lib/workspace.mjs'
 import { formatValue, uartDecode, uartTiming } from '../public/wavecore.js'
 
 // Trimmed from Icarus: two $dumpvars make the testbench scope appear twice, a task scope, a
@@ -271,4 +273,297 @@ test('flow state: running, done, failed with its error line, skipped once the ru
     rmSync(ws, { recursive: true, force: true })
   }
   assert.equal(errorLine('fine\n  ok   no error here\nError: it broke\n'), 'Error: it broke')
+})
+
+// ------------------------------------------------------------------------------ the edges
+
+test('VCD edges: odd headers, same-tick rewrites, reals, strings, scalar levels, the change cap', () => {
+  assert.equal(tickFs(undefined), 1e3)
+  assert.equal(extendBits('10101', 3), '101')
+  assert.equal(extendBits('', 4), '0000')
+  assert.equal(parseVcd('$date never ends').signals.size, 0)
+
+  const p = parseVcd(`$timescale 10 ns $end
+$var wire 1 ! top_level $end
+$var wire 1 $end
+$var reg w # oddwidth $end
+$scope module m $end
+$var reg 8 @ bus [7:0] $end
+$var wire 1 ^ bit [3] $end
+$var real 64 % temp $end
+$var string 1 & msg $end
+$upscope $end
+$scope module m $end
+$var reg 8 @ bus [7:0] $end
+$upscope $end
+$upscope $end
+$enddefinitions $end
+#0
+0!
+1!
+b101 %
+x@
+#5
+1!
+$comment 0! not a change $end
+r2.5 %
+R2.5 %
+r9 ?
+sHello &
+Sbye ?
+b1 ?
+l^
+#6
+h^
+#7
+u^
+#8
+Z^
+#9
+X^
+0?
+`)
+  assert.equal(p.tickFs, 1e7)
+  assert.deepEqual(p.vars.map((v) => [v.path, v.width, v.msb, v.lsb]),
+    [['top_level', 1, 0, 0], ['oddwidth', 1, 0, 0], ['m.bus', 8, 7, 0], ['m.bit', 1, 3, 3], ['m.temp', 64, 63, 0], ['m.msg', 1, 0, 0]])
+  const sig = (id) => p.signals.get(id)
+  // 0 then 1 in the first tick: the later write wins; 1 again at #5 is no edge
+  assert.deepEqual([sig('!').times, sig('!').values], [[0], ['1']])
+  assert.deepEqual(sig('@').values, ['xxxxxxxx']) // a scalar x on a bus fills it
+  assert.deepEqual([sig('%').real, sig('%').values], [true, ['101', '2.5']])
+  assert.deepEqual(sig('&').values, ['Hello'])
+  assert.deepEqual(sig('^').values, ['0', '1', 'x', 'z', 'x'])
+  assert.equal(p.truncated, false)
+
+  const capped = parseVcd('$var wire 1 ! a $end $enddefinitions $end #0 0! #1 1! #2 0! #3 1!', { maxChanges: 2 })
+  assert.deepEqual([capped.truncated, capped.signals.get('!').values], [true, ['0', '1']])
+})
+
+test('chipdb: found beside icepack and read from its head, or the built-in UP5K pin table', () => {
+  const probe = (env, pins) => {
+    const r = spawnSync(process.execPath, [fileURLToPath(new URL('./chipdb-probe.mjs', import.meta.url))], {
+      env: { ...process.env, ...env, PROBE_PINS: JSON.stringify(pins) }, encoding: 'utf8',
+    })
+    assert.equal(r.status, 0, r.stderr)
+    return JSON.parse(r.stdout)
+  }
+  const root = mkdtempSync(join(tmpdir(), 'yosys-chipdb-'))
+  try {
+    mkdirSync(join(root, 'bin'))
+    writeFileSync(join(root, 'bin', 'icepack'), '')
+    mkdirSync(join(root, 'share', 'icestorm', 'chipdb'), { recursive: true })
+    writeFileSync(join(root, 'share', 'icestorm', 'chipdb', 'chipdb-5k.txt'),
+      '.device 5k\n.pins sg48\n2 8 0 0\n3 9 0 1\n\n.pins uwg30\nA1 1 2 3\n.io_tile 1 0\n')
+    const found = probe({ PROBE_ICEPACK: join(root, 'bin', 'icepack') },
+      [['up5k', 'sg48'], ['up5k', 'uwg30'], ['up5k', 'nope'], ['hx8k', 'ct256'], ['ecp5', 'x']])
+    assert.equal(realpathSync(found.dir), realpathSync(join(root, 'share', 'icestorm', 'chipdb')))
+    assert.equal(found.cached, true)
+    assert.ok(found.lookupPath.endsWith(':/opt/homebrew/bin:/usr/local/bin:/usr/bin'))
+    assert.deepEqual(found.pins, [
+      [{ pin: '2', x: 8, y: 0, z: 0 }, { pin: '3', x: 9, y: 0, z: 1 }],
+      [{ pin: 'A1', x: 1, y: 2, z: 3 }],
+      null, // no such package in the chipdb, and not the one the table knows
+      null, // chipdb-8k.txt is not there
+      null, // not an iCE40
+    ])
+    assert.equal(found.pinsCached, true)
+
+    const none = probe({ PROBE_ICEPACK: '', PROBE_NO_PATH: '1' }, [['up5k', 'sg48'], ['hx8k', 'ct256']])
+    assert.equal(none.dir, null)
+    assert.equal(none.lookupPath, ':/opt/homebrew/bin:/usr/local/bin:/usr/bin')
+    assert.equal(none.pins[0].length, 39)
+    assert.deepEqual(none.pins[0].find((pin) => pin.pin === '35'), { pin: '35', x: 12, y: 31, z: 1 })
+    assert.equal(none.pins[1], null)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('floorplan edges: unknown tiles, odd routes, bare cells and nets, critical paths', () => {
+  assert.deepEqual(tilesFromText('.device 5k\n.weird_tile 1 0\n').rows, ['.?'])
+  assert.equal(tilesFromText('.device 5k\nno tiles\n'), null)
+  assert.equal(moduleOf('9lives.cell_LC'), '')
+  // a pip outside any tile, a source wire not in X.Y.name form, and the same segment twice
+  const r = routeSegments('X1/Y1/a;;1;X2/Y2/b;junk;1;X3/Y3/c;X3/Y3/nodots.->.x;1;X5/Y5/d;X5/Y5/1.1.a.->.5.5.d;1;X5/Y5/e;X5/Y5/1.1.a.->.5.5.e;1')
+  assert.deepEqual(r, { segs: [1, 1, 5, 5], global: false })
+
+  const empty = buildChip({})
+  assert.deepEqual([empty.arch, empty.package, empty.grid, empty.cells, empty.nets, empty.utilization, empty.fmax, empty.criticalPaths],
+    ['up5k', 'sg48', null, [], [], null, null, []])
+  assert.deepEqual(buildChip({ routed: {} }).cells, [])
+  assert.equal(buildChip({ asc: '.device 1k\n.logic_tile 0 0\n' }).arch, 'hx1k')
+  assert.equal(buildChip({ asc: '.device 2x\n.logic_tile 0 0\n' }).arch, '2x')
+
+  const chip = buildChip({
+    asc: '.device 8k\n.logic_tile 1 1\n',
+    routed: {
+      modules: {
+        top: {
+          cells: {
+            bare: { type: 'ICESTORM_LC' },
+            lc: { type: 'ICESTORM_LC', parameters: { DFF_ENABLE: 1, CARRY_ENABLE: '1', LUT_INIT: '1' }, attributes: { NEXTPNR_BEL: 'X1/Y1/lc1' }, port_directions: { I0: 'input', O: 'output' }, connections: { I0: [5], I1: ['0'], O: [6] } },
+            carry: { type: 'ICESTORM_LC', parameters: { DFF_ENABLE: '0', CARRY_ENABLE: 1 }, attributes: {}, connections: {} },
+            io: { type: 'SB_IO', attributes: { NEXTPNR_BEL: 'X0/Y1/io0' }, port_directions: { D_IN_0: 'output' }, connections: { D_IN_0: [5] } },
+          },
+          netnames: {
+            clk: { bits: [5], attributes: { ROUTING: 'X0/Y1/io_0:D_IN_0;;1;X1/Y1/lutff_1:in_0;X1/Y1/0.1.glb_netwk_1.->.1.1.lutff_1:in_0;1' } },
+            clk_alias: { bits: [5], attributes: { ROUTING: 'X9/Y9/x;;1' } },
+            unrouted: { bits: [6], attributes: {} },
+            constant: { bits: ['x'] },
+            floating: { bits: [8], attributes: { ROUTING: 'X2/Y2/w;;1' } },
+          },
+        },
+      },
+    },
+    report: {
+      critical_paths: [
+        { from: 'a', to: 'b', path: [
+          { type: 'clk-to-q', delay: 0.5, net: 'clk', sources: ['rtl/blink.v:3'], from: { cell: 'x', port: 'Q', loc: [1, 1] }, to: { cell: 'y', port: 'I0', loc: [2, 2] } },
+          { type: 'setup', delay: 0.1 },
+        ] },
+        { from: 'c', to: 'd' },
+      ],
+    },
+  })
+  assert.deepEqual([chip.arch, chip.package], ['hx8k', 'sg48'])
+  const [bare, lc, carry, io] = chip.cells
+  assert.deepEqual([bare.x, bare.y, bare.b, bare.lut, bare.ff, bare.carry, bare.k], [-1, -1, '', 0, 0, 0, undefined])
+  assert.deepEqual([lc.lut, lc.ff, lc.carry, lc.k, lc.init], [1, 1, 1, 2, undefined])
+  assert.deepEqual([carry.ff, carry.carry], [0, 1])
+  assert.equal(io.t, 'SB_IO')
+  assert.deepEqual(chip.nets, [
+    { n: 'clk', g: 1, s: [0, 1, 1, 1], d: 3, k: [1] },
+    { n: 'floating', g: 0, s: [], d: -1, k: [] },
+  ])
+  assert.deepEqual(chip.criticalPaths, [
+    { from: 'a', to: 'b', path: [
+      { type: 'clk-to-q', delay: 0.5, net: 'clk', sources: ['rtl/blink.v:3'], from: { cell: 'x', port: 'Q', loc: [1, 1] }, to: { cell: 'y', port: 'I0', loc: [2, 2] } },
+      { type: 'setup', delay: 0.1, net: null, sources: [], from: null, to: null },
+    ] },
+    { from: 'c', to: 'd', path: [] },
+  ])
+  assert.deepEqual([chip.utilization, chip.fmax], [null, null])
+})
+
+test('netlist edges: names, parameters, deep and bare modules', () => {
+  assert.equal(cleanModuleName(''), '')
+  assert.equal(cleanModuleName(undefined), undefined)
+  assert.equal(cleanModuleName('$paramod'), '$paramod')
+  assert.equal(cleanModuleName('\\top'), 'top')
+  assert.deepEqual(paramsOf({ parameter_default_values: { TEXT: 'abc', WIDE: '1'.repeat(60), N: '101' } }),
+    { TEXT: 'abc', WIDE: '1'.repeat(60), N: '5' })
+  assert.deepEqual(paramsOf(undefined), {})
+  assert.equal(topModule(undefined), null)
+  assert.equal(hierarchy({}), null)
+
+  const nl = {
+    modules: {
+      top: { cells: { m1: { type: 'mid' } } },
+      mid: { cells: { l1: { type: 'leaf' }, again: { type: 'mid' } } },
+      leaf: {},
+    },
+  }
+  const tree = hierarchy(nl)
+  const leaf = tree.children[0].children.find((c) => c.name === 'l1')
+  assert.deepEqual([leaf.path, leaf.cells, leaf.children], ['m1.l1', 0, []])
+  // a module that instantiates itself stops at the depth limit instead of recursing forever
+  let depth = 0
+  for (let node = tree.children[0]; node; node = node.children.find((c) => c.name === 'again')) depth++
+  assert.equal(depth, 33)
+
+  assert.equal(moduleForRender({}, 'top'), null)
+  assert.equal(moduleForRender(nl, 'nope'), null)
+  assert.deepEqual(moduleForRender(nl, 'leaf'), { modules: { leaf: { attributes: { top: 1 }, cells: {} } } })
+
+  assert.equal(moduleIndex(undefined, 'top'), null)
+  const bare = moduleIndex(nl, 'leaf')
+  assert.deepEqual([bare.nets, bare.cells, bare.ports, bare.src], [{}, {}, {}, ''])
+  const idx = moduleIndex({
+    modules: {
+      top: {
+        attributes: { src: 'rtl/top.v:1' },
+        ports: { nobits: { direction: 'input' } },
+        netnames: {
+          a: { bits: [2, '0', 'x'] }, b: { bits: [2] }, c: { bits: [2], attributes: { src: 'rtl/top.v:4' } }, d: { bits: [2] },
+          e: {},
+          '$auto$only': { hide_name: 1, bits: [9] },
+        },
+      },
+    },
+  }, 'top')
+  assert.deepEqual(idx.bitNames['2'], ['a[0]', 'b', 'c']) // at most three names per bit
+  assert.equal(idx.nets[''].width, 0)
+  assert.deepEqual([idx.nets['2'].names, idx.nets['2'].src, idx.nets['2'].hidden], [['b', 'c', 'd'], '', 0])
+  assert.deepEqual([idx.nets['9'].names, idx.nets['9'].hidden], [['$auto$only'], 1]) // a net only yosys named
+  assert.equal(idx.ports.nobits.width, 0)
+  assert.equal(idx.src, 'rtl/top.v:1')
+})
+
+test('workspace edges: long logs, the top from other files, odd steps, PCF flags, ports', () => {
+  const ws = mkdtempSync(join(tmpdir(), 'yosys-ws-'))
+  try {
+    const put = (rel, text) => { mkdirSync(join(ws, rel, '..'), { recursive: true }); writeFileSync(join(ws, rel), text) }
+    put('big.log', 'head\nmiddle\ntail')
+    assert.equal(readText(join(ws, 'big.log'), 4), 'tail')
+    assert.equal(readText(join(ws, 'big.log'), 100), 'head\nmiddle\ntail')
+    mkdirSync(join(ws, 'out'))
+    assert.equal(fileInfo(ws, 'out'), null)
+
+    // no out/.top: a file the pane was opened on, then the newest report, then the testbench
+    assert.equal(findTop(ws, 'out/uart.svg'), 'uart')
+    assert.equal(findTop(ws, 'out/waves.json'), null)
+    put('tb/notes.txt', '')
+    assert.equal(findTop(ws, 'out/sim.json'), null)
+    put('tb/spi_tb.v', '')
+    assert.equal(findTop(ws, null), 'spi')
+    put('out/old.report.json', '{}')
+    put('out/new.report.json', '{}')
+    utimesSync(join(ws, 'out/old.report.json'), new Date(1000), new Date(1000))
+    assert.equal(findTop(ws, 'out/waves.json'), 'new')
+
+    // steps: a running step with an empty log, a failed one whose log says nothing, a run with no pid
+    const logs = join(ws, 'out', 'logs')
+    put('out/logs/run.json', JSON.stringify({ startedAt: 1 }))
+    put('out/logs/sim.start', 'soon\n')
+    put('out/logs/sim.log', '')
+    put('out/logs/synth.exit', '2\n')
+    put('out/logs/synth.log', '\n\n')
+    put('out/logs/pnr.exit', '1\n')
+    put('out/logs/pnr.log', 'placing\nstill placing\n')
+    put('out/logs/pack.time', 'not times\n')
+    let st = flowState(ws)
+    assert.deepEqual([st.abandoned, st.running], [false, true])
+    const [sim, , synth, , , pnr, pack] = st.steps
+    assert.deepEqual([sim.state, sim.last, sim.startedAt], ['running', '', undefined])
+    assert.deepEqual([synth.state, synth.exit, synth.last, synth.error], ['failed', 2, '', ''])
+    assert.deepEqual([pnr.last, pnr.error], ['still placing', 'still placing'])
+    assert.deepEqual([pack.state, pack.ms], ['pending', undefined])
+    assert.ok(logs)
+    // a pid that exists but is not ours (EPERM) is still alive
+    put('out/logs/run.json', JSON.stringify({ pid: 1, startedAt: 1 }))
+    st = flowState(ws)
+    assert.deepEqual([st.abandoned, st.running], [false, true])
+    assert.equal(errorLine(''), '')
+
+    const pcf = parsePcf('set_io -x -nowarn a 1\nset_io b 2 -pullup\nset_io lonely\n# set_frequency clk 99\n')
+    assert.deepEqual(pcf.ios, [
+      { port: 'a', pin: '1', line: 1, commented: false, x: true, nowarn: true },
+      { port: 'b', pin: '2', line: 2, commented: false, pullup: true },
+    ])
+    assert.deepEqual(pcf.frequencies, {})
+    assert.deepEqual(parsePcf(undefined), { ios: [], frequencies: {} })
+
+    // ports: a synthesised netlist that does not name the top, then a schematic that marks it
+    put('out/t.json', JSON.stringify({ modules: { other: { attributes: { top: 0 } } } }))
+    put('out/t_schematic.json', JSON.stringify({ modules: { renamed: { attributes: { top: '00000000000000000000000000000001' }, ports: { a: { direction: 'input' } } } } }))
+    assert.deepEqual(topPorts(ws, 't'), { from: 'out/t_schematic.json', ports: { a: { direction: 'input', width: 0 } } })
+    put('out/u.json', JSON.stringify({ modules: { u: {} } }))
+    assert.deepEqual(topPorts(ws, 'u'), { from: 'out/u.json', ports: {} })
+    assert.equal(topPorts(ws, 'nobody'), null)
+    put('rtl/README.md', '')
+    put('rtl/top.sv', '')
+    assert.deepEqual(sources(ws).map((f) => f.path), ['rtl/top.sv', 'tb/spi_tb.v'])
+  } finally {
+    rmSync(ws, { recursive: true, force: true })
+  }
 })

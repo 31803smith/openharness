@@ -91,5 +91,6 @@ upstream, bugs in the wrapper belong here, and a newer toolchain is a `brew upgr
 harness dsh check .                                      # conformance
 harness dsh install "$PWD" --link                        # this checkout as the installed agent
 harness dsh doctor autonomous/yosys                       # what this machine is missing
-npm test                                                  # the pane's readers, the judge and the VCD reader, without a toolchain
+npm test                                                  # the pane's server and readers, the judge, the VCD reader and the scripts, on stub tools
+                                                          # (plus one real flow on the starter when the FPGA tools are installed)
 ```
