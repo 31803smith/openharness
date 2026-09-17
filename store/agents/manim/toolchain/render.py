@@ -95,6 +95,19 @@ def error_from(exc: BaseException | None, tb) -> dict:
 QUALITY = {"l": "480p15", "m": "720p30", "h": "1080p60", "p": "1440p60", "k": "2160p60"}
 
 
+def option(command: list[str], *names: str) -> str | None:
+    """An option's value however click accepts it: `-qh`, `-q h`, `--quality h`, `--quality=h`."""
+    for i, a in enumerate(command):
+        for name in names:
+            if a == name:
+                return command[i + 1] if i + 1 < len(command) else None
+            if a.startswith(name + "="):
+                return a[len(name) + 1:]
+            if len(name) == 2 and a.startswith(name):  # a short option with its value attached
+                return a[2:]
+    return None
+
+
 def guess_target(command: list[str]) -> dict:
     """Before Manim has built a scene (a syntax error in the file), what the command meant to render."""
     source = next((a for a in command if a.endswith(".py")), None)
@@ -102,8 +115,8 @@ def guess_target(command: list[str]) -> dict:
         return {}
     after = command[command.index(source) + 1:]
     scene = next((a for a in after if not a.startswith("-")), None)
-    quality = next((QUALITY.get(a[2:3]) for a in command if a.startswith("-q") and len(a) == 3), None) or "480p15"
-    media = command[command.index("--media_dir") + 1] if "--media_dir" in command else "media"
+    quality = QUALITY.get((option(command, "-q", "--quality") or "").lower()) or "480p15"
+    media = option(command, "--media_dir") or "media"
     out = {"source": rel(WS / source) if not os.path.isabs(source) else rel(source), "scene": scene, "quality": quality}
     if scene:
         out["output"] = f"{media}/videos/{Path(source).stem}/{quality}/{scene}.mp4"
