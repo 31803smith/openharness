@@ -10,6 +10,7 @@ import { registry, type RegisteredSession } from './lib/registry.js'
 import * as mediaPreview from './lib/mediaPreview.js'
 import * as projectFolder from './lib/projectFolder.js'
 import * as projectPreview from './lib/projectPreview.js'
+import * as storeCatalog from './dsh/catalog.js'
 import { randomUUID } from 'node:crypto'
 
 const wsMock = vi.hoisted(() => {
@@ -677,6 +678,25 @@ describe('BackendSocket outbound queue', () => {
     ])
     expect(removed).toEqual(['autonomous/marp', 'autonomous/none'])
     await socket.unregisterLocalClient('local:store')
+    await socket.stop()
+  })
+
+  it('serves live catalog entries without making unrelated RPCs wait for catalog I/O', async () => {
+    let finish!: (entries: Awaited<ReturnType<typeof storeCatalog.refreshDshRegistry>>) => void
+    vi.spyOn(storeCatalog, 'refreshDshRegistry').mockImplementation(() => new Promise(resolve => { finish = resolve }))
+    const socket = new BackendSocket('token')
+    socket.runtimeModelsProvider = async () => []
+    const frames: Array<Record<string, unknown>> = []
+    socket.registerLocalClient('local:catalog', { sendFrame: frame => { frames.push(frame); return true }, sendBinary: () => true })
+    socket.handleLocalFrame('local:catalog', { type: 'dsh_list', payload: { requestId: 'catalog' } })
+    socket.handleLocalFrame('local:catalog', { type: 'models_list', payload: { requestId: 'models' } })
+    await vi.waitFor(() => expect(frames.some(frame => frame.type === 'models_list_result')).toBe(true))
+    expect(frames.some(frame => frame.type === 'dsh_list_result')).toBe(false)
+    finish([{ id: 'acme/published-today', name: 'Published today', engine: 'claude', repo: 'https://example.test/project', tier: 2, viewerUse: 'acme/viewer' }])
+    await vi.waitFor(() => expect(frames).toContainEqual({
+      type: 'dsh_list_result', payload: { requestId: 'catalog', dsh: [expect.objectContaining({ id: 'acme/published-today', installed: false, viewerUse: 'acme/viewer' })] },
+    }))
+    await socket.unregisterLocalClient('local:catalog')
     await socket.stop()
   })
 

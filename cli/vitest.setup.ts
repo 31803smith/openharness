@@ -11,3 +11,4 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 process.env.ADAPTER_DATA_DIR = mkdtempSync(join(tmpdir(), 'adapter-test-data-'))
+process.env.DSH_DIR = join(process.env.ADAPTER_DATA_DIR, 'dsh')

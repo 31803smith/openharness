@@ -281,6 +281,26 @@ void main() {
   );
 
   testWidgets(
+    'an open Store refreshes its catalog and stops polling when closed',
+    (tester) async {
+      final (notifier, _) = await open(tester);
+      notifier.machineStates['machine-1']!.connectionStatus =
+          ConnectionStatus.connected;
+      notifier.notifyListeners();
+      await tester.pump();
+      final probes = notifier.probes;
+      final engines = notifier.engineProbes;
+      await tester.pump(const Duration(minutes: 1));
+      expect(notifier.probes, probes + 1);
+      expect(notifier.engineProbes, engines);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(minutes: 2));
+      expect(notifier.probes, probes + 1);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
     'a machine that is offline, unlinked or on an older CLI says so instead of offering Get',
     (tester) async {
       final notifier = _Notifier();

@@ -6,7 +6,8 @@
 import type { DshInstallProgress } from './install.js'
 import { listInstalledDsh, type InstalledDsh } from './installed.js'
 import { DSH_ID_RE, dshTier, viewerUse } from './manifest.js'
-import { bundledDshRegistry, registrySourceUrl, type DshRegistryEntry } from './registry.js'
+import { registrySourceUrl, type DshRegistryEntry } from './registry.js'
+import { currentDshRegistry } from './catalog.js'
 
 /**
  * `dsh_list`: the harnesses installed on this machine, then what the registry offers that is not.
@@ -15,10 +16,11 @@ import { bundledDshRegistry, registrySourceUrl, type DshRegistryEntry } from './
  */
 export function dshListRows(
   installed: readonly InstalledDsh[] = listInstalledDsh(),
-  registry: readonly DshRegistryEntry[] = bundledDshRegistry(),
+  registry: readonly DshRegistryEntry[] = currentDshRegistry(),
 ): Record<string, unknown>[] {
+  const byId = new Map(registry.map(entry => [entry.id, entry]))
   const facts = (id: string): Record<string, unknown> => {
-    const known = registry.find((entry) => entry.id === id)
+    const known = byId.get(id)
     return {
       verified: known?.verified === true,
       // Where a person can read the package: its folder page for a built-in (store/…) one.

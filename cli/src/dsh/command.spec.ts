@@ -47,6 +47,9 @@ describe('harness dsh', () => {
     env.DSH_DIR = join(root, 'installed')
     env.HARNESS_STORE_REF = undefined
     invalidateInstalledDsh()
+    // These command-contract fixtures exercise the offline bundled fallback.
+    // catalog.spec.ts covers live discovery and installation separately.
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline fixture')))
     out = []
     err = []
     vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => { out.push(args.join(' ')) })

@@ -38,6 +38,7 @@ import { projectPreview } from './lib/projectPreview.js'
 import { agentFrame, type AgentDshContext, type AgentFrame } from './lib/agentFrame.js'
 import { installedDsh } from './dsh/installed.js'
 import { DSH_ID_RE } from './dsh/manifest.js'
+import { refreshDshRegistry } from './dsh/catalog.js'
 import type { DshInstallProgress } from './dsh/install.js'
 import { dshInstallReply, dshInstallRequest, dshInstallStatus, dshListRows, dshRemoveId, dshRemoveReply } from './dsh/wire.js'
 import { routeVoiceTask } from './lib/voiceRouter.js'
@@ -1469,9 +1470,10 @@ export class BackendSocket {
         }
 
         case 'dsh_list': {
-          // Which domain-specific harnesses this machine has, plus what the bundled registry offers —
-          // answered here, on the machine in question, for the same reason `engines_probe` is.
-          reply(type, requestId, { dsh: dshListRows() })
+          // Keep catalog I/O off this connection's ordered RPC queue.
+          void refreshDshRegistry()
+            .then(catalog => reply(type, requestId, { dsh: dshListRows(undefined, catalog) }))
+            .catch(error => reply(type, requestId, { error: 'INTERNAL', detail: error instanceof Error ? error.message : String(error) }))
           return
         }
 

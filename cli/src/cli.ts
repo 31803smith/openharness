@@ -73,7 +73,7 @@ import { buildLaunchOverrides, validateLaunchOverrides, type LaunchOverridesDeps
 import { buildHarnessSessionLabel } from './lib/harnessSessionLabel.js'
 import { installedDsh } from './dsh/installed.js'
 import { dshVerdictPath } from './dsh/manifest.js'
-import { registryEntry } from './dsh/registry.js'
+import { catalogEntry, refreshDshRegistry } from './dsh/catalog.js'
 import { installDsh, resolveInstallSource, removeDsh } from './dsh/install.js'
 import { preTrustClaudeProject, preTrustCodexProject } from './lib/claudeTrust.js'
 import { materializeWorkspace } from './dsh/materialize.js'
@@ -1374,7 +1374,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     return {
       // The current id, so a face drawn by id survives a rename the agent predates.
       id: installed?.id ?? s.dsh,
-      name: installed?.manifest.name ?? registryEntry(s.dsh)?.name ?? null,
+      name: installed?.manifest.name ?? catalogEntry(s.dsh)?.name ?? null,
       viewerUrl: state?.viewerUrl ?? null,
       verdict: state?.verdict ?? null,
     }
@@ -2110,6 +2110,8 @@ async function runForeground(session: AuthSession): Promise<void> {
   backend.dshFrameProvider = dshFrameContext
   backend.onDshRemove = (id) => removeDsh(id)
   backend.onDshInstall = async ({ id, url, ref }, progress) => {
+    const catalog = new Map((await refreshDshRegistry(!!id && !catalogEntry(id))).map(entry => [entry.id, entry]))
+    if (id && !catalog.has(id)) return { ok: false, error: 'INVALID_DSH', detail: `${id} is not in this machine's Store catalog` }
     const resolved = id ? resolveInstallSource(id) : url ? { source: url, ref } : null
     if (!resolved) return { ok: false, error: 'INVALID_DSH', detail: `${id ?? url} is not a known harness` }
     // NARRATE THE LINES, NOT ONLY THE PHASES. A toolchain setup is minutes of npm and uv output, and
@@ -2128,6 +2130,8 @@ async function runForeground(session: AuthSession): Promise<void> {
     }
     const result = await installDsh({
       source: resolved.source,
+      expectedId: id,
+      registry: dependencyId => catalog.get(dependencyId),
       ref: ref ?? resolved.ref,
       path: 'path' in resolved ? resolved.path : undefined,
       onProgress: (p) => {

@@ -79,6 +79,27 @@ describe('installDsh with a used viewer', () => {
     expect(asked).toBe(0)
   })
 
+  it('can install a whole repository at the published commit after its branch advances', async () => {
+    const repo = gitRepo(join(root, 'pinned'), { 'harness.json': JSON.stringify({ spec: 1, id: 'acme/pinned', name: 'Published', engine: 'claude' }) })
+    const ref = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
+    writeFileSync(join(repo, 'harness.json'), JSON.stringify({ spec: 1, id: 'acme/pinned', name: 'Unpublished', engine: 'claude' }))
+    execFileSync('git', ['-C', repo, '-c', 'user.name=test', '-c', 'user.email=test@example.test', 'commit', '-qam', 'later version'])
+    const result = await installDsh({ source: repo, ref, expectedId: 'acme/pinned' })
+    expect(result.ok, JSON.stringify(result)).toBe(true)
+    expect(installedDsh('acme/pinned')?.commit).toBe(ref)
+    expect(installedDsh('acme/pinned')?.manifest.name).toBe('Published')
+  })
+
+  it('rejects a mismatched catalog identity before installing or running setup', async () => {
+    const repo = gitRepo(join(root, 'wrong-id'), {
+      'harness.json': JSON.stringify({ spec: 1, id: 'acme/surprise', name: 'Wrong', engine: 'claude', toolchain: { setup: './setup.sh' } }),
+      'setup.sh': '#!/bin/sh\ntouch did-run\n',
+    })
+    expect(await installDsh({ source: repo, expectedId: 'acme/expected' })).toMatchObject({ ok: false, error: 'PACKAGE_ID_MISMATCH' })
+    expect(listInstalledDsh()).toEqual([])
+    expect(readdirSync(env.DSH_DIR).filter(name => name.startsWith('.tmp-'))).toEqual([])
+  })
+
   it('a used viewer that is neither installed nor in the registry is said, and the harness still installs', async () => {
     const harnessRepo = gitRepo(join(root, 'src', 'thing'), {
       'harness.json': JSON.stringify({ spec: 1, id: 'acme/thing', name: 'Thing', engine: 'claude', viewer: { use: 'acme/missing' } }),

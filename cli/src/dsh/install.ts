@@ -18,7 +18,8 @@ import {
   type InstalledDsh, type InstalledDshRecord,
 } from './installed.js'
 import { readDshManifest, viewerUse, type DshManifest } from './manifest.js'
-import { PACKAGE_PATH_RE, registryEntry, type DshRegistryEntry } from './registry.js'
+import { PACKAGE_PATH_RE, type DshRegistryEntry } from './registry.js'
+import { catalogEntry, refreshDshRegistry } from './catalog.js'
 import { resolveDshCommand } from './materialize.js'
 import { runDshCommand } from './shell.js'
 
@@ -42,6 +43,8 @@ export interface DshInstallProgress {
 export interface DshInstallOptions {
   /** A git URL, or a local path (cloned unless `link`). */
   source: string
+  /** A catalog install must resolve to the package the user selected. */
+  expectedId?: string
   ref?: string
   /**
    * The folder inside `source` that is the package (`store/agents/typst` of the Harness monorepo).
@@ -70,7 +73,7 @@ export type DshInstallResult =
 /** A registry id (`autonomous/typst`) resolves to its repo, ref and folder; anything else is a source. */
 export function resolveInstallSource(
   idOrSource: string,
-  registry: (id: string) => DshRegistryEntry | undefined = registryEntry,
+  registry: (id: string) => DshRegistryEntry | undefined = catalogEntry,
 ): { source: string; ref?: string; path?: string; id?: string } | null {
   const entry = registry(idOrSource)
   if (entry) return { source: entry.repo, ref: entry.ref, ...(entry.path ? { path: entry.path } : {}), id: entry.id }
@@ -129,8 +132,7 @@ async function cloneInstall(
   if (path === undefined) {
     // `--progress` because stderr is not a tty here and git would otherwise stay silent until the end;
     // streamed, not collected, so "Receiving objects: 39%" reaches the dialog while it is true.
-    const args = ['clone', '--depth', '1', '--progress', ...(ref ? ['--branch', ref] : []), '--', source, tmpDir]
-    const clone = await streamGit(args, onLine)
+    const clone = await cloneRepo(source, ref, tmpDir, false, onLine)
     if (!clone.ok) return fail('CLONE_FAILED', clone.detail)
     commit = await gitHead(tmpDir)
   } else {
@@ -140,10 +142,7 @@ async function cloneInstall(
     // moved out and the rest of the clone thrown away, so the install is laid out exactly like a
     // whole-repo one (the manifest at its root) and nothing else of the monorepo lands on the machine.
     const repoDir = join(root, `.tmp-${randomUUID()}`)
-    const clone = await streamGit(
-      ['clone', '--depth', '1', '--filter=blob:none', '--sparse', '--progress', ...(ref ? ['--branch', ref] : []), '--', source, repoDir],
-      onLine,
-    )
+    const clone = await cloneRepo(source, ref, repoDir, true, onLine)
     if (!clone.ok) return fail('CLONE_FAILED', clone.detail, repoDir)
     const sparse = await streamGit(['-C', repoDir, 'sparse-checkout', 'set', '--', path], onLine)
     if (!sparse.ok) return fail('CLONE_FAILED', sparse.detail, repoDir)
@@ -162,6 +161,25 @@ async function cloneInstall(
 
 /** How long one git command may take: a clone of a large repository over a slow link, not a hang. */
 const GIT_TIMEOUT_MS = 10 * 60_000
+
+/** Catalogs pin built-ins to the commit they describe; `git clone --branch` cannot take a SHA. */
+async function cloneRepo(source: string, ref: string | undefined, dir: string, sparse: boolean, onLine: DshInstallOptions['onLine']): Promise<{ ok: true } | { ok: false; detail: string }> {
+  if (!ref || !/^[a-f0-9]{40}$/i.test(ref)) {
+    return streamGit(['clone', '--depth', '1', ...(sparse ? ['--filter=blob:none', '--sparse'] : []), '--progress', ...(ref ? ['--branch', ref] : []), '--', source, dir], onLine)
+  }
+  const steps = [
+    ['init', '--quiet', dir],
+    ['-C', dir, 'remote', 'add', 'origin', source],
+    ['-C', dir, 'fetch', '--depth', '1', ...(sparse ? ['--filter=blob:none'] : []), '--progress', 'origin', ref],
+    ...(sparse ? [['-C', dir, 'sparse-checkout', 'init', '--cone']] : []),
+    ['-C', dir, 'checkout', '--detach', 'FETCH_HEAD'],
+  ]
+  for (const args of steps) {
+    const result = await streamGit(args, onLine)
+    if (!result.ok) return result
+  }
+  return { ok: true }
+}
 
 /** Run git, handing each stderr line (and each carriage-return progress segment) to `onLine` as it lands. */
 function streamGit(args: string[], onLine: ((line: string) => void) | undefined): Promise<{ ok: true } | { ok: false; detail: string }> {
@@ -239,6 +257,11 @@ export async function runDshDoctor(installed: InstalledDsh, onLine?: (line: stri
 
 export async function installDsh(opts: DshInstallOptions): Promise<DshInstallResult> {
   const progress = (p: DshInstallProgress): void => opts.onProgress?.(p)
+  const wrongId = (actual: string): DshInstallResult => {
+    const detail = `Catalog requested ${opts.expectedId}, but the package declares ${actual}`
+    progress({ id: opts.expectedId ?? null, phase: 'failed', detail })
+    return { ok: false, error: 'PACKAGE_ID_MISMATCH', detail }
+  }
   let manifest: DshManifest
   let dir: string
   let commit: string | null = null
@@ -249,6 +272,7 @@ export async function installDsh(opts: DshInstallOptions): Promise<DshInstallRes
     const linked = linkInstall(opts.source)
     if (!linked.ok) { progress({ id: null, phase: 'failed', detail: linked.detail }); return linked }
     manifest = linked.manifest
+    if (opts.expectedId && manifest.id !== opts.expectedId) return wrongId(manifest.id)
     realDir = linked.realDir
     dir = placeAt(manifest.id, { linkTo: realDir })
     commit = await gitHead(realDir)
@@ -256,6 +280,10 @@ export async function installDsh(opts: DshInstallOptions): Promise<DshInstallRes
     const cloned = await cloneInstall(opts.source, opts.ref, opts.path, opts.onLine)
     if (!cloned.ok) { progress({ id: null, phase: 'failed', detail: cloned.detail }); return cloned }
     manifest = cloned.manifest
+    if (opts.expectedId && manifest.id !== opts.expectedId) {
+      rmSync(cloned.tmpDir, { recursive: true, force: true })
+      return wrongId(manifest.id)
+    }
     commit = cloned.commit
     dir = placeAt(manifest.id, { tmpDir: cloned.tmpDir })
     realDir = realpathSync(dir)
@@ -297,7 +325,8 @@ export async function installDsh(opts: DshInstallOptions): Promise<DshInstallRes
   // first (`harness dsh install <url>`), and the doctor says so rather than the pane going blank.
   const uses = viewerUse(manifest)
   if (uses && !installedDsh(uses)) {
-    const entry = (opts.registry ?? registryEntry)(uses)
+    if (!opts.registry && !catalogEntry(uses)) await refreshDshRegistry()
+    const entry = (opts.registry ?? catalogEntry)(uses)
     if (entry) {
       opts.onLine?.(`viewer ${uses} · installing`)
       // The viewer's own phases are narrated UNDER THE HARNESS: the dialog watches the id it asked
@@ -305,7 +334,7 @@ export async function installDsh(opts: DshInstallOptions): Promise<DshInstallRes
       // install would read as hung for the minutes OpenCascade takes to arrive. The viewer's `done`
       // is not the harness's done, so it reports as the harness's setup still going.
       const dep = await installDsh({
-        source: entry.repo, ref: entry.ref, path: entry.path, setupTimeoutMs: opts.setupTimeoutMs, onLine: opts.onLine,
+        source: entry.repo, expectedId: entry.id, ref: entry.ref, path: entry.path, registry: opts.registry, setupTimeoutMs: opts.setupTimeoutMs, onLine: opts.onLine,
         onProgress: (p) => {
           if (p.phase === 'failed') return // reported below, once, with the viewer named
           const phase: DshInstallPhase = p.phase === 'done' ? 'setup' : p.phase

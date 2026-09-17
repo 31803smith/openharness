@@ -120,6 +120,7 @@ class _StoreTabState extends State<StoreTab> {
   late final _search = TextEditingController(
     text: widget.initialHarness == null ? _place.query : '',
   );
+  Timer? _catalogRefresh;
 
   void _remember() {
     _place
@@ -154,6 +155,17 @@ class _StoreTabState extends State<StoreTab> {
         _ask(machine);
       }
       widget.notifier.addListener(_onAppChanged);
+      // A Store left open picks up new publications; engines do not need reprobes.
+      // The daemon caches catalog HTTP requests for five minutes.
+      _catalogRefresh = Timer.periodic(const Duration(minutes: 1), (_) {
+        for (final machine in widget.notifier.machineStates.values) {
+          if (machine.connectionStatus == ConnectionStatus.connected) {
+            unawaited(
+              widget.notifier.probeDsh(machine.machine.machineId, force: true),
+            );
+          }
+        }
+      });
     });
   }
 
@@ -201,6 +213,7 @@ class _StoreTabState extends State<StoreTab> {
 
   @override
   void dispose() {
+    _catalogRefresh?.cancel();
     widget.notifier.removeListener(_onAppChanged);
     _search.dispose();
     _store.dispose();

@@ -22,17 +22,19 @@ export function storeEntry(path, manifest, facts) {
   return entry
 }
 
-function readStoreDir(storeDir) {
+function readStoreDir(storeDir, strict) {
   const out = []
   for (const plural of ['agents', 'viewers']) {
     let names
     try { names = readdirSync(join(storeDir, plural)).sort() } catch { continue }
     for (const name of names) {
       const dir = join(storeDir, plural, name)
+      if (!statSync(dir).isDirectory() || name.startsWith('.')) continue
       let manifest
-      try { manifest = JSON.parse(readFileSync(join(dir, 'harness.json'), 'utf8')) } catch { continue }
+      try { manifest = JSON.parse(readFileSync(join(dir, 'harness.json'), 'utf8')) } catch (error) { if (strict) throw error; continue }
+      if (strict && (manifest.spec !== 1 || manifest.id !== `autonomous/${name}` || (manifest.kind ?? 'agent') !== (plural === 'agents' ? 'agent' : 'viewer'))) throw new Error(`Invalid package identity: ${dir}`)
       let facts = {}
-      try { facts = JSON.parse(readFileSync(join(dir, 'store.json'), 'utf8')) } catch { facts = {} }
+      try { facts = JSON.parse(readFileSync(join(dir, 'store.json'), 'utf8')) } catch (error) { if (strict) throw error; facts = {} }
       out.push(storeEntry(`store/${plural}/${name}`, manifest, facts))
     }
   }
@@ -61,7 +63,7 @@ function readRegistryDir(root) {
 }
 
 /** `storeDir` is the repo's `store/` folder, as a path or a file URL. */
-export function readDshRegistry(storeDir) {
+export function readDshRegistry(storeDir, { strict = false } = {}) {
   const root = storeDir instanceof URL ? fileURLToPath(storeDir) : storeDir
-  return [...readStoreDir(root), ...readRegistryDir(join(root, 'registry'))]
+  return [...readStoreDir(root, strict), ...readRegistryDir(join(root, 'registry'))]
 }

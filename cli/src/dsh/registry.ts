@@ -1,5 +1,5 @@
 /**
- * The bundled registry, baked into the CLI at build time the same way the version is
+ * The offline fallback registry, baked into the CLI at build time the same way the version is
  * (`__DSH_REGISTRY__`, an esbuild `define` in both `build.mjs` and `build-bundle.mjs`). Two sources
  * at the repo root: every built-in package folder, `store/<agents|viewers>/<name>` — its entry built
  * from its `harness.json` and `store.json`, so no fact is written twice — and
@@ -9,7 +9,8 @@
  *
  * A registry entry is how the desktop can offer "Install Typst" for a package this machine does not
  * have yet: it names the repo and the ref to clone, and — for the built-in shelf, which lives in this
- * monorepo under `store/` — the folder inside that repo that IS the package. Nothing here runs code.
+ * monorepo under `store/` — the folder inside that repo that IS the package. `catalog.ts` refreshes
+ * the live shelf; this module supplies its schema and first-offline-launch fallback. Nothing here runs code.
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'

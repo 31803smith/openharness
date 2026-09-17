@@ -127,7 +127,7 @@ Two ways, depending on where the package lives.
 
 **In this repository**, as a built-in: the folder is `store/agents/<name>` (or `store/viewers/<name>`),
 its id `autonomous/<name>`, and beside `harness.json` a `store.json` with what the store page shows
-that a manifest does not know. The CLI build lists every such folder; there is no entry to write.
+that a manifest does not know. The catalog publisher lists every such folder; there is no entry to write.
 
 ```json
 { "homepage": "https://typst.app", "upstream": "https://github.com/typst/typst", "license": "MIT",
@@ -147,10 +147,40 @@ matching viewer ID) in the registry entry so the Store can show its dependencies
 Built-in entries derive this field from the manifest automatically.
 
 A package that is one folder of a bigger repository names it with `"path"`; install then fetches
-that folder alone. Run the conformance check and include a real example in the PR; CI is currently
-triggered manually. Once merged and included in a CLI release, the app offers the tile before the
-package is installed and installs it on Create; `verified: true` marks first-party packages, which
-every built-in is, and everything else shows its git URL on install.
+that folder alone. Run the conformance check and include a real example in the PR; the full test
+suite is currently triggered manually. Once merged, the catalog publisher lists it automatically.
+The app offers the tile before the package is installed. `verified: true` marks built-in packages;
+community packages show their source on install.
+
+### Live catalog
+
+Package changes merged into `main` trigger
+[`Publish Store catalog`](../.github/workflows/publish-store-catalog.yml). It validates the complete
+catalog, checks viewer dependencies, pins built-in packages to the source commit, and writes one
+`catalog.json` to the `store-catalog` branch. It uses GitHub only; it does not build or release the
+app, run package setup scripts, or access cloud infrastructure. Authors do not edit a generated index.
+
+The CLI reads that public JSON over HTTPS, using conditional requests and a five-minute cache.
+Concurrent requests share one fetch. An open Store asks connected machines again every minute;
+reopening it also asks. New harnesses and shared viewers appear without a client restart or another
+app/CLI release. GitHub caching and the refresh interval mean publication is not instantaneous.
+
+The last validated catalog is saved on disk. If GitHub is unavailable, slow, or serves an invalid
+response, clients keep that catalog; a first offline launch uses the bundled catalog. Installed
+harnesses remain listed even if their Store entry is removed. Refreshing metadata does not install,
+update, or execute packages. Get resolves both the harness and its viewer from the live catalog,
+and an already-installed viewer is reused.
+
+Validate publication locally without writing to GitHub:
+
+```bash
+node store/tools/catalog.mjs
+```
+
+`HARNESS_STORE_CATALOG_URL` selects a catalog mirror or a loopback HTTP fixture for development.
+`HARNESS_STORE_REF` still overrides built-in install refs for testing a branch. Existing clients
+need the CLI version containing the live reader once; subsequent package publications do not need
+releases. Changes to the runtime or package protocol can still require a client update.
 
 ## Tiers
 
@@ -186,7 +216,8 @@ The packages Autonomous maintains are folders here, and the rules below hold for
   `blender`, `text-to-cad`, `autonomous-circuit`. A wrapper never renames what it wraps.
 - **One place per fact.** Name, category, author, description and engine are the manifest's; homepage,
   upstream, licence and screenshots are `store.json`'s. The CLI build turns each folder into its
-  registry entry (repo this repository, ref `main`, path the folder, tier from what the manifest ships).
+  registry entry (repo this repository, path the folder, tier from what the manifest ships). The
+  live publisher pins its ref to the source commit; the offline build fallback uses `main`.
 - **`harness dsh check` passes** on the folder as it is committed.
 - **Credit travels with the code.** A `LICENSE` for the wrapper, the upstream's licence beside it when
   anything of theirs is in the folder, and a README whose "Credit and stewardship" section says whose
