@@ -36,12 +36,14 @@ export class RelaySessionCrypto {
   private groupKey: Uint8Array | null = null
   private epoch = ''
   private p2pVersion = 0
+  private viewerVersion = 0
   private groupRecv = new Map<string, number>() // epoch -> highest counter seen
 
   constructor(private readonly deps: RelayCryptoDeps) {}
 
   get ready(): boolean { return this.c2s !== null && this.s2c !== null }
   get terminalP2pVersion(): number { return this.p2pVersion }
+  get viewerForwardingVersion(): number { return this.viewerVersion }
 
   helloFrame(): Frame {
     return {
@@ -69,7 +71,7 @@ export class RelaySessionCrypto {
     } catch { return false }
     const opened = C.aeadOpen(keys.s2c, 0, C.utf8('e2e-welcome'), C.b64d(encB64))
     if (!opened) return false
-    let initial: { groupKey?: string; epoch?: string; features?: { terminalP2p?: unknown } }
+    let initial: { groupKey?: string; epoch?: string; features?: { terminalP2p?: unknown; viewerForwarding?: unknown } }
     try { initial = JSON.parse(new TextDecoder().decode(opened)) as typeof initial } catch { return false }
     if (!initial.groupKey || !initial.epoch) return false
     this.c2s = keys.c2s
@@ -81,6 +83,7 @@ export class RelaySessionCrypto {
     this.p2pVersion = Number.isSafeInteger(initial.features?.terminalP2p)
       ? Number(initial.features?.terminalP2p)
       : 0
+    this.viewerVersion = initial.features?.viewerForwarding === 1 ? 1 : 0
     return true
   }
 

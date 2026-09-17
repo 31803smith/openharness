@@ -17,6 +17,7 @@ import 'swarm_state_test.dart' show createApp;
 Map<String, dynamic> _frame(
   String id, {
   String? viewerUrl,
+  String? viewerError,
   String? viewerName,
   Map<String, dynamic>? verdict,
 }) => {
@@ -26,6 +27,7 @@ Map<String, dynamic> _frame(
   'dsh': 'autonomous/autonomous-circuit',
   'dshName': 'Autonomous Circuit',
   'viewerUrl': ?viewerUrl,
+  'viewerError': ?viewerError,
   'viewerName': ?viewerName,
   'verdict': ?verdict,
   'terminal': {
@@ -40,6 +42,7 @@ Future<void> _synced(
   AppNotifier app,
   String id, {
   String? viewerUrl,
+  String? viewerError,
   String? viewerName,
   Map<String, dynamic>? verdict,
 }) => app.handleEventForTest('m', {
@@ -48,6 +51,7 @@ Future<void> _synced(
     'agent': _frame(
       id,
       viewerUrl: viewerUrl,
+      viewerError: viewerError,
       viewerName: viewerName,
       verdict: verdict,
     ),
@@ -58,6 +62,37 @@ List<TerminalPane> _viewers(AppNotifier app) =>
     app.panes.where((pane) => pane.isWeb).toList();
 
 void main() {
+  testWidgets(
+    'remote viewer update guidance can be dismissed and recovers to a forwarded URL',
+    (tester) async {
+      final app = createApp();
+      addTearDown(app.dispose);
+      app.stateOf('m')!.nodeOnline = true;
+      app.adoptSessionForTest(terminal('a0', <TerminalBinaryFrame>[]));
+      await mount(tester, app);
+      const error = 'Update Harness on the remote machine to show its viewer.';
+      await _synced(app, 'a0', viewerError: error);
+      await tester.pump();
+      expect(find.text(error), findsOneWidget);
+      expect(_viewers(app).single.url, isNull);
+      await app.closePane(_viewers(app).single.id);
+      await _synced(app, 'a0', viewerError: error);
+      expect(_viewers(app), isEmpty);
+      await app.toggleViewerPane('m', 'a0');
+      expect(_viewers(app).single.viewerError, error);
+      await _synced(
+        app,
+        'a0',
+        viewerUrl: 'http://127.0.0.1:4180/__harness_viewer/token?path=%2F',
+      );
+      await tester.pump();
+      expect(find.text(error), findsNothing);
+      expect(_viewers(app).single.viewerError, isNull);
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   test('a viewer opens to the left of its agent and follows the URL', () async {
     final app = createApp();
     addTearDown(app.dispose);

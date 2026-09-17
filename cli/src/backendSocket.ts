@@ -51,6 +51,8 @@ import { tailFile } from './lib/sessions.js'
 import { messagesToEvents, windowRawLines, subagentStatsFromRawLines, type SessionEvent } from './lib/normalize.js'
 import { listFileTree, readProjectFile } from './lib/files.js'
 import { MediaPreviewError, readMediaPreviewChunk } from './lib/mediaPreview.js'
+import { ViewerForwarder } from './lib/viewerForwarder.js'
+import { VIEWER_DOWN_TYPES } from './lib/viewerWire.js'
 import { codexMessagesToEvents, windowCodexLines } from './engines/codex/normalizer.js'
 import { codexSubagentResolverFor } from './engines/codex/subagent.js'
 import { parseHostTheme, type HostTheme } from './lib/hostTheme.js'
@@ -378,6 +380,18 @@ export class BackendSocket {
   onDshRemove: ((id: string) => { ok: true } | { ok: false; error: string; detail: string }) | null = null
   /** What the daemon knows about an agent's DSH companions (viewer URL, verdict); null when nothing. */
   dshFrameProvider: ((session: RegisteredSession) => AgentDshContext | null) | null = null
+  viewerTargetProvider: ((agentId: string) => string | null) | null = null
+  readonly viewerForwarder = new ViewerForwarder({
+    target: (agentId) => this.viewerTargetProvider?.(agentId) ?? null,
+    send: (connId, type, payload) => {
+      if (this.localClients.has(connId)) { this.sendTo(connId, { type, payload }); return true }
+      if (!this.isConnected()) return false
+      const frame = this.e2ee.wrapTarget(connId, type, payload)
+      if (!frame) return false
+      this.sendTo(connId, frame)
+      return true
+    },
+  })
   private readonly agentCreations = new AgentCreationReceipts(join(env.ADAPTER_DATA_DIR, 'agent-creations'))
   /** Injectable for queue-isolation tests; production uses the machine-local probe. */
   engineProbeProvider: typeof probeEngines = probeEngines
@@ -550,6 +564,7 @@ export class BackendSocket {
       isConnectionAvailable: connId => this.directDeviceSinks.has(connId) || this.isConnected(),
       onIdentityPaired: (connId, pub) => { if (this.directDeviceSinks.has(connId)) this.directDevicePins.set(connId, pub) },
       onIdentityRevoked: identity => { this.autonomousDeviceRelay?.revoke(identity); this.onDirectDeviceRevoked?.(fingerprint(b64d(identity))) },
+      onSessionDropped: (connId) => this.viewerForwarder.closeConnection(connId),
     })
     this.terminalP2p = new TerminalP2pResponderPool({
       sendSignal: (connId, type, payload) => this.sendP2pSignal(connId, type, payload),
@@ -687,6 +702,7 @@ export class BackendSocket {
       // completing during the gap burns a `claude -p` recap that goes nowhere. attachAdapter always
       // re-pushes the true count via recomputeAndSendClients on reconnect (and 0→N re-fires the replay).
       this.setCommanderCount(0, null) // active count is unknown until the next __clients snapshot
+      this.viewerForwarder.closeAll()
       void this.terminalStreams?.closeConnectionsWhere(
         (connId) => !isLocalClientId(connId),
         'backend disconnected',
@@ -756,6 +772,7 @@ export class BackendSocket {
 
   async stop(): Promise<void> {
     this.closed = true
+    this.viewerForwarder.closeAll()
     if (this.heartbeat) this.heartbeat.stop()
     if (this.appPing) clearInterval(this.appPing)
     await this.terminalStreams?.stop()
@@ -906,6 +923,7 @@ export class BackendSocket {
   /** Release all connection-scoped state when the loopback WebSocket closes. */
   async unregisterLocalClient(connId: string): Promise<void> {
     if (!this.localClients.delete(connId)) return
+    this.viewerForwarder.closeConnection(connId)
     // The window left before any link could hear it attach: nothing happened, as far as the backend
     // is concerned, and a later link must not be told otherwise.
     if (this.localClients.size === 0) this.appOpenOwed = false
@@ -1179,7 +1197,7 @@ export class BackendSocket {
     // than as an opaque __e2e envelope.
     // Terminal frames contain raw keystrokes, paste text and screen bytes after
     // unwrap. Never pass them to the frame logger, even in diagnostic mode.
-    if (env.LOG_FRAMES && !type.startsWith('terminal_') && type !== 'agent_read_file' && type !== 'project_preview') {
+    if (env.LOG_FRAMES && !type.startsWith('terminal_') && !type.startsWith('viewer_') && type !== 'agent_read_file' && type !== 'project_preview') {
       logFrame('←', connId ? `conn:${sid(connId)}` : 'backend', frame)
     }
     const reply = (t: string, rid: unknown, p: Record<string, unknown>): void => this.emitReply(connId, t, rid, p)
@@ -1213,6 +1231,7 @@ export class BackendSocket {
       // terminal controller lease until the 30-second heartbeat timeout.
       this.autonomousDeviceRelay?.drop(connId)
       this.e2ee.dropSession(connId)
+      this.viewerForwarder.closeConnection(connId)
       await this.terminalP2p.closeConnection(connId, 'client_disconnected', false)
       this.p2pPendingOpens.delete(connId)
       this.p2pStreams.delete(connId)
@@ -1244,6 +1263,13 @@ export class BackendSocket {
 
     const payload = (frame.payload ?? {}) as Record<string, unknown>
     const requestId = payload.requestId
+
+    if (type.startsWith('viewer_')) {
+      if (VIEWER_DOWN_TYPES.has(type) && (local || this.e2ee.sessionRole(connId) === 'web')) {
+        this.viewerForwarder.handle(connId, type, payload)
+      }
+      return
+    }
 
     if (type.startsWith('terminal_')) {
       this.noteTerminalInputRoute(connId, type, payload, transport)

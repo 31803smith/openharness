@@ -1731,7 +1731,8 @@ class _TerminalHeader extends StatelessWidget {
                     composerVisible: composerVisible,
                     // A harness agent's viewer, shown or hidden from the
                     // pane it belongs to.
-                    onToggleViewer: agent?.viewerUrl == null
+                    onToggleViewer:
+                        agent?.viewerUrl == null && agent?.viewerError == null
                         ? null
                         : () => notifier.toggleViewerPane(
                             session.machineId,
