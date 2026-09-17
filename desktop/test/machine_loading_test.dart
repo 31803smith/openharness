@@ -57,7 +57,6 @@ class _Connection extends WsConn {
   bool refuseTheme = false;
   final timeouts = <String, Duration>{};
   final sent = <String>[];
-  final sentPayloads = <Map<String, dynamic>>[];
   Completer<void>? readiness;
 
   @override
@@ -98,7 +97,6 @@ class _Connection extends WsConn {
     Map<String, dynamic> payload,
   ) async {
     sent.add(type);
-    sentPayloads.add({'type': type, 'payload': payload});
     return true;
   }
 }
@@ -122,13 +120,7 @@ void main() {
     app.machines = [_machine];
     app.machineStates['m'] = machine;
   });
-  // A widget test must have no timer left when its tree is torn down, which is before tearDown
-  // runs — those tests dispose the app themselves and say so here.
-  var disposedInTest = false;
-  tearDown(() {
-    if (!disposedInTest) app.dispose();
-    disposedInTest = false;
-  });
+  tearDown(() => app.dispose());
 
   test('agent inventory and capabilities are requested together', () async {
     final load = app.reloadMachineData('m');
@@ -277,45 +269,6 @@ void main() {
     await load;
     expect(connection.calls, isEmpty);
     expect(app.panes, isEmpty);
-  });
-
-  group('the window\'s presence reaches this computer\'s daemon', () {
-    Iterable<String> kinds() => connection.sentPayloads
-        .where((f) => f['type'] == 'app_presence')
-        .map((f) => f['payload']['kind'] as String);
-
-    testWidgets(
-      'says open on connect and pings every interval until the socket drops',
-      (tester) async {
-        machine.localOnly = true;
-        app.onMachineConnectedForTest('m');
-        await tester.pump();
-        expect(kinds(), ['open']);
-
-        await tester.pump(AppNotifier.appPresenceInterval);
-        await tester.pump(AppNotifier.appPresenceInterval);
-        expect(kinds(), ['open', 'ping', 'ping']);
-
-        // The daemon went away: nothing is pinged into the void, and the reconnect will say `open`.
-        app.connectionStatusForTest('m', ConnectionStatus.disconnected);
-        await tester.pump(AppNotifier.appPresenceInterval * 3);
-        expect(kinds(), hasLength(3));
-        app.dispose();
-        disposedInTest = true;
-      },
-    );
-
-    testWidgets(
-      'is not sent to a relayed machine — its daemon is not this desk',
-      (tester) async {
-        app.onMachineConnectedForTest('m');
-        await tester.pump();
-        await tester.pump(AppNotifier.appPresenceInterval * 2);
-        expect(kinds(), isEmpty);
-        app.dispose();
-        disposedInTest = true;
-      },
-    );
   });
 
   group('pane colours reach the daemon', () {

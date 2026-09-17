@@ -288,7 +288,6 @@ class AppNotifier extends ChangeNotifier {
   final AuthSession session;
   AppConfig config;
   late ApiClient api;
-
   /// Signs in, and says whether this computer is signed in: the harness CLI in a desktop build,
   /// [ViewerServices.login] in a viewer build — which has no CLI — under one name, so every call
   /// site reads the same in both.
@@ -380,12 +379,6 @@ class AppNotifier extends ChangeNotifier {
   // (agent_synced/agent_created/agent_renamed/agent_deleted) that normally keep it live — catches the
   // rare case a push event was dropped. Runs silently: see _syncAgentsIfChanged.
   final Map<String, Timer> _agentSyncTimers = {};
-  // "This window is open" — the one fact about the desk that goes past the daemon, to the backend,
-  // where it becomes the person's day in `user_daily_presence`. Sent only to THIS computer's daemon
-  // (a relayed machine's daemon would drop it as an unknown frame, and the account is the same
-  // either way). `open` once when the local socket connects, `ping` every [appPresenceInterval]
-  // after; see _startAppPresence.
-  final Map<String, Timer> _appPresenceTimers = {};
   // Keeps the local `harness` daemon alive for the whole app run — started once after the first
   // successful bootstrap (see `ensureCliDaemonReady`), cancelled on dispose. Cancelling only stops this
   // Dart-side loop; the daemon itself self-daemonizes and must keep running after the app quits.
@@ -505,9 +498,11 @@ class AppNotifier extends ChangeNotifier {
     final target = swarms.where((s) => s.id == entry.swarmId).firstOrNull;
     return target == null ||
         target.panes.length < maxPanes ||
-        target.panes.any(
-          (p) => p.machineId == entry.machineId && p.agentId == entry.agentId,
-        );
+              target.panes.any(
+                (p) =>
+                    p.machineId == entry.machineId &&
+                    p.agentId == entry.agentId,
+              );
   }
 
   bool _canReopenSwarm(ClosedSwarm saved) {
@@ -1201,7 +1196,6 @@ class AppNotifier extends ChangeNotifier {
 
   static const offlineRetryInterval = Duration(seconds: 5);
   static const agentSyncInterval = Duration(seconds: 60);
-  static const appPresenceInterval = Duration(seconds: 30);
 
   MachineState? stateOf(String machineId) => machineStates[machineId];
 
@@ -1538,7 +1532,6 @@ class AppNotifier extends ChangeNotifier {
     unawaited(_applyNodeStatus(machine, true));
     unawaited(_loadMachineData(machine, force: true));
     _startAgentSyncTimer(machineId);
-    if (machine.isLocalMachine) _startAppPresence(machineId);
   }
 
   @visibleForTesting
@@ -2420,7 +2413,6 @@ class AppNotifier extends ChangeNotifier {
     _daemonSupervisionTimer?.cancel();
     _daemonSupervisionTimer = null;
     _cliEndpoint = null;
-    _stopAllAppPresence();
     unawaited(_pool?.closeAll());
     _pool = null;
     _lastError = message;
@@ -2661,7 +2653,6 @@ class AppNotifier extends ChangeNotifier {
     _stopAllOfflineRetries();
     _stopAllLinkRetries();
     _stopAllAgentSyncTimers();
-    _stopAllAppPresence();
     // Tiles go, the saved layout stays: signing out and back in is the same
     // person at the same desk, and the file is only read once machines exist.
     await _closeAllPanes(persist: false);
@@ -2741,46 +2732,39 @@ class AppNotifier extends ChangeNotifier {
       onAuthFailure: _signedOutAtRuntime,
       onLocalFailure: _onLocalFailure,
       onEvent: _handleEvent,
-      onStatus: _onConnectionStatus,
+      onStatus: (machineId, nextStatus) {
+        final machine = machineStates[machineId];
+        if (machine == null) return;
+        machine.connectionStatus = nextStatus;
+        if (nextStatus == ConnectionStatus.connected) {
+          _onMachineConnected(machineId, machine);
+        } else if (nextStatus == ConnectionStatus.reconnecting ||
+            nextStatus == ConnectionStatus.disconnected) {
+          _stopAgentSyncTimer(machineId);
+          _clearMachineActivity(machine);
+          if (machine.isLocalMachine) {
+            machine.transportMode = MachineTransportMode.localOffline;
+          }
+          // Same reasoning as above, mirrored: capture pendingOfflineAgentId from the currently-open
+          // terminal (if any) so the connected branch above can reattach it, for every machine — this
+          // used to be local-only, which is why a remote machine's terminal never came back on its own
+          // after `harness start` on that machine, even though the guide screen promised it would.
+          //
+          // NOT while the machine is unlinked. NO_PEER_LINK is the local CLI failing a lookup in its
+          // own peer table (remoteRelay.ts `dial`) before anything is dialled, so neither that close
+          // nor the one `_startLinkRetry`'s `closeMachine` fires every few seconds says anything about
+          // whether the OTHER computer is up — our socket never reaches it. Forcing nodeOnline false
+          // here overwrote the REST `/api/machines` status, the one signal that does, and painted
+          // every unlinked machine as off. Keyed on the sticky flag rather than the 4404 close on
+          // purpose: the retry loop's own close() lands as a plain `disconnected` too. needsLink is
+          // set by onLocalFailure, which runs before this branch for 4404 (see WsConn._onDone).
+          if (!machine.needsLink) {
+            unawaited(_applyNodeStatus(machine, false));
+          }
+        }
+        notifyListeners();
+      },
     );
-  }
-
-  @visibleForTesting
-  void connectionStatusForTest(String machineId, ConnectionStatus status) =>
-      _onConnectionStatus(machineId, status);
-
-  void _onConnectionStatus(String machineId, ConnectionStatus nextStatus) {
-    final machine = machineStates[machineId];
-    if (machine == null) return;
-    machine.connectionStatus = nextStatus;
-    if (nextStatus == ConnectionStatus.connected) {
-      _onMachineConnected(machineId, machine);
-    } else if (nextStatus == ConnectionStatus.reconnecting ||
-        nextStatus == ConnectionStatus.disconnected) {
-      _stopAgentSyncTimer(machineId);
-      _stopAppPresence(machineId);
-      _clearMachineActivity(machine);
-      if (machine.isLocalMachine) {
-        machine.transportMode = MachineTransportMode.localOffline;
-      }
-      // Same reasoning as above, mirrored: capture pendingOfflineAgentId from the currently-open
-      // terminal (if any) so the connected branch above can reattach it, for every machine — this
-      // used to be local-only, which is why a remote machine's terminal never came back on its own
-      // after `harness start` on that machine, even though the guide screen promised it would.
-      //
-      // NOT while the machine is unlinked. NO_PEER_LINK is the local CLI failing a lookup in its
-      // own peer table (remoteRelay.ts `dial`) before anything is dialled, so neither that close
-      // nor the one `_startLinkRetry`'s `closeMachine` fires every few seconds says anything about
-      // whether the OTHER computer is up — our socket never reaches it. Forcing nodeOnline false
-      // here overwrote the REST `/api/machines` status, the one signal that does, and painted
-      // every unlinked machine as off. Keyed on the sticky flag rather than the 4404 close on
-      // purpose: the retry loop's own close() lands as a plain `disconnected` too. needsLink is
-      // set by onLocalFailure, which runs before this branch for 4404 (see WsConn._onDone).
-      if (!machine.needsLink) {
-        unawaited(_applyNodeStatus(machine, false));
-      }
-    }
-    notifyListeners();
   }
 
   /// The machine list is being fetched and there is nothing to show meanwhile.
@@ -2970,7 +2954,6 @@ class AppNotifier extends ChangeNotifier {
         _stopOfflineRetry(entry.key);
         _stopLinkRetry(entry.key);
         _stopAgentSyncTimer(entry.key);
-        _stopAppPresence(entry.key);
       }
     }
     machineStates.removeWhere((id, _) => !visible.contains(id));
@@ -3082,49 +3065,6 @@ class AppNotifier extends ChangeNotifier {
       timer.cancel();
     }
     _agentSyncTimers.clear();
-  }
-
-  /// Tell this computer's daemon the window is open: `open` now, then a `ping` every
-  /// [appPresenceInterval] for as long as the local socket stays up. Fire-and-forget on the
-  /// ready socket only (like app_focus) — a ping that finds the socket down is simply lost, and
-  /// the reconnect's own `open` says everything it would have.
-  void _startAppPresence(String machineId) {
-    if (_appPresenceTimers.containsKey(machineId)) return;
-    _sendAppPresence(machineId, 'open');
-    _appPresenceTimers[machineId] = Timer.periodic(appPresenceInterval, (_) {
-      if (!machineStates.containsKey(machineId)) {
-        _stopAppPresence(machineId);
-        return;
-      }
-      _sendAppPresence(machineId, 'ping');
-    });
-  }
-
-  void _sendAppPresence(String machineId, String kind) {
-    if (_disposed) return;
-    // The socket that reported `connected` (or the fixture standing in for it) — never one dialed
-    // for the purpose: this runs on a timer, and a tick that lands after the pool dropped the
-    // machine must not resurrect it.
-    final connection = connectionForTest != null
-        ? _conn(machineId)
-        : _pool?[machineId];
-    if (connection == null) return;
-    unawaited(
-      connection
-          .sendTerminalFrame('app_presence', {'kind': kind})
-          .catchError((_) => false),
-    );
-  }
-
-  void _stopAppPresence(String machineId) {
-    _appPresenceTimers.remove(machineId)?.cancel();
-  }
-
-  void _stopAllAppPresence() {
-    for (final timer in _appPresenceTimers.values) {
-      timer.cancel();
-    }
-    _appPresenceTimers.clear();
   }
 
   /// Silent safety-net reconciliation, ticked every [agentSyncInterval] while a machine is connected.
@@ -4891,7 +4831,6 @@ class AppNotifier extends ChangeNotifier {
     }
     _persistLayout();
     _stopAgentSyncTimer(machineId);
-    _stopAppPresence(machineId);
     machineStates.remove(machineId);
     machines.removeWhere((m) => m.machineId == machineId);
     if (selectedMachineId == machineId) selectedMachineId = null;
@@ -6478,7 +6417,6 @@ class AppNotifier extends ChangeNotifier {
     _stopAllOfflineRetries();
     _stopAllLinkRetries();
     _stopAllAgentSyncTimers();
-    _stopAllAppPresence();
     _clearAllTurnActivity();
     for (final pane in allPanes) {
       pane.session?.removeListener(notifyListeners);
