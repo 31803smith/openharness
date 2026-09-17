@@ -7,15 +7,23 @@ cd "$(dirname "$0")/.."
 root=$PWD
 # shellcheck disable=SC1091
 . ./VERSIONS
+# shellcheck source=runtimes.sh
+. toolchain/runtimes.sh
 
 command -v curl >/dev/null 2>&1 || { echo "miss curl on PATH"; exit 1; }
-command -v node >/dev/null 2>&1 || { echo "miss node >= 18 on PATH (the pane is a node server)"; exit 1; }
+# node reads the permutations out of the build here, and the pane is a node server: this machine's
+# own when it has one, else the Node Harness itself runs on.
+harness_node 18 || exit 1
+# The verdict is written for any python3 from 3.9 on, Apple's own included.
 command -v python3 >/dev/null 2>&1 || { echo "miss python3 (the verdict)"; exit 1; }
 command -v tar >/dev/null 2>&1 || { echo "miss tar on PATH"; exit 1; }
 
-war=$root/upstream/war
+# Everything lands in upstream.partial/ and replaces upstream/ only once it is complete, so a fetch
+# that fails halfway (a re-run without network) leaves the working install as it was.
+dest=$root/upstream.partial
+war=$dest/war
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/circuitjs1.XXXXXX")
-trap 'rm -rf "$tmp"' EXIT
+trap 'rm -rf "$tmp" "$dest"' EXIT
 
 get() { # url dest
   curl -fsSL --retry 3 --connect-timeout 20 --max-time 300 -o "$2" "$1" \
@@ -30,7 +38,7 @@ tar xzf "$tmp/src.tar.gz" -C "$tmp"
 src=$(find "$tmp" -maxdepth 1 -type d -name 'circuitjs1-*' | head -1)
 [ -d "$src/war" ] || { echo "miss war/ in the circuitjs1 tarball"; exit 1; }
 
-rm -rf "$root/upstream"
+rm -rf "$dest"
 mkdir -p "$war/circuitjs1"
 # war/ minus the servlet plumbing, the PHP relay and the service worker: the pane serves static
 # files off loopback, so a worker that caches them can only ever hand back something stale.
@@ -38,7 +46,7 @@ mkdir -p "$war/circuitjs1"
   | ( cd "$war" && tar xf - )
 # The GWT module's public/ folder is copied into the module dir by the compiler; do the same.
 cp -R "$src/src/com/lushprojects/circuitjs1/public/." "$war/circuitjs1/"
-cp "$src/COPYING.txt" "$root/upstream/COPYING.txt"
+cp "$src/COPYING.txt" "$dest/COPYING.txt"
 
 # 2. The compiled module. The selection script names its own permutations; read them out of it
 #    rather than pinning a list that upstream's next build would invalidate.
@@ -72,17 +80,19 @@ done
 echo "     $n compiled permutation(s), $(ls "$war/circuitjs1/gwt/clean/images" | wc -l | tr -d ' ') theme images, $(ls "$war/circuitjs1/circuits" | wc -l | tr -d ' ') example circuits"
 
 # 3. What landed, so doctor can tell and a human can audit.
-( cd "$root/upstream" && find . -type f | LC_ALL=C sort | xargs shasum -a 256 ) > "$root/upstream/MANIFEST"
+( cd "$dest" && find . -type f | LC_ALL=C sort | xargs shasum -a 256 ) > "$dest/MANIFEST"
 {
   echo "commit=$CIRCUITJS1_COMMIT"
   echo "build=$CIRCUITJS1_BUILD"
   echo "permutations=$n"
   echo "fetchedAt=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-} > "$root/upstream/INSTALLED"
+} > "$dest/INSTALLED"
 
 for f in circuitjs.html lz-string.min.js circuitjs1/circuitjs1.nocache.js circuitjs1/setuplist.txt circuitjs1/gwt/clean/clean.css; do
   [ -s "$war/$f" ] || { echo "miss upstream/war/$f after fetch"; exit 1; }
 done
+rm -rf "$root/upstream"
+mv "$dest" "$root/upstream"
 python3 -c "import json,sys; json.dumps(1)" >/dev/null
-echo "ok   circuitjs1 ${CIRCUITJS1_COMMIT:0:12} · $(du -sh "$root/upstream" | cut -f1) in upstream/ · GPL-2.0 (LICENSE-circuitjs1)"
+echo "ok   circuitjs1 ${CIRCUITJS1_COMMIT:0:12} · $(du -sh "$root/upstream" | cut -f1 | tr -d ' ') in upstream/ · GPL-2.0 (LICENSE-circuitjs1)"
 echo "ok   node $(node -v) · $(python3 --version)"

@@ -1,12 +1,22 @@
 """The judge, without a toolchain: every fixture below is real output from iverilog, yosys or
 nextpnr, trimmed. `python3 -m unittest discover -s toolchain`."""
+import io
+import json
+import os
+import runpy
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).parent))
-from verdict import assemble, parse_pnr_report, parse_sim_log, parse_yosys_log, read_step, to_verdict  # noqa: E402
+import verdict  # noqa: E402
+from verdict import (assemble, load_json, parse_pnr_log, parse_pnr_report, parse_sim_log,  # noqa: E402
+                     parse_yosys_log, read_step, to_verdict)
+
+SCRIPT = Path(__file__).parent / "verdict.py"
 
 DONE = {"state": "done", "exit": 0}
 FAILED = {"state": "failed", "exit": 1}
@@ -45,13 +55,16 @@ End of script.
 """
 
 
-def build(steps=None, sim=None, synth=None, pnr=None, bitstream=None, rtl=("rtl/blink.v",)):
+BITSTREAM = {"path": "out/blink.bin", "bytes": 104090, "flash": "iceprog out/blink.bin"}
+
+
+def build(steps=None, sim=None, synth=None, pnr=None, bitstream=BITSTREAM, rtl=("rtl/blink.v",)):
     return assemble(
         "blink", steps if steps is not None else dict(ALL_DONE), list(rtl),
         sim if sim is not None else {"checks": ["PASS blink"], "failures": [], "asserted": True, "diagnostics": []},
         synth if synth is not None else {"cells": 77, "byType": {"SB_LUT4": 32}, "diagnostics": []},
         pnr if pnr is not None else {**parse_pnr_report(PNR), "diagnostics": []},
-        bitstream if bitstream is not None else {"path": "out/blink.bin", "bytes": 104090, "flash": "iceprog out/blink.bin"},
+        bitstream,
         {"signals": [{"name": "clk"}], "end": 985000}, "--up5k", "sg48", "out/blink.svg",
     )
 
@@ -75,6 +88,16 @@ class SimLog(unittest.TestCase):
     def test_a_dump_with_no_assertion_is_not_a_test(self):
         self.assertFalse(parse_sim_log("VCD info: dumpfile out/sim.vcd opened\n")["asserted"])
 
+    def test_a_passing_check_that_mentions_failure_is_not_a_failure(self):
+        s = parse_sim_log("  ok   no failure after reset\n  ok   parity flagged on a failed frame\n"
+                          "PASS  uart: 2 checks\n")
+        self.assertEqual(s["failures"], [])
+        self.assertTrue(s["asserted"])
+
+    def test_the_word_FAIL_anywhere_in_a_check_line_still_fails_it(self):
+        s = parse_sim_log("  ok   3 frames, FAIL on the fourth\n")
+        self.assertEqual(s["failures"], ["ok   3 frames, FAIL on the fourth"])
+
 
 class YosysLog(unittest.TestCase):
     def test_stat_gives_cells_and_types(self):
@@ -89,6 +112,11 @@ class YosysLog(unittest.TestCase):
         y = parse_yosys_log(r"Warning: Latch inferred for signal `\bad.\y' from process")
         self.assertEqual(y["diagnostics"][0]["kind"], "latch")
         self.assertEqual(y["diagnostics"][0]["severity"], "warning")
+
+    def test_a_stat_block_without_counts(self):
+        y = parse_yosys_log("=== empty ===\n\n   Number of ports: 0\n")
+        self.assertEqual((y["cells"], y["wires"], y["byType"]), (0, 0, {}))
+        self.assertEqual(parse_yosys_log("no statistics here")["cells"], 0)
 
     def test_error_is_an_error(self):
         y = parse_yosys_log("ERROR: Multiple conflicting drivers for bad.\\y")
@@ -110,6 +138,14 @@ class PnrReport(unittest.TestCase):
         self.assertEqual([u["id"] for u in util], ["ICESTORM_LC", "SB_IO", "SB_GB"])
         self.assertEqual(util[0]["percent"], round(3600 / 5280, 2))
         self.assertEqual(util[0]["name"], "Logic cells")
+
+
+class PnrLog(unittest.TestCase):
+    def test_errors_and_warnings_with_or_without_the_info_prefix(self):
+        d = parse_pnr_log("Info: placing\nERROR: IO 'tx' is unconstrained\nInfo: Warning: timing is tight\n")
+        self.assertEqual(d, [
+            {"severity": "error", "kind": "nextpnr", "message": "IO 'tx' is unconstrained"},
+            {"severity": "warning", "kind": "nextpnr", "message": "timing is tight"}])
 
 
 class Assemble(unittest.TestCase):
@@ -191,6 +227,43 @@ class Assemble(unittest.TestCase):
         r = build(steps=steps, synth=synth, bitstream=None)
         self.assertEqual(len([f for f in r["findings"] if "check -assert" in f["message"]]), 1)
 
+    def test_verilog_diagnostics_are_findings_on_their_line(self):
+        sim = parse_sim_log("rtl/blink.v:19: error: Unknown module type: countr\n")
+        steps = {**ALL_DONE, "sim": {"state": "failed", "exit": 1, "log": "out/logs/sim.log", "tail": "1 error(s)"}}
+        r = build(steps=steps, sim=sim, bitstream=None)
+        self.assertEqual(r["findings"][0], {"severity": "error", "kind": "verilog",
+                                            "message": "Unknown module type: countr", "ref": "rtl/blink.v:19"})
+        # the parsed error explains the red phase; the log's last line is not added on top
+        self.assertEqual(len(r["findings"]), 1)
+        self.assertEqual(r["phases"][1]["state"], "failed")
+        self.assertTrue(r["summary"].endswith("1 error"))
+
+    def test_a_simulation_that_did_not_finish_says_so(self):
+        steps = {**ALL_DONE, "sim": {"state": "failed", "exit": 1, "log": "out/logs/sim.log"}}
+        r = build(steps=steps, sim={"checks": [], "failures": [], "asserted": False, "diagnostics": []},
+                  bitstream=None)
+        self.assertEqual(r["findings"][0]["kind"], "simulation")
+        self.assertIn("simulation did not finish", r["findings"][0]["message"])
+        self.assertIsNone(r["simulation"]["vcd"])
+
+    def test_nextpnr_errors_point_at_the_constraints(self):
+        steps = {**ALL_DONE, "pnr": dict(FAILED), "pack": {"state": "skipped"}}
+        pnr = {"utilization": [], "clocks": [], "diagnostics": parse_pnr_log("ERROR: IO 'tx' is unconstrained\n")}
+        r = build(steps=steps, pnr=pnr, bitstream=None)
+        self.assertEqual(r["findings"], [{"severity": "error", "kind": "nextpnr", "message": "IO 'tx' is unconstrained",
+                                          "ref": "constraints/blink.pcf"}])
+        self.assertEqual(r["summary"], "blink · sim passes · 77 cells · 1 error")
+
+    def test_a_running_step_makes_its_phase_active(self):
+        steps = {"sim": dict(DONE), "waves": dict(DONE), "synth": {"state": "running", "log": "out/logs/synth.log"}}
+        r = build(steps=steps, pnr={"utilization": [], "clocks": [], "diagnostics": []}, bitstream=None)
+        self.assertEqual([p["state"] for p in r["phases"]], ["done", "done", "active", "pending", "pending"])
+
+    def test_several_errors_are_counted_in_the_summary(self):
+        steps = {**ALL_DONE, "synth": dict(FAILED), "pnr": dict(FAILED)}
+        r = build(steps=steps, bitstream=None)
+        self.assertTrue(r["summary"].endswith("2 errors"))
+
     def test_a_latch_finding_explains_itself(self):
         synth = {"cells": 4, "byType": {}, "diagnostics": [
             {"severity": "warning", "kind": "latch", "message": r"Latch inferred for signal `\bad.\y'"}]}
@@ -217,6 +290,16 @@ class Verdict(unittest.TestCase):
     def test_summary_is_capped(self):
         sim = {"checks": [], "failures": ["FAIL " + "x" * 400], "asserted": True, "diagnostics": []}
         self.assertLessEqual(len(to_verdict(build(sim=sim), "a")["summary"]), 200)
+
+
+class LoadJson(unittest.TestCase):
+    def test_missing_or_broken_json_is_none(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertIsNone(load_json(Path(d) / "nope.json"))
+            (Path(d) / "bad.json").write_text("{not json")
+            self.assertIsNone(load_json(Path(d) / "bad.json"))
+            (Path(d) / "ok.json").write_text('{"a": 1}')
+            self.assertEqual(load_json(Path(d) / "ok.json"), {"a": 1})
 
 
 class Steps(unittest.TestCase):
@@ -250,6 +333,102 @@ class Steps(unittest.TestCase):
         phases = {p["id"]: p["state"] for p in r["phases"]}
         self.assertEqual((phases["synthesize"], phases["pnr"], phases["bitstream"]), ("failed", "pending", "pending"))
         self.assertFalse(r["ready"])
+
+
+def workspace(root: Path, *, top="blink", pack=True, pnr_ok=True):
+    """A workspace as flow.sh leaves it after a whole run."""
+    logs = root / "out" / "logs"
+    logs.mkdir(parents=True)
+    (root / "rtl").mkdir()
+    (root / "rtl" / f"{top}.v").write_text("module blink; endmodule\n")
+    (root / "out" / ".top").write_text(top + "\n")
+    (logs / "run.json").write_text(json.dumps({"top": top, "pid": 1, "startedAt": 1000, "finishedAt": 9000}))
+    for k, sid in enumerate(("sim", "waves", "synth", "schematic", "svg", "pnr", "pack")):
+        if sid == "pack" and not pack:
+            continue
+        failed = sid == "pnr" and not pnr_ok
+        (logs / f"{sid}.start").write_text(f"{1000 + k}\n")
+        (logs / f"{sid}.time").write_text(f"{1000 + k} {1500 + k}\n")
+        (logs / f"{sid}.exit").write_text("1\n" if failed else "0\n")
+        (logs / f"{sid}.log").write_text({"sim": "  ok   one\nPASS  blink\n", "synth": STAT}.get(sid, "")
+                                         + ("ERROR: IO 'tx' is unconstrained\n" if failed else ""))
+    (root / "out" / f"{top}_pnr.json").write_text(json.dumps(PNR))
+    (root / "out" / f"{top}_routed.json").write_text("{}")
+    (root / "out" / f"{top}.svg").write_text("<svg/>")
+    (root / "out" / f"{top}.bin").write_bytes(b"\0" * 32)
+    (root / "out" / "waves.json").write_text(json.dumps({"signals": [{"name": "clk"}, {"name": "led"}]}))
+
+
+class Main(unittest.TestCase):
+    """The whole read: out/ as flow.sh leaves it -> out/<top>.report.json and .harness/verdict.json."""
+
+    def run_main(self, root: Path, argv):
+        out = io.StringIO()
+        with mock.patch.object(verdict, "WS", root), redirect_stdout(out):
+            code = verdict.main(argv)
+        return code, out.getvalue()
+
+    def test_a_finished_run_is_ready_and_writes_both_files(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            workspace(root)
+            code, out = self.run_main(root, ["verdict.py", "blink"])
+            self.assertEqual(code, 0)
+            self.assertTrue(out.startswith("ready · blink · sim passes · 77 cells"), out)
+            report = json.loads((root / "out" / "blink.report.json").read_text())
+            self.assertEqual(report["bitstream"], {"path": "out/blink.bin", "bytes": 32, "flash": "iceprog out/blink.bin"})
+            self.assertEqual((report["pnr"]["report"], report["pnr"]["routed"]), ("out/blink_pnr.json", "out/blink_routed.json"))
+            self.assertEqual(report["synthesis"]["schematic"], "out/blink.svg")
+            self.assertEqual(report["simulation"]["signals"], 2)
+            self.assertEqual(report["steps"][0]["seconds"], 0.5)
+            self.assertEqual(report["board"]["device"], "iCE40 UP5K")
+            v = json.loads((root / ".harness" / "verdict.json").read_text())
+            self.assertEqual((v["ready"], v["artifact"]), (True, "out/blink.report.json"))
+
+    def test_the_top_comes_from_out_dot_top_then_the_testbench_then_a_default(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            workspace(root)
+            self.assertEqual(self.run_main(root, ["verdict.py"])[0], 0)
+            (root / "out" / ".top").unlink()
+            (root / "tb").mkdir()
+            (root / "tb" / "uart_tb.v").write_text("")
+            code, out = self.run_main(root, ["verdict.py"])
+            self.assertTrue((root / "out" / "uart.report.json").exists())
+            self.assertTrue(out.startswith("ready · uart · sim passes"), out)
+            self.assertNotIn("bitstream ready", out)  # there is no out/uart.bin
+        with tempfile.TemporaryDirectory() as d:
+            code, out = self.run_main(Path(d), ["verdict.py"])
+            self.assertEqual(code, 1)
+            self.assertIn("not ready · top", out)
+            self.assertIn("  error   no rtl/*.v — nothing to build", out)
+            v = json.loads((Path(d) / ".harness" / "verdict.json").read_text())
+            self.assertEqual([p["state"] for p in v["phases"]], ["active", "pending", "pending", "pending", "pending"])
+
+    def test_a_failed_place_and_route_reads_its_log_and_ships_no_bitstream(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            workspace(root, pnr_ok=False, pack=False)
+            (root / "out" / "blink_routed.json").unlink()
+            (root / "out" / "blink_pnr.json").unlink()
+            code, out = self.run_main(root, ["verdict.py", "blink"])
+            self.assertEqual(code, 1)
+            self.assertIn("  error   IO 'tx' is unconstrained  (constraints/blink.pcf)", out)
+            report = json.loads((root / "out" / "blink.report.json").read_text())
+            self.assertIsNone(report["bitstream"])
+            self.assertIsNone(report["pnr"]["routed"])
+            self.assertEqual(report["steps"][-1]["state"], "skipped")
+
+    def test_runs_as_a_script_on_the_harness_workspace(self):
+        with tempfile.TemporaryDirectory() as d:
+            workspace(Path(d))
+            with mock.patch.dict(os.environ, {"HARNESS_WORKSPACE": d, "YOSYS_DEVICE": "--hx8k"}), \
+                    mock.patch.object(sys, "argv", [str(SCRIPT), "blink"]), redirect_stdout(io.StringIO()), \
+                    self.assertRaises(SystemExit) as exit_:
+                runpy.run_path(str(SCRIPT), run_name="__main__")
+            self.assertEqual(exit_.exception.code, 0)
+            report = json.loads((Path(d) / "out" / "blink.report.json").read_text())
+            self.assertEqual(report["board"]["device"], "iCE40 HX8K")
 
 
 if __name__ == "__main__":

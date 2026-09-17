@@ -600,7 +600,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
       case 'addProject':
         await _addProject();
       case 'linkMachine':
-        await _dialog(() => showSwarmLinkDialog(context, app));
+        await _dialog(() => linkMachineOrSignIn(context, app));
       case 'manageMachines':
         unawaited(_dialog(() => showMachinesManager(context, app)));
       case 'refreshMachines':
@@ -769,7 +769,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
         folder ?? (agent == null ? null : machine?.projectOf(agent)?.cwd);
     await _dialog(() async {
       if (id == null) {
-        await showSwarmLinkDialog(context, app);
+        await linkMachineOrSignIn(context, app);
         return;
       }
       await showNewAgentDialog(
@@ -1238,7 +1238,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
     for (var i = 1; i <= 9; i++)
       'pane.focus_$i': () => app.focusPaneByIndex(i - 1),
     'navigation.commands': _showSearchCommands,
-    'machine.link': () => _dialog(() => showSwarmLinkDialog(context, app)),
+    'machine.link': () => _dialog(() => linkMachineOrSignIn(context, app)),
     'machines.manage': () => _dialog(() => showMachinesManager(context, app)),
     'project.add': _addProject,
     'keyboard.open_config': () => openKeyboardConfig(context),
@@ -1428,59 +1428,59 @@ class _SwarmScreenState extends State<SwarmScreen> {
                             source: 'tab',
                           )
                         else
-                        Padding(
-                          padding: app.panes.isEmpty
-                              ? EdgeInsets.zero
-                              : const EdgeInsets.all(10),
-                          child: Focus.withExternalFocusNode(
-                            focusNode: _canvasFocus,
-                            includeSemantics: false,
-                            child: Stack(
-                              children: [
-                                Positioned.fill(
-                                  child: PaneGrid(
-                                    notifier: app,
-                                    swarmMode: true,
-                                    onSplit: (paneId, axis) => unawaited(
-                                      _splitAgent(axis, paneId: paneId),
-                                    ),
-                                    onNewSplit: (paneId, axis) => unawaited(
-                                      _splitAgent(
-                                        axis,
-                                        paneId: paneId,
-                                        create: true,
+                          Padding(
+                            padding: app.panes.isEmpty
+                                ? EdgeInsets.zero
+                                : const EdgeInsets.all(10),
+                            child: Focus.withExternalFocusNode(
+                              focusNode: _canvasFocus,
+                              includeSemantics: false,
+                              child: Stack(
+                                children: [
+                                  Positioned.fill(
+                                    child: PaneGrid(
+                                      notifier: app,
+                                      swarmMode: true,
+                                      onSplit: (paneId, axis) => unawaited(
+                                        _splitAgent(axis, paneId: paneId),
                                       ),
+                                      onNewSplit: (paneId, axis) => unawaited(
+                                        _splitAgent(
+                                          axis,
+                                          paneId: paneId,
+                                          create: true,
+                                        ),
+                                      ),
+                                      empty: app.panes.isEmpty
+                                          ? HarnessStartPage(
+                                              key: ValueKey(
+                                                'harness-start:${app.activeSwarmId}',
+                                              ),
+                                              focusNode: _startSearchFocus,
+                                              createSearch: () =>
+                                                  SwarmSearchController(
+                                                    app,
+                                                    _navigation.recent,
+                                                    projects: _projects,
+                                                    commands: _searchCommands,
+                                                    adding: true,
+                                                    catalog: _searchCatalog,
+                                                  ),
+                                              onNew: _newAgent,
+                                              onStore: app.openStore,
+                                              onChoose: (selection) =>
+                                                  _activateSearch(
+                                                    selection,
+                                                    app.activeSwarmId,
+                                                  ),
+                                            )
+                                          : null,
                                     ),
-                                    empty: app.panes.isEmpty
-                                        ? HarnessStartPage(
-                                            key: ValueKey(
-                                              'harness-start:${app.activeSwarmId}',
-                                            ),
-                                            focusNode: _startSearchFocus,
-                                            createSearch: () =>
-                                                SwarmSearchController(
-                                                  app,
-                                                  _navigation.recent,
-                                                  projects: _projects,
-                                                  commands: _searchCommands,
-                                                  adding: true,
-                                                  catalog: _searchCatalog,
-                                                ),
-                                            onNew: _newAgent,
-                                            onStore: app.openStore,
-                                            onChoose: (selection) =>
-                                                _activateSearch(
-                                                  selection,
-                                                  app.activeSwarmId,
-                                                ),
-                                          )
-                                        : null,
                                   ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
                           ),
-                        ),
                       ],
                     ),
                   ),
@@ -1571,7 +1571,9 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                         // The Store shares the app's icon.
                                         Image.asset(
                                           kStoreMarkAsset,
-                                          key: ValueKey('tab-store:${swarm.id}'),
+                                          key: ValueKey(
+                                            'tab-store:${swarm.id}',
+                                          ),
                                           width: 16,
                                           height: 16,
                                         )

@@ -22,10 +22,27 @@ class _NoopLogin extends CliLogin {
   }
 }
 
+/// Signing out re-seats the desk on the daemon this computer now runs as;
+/// this test is about the history and must not reach for a real daemon.
+class _DeskOnlyApp extends AppNotifier {
+  _DeskOnlyApp({
+    required super.config,
+    required super.authSession,
+    super.configStore,
+    super.cliLogin,
+  });
+
+  @override
+  Future<void> ensureCliDaemonReady() async {}
+
+  @override
+  Future<void> refreshMachines() async {}
+}
+
 void main() {
   test('recently closed agents and swarms do not survive sign-out', () async {
     final login = _NoopLogin();
-    final app = AppNotifier(
+    final app = _DeskOnlyApp(
       config: AppConfig.dev,
       authSession: AuthSession(),
       configStore: null,

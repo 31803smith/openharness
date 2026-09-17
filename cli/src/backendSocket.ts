@@ -36,10 +36,11 @@ import { parseProjectFolder, prepareProjectFolder, ProjectFolderError } from './
 import { preTrustClaudeProject, preTrustCodexProject } from './lib/claudeTrust.js'
 import { projectPreview } from './lib/projectPreview.js'
 import { agentFrame, type AgentDshContext, type AgentFrame } from './lib/agentFrame.js'
-import { installedDsh, listInstalledDsh } from './dsh/installed.js'
-import { DSH_ID_RE, dshTier, viewerUse } from './dsh/manifest.js'
-import { bundledDshRegistry, registrySourceUrl } from './dsh/registry.js'
+import { installedDsh } from './dsh/installed.js'
+import { DSH_ID_RE } from './dsh/manifest.js'
+import { refreshDshRegistry } from './dsh/catalog.js'
 import type { DshInstallProgress } from './dsh/install.js'
+import { dshInstallReply, dshInstallRequest, dshInstallStatus, dshListRows, dshRemoveId, dshRemoveReply } from './dsh/wire.js'
 import { routeVoiceTask } from './lib/voiceRouter.js'
 import { tailFile } from './lib/sessions.js'
 import { messagesToEvents, windowRawLines, subagentStatsFromRawLines, type SessionEvent } from './lib/normalize.js'
@@ -1469,62 +1470,10 @@ export class BackendSocket {
         }
 
         case 'dsh_list': {
-          // Which domain-specific harnesses this machine has, plus what the bundled registry offers —
-          // answered here, on the machine in question, for the same reason `engines_probe` is.
-          const installed = listInstalledDsh()
-          const seen = new Set<string>()
-          const rows: Record<string, unknown>[] = []
-          // The store's facts (repo, homepage, upstream, licence, pictures) come from the registry
-          // whether or not the package is installed: a manifest does not carry them.
-          const facts = (id: string): Record<string, unknown> => {
-            const known = bundledDshRegistry().find((entry) => entry.id === id)
-            return {
-              verified: known?.verified === true,
-              // Where a person can read the package: its folder page for a built-in (store/…) one.
-              repo: known ? registrySourceUrl(known) : null,
-              homepage: known?.homepage ?? null,
-              upstream: known?.upstream ?? null,
-              license: known?.license ?? null,
-              screenshots: known?.screenshots ?? [],
-            }
-          }
-          for (const entry of installed) {
-            seen.add(entry.id)
-            rows.push({
-              id: entry.id,
-              kind: entry.manifest.kind ?? 'agent',
-              name: entry.manifest.name,
-              description: entry.manifest.description ?? null,
-              category: entry.manifest.category ?? null,
-              author: entry.manifest.author ?? null,
-              engine: entry.manifest.engine ?? null,
-              installed: true,
-              linked: entry.linked === true,
-              viewer: !!entry.manifest.viewer,
-              viewerUse: viewerUse(entry.manifest),
-              tier: dshTier(entry.manifest),
-              ...facts(entry.id),
-            })
-          }
-          for (const entry of bundledDshRegistry()) {
-            if (seen.has(entry.id)) continue
-            rows.push({
-              id: entry.id,
-              kind: entry.kind ?? 'agent',
-              name: entry.name,
-              description: entry.description ?? null,
-              category: entry.category ?? null,
-              author: entry.author ?? null,
-              engine: entry.engine ?? null,
-              installed: false,
-              linked: false,
-              viewer: (entry.tier ?? 0) >= 2,
-              viewerUse: entry.viewerUse ?? null,
-              tier: entry.tier ?? 0,
-              ...facts(entry.id),
-            })
-          }
-          reply(type, requestId, { dsh: rows })
+          // Keep catalog I/O off this connection's ordered RPC queue.
+          void refreshDshRegistry()
+            .then(catalog => reply(type, requestId, { dsh: dshListRows(undefined, catalog) }))
+            .catch(error => reply(type, requestId, { error: 'INTERNAL', detail: error instanceof Error ? error.message : String(error) }))
           return
         }
 
@@ -1534,10 +1483,9 @@ export class BackendSocket {
           // longer says installed. Agents already running from it keep running — their processes
           // hold what they need — and the store is what asks; it refreshes the list itself.
           if (!this.onDshRemove) { reply(type, requestId, { error: 'UNSUPPORTED_ON_REMOTE' }); return }
-          const id = typeof payload.id === 'string' && DSH_ID_RE.test(payload.id) ? payload.id : undefined
+          const id = dshRemoveId(payload)
           if (!id) { reply(type, requestId, { error: 'INVALID_DSH', detail: 'dsh_remove needs an id' }); return }
-          const result = this.onDshRemove(id)
-          reply(type, requestId, result.ok ? { ok: true, id } : { error: result.error, detail: result.detail })
+          reply(type, requestId, dshRemoveReply(id, this.onDshRemove(id)))
           return
         }
 
@@ -1546,12 +1494,10 @@ export class BackendSocket {
           // it is detached from the ordered RPC chain like `engines_probe`, and progress travels as
           // `dsh_install_status` pushes the app renders in the create dialog.
           if (!this.onDshInstall) { reply(type, requestId, { error: 'UNSUPPORTED_ON_REMOTE' }); return }
-          const id = typeof payload.id === 'string' && DSH_ID_RE.test(payload.id) ? payload.id : undefined
-          const url = typeof payload.url === 'string' && payload.url.length <= 2048 && !/[\x00-\x1f\x7f]/.test(payload.url) ? payload.url : undefined
-          const ref = typeof payload.ref === 'string' && payload.ref.length <= 200 ? payload.ref : undefined
-          if (!id && !url) { reply(type, requestId, { error: 'INVALID_DSH', detail: 'dsh_install needs an id or a url' }); return }
-          void this.onDshInstall({ id, url, ref }, (p) => this.send({ type: 'dsh_install_status', payload: { ...p, id: p.id ?? id ?? null } }))
-            .then((result) => reply(type, requestId, result.ok ? { ok: true, id: result.id } : { error: result.error, detail: result.detail }))
+          const request = dshInstallRequest(payload)
+          if (!request) { reply(type, requestId, { error: 'INVALID_DSH', detail: 'dsh_install needs an id or a url' }); return }
+          void this.onDshInstall(request, (p) => this.send({ type: 'dsh_install_status', payload: dshInstallStatus(p, request) }))
+            .then((result) => reply(type, requestId, dshInstallReply(result)))
             .catch((error) => reply(type, requestId, { error: 'INTERNAL', detail: error instanceof Error ? error.message : String(error) }))
           return
         }

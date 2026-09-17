@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -8,6 +9,7 @@ import {
   buildEngineCommandArgv,
   buildEngineLaunchArgv,
   commandAvailableInInteractiveShell,
+  harnessNodePrelude,
 } from './engineLaunch.js'
 import { ENGINES } from '../engines/types.js'
 import { engineBin } from './engineBin.js'
@@ -33,6 +35,37 @@ describe('buildEngineLaunchArgv', () => {
       'if ! cd -- "$1"; then printf \'%s\\n\' \'harness: the selected working directory is unavailable.\' >&2; exit 1; fi\nshift\nexec "$@"',
       'harness-engine', '/work/project', engineBin('claude'),
     ])
+  })
+
+  it('a DSH agent gets Harness\'s Node at the end of a PATH that has none; a plain launch is unchanged', () => {
+    const argv = buildEngineLaunchArgv('claude', { harnessNode: true }, '/bin/zsh', '/opt/harness runtime/bin/node')
+    expect(argv[2]).toBe(`${harnessNodePrelude('/opt/harness runtime/bin/node')}exec "$@"`)
+    expect(harnessNodePrelude('/opt/harness runtime/bin/node')).toBe(
+      'if ! command -v node >/dev/null 2>&1; then PATH="${PATH:+$PATH:}"\'/opt/harness runtime/bin\'; export PATH; fi\n')
+    expect(buildEngineLaunchArgv('claude', { harnessNode: false }, '/bin/zsh')[2]).toBe('exec "$@"')
+  })
+
+  it('the DSH prelude, run by a real shell, reaches the engine\'s PATH only when node is missing', () => {
+    const home = mkdtempSync(join(tmpdir(), 'harness-node-prelude-'))
+    try {
+      const runtimeBin = join(home, 'runtime', 'bin')
+      mkdirSync(runtimeBin, { recursive: true })
+      writeFileSync(join(runtimeBin, 'node'), '#!/bin/sh\n', { mode: 0o755 })
+      const run = (path: string) => {
+        const argv = buildEngineLaunchArgv('claude', { harnessNode: true }, '/bin/sh', join(runtimeBin, 'node'))
+        const script = argv[2]
+        return execFileSync('/bin/sh', ['-c', script, 'harness-engine', '/bin/sh', '-c', 'echo "$PATH"; command -v node'], {
+          env: { HOME: home, PATH: path }, encoding: 'utf8',
+        }).trim().split('\n')
+      }
+      expect(run('/usr/bin:/bin')).toEqual([`/usr/bin:/bin:${runtimeBin}`, join(runtimeBin, 'node')])
+      const own = join(home, 'own')
+      mkdirSync(own)
+      writeFileSync(join(own, 'node'), '#!/bin/sh\n', { mode: 0o755 })
+      expect(run(`${own}:/usr/bin:/bin`)).toEqual([`${own}:/usr/bin:/bin`, join(own, 'node')])
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
   })
 
   it('falls back to direct execution when no absolute shell is available', () => {

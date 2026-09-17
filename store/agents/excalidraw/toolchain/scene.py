@@ -93,7 +93,7 @@ class Scene:
         return self.text(x, y, text, size=size)
 
     def note(self, x: float, y: float, text: str, color: str = "yellow", w: float = 220) -> dict:
-        """A sticky note: a filled box with left-aligned small text."""
+        """A sticky note: a filled box, 220 px wide by default, with its text small and centred."""
         return self.box(x, y, text, color=color, w=w, size=16)
 
     # ---- edges ----
@@ -160,8 +160,10 @@ def _edge(el: dict, tx: float, ty: float) -> tuple[float, float]:
         return cx, cy
     hw, hh = el["width"] / 2, el["height"] / 2
     if el["type"] == "ellipse":
-        ang = math.atan2(dy, dx)
-        return cx + hw * math.cos(ang), cy + hh * math.sin(ang)
+        # Along the line itself: (dx·s/hw)² + (dy·s/hh)² = 1. The ellipse's parametric angle is not the
+        # line's angle unless it is a circle, and an arrow started there pointed off-centre.
+        s = 1 / math.hypot(dx / hw, dy / hh)
+        return cx + dx * s, cy + dy * s
     sx = hw / abs(dx) if dx else math.inf
     sy = hh / abs(dy) if dy else math.inf
     s = min(sx, sy)

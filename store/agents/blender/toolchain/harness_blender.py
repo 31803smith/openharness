@@ -215,7 +215,9 @@ def turntable(path: str | Path = "out/turntable.mp4", seconds: float = 4.0, fps:
     bpy.context.view_layer.update()
     cam.parent = pivot
     cam.matrix_parent_inverse = pivot.matrix_world.inverted()
-    frames = int(seconds * fps)
+    # At least one frame, rounded not truncated: int(0.29 * 100) is 28, and 0 frames divided by zero in
+    # the progress handler below.
+    frames = max(1, round(seconds * fps))
     s.frame_start, s.frame_end = 1, frames
     s.render.fps = fps
     # Linear keys, set through the preference new keys are born with: Blender 5's layered actions
@@ -256,9 +258,9 @@ def turntable(path: str | Path = "out/turntable.mp4", seconds: float = 4.0, fps:
         s.frame_start, s.frame_end, s.render.fps = saved["start"], saved["end"], saved["fps"]
         s.frame_set(saved["current"])
         bpy.context.preferences.edit.keyframe_new_interpolation_type = saved["interp"]
-    ffmpeg = shutil.which("ffmpeg")
+    ffmpeg = _ffmpeg()
     if ffmpeg is None:
-        print(f"warn no ffmpeg on PATH — turntable frames are in {frames_dir}; brew install ffmpeg to get an mp4")
+        print(f"warn no ffmpeg — turntable frames are in {frames_dir}; run toolchain/setup.sh again to get an mp4")
         return out
     _activity("Encoding turntable")
     subprocess.run([ffmpeg, "-y", "-loglevel", "error", "-framerate", str(fps), "-i", str(frames_dir / "frame_%04d.png"),
@@ -266,6 +268,18 @@ def turntable(path: str | Path = "out/turntable.mp4", seconds: float = 4.0, fps:
     shutil.rmtree(frames_dir, ignore_errors=True)
     return out
 
+
+
+def _ffmpeg() -> str | None:
+    """The machine's ffmpeg, else the one imageio-ffmpeg carries in the venv (setup installs it)."""
+    found = shutil.which("ffmpeg")
+    if found:
+        return found
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:  # not installed, or its binary is missing for this platform
+        return None
 
 # ---------------------------------------------------------------------------------------------------
 # Exports
@@ -314,7 +328,11 @@ def _stamp() -> list[tuple]:
     targets: list[tuple] = []
 
     def put(idblock, value: dict) -> None:
-        targets.append((idblock, idblock.get("harness")))
+        before = idblock.get("harness")
+        # A group or an array comes back as a live view of the property about to be replaced, and
+        # reads as whatever took its memory afterwards: keep a copy.
+        copy = getattr(before, "to_dict", None) or getattr(before, "to_list", None)
+        targets.append((idblock, copy() if copy else before))
         idblock["harness"] = value
 
     put(s, {
@@ -362,14 +380,20 @@ def export_glb(path: str | Path = "out/model.glb", cameras: bool = True, lights:
     _activity(f"Exporting {out.name}")
     gltf = out.suffix.lower() == ".gltf"
     tmp = out.with_name(f".{out.stem}.partial{out.suffix}")
+    # Since Blender 4.2 the exporter offers GLTF_EMBEDDED (one self-contained .gltf, what the pane
+    # loads) only while its add-on preference allows it; allow it for this export and put it back.
+    prefs = bpy.context.preferences.addons["io_scene_gltf2"].preferences
+    embedded = prefs.allow_embedded_format
     targets = _stamp()
     try:
+        prefs.allow_embedded_format = True
         bpy.ops.export_scene.gltf(
             filepath=str(tmp), export_format="GLTF_EMBEDDED" if gltf else "GLB",
             use_selection=False, use_renderable=True, export_apply=True, export_yup=True,
             export_extras=True, export_cameras=cameras, export_lights=lights,
             export_hierarchy_full_collections=collections, export_animations=True)
     finally:
+        prefs.allow_embedded_format = embedded
         _unstamp(targets)
     os.replace(tmp, out)
     rel = _rel(out)

@@ -13,6 +13,7 @@ import 'package:harness/state/swarm_navigation.dart';
 import 'package:harness/state/terminal_pane.dart';
 import 'package:harness/terminal/terminal_binary.dart';
 import 'package:harness/terminal/terminal_session.dart';
+import 'package:harness/widgets/engine_identity.dart';
 import 'package:harness/widgets/pane_grid.dart';
 import 'package:harness/widgets/terminal_panel.dart';
 import 'package:harness/ws/local_cli_discovery.dart';
@@ -168,6 +169,162 @@ void main() {
       } else {
         expect(find.byKey(ValueKey('tab-store:${tab.id}')), findsOneWidget);
       }
+    });
+
+    testWidgets(
+      'a harness tab — its agent and that agent\'s viewer — wears the harness mark (native=$native)',
+      (tester) async {
+        const channel = MethodChannel('harness/swarm_tabs');
+        final updates = <Map>[];
+        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (
+          call,
+        ) async {
+          if (call.method == 'update') updates.add(call.arguments as Map);
+          return true;
+        });
+        addTearDown(
+          () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+            channel,
+            null,
+          ),
+        );
+        final app = createApp();
+        final machine = app.stateOf('m')!;
+        machine.agents = [
+          ...machine.agents,
+          const Agent(
+            id: 'deck',
+            name: 'Quarterly deck',
+            engine: 'claude',
+            dsh: 'autonomous/marp',
+            dshName: 'Marp',
+            terminalAvailable: true,
+          ),
+        ];
+        final tab = app.activeSwarm;
+        await mount(tester, app, nativeTabs: native);
+        await app.addAgentToSwarm('m', 'deck');
+        tab.panes.insert(
+          0,
+          TerminalPane(
+            id: 900,
+            machineId: 'm',
+            kind: PaneKind.web,
+            ownerAgentId: 'deck',
+            url: 'http://127.0.0.1:1/',
+          ),
+        );
+        app.renameSwarm(tab.id, 'Quarterly deck');
+        await tester.pump();
+        if (native) {
+          final row = (updates.last['tabs'] as List).single as Map;
+          expect(row['kind'], 'harness');
+          expect(row['agentCount'], 1);
+          expect(row['engine'], 'autonomous/marp', reason: 'the harness, not the engine under it');
+          expect(row['iconAsset'], 'assets/engine-icons/marp.png');
+        } else {
+          final mark = find.byKey(ValueKey('tab-engine:${tab.id}'));
+          expect(tester.widget<EngineMark>(mark).engine, 'autonomous/marp');
+          expect(find.byKey(ValueKey('tab-group:${tab.id}')), findsNothing);
+        }
+
+        // An agent the machine no longer lists is drawn as its session's engine,
+        // and one with neither is a plain tab.
+        final other = TerminalPane(id: 901, machineId: 'm', agentId: 'gone');
+        app.newSwarm(name: 'Leftovers');
+        final leftovers = app.activeSwarm;
+        leftovers.panes.add(other);
+        // Back to the harness tab: the strip draws every tab, shown or not.
+        app.selectSwarm(tab.id);
+        await tester.pump();
+        if (native) {
+          final row = (updates.last['tabs'] as List).cast<Map>().last;
+          expect(row['agentCount'], 1);
+          expect(row['engine'], isNull);
+          expect(row['iconAsset'], isNull);
+        } else {
+          expect(
+            tester.widget<EngineMark>(find.byKey(ValueKey('tab-engine:${leftovers.id}'))).engine,
+            isNull,
+          );
+        }
+        final session = terminal('gone', []);
+        other.session = session;
+        app.renameSwarm(leftovers.id, 'Leftovers again');
+        await tester.pump();
+        if (native) {
+          final row = (updates.last['tabs'] as List).cast<Map>().last;
+          expect(row['engine'], 'codex');
+          expect(row['iconAsset'], 'assets/engine-icons/codex.png');
+        } else {
+          expect(
+            tester.widget<EngineMark>(find.byKey(ValueKey('tab-engine:${leftovers.id}'))).engine,
+            'codex',
+          );
+        }
+        tab.panes.removeWhere((pane) => pane.id == 900);
+        leftovers.panes.clear();
+        await tester.pumpWidget(const SizedBox());
+        app.dispose();
+      },
+    );
+
+    testWidgets('the store opens past forty tabs, and is still one tab (native=$native)', (
+      tester,
+    ) async {
+      const channel = MethodChannel('harness/swarm_tabs');
+      final updates = <Map>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (
+        call,
+      ) async {
+        if (call.method == 'update') updates.add(call.arguments as Map);
+        return true;
+      });
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          channel,
+          null,
+        ),
+      );
+      final app = createApp();
+      await mount(tester, app, nativeTabs: native);
+      await app.addAgentToSwarm('m', 'a0');
+      for (var i = 0; i < 40; i++) {
+        app.newSwarm(name: 'Project $i');
+      }
+      app.openStore();
+      await tester.pump();
+      final store = app.activeSwarm;
+      expect(store.isStore, isTrue);
+      expect(app.swarms, hasLength(42));
+      app.selectSwarm(app.swarms.first.id);
+      app.openStore();
+      await tester.pump();
+      expect(app.activeSwarm, same(store));
+      expect(app.swarms.where((swarm) => swarm.isStore), hasLength(1));
+      if (native) {
+        final rows = (updates.last['tabs'] as List).cast<Map>();
+        expect(rows, hasLength(42));
+        expect(rows.where((row) => row['kind'] == 'store'), hasLength(1));
+        expect(rows.last['engine'], 'store');
+        expect(updates.last['activeId'], store.id);
+      } else {
+        // The strip is the one horizontal list; the store is its last tab.
+        final strip = find
+            .byWidgetPredicate(
+              (widget) =>
+                  widget is Scrollable &&
+                  widget.axisDirection == AxisDirection.right,
+            )
+            .first;
+        // Scrolled, not dragged: a drag on a tab reorders it.
+        final position = tester.state<ScrollableState>(strip).position;
+        position.jumpTo(position.maxScrollExtent);
+        await tester.pump();
+        expect(find.byKey(ValueKey('tab-store:${store.id}')), findsOneWidget);
+      }
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
     });
 
     testWidgets('tab identity follows its agent count (native=$native)', (

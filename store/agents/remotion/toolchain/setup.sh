@@ -7,7 +7,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 # shellcheck disable=SC1091
 . ./VERSIONS
-command -v node >/dev/null 2>&1 && node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 18 ? 0 : 1)' || { echo "miss node >= 18 on PATH"; exit 1; }
+# shellcheck source=runtimes.sh
+. toolchain/runtimes.sh
+# This machine's node when it has one, else the Node Harness itself runs on — npm is beside it.
+harness_node 18 || exit 1
 command -v npm >/dev/null 2>&1 || { echo "miss npm on PATH"; exit 1; }
 command -v python3 >/dev/null 2>&1 || { echo "miss python3 (the verdict)"; exit 1; }
 echo "     npm ci (remotion ${REMOTION}, a few minutes the first time)"

@@ -41,7 +41,6 @@ export function fileInfo(ws, rel) {
 }
 
 function alive(pid) {
-  if (!pid) return false
   try { process.kill(pid, 0); return true } catch (e) { return e.code === 'EPERM' }
 }
 

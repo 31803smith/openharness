@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { cp, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -89,4 +89,11 @@ test('shows a recoverable empty state before a page exists', async () => {
   assert.match(await missing.text(), /No preview yet/);
   await writeFile(join(workspace, 'later.html'), '<p>Now ready</p>');
   assert.match(await (await fetch(base + '/files/later.html')).text(), /Now ready/);
+});
+
+test('Hello World declares this viewer, and the page this viewer opens by default is its workspace marker', async () => {
+  const example = JSON.parse(await readFile(new URL('../../../examples/hello-world/harness.json', import.meta.url), 'utf8'));
+  const viewer = JSON.parse(await readFile(new URL('../harness.json', import.meta.url), 'utf8'));
+  assert.equal(example.viewer.use, viewer.id);
+  assert.equal(new URL(viewer.viewer.url.replace('${port}', '4310')).searchParams.get('file'), example.workspace.marker);
 });

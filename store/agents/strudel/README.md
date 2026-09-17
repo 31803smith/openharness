@@ -22,7 +22,9 @@ hear it in the Strudel pane as the agent writes the pattern. Runs on Claude Code
 harness dsh check .                              # conformance
 harness dsh install "$PWD" --link                # this checkout as the installed agent
 python3 -m unittest toolchain/test_verdict.py    # the verdict
+python3 -m unittest toolchain/test_scripts.py    # setup, doctor, init, viewer.sh, with stub commands
 node --test pane/voices.test.mjs                 # the pane's voice parser
+node --test test/viewer.test.mjs                 # the pane server, over HTTP, with a stand-in REPL
 ```
 
 ## What cannot be checked here

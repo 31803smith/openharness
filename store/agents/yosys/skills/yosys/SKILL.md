@@ -29,11 +29,14 @@ Each step's full output is at `out/logs/<step>.log`, with `<step>.start`, `<step
 which step is running. The flow does not stop the world on a failure: synthesis still runs when
 simulation fails, so you see every problem at once.
 
-Single steps, when you are iterating on one thing:
+Single steps, when you are iterating on one thing — through `"$YOSYS_TOOLCHAIN/run"`, which finds
+the tools the way the flow does (they need not be on your PATH):
 
 ```sh
-iverilog -g2012 -o out/sim.vvp rtl/*.v tb/blink_tb.v && vvp out/sim.vvp   # just the simulation
-yosys -p "read_verilog rtl/*.v; synth_ice40 -top blink; stat"             # just the cell count
+# just the simulation
+"$YOSYS_TOOLCHAIN/run" iverilog -g2012 -o out/sim.vvp rtl/*.v tb/blink_tb.v && "$YOSYS_TOOLCHAIN/run" vvp out/sim.vvp
+# just the cell count
+"$YOSYS_TOOLCHAIN/run" yosys -p "read_verilog rtl/*.v; synth_ice40 -top blink; stat"
 ```
 
 Then always finish with the full `"$YOSYS_FLOW" <top>` so the pane and the verdict are current.
@@ -200,8 +203,8 @@ Another board: change `constraints/<top>.pcf` and set `YOSYS_DEVICE` / `YOSYS_PA
   is to break it with a pipeline register, not to lower the clock, unless lowering it is honest.
   The path itself, hop by hop with the RTL line of each net, is `critical_paths` in
   `out/<top>_pnr.json` — and drawn on the floorplan in the pane's Chip tab.
-- **`bitstream.path`** — `out/<top>.bin`, and `iceprog out/<top>.bin` flashes a board over USB
-  (install `icestorm`'s `iceprog`; the user needs the board plugged in).
+- **`bitstream.path`** — `out/<top>.bin`, and `"$YOSYS_TOOLCHAIN/run" iceprog out/<top>.bin` flashes
+  a board over USB (the user needs the board plugged in).
 
 ## Pitfalls that cost a day
 

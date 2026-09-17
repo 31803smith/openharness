@@ -5,8 +5,9 @@
 //   node art.mjs wallpaper -o assets/bg.svg [--palette aurora|sunset|ocean|graphite|spectrum] [--seed 7] [--size 1920x1080]
 //   node art.mjs chart -o assets/chart.svg --data "2022:12,2023:31,2024:64" [--type bar|line] [--accent "#2997ff"] [--label "Revenue, $M"]
 //   node art.mjs frame -o assets/phone.svg --image assets/screen.png [--kind phone|laptop|window] [--palette aurora]
-import { writeFileSync, readFileSync, existsSync } from 'node:fs'
+import { writeFileSync, readFileSync, existsSync, realpathSync } from 'node:fs'
 import { extname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const PALETTES = {
   aurora: ['#5e5ce6', '#bf5af2', '#ff375f', '#30d158', '#64d2ff'],
@@ -141,7 +142,14 @@ ${bg}
 `
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Run as a script, however it was reached: `file://${argv[1]}` never matched a path with a space in it
+// (the URL escapes it) or an install linked with `harness dsh install --link` (the URL is the real path),
+// and the CLI then did nothing at all, silently.
+function isMain() {
+  try { return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url)) } catch { return false }
+}
+
+if (isMain()) {
   const a = args(process.argv.slice(2))
   const cmd = a._[0]
   const out = a.o
@@ -151,10 +159,12 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     else if (cmd === 'chart') svg = chart({ data: a.data, type: a.type, accent: a.accent, label: a.label, dark: a.light ? false : true })
     else if (cmd === 'frame') svg = frame({ image: a.image ? resolve(a.image) : undefined, kind: a.kind, palette: a.palette, seed: a.seed })
     else { console.error('usage: art.mjs wallpaper|chart|frame -o <file.svg> [options]'); process.exit(2) }
-    if (!out) { process.stdout.write(svg); process.exit(0) }
-    writeFileSync(out, svg)
-    console.log(`wrote ${out}`)
+    // No exit after writing to stdout: on a pipe the write is asynchronous, and exiting cut the SVG off at 64 KB.
+    if (!out) { process.stdout.write(svg) } else {
+      writeFileSync(out, svg)
+      console.log(`wrote ${out}`)
+    }
   } catch (error) {
-    console.error(`art: ${error instanceof Error ? error.message : error}`); process.exit(1)
+    console.error(`art: ${error.message}`); process.exit(1)
   }
 }

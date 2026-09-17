@@ -80,7 +80,8 @@ async function handleOpen(req, res) {
   if (!trusted(req)) return json(res, 403, { ok: false, error: 'forbidden' })
   if (OPEN_MODE === 'off') return json(res, 501, { ok: false, error: 'opening is not available here' })
   let body
-  try { body = JSON.parse(await readBody(req)) } catch { return json(res, 400, { ok: false, error: 'bad request' }) }
+  try { body = JSON.parse(await readBody(req)) } catch { body = null }
+  if (!body || typeof body !== 'object') return json(res, 400, { ok: false, error: 'bad request' })
   if (body.kind === 'url') {
     const url = String(body.url ?? '')
     if (!/^(https?:\/\/|mailto:)/i.test(url) || url.length > 4096) return json(res, 400, { ok: false, error: 'only http(s) and mailto links open' })
@@ -98,10 +99,13 @@ function state(file) {
   return { ...docState(workspace, file), canOpen: OPEN_MODE !== 'off' }
 }
 
-createServer((req, res) => {
-  const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`)
-  let path
-  try { path = decodeURIComponent(url.pathname) } catch { res.writeHead(400); res.end(); return }
+const server = createServer((req, res) => {
+  // An absolute-form target (`GET http://a:99999/`) is not a URL either: both answer 400, neither throws.
+  let url, path
+  try {
+    url = new URL(req.url, `http://127.0.0.1:${port}`)
+    path = decodeURIComponent(url.pathname)
+  } catch { res.writeHead(400); res.end(); return }
   if (path === '/' || path === '/index.html') return sendFile(req, res, join(APP, 'index.html'))
   if (path.startsWith('/app/')) {
     const full = safeJoin(APP, path.slice('/app/'.length))
@@ -116,7 +120,12 @@ createServer((req, res) => {
     const full = safeJoin(workspace, path.slice('/ws/'.length))
     return full ? sendFile(req, res, full, { download: url.searchParams.has('download') }) : (res.writeHead(404), res.end())
   }
-  if (path === '/api/state') return json(res, 200, state(url.searchParams.get('file') ?? ''))
+  if (path === '/api/state') {
+    // A verdict the agent wrote badly is an error for this request, never the end of the pane.
+    let body
+    try { body = state(url.searchParams.get('file') ?? '') } catch (error) { return json(res, 500, { error: error.message }) }
+    return json(res, 200, body)
+  }
   if (path === '/api/open' && req.method === 'POST') { handleOpen(req, res).catch((e) => json(res, 500, { ok: false, error: e.message })); return }
   if (path === '/events') {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' })
@@ -156,3 +165,5 @@ try {
 }
 setInterval(() => { if (clients.size) flush() }, 3000).unref()
 setInterval(() => { for (const c of clients) c.res.write(': ping\n\n') }, 20_000).unref()
+// Harness stops the pane with a signal: end the event streams and exit, rather than dying mid-write.
+for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => { for (const c of clients) c.res.end(); server.close(); process.exit(0) })

@@ -17,10 +17,11 @@ print a URL, never open a browser.
 - **The skill** is linked into `.claude/skills/marp-deck`. Read it before the first save: it is
   the arc of a keynote, the copy rules, the two themes and their slide classes, the art generator,
   the check, the export. Everything below assumes you have.
-- **The toolchain** is `$MARP_TOOLCHAIN` (pinned `marp-core`, `marp-cli`, `art.mjs`, `check.mjs`)
-  and the themes are `$MARP_THEMES`. Use them through the skill's commands; install nothing.
+- **The toolchain** is `$MARP_TOOLCHAIN` (pinned `marp-core`, `marp-cli`, `art.mjs`, `check.mjs`,
+  run as `art`, `check` and `marp` beside them) and the themes are `$MARP_THEMES`. Use them through
+  the skill's commands, never with a bare `node`; install nothing.
 - **The verdict.** `.harness/verdict.json` is written by the check — by the viewer on every save
-  and by you when you run `node "$MARP_TOOLCHAIN/check.mjs"`. Never edit it by hand.
+  and by you when you run `"$MARP_TOOLCHAIN/check"`. Never edit it by hand.
 
 ## How to work: the deck takes shape in the pane
 
@@ -36,7 +37,7 @@ early and often — not in your head and then all at once.
    Reference each from its slide and save. The pane goes from words to a keynote in one step.
 3. **Then fill, slide by slide, in order.** Headline, one line, speaker notes. Save after every
    slide or two; every save redraws the pane.
-4. **Run the check after each pass**: `node "$MARP_TOOLCHAIN/check.mjs"`. Fix errors at once;
+4. **Run the check after each pass**: `"$MARP_TOOLCHAIN/check"`. Fix errors at once;
    clear warnings before you call it done. The header reads *Ready* when it is a deck and the
    Polish phase completes when the check has nothing left to say.
 5. **Ask only what you cannot infer, and only after the outline is up.** Audience, length and

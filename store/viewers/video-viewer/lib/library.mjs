@@ -127,7 +127,7 @@ export function createLibrary(workspace, options = {}) {
     const partialRoots = [] // { qdirRel, scene, abs }
     let entries = 0
     const visit = (dir, depth) => {
-      if (depth > MAX_DEPTH || entries > MAX_ENTRIES) return
+      if (depth > MAX_DEPTH) return
       let names
       try { names = readdirSync(dir) } catch { return }
       for (const name of names) {
@@ -236,7 +236,7 @@ export function createLibrary(workspace, options = {}) {
     return beats
   }
 
-  function renderEntry(item) {
+  function renderEntry(item, extras = true) {
     const { rel, abs, st, kind } = item
     const info = probed(abs, st, kind)
     const parts = kind === 'image' ? null : manimParts(rel)
@@ -263,7 +263,7 @@ export function createLibrary(workspace, options = {}) {
       beats: null,
       changes: null,
     }
-    if (kind === 'video' && entry.complete) {
+    if (extras && kind === 'video' && entry.complete) {
       const sidecar = sidecarFor(rel, st)
       const beats = (sidecar && beatsFromSidecar(sidecar, fps, entry.frames)) || beatsFor(parts, st, entry.frames)
       let sections = sectionsFor(parts, st, fps)
@@ -412,13 +412,15 @@ export function createLibrary(workspace, options = {}) {
 
   function scan() {
     const { media, partialRoots } = walk()
-    const renders = media.map(renderEntry).sort((a, b) => b.mtimeMs - a.mtimeMs)
+    // A sidecar or a sections file that is not the shape written costs that render its chapters and
+    // beats, never the library: the render is still listed, as itself.
+    const renders = media.map((item) => { try { return renderEntry(item) } catch { return renderEntry(item, false) } }).sort((a, b) => b.mtimeMs - a.mtimeMs)
     const live = liveFromFiles(partialRoots, renders)
     const status = liveFromStatus(renders)
     if (status) {
       const i = live.findIndex((l) => l.key === status.key)
       // A plain `manim render` after the wrapper's last run is newer news than its status file.
-      const filesNewer = i >= 0 && (live[i].updatedAtMs ?? 0) > (status.updatedAtMs ?? 0) + 1000 && status.state !== 'rendering'
+      const filesNewer = i >= 0 && live[i].updatedAtMs > status.updatedAtMs + 1000 && status.state !== 'rendering'
       if (status.done) { if (i >= 0 && live[i].state !== 'rendering') live.splice(i, 1) } else if (i >= 0) { if (!filesNewer) live[i] = status }
       else live.push(status)
     }
@@ -428,12 +430,12 @@ export function createLibrary(workspace, options = {}) {
     return {
       workspace: { name: basename(workspace), path: workspace },
       renders,
-      live: live.sort((a, b) => (b.updatedAtMs ?? 0) - (a.updatedAtMs ?? 0)),
+      live: live.sort((a, b) => b.updatedAtMs - a.updatedAtMs),
       scenes,
       verdict: verdict && typeof verdict === 'object' ? { ready: Boolean(verdict.ready), summary: verdict.summary ?? '', artifact: verdict.artifact ?? null, updatedAt: verdict.updatedAt ?? null } : null,
     }
   }
 
-  return { scan, probe: (rel) => { const abs = join(workspace, rel); const st = statOrNull(abs); return st ? probed(abs, st, ext(rel) === '.gif' ? 'gif' : 'video') : null } }
+  return { scan }
 }
 

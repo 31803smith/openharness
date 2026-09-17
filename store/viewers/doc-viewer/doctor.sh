@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
+# The Node setup.sh uses, found the same way (runtimes.sh), then what it installed.
 set -u; cd "$(dirname "$0")"
-command -v node >/dev/null 2>&1 && node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 20 ? 0 : 1)' || { echo "miss node >= 20 on PATH"; exit 1; }
+# shellcheck source=runtimes.sh
+. ./runtimes.sh
+harness_node 20 || exit 1
 for f in build/pdf.min.mjs build/pdf.worker.min.mjs web/pdf_viewer.mjs web/pdf_viewer.css legacy/build/pdf.min.mjs legacy/web/pdf_viewer.mjs; do
   [ -f "node_modules/pdfjs-dist/$f" ] || { echo "miss node_modules/pdfjs-dist/$f — run ./setup.sh"; exit 1; }
 done

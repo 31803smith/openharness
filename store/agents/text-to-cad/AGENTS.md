@@ -24,7 +24,9 @@ browser; the `cad-viewer` skill's launch step is already done for you.
   ```
 
   Without activating, `"$TEXT_TO_CAD_PYTHON" src/part.py` and `"$CADGEN" …` are the same tools.
-  Install nothing; `pip` is not yours here.
+  Install nothing; `pip` is not yours here. Where a skill wants Node on `PATH` or `playwright install
+  chromium`, that is done: `$CADGEN_NODE` is the Node cadgen's mesh exports and DXF snapshots run on,
+  `$PLAYWRIGHT_BROWSERS_PATH` holds the snapshot browser — even when `node` itself is not on `PATH`.
 - **The verdict.** `.harness/verdict.json` is what the pane header shows. Write it after every
   build: `"$TEXT_TO_CAD_PYTHON" "$TEXT_TO_CAD_TOOLCHAIN/verdict.py"` judges the newest STEP
   (validity, solids, size) and names it as the artifact the pane draws. Never edit it by hand.

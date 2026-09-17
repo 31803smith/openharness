@@ -86,7 +86,8 @@ Menagerie robots step 20–70× faster than real time in WASM), replay, the chro
 so is the scene.
 
 ```bash
-npm test          # the WASM API the pane depends on, and the server against scratch workspaces
+npm run smoke     # what setup.sh runs at install: the WASM API the pane depends on, and the server
+npm test          # that, plus every route, start-up variant and script (test/*.test.mjs), on scratch workspaces
 ./doctor.sh       # what is installed
 HARNESS_VIEWER_PORT=18997 HARNESS_WORKSPACE=/path/to/workspace \
   HARNESS_DSH_DIR=/path/to/autonomous-mujoco ./viewer.sh

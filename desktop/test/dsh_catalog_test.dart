@@ -47,6 +47,8 @@ const _circuit = {
 
 void main() {
   _authorAndKindTests();
+  _productPageTests();
+  _installRunTests();
   test('shared viewer dependencies are optional and validated', () {
     expect(
       DshEntry.fromJson({..._circuit, 'viewerUse': 'autonomous/cad-viewer'})!
@@ -218,5 +220,208 @@ void _authorAndKindTests() {
     expect(viewer.engine, '');
     // an agent row without an engine is still refused
     expect(DshEntry.fromJson({'id': 'a/b', 'name': 'B'}), isNull);
+  });
+}
+
+void _productPageTests() {
+  test('the product page reads only web links, and trims what it shows', () {
+    final long = 'x' * 400;
+    final entry = DshEntry.fromJson({
+      'id': 'autonomous/marp',
+      'engine': 'claude',
+      'name': '  ${'M' * 50}  ',
+      'description': '  $long  ',
+      'category': ' ${'c' * 30} ',
+      'author': 'a' * 100,
+      'license': '  ${'L' * 60}  ',
+      'repo': ' https://github.com/autonomous-ai/autonomous-marp ',
+      'homepage': 'http://marp.app',
+      'upstream': 'file:///etc/passwd',
+      'screenshots': [
+        'https://example.com/1.png',
+        'javascript:alert(1)',
+        'mailto:someone@example.com',
+        '//example.com/no-scheme.png',
+        'https://example.com/${'p' * 2100}.png',
+        42,
+        for (var i = 2; i <= 10; i++) 'https://example.com/$i.png',
+      ],
+      'linked': true,
+      'tier': 12,
+    })!;
+    expect(entry.name, 'M' * 40);
+    expect(entry.description, 'x' * 300);
+    expect(entry.category, 'c' * 24);
+    expect(entry.author, 'a' * 80);
+    expect(entry.license, 'L' * 40);
+    expect(entry.repo, 'https://github.com/autonomous-ai/autonomous-marp');
+    expect(entry.homepage, 'http://marp.app');
+    expect(entry.upstream, isNull, reason: 'never a file: link');
+    expect(entry.screenshots, [
+      'https://example.com/1.png',
+      for (var i = 2; i <= 8; i++) 'https://example.com/$i.png',
+    ]);
+    expect(entry.linked, isTrue);
+    expect(entry.tier, 0, reason: 'a tier out of range is none');
+
+    final bare = DshEntry.fromJson({
+      'id': 'autonomous/marp',
+      'engine': 'claude',
+      'license': '   ',
+      'screenshots': 'https://example.com/1.png',
+      'repo': 7,
+    })!;
+    expect(bare.license, isNull);
+    expect(bare.screenshots, isEmpty);
+    expect(bare.repo, isNull);
+    expect(bare.linked, isFalse);
+    expect(
+      DshEntry.fromJson({'id': 'a/b', 'engine': 'e' * 65}),
+      isNull,
+      reason: 'an engine id past 64 characters is not one',
+    );
+  });
+}
+
+void _installRunTests() {
+  test('every phase reads as a sentence', () {
+    String label(String phase, [String? detail]) =>
+        DshInstallProgress(id: 'a/b', phase: phase, detail: detail).label;
+    expect(label('clone'), 'Fetching…');
+    expect(label('doctor'), 'Checking the machine…');
+    expect(label('done'), 'Installed');
+    expect(label('failed'), 'Install failed');
+    expect(label('failed', ''), 'Install failed');
+    expect(label('failed', 'no space left'), 'no space left');
+    expect(label('queued'), 'Installing…');
+    final done = DshInstallProgress.fromJson({'id': 'a/b', 'phase': 'done'})!;
+    expect(done.done, isTrue);
+    expect(done.inProgress, isFalse);
+  });
+
+  test(
+    'a push is read defensively: ids, phases, and lines without control characters',
+    () {
+      expect(DshInstallProgress.fromJson(null), isNull);
+      expect(DshInstallProgress.fromJson({'id': '', 'phase': 'setup'}), isNull);
+      expect(DshInstallProgress.fromJson({'id': 'a/b', 'phase': ''}), isNull);
+      expect(DshInstallProgress.fromJson({'id': 1, 'phase': 'setup'}), isNull);
+      final escape = String.fromCharCode(27);
+      final bell = String.fromCharCode(7);
+      final push = DshInstallProgress.fromJson({
+        'id': 'a/b',
+        'phase': 'setup',
+        'detail': '   ',
+        'line': '$escape[32madded$bell ${'n' * 300}',
+      })!;
+      expect(push.detail, isNull);
+      expect(push.line, hasLength(200));
+      expect(push.line, startsWith('[32madded  n'));
+      expect(
+        DshInstallProgress.fromJson({
+          'id': 'a/b',
+          'phase': 'setup',
+          'line': 3,
+        })!.line,
+        isNull,
+      );
+    },
+  );
+
+  test(
+    'a run keeps its phases in order, a bounded log, and how long each took',
+    () {
+      final t0 = DateTime(2026, 9, 1, 9);
+      final run = DshInstallRun('a/b', startedAt: t0);
+      expect(run.phase, 'clone', reason: 'nothing heard yet is the fetch');
+      expect(run.inProgress, isTrue);
+      expect(run.took('clone'), isNull);
+      run.apply(
+        const DshInstallProgress(id: 'a/b', phase: 'clone', detail: 'Resolving'),
+        now: t0,
+      );
+      run.apply(
+        const DshInstallProgress(id: 'a/b', phase: 'clone', line: 'cloned'),
+        now: t0.add(const Duration(seconds: 2)),
+      );
+      // The same line again is not a new line.
+      run.apply(
+        const DshInstallProgress(id: 'a/b', phase: 'clone', line: 'cloned'),
+        now: t0.add(const Duration(seconds: 3)),
+      );
+      run.apply(
+        const DshInstallProgress(id: 'a/b', phase: 'setup'),
+        now: t0.add(const Duration(seconds: 9)),
+      );
+      expect(run.phases.map((p) => p.phase), ['clone', 'setup']);
+      expect(
+        run.detail,
+        'Resolving',
+        reason: 'a push without detail keeps the last',
+      );
+      expect(run.log, ['cloned']);
+      expect(run.took('clone'), const Duration(seconds: 9));
+      expect(run.took('setup'), isNull, reason: 'still under way');
+      expect(run.took('doctor'), isNull, reason: 'never began');
+      expect(run.reached('setup'), isTrue);
+      expect(run.reached('doctor'), isFalse);
+
+      for (var i = 0; i < DshInstallRun.maxLog + 5; i++) {
+        run.apply(
+          DshInstallProgress(
+            id: 'a/b',
+            phase: 'doctor',
+            line: i.isEven ? 'ok tool$i' : 'step $i',
+          ),
+        );
+      }
+      expect(run.log, hasLength(DshInstallRun.maxLog));
+      expect(run.log.first, 'step 5');
+      expect(run.checks, everyElement(startsWith('ok ')));
+      expect(run.checks, hasLength(20));
+    },
+  );
+
+  test('a push after a finished run is a new attempt with its own clock', () {
+    final catalog = MachineDsh();
+    final t0 = DateTime(2026, 9, 1, 9);
+    catalog.applyInstall(
+      const DshInstallProgress(id: 'a/b', phase: 'setup'),
+      now: t0,
+    );
+    final first = catalog.runs['a/b']!;
+    expect(
+      first.startedAt,
+      t0,
+      reason: 'another window started it; it is watched all the same',
+    );
+    catalog.applyInstall(
+      const DshInstallProgress(
+        id: 'a/b',
+        phase: 'failed',
+        detail: 'no space left',
+      ),
+      now: t0.add(const Duration(minutes: 1)),
+    );
+    expect(identical(catalog.runs['a/b'], first), isTrue);
+    expect(catalog.installs['a/b']!.failed, isTrue);
+    catalog.applyInstall(
+      const DshInstallProgress(id: 'a/b', phase: 'clone'),
+      now: t0.add(const Duration(minutes: 5)),
+    );
+    expect(identical(catalog.runs['a/b'], first), isFalse);
+    expect(catalog.runs['a/b']!.phase, 'clone');
+    expect(catalog.installs['a/b']!.inProgress, isTrue);
+
+    catalog.error = 'UNSUPPORTED';
+    catalog.replace(const [
+      DshEntry(id: 'a/b', name: 'B', engine: 'claude'),
+      DshEntry(id: 'a/c', name: 'C', engine: 'codex'),
+    ]);
+    expect(catalog.loaded, isTrue);
+    expect(catalog.error, isNull, reason: 'an answer clears the refusal');
+    expect(catalog.entries.map((e) => e.id), ['a/b', 'a/c']);
+    expect(catalog['a/c']!.engine, 'codex');
+    expect(catalog['a/z'], isNull);
   });
 }

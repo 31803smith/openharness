@@ -133,6 +133,9 @@ def main(argv: list[str]) -> int:
         except ValueError:
             report = None
     path = Path(argv[1]).resolve() if len(argv) > 1 else newest_sdf(WS)
+    if path and not path.is_relative_to(WS):  # the artifact is workspace-relative, and so is the pane
+        print(f"not judged · {argv[1]} is outside the workspace ({WS})", file=sys.stderr)
+        return 2
     verdict = judge(has_design, report, inspect(path) if path and path.exists() else None)
     (WS / ".harness").mkdir(exist_ok=True)
     (WS / ".harness" / "verdict.json").write_text(json.dumps(verdict, indent=2) + "\n")

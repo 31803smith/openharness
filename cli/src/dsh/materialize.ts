@@ -158,7 +158,9 @@ export async function materializeWorkspace(dsh: InstalledDsh, workspace: string)
   }
   const ws = dsh.manifest.workspace
   const marker = ws?.marker ? join(workspace, ws.marker) : null
-  const fresh = marker ? !existsSync(marker) : false
+  // No marker declared means nothing can say the workspace is laid out: the template is copied (never
+  // over a file) and the init runs at every create — what the spec says, and what `dsh check` warns of.
+  const fresh = marker ? !existsSync(marker) : true
   if (fresh && ws?.template) copyTemplate(join(dsh.realDir, ws.template), workspace, result)
   if (fresh && ws?.init) {
     // The init runs IN the workspace, so a command that names a script by its path inside the

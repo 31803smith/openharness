@@ -4,7 +4,7 @@
 // dead pid reported as stopped), workspace files with byte ranges, nothing outside the workspace,
 // and a server-sent `state` event when the agent writes a new export.
 //
-//   npm test            (HARNESS_VIEWER_PORT picks the port; a free one otherwise)
+//   npm run smoke       (HARNESS_VIEWER_PORT picks the port; a free one otherwise)
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { createServer, request } from 'node:http'

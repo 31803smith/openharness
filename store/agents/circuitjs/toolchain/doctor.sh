@@ -2,6 +2,8 @@
 # Exit 0 = this machine can run the harness. One line per check; Harness shows them.
 set -u
 cd "$(dirname "$0")/.."
+# shellcheck source=runtimes.sh
+. toolchain/runtimes.sh
 bad=0
 war=upstream/war
 if [ -s "$war/circuitjs.html" ] && [ -s "$war/circuitjs1/circuitjs1.nocache.js" ] && ls "$war"/circuitjs1/*.cache.js >/dev/null 2>&1; then
@@ -18,6 +20,6 @@ else
   echo "miss upstream/war/circuitjs1/circuits — run toolchain/setup.sh"
   bad=1
 fi
-if command -v node >/dev/null 2>&1; then echo "ok   node $(node -v) (the pane)"; else echo "miss node >= 18 (the pane is a node server)"; bad=1; fi
+if harness_node 18 >/dev/null; then echo "ok   node $(node -v) (the pane)"; else harness_node 18; bad=1; fi
 if command -v python3 >/dev/null 2>&1; then echo "ok   $(python3 --version) (the verdict)"; else echo "miss python3 (the verdict)"; bad=1; fi
 exit $bad

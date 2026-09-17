@@ -27,8 +27,11 @@ how the pane shows the step that is running *now*.
 - `skills/yosys/` — the skill (ours): the synthesisable Verilog-2005 subset, the testbench shape,
   the iCEBreaker pinout, how to read utilisation and Fmax, the pitfalls, and ready-made
   UART / PWM / debounce blocks. Every code block in it compiles and synthesises.
-- `toolchain/setup.sh` installs the four tools from Homebrew (idempotent — it skips what is already
-  on PATH) and netlistsvg into `node_modules`; `doctor.sh` checks all of them;
+- `toolchain/setup.sh` keeps the machine's own four tools when it has them all (Homebrew's, a
+  distro's) and otherwise fetches YosysHQ's OSS CAD Suite — one dated release, checksummed per
+  platform — into `oss-cad-suite/`, cut down to those four; then netlistsvg into `node_modules` and a
+  smoke run of the flow. `path.sh` finds the tools (and a node) the same way for `flow.sh`,
+  `doctor.sh`, `viewer.sh` and `run` (one tool alone, for the agent); `doctor.sh` checks all of them;
   `flow.sh <top>` is the whole flow; `vcd2json.py` turns the VCD into a summary for the verdict;
   `verdict.py` writes `out/<top>.report.json` and `.harness/verdict.json` **before and after every
   step**, so the pane fills in while the flow runs.
@@ -76,8 +79,8 @@ numbers in the template's PCF are the
 [iCEBreaker project's](https://codeberg.org/icebreaker-fpga/icebreaker-verilog-examples), cited in
 the file itself.
 
-Nothing of any of them is changed or redistributed here: `setup.sh` installs them from Homebrew and
-npm as their authors publish them. This folder is the Harness wrapper — the manifest, a skill,
+Nothing of any of them is changed or redistributed here: `setup.sh` uses the machine's own, or
+downloads YosysHQ's OSS CAD Suite build and npm packages as their authors publish them. This folder is the Harness wrapper — the manifest, a skill,
 the template, the toolchain, the verdict and the viewer — written by Autonomous to bring the
 open-source FPGA flow into Harness. We did that work on the projects' behalf, to bootstrap the
 catalogue.
@@ -85,11 +88,13 @@ catalogue.
 If you maintain any of these projects and want to own this Harness package, it is yours: open an
 issue on [OpenHarness](https://github.com/autonomous-ai/openharness/issues) and we
 transfer this package and point the registry entry at it. Until then: bugs in the tools belong
-upstream, bugs in the wrapper belong here, and a newer toolchain is a `brew upgrade`.
+upstream, bugs in the wrapper belong here, and a newer toolchain is a new `SUITE_RELEASE` (and its
+four checksums) in `toolchain/setup.sh`.
 
 ```sh
 harness dsh check .                                      # conformance
 harness dsh install "$PWD" --link                        # this checkout as the installed agent
 harness dsh doctor autonomous/yosys                       # what this machine is missing
-npm test                                                  # the pane's readers, the judge and the VCD reader, without a toolchain
+npm test                                                  # the pane's server and readers, the judge, the VCD reader and the scripts, on stub tools
+                                                          # (plus one real flow on the starter when the FPGA tools are installed)
 ```

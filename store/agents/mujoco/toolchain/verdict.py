@@ -4,8 +4,9 @@
     python toolchain/verdict.py            # out/rollout.json + out/rollout.qpos.json
 
 Phases: Model (a simulation script under sim/ or an MJCF under scenes/), Simulate (a rollout ran and
-did not diverge; active while `record` is still writing it), Record (the trajectory the pane runs is
-there, with its controls, so the pane can re-simulate it). Ready = simulated and recorded.
+did not diverge; active while `record` is still writing it, failed when the script stopped with an
+error mid-rollout), Record (the trajectory the pane runs is there, with its controls, so the pane can
+re-simulate it). Ready = simulated and recorded.
 
 The artifact — what the pane opens — is the trajectory, `out/rollout.qpos.json`, and the pane opens
 it as a live simulation. Before there is one it is the report, which still names the model. It is
@@ -34,15 +35,19 @@ def judge(has_model: bool, report: dict | None, video_ok: bool, trajectory: str 
           recording: dict | None = None, ctrl_recorded: bool = True) -> dict:
     findings: list[dict] = []
     if recording is not None:
+        # `error`: the script raised (or was stopped) mid-rollout; what was recorded still replays.
         done = max(0, int(recording.get("frames", 0)) - 1) * float(recording.get("dt") or 0)
         name = model_name(recording.get("model")) or "rollout"
+        error = recording.get("error")
         phases = [
             {"id": "model", "name": "Model", "state": "done"},
-            {"id": "simulate", "name": "Simulate", "state": "active"},
+            {"id": "simulate", "name": "Simulate", "state": "failed" if error else "active"},
             {"id": "record", "name": "Record", "state": "pending"},
         ]
-        return {"spec": 1, "ready": False, "summary": f"recording {name} · {done:.1f} / {float(recording.get('seconds') or 0):.1f} s",
-                "findings": [], "artifact": TRAJECTORY, "phases": phases,
+        if error:
+            findings.append({"severity": "error", "kind": "simulate", "message": f"the rollout stopped at {done:.1f} s: {error}"})
+        return {"spec": 1, "ready": False, "summary": f"{'stopped' if error else 'recording'} {name} · {done:.1f} / {float(recording.get('seconds') or 0):.1f} s",
+                "findings": findings, "artifact": TRAJECTORY, "phases": phases,
                 "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
 
     simulated = report is not None and not report.get("nan")
@@ -77,9 +82,10 @@ def judge(has_model: bool, report: dict | None, video_ok: bool, trajectory: str 
 
 def _read_json(path: Path) -> dict | None:
     try:
-        return json.loads(path.read_text())
+        value = json.loads(path.read_text())
     except (OSError, ValueError):
         return None
+    return value if isinstance(value, dict) else None       # a list or a number is no report either
 
 
 def main(argv: list[str]) -> int:
@@ -90,9 +96,11 @@ def main(argv: list[str]) -> int:
     trajectory = None
     ctrl_recorded = True
     if trajectory_body and isinstance(trajectory_body.get("qpos"), list):
-        if trajectory_body.get("status") == "recording":
+        if trajectory_body.get("status") in ("recording", "failed"):
             recording = {"frames": len(trajectory_body["qpos"]), "dt": trajectory_body.get("dt"),
                          "seconds": trajectory_body.get("seconds"), "model": trajectory_body.get("model")}
+            if trajectory_body.get("status") == "failed":
+                recording["error"] = trajectory_body.get("error") or "the script stopped"
         else:
             trajectory = TRAJECTORY
             ctrl_recorded = bool(trajectory_body.get("ctrl")) or not trajectory_body.get("nu", 1)

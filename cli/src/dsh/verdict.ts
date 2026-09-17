@@ -134,7 +134,8 @@ export class DshVerdictWatcher {
     try {
       mkdirSync(dir, { recursive: true })
     } catch (error) {
-      this.deps.log?.(`[dsh] verdict dir ${dir} could not be created · ${error instanceof Error ? error.message : error}`)
+      // mkdirSync throws only system errors (a file where a directory should be, no permission).
+      this.deps.log?.(`[dsh] verdict dir ${dir} could not be created · ${(error as Error).message}`)
       return
     }
     const name = basename(file)

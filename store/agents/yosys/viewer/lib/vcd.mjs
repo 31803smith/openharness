@@ -33,9 +33,10 @@ const MAX_CHANGES = 40_000_000 // across all signals; past this the dump is trun
 
 /**
  * @param {string} text the VCD
+ * @param {{maxChanges?: number}} [options] the cap on changes kept across all signals
  * @returns {{timescale:string, tickFs:number, end:number, truncated:boolean, scopes:object[], vars:object[], signals:Map<string,object>}}
  */
-export function parseVcd(text) {
+export function parseVcd(text, { maxChanges = MAX_CHANGES } = {}) {
   const n = text.length
   let i = 0
 
@@ -131,7 +132,7 @@ export function parseVcd(text) {
         return
       }
     }
-    if (total >= MAX_CHANGES) { truncated = true; return }
+    if (total >= maxChanges) { truncated = true; return }
     times.push(time)
     values.push(value)
     total++

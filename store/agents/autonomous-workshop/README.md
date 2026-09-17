@@ -16,6 +16,9 @@ the pane is the store's shared [CAD Viewer](../../viewers/cad-viewer).
 - `VERSIONS` — the repository, the pinned commit on its main, and the sparse folders.
 - `toolchain/fetch-upstream.sh` — the read-only, sparse, blob-less fetch; `setup.sh`, `doctor.sh` and
   `init-workspace.sh` hand off to the project's scripts of the same names.
+- `toolchain/runtimes.sh` — the store's shared helper (a copy; `store/tools/sync-runtimes.mjs` writes it).
+  The project's setup needs `uv` on PATH, which a new Mac lacks: the wrapper puts a pinned one there
+  first (uv then brings the Python). The doctor finds it, and Node, the same way.
 
 ## Credit and stewardship
 
@@ -28,4 +31,5 @@ wants to own the store entry, the wrapper moves into their repository and the re
 ```sh
 harness dsh check "$PWD"                           # conformance (warns: the project arrives with setup)
 harness dsh install "$PWD" --link                  # this checkout as the installed agent
+python3 -m unittest discover -s toolchain          # the scripts, against a local stand-in repository
 ```

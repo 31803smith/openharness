@@ -12,8 +12,9 @@ human confirms it.
 Check is static. Strudel's own transpiler parses a pattern as ECMAScript 2022 with top-level await
 allowed (`parse(input, { ecmaVersion: 2022, allowAwaitOutsideFunction: true })` in
 @strudel/transpiler), so `node --check --input-type=module` is exactly the parser the REPL will use
-and is the real syntax gate here. Without node we fall back to a bracket/quote scanner. What is not
-checked: whether a name exists in Strudel's eval scope, and whether it sounds good.
+and is the real syntax gate here. node is this machine's or, when the agent's shell has none on PATH,
+the one Harness runs on (with-node.sh finds it). Without either we fall back to a bracket/quote
+scanner. What is not checked: whether a name exists in Strudel's eval scope, and whether it sounds good.
 """
 from __future__ import annotations
 
@@ -27,6 +28,7 @@ from pathlib import Path
 
 WS = Path(os.environ.get("HARNESS_WORKSPACE") or os.getcwd()).resolve()
 DEFAULT = "track.strudel"
+WITH_NODE = Path(__file__).resolve().parent / "with-node.sh"
 
 # Sounds superdough registers itself, with no bank to download: registerSynthSounds() (the four
 # oscillators plus user/one, sbd, supersaw, pulse, bytebeat, bus and the four noises) and
@@ -49,11 +51,13 @@ NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 PAIRS = {")": "(", "]": "[", "}": "{"}
 
 
-def strip_code(text: str) -> tuple[str, list[dict]]:
+def strip_code(text: str) -> tuple[str, list[dict], str]:
     """Walk the source once: report unbalanced brackets and unterminated strings, and return the
-    code with comments and string bodies blanked out so name scans do not trip over them."""
+    code with comments and string bodies blanked out so name scans do not trip over them, and the
+    source with only the comments taken out, so the sound scan does not read a commented-out voice."""
     findings: list[dict] = []
     out: list[str] = []
+    kept: list[str] = []
     stack: list[tuple[str, int]] = []
     i, line, n = 0, 1, len(text)
     while i < n:
@@ -61,6 +65,7 @@ def strip_code(text: str) -> tuple[str, list[dict]]:
         if c == "\n":
             line += 1
             out.append(c)
+            kept.append(c)
             i += 1
         elif c == "/" and i + 1 < n and text[i + 1] == "/":
             while i < n and text[i] != "\n":
@@ -73,12 +78,15 @@ def strip_code(text: str) -> tuple[str, list[dict]]:
             else:
                 line += text.count("\n", i, end)
                 i = end + 2
+                kept.append(" ")
         elif c in "\"'`":
-            quote, start_line, i = c, line, i + 1
+            quote, start_line, start, i = c, line, i, i + 1
             closed = False
             while i < n:
                 ch = text[i]
                 if ch == "\\":
+                    if text[i + 1:i + 2] == "\n":  # a line continuation is still a line
+                        line += 1
                     i += 2
                     continue
                 if ch == quote:
@@ -93,9 +101,11 @@ def strip_code(text: str) -> tuple[str, list[dict]]:
             if not closed:
                 findings.append({"severity": "error", "kind": "syntax", "message": f"line {start_line}: a {quote} string is never closed"})
             out.append(" ")
+            kept.append(text[start:i])
         elif c in "([{":
             stack.append((c, line))
             out.append(c)
+            kept.append(c)
             i += 1
         elif c in ")]}":
             if not stack or stack[-1][0] != PAIRS[c]:
@@ -103,22 +113,24 @@ def strip_code(text: str) -> tuple[str, list[dict]]:
             else:
                 stack.pop()
             out.append(c)
+            kept.append(c)
             i += 1
         else:
             out.append(c)
+            kept.append(c)
             i += 1
     for opener, at in stack:
         findings.append({"severity": "error", "kind": "syntax", "message": f"line {at}: {opener} is never closed"})
-    return "".join(out), findings
+    return "".join(out), findings, "".join(kept)
 
 
 def node_check(text: str) -> list[dict]:
-    """The REPL's own parser, when node is on PATH. Silent when node is not."""
+    """The REPL's own parser, when there is a node to run it. Silent when there is not (127)."""
     try:
-        done = subprocess.run(["node", "--check", "--input-type=module"], input=text, capture_output=True, text=True, timeout=20)
+        done = subprocess.run([str(WITH_NODE), "node", "--check", "--input-type=module"], input=text, capture_output=True, text=True, timeout=20)
     except (OSError, subprocess.SubprocessError):
         return []
-    if done.returncode == 0:
+    if done.returncode in (0, 127):
         return []
     detail = ""
     for raw in (done.stderr or "").splitlines():
@@ -131,7 +143,7 @@ def node_check(text: str) -> list[dict]:
 
 def judge(text: str, rel: str) -> dict:
     findings: list[dict] = []
-    code, scan = strip_code(text)
+    code, scan, uncommented = strip_code(text)
     findings += scan
     bare = "".join(ch for ch in code if not ch.isspace())
     written = bool(bare)
@@ -152,7 +164,7 @@ def judge(text: str, rel: str) -> dict:
         findings.append({"severity": "info", "kind": "tempo", "message": "no setcps/setcpm: Strudel runs at its default 0.5 cycles per second"})
 
     online: list[str] = []
-    for _, literal in SOUND_LITERAL.findall(text):
+    for _, literal in SOUND_LITERAL.findall(uncommented):
         for token in NAME.findall(literal):
             if token not in OFFLINE_SOUNDS and token not in online:
                 online.append(token)
@@ -161,7 +173,6 @@ def judge(text: str, rel: str) -> dict:
                          "message": f"{', '.join(online[:8])} {'is' if len(online) == 1 else 'are'} sample-bank sound(s): the pane downloads them at start, so this track needs the internet"})
 
     errors = [f for f in findings if f["severity"] == "error"]
-    warnings = [f for f in findings if f["severity"] == "warning"]
     ok = written and not errors
 
     lines = len(text.splitlines())
@@ -174,8 +185,6 @@ def judge(text: str, rel: str) -> dict:
         bits.append(f"{len(errors)} error{'s' if len(errors) != 1 else ''}")
     elif online:
         bits.append("plays — samples need the internet")
-    elif warnings:
-        bits.append(f"plays · {len(warnings)} warning{'s' if len(warnings) != 1 else ''}")
     else:
         bits.append("plays offline")
 
@@ -195,7 +204,8 @@ def main(argv: list[str]) -> int:
     target = target if target.is_absolute() else WS / target
     rel = os.path.relpath(target, WS)
     try:
-        text = target.read_text()
+        # As the pane reads it (served as UTF-8, decoded with replacement), not a crash.
+        text = target.read_text(encoding="utf-8", errors="replace")
     except OSError as error:
         verdict = {"spec": 1, "ready": False, "summary": f"{Path(rel).name} · unreadable",
                    "findings": [{"severity": "error", "kind": "file", "message": f"{rel}: {error}"}],

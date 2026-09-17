@@ -26,7 +26,7 @@ cd ../my-first-harness
 ```
 
 The first command links the shared viewer from this checkout. Store installations normally install
-that dependency automatically; this also lets you try a new viewer before it reaches a release.
+that dependency automatically; this also lets you try a new viewer before it is published.
 
 **Agent + viewer = harness.** This example has three working files:
 
@@ -118,10 +118,14 @@ You do not need permission to build a harness or share its repository. Choose th
   submit a small entry at `store/registry/<owner>/<name>.json`. You keep the code and its maintenance.
 - **This repository:** contribute a folder at `store/agents/<name>/` with a `harness.json` and
   `store.json`. Built-in package IDs use `autonomous/<name>`; the `author` field credits the actual
-  author or upstream project. The CLI build generates the listing from those files.
+  author or upstream project. The catalog publisher generates the listing from those files.
 
 The [publishing examples](store/README.md#publish-a-harness) show the exact metadata for both routes.
-A Store listing reaches users with a CLI release after it is merged.
+The live catalog is published independently of client releases; see the
+[publication setup](store/README.md#live-catalog). Running clients pick up a published catalog within
+minutes; no app or CLI release is needed for a new harness or viewer that uses the existing
+package format. The catalog describes packages; installation still happens when someone chooses
+Get. Installed packages are not silently replaced.
 
 For a first pull request, give reviewers a short path to the same result you saw:
 
@@ -165,8 +169,8 @@ Security reports go through [SECURITY.md](SECURITY.md).
    currently run manually through **Actions → CI → Run workflow**; a PR does not automatically
    exercise the app, real engines, or hardware. Report those checks separately.
 5. **Merge and release.** PRs are squash-merged. Rebase on the latest `main` when needed to keep
-   the diff readable. Merging and publishing are separate: app, CLI, and firmware releases have
-   their own schedules.
+   the diff readable. Harness catalog changes use the independent catalog publisher. App, CLI, and
+   firmware releases have their own schedules.
 
 ## Conventions across this repository
 

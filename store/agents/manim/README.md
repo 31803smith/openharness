@@ -6,8 +6,10 @@ animate in the Video Viewer pane as the scenes render. Runs on Claude Code.
 
 - `harness.json` — engine, template, skill, toolchain, `viewer.use: autonomous/video-viewer`.
 - `skills/manim/` — the Manim skill (ours): the library, the commands, the rules of a good scene.
-- `toolchain/setup.sh` makes one venv with the pinned Manim (`MANIM_VERSION`); `doctor.sh` checks
-  ffmpeg and LaTeX; `init-workspace.sh` renders the starter; `verdict.py` judges the newest render.
+- `toolchain/setup.sh` makes one environment with the pinned Manim (`MANIM_VERSION`): conda-forge's
+  Python, pycairo and manimpango, Manim from PyPI on top, no Homebrew and no ffmpeg binary (PyAV encodes);
+  `doctor.sh` checks it and LaTeX; `init-workspace.sh` renders the starter; `verdict.py` judges the
+  newest render.
 - `toolchain/render.py` is how the agent renders: `manim render` with `--media_dir out
   --save_sections`, plus `.harness/render.json` while it runs (scene, animation n of ~m, section,
   clips so far, the error and its line on failure) and `.harness/renders/<video>.json` when a scene

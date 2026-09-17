@@ -10,14 +10,16 @@
 // routes above and injects two small scripts into the game page: a guard (runtime errors, before
 // anything else runs) and a probe (finds the Phaser.Game so the frame can pause, debug, restart).
 // Nothing is written into the workspace; `vite build` and a standalone `npm run dev` never see it.
-import { existsSync, readFileSync, statSync } from 'node:fs'
-import { dirname, extname, join, normalize, relative, resolve, sep } from 'node:path'
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
+import { dirname, extname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createServer } from 'vite'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const port = Number(process.env.HARNESS_VIEWER_PORT)
-const workspace = resolve(process.env.HARNESS_WORKSPACE)
+// The real path: Vite names modules by it, so a workspace reached through a symlink (under /tmp, or
+// a linked folder) would otherwise match none of its own files — no HMR, no code frames.
+const workspace = realpathSync(resolve(process.env.HARNESS_WORKSPACE))
 const ASSETS = join(here, 'viewer')
 const PROBE_ID = '/@harness/probe.js'
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' }
@@ -30,13 +32,15 @@ function broadcast(event, data) {
 }
 
 function rel(file) {
-  const r = relative(workspace, resolve(workspace, String(file ?? '')))
-  return r.startsWith('..') ? String(file ?? '') : r.split(sep).join('/')
+  const r = relative(workspace, resolve(workspace, String(file)))
+  return (r + sep).startsWith(`..${sep}`) ? String(file) : r.split(sep).join('/')
 }
 
 /** A workspace path from an error payload or a URL, or null when it leaves the workspace. */
 function inWorkspace(raw) {
-  const clean = decodeURIComponent(String(raw ?? '').replace(/^https?:\/\/[^/]+/, '').replace(/[?#].*$/, '').replace(/^\/@fs/, ''))
+  const path = String(raw ?? '').replace(/^https?:\/\/[^/]+/, '').replace(/[?#].*$/, '').replace(/^\/@fs/, '')
+  let clean = path
+  try { clean = decodeURIComponent(path) } catch { /* a name with a real `%` in it, already decoded */ }
   const full = normalize(clean.startsWith(workspace) ? clean : join(workspace, clean.replace(/^\/+/, '')))
   return full.startsWith(workspace + sep) ? full : null
 }
@@ -80,19 +84,19 @@ function harness() {
       },
     },
     configureServer(server) {
-      const hot = server.environments?.client?.hot ?? server.ws
+      const hot = server.environments.client.hot
       const send = hot.send.bind(hot)
       hot.send = (...args) => {
         try { observe(typeof args[0] === 'string' ? { type: 'custom', event: args[0], data: args[1] } : args[0]) } catch { /* the frame is a spectator */ }
         return send(...args)
       }
       server.watcher.on('all', (event, file) => {
-        const r = rel(file)
-        if (r.startsWith('..') || /^(out|\.vite|\.harness|node_modules|\.git)(\/|$)/.test(r)) return
+        const r = rel(file) // the watcher's paths are absolute, so one left absolute is outside
+        if (isAbsolute(r) || /^(out|\.vite|\.harness|node_modules|\.git)(\/|$)/.test(r)) return
         broadcast('change', { event, file: r })
       })
       server.middlewares.use((req, res, next) => {
-        const url = new URL(req.url ?? '/', 'http://127.0.0.1')
+        const url = new URL(req.url, 'http://127.0.0.1')
         const path = url.pathname
         if (path === '/' && !url.searchParams.has('game')) return asset(res, 'frame.html')
         if (!path.startsWith('/__harness/')) return next()
@@ -121,8 +125,9 @@ function harness() {
 
 function asset(res, name) {
   const full = normalize(join(ASSETS, name))
-  if (!full.startsWith(ASSETS + sep) || !existsSync(full) || !statSync(full).isFile()) { res.writeHead(404); res.end('not found'); return }
-  res.writeHead(200, { 'content-type': TYPES[extname(full)] ?? 'application/octet-stream', 'cache-control': 'no-store' })
+  const type = TYPES[extname(full)]
+  if (!type || !full.startsWith(ASSETS + sep) || !existsSync(full) || !statSync(full).isFile()) { res.writeHead(404); res.end('not found'); return }
+  res.writeHead(200, { 'content-type': type, 'cache-control': 'no-store' })
   res.end(readFileSync(full))
 }
 

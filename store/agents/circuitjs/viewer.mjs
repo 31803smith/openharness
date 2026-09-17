@@ -68,6 +68,9 @@ function check(text, rel) {
     } catch { ok(null); return }
     const timer = setTimeout(() => { child.kill(); ok(null) }, 10_000)
     child.stdout.on('data', (d) => { out += d })
+    // A python that exits before reading all of a large circuit closes the pipe mid-write; the
+    // EPIPE is answered by 'close' below, and must not become an uncaught exception.
+    child.stdin.on('error', () => {})
     child.on('error', () => { clearTimeout(timer); ok(null) })
     child.on('close', () => {
       clearTimeout(timer)
@@ -99,8 +102,9 @@ function sendFile(res, full, req) {
 }
 
 createServer(async (req, res) => {
-  const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`)
-  const path = decodeURIComponent(url.pathname)
+  const url = new URL(req.url, `http://127.0.0.1:${port}`)
+  let path
+  try { path = decodeURIComponent(url.pathname) } catch { res.writeHead(400); res.end('bad path'); return }
   if (path === '/') { send(res, page(), 'text/html; charset=utf-8', 'no-store'); return }
   if (path === '/events') {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' })
@@ -115,7 +119,10 @@ createServer(async (req, res) => {
     })
     return
   }
-  if (path === '/app/circuitjs.html') { send(res, appShell(), TYPES['.html'], 'no-store'); return }
+  if (path === '/app/circuitjs.html') {
+    if (!existsSync(join(war, 'circuitjs.html'))) { res.writeHead(404); res.end('CircuitJS1 is not installed: run toolchain/setup.sh'); return }
+    send(res, appShell(), TYPES['.html'], 'no-store'); return
+  }
   if (path.startsWith('/app/')) { sendFile(res, safe(war, path.slice('/app/'.length)), req); return }
   sendFile(res, safe(workspace, path.replace(/^\/+/, '')), req)
 }).listen(port, '127.0.0.1', () => console.log(`[circuitjs] listening on http://127.0.0.1:${port}/ (workspace: ${workspace})`))
@@ -126,6 +133,7 @@ let timer = null
 const changed = new Set()
 try {
   watch(workspace, { recursive: true }, (_event, name) => {
+    /* c8 ignore next */ // name is null only where fs.watch cannot report file names; macOS FSEvents always does
     const n = String(name ?? '').split(sep).join('/')
     if (!n || n.startsWith('.git') || n.startsWith('node_modules')) return
     changed.add(n)

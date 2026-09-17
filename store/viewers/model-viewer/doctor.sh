@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 set -u; cd "$(dirname "$0")"
 fail=0
-if command -v node >/dev/null 2>&1; then echo "ok   node $(node --version)"; else echo "miss node on PATH"; fail=1; fi
+# The same Node setup.sh uses, found the same way: a doctor that passes where setup fails helps no one.
+# shellcheck source=runtimes.sh
+. ./runtimes.sh
+if harness_node 18; then echo "ok   node $(node --version)"; else fail=1; fi
 if [ -f node_modules/three/build/three.module.js ] && [ -f node_modules/three/examples/jsm/loaders/GLTFLoader.js ]; then
   echo "ok   three $(node -p "require('./node_modules/three/package.json').version")"
 else

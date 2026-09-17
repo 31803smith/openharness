@@ -14,10 +14,12 @@ Phases:
           whether the game is *fun*; it can tell that nothing would respond to the player.
 
 Ready = it builds and something would respond. The artifact is the built page when there is one;
-the pane is the dev server either way.
+the pane is the dev server either way. Vite runs on node, which the agent's shell may not have on
+PATH: with-node.sh puts this machine's or Harness's own there first.
 """
 from __future__ import annotations
 
+import errno
 import json
 import os
 import re
@@ -28,6 +30,7 @@ from pathlib import Path
 
 WS = Path(os.environ.get("HARNESS_WORKSPACE") or os.getcwd()).resolve()
 VITE = os.environ.get("VITE") or str(WS / "node_modules" / ".bin" / "vite")
+WITH_NODE = Path(__file__).resolve().parent / "with-node.sh"
 
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 SCENE = re.compile(r"extends\s+(?:Phaser\.)?Scene\b")
@@ -46,7 +49,7 @@ def source_files(ws: Path) -> list[Path]:
     skip = {"node_modules", "out", "dist", ".vite"}
     return sorted(
         p for p in (ws / "src").rglob("*")
-        if p.suffix in (".js", ".mjs", ".ts") and p.is_file() and not (skip & set(p.parts))
+        if p.suffix in (".js", ".mjs", ".ts") and p.is_file() and not (skip & set(p.relative_to(ws).parts))
     )
 
 
@@ -62,10 +65,8 @@ def build_message(output: str) -> str:
             # message is the part a person can act on; the stack is noise in a pane header.
             rest: list[str] = []
             for candidate in lines[i + 1:i + 6]:
-                text = candidate.strip()
-                if not text:
-                    continue
-                if text.startswith(("file:", "at ", "    at ")):
+                text = candidate.strip()  # never empty: blank lines were dropped above
+                if text.startswith(("file:", "at ")):
                     break
                 rest.append(text)
             if rest:
@@ -173,8 +174,10 @@ def main(argv: list[str]) -> int:
     build_ran = bool(written and scenes and not no_build)
     if build_ran:
         try:
+            if not os.access(VITE, os.X_OK):  # said plainly: through the wrapper it would be an exec error on stderr
+                raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), VITE)
             run = subprocess.run(
-                [VITE, "build", "--outDir", "out/dist", "--minify", "false", "--logLevel", "warn"],
+                [str(WITH_NODE), VITE, "build", "--outDir", "out/dist", "--minify", "false", "--logLevel", "warn"],
                 capture_output=True, text=True, cwd=WS, timeout=600)
             if run.returncode != 0:
                 build_err = build_message(run.stderr + "\n" + run.stdout)

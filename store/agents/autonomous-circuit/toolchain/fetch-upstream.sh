@@ -10,7 +10,9 @@ if [ -f upstream/.harness-commit ] && [ "$(cat upstream/.harness-commit)" = "${U
 fi
 command -v git >/dev/null 2>&1 || { echo "miss git on PATH"; exit 1; }
 echo "     fetching ${UPSTREAM_REPO} @ ${UPSTREAM_COMMIT:0:12} (${UPSTREAM_SPARSE_MODE} sparse: ${UPSTREAM_SPARSE})"
-rm -rf upstream.partial upstream
+# The copy in upstream/ stays until the new one is complete: a fetch that fails (offline, a bad pin)
+# leaves the install that worked.
+rm -rf upstream.partial
 git init -q upstream.partial
 git -C upstream.partial remote add origin "${UPSTREAM_REPO}"
 # Split the patterns on spaces WITHOUT globbing: `/*` is a sparse pattern, not the filesystem root.
@@ -19,5 +21,6 @@ git -C upstream.partial sparse-checkout set --"${UPSTREAM_SPARSE_MODE}" -- "${pa
 git -C upstream.partial fetch -q --depth 1 --filter=blob:none origin "${UPSTREAM_COMMIT}"
 git -C upstream.partial checkout -q FETCH_HEAD
 echo "${UPSTREAM_COMMIT}" > upstream.partial/.harness-commit
+rm -rf upstream
 mv upstream.partial upstream
 echo "ok   ${UPSTREAM_NAME} @ ${UPSTREAM_COMMIT:0:12} fetched ($(du -sh upstream | cut -f1))"

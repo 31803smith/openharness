@@ -19,7 +19,7 @@ const isMain = (() => { try { return realpathSync(process.argv[1]) === realpathS
 
 if (isMain && sub !== 'render' && sub !== 'still') {
   const child = spawn(cli, args, { stdio: 'inherit' })
-  child.on('exit', (code, signal) => process.exit(signal ? 1 : code ?? 1))
+  child.on('exit', (code, signal) => process.exit(signal ? 1 : code))
   child.on('error', (error) => { console.error(`remotion could not start: ${error.message}`); process.exit(1) })
 } else if (isMain) {
   track()
@@ -122,7 +122,7 @@ function track() {
     else state.error = tail.filter((l) => /error|Error|failed|✖/.test(l)).slice(-3).join('\n') || tail.slice(-3).join('\n') || `remotion exited ${code}`
     state.finishedAt = new Date().toISOString()
     write(true)
-    process.exit(code ?? 1)
+    process.exit(code)
   }
   child.on('exit', (code, signal) => setTimeout(() => finish(signal ? 1 : code), 50))
   child.on('error', (error) => { tail.push(error.message); finish(1) })

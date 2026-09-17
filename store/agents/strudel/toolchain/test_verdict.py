@@ -1,13 +1,17 @@
 """python3 -m unittest toolchain/test_verdict.py — what the verdict says about a track."""
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
+import runpy
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -96,6 +100,58 @@ class Judging(unittest.TestCase):
         self.assertTrue(result["ready"])
         self.assertIn("tempo", kinds(result, "info"))
 
+    def test_an_unclosed_block_comment_is_an_error(self) -> None:
+        result = verdict.judge('s("sbd*4")\n/* the bass\n', "track.strudel")
+        self.assertEqual(kinds(result, "error"), ["syntax"])
+        self.assertIn("line 2: a /* comment is never closed", result["findings"][0]["message"])
+
+    def test_a_block_comment_keeps_the_line_count(self) -> None:
+        result = verdict.judge('/* one\ntwo */\ns("sbd"))\n', "track.strudel")
+        self.assertIn("line 3: a stray )", [f["message"] for f in result["findings"]])
+
+    def test_a_string_cut_off_by_the_end_of_the_file(self) -> None:
+        result = verdict.judge('s("sbd*4', "track.strudel")
+        self.assertIn('line 1: a " string is never closed', [f["message"] for f in result["findings"]])
+
+    def test_an_escaped_quote_does_not_close_the_string(self) -> None:
+        result = verdict.judge('setcps(1)\ns("sbd \\" sbd")\n', "track.strudel")
+        self.assertTrue(result["ready"], result["findings"])
+
+    def test_a_template_literal_spans_lines(self) -> None:
+        result = verdict.judge('setcps(1)\ns(`sbd\n  sbd`)\n)\n', "track.strudel")
+        self.assertIn("line 4: a stray )", [f["message"] for f in result["findings"]])
+
+    def test_a_line_continuation_inside_a_string_keeps_the_line_count(self) -> None:
+        # A backslash-newline continues a '…' or "…" string onto the next line. Before the fix the
+        # escape skipped the newline without counting it, so every later finding was a line early.
+        result = verdict.judge('s("sbd \\\nsbd")\n)\n', "track.strudel")
+        self.assertIn("line 3: a stray )", [f["message"] for f in result["findings"]])
+
+    def test_a_commented_out_sample_is_not_a_network_dependency(self) -> None:
+        # Before the fix the sound scan read the raw text, comments included, so a voice the agent
+        # had commented out still said "this track needs the internet".
+        result = verdict.judge('setcps(1)\n// s("bd*4")\n/* s("hh*8") */\ns("sbd*4")\n', "track.strudel")
+        self.assertEqual(kinds(result, "warning"), [])
+        self.assertIn("plays offline", result["summary"])
+
+    def test_without_node_the_scan_is_the_only_syntax_check(self) -> None:
+        for error in (OSError("node"), subprocess.TimeoutExpired("node", 20)):
+            with self.subTest(error=type(error).__name__), \
+                    mock.patch.object(verdict.subprocess, "run", side_effect=error):
+                self.assertEqual(verdict.node_check('s("sbd")'), [])
+
+    def test_no_node_on_path_or_in_harness_is_the_scan_alone(self) -> None:
+        done = subprocess.CompletedProcess(["with-node.sh"], 127, stdout="", stderr="miss node >= 18, and Harness's own Node is not in …\n")
+        with mock.patch.object(verdict.subprocess, "run", return_value=done) as run:
+            self.assertEqual(verdict.node_check('s("sbd")'), [])
+        self.assertEqual(run.call_args.args[0], [str(HERE / "with-node.sh"), "node", "--check", "--input-type=module"])
+
+    def test_a_node_failure_without_a_syntax_error_line(self) -> None:
+        done = subprocess.CompletedProcess(["node"], 1, stdout="", stderr="node: bad option\n")
+        with mock.patch.object(verdict.subprocess, "run", return_value=done):
+            self.assertEqual(verdict.node_check('s("sbd")')[0]["message"],
+                             "node could not parse the pattern: syntax error")
+
     def test_the_template_is_ready_and_offline(self) -> None:
         result = verdict.judge(TEMPLATE.read_text(), "track.strudel")
         self.assertTrue(result["ready"], result["findings"])
@@ -135,6 +191,56 @@ class Writing(unittest.TestCase):
             code, written = self.run_in(workspace, "b-side.strudel")
             self.assertEqual(code, 0)
             self.assertEqual(written["artifact"], "b-side.strudel")
+
+
+class Main(unittest.TestCase):
+    """main() in this process, so what it does is measured, not only what it leaves on disk."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.ws = Path(self.tmp.name).resolve()
+
+    def main(self, *args: str) -> tuple[int, str, dict]:
+        out = io.StringIO()
+        with mock.patch.object(verdict, "WS", self.ws), contextlib.redirect_stdout(out):
+            code = verdict.main(["verdict.py", *args])
+        return code, out.getvalue(), json.loads((self.ws / ".harness" / "verdict.json").read_text())
+
+    def test_the_default_track_prints_the_summary_and_each_finding(self) -> None:
+        (self.ws / "track.strudel").write_text('s("sbd*4")\n')
+        code, printed, written = self.main()
+        self.assertEqual(code, 0)
+        self.assertEqual(written["artifact"], "track.strudel")
+        self.assertEqual(printed.splitlines(), [
+            "ready · track.strudel · 1 line · plays offline",
+            "  info    no setcps/setcpm: Strudel runs at its default 0.5 cycles per second",
+        ])
+
+    def test_an_absolute_path_and_an_unreadable_one(self) -> None:
+        (self.ws / "b.strudel").write_text(GOOD)
+        self.assertEqual(self.main(str(self.ws / "b.strudel"))[2]["artifact"], "b.strudel")
+        code, printed, written = self.main("missing.strudel")
+        self.assertEqual(code, 1)
+        self.assertEqual(written["summary"], "missing.strudel · unreadable")
+        self.assertEqual([p["state"] for p in written["phases"]], ["active", "pending", "pending"])
+        self.assertIn("  error   missing.strudel: ", printed)
+
+    def test_bytes_that_are_not_utf8_are_judged_not_a_crash(self) -> None:
+        # Before the fix read_text() raised UnicodeDecodeError: no verdict, the last one left standing.
+        (self.ws / "track.strudel").write_bytes(b'setcps(1)\n// caf\xe9 set\ns("sbd*4")\n')
+        code, _, written = self.main()
+        self.assertEqual(code, 0)
+        self.assertTrue(written["ready"])
+
+    def test_run_as_a_script(self) -> None:
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, {"HARNESS_WORKSPACE": str(self.ws)}), \
+                mock.patch.object(sys, "argv", ["verdict.py"]), contextlib.redirect_stdout(out), \
+                self.assertRaises(SystemExit) as exit_:
+            runpy.run_path(str(HERE / "verdict.py"), run_name="__main__")
+        self.assertEqual(exit_.exception.code, 1)
+        self.assertIn("not ready · track.strudel · unreadable", out.getvalue())
 
 
 if __name__ == "__main__":

@@ -89,6 +89,16 @@ describe('spec 1.1: package kinds and viewer.use', () => {
     expect(parseDshManifest(JSON.stringify({ ...base, kind: 'viewer' })).ok).toBe(false)
     expect(parseDshManifest(JSON.stringify({ ...base, kind: 'viewer', engine: 'claude', viewer: { command: 'v', url: 'http://127.0.0.1:${port}/' } })).ok).toBe(false)
     expect(parseDshManifest(JSON.stringify(base)).ok).toBe(false)
+    const withAgent = parseDshManifest(JSON.stringify({ ...base, kind: 'viewer', agent: { instructions: 'AGENTS.md' }, viewer: { command: 'v', url: 'http://127.0.0.1:${port}/' } }))
+    expect(withAgent).toEqual({ ok: false, error: 'harness.json is not a spec-1 manifest: agent: a viewer package has no agent' })
+  })
+
+  it('says why a manifest could not be read: the file, the JSON, or the first issues with their paths', () => {
+    const missing = readDshManifest('/nonexistent/dir')
+    expect(!missing.ok && missing.error).toMatch(/^no harness\.json in \/nonexistent\/dir \(ENOENT: /)
+    const notJson = parseDshManifest('{"spec": 1,')
+    expect(!notJson.ok && notJson.error).toMatch(/^harness\.json is not JSON: \S/)
+    expect(parseDshManifest('[]')).toEqual({ ok: false, error: expect.stringMatching(/^harness\.json is not a spec-1 manifest: \(root\): /) })
   })
   it('an agent may use a viewer package instead of shipping one, and may narrow its url and extensions', () => {
     const used = parseDshManifest(JSON.stringify({ ...base, engine: 'claude', viewer: { use: 'autonomous/cad-viewer', artifactExtensions: ['.step'] } }))

@@ -236,6 +236,8 @@ class _WebPanePanelState extends State<WebPanePanel> {
                 ),
               ),
               const SizedBox(width: 8),
+              // coverage:ignore-start
+              // Only a real webview's navigation sets _loading; none under test.
               if (_loading)
                 const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 6),
@@ -245,6 +247,7 @@ class _WebPanePanelState extends State<WebPanePanel> {
                     child: CircularProgressIndicator(strokeWidth: 1.5),
                   ),
                 ),
+              // coverage:ignore-end
               _ViewerActions(
                 zoomed: widget.zoomed,
                 onReload: _controller == null ? null : _reload,

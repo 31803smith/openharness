@@ -3,23 +3,21 @@
 # One line per check: `ok   <what>` / `warn <what>` / `miss <what>`. Exit 1 only on a miss.
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=runtimes.sh
+. "$ROOT/toolchain/runtimes.sh"
+# shellcheck source=browser.sh
+. "$ROOT/toolchain/browser.sh"
 status=0
 ok()   { echo "ok   $*"; }
 warn() { echo "warn $*"; }
 miss() { echo "miss $*"; status=1; }
 
-if command -v claude >/dev/null 2>&1 || [ -x "$HOME/.local/bin/claude" ]; then
-  ok "claude on PATH"
+# The engine (claude) is Harness's to find, like every other package's; this checks what setup provides.
+# node: this machine's when it is new enough, else the Node Harness itself runs on.
+if harness_node 18 >/dev/null; then
+  ok "node $(node --version | sed 's/^v//')"
 else
-  miss "claude not found — install Claude Code: https://claude.ai/install"
-fi
-
-if command -v node >/dev/null 2>&1; then
-  v="$(node --version | sed 's/^v//')"; major="${v%%.*}"
-  case "$major" in (*[!0-9]*|"") major=0;; esac
-  if [ "$major" -ge 18 ]; then ok "node $v"; else miss "node $v is older than 18 (brew install node)"; fi
-else
-  miss "node not found (brew install node)"
+  harness_node 18; status=1
 fi
 
 if [ -d "$ROOT/toolchain/node_modules/@marp-team/marp-core" ]; then
@@ -39,13 +37,8 @@ else
   miss "toolchain/viewer/ is incomplete — reinstall the harness"
 fi
 
-# Export to PDF/PPTX renders through a Chromium-family browser marp-cli finds on its own.
-found=""
-for app in "/Applications/Google Chrome.app" "/Applications/Chromium.app" "/Applications/Microsoft Edge.app" "/Applications/Brave Browser.app"; do
-  [ -d "$app" ] && { found="$app"; break; }
-done
-[ -z "$found" ] && command -v chromium >/dev/null 2>&1 && found="$(command -v chromium)"
-[ -z "$found" ] && command -v google-chrome >/dev/null 2>&1 && found="$(command -v google-chrome)"
-if [ -n "$found" ]; then ok "browser for PDF/PPTX export: $(basename "$found")"; else warn "no Chrome/Chromium/Edge — HTML export only, no PDF or PPTX"; fi
+# Export to PDF/PPTX renders through a Chromium-family browser: this machine's, or the headless shell
+# setup.sh fetched when it had none.
+if found="$(marp_browser)"; then ok "browser for PDF/PPTX export: $(basename "$found")"; else warn "no Chrome/Chromium/Edge — HTML export only until toolchain/setup.sh fetches a headless one"; fi
 
 exit $status

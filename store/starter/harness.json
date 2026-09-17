@@ -3,6 +3,7 @@
   "id": "autonomous/starter",
   "name": "Starter",
   "category": "Example",
+  "author": "Autonomous",
   "description": "The smallest domain-specific harness: a manifest, an AGENTS.md, and one skill.",
   "engine": "claude",
   "workspace": {

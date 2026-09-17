@@ -83,7 +83,7 @@ being written is never offered. The page (`ui/app.js`) draws the filmstrip and p
 hidden `<video>` elements, and plays a render in progress as a playlist of its clips.
 
 ```sh
-node --test                          # the MP4 reader and the library, on synthetic files
+node --test test/*.test.mjs          # the MP4 reader, the library, the server and the scripts, on synthetic files
 harness dsh check .                  # conformance
 harness dsh install "$PWD" --link    # this checkout as the installed viewer
 ```

@@ -9,8 +9,10 @@ Viewer pane beside the terminal. Runs on Claude Code; the skills are upstream's,
 - `skills/` — text-to-cad's eleven skills at the release in `PROVENANCE.md`, verbatim.
 - `AGENTS.md` — what the agent is told: where the toolchain is, build early, verdict after each build.
 - `template/` — a fresh workspace in the skill's own project layout, with a starter part.
-- `toolchain/` — `setup.sh` (one venv: the pinned `cadgen`, the skills' extras, a browser for
-  snapshots), `doctor.sh`, `init-workspace.sh`, and `verdict.py`, the pane header.
+- `toolchain/` — `setup.sh` (one venv on Python 3.12, which uv brings when the machine has none: the
+  pinned `cadgen`, the skills' extras; a headless Chromium for snapshots in `.playwright/`), `doctor.sh`,
+  `init-workspace.sh`, `node.sh` (the Node cadgen's mesh exports run on — this machine's, else Harness's
+  own; `CADGEN_NODE` names it), and `verdict.py`, the pane header.
 - The pane is [`autonomous/cad-viewer`](https://github.com/autonomous-ai/openharness/tree/main/store/viewers/cad-viewer),
   installed with this package.
 
@@ -30,4 +32,5 @@ wrapper belong here, and a newer release is a `skills/` swap and a `CADGEN_VERSI
 harness dsh check .                              # conformance
 harness dsh install "$PWD" --link                # this checkout as the installed agent
 python3 -m unittest toolchain/test_verdict.py    # the verdict, without cadgen
+python3 -m unittest toolchain/test_scripts.py    # setup, doctor, node.sh and init, with fake interpreters
 ```

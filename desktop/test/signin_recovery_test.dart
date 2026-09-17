@@ -189,7 +189,9 @@ void main() {
       expect(app.canCancelLogin, isFalse);
       expect(app.pendingAuthorizeUrl, isNull);
       app.cancelLogin();
-      expect(app.status, AppStatus.bootstrapping);
+      // A desktop window signs in on a sheet over its desk: the status it was
+      // in (the guest's home) is the status it stays in, start to finish.
+      expect(app.status, AppStatus.unauthenticated);
       expect(cli.cancellations, 0);
       app.daemon!.completeError(StateError('Fixture service unavailable'));
       await login;

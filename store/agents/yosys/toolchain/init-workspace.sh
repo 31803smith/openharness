@@ -8,9 +8,7 @@ set -uo pipefail
 : "${HARNESS_DSH_DIR:?}"
 mkdir -p .harness out
 
-# Homebrew's bin is not always on the PATH of a process the daemon spawned.
-command -v yosys >/dev/null 2>&1 || export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
-
+# flow.sh finds the tools and node itself (toolchain/path.sh), whatever PATH the daemon gave us.
 HARNESS_WORKSPACE="$PWD" bash "$HARNESS_DSH_DIR/toolchain/flow.sh" blink >out/logs-init.txt 2>&1 || true
 # flow.sh always leaves a verdict; if it could not run at all, seed one so the header is not empty.
 [ -f .harness/verdict.json ] || python3 "$HARNESS_DSH_DIR/toolchain/verdict.py" blink >/dev/null 2>&1 || true

@@ -73,10 +73,25 @@ def with_manim_args(argv: list[str]) -> list[str]:
     return ["render", *args]
 
 
+# What Tex and MathTex run. LaTeX is not part of the toolchain (it is gigabytes), so on most machines a
+# formula scene fails on the first of these; the doctor warns about it.
+TEX_PROGRAMS = {"latex", "pdflatex", "xelatex", "lualatex", "dvisvgm"}
+
+
+def missing_tex(exc: BaseException | None) -> str | None:
+    """The TeX program a Tex/MathTex scene tried to run and this machine does not have."""
+    if isinstance(exc, FileNotFoundError) and os.path.basename(str(exc.filename or "")) in TEX_PROGRAMS:
+        return os.path.basename(str(exc.filename))
+    return None
+
+
 def error_from(exc: BaseException | None, tb) -> dict:
     if exc is None:
         return {"type": "Error", "message": "manim exited with an error"}
     out = {"type": type(exc).__name__, "message": str(exc).strip().splitlines()[0] if str(exc).strip() else type(exc).__name__}
+    tex = missing_tex(exc)
+    if tex:
+        out["message"] = f"Tex/MathTex need LaTeX and `{tex}` is not on this machine — write the formula with Text(…) instead"
     if isinstance(exc, SyntaxError) and exc.filename:
         out.update(file=rel(exc.filename), line=exc.lineno, code=(exc.text or "").strip() or None)
         return out
@@ -95,6 +110,19 @@ def error_from(exc: BaseException | None, tb) -> dict:
 QUALITY = {"l": "480p15", "m": "720p30", "h": "1080p60", "p": "1440p60", "k": "2160p60"}
 
 
+def option(command: list[str], *names: str) -> str | None:
+    """An option's value however click accepts it: `-qh`, `-q h`, `--quality h`, `--quality=h`."""
+    for i, a in enumerate(command):
+        for name in names:
+            if a == name:
+                return command[i + 1] if i + 1 < len(command) else None
+            if a.startswith(name + "="):
+                return a[len(name) + 1:]
+            if len(name) == 2 and a.startswith(name):  # a short option with its value attached
+                return a[2:]
+    return None
+
+
 def guess_target(command: list[str]) -> dict:
     """Before Manim has built a scene (a syntax error in the file), what the command meant to render."""
     source = next((a for a in command if a.endswith(".py")), None)
@@ -102,8 +130,8 @@ def guess_target(command: list[str]) -> dict:
         return {}
     after = command[command.index(source) + 1:]
     scene = next((a for a in after if not a.startswith("-")), None)
-    quality = next((QUALITY.get(a[2:3]) for a in command if a.startswith("-q") and len(a) == 3), None) or "480p15"
-    media = command[command.index("--media_dir") + 1] if "--media_dir" in command else "media"
+    quality = QUALITY.get((option(command, "-q", "--quality") or "").lower()) or "480p15"
+    media = option(command, "--media_dir") or "media"
     out = {"source": rel(WS / source) if not os.path.isabs(source) else rel(source), "scene": scene, "quality": quality}
     if scene:
         out["output"] = f"{media}/videos/{Path(source).stem}/{quality}/{scene}.mp4"
@@ -343,6 +371,12 @@ def install_hooks(status: Status) -> None:
     def print_exception(*args, **kwargs):
         exc_type, exc, tb = sys.exc_info()
         safely(status.fail, exc, tb, isinstance(exc, KeyboardInterrupt))
+        if missing_tex(exc):
+            # One line that says what to do, not a screen of subprocess frames ending in "No such file".
+            error = error_from(exc, tb)
+            where = f"{error['file']}:{error['line']}: " if error.get("file") and error.get("line") else ""
+            print(f"{where}{error['message']}", file=sys.stderr)
+            return None
         return orig_print_exception(*args, **kwargs)
 
     console.print_exception = print_exception

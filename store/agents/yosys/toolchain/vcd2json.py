@@ -132,8 +132,6 @@ def parse(text: str) -> dict:
     while i < n:
         t = tokens[i]
         i += 1
-        if not t:
-            continue
         head = t[0]
         if head == "#":
             try:
@@ -164,7 +162,12 @@ def parse(text: str) -> dict:
         if sig["changes"] and sig["changes"][-1][1] == value:
             continue  # a repeat of the same value carries no edge
         if sig["changes"] and sig["changes"][-1][0] == time:
-            sig["changes"][-1][1] = value  # same tick: the last write wins
+            # Same tick: the last write wins — unless it puts back the value before it, which
+            # makes the tick no edge at all.
+            if len(sig["changes"]) > 1 and sig["changes"][-2][1] == value:
+                sig["changes"].pop()
+            else:
+                sig["changes"][-1][1] = value
             continue
         sig["changes"].append([time, value])
 

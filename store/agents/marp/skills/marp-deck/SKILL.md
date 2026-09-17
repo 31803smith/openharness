@@ -149,14 +149,14 @@ seed, no network, no accounts:
 
 ```sh
 # wallpapers: gradient light on black (or --light). Palettes: aurora sunset ocean graphite spectrum
-node "$MARP_TOOLCHAIN/art.mjs" wallpaper -o assets/hero.svg --palette aurora --seed 7
-node "$MARP_TOOLCHAIN/art.mjs" wallpaper -o assets/reveal.svg --palette aurora --seed 12
+"$MARP_TOOLCHAIN/art" wallpaper -o assets/hero.svg --palette aurora --seed 7
+"$MARP_TOOLCHAIN/art" wallpaper -o assets/reveal.svg --palette aurora --seed 12
 
 # a chart from the talk's real numbers: bar (default) or line, in the accent colour
-node "$MARP_TOOLCHAIN/art.mjs" chart -o assets/growth.svg --data "2023:12,2024:31,2025:64" --label "Teams on it" --type bar
+"$MARP_TOOLCHAIN/art" chart -o assets/growth.svg --data "2023:12,2024:31,2025:64" --label "Teams on it" --type bar
 
 # a screenshot or photo in a device, on a wallpaper: phone (default), laptop, window
-node "$MARP_TOOLCHAIN/art.mjs" frame -o assets/demo.svg --image assets/screen.png --kind laptop --palette ocean
+"$MARP_TOOLCHAIN/art" frame -o assets/demo.svg --image assets/screen.png --kind laptop --palette ocean
 ```
 
 - Same palette across the deck; vary `--seed` so slides differ. Seeds 1–99 all look good.
@@ -169,8 +169,8 @@ node "$MARP_TOOLCHAIN/art.mjs" frame -o assets/demo.svg --image assets/screen.pn
 ## 5. The check
 
 ```sh
-node "$MARP_TOOLCHAIN/check.mjs"            # deck.md
-node "$MARP_TOOLCHAIN/check.mjs" other.md   # another file
+"$MARP_TOOLCHAIN/check"            # deck.md
+"$MARP_TOOLCHAIN/check" other.md   # another file
 ```
 
 Writes `.harness/verdict.json` (what the pane header shows) and prints every finding. Errors: the
@@ -182,12 +182,12 @@ check on every save; run it yourself to read the list.
 ## 6. Export
 
 ```sh
-"$MARP_TOOLCHAIN/node_modules/.bin/marp" deck.md --theme-set "$MARP_THEMES" --allow-local-files --no-stdin -o dist/deck.pdf
-"$MARP_TOOLCHAIN/node_modules/.bin/marp" deck.md --theme-set "$MARP_THEMES" --allow-local-files --no-stdin -o dist/deck.pptx
-"$MARP_TOOLCHAIN/node_modules/.bin/marp" deck.md --theme-set "$MARP_THEMES" --allow-local-files --no-stdin -o dist/deck.html
+"$MARP_TOOLCHAIN/marp" deck.md --theme-set "$MARP_THEMES" --allow-local-files --no-stdin -o dist/deck.pdf
+"$MARP_TOOLCHAIN/marp" deck.md --theme-set "$MARP_THEMES" --allow-local-files --no-stdin -o dist/deck.pptx
+"$MARP_TOOLCHAIN/marp" deck.md --theme-set "$MARP_THEMES" --allow-local-files --no-stdin -o dist/deck.html
 ```
 
 `--theme-set` is what makes the keynote themes real outside the viewer; without it the export falls
-back to the default theme. PDF and PPTX render through a Chromium-family browser on the machine;
-`toolchain/doctor.sh` says whether one is there. HTML needs nothing. `--no-stdin` matters in a tool
+back to the default theme. PDF and PPTX render through a Chromium-family browser — the machine's, or
+the headless one setup fetched when it had none; `toolchain/doctor.sh` says which. HTML needs nothing. `--no-stdin` matters in a tool
 shell. Keynote (the app) opens the PPTX.

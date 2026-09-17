@@ -20,7 +20,9 @@
       "CADGEN": "${dsh}/.venv/bin/cadgen",
       "TEXT_TO_CAD_VENV": "${dsh}/.venv",
       "TEXT_TO_CAD_PYTHON": "${dsh}/.venv/bin/python",
-      "TEXT_TO_CAD_TOOLCHAIN": "${dsh}/toolchain"
+      "TEXT_TO_CAD_TOOLCHAIN": "${dsh}/toolchain",
+      "CADGEN_NODE": "${dsh}/toolchain/node.sh",
+      "PLAYWRIGHT_BROWSERS_PATH": "${dsh}/.playwright"
     }
   },
   "toolchain": {

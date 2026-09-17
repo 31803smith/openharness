@@ -26,6 +26,22 @@ def newest(root: Path, suffixes: tuple[str, ...]) -> Path | None:
     return best[1] if best else None
 
 
+ID_RE = re.compile(r"[A-Za-z0-9_\-]+")
+CHATTER = ("Bundling", "Getting", "Downloading", "Compositions", "id", "ID")
+
+
+def composition_ids(stdout: str) -> list[str]:
+    """The ids `remotion compositions --quiet` prints — all of them on ONE line, separated by spaces
+    (Remotion 4's printCompositions). A line that does not start with an id (a header, a blank,
+    progress) is dropped rather than counted."""
+    ids: list[str] = []
+    for line in stdout.splitlines():
+        words = line.split()
+        if words and ID_RE.fullmatch(words[0]) and words[0] not in CHATTER:
+            ids += [w for w in words if ID_RE.fullmatch(w)]
+    return ids
+
+
 def judge(written: bool, comps: list[str], bundle_err: str | None, render: str | None, stale: bool) -> dict:
     findings: list[dict] = []
     if bundle_err:
@@ -46,7 +62,8 @@ def judge(written: bool, comps: list[str], bundle_err: str | None, render: str |
     if render:
         bits.append(f"{Path(render).name}{' (stale)' if stale else ''}")
     if not bits:
-        bits.append("bundles" if bundled else ("does not bundle" if written else "no project yet"))
+        # Bundled means compositions, which are always named above: only the failures get here.
+        bits.append("does not bundle" if written else "no project yet")
     return {"spec": 1, "ready": bool(bundled), "summary": " · ".join(bits), "findings": findings,
             "artifact": render, "phases": phases, "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
 
@@ -59,16 +76,11 @@ def main(argv: list[str]) -> int:
         try:
             r = subprocess.run([REMOTION, "compositions", "src/index.ts", "--quiet"], capture_output=True, text=True, cwd=WS, timeout=600)
             if r.returncode != 0:
-                lines = [l for l in (r.stderr + r.stdout).splitlines() if l.strip()]
+                # The error is stderr's last line; stdout only when stderr said nothing.
+                lines = [l for l in r.stderr.splitlines() if l.strip()] or [l for l in r.stdout.splitlines() if l.strip()]
                 bundle_err = lines[-1] if lines else f"remotion compositions exited {r.returncode}"
             else:
-                # One composition per line, its id first; anything that is not an id (a header, a
-                # blank, progress) is dropped rather than counted.
-                comps = []
-                for line in r.stdout.splitlines():
-                    first = line.strip().split()[0] if line.strip() else ""
-                    if re.fullmatch(r"[A-Za-z0-9_\-]+", first) and first not in ("Bundling", "Getting", "Downloading", "Compositions", "id", "ID"):
-                        comps.append(first)
+                comps = composition_ids(r.stdout)
         except (OSError, subprocess.TimeoutExpired) as error:
             bundle_err = f"remotion could not run ({error})"
     render = newest(WS / "out", (".mp4", ".webm", ".gif")) if (WS / "out").is_dir() else None

@@ -1,4 +1,4 @@
-// node --test   (from the package folder) — the MP4 reader and the library, on synthetic files (no Manim, no ffmpeg).
+// node --test test/*.test.mjs   (from the package folder) — the MP4 reader and the library, on synthetic files (no Manim, no ffmpeg).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, writeFileSync, utimesSync, rmSync } from 'node:fs'

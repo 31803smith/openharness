@@ -3,8 +3,9 @@
  * and for the development loop (`--link` a checkout, iterate, no re-clone).
  */
 import { listDshState, installedDsh } from './installed.js'
-import { dshTier } from './manifest.js'
-import { bundledDshRegistry, registrySourceUrl } from './registry.js'
+import { DSH_ID_RE, dshTier } from './manifest.js'
+import { registrySourceUrl } from './registry.js'
+import { catalogEntry, currentDshRegistry, refreshDshRegistry } from './catalog.js'
 import { installDsh, removeDsh, resolveInstallSource, runDshDoctor } from './install.js'
 import { checkDsh, formatCheck } from './check.js'
 
@@ -33,7 +34,7 @@ export async function dshCommand(verb: string | undefined, rest: readonly string
   switch (verb) {
     case 'list': {
       const { installed, broken } = listDshState()
-      const registry = bundledDshRegistry()
+      const registry = await refreshDshRegistry()
       const seen = new Set<string>()
       const rows: string[] = []
       for (const dsh of installed) {
@@ -54,13 +55,17 @@ export async function dshCommand(verb: string | undefined, rest: readonly string
     case 'install': {
       const target = args[0]
       if (!target) { console.error(dshUsage()); return 1 }
+      if (DSH_ID_RE.test(target) && !rest.includes('--link')) await refreshDshRegistry(!catalogEntry(target))
       const resolved = resolveInstallSource(target)
       if (!resolved) { console.error(`harness dsh install: ${target} is not an id, URL or path`); return 1 }
       const link = rest.includes('--link')
       const ref = flagValue(rest, '--ref') ?? resolved.ref
       const path = flagValue(rest, '--path') ?? resolved.path
+      const catalog = new Map(currentDshRegistry().map(entry => [entry.id, entry]))
       const result = await installDsh({
         source: resolved.source,
+        expectedId: resolved.id,
+        registry: resolved.id ? id => catalog.get(id) : undefined,
         ref: link ? undefined : ref,
         path: link ? undefined : path,
         link,
@@ -83,7 +88,8 @@ export async function dshCommand(verb: string | undefined, rest: readonly string
       const target = args[0] ?? '.'
       const result = checkDsh(target)
       console.log(formatCheck(result))
-      console.log(result.ok ? `${result.manifest?.id ?? target} conforms to spec 1` : `${result.manifest?.id ?? target} does not conform`)
+      const name = result.manifest?.id ?? target
+      console.log(result.ok ? `${name} conforms to spec 1` : `${name} does not conform`)
       return result.ok ? 0 : 1
     }
     case 'remove': {

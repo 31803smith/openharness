@@ -1,11 +1,138 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-
 import '../shared/theme/app_theme.dart' as grid;
+import '../shared/widgets/app_dialog.dart';
 import '../state/app_state.dart';
 import '../widgets/login_relay_diagram.dart';
 import '../widgets/welcome_workspace_preview.dart';
+
+/// The sign-in, raised OVER the desk rather than in front of it.
+///
+/// A desktop window opens on this computer without an account, and what an
+/// account adds — the other machines, voice on the dial — is asked for at the
+/// moment the person reaches for it. So this is a sheet with one line saying
+/// what it is for ([reason]), the same button and browser wait [LoginScreen]
+/// has, and nothing else: the workspace preview and the pitch belong to a
+/// window that has nothing to show yet, and this one is showing the work.
+///
+/// Closes itself the moment the account arrives — [AppNotifier.signedIn] flips
+/// — or when the person cancels, whichever comes first. Returns whether the
+/// sign-in completed, so a caller that opened it on the way to something (Link
+/// Machine, say) knows whether to carry on.
+Future<bool> showSignInSheet(
+  BuildContext context,
+  AppNotifier notifier, {
+  String? reason,
+}) async {
+  if (notifier.signedIn) return true;
+  final completed = await showAppDialog<bool>(
+    context: context,
+    builder: (dialogContext) =>
+        _SignInSheet(notifier: notifier, reason: reason),
+  );
+  return completed ?? notifier.signedIn;
+}
+
+class _SignInSheet extends StatefulWidget {
+  const _SignInSheet({required this.notifier, this.reason});
+
+  final AppNotifier notifier;
+  final String? reason;
+
+  @override
+  State<_SignInSheet> createState() => _SignInSheetState();
+}
+
+class _SignInSheetState extends State<_SignInSheet> {
+  AppNotifier get notifier => widget.notifier;
+  bool _popped = false;
+
+  @override
+  void initState() {
+    super.initState();
+    notifier.addListener(_onChange);
+  }
+
+  @override
+  void dispose() {
+    notifier.removeListener(_onChange);
+    super.dispose();
+  }
+
+  void _onChange() {
+    if (_popped || !mounted || !notifier.signedIn) return;
+    _popped = true;
+    // After the frame: the notification can land mid-build.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && Navigator.of(context).canPop()) {
+        Navigator.of(context).pop(true);
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    grid.AppTheme.watch(context);
+    return ListenableBuilder(
+      listenable: notifier,
+      builder: (context, _) {
+        final waiting = notifier.signingIn;
+        return Dialog(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 400),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(24, 24, 24, 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const _AppMark(),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Sign in to Harness',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    widget.reason ??
+                        'Reach your other machines and use voice on the dial. '
+                            'Everything on this computer keeps working either way.',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 20),
+                  _Action(notifier: notifier, waiting: waiting),
+                  if (notifier.lastError != null && !waiting) ...[
+                    const SizedBox(height: 16),
+                    _ErrorTile(
+                      message: notifier.lastError!,
+                      onRetry: notifier.login,
+                    ),
+                  ],
+                  if (!waiting) ...[
+                    const SizedBox(height: 12),
+                    TextButton(
+                      onPressed: () {
+                        if (_popped) return;
+                        _popped = true;
+                        Navigator.of(context).pop(false);
+                      },
+                      style: TextButton.styleFrom(
+                        foregroundColor: grid.AppPalette.textSecondary,
+                      ),
+                      child: const Text('Not now'),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
 
 /// The sign-in screen.
 ///

@@ -22,7 +22,8 @@ def judge(source: str, diagnostics: str, code: int, pdf: str | None, pages: int 
         findings.append({"severity": "error" if sev == "error" else "warning", "kind": "typst", "message": msg.strip(), **({"ref": f"{file}:{line}:{col}"} if file else {})})
     errors = [f for f in findings if f["severity"] == "error"]
     written = len(source.strip()) > 0
-    compiled = code == 0 and not errors and pdf is not None
+    # An empty file compiles to a blank page: that is not a document yet, so it is not ready either.
+    compiled = written and code == 0 and not errors and pdf is not None
     phases = [
         {"id": "write", "name": "Write", "state": "done" if written else "active"},
         {"id": "compile", "name": "Compile", "state": ("done" if compiled else "failed") if written else "pending"},
@@ -50,11 +51,15 @@ def main(argv: list[str]) -> int:
     out = WS / "out" / (src.stem + ".pdf")
     out.parent.mkdir(parents=True, exist_ok=True)
     source = src.read_text() if src.exists() else ""
-    code, diag = 1, "error: no main.typ in the workspace"
+    code, diag = 1, f"error: no {os.path.relpath(src, WS)} in the workspace"
     if src.exists():
-        r = subprocess.run([TYPST, "compile", "--root", str(WS), str(src), str(out)], capture_output=True, text=True, cwd=WS)
-        code, diag = r.returncode, r.stderr
-    pdf = os.path.relpath(out, WS) if out.exists() and code == 0 else (os.path.relpath(out, WS) if out.exists() else None)
+        try:
+            r = subprocess.run([TYPST, "compile", "--root", str(WS), str(src), str(out)], capture_output=True, text=True, cwd=WS)
+            code, diag = r.returncode, r.stderr
+        except OSError as error:  # no typst binary (setup not run): still a verdict, not a traceback
+            code, diag = 1, f"error: typst could not run ({error})"
+    # The last good PDF stays the artifact while the source does not compile: the pane keeps showing it.
+    pdf = os.path.relpath(out, WS) if out.exists() else None
     verdict = judge(source, diag, code, pdf, page_count(out) if out.exists() else None)
     (WS / ".harness").mkdir(exist_ok=True)
     (WS / ".harness" / "verdict.json").write_text(json.dumps(verdict, indent=2) + "\n")

@@ -17,6 +17,7 @@ import { sid } from './lib/log.js'
 import { VERSION } from './version.js'
 import { env } from './config/env.js'
 import { hookCredentialMatches, loadOrCreateHookCredential } from './lib/hookAuth.js'
+import { routeStoreRequest, type StoreHandler } from './lib/storeProxy.js'
 import type { HookTerminalHint } from './lib/terminalTypes.js'
 import { ENGINES, type AgentEngine } from './engines/types.js'
 
@@ -119,12 +120,11 @@ export interface HookServerHandlers {
   /** GET /api/auth/me — proxy the signed-in user's profile from backend. */
   onAuthMe?: () => Promise<PairOutcome>
   /** /api/store/* — proxy the Harness Store's ratings and reviews to backend the same way: reads
-   *  ungated like the machine list, writes (PUT/DELETE) CSRF-guarded like a rename. */
-  onStore?: (method: 'GET' | 'PUT' | 'DELETE', path: string, body?: unknown) => Promise<PairOutcome>
+   *  ungated like the machine list, writes (PUT/DELETE) CSRF-guarded like a rename. See storeProxy.ts. */
+  onStore?: StoreHandler
 }
 
-/** A store path the daemon will forward: /api/store/… with nothing but id characters, slashes and a query. */
-export const STORE_PATH_RE = /^\/api\/store\/[A-Za-z0-9_\-./]{1,200}(?:\?[A-Za-z0-9_\-.=&%]{0,200})?$/
+export { STORE_PATH_RE } from './lib/storeProxy.js'
 
 const MAX_HOOK_BODY_BYTES = 256 * 1024
 const HOOK_BODY_FIELDS = new Set([
@@ -632,24 +632,14 @@ export function startHookServer(
         await proxied(() => remove(machineId)); return
       }
 
-      // The Harness Store: ratings and reviews live in the backend, and the app reaches them the way
-      // it reaches its machine list — through this daemon's own session. The path is forwarded as
-      // given (query included) so the backend's own validation is the one that answers.
+      // The Harness Store: ratings and reviews in the backend, through this daemon's own session. The
+      // rules (reads ungated, writes behind the local header, the paths it forwards) are storeProxy.ts's.
       if (url.startsWith('/api/store/')) {
-        const store = handlers.onStore
-        if (!store) { json(503, { error: 'UNAVAILABLE' }); return }
-        const full = req.url ?? url
-        if (!STORE_PATH_RE.test(full)) { json(400, { error: 'BAD_PATH' }); return }
-        if (req.method === 'GET') { await proxied(() => store('GET', full)); return }
-        if (req.method === 'PUT' || req.method === 'DELETE') {
-          if (!localOk) { json(403, { error: 'FORBIDDEN' }); return }
-          let body: unknown
-          if (req.method === 'PUT') {
-            try { body = JSON.parse(await readBody(req)) } catch { json(400, { error: 'bad json' }); return }
-          }
-          await proxied(() => store(req.method as 'PUT' | 'DELETE', full, body)); return
-        }
-        json(405, { error: 'METHOD_NOT_ALLOWED' }); return
+        // A request an http.Server hands over always has its url; `url` above is it without the query.
+        const route = await routeStoreRequest({ method: req.method, url: req.url as string, localOk, readBody: () => readBody(req) }, handlers.onStore)
+        if ('forward' in route) await proxied(route.forward)
+        else json(route.status, route.body)
+        return
       }
 
       // `harness pairings` — list paired browsers.

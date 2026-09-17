@@ -11,6 +11,6 @@ parentPort.on('message', async ({ id, skin, netlist }) => {
     const svg = await lib.render(skin, netlist)
     parentPort.postMessage({ id, svg })
   } catch (error) {
-    parentPort.postMessage({ id, error: String(error?.message ?? error) })
+    parentPort.postMessage({ id, error: error.message })
   }
 })
