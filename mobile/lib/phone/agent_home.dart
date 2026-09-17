@@ -153,6 +153,7 @@ class _AgentHomeState extends State<AgentHome> {
     widget.openMachineId?.removeListener(_onLinkedMachineChanged);
     widget.openAgent?.removeListener(_onAgentRequested);
     _loadingDeadline?.cancel();
+    _restoreDeadline?.cancel();
     super.dispose();
   }
 
@@ -212,7 +213,63 @@ class _AgentHomeState extends State<AgentHome> {
       // somebody off a terminal they are already looking at, seconds after it opened.
       if (last != null && _neighboursFor == null) _showing = last;
     });
+    if (last != null) {
+      _restoreDeadline = Timer(_restoreTimeout, () {
+        if (!mounted) return;
+        setState(() => _restoreGaveUp = true);
+      });
+    }
   }
+
+  /// How long the remembered agent's machine gets to come up before the screen settles for the
+  /// first agent it can reach — see [_target].
+  ///
+  /// 30s: a relayed machine that drops its first dial and redials was measured taking well past 15s
+  /// to hand over its agent list.
+  static const _restoreTimeout = Duration(seconds: 30);
+  Timer? _restoreDeadline;
+  bool _restoreGaveUp = false;
+
+  /// Whether [machineId] is on its way — connecting, or connected with its agent list still owed —
+  /// rather than answered, offline, or wanting a password.
+  ///
+  /// ⚠️ **"Offline" and a failed agent list are NOT taken at their word here.** A socket that drops
+  /// while it is still being dialled marks the node offline for a moment, and `agents_list` answers
+  /// "WS closed" on the way — both seen on a real launch, both for a machine that came up seconds
+  /// later. Believing either ended the wait and handed the screen to the faster machine's agent.
+  /// So offline counts as coming while the account's own record (`/api/machines`) says the machine
+  /// is up, and an errored list counts as coming too; the deadline is what ends a wait that is not
+  /// going to be met. Only a password prompt, a machine the account says is down, or a list that
+  /// LOADED without the agent end it early.
+  bool _machineStillComing(String machineId) {
+    final notifier = widget.notifier;
+    final machine = notifier.stateOf(machineId);
+    if (machine == null) {
+      return notifier.machines.isEmpty || notifier.machinesLoading;
+    }
+    return switch (phoneMachineStatusOf(machine)) {
+      PhoneMachineStatus.needsPassword => false,
+      PhoneMachineStatus.offline => _accountSaysOnline(machine.machine.status),
+      PhoneMachineStatus.connecting => true,
+      PhoneMachineStatus.ready => switch (machine.agentLoadStatus) {
+        AgentLoadStatus.loaded || AgentLoadStatus.needsLink => false,
+        AgentLoadStatus.idle ||
+        AgentLoadStatus.loading ||
+        AgentLoadStatus.error => true,
+      },
+    };
+  }
+
+  /// The machine list's own word on whether the machine is up — the REST status, not the socket.
+  static bool _accountSaysOnline(String? status) =>
+      switch (status?.trim().toLowerCase()) {
+        'running' || 'online' || 'connected' || 'ready' => true,
+        _ => false,
+      };
+
+  /// Whether the screen is currently holding out for the remembered agent — see [_target]. Read by
+  /// build so the wait draws as "Connecting…", never as the empty state.
+  bool _waitingForRestore = false;
 
   /// The agent to draw, given what the account can currently reach.
   ///
@@ -223,6 +280,7 @@ class _AgentHomeState extends State<AgentHome> {
   ///    with no list behind it cannot afford to show nothing while agents exist;
   ///  - nothing openable at all → null, and the empty state says so.
   AgentEntry? _target(List<AgentEntry> entries) {
+    _waitingForRestore = false;
     // Picked by hand elsewhere — see [AgentHome.openAgent]. Until it is in the list, the screen keeps
     // what it has rather than blanking.
     final requested = _requestedAgent;
@@ -257,6 +315,18 @@ class _AgentHomeState extends State<AgentHome> {
     if (showing != null) {
       final held = _entryFor(entries, showing);
       if (held != null) return held;
+      // ⚠️ **The agent from last time is waited for while its machine is still coming up.** With two
+      // machines, the one that answers first used to win: its first agent took the screen, a pager
+      // was built around it, and when the machine holding the remembered agent arrived a second
+      // later there was no going back to it. Only before any pager is up, only while that machine
+      // is genuinely on its way, and only until [_restoreDeadline] — an agent that was deleted, or a
+      // machine that stays down, still falls through to the first agent below.
+      if (_neighboursFor == null &&
+          !_restoreGaveUp &&
+          _machineStillComing(showing.machineId)) {
+        _waitingForRestore = true;
+        return null;
+      }
     }
     return entries.where((entry) => entry.agent.terminalAvailable).firstOrNull;
   }
@@ -339,6 +409,7 @@ class _AgentHomeState extends State<AgentHome> {
       AppTheme.watch(context);
       final entries = visibleAgents(agentIndex(widget.notifier));
       _openNewAgentIfUnlockedMachineIsEmpty(entries);
+      _dropPagerIfShownAgentWasDeleted(entries);
       // ⚠️ `_readingLast` holds the screen back so the record gets to name the agent before the
       // fallback does — but only while the screen is still willing to wait at all. Past
       // [_loadingTimeout] a read that has not returned is not going to, and going on to pick an
@@ -353,7 +424,11 @@ class _AgentHomeState extends State<AgentHome> {
         // cards promises the wrong thing and then never delivers it. [_AgentHomeLoading] says what
         // is happening in words instead, and hands over to the terminal's own "Attaching…" — the
         // two are built to read as one sequence.
-        final loading = _loadingMessage();
+        final loading =
+            _loadingMessage() ??
+            // Every other machine may be up and loaded while the one holding the remembered agent
+            // is still dialling — without this the wait would draw as "No agents yet".
+            (_waitingForRestore ? 'Connecting to your machine…' : null);
         if (loading != null) return _AgentHomeLoading(message: loading);
         // ⚠️ **No machine is open → this is a MACHINE problem, so the machine screen is what the
         // person gets.** An "Agents" header over "No machines are open yet" named the thing that is
@@ -370,7 +445,28 @@ class _AgentHomeState extends State<AgentHome> {
         _openNewAgentAfterLastOneWent();
         return _AgentHomeEmpty(notifier: widget.notifier);
       }
-      final chosen = (machineId: target.machineId, agentId: target.agent.id);
+      var chosen = (machineId: target.machineId, agentId: target.agent.id);
+      // ⚠️ **The swipe list is a snapshot, so it is retaken when the SET of agents changes.** It is
+      // taken as the pager opens, and on launch that is as soon as one machine answers — a second
+      // machine's agents arriving a moment later never reached it, and a pager built around one
+      // agent has no neighbours: nothing to swipe to until the app was restarted. Order changes do
+      // not count (see [_neighbours] for why they must not), only agents joining or leaving.
+      //
+      // Rebuilt around the agent ON SCREEN, not the one the pager opened on — the person stays
+      // where they are, now with every agent beside them.
+      final snapshot = _neighbours;
+      if (snapshot != null &&
+          _neighboursFor != null &&
+          !_sameAgents(snapshot, entries)) {
+        final showing = _showing;
+        final onScreen = showing == null ? null : _entryFor(entries, showing);
+        if (onScreen != null) {
+          chosen = (machineId: onScreen.machineId, agentId: onScreen.agent.id);
+        }
+        _neighboursFor = null;
+        _neighbours = null;
+        _pagerGeneration++;
+      }
       // A pager already up for this agent is LEFT ALONE — same key, same snapshot, so it keeps the
       // page it is on, and [_showing] keeps naming whatever it has been swiped to. A pager is built
       // here only when there is none, or when the one there opened on an agent that can no longer be
@@ -415,7 +511,11 @@ class _AgentHomeState extends State<AgentHome> {
       // So the key changes only when [_target] picks a DIFFERENT agent than the pager was built for,
       // which happens when the one it opened on can no longer be opened at all.
       return AgentSwipeHost(
-        key: ValueKey('${opened.machineId}/${opened.agentId}'),
+        // The generation is what lets a pager be REBUILT around the same opening agent — see
+        // [_dropPagerIfShownAgentWasDeleted]; the agent alone would hand Flutter the same key.
+        key: ValueKey(
+          '${opened.machineId}/${opened.agentId}#$_pagerGeneration',
+        ),
         notifier: widget.notifier,
         machineId: opened.machineId,
         agentId: opened.agentId,
@@ -428,6 +528,81 @@ class _AgentHomeState extends State<AgentHome> {
       );
     },
   );
+
+  /// Whether [snapshot] holds exactly the openable agents in [entries], in any order.
+  static bool _sameAgents(AgentSwipeList snapshot, List<AgentEntry> entries) {
+    Set<String> keys(Iterable<AgentEntry> list) => {
+      for (final entry in list)
+        if (entry.agent.terminalAvailable)
+          '${entry.machineId}/${entry.agent.id}',
+    };
+    final before = keys(snapshot.entries);
+    final now = keys(entries);
+    return before.length == now.length && before.containsAll(now);
+  }
+
+  /// Bumped whenever the pager is thrown away and rebuilt, and part of its key.
+  int _pagerGeneration = 0;
+
+  /// The agent on screen was deleted while the pager's OPENING agent still exists: rebuild.
+  ///
+  /// ⚠️ **The pager is keyed by the agent it opened on, so it survives anything short of that
+  /// agent going away — including the agent actually on screen going away.** Swipe from A to B,
+  /// delete B, and [_target] still answers A, the key does not change, and the pager stays parked on
+  /// B's page: a header reading "Agent" over "Attaching…" to a terminal that no longer exists, with
+  /// nothing to leave to because this screen is the root.
+  ///
+  /// Only for a real deletion: the agent's machine is still answering with a loaded list, and the
+  /// agent is not on it. A machine dropping out empties its entries too, and rebuilding for that
+  /// would move the screen to another machine's agent when this one comes back in a moment.
+  ///
+  /// The last agent is left to [_openNewAgentAfterLastOneWent], which needs [_neighboursFor] intact
+  /// to know there was a terminal to lose.
+  void _dropPagerIfShownAgentWasDeleted(List<AgentEntry> entries) {
+    final showing = _showing;
+    if (_neighboursFor == null || showing == null) return;
+    if (_entryFor(entries, showing) != null) return;
+    final machine = widget.notifier.stateOf(showing.machineId);
+    if (machine == null ||
+        phoneMachineStatusOf(machine) != PhoneMachineStatus.ready ||
+        machine.agentLoadStatus != AgentLoadStatus.loaded ||
+        machine.agents.any((agent) => agent.id == showing.agentId)) {
+      return;
+    }
+    if (!entries.any((entry) => entry.agent.terminalAvailable)) return;
+    final next = _nextAfter(showing, entries);
+    _neighboursFor = null;
+    _neighbours = null;
+    // The agent that was one swipe to the RIGHT of the deleted one takes its place — what the
+    // person would have reached by swiping on. Null only if the snapshot has nothing still standing,
+    // and then [_target] falls back to the first agent.
+    _showing = next;
+    _pagerGeneration++;
+  }
+
+  /// The first agent after [deleted] in the pager's own order — wrapping past the end, as the pager
+  /// does — that can still be opened.
+  ///
+  /// The SNAPSHOT's order, not a fresh [visibleAgents]: "the one to the right" means the page the
+  /// person would have swiped to, and the live list may have reordered since the pager opened.
+  ({String machineId, String agentId})? _nextAfter(
+    ({String machineId, String agentId}) deleted,
+    List<AgentEntry> entries,
+  ) {
+    final order = _neighbours?.entries ?? const <AgentEntry>[];
+    final at = order.indexWhere(
+      (entry) =>
+          entry.machineId == deleted.machineId &&
+          entry.agent.id == deleted.agentId,
+    );
+    if (at < 0) return null;
+    for (var step = 1; step < order.length; step++) {
+      final candidate = order[(at + step) % order.length];
+      final ref = (machineId: candidate.machineId, agentId: candidate.agent.id);
+      if (_entryFor(entries, ref) != null) return ref;
+    }
+    return null;
+  }
 
   /// A machine just unlocked that turns out to have no agents: the form for its first one, rather
   /// than a screen saying there is nothing here.
