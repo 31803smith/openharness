@@ -4,7 +4,10 @@
  * `gridHandoff.ts` and `gridLogout.ts` each grew their own spawn because there were two calls. The
  * harness-grid flow adds several more — ensure, models, endpoint — and a per-caller spawn is how a
  * PATH check, a capture bound and an exit-code meaning end up disagreeing three ways. So: one
- * resolver, one classification, one bounded capture.
+ * resolver, one classification, one bounded capture. The hand-off and the sign-out keep their own
+ * spawn (a token on stdin; a passthrough to the terminal where a person is watching), but they
+ * resolve the binary HERE, through [gridBinaryPath] — so every grid call on this daemon runs the one
+ * `grid`.
  *
  * **Which binary.** `HARNESS_GRID_BIN` (an explicit override, for a developer testing an unreleased
  * grid) → the runtime this daemon manages → `grid` on PATH. The managed runtime is PINNED, and it
@@ -22,7 +25,8 @@ import { join, sep } from 'node:path'
 import { env } from '../config/env.js'
 import { binaryOnPath } from './binaryOnPath.js'
 
-/** The command, as it is named on PATH. Shared with `gridHandoff.ts`, which owns the sign-in seam. */
+/** The command, as it is named on PATH — the last resort of [gridBinaryPath], and the word the
+ *  sign-out's own "nothing to run" sentence uses (`gridLogout.ts`). */
 export const GRID_BINARY = 'grid'
 
 /**

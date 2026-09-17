@@ -13,11 +13,13 @@
  */
 import { spawn } from 'node:child_process'
 import { binaryOnPath } from './binaryOnPath.js'
+import { gridBinaryPath } from './gridExec.js'
 
-/** The command, and the flag on it that means "read the token off stdin" (autonomous-grid's
- *  `cli/parser.py`). Located on PATH with no environment override: tests control PATH directly, so an
- *  override would be a knob with no user. */
-export const GRID_BINARY = 'grid'
+/** The flag on `grid login` that means "read the token off stdin" (autonomous-grid's `cli/parser.py`).
+ *  WHICH `grid` is not decided here: `gridBinaryPath()` (lib/gridExec.ts) answers that for every grid
+ *  call alike — the developer override, then the managed runtime, then PATH — because this call
+ *  carries the token, and a sign-in on one binary with models on another would be two versions
+ *  writing one `~/.grid`. */
 export const GRID_HANDOFF_FLAG = '--harness'
 
 /**
@@ -52,8 +54,8 @@ function capped(sofar: string, chunk: Buffer): string {
 }
 
 const MISSING_MESSAGE =
-  'No `grid` on PATH, so there is nothing to hand this sign-in to. Install the grid CLI, then run '
-  + '`harness grid login` again.'
+  'No `grid` on PATH and no managed grid runtime, so there is nothing to hand this sign-in to. Install '
+  + 'the grid CLI, then run `harness grid login` again.'
 
 const OUTDATED_MESSAGE =
   `Your \`grid\` CLI is too old: it does not understand \`grid login ${GRID_HANDOFF_FLAG}\`. Update `
@@ -80,16 +82,17 @@ export async function handOffToGrid(
   token: string,
   opts: { json?: boolean } = {},
 ): Promise<GridHandoffResult> {
-  // Asking PATH rather than spawning to find out: a missing `grid` is a sentence about installing
-  // one, not a spawn error the caller has to recognise. This process's own environment, inherited —
-  // there is nothing to override, and a parameter for one would be the knob with no user the ticket
-  // refuses.
-  if (!binaryOnPath(GRID_BINARY)) {
+  // Asking by reading rather than by spawning to find out: a missing `grid` is a sentence about
+  // installing one, not a spawn error the caller has to recognise — and a present-but-unrunnable
+  // one (EACCES, never ENOENT) is caught too. Resolved off this process's own environment, which is
+  // the one place the override and the runtime dir are read from.
+  const binary = gridBinaryPath()
+  if (!binaryOnPath(binary)) {
     return { code: 'GRID_CLI_MISSING', exitCode: 1, message: MISSING_MESSAGE, stdout: '', stderr: '' }
   }
   const args = ['login', GRID_HANDOFF_FLAG, ...(opts.json ? ['--json'] : [])]
   return await new Promise<GridHandoffResult>((resolve) => {
-    const child = spawn(GRID_BINARY, args, {
+    const child = spawn(binary, args, {
       stdio: ['pipe', opts.json ? 'pipe' : 'inherit', opts.json ? 'pipe' : 'inherit'],
     })
     let stdout = ''
@@ -109,7 +112,7 @@ export async function handOffToGrid(
     const { stdin } = child
     if (!stdin) {
       child.kill()
-      settle({ code: 'GRID_LOGIN_FAILED', exitCode: 1, message: `Could not open a pipe to \`${GRID_BINARY}\`.`, stdout, stderr })
+      settle({ code: 'GRID_LOGIN_FAILED', exitCode: 1, message: `Could not open a pipe to \`${binary}\`.`, stdout, stderr })
       return
     }
 
@@ -117,7 +120,7 @@ export async function handOffToGrid(
     // before reading breaks the pipe. Both are the child's story to tell, never a crash here.
     child.once('error', (err: NodeJS.ErrnoException) => settle(err.code === 'ENOENT'
       ? { code: 'GRID_CLI_MISSING', exitCode: 1, message: MISSING_MESSAGE, stdout, stderr }
-      : { code: 'GRID_LOGIN_FAILED', exitCode: 1, message: `Could not run \`${GRID_BINARY}\`: ${err.message}`, stdout, stderr }))
+      : { code: 'GRID_LOGIN_FAILED', exitCode: 1, message: `Could not run \`${binary}\`: ${err.message}`, stdout, stderr }))
     stdin.on('error', () => { /* EPIPE — see above */ })
 
     // A trailing newline as well as the close: `grid` reads one bounded LINE, so the hand-off does
