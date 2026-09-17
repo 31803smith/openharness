@@ -56,8 +56,9 @@ icon size in thirty seconds instead of in an email twenty minutes later.
 | `1.0.0 (4)` | 2026-09-16 | TestFlight. Adds agent/machine search (`feat/mobile-search`) |
 | `1.0.0 (5)` | 2026-09-16 | TestFlight. Agent creation flow; Machines tab pairs/unpairs |
 | `1.0.0 (6)` | 2026-09-16 | TestFlight. Custom voice input on a terminal tap — misheard Vietnamese, removed for the keyboard's own dictation |
+| `1.0.0 (7)` | 2026-09-17 | TestFlight. Voice input back, transcribed by the backend (`/api/voice/stt`); opens on the last agent's terminal |
 
-`pubspec.yaml` is therefore at `1.0.0+7`: the repo always holds the NEXT build number, so a release
+`pubspec.yaml` is therefore at `1.0.0+8`: the repo always holds the NEXT build number, so a release
 runs clean without anyone having to remember the last one.
 
 ### Why the app is iPhone-only
