@@ -354,11 +354,22 @@ Future<void> showSwarmLinkDialog(
                         leading: const Icon(Icons.computer, size: 18),
                         title: Text(machine.machine.displayName),
                         subtitle: Text(
-                          machine.needsLink
-                              ? 'Link required'
-                              : machine.nodeOnline == false
-                              ? 'Offline'
-                              : 'Linked',
+                          // Presence and link state are independent segments,
+                          // the same split the Machines menu and manager use:
+                          // an unlinked machine whose node is up reads
+                          // "Online · Link required" rather than the link
+                          // state hiding that the computer is reachable.
+                          // "Connecting…" only when presence is genuinely
+                          // unknown and there is no link prompt to show.
+                          [
+                            if (machine.nodeOnline == true)
+                              'Online'
+                            else if (machine.nodeOnline == false)
+                              'Offline'
+                            else if (!machine.needsLink)
+                              'Connecting…',
+                            machine.needsLink ? 'Link required' : 'Linked',
+                          ].join(' · '),
                         ),
                         onTap: () =>
                             Navigator.pop(context, machine.machine.machineId),

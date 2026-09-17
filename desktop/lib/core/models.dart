@@ -121,6 +121,11 @@ class Agent {
   final String id;
   final String? sessionId;
   final String name;
+
+  /// What the agent is on, in its own words — the transcript's title as the
+  /// daemon cleaned it, null when it has none or it is the name already. A
+  /// search finds an agent by this before it finds one by a recap.
+  final String? title;
   final String? engine;
   final String? engineDisplayName;
   final String? engineIconHint;
@@ -134,10 +139,10 @@ class Agent {
   final bool terminalAvailable;
   final String? terminalUnavailableReason;
 
-  /// The domain-specific harness this agent was created from (`autonomous/copper`), or
+  /// The domain-specific harness this agent was created from (`autonomous/autonomous-circuit`), or
   /// null for a plain engine. [engine] stays the BASE engine the process actually runs —
   /// a DSH is a decoration on the session, never a second engine (see the DSH spec in
-  /// `dsh/spec/README.md`). Everything a person sees keys off this when it is set.
+  /// `store/spec/README.md`). Everything a person sees keys off this when it is set.
   final String? dsh;
 
   /// The harness's display name as the daemon read it off the manifest. Lets a DSH this
@@ -155,6 +160,7 @@ class Agent {
     required this.id,
     this.sessionId,
     required this.name,
+    this.title,
     this.engine,
     this.engineDisplayName,
     this.engineIconHint,
@@ -207,6 +213,7 @@ class Agent {
       id: j['id'] as String,
       sessionId: _safeLabel(j['sessionId']),
       name: j['name'] as String? ?? 'agent',
+      title: _safeLabel(j['title']),
       engine: _safeEngine(j['engine']),
       engineDisplayName: _safeLabel(j['engineDisplayName']),
       engineIconHint: _safeLabel(j['engineIconHint']),
@@ -235,6 +242,7 @@ class Agent {
     id: id,
     sessionId: sessionId,
     name: name ?? this.name,
+    title: title,
     engine: engine,
     engineDisplayName: engineDisplayName,
     engineIconHint: engineIconHint,
@@ -304,7 +312,7 @@ class Agent {
 }
 
 /// A domain-specific harness's verdict on an agent's workspace, as the daemon read it off
-/// `.harness/verdict.json` (see `dsh/spec/README.md`). Counts rather than the findings
+/// `.harness/verdict.json` (see `store/spec/README.md`). Counts rather than the findings
 /// themselves: the pane header has room for "3 errors", and the findings live in the
 /// harness's own viewer.
 enum AgentPhaseState { done, active, pending, failed }

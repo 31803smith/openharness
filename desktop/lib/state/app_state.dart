@@ -470,7 +470,8 @@ class AppNotifier extends ChangeNotifier {
   final List<Swarm> swarms = [Swarm(id: 'swarm-1')];
   String _activeSwarmId = 'swarm-1';
   int _nextSwarmId = 2;
-  static const maxSwarms = 24;
+  // No tab cap, as in Chrome: only the visible tab's panes are built, so a background tab costs its
+  // terminal streams and nothing else — its web panes are unloaded until it is shown again.
   static const maxClosedSwarms = 24;
   final List<ClosedWork> _closedHistory = [];
   int _nextClosedHistoryId = 1;
@@ -495,9 +496,8 @@ class AppNotifier extends ChangeNotifier {
     if (entry is ClosedSwarm) return _canReopenSwarm(entry);
     if (entry is! ClosedAgent) return false;
     final target = swarms.where((s) => s.id == entry.swarmId).firstOrNull;
-    return target == null
-        ? swarms.length < maxSwarms
-        : target.panes.length < maxPanes ||
+    return target == null ||
+        target.panes.length < maxPanes ||
               target.panes.any(
                 (p) =>
                     p.machineId == entry.machineId &&
@@ -508,7 +508,7 @@ class AppNotifier extends ChangeNotifier {
   bool _canReopenSwarm(ClosedSwarm saved) {
     if (_disposed) return false;
     final target = swarms.where((swarm) => swarm.id == saved.id).firstOrNull;
-    if (target == null) return swarms.length < maxSwarms;
+    if (target == null) return true;
     final present = {
       for (final pane in target.panes) (pane.machineId, pane.agentId),
     };
@@ -540,8 +540,6 @@ class AppNotifier extends ChangeNotifier {
   List<TerminalPane> get panes => activeSwarm.panes;
   Iterable<TerminalPane> get allPanes => swarms.expand((s) => s.panes).toSet();
   String get activeSwarmId => activeSwarm.id;
-  bool get canOpenNewTab =>
-      swarms.length < maxSwarms || swarms.any((swarm) => swarm.isEmptyStarter);
 
   // A New Tab remains temporary until it has content or a custom name.
   // The return destination is session-local; abandoned drafts are never saved.
@@ -569,7 +567,6 @@ class AppNotifier extends ChangeNotifier {
         return;
       }
     }
-    if (swarms.length >= maxSwarms) return;
     while (swarms.any((s) => s.id == 'swarm-$_nextSwarmId')) {
       _nextSwarmId++;
     }
@@ -578,6 +575,40 @@ class AppNotifier extends ChangeNotifier {
       _draftSwarmReturns[swarm.id] =
           _draftSwarmReturns[activeSwarmId] ?? activeSwarmId;
     }
+    swarms.add(swarm);
+    selectSwarm(swarm.id);
+  }
+
+  /// The Harness Store takes over the tab it was opened from — the New Tab
+  /// whose start page carries the card — exactly as the first agent takes
+  /// over a New Tab. One store tab per window, like one New Tab: when it is
+  /// already open somewhere, that one is selected. From a tab with panes it
+  /// gets a tab of its own.
+  void openStore() {
+    final current = activeSwarm;
+    if (current.isStore) return;
+    final existing = swarms.where((swarm) => swarm.isStore).firstOrNull;
+    if (existing != null) {
+      selectSwarm(existing.id);
+      return;
+    }
+    if (current.isEmptyStarter) {
+      current
+        ..kind = 'store'
+        ..name = Swarm.storeName;
+      _draftSwarmReturns.remove(current.id);
+      _persistLayout();
+      notifyListeners();
+      return;
+    }
+    while (swarms.any((s) => s.id == 'swarm-$_nextSwarmId')) {
+      _nextSwarmId++;
+    }
+    final swarm = Swarm(
+      id: 'swarm-${_nextSwarmId++}',
+      name: Swarm.storeName,
+      kind: 'store',
+    );
     swarms.add(swarm);
     selectSwarm(swarm.id);
   }
@@ -803,7 +834,7 @@ class AppNotifier extends ChangeNotifier {
       selectSwarm(target.id);
       return;
     }
-    final restored = Swarm(id: saved.id, name: saved.name)
+    final restored = Swarm(id: saved.id, name: saved.name, kind: saved.kind)
       ..gridColumns = saved.gridColumns
       ..presets.addAll(saved.presets)
       ..paneSizes.addAll(saved.paneSizes);
@@ -3645,6 +3676,44 @@ class AppNotifier extends ChangeNotifier {
     }
   }
 
+  /// Uninstall the harness [id] from [machineId] (`dsh_remove`): the clone
+  /// goes, a linked install loses only its link, and the machine's catalog is
+  /// asked again so the store's "Installed" reads true. Null on success, else
+  /// a sentence for the person who clicked.
+  Future<String?> removeDsh(String machineId, String id) async {
+    final machine = machineStates[machineId];
+    if (machine == null) return 'Machine not found';
+    final machineName = machine.machine.displayName;
+    try {
+      final result = await _conn(machineId).request(
+        'dsh_remove',
+        payload: {'id': id},
+        timeout: const Duration(seconds: 30),
+      );
+      if (result['ok'] != true) {
+        final detail = result['detail'];
+        return detail is String && detail.isNotEmpty
+            ? detail
+            : 'Remove failed on $machineName';
+      }
+    } on WsRequestFailure catch (failure) {
+      return switch (failure.code) {
+        'UNSUPPORTED' || 'UNSUPPORTED_ON_REMOTE' =>
+          'Update the harness CLI on $machineName to remove harnesses',
+        _ =>
+          failure.detail?.isNotEmpty == true
+              ? failure.detail!
+              : 'Remove failed on $machineName (${failure.code})',
+      };
+    } on WsRequestTimeout {
+      return '$machineName did not answer. Try again.';
+    } catch (_) {
+      return 'Remove failed on $machineName';
+    }
+    await probeDsh(machineId, force: true);
+    return null;
+  }
+
   /// Install the harness [id] on [machineId]: clone, set up its toolchain, run
   /// its doctor. Minutes, not seconds — the Circuit toolchain alone is an
   /// `npm ci` — so the request carries its own long budget and the machine
@@ -5757,12 +5826,19 @@ class AppNotifier extends ChangeNotifier {
         activeSwarm == initialSwarm) {
       final restored = <Swarm>[];
       final pool = <String, TerminalPane>{};
-      for (final raw in (saved['swarms'] as List).take(maxSwarms)) {
+      for (final raw in (saved['swarms'] as List)) {
         if (raw is! Map || raw['id'] is! String || raw['panes'] is! List) {
           continue;
         }
         final id = raw['id'] as String;
         if (id.isEmpty || restored.any((s) => s.id == id)) continue;
+        // An empty tab carrying the store's name is the store — a layout
+        // saved by a build that did not yet write the kind — and one store
+        // tab, as one New Tab: a second has nothing the first does not.
+        final isStore =
+            raw['kind'] == 'store' ||
+            (raw['name'] == Swarm.storeName && (raw['panes'] as List).isEmpty);
+        if (isStore && restored.any((s) => s.isStore)) continue;
         final swarm = Swarm(
           id: id,
           name:
@@ -5772,6 +5848,7 @@ class AppNotifier extends ChangeNotifier {
                   (raw['name'] as String).length.clamp(0, 80),
                 )
               : Swarm.defaultName,
+          kind: isStore ? 'store' : 'harness',
         );
         for (final item in (raw['panes'] as List).take(maxPanes)) {
           final entry = PaneLayoutEntry.fromJson(item);
