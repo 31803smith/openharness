@@ -30,4 +30,5 @@ wrapper belong here, and a newer release is a `skills/` swap and a `CADGEN_VERSI
 harness dsh check .                              # conformance
 harness dsh install "$PWD" --link                # this checkout as the installed agent
 python3 -m unittest toolchain/test_verdict.py    # the verdict, without cadgen
+python3 -m unittest toolchain/test_scripts.py    # setup, doctor and init, with fake interpreters
 ```
