@@ -18,6 +18,7 @@ import { relative } from 'node:path'
 import { isCandidateArtifact, isArtifactDirIgnored, newestArtifact } from './artifacts.js'
 import { installedDsh, type InstalledDsh } from './installed.js'
 import { isViewerPackage } from './manifest.js'
+import { resolveDshCommand } from './materialize.js'
 import { isShellNoise, killProcessGroup, spawnDshCommand } from './shell.js'
 
 /** The viewer that will actually run for a harness: its own, or the package it points at. */
@@ -244,7 +245,8 @@ export class DshViewerManager {
     // A used viewer runs in ITS directory with ITS files, and is told which harness it draws for:
     // HARNESS_DSH/_DIR stay the harness's (the contract every DSH script relies on), HARNESS_VIEWER
     // and HARNESS_VIEWER_DIR name the package. A harness's own viewer sees both pairs agree.
-    const child = (this.deps.spawn ?? spawnDshCommand)(viewer.command, {
+    // Resolved inside the viewer's directory, as check.ts reads it: a bare `viewer.sh` is that file.
+    const child = (this.deps.spawn ?? spawnDshCommand)(resolveDshCommand({ realDir: viewer.dir }, viewer.command), {
       cwd: viewer.dir,
       env: {
         HARNESS_DSH: state.dsh.id,

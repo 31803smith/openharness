@@ -312,6 +312,16 @@ describe('DshViewerManager, the rest of a viewer\'s life', () => {
     return { spawned, urls, logs, manager }
   }
 
+  it('runs a bare script name as the package\'s own file, the way `harness dsh check` reads it', async () => {
+    writeFileSync(join(root, 'viewer.sh'), '#!/bin/sh\n', { mode: 0o755 })
+    const scripts: string[] = []
+    const { manager } = setup({ spawn: ((script: string) => { scripts.push(script); return fakeChild() }) as unknown as typeof import('./shell.js').spawnDshCommand })
+    const own = (command: string): InstalledDsh => ({ ...dsh({ command, url: 'http://127.0.0.1:${port}/' }), dir: root, realDir: root })
+    await manager.start('a1', own('viewer.sh'), '/ws')
+    await manager.start('a2', own('node viewer.mjs --port $HARNESS_VIEWER_PORT'), '/ws')
+    expect(scripts).toEqual([`'${join(root, 'viewer.sh')}'`, 'node viewer.mjs --port $HARNESS_VIEWER_PORT'])
+  })
+
   it('does nothing for a harness with no viewer', async () => {
     const { spawned, logs, manager } = setup()
     await manager.start('a1', { ...dsh({ command: 'v', url: 'u' }), manifest: { spec: 1, id: 'acme/thing', name: 'Thing', engine: 'claude' } }, '/ws')
