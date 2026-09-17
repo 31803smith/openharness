@@ -281,6 +281,9 @@ void main() {
   test(
     'terminal input batches, preserves Enter boundary and is never retried',
     () async {
+      // Real sleeps can overshoot the 4 ms window on a busy test host. Hold the input clock
+      // inside it while exercising the real send queue and trailing timer.
+      session.inputClockForTest = () => DateTime.utc(2026, 9, 17);
       await ready();
       await session.handleBinary(
         output(0, utf8.encode(r'prompt> '), keyframe: true, cols: 80, rows: 24),
