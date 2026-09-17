@@ -3920,6 +3920,8 @@ async function runForeground(session: AuthSession): Promise<void> {
     // links) and take its env/argv for the launch. Refused, never approximated, when it is not here.
     let dshEnv: Record<string, string> | undefined
     let dshArgs: string[] = []
+    /** A DSH's own name ("Blender"), which the agent is named after instead of its engine. */
+    let dshLabel: string | undefined
     if (dsh) {
       const installed = installedDsh(dsh)
       if (!installed) return { ok: false, error: 'INVALID_DSH', detail: `${dsh} is not installed on this machine` }
@@ -3953,6 +3955,7 @@ async function runForeground(session: AuthSession): Promise<void> {
       const launch = dshLaunch(installed, cwd)
       dshEnv = launch.env
       dshArgs = launch.args
+      dshLabel = installed.manifest.name
     }
     // Harness-created sessions are easy to distinguish from a user's organic tmux sessions while
     // retaining the engine and a collision-resistant creation suffix for diagnostics. Computed
@@ -4046,6 +4049,7 @@ async function runForeground(session: AuthSession): Promise<void> {
       agent,
       bypassPermission,
       defaultName: name,
+      label: dshLabel,
     })
     if (!result.ok) return { ok: false, error: result.error, detail: result.detail }
     const { spawned, pending } = result

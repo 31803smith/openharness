@@ -16,6 +16,7 @@
 import { DSH_ID_RE } from '../dsh/manifest.js'
 import { AGENT_NAME_RE } from './engineLaunch.js'
 import { namingTitle } from './sessionTitle.js'
+import { automaticAgentName, engineLabel, isAutomaticName } from './agentNames.js'
 import {
   closeSync,
   constants,
@@ -165,8 +166,9 @@ export interface RegisteredSession {
   launcherId?: string
   transcriptPath: string | null
   projectDir: string
-  /** Stable default for agents created by Harness — the next `harness-N`, or the name the creator asked
-   *  for (`agent_create`'s `name`). Discovered agents keep their existing names. */
+  /** Stable default for agents created by Harness — `<agent> harness M-D H:MM` (agentNames.ts), or the
+   *  name the creator asked for (`agent_create`'s `name`). Rows from earlier daemons carry `harness-N`.
+   *  Discovered agents keep their existing names. */
   defaultName?: string
   cwd: string | null
   /** Authoritative backend-neutral terminal placements for this one process-owned agent. */
@@ -209,18 +211,16 @@ export interface RegisterInput {
 /** Display name for a session's "project" tab/tile. A user rename (persisted override) is
  *  authoritative and FIXED. Until there is one, a session is called what its engine calls it — the
  *  conversation title Claude Code puts on its terminal, Codex's thread name (sessionTitle.ts) — which
- *  moves as the engine retitles it, and says what the agent is doing where harness-43 does not. The
- *  numbered name a harness is created with stands in until the engine has a title, a name its creator
- *  chose is kept like a rename, and a discovered session falls back to its folder. */
+ *  moves as the engine retitles it, and says what the agent is doing. The name a harness is created
+ *  with ("Codex harness 9-17 15:26") stands in until the engine has a title, a name its creator chose
+ *  is kept like a rename, and a discovered session falls back to its folder. */
 export function projectDisplayName(s: RegisteredSession): string {
-  // A name the creator chose ("Local model") is fixed like a rename; only a numbered default gives way.
-  const chosen = s.defaultName && !NUMBERED_DEFAULT_NAME.test(s.defaultName) ? s.defaultName : null
+  // A name the creator chose ("Local model") is fixed like a rename; only a name Harness gave gives way.
+  const chosen = s.defaultName && !isAutomaticName(s.defaultName) ? s.defaultName : null
   return NAME_OVERRIDES.get(s.sessionId) || NAME_OVERRIDES.get(s.agentId) || chosen
     || sessionDisplayTitle(s) || s.defaultName || defaultProjectDisplayName(s)
 }
 
-/** The names a daemon numbers agents with: `harness-N`, and `agent-N` from before the rename. */
-const NUMBERED_DEFAULT_NAME = /^(?:harness|agent)-[1-9]\d*$/
 
 /** The engine's own name for this session, or null while it has none worth showing. */
 export function sessionDisplayTitle(s: RegisteredSession): string | null {
@@ -1067,8 +1067,10 @@ class Registry {
     /** The engine's named agent the pane was opened as (`agent_create`'s `agent`), validated upstream. */
     agent?: string | null
     bypassPermission?: boolean
-    /** The name the creator asked for, instead of the next `harness-N`. Blank means "number it". */
+    /** The name the creator asked for. Blank or absent means Harness names it (agentNames.ts). */
     defaultName?: string | null
+    /** Who the agent is, for the name Harness gives it: a DSH's own name ("Blender"); the engine's by default. */
+    label?: string | null
   }): RegisteredSession | null {
     if (this.writeBlocked) return null
     const runtimes = normalizedRuntimes(input.runtimes)
@@ -1080,7 +1082,7 @@ class Registry {
       schemaVersion: 2,
       active: true,
       launch: { state: 'starting' },
-      defaultName: normalizedDefaultName(input.defaultName) ?? this.nextAgentName(input.cwd),
+      defaultName: normalizedDefaultName(input.defaultName) ?? this.automaticName(input.label?.trim() || engineLabel(input.engine), new Date(now)),
       agentId,
       sessionId: '',
       boundAt: null,
@@ -1123,21 +1125,13 @@ class Registry {
     ].filter((name): name is string => typeof name === 'string' && name.length > 0)
   }
 
-  private nextAgentName(cwd?: string | null): string {
-    let next = 1n
-    const names = this.agentNamesInUse()
-    // A new project is the folder `~/harnesses/harness-N`, numbered by its own counter. An agent
-    // started in it answers to the same N rather than to this counter, which drifts from that one
-    // (the tab said harness-42 over a terminal in ~/harnesses/harness-41). Taken already — a second
-    // agent in the same folder — it falls back to the next free number.
-    const folder = cwd ? basename(cwd) : null
-    if (folder && /^harness-[1-9]\d*$/.test(folder) && !names.includes(folder)) return folder
-    for (const name of names) {
-      // `agent-N` is the name this daemon gave sessions before the rename; the count carries on
-      const match = name && /^(?:harness|agent)-([1-9]\d*)$/.exec(name)
-      if (match && BigInt(match[1]!) >= next) next = BigInt(match[1]!) + 1n
-    }
-    return `harness-${next}`
+  /**
+   * "Codex harness 9-17 15:26", or with the seconds when that name is already taken — two of the same
+   * agent started in one minute. Nothing is counted, so nothing can drift.
+   */
+  private automaticName(label: string, at: Date): string {
+    const name = automaticAgentName(label, at)
+    return this.agentNamesInUse().includes(name) ? automaticAgentName(label, at, true) : name
   }
 
   /** Discovered process agents that have no engine session bound yet. */

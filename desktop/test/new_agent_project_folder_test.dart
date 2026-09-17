@@ -62,23 +62,19 @@ class _App extends AppNotifier {
       authMode: MachineAuthMode.remote,
     );
     machineStates['m'] = MachineState(machine)
-      ..localOnly = local
-      ..agents = [
-        Agent(id: 'a1', name: 'harness-42', status: 'idle'),
-        Agent(id: 'a2', name: 'Lamp', status: 'idle'),
-      ];
+      ..localOnly = local;
   }
   final prepared = <ProjectFolderRequest>[];
-  final namesSeen = <List<String>>[];
+  final labels = <String>[];
   @override
   Future<void> probeEngines(String machineId, {bool force = false}) async {}
   @override
   Future<String> prepareLocalProjectFolder(
     ProjectFolderRequest request, {
-    Iterable<String> namesInUse = const [],
+    String label = 'harness',
   }) async {
     prepared.add(request);
-    namesSeen.add(namesInUse.toList());
+    labels.add(label);
     return '/local/Harness Projects/project-test';
   }
 }
@@ -162,8 +158,8 @@ void main() {
       expect(connection.calls.last.$2.containsKey('projectSource'), isFalse);
       expect(app.prepared.length, local ? 1 : 0);
       if (local) {
-        expect(app.namesSeen.single, ['harness-42', 'Lamp'],
-            reason: 'the folder is numbered past the names this computer\'s agents answer to');
+        expect(app.labels.single, 'Claude',
+            reason: 'the folder is named after who the harness is');
       }
       connection.fail();
       await tester.pumpAndSettle();

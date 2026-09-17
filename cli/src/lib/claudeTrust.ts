@@ -1,6 +1,6 @@
 /**
  * Claude Code asks "do you trust this folder?" the first time it opens a project. For a workspace
- * Harness itself just made — a fresh `~/harnesses/harness-N`, or a harness template it laid out —
+ * Harness itself just made — a fresh `~/harnesses/codex-2026-09-17-15-26`, or a harness template it laid out —
  * the answer is the one the person already gave by clicking Create, so the daemon records it the
  * way Claude Code does: `projects[<path>].hasTrustDialogAccepted` in `~/.claude.json`.
  *

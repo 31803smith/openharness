@@ -18,15 +18,16 @@ class ProjectFolderRequest {
     if (repository != null) 'repositoryUrl': repository!.url,
   };
 
-  /// [namesInUse] are the names this computer's agents already answer to. The daemon names an agent
-  /// started in `harness-N` after its folder only while `harness-N` is free, so folders numbered
-  /// from the disk alone drifted: once one agent was named a number ahead, every later tab said
-  /// harness-43 over a terminal in ~/harnesses/harness-42. Numbering past the names as well puts
-  /// the next folder where its agent's name is free, and the two agree again.
+  /// A new project is named after who it is for and when: [label] ("Codex", "Blender") and the
+  /// local time, `codex-2026-09-03-09-05`, every part two digits so a folder listing sorts in the
+  /// order harnesses were made. Nothing is counted — `harness-N` folders numbered apart from agent
+  /// names drifted from them. Two in the same minute take the seconds, then a suffix. The daemon
+  /// names remote projects the same way (cli/src/lib/agentNames.ts).
   Future<String> prepareLocal({
     String? projectHome,
     RepositoryClone Function()? createClone,
-    Iterable<String> namesInUse = const [],
+    String label = 'harness',
+    DateTime Function()? now,
   }) async {
     final home =
         Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
@@ -44,21 +45,18 @@ class ProjectFolderRequest {
           root.path,
         );
       }
-      var next = BigInt.one;
-      final numbered = RegExp(r'^(?:harness|agent)-([1-9]\d*)$');
-      void count(String name) {
-        final match = numbered.firstMatch(name);
-        if (match == null) return;
-        final number = BigInt.parse(match.group(1)!);
-        if (number >= next) next = number + BigInt.one;
-      }
-      await for (final entry in root.list(followLinks: false)) {
-        count(p.basename(entry.path));
-      }
-      namesInUse.forEach(count);
-      for (;;) {
-        final folder = p.join(root.path, 'harness-$next');
-        next += BigInt.one;
+      final at = (now ?? DateTime.now)();
+      final base = projectFolderName(label, at);
+      final precise = projectFolderName(label, at, withSeconds: true);
+      for (var attempt = 0; ; attempt++) {
+        final folder = p.join(
+          root.path,
+          attempt == 0
+              ? base
+              : attempt == 1
+              ? precise
+              : '$precise-$attempt',
+        );
         // Directory.create accepts an existing directory. The platform mkdir
         // command reserves it exclusively, so concurrent creates never share
         // a workspace. Paths are arguments, never shell text.
@@ -79,4 +77,20 @@ class ProjectFolderRequest {
       );
     }
   }
+}
+
+/// `codex-2026-09-03-09-05`: [label] in lowercase words, then the local date and time.
+String projectFolderName(
+  String label,
+  DateTime at, {
+  bool withSeconds = false,
+}) {
+  String two(int n) => n.toString().padLeft(2, '0');
+  final slug = label
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
+      .replaceAll(RegExp(r'^-+|-+$'), '');
+  final time =
+      '${two(at.hour)}-${two(at.minute)}${withSeconds ? '-${two(at.second)}' : ''}';
+  return '${slug.isEmpty ? 'harness' : slug}-${at.year}-${two(at.month)}-${two(at.day)}-$time';
 }

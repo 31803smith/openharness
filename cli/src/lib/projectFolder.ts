@@ -1,7 +1,8 @@
 import { spawn } from 'node:child_process'
-import { lstat, mkdir, mkdtemp, readdir, rename, rm } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, rename, rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { projectFolderName } from './agentNames.js'
 
 export type ProjectFolder = { source: 'new' } | { source: 'remote'; repositoryUrl: string; name: string }
 
@@ -49,14 +50,9 @@ export async function prepareProjectFolder(
   options: {
     root?: string
     clone?: (url: string, destination: string) => Promise<void>
-    /**
-     * Agent names already taken on this machine. An agent started in `harness-N` answers to
-     * `harness-N` only while that name is free (registry.ts, nextAgentName); numbered from the
-     * folders alone, one folder once named off by one kept every later one off by one — the tab said
-     * harness-43 over a terminal in ~/harnesses/harness-42. Counting the names too puts the next
-     * folder past both, where its agent's name is free and the two agree again.
-     */
-    namesInUse?: Iterable<string | null | undefined>
+    /** Who the harness is ("Codex", "Blender"): a new project folder is named after it and the time. */
+    label?: string | null
+    now?: () => Date
   } = {},
 ): Promise<string> {
   const root = options.root ?? join(homedir(), 'harnesses')
@@ -64,15 +60,17 @@ export async function prepareProjectFolder(
   try {
     await mkdir(root, { recursive: true })
     if (project.source === 'new') {
-      const numbers = [...await readdir(root), ...(options.namesInUse ?? [])]
-        .map(name => (name ? /^(?:harness|agent)-([1-9]\d*)$/.exec(name)?.[1] : undefined))
-      let next = numbers.reduce((max, value) => value && BigInt(value) > max ? BigInt(value) : max, 0n) + 1n
-      for (;;) {
-        const folder = join(root, `harness-${next++}`)
+      // `codex-2026-09-17-15-26` (agentNames.ts): nothing to count. Two in the same minute take the
+      // seconds; the same second, a suffix. mkdir reserves the name atomically, so simultaneous
+      // desktop and remote creates never share a folder; files and symlinks count as taken.
+      const at = (options.now ?? (() => new Date()))()
+      const label = options.label?.trim() || 'harness'
+      const precise = projectFolderName(label, at, true)
+      for (let attempt = 0; ; attempt++) {
+        const name = attempt === 0 ? projectFolderName(label, at) : attempt === 1 ? precise : `${precise}-${attempt}`
+        const folder = join(root, name)
         try { await mkdir(folder); return folder }
         catch (error) {
-          // mkdir reserves the name atomically, including simultaneous desktop
-          // and remote creates. Files and symlinks also count as occupied.
           if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
         }
       }

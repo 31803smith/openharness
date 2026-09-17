@@ -4715,8 +4715,8 @@ class AppNotifier extends ChangeNotifier {
   /// whether to offer Check status instead of inviting another creation.
   Future<String> prepareLocalProjectFolder(
     ProjectFolderRequest request, {
-    Iterable<String> namesInUse = const [],
-  }) => request.prepareLocal(namesInUse: namesInUse);
+    String label = 'harness',
+  }) => request.prepareLocal(label: label);
 
   Future<String?> createAgent(
     String machineId, {
@@ -4867,9 +4867,17 @@ class AppNotifier extends ChangeNotifier {
         final project = repository is String
             ? ProjectFolderRequest.remote(GitHubRepository.parse(repository)!)
             : const ProjectFolderRequest.newProject();
+        final dshId = choices['dsh'];
         creation._preparedFolder ??= await prepareLocalProjectFolder(
           project,
-          namesInUse: machine.agents.map((agent) => agent.name),
+          // The folder is named after who the harness is: the harness's own name, else the engine's.
+          label: dshId is String && dshId.isNotEmpty
+              ? (machine.dsh.entries
+                        .where((entry) => entry.id == dshId)
+                        .firstOrNull
+                        ?.name ??
+                    engineIdentity(dshId).label)
+              : engineIdentity(choices['engine'] as String?).label,
         );
       } on RepositoryCloneException catch (error) {
         return creation._complete(error.message);

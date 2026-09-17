@@ -35,12 +35,15 @@ export interface CreateAgentPaneDeps {
     agent?: string | null
     bypassPermission?: boolean
     defaultName?: string | null
+    label?: string | null
   }) => RegisteredSession | null }
   engine: AgentEngine
   cwd?: string | null
   bypassPermission?: boolean
-  /** The name the creator asked for (`agent_create`'s `name`); the registry numbers the agent without one. */
+  /** The name the creator asked for (`agent_create`'s `name`); without one the registry names the agent. */
   defaultName?: string | null
+  /** Who the agent is when a DSH says ("Blender") — the name the registry gives is built from it. */
+  label?: string | null
   /** Base tmux session name (`-s`). Retries append `-r<attempt>` — see module doc. */
   sessionLabel: string
   argv: string[]
@@ -93,6 +96,7 @@ export async function createAndRegisterPane(deps: CreateAgentPaneDeps): Promise<
       agent: deps.agent,
       bypassPermission: deps.bypassPermission,
       defaultName: deps.defaultName,
+      label: deps.label,
     })
     if (pending) return { ok: true, spawned, pending }
     console.warn(`[agent] create ${deps.engine} registration failed · pane ${spawned.runtime.paneId} · `

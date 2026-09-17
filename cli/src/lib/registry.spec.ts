@@ -1024,72 +1024,85 @@ describe('agent identity: the process owns the agent, the session is bound to it
     expect(registry.list()).toHaveLength(1)
   })
 
-  it('an agent started in a new project folder harness-N is named harness-N, and a second one there is not', async () => {
-    const { registry } = await loadRegistryModule()
-    registry.load()
-    const early = registry.openPendingAgent({ engine: 'claude', runtimes: [{ backend: 'tmux', paneId: '%3' }], cwd: '/tmp/elsewhere' })!
-    expect(registry.displayName(early)).toBe('harness-1')
-    const inFolder = registry.openPendingAgent({ engine: 'claude', runtimes: [{ backend: 'tmux', paneId: '%4' }], cwd: '/Users/u/harnesses/harness-41' })!
-    expect(registry.displayName(inFolder)).toBe('harness-41')
-    const sameFolder = registry.openPendingAgent({ engine: 'codex', runtimes: [{ backend: 'tmux', paneId: '%5' }], cwd: '/Users/u/harnesses/harness-41' })!
-    expect(registry.displayName(sameFolder)).toBe('harness-42')
-    const named = registry.openPendingAgent({ engine: 'codex', runtimes: [{ backend: 'tmux', paneId: '%6' }], cwd: '/Users/u/code/harness-app' })!
-    expect(registry.displayName(named)).toBe('harness-43')
-  })
+  describe('the name Harness gives an agent: who it is and when it started', () => {
+    afterEach(() => { vi.useRealTimers() })
+    const at = (y: number, mo: number, d: number, h: number, mi: number, sec = 0) => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date(y, mo - 1, d, h, mi, sec))
+    }
 
-  it('lists every name in use, so a new project folder can be numbered past them', async () => {
-    const { registry } = await loadRegistryModule()
-    registry.load()
-    const a = registry.openPendingAgent({ engine: 'claude', runtimes: [{ backend: 'tmux', paneId: '%11' }], cwd: '/Users/u/harnesses/harness-41' })!
-    registry.openPendingAgent({ engine: 'claude', runtimes: [{ backend: 'tmux', paneId: '%12' }], cwd: '/Users/u/harnesses/harness-41' })
-    registry.rename(a.agentId, 'Lamp')
-    const names = registry.agentNamesInUse()
-    expect(names).toEqual(expect.arrayContaining(['harness-41', 'harness-42', 'Lamp']))
-    expect(names.every((name) => typeof name === 'string' && name.length > 0)).toBe(true)
-  })
+    it('is the engine or DSH name and the local time, with no zero where it says nothing', async () => {
+      const { registry } = await loadRegistryModule()
+      registry.load()
+      at(2026, 9, 17, 15, 26)
+      const codex = registry.openPendingAgent({ engine: 'codex', runtimes: [{ backend: 'tmux', paneId: '%3' }], cwd: '/Users/u/harnesses/codex-2026-09-17-15-26' })!
+      expect(registry.displayName(codex)).toBe('Codex harness 9-17 15:26')
+      at(2026, 9, 3, 9, 5)
+      const blender = registry.openPendingAgent({ engine: 'claude', runtimes: [{ backend: 'tmux', paneId: '%4' }], cwd: '/tmp/b', dsh: 'autonomous/blender', label: ' Blender ' })!
+      expect(registry.displayName(blender)).toBe('Blender harness 9-3 9:05')
+      const claude = registry.openPendingAgent({ engine: 'claude', runtimes: [{ backend: 'tmux', paneId: '%5' }], cwd: '/tmp/c', label: '   ' })!
+      expect(registry.displayName(claude)).toBe('Claude harness 9-3 9:05')
+    })
 
-  it('gives new agents stable numbered names until their session has a title, and a rename fixes a name', async () => {
-    const { registry } = await loadRegistryModule()
-    registry.load()
-    const first = registry.openPendingAgent({ engine: 'opencode', runtimes: [{ backend: 'tmux', paneId: '%7' }], cwd: '/tmp/demo' })!
-    const second = registry.openPendingAgent({ engine: 'opencode', runtimes: [{ backend: 'tmux', paneId: '%8' }], cwd: '/tmp/demo' })!
-    expect(registry.displayName(first)).toBe('harness-1')
-    expect(registry.displayName(second)).toBe('harness-2')
-    const bound = registry.register({ engine: 'opencode', sessionId: 'session-numbered', tmuxPane: '%7', title: 'OC | Greeting' })!.entry
-    expect(registry.displayName(bound)).toBe('Greeting')
-    expect(bound.defaultName).toBe('harness-1')
-    registry.updateTitle('session-numbered', 'OC | Plan the launch')
-    expect(registry.displayName(bound)).toBe('Plan the launch')
-    registry.rename(second.agentId, 'My project')
-    registry.updateTitle(second.agentId, 'OC | Something else')
-    expect(registry.displayName(registry.byAgent(second.agentId)!)).toBe('My project')
-    const { registry: reloaded } = await loadRegistryModule()
-    reloaded.load()
-    expect(reloaded.displayName(reloaded.byAgent(first.agentId)!)).toBe('Plan the launch')
-    expect(reloaded.displayName(reloaded.byAgent(second.agentId)!)).toBe('My project')
-    const third = reloaded.openPendingAgent({ engine: 'codex', runtimes: [{ backend: 'tmux', paneId: '%9' }], cwd: '/tmp/demo' })!
-    expect(reloaded.displayName(third)).toBe('harness-3')
-    reloaded.rename(third.agentId, 'agent-10')  // the old prefix still counts, so a hand-typed agent-10 moves the next default past it
-    const fourth = reloaded.openPendingAgent({ engine: 'claude', runtimes: [{ backend: 'tmux', paneId: '%10' }], cwd: '/tmp/demo' })!
-    expect(reloaded.displayName(fourth)).toBe('harness-11')
-  })
+    it('takes the seconds when the same agent already has that minute, and counts nothing', async () => {
+      const { registry } = await loadRegistryModule()
+      registry.load()
+      at(2026, 12, 25, 15, 26, 8)
+      const first = registry.openPendingAgent({ engine: 'codex', runtimes: [{ backend: 'tmux', paneId: '%6' }], cwd: '/tmp/a' })!
+      const second = registry.openPendingAgent({ engine: 'codex', runtimes: [{ backend: 'tmux', paneId: '%7' }], cwd: '/tmp/a' })!
+      const other = registry.openPendingAgent({ engine: 'claude', runtimes: [{ backend: 'tmux', paneId: '%8' }], cwd: '/tmp/a' })!
+      expect([first, second, other].map((agent) => registry.displayName(agent)))
+        .toEqual(['Codex harness 12-25 15:26', 'Codex harness 12-25 15:26:08', 'Claude harness 12-25 15:26'])
+      expect(registry.agentNamesInUse()).toEqual(expect.arrayContaining(['Codex harness 12-25 15:26', 'Codex harness 12-25 15:26:08']))
+    })
 
-  it('opens a pane under the name its creator asked for, keeps it through binding and reload, and does not spend a number on it', async () => {
-    const { registry } = await loadRegistryModule()
-    registry.load()
-    const named = registry.openPendingAgent({ engine: 'opencode', runtimes: [{ backend: 'tmux', paneId: '%7' }], cwd: '/tmp/demo', defaultName: ' Local model ' })!
-    expect(named.defaultName).toBe('Local model')
-    expect(registry.displayName(named)).toBe('Local model')
-    // The engine reporting a session title does not retitle a pane that was named at creation.
-    const bound = registry.register({ engine: 'opencode', sessionId: 'session-named', tmuxPane: '%7', title: 'OC | Greeting' })!.entry
-    expect(registry.displayName(bound)).toBe('Local model')
-    // Blank means "number it", the same as absent — and the named agent took no number.
-    const numbered = registry.openPendingAgent({ engine: 'opencode', runtimes: [{ backend: 'tmux', paneId: '%8' }], cwd: '/tmp/demo', defaultName: '  ' })!
-    expect(registry.displayName(numbered)).toBe('harness-1')
-    const { registry: reloaded } = await loadRegistryModule()
-    reloaded.load()
-    expect(reloaded.displayName(reloaded.byAgent(named.agentId)!)).toBe('Local model')
-    expect(reloaded.displayName(reloaded.byAgent(numbered.agentId)!)).toBe('harness-1')
+    it('gives way to the session’s title, which moves with it, until a rename fixes a name — and survives reload', async () => {
+      const { registry } = await loadRegistryModule()
+      registry.load()
+      at(2026, 9, 17, 15, 30)
+      const first = registry.openPendingAgent({ engine: 'opencode', runtimes: [{ backend: 'tmux', paneId: '%7' }], cwd: '/tmp/demo' })!
+      const second = registry.openPendingAgent({ engine: 'opencode', runtimes: [{ backend: 'tmux', paneId: '%8' }], cwd: '/tmp/demo' })!
+      expect(registry.displayName(first)).toBe('OpenCode harness 9-17 15:30')
+      const bound = registry.register({ engine: 'opencode', sessionId: 'session-named-by-time', tmuxPane: '%7', title: 'OC | Greeting' })!.entry
+      expect(registry.displayName(bound)).toBe('Greeting')
+      expect(bound.defaultName).toBe('OpenCode harness 9-17 15:30')
+      registry.updateTitle('session-named-by-time', 'OC | Plan the launch')
+      expect(registry.displayName(bound)).toBe('Plan the launch')
+      registry.rename(second.agentId, 'My project')
+      registry.updateTitle(second.agentId, 'OC | Something else')
+      expect(registry.displayName(registry.byAgent(second.agentId)!)).toBe('My project')
+      const { registry: reloaded } = await loadRegistryModule()
+      reloaded.load()
+      expect(reloaded.displayName(reloaded.byAgent(first.agentId)!)).toBe('Plan the launch')
+      expect(reloaded.displayName(reloaded.byAgent(second.agentId)!)).toBe('My project')
+    })
+
+    it('treats a harness-N from an earlier daemon as a name Harness gave, and a title replaces it', async () => {
+      const { registry } = await loadRegistryModule()
+      registry.load()
+      const legacy = registry.openPendingAgent({ engine: 'claude', runtimes: [{ backend: 'tmux', paneId: '%9' }], cwd: '/tmp/old', defaultName: 'harness-42' })!
+      expect(registry.displayName(legacy)).toBe('harness-42')
+      registry.updateTitle(legacy.agentId, '✳ Unitree Go2 squats and wave')
+      expect(registry.displayName(registry.byAgent(legacy.agentId)!)).toBe('Unitree Go2 squats and wave')
+    })
+
+    it('keeps a name the creator asked for through titles, binding and reload; blank means Harness names it', async () => {
+      const { registry } = await loadRegistryModule()
+      registry.load()
+      at(2026, 9, 17, 16, 0)
+      const named = registry.openPendingAgent({ engine: 'opencode', runtimes: [{ backend: 'tmux', paneId: '%10' }], cwd: '/tmp/demo', defaultName: ' Local model ' })!
+      expect(named.defaultName).toBe('Local model')
+      expect(registry.displayName(named)).toBe('Local model')
+      // The engine reporting a session title does not retitle a pane that was named at creation.
+      const bound = registry.register({ engine: 'opencode', sessionId: 'session-named', tmuxPane: '%10', title: 'OC | Greeting' })!.entry
+      expect(registry.displayName(bound)).toBe('Local model')
+      const unnamed = registry.openPendingAgent({ engine: 'opencode', runtimes: [{ backend: 'tmux', paneId: '%11' }], cwd: '/tmp/demo', defaultName: '  ' })!
+      expect(registry.displayName(unnamed)).toBe('OpenCode harness 9-17 16:00')
+      const { registry: reloaded } = await loadRegistryModule()
+      reloaded.load()
+      expect(reloaded.displayName(reloaded.byAgent(named.agentId)!)).toBe('Local model')
+      expect(reloaded.displayName(reloaded.byAgent(unnamed.agentId)!)).toBe('OpenCode harness 9-17 16:00')
+    })
   })
 
   it('keeps the named agent a pane was opened as through binding and reload, and drops one that is not an identifier', async () => {

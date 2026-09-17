@@ -45,10 +45,10 @@ export type AgentFrame = {
   userId: string
   name: string
   /**
-   * What the agent is on, in its own words — the transcript's title (Claude Code's, Codex's),
-   * cleaned; null when there is none or it is the name already. Not the name: a created agent
-   * keeps its `harness-N` name while its title moves with the work, and a client searching for
-   * "board fab check" must find it by this, not by luck in a recap.
+   * What the agent is on, in its own words — the session title (Claude Code's, Codex's), cleaned;
+   * null when there is none or it is the name already. It is usually the name too (registry.ts,
+   * projectDisplayName), but not once the person renames the agent, and a client searching for
+   * "board fab check" must still find it by this, not by luck in a recap.
    */
   title: string | null
   status: string
