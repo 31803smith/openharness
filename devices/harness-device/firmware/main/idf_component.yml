@@ -3,7 +3,12 @@ dependencies:
   idf:
     version: ">=5.5.0"
   # LVGL v9 graphics library.
-  lvgl/lvgl: "^9.2.0"
+  # "~9.5.0", not "^9.2.0": the caret took any 9.x, and LVGL 9.6.0 (registry, 2026-09-16) tightened
+  # the TLSF pool limit so the 512 KiB PSRAM pool below is refused and the firmware aborts at boot. The
+  # lock that pinned 9.5.0 was gitignored, so every fresh checkout — a clone, CI, a worktree — resolved to
+  # 9.6.0 and built a dial that boot-looped. Moving to 9.6 is a deliberate change to the pool setup, not
+  # something a fresh build should do on its own.
+  lvgl/lvgl: "~9.5.0"
   # Official CO5300 AMOLED panel driver (the controller on this board).
   espressif/esp_lcd_co5300: "*"
   # Capacitive touch → LVGL pointer indev for swipe. BOTH controllers are linked in: the two dials
