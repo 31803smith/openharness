@@ -35,8 +35,6 @@ class TerminalInputDock extends StatelessWidget {
       builder: (context, _) => TerminalKeyBar(
         terminal: session.terminal,
         enabled: session.acceptsInput,
-        controlArmed: session.controlArmed,
-        onControlToggle: session.armControl,
         onDismissKeyboard: onDismiss,
         onPickImage: onPickImage,
         onTakePhoto: onTakePhoto,

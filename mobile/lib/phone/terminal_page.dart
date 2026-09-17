@@ -390,7 +390,6 @@ class _TerminalPageState extends State<TerminalPage>
         final agent = machine?.agents
             .where((a) => a.id == widget.agentId)
             .firstOrNull;
-        final status = phoneSessionSummary(session);
         final reclaim = phoneReclaimAction(session);
         return Scaffold(
           backgroundColor: AppPalette.windowBg,
@@ -407,10 +406,29 @@ class _TerminalPageState extends State<TerminalPage>
               children: [
                 PhoneHeader(
                   title: _clipTitle(agent?.name ?? 'Agent'),
-                  leading: EngineMark(
-                    engine: agent?.engine,
-                    displayName: agent?.engineDisplayName,
-                    size: 22,
+                  // The connection state rides the engine mark as a badge in
+                  // its bottom-right corner, the way a messenger shows presence
+                  // on an avatar: green while live, a spinner while attaching or
+                  // resyncing, the warning or error colour when the stream is
+                  // taken over or drops. No words — the long-press tooltip and
+                  // screen readers still get them.
+                  leading: Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      EngineMark(
+                        engine: agent?.engine,
+                        displayName: agent?.engineDisplayName,
+                        size: 22,
+                      ),
+                      Positioned(
+                        right: -4,
+                        bottom: -4,
+                        child: StatusDot(
+                          summary: phoneSessionSummary(session),
+                          ring: AppPalette.windowBg,
+                        ),
+                      ),
+                    ],
                   ),
                   // ⚠️ No subtitle. The machine and its state moved to
                   // [TerminalFootBar] at the foot of the page — see there for
@@ -479,7 +497,7 @@ class _TerminalPageState extends State<TerminalPage>
                     // and machines.
                     //
                     // ⚠️ Shown while the keyboard is up, and so is `+`. Both
-                    // were once hidden on `!_ownsInput`, to spare a one-row
+                    // were once hidden while typing, to spare a one-row
                     // header while typing — but the row is not what was short.
                     // The title ellipses at the same width either way, so
                     // hiding them bought the title nothing and only left a gap,
@@ -489,9 +507,9 @@ class _TerminalPageState extends State<TerminalPage>
                     //
                     // ⚠️ Not [PhoneSearchButton], which pushes and forgets. A
                     // page that pops back onto the top gets no rebuild of its
-                    // own, so anything read from [_ownsInput] — the machine
-                    // bar below still does — would keep answering with what was
-                    // true while the search was covering it. Awaiting the push
+                    // own, so anything read from the route's state would keep
+                    // answering with what was true while the search was
+                    // covering it. Awaiting the push
                     // is what turns "the search closed" into a frame.
                     _HeaderAction(
                       icon: LucideIcons.search300,
@@ -593,10 +611,13 @@ class _TerminalPageState extends State<TerminalPage>
                                 )
                               : null,
                         ),
-                      // Which computer this is running on, whether it is still
-                      // answering, and the mic — the pair that used to sit
-                      // under the filename in the header, and the one voice
-                      // control the page has.
+                      // The mic — the one voice control the page has.
+                      //
+                      // ⚠️ No machine name and no status in it any more: the
+                      // state is the dot on the engine mark in the header, and
+                      // the machine is on the `⋯` sheet's title line. The row
+                      // stays for the mic, and for what the mic is doing while
+                      // it is doing it.
                       //
                       // ⚠️ Below the key bar, not above it. The bar is what the
                       // thumb works, and a line that moves every time it
@@ -611,19 +632,10 @@ class _TerminalPageState extends State<TerminalPage>
                       // what is being read mid-typing.
                       if (!_ownsInput)
                         TerminalFootBar(
-                          name: machine?.machine.displayName ?? '',
+                          name: '',
                           voice: widget.voice,
                           session: session,
-                          // ⚠️ The machine ALONE once the reclaim button is up.
-                          // The two say the same fact in different words —
-                          // "Taken over" here against "Take control" there,
-                          // "Disconnected" against "Reconnect" — and a page
-                          // stating its problem twice reads as two problems.
-                          // The button wins because it is the way out of the
-                          // state, not just a report of it. Same rule the
-                          // header's subtitle followed before this row took
-                          // the pair over.
-                          status: reclaim == null ? status : null,
+                          status: null,
                         ),
                     ],
                   ),
@@ -672,6 +684,17 @@ class _TerminalPageState extends State<TerminalPage>
     showPhoneSheet(
       context,
       title: '$agentName · $machineName',
+      // Settings is an icon on the title line rather than a row: it is about the app, not about
+      // this agent, and it is here only because the tab bar that used to lead to it is hidden.
+      titleAction: PhoneSheetAction(
+        icon: LucideIcons.settings300,
+        label: 'Settings',
+        onTap: () => Navigator.of(context).push(
+          phoneRoute(
+            (_) => SettingsPage(notifier: widget.notifier, large: false),
+          ),
+        ),
+      ),
       actions: [
         PhoneSheetAction(
           icon: LucideIcons.pencil300,
@@ -688,17 +711,6 @@ class _TerminalPageState extends State<TerminalPage>
           icon: LucideIcons.refreshCw300,
           label: 'Restart agent',
           onTap: () => unawaited(_restart()),
-        ),
-        // Settings lives here now that the tab bar is hidden and the phone opens into a terminal:
-        // this sheet is the one menu every screen the person actually sits on reaches.
-        PhoneSheetAction(
-          icon: LucideIcons.settings300,
-          label: 'Settings',
-          onTap: () => Navigator.of(context).push(
-            phoneRoute(
-              (_) => SettingsPage(notifier: widget.notifier, large: false),
-            ),
-          ),
         ),
         // Last, and alone in red: the two above are recoverable and this one is
         // not, so it does not sit where a thumb lands on the way to them.

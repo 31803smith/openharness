@@ -6,22 +6,16 @@ import 'package:xterm/xterm.dart';
 void main() {
   late Terminal terminal;
   late List<String> outbound;
-  late List<bool> armings;
   late int dismissals;
 
   setUp(() {
     terminal = Terminal(maxLines: 200, reflowEnabled: false)..resize(80, 12);
     outbound = [];
-    armings = [];
     dismissals = 0;
     terminal.onOutput = outbound.add;
   });
 
-  Future<void> pumpBar(
-    WidgetTester tester, {
-    bool enabled = true,
-    bool controlArmed = false,
-  }) async {
+  Future<void> pumpBar(WidgetTester tester, {bool enabled = true}) async {
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
@@ -30,8 +24,6 @@ void main() {
             child: TerminalKeyBar(
               terminal: terminal,
               enabled: enabled,
-              controlArmed: controlArmed,
-              onControlToggle: armings.add,
               onDismissKeyboard: () => dismissals++,
             ),
           ),
@@ -51,30 +43,26 @@ void main() {
     await pumpBar(tester);
 
     await tapKey(tester, 'esc');
-    await tapKey(tester, 'tab');
-    // CSI Z, built from the modifier — there is no `TerminalKey.shiftTab`.
-    await tapKey(tester, '\u21e7tab');
+    await tapKey(tester, 'Left');
     await tapKey(tester, 'Up');
-    await tapKey(tester, '7');
+    await tapKey(tester, 'Down');
+    await tapKey(tester, 'Right');
 
-    expect(outbound, ['\x1b', '\t', '\x1b[Z', '\x1b[A', '7']);
+    expect(outbound, ['\x1b', '\x1b[D', '\x1b[A', '\x1b[B', '\x1b[C']);
   });
 
-  testWidgets('ctrl is handed to the session, which owns the modifier', (
+  testWidgets('the row holds esc, the arrows and hide — nothing else', (
     tester,
   ) async {
     await pumpBar(tester);
 
-    await tapKey(tester, 'ctrl');
-
-    // Nothing goes down the wire: the chord is made from the NEXT character,
-    // and only the session sees that one arrive.
-    expect(outbound, isEmpty);
-    expect(armings, [true]);
-
-    await pumpBar(tester, controlArmed: true);
-    await tapKey(tester, 'ctrl');
-    expect(armings, [true, false]);
+    for (final gone in ['tab', 'Enter', 'ctrl', '1', '0']) {
+      expect(
+        find.byKey(ValueKey('terminal-key-$gone')),
+        findsNothing,
+        reason: gone,
+      );
+    }
   });
 
   testWidgets('a stream that takes no input answers nothing — except the key '
@@ -82,9 +70,8 @@ void main() {
     await pumpBar(tester, enabled: false);
 
     await tapKey(tester, 'esc');
-    await tapKey(tester, 'ctrl');
+    await tapKey(tester, 'Up');
     expect(outbound, isEmpty);
-    expect(armings, isEmpty);
 
     // Hiding the keyboard is this page's own business, not the pane's, and it
     // is the way back to a full screen of output — it works either way.

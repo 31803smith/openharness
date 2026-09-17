@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:harness_mobile/shared/theme/app_theme.dart';
+
 import 'phone_status.dart';
 
 /// The palette colour a [PhoneTone] draws in.
@@ -27,20 +28,7 @@ class StatusPill extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        SizedBox.square(
-          dimension: 10,
-          child: summary.tone == PhoneTone.busy
-              ? CircularProgressIndicator(strokeWidth: 1.6, color: color)
-              : Center(
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: color,
-                      shape: BoxShape.circle,
-                    ),
-                    child: const SizedBox.square(dimension: 8),
-                  ),
-                ),
-        ),
+        StatusDot(summary: summary),
         const SizedBox(width: 7),
         Flexible(
           child: Text(
@@ -55,6 +43,50 @@ class StatusPill extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// The status without its words: a dot in the tone's colour, or a small spinner while something is
+/// under way. For a place with no room for a label — the terminal header, beside the agent's name.
+///
+/// The label is still there for a screen reader, and as a long-press tooltip, so a colour is never
+/// the only way to learn what it means.
+class StatusDot extends StatelessWidget {
+  const StatusDot({super.key, required this.summary, this.ring});
+
+  final PhoneSummary summary;
+
+  /// A cut-out ring in this colour around the dot, for a dot laid OVER something — a badge on a
+  /// mark, the way presence sits on an avatar. It should be the colour behind the mark, so the dot
+  /// reads as notched into it rather than stuck on top.
+  final Color? ring;
+
+  @override
+  Widget build(BuildContext context) {
+    AppTheme.watch(context);
+    final color = phoneToneColor(summary.tone);
+    final ring = this.ring;
+    Widget dot = SizedBox.square(
+      dimension: 10,
+      child: summary.tone == PhoneTone.busy
+          ? CircularProgressIndicator(strokeWidth: 1.6, color: color)
+          : Center(
+              child: DecoratedBox(
+                decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+                child: const SizedBox.square(dimension: 8),
+              ),
+            ),
+    );
+    if (ring != null) {
+      dot = DecoratedBox(
+        decoration: BoxDecoration(color: ring, shape: BoxShape.circle),
+        child: Padding(padding: const EdgeInsets.all(2), child: dot),
+      );
+    }
+    return Tooltip(
+      message: summary.label,
+      child: Semantics(label: summary.label, child: dot),
     );
   }
 }

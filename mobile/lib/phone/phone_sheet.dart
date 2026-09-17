@@ -29,6 +29,7 @@ Future<void> showPhoneSheet(
   BuildContext context, {
   required String title,
   required List<PhoneSheetAction> actions,
+  PhoneSheetAction? titleAction,
 }) => showModalBottomSheet<void>(
   context: context,
   useRootNavigator: true,
@@ -40,12 +41,38 @@ Future<void> showPhoneSheet(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
-          child: Text(
-            title,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(color: AppPalette.textSecondary, fontSize: 13),
+          padding: EdgeInsets.fromLTRB(20, 0, titleAction == null ? 20 : 8, 10),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: AppPalette.textSecondary,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+              // [titleAction]: an icon on the title line — for something that is not about the
+              // subject of the sheet (Settings, on an agent's sheet), so it does not take a row
+              // among the actions that are. Its label is the tooltip.
+              if (titleAction != null)
+                IconButton(
+                  tooltip: titleAction.label,
+                  icon: Icon(
+                    titleAction.icon,
+                    size: 20,
+                    color: AppPalette.textSecondary,
+                  ),
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () {
+                    Navigator.of(sheetContext).pop();
+                    titleAction.onTap();
+                  },
+                ),
+            ],
           ),
         ),
         // Scrolls once the rows outgrow the sheet — voice input's six languages do on a short phone —
