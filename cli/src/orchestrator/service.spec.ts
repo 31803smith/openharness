@@ -453,4 +453,34 @@ describe('durable orchestrator lifecycle', () => {
     await vi.waitFor(() => expect(service.snapshot(other).state).toBe('paused'))
     expect(service.snapshot(other).error).toContain('unknown error')
   })
+  it('finishes a 64-task mixed-engine graph with bounded parallelism and verified fan-in', async () => {
+    deps.supportsEngine = engine => ['claude', 'codex', 'opencode'].includes(engine)
+    deps.catalog = () => ['cad', 'blender', 'video', 'research'].map((name, i) => ({
+      id: `test/${name}`, name, description: `Synthetic ${name}`, engine: ['codex', 'claude', 'opencode'][i % 3], viewer: i !== 3,
+    }))
+    await service.start({ id, engine: 'claude', prompt: 'Stress-test a creative fan-out/fan-in project', parallelism: 6 }); await active()
+    const graph = Array.from({ length: 64 }, (_, i) => task(`work-${i}`, i < 6 ? [] : [...new Set([`work-${i - 6}`, `work-${Math.floor((i - 6) / 2)}`])], `test/${['cad', 'blender', 'video', 'research'][i % 4]}`))
+    service.plan(id, graph.slice(0, 32)); service.plan(id, graph.slice(32))
+    expect(() => service.plan(id, [task('one-too-many')])).toThrow(/64 tasks/)
+    let finished = 0, checkedInputs = 0
+    while (finished < 64) {
+      await vi.waitFor(() => expect(tasks().some(t => t.state === 'running')).toBe(true))
+      const batch = tasks().filter(t => t.state === 'running')
+      expect(tasks().filter(t => ['running', 'launching'].includes(t.state)).length).toBeLessThanOrEqual(6)
+      for (const current of batch) {
+        for (const parent of current.dependsOn) {
+          expect(readFileSync(join(current.cwd, 'inputs', parent, 'result.txt'), 'utf8')).toBe(`Verified ${parent}`)
+          checkedInputs++
+        }
+        writeFileSync(join(current.cwd, 'result.txt'), `Verified ${current.id}`)
+        await service.finish(id, current.id, current.attempt, `Checked ${current.dependsOn.length} upstream contracts`, ['result.txt'])
+        finished++
+      }
+    }
+    expect(checkedInputs).toBeGreaterThan(100)
+    expect(new Set(launches.slice(1).map(l => l.engine))).toEqual(new Set(['claude', 'codex', 'opencode']))
+    expect(launches).toHaveLength(65)
+    service.complete(id, 'All 64 task results and pinned input contracts verified')
+    expect(service.snapshot(id).state).toBe('completed')
+  }, 30_000)
 })

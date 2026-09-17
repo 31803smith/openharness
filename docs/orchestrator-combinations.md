@@ -4,6 +4,8 @@ The director should build a graph, not pick one fixed pipeline. Each edge is an 
 
 Current local inventory: Solid, Autonomous Workshop, Blender, Copper, plus CAD Viewer and Model Viewer. The two viewers are viewer packages, not extra agents. Generic `engine:<director-engine>` tasks can research, write code, or validate data but do not automatically gain a domain viewer. Remotion and other unlisted packages require installation; the director never silently installs them.
 
+Inventory note: another session added Autonomous Grid after the live test began. It was not modified or included in this validation. The production director refreshes its catalog dynamically; this cookbook is an evidence snapshot, not a hard-coded allowlist.
+
 ## Recipes and readiness
 
 | Project | Combination | Handoff and decisive check | Readiness |

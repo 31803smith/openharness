@@ -446,10 +446,12 @@ void main() {
         id: projectId,
         request: (p) async {
           requests.add(p);
-          if (p['action'] == 'cancel')
+          if (p['action'] == 'cancel') {
             current = {...current, 'state': 'cancelled', 'revision': 2};
-          if (p['action'] == 'resume')
+          }
+          if (p['action'] == 'resume') {
             current = {...current, 'state': 'active', 'revision': 3};
+          }
           return {'project': current};
         },
       );
