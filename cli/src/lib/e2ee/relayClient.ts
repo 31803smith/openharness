@@ -1,3 +1,4 @@
+import { SHARE_REQUEST_TYPES } from '../../sharing/protocol.js'
 /**
  * The "client" (formerly-browser) role of the E2EE session protocol, run by THIS daemon on behalf of a
  * local app relaying through it to a REMOTE machine it has `harness link connect`-ed to via that
@@ -103,7 +104,7 @@ export class RelaySessionCrypto {
   /** Encrypt an outgoing (local app → remote machine) frame if its type requires it. */
   wrapOutgoing(frame: Frame): Frame {
     const type = frame.type as string | undefined
-    if (!type || !this.c2s || !C.isEncryptedDownType(type)) return frame
+    if (!type || !this.c2s || !(C.isEncryptedDownType(type) || SHARE_REQUEST_TYPES.has(type))) return frame
     const payload = C.wrapPayload(this.c2s, 'p', this.c2sCounter++, type, undefined, frame.payload)
     return { ...frame, payload }
   }

@@ -291,6 +291,7 @@ class AppNotifier extends ChangeNotifier {
   final AuthSession session;
   AppConfig config;
   late ApiClient api;
+
   /// Signs in, and says whether this computer is signed in: the harness CLI in a desktop build,
   /// [ViewerServices.login] in a viewer build — which has no CLI — under one name, so every call
   /// site reads the same in both.
@@ -389,6 +390,8 @@ class AppNotifier extends ChangeNotifier {
   // Backend REST can fail while the daemon and its WebSocket remain ready. Recover that list
   // independently, with capped backoff and the same in-flight request as a manual retry.
   Timer? _machineRecoveryTimer;
+  Timer? _sharingDiscoveryTimer;
+  bool _sharingDiscoveryBusy = false;
   int _machineRecoveryAttempts = 0;
   String? _machineLoadError;
 
@@ -501,11 +504,9 @@ class AppNotifier extends ChangeNotifier {
     final target = swarms.where((s) => s.id == entry.swarmId).firstOrNull;
     return target == null ||
         target.panes.length < maxPanes ||
-              target.panes.any(
-                (p) =>
-                    p.machineId == entry.machineId &&
-                    p.agentId == entry.agentId,
-              );
+        target.panes.any(
+          (p) => p.machineId == entry.machineId && p.agentId == entry.agentId,
+        );
   }
 
   bool _canReopenSwarm(ClosedSwarm saved) {
@@ -2493,7 +2494,8 @@ class AppNotifier extends ChangeNotifier {
       final updater = desktopUpdater ?? DesktopUpdater();
       final staged = await updater.downloadAndStage(info);
       if (staged == null) {
-        updateError = 'Could not download and verify OpenHarness ${info.version}.';
+        updateError =
+            'Could not download and verify OpenHarness ${info.version}.';
         return false;
       }
       final applied = await updater.applyStaged(staged, selfPid: pid);
@@ -2778,6 +2780,21 @@ class AppNotifier extends ChangeNotifier {
   /// machines", which an empty list alone cannot say.
   bool machinesLoading = false;
 
+  Future<Map<String, dynamic>> manageHarnessShares(
+    String machineId,
+    String agentId,
+    String action, [
+    Map<String, dynamic> payload = const {},
+  ]) {
+    if (machineStates[machineId]?.machine.isShared == true) {
+      return Future.error(StateError('Only the owner can change sharing.'));
+    }
+    return _conn(machineId).request(
+      'harness_share_$action',
+      payload: {'agentId': agentId, ...payload},
+    );
+  }
+
   Future<void> refreshMachines() async {
     final revision = _authRevision;
     if (!_authWorkCurrent(revision)) return;
@@ -2966,6 +2983,31 @@ class AppNotifier extends ChangeNotifier {
         (state) => state..machine = machine,
         ifAbsent: () => MachineState(machine),
       );
+      if (machine.isShared) {
+        state.agents = [
+          for (final grant in machine.sharedHarnesses)
+            Agent(
+              id: grant.agentId,
+              name: grant.name,
+              engine: grant.engine,
+              terminalAvailable: true,
+            ),
+        ];
+        state.agentLoadStatus = AgentLoadStatus.loaded;
+        state.needsLink = false;
+        state.nodeOnline = machine.status == 'running';
+        for (final pane in allPanes.where(
+          (p) => p.machineId == machine.machineId,
+        )) {
+          pane.sharedHarness =
+              machine.sharedHarnesses
+                  .where((g) => g.agentId == pane.agentId)
+                  .firstOrNull ??
+              pane.sharedHarness;
+          pane.sharedOwnerName = machine.ownerName;
+        }
+        continue;
+      }
       state.localOnly =
           localComputerId != null &&
           _normalizeComputerId(machine.computerId) == localComputerId;
@@ -2979,6 +3021,20 @@ class AppNotifier extends ChangeNotifier {
     }
     if (localEndpoint != null) _updateLocalProjectSnapshot(localEndpoint);
     _autoConnectAndLoadMachines();
+    _sharingDiscoveryTimer ??= Timer.periodic(const Duration(seconds: 15), (
+      _,
+    ) async {
+      if (_disposed ||
+          status != AppStatus.authenticated ||
+          _sharingDiscoveryBusy)
+        return;
+      _sharingDiscoveryBusy = true;
+      try {
+        await refreshMachines();
+      } finally {
+        _sharingDiscoveryBusy = false;
+      }
+    });
     notifyListeners();
   }
 
@@ -3391,6 +3447,7 @@ class AppNotifier extends ChangeNotifier {
   }
 
   void _connectMachine(MachineState machine) {
+    if (machine.machine.isShared) return;
     // connFor() starts a new socket and reports `connecting` through onStatus,
     // or returns the existing socket with its current status intact. Do not
     // overwrite an already-connected socket when the user collapses and
@@ -3559,7 +3616,10 @@ class AppNotifier extends ChangeNotifier {
     if (decision == null) return;
     // The dialog may list the machines, and the person may have moved the choice.
     machineId = decision.machineId;
-    final error = await _startLocalModelAgent(machineId, prompt: decision.prompt);
+    final error = await _startLocalModelAgent(
+      machineId,
+      prompt: decision.prompt,
+    );
     if (error != null) {
       _lastError = error;
       _lastErrorRetryable = false;
@@ -3591,7 +3651,10 @@ class AppNotifier extends ChangeNotifier {
   /// before this dialog had buttons.
   ///
   /// Null on success, else the sentence for the person.
-  Future<String?> _startLocalModelAgent(String machineId, {String? prompt}) async {
+  Future<String?> _startLocalModelAgent(
+    String machineId, {
+    String? prompt,
+  }) async {
     final machine = machineStates[machineId];
     if (machine == null) return 'Machine not found';
     final home = await _homeFolderOf(machine);
@@ -3715,6 +3778,7 @@ class AppNotifier extends ChangeNotifier {
     MachineState machine, {
     bool force = false,
   }) async {
+    if (machine.machine.isShared) return;
     if (!_machineWorkCurrent(machine, _authRevision)) return;
     if (machine.agentLoadStatus == AgentLoadStatus.loaded && !force) return;
     if (machine.isLocalMachine && !machine.usesLocalTransport) {
@@ -5515,6 +5579,12 @@ class AppNotifier extends ChangeNotifier {
         shared ??
         TerminalPane(id: _nextPaneId++, machineId: machineId, agentId: agentId);
     final firstAgent = targetPanes.every((pane) => pane.agentId == null);
+    if (machine.machine.isShared) {
+      pane.sharedHarness = machine.machine.sharedHarnesses
+          .where((g) => g.agentId == agentId)
+          .firstOrNull;
+      pane.sharedOwnerName = machine.machine.ownerName;
+    }
     targetPanes.insert(insertion.clamp(0, targetPanes.length), pane);
     if (split != null) {
       target.pinnedSlots.updateAll(
@@ -5586,6 +5656,14 @@ class AppNotifier extends ChangeNotifier {
     if (wantedAgentId == null) return;
     final machine = machineStates[pane.machineId];
     if (machine == null) return;
+    if (machine.machine.isShared) {
+      pane.sharedHarness = machine.machine.sharedHarnesses
+          .where((g) => g.agentId == wantedAgentId)
+          .firstOrNull;
+      pane.sharedOwnerName = machine.machine.ownerName;
+      notifyListeners();
+      return;
+    }
     if (machine.nodeOnline == false) return;
     if (!machine.terminalCapabilityAvailable) return;
 
@@ -6682,6 +6760,7 @@ class AppNotifier extends ChangeNotifier {
     _localGitProjects.dispose();
     sessionPreviews.dispose();
     _disposed = true;
+    _sharingDiscoveryTimer?.cancel();
     _stopMachineRecovery();
     if (signingIn) cliLogin.cancel();
     _closedHistory.clear();

@@ -59,14 +59,14 @@ export class HarnessShareOwner {
     if (!observer || !this.authorized(observer)) return false
     return this.deps.send(connId, 'observer_frame', observer.cipher.seal(frame) as unknown as Payload)
   }
-  close(connId: string, reason = 'Observation ended'): void {
+  close(connId: string, reason = 'Observation ended', retry = false): void {
     if (!this.observers.delete(connId)) return
     this.viewers.get(connId)?.()
     this.viewers.delete(connId)
     void this.streams.closeConnection(connId)
-    this.deps.send(connId, 'observer_closed', { reason })
+    this.deps.send(connId, 'observer_closed', { reason, retry })
   }
-  closeAll(): void { for (const id of this.observers.keys()) this.close(id, 'Owner disconnected') }
+  closeAll(): void { for (const id of this.observers.keys()) this.close(id, 'Owner disconnected', true) }
   async stop(): Promise<void> { clearInterval(this.timer); this.closeAll(); await this.streams.stop() }
 
   async receive(connId: string, type: string, payload: Payload): Promise<void> {
@@ -130,17 +130,19 @@ export class HarnessShareOwner {
           ownerPublicKey: b64e(this.deps.identity.pub),
           expiresAt: new Date(this.now() + parsed.data.days * 86400_000).toISOString() })
       }
+      await this.syncing
       await this.sync()
     } else if (type === 'harness_share_remove') {
       if (typeof payload.id !== 'string' || !this.deps.grants.revoke(payload.id, machineId, agentId)) {
         return { error: 'INVITATION_NOT_FOUND', detail: 'This invitation is no longer available.' }
       }
       for (const [id, observer] of this.observers) if (observer.grant.id === payload.id) this.close(id, 'Access removed')
+      await this.syncing
       await this.sync()
     } else if (type !== 'harness_share_list') return { error: 'UNSUPPORTED' }
     return { shares: this.deps.grants.list(machineId, agentId).map(grant => ({
       id: grant.id, email: grant.recipientEmail, expiresAt: grant.expiresAt,
-      expired: Date.parse(grant.expiresAt) <= this.now(), pending: grant.pending,
+      expired: Date.parse(grant.expiresAt) <= this.now(), pending: grant.pending, error: grant.publicationError,
       watching: [...this.observers.values()].filter(o => o.grant.id === grant.id).length,
     })) }
   }
@@ -157,6 +159,12 @@ export class HarnessShareOwner {
             // A revoke may have happened while this network request was in flight.
             const current = this.deps.grants.all().find(g => g.id === grant.id)
             if (current?.revoked === grant.revoked && current.expiresAt === grant.expiresAt) this.deps.grants.synced(grant.id)
+          } else if (!grant.revoked && [400, 403, 409, 422].includes(result.status)) {
+            const body = result.body as { error?: { message?: string }; message?: string }
+            const current = this.deps.grants.all().find(g => g.id === grant.id)
+            if (current && !current.revoked && current.expiresAt === grant.expiresAt) {
+              this.deps.grants.failed(grant.id, body.error?.message || body.message || 'This invitation could not be shared. Remove it or add the email again to retry.')
+            }
           }
         } catch { /* Persisted pending change is retried, including after daemon restart. */ }
       }

@@ -1,3 +1,5 @@
+import type { HarnessShareOwner } from './sharing/owner.js'
+import { SHARE_REQUEST_TYPES, SHARE_RESULT_TYPES } from './sharing/protocol.js'
 import { AutonomousDeviceRelay } from './lib/autonomous-device/relay.js'
 import type { AutonomousDeviceService, AutonomousDeviceFrame } from './lib/autonomous-device/service.js'
 /**
@@ -377,6 +379,7 @@ export class BackendSocket {
   /** Called on `dsh_remove` — cli.ts uninstalls the harness from this machine. */
   onDshRemove: ((id: string) => { ok: true } | { ok: false; error: string; detail: string }) | null = null
   /** What the daemon knows about an agent's DSH companions (viewer URL, verdict); null when nothing. */
+  harnessSharing: HarnessShareOwner | null = null
   dshFrameProvider: ((session: RegisteredSession) => AgentDshContext | null) | null = null
   private readonly agentCreations = new AgentCreationReceipts(join(env.ADAPTER_DATA_DIR, 'agent-creations'))
   /** Injectable for queue-isolation tests; production uses the machine-local probe. */
@@ -686,6 +689,7 @@ export class BackendSocket {
       // default the recap gate to OFF (safe value) instead of holding a stale count — otherwise a turn
       // completing during the gap burns a `claude -p` recap that goes nowhere. attachAdapter always
       // re-pushes the true count via recomputeAndSendClients on reconnect (and 0→N re-fires the replay).
+      this.harnessSharing?.closeAll()
       this.setCommanderCount(0, null) // active count is unknown until the next __clients snapshot
       void this.terminalStreams?.closeConnectionsWhere(
         (connId) => !isLocalClientId(connId),
@@ -762,6 +766,7 @@ export class BackendSocket {
     await this.terminalP2p.stop()
     try { this.ws?.close() } catch { /* ignore */ }
     this.ws = null
+    await this.harnessSharing?.stop()
   }
 
   /** Send an up-frame (event or RPC reply) to the WEB audience. Queued while disconnected.
@@ -797,6 +802,10 @@ export class BackendSocket {
   }
 
   /** Send an up-frame to exactly ONE web connection (E2EE pairing/welcome + targeted RPC replies). */
+  sendObserver(connId: string, type: string, payload: Record<string, unknown>): boolean {
+    return this.sendBestEffort({ t: 'up', targetConnId: connId, webEligible: false, commanderEligible: false, frame: { type, payload } })
+  }
+
   sendTo(connId: string, frame: Frame): void {
     const direct = this.directDeviceSinks.get(connId)
     if (direct) { direct(frame); return }
@@ -1105,12 +1114,12 @@ export class BackendSocket {
   private emitReply(connId: string, type: string, requestId: unknown, payload: Record<string, unknown>): void {
     const resultType = `${type}_result`
     // Before the E2EE wrap: an RPC reply is only readable here.
-    if (env.LOG_FRAMES && type !== 'agent_read_file' && type !== 'project_preview') logFrame('→', connId ? `conn:${sid(connId)}` : 'backend', { type: resultType, payload: { requestId, ...payload } })
+    if (env.LOG_FRAMES && type !== 'agent_read_file' && type !== 'project_preview' && !SHARE_REQUEST_TYPES.has(type)) logFrame('→', connId ? `conn:${sid(connId)}` : 'backend', { type: resultType, payload: { requestId, ...payload } })
     if (this.localClients.has(connId)) {
       this.sendTo(connId, { type: resultType, payload: { requestId, ...payload } })
       return
     }
-    if (connId && this.e2ee.hasSession(connId) && ENCRYPTED_RPC_RESULT_TYPES.has(resultType)) {
+    if (connId && this.e2ee.hasSession(connId) && (ENCRYPTED_RPC_RESULT_TYPES.has(resultType) || SHARE_RESULT_TYPES.has(resultType))) {
       let replyPayload = payload
       if (resultType === 'agent_recent_result') {
         const trim = fitRecentReplyPayloadForDevice(
@@ -1133,7 +1142,7 @@ export class BackendSocket {
     // adapter plaintext. A real client gets a targeted error; the legacy backend nodeRequest awaiter
     // (`connId === ''`) gets a broadcast error with the same requestId so it fails closed without data.
     // 
-    if (ENCRYPTED_RPC_RESULT_TYPES.has(resultType)) {
+    if ((ENCRYPTED_RPC_RESULT_TYPES.has(resultType) || SHARE_RESULT_TYPES.has(resultType))) {
       const errorFrame = { type: resultType, payload: { requestId, error: 'E2EE_REQUIRED' } }
       if (connId) this.sendTo(connId, errorFrame)
       else this.send(errorFrame)
@@ -1145,6 +1154,11 @@ export class BackendSocket {
   private async dispatchDown(frame: Frame, connId: string, transport: 'relay' | 'p2p' = 'relay'): Promise<void> {
     const type = frame.type as string | undefined
     if (!type) return
+    if (connId.startsWith('observer:')) {
+      await this.harnessSharing?.receive(connId, type, (frame.payload ?? {}) as Record<string, unknown>)
+      return
+    }
+    if (type.startsWith('observer_')) return
     const local = this.localClients.has(connId)
     // E2EE control frames (pairing/handshake) are handled by the manager, never as node RPCs.
     if (type.startsWith('e2e_')) {
@@ -1161,7 +1175,7 @@ export class BackendSocket {
     }
     // Client→adapter encrypted frames: chat messages plus trusted web control actions. Plaintext
     // passes through for legacy/device transition paths; undecryptable ciphertext is dropped.
-    if (!local && isEncryptedDownType(type)) {
+    if (!local && (isEncryptedDownType(type) || SHARE_REQUEST_TYPES.has(type))) {
       if (type !== 'message' && type !== 'question_response' && !isWrapped(frame.payload)) {
         const requestId = (frame.payload as { requestId?: unknown } | undefined)?.requestId
         if (requestId !== undefined) this.emitReply(connId, type, requestId, { error: 'E2EE_REQUIRED' })
@@ -1179,10 +1193,16 @@ export class BackendSocket {
     // than as an opaque __e2e envelope.
     // Terminal frames contain raw keystrokes, paste text and screen bytes after
     // unwrap. Never pass them to the frame logger, even in diagnostic mode.
-    if (env.LOG_FRAMES && !type.startsWith('terminal_') && type !== 'agent_read_file' && type !== 'project_preview') {
+    if (env.LOG_FRAMES && !type.startsWith('terminal_') && type !== 'agent_read_file' && type !== 'project_preview' && !SHARE_REQUEST_TYPES.has(type)) {
       logFrame('←', connId ? `conn:${sid(connId)}` : 'backend', frame)
     }
     const reply = (t: string, rid: unknown, p: Record<string, unknown>): void => this.emitReply(connId, t, rid, p)
+    if (SHARE_REQUEST_TYPES.has(type)) {
+      const p = (frame.payload ?? {}) as Record<string, unknown>
+      const result = await this.harnessSharing?.manage(type, p).catch(() => ({ error: 'SHARING_UNAVAILABLE', detail: 'Sharing is temporarily unavailable. Try again.' }))
+      reply(type, p.requestId, result ?? { error: 'UNSUPPORTED' })
+      return
+    }
     // Cross-instance client snapshot. Generation detects leave/join cycles that coalesce to the same
     // count; count rise remains the compatibility fallback for older backends.
     if (type === '__clients') {

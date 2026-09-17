@@ -13,6 +13,7 @@ const grantSchema = z.object({
   recipientEmail: emailSchema, name: z.string(), engine: z.string().nullable(),
   ownerPublicKey: z.string(), expiresAt: z.string().datetime(), createdAt: z.string().datetime(),
   revoked: z.boolean().default(false), pending: z.boolean().default(false),
+  publicationError: z.string().nullable().default(null),
 })
 export type HarnessGrant = z.infer<typeof grantSchema>
 
@@ -36,22 +37,25 @@ export class HarnessGrantStore {
   all(): HarnessGrant[] { return this.grants.map(g => ({ ...g })) }
   active(id: string, email: string, machineId: string): HarnessGrant | null {
     const grant = this.grants.find(g => g.id === id && g.machineId === machineId
-      && g.recipientEmail === email && !g.revoked && Date.parse(g.expiresAt) > this.now())
+      && g.recipientEmail === email && !g.revoked && !g.publicationError && Date.parse(g.expiresAt) > this.now())
     return grant ? { ...grant } : null
   }
   list(machineId: string, agentId: string): HarnessGrant[] {
     return this.all().filter(g => g.machineId === machineId && g.agentId === agentId && !g.revoked)
   }
-  invite(input: Omit<HarnessGrant, 'id' | 'createdAt' | 'pending' | 'revoked'>): HarnessGrant {
+  invite(input: Omit<HarnessGrant, 'id' | 'createdAt' | 'pending' | 'revoked' | 'publicationError'>): HarnessGrant {
     const previous = this.grants.find(g => g.machineId === input.machineId && g.agentId === input.agentId
       && g.recipientEmail === input.recipientEmail)
     const grant = grantSchema.parse({ ...input, id: previous?.id ?? randomUUID(),
-      createdAt: previous?.createdAt ?? new Date(this.now()).toISOString(), pending: true, revoked: false })
+      createdAt: previous?.createdAt ?? new Date(this.now()).toISOString(), pending: true, revoked: false, publicationError: null })
     this.save([...this.grants.filter(g => g.id !== grant.id), grant])
     return { ...grant }
   }
   synced(id: string): void {
     this.save(this.grants.map(g => g.id === id ? { ...g, pending: false } : g))
+  }
+  failed(id: string, publicationError: string): void {
+    this.save(this.grants.map(g => g.id === id ? { ...g, pending: false, publicationError } : g))
   }
   revoke(id: string, machineId: string, agentId: string): boolean {
     const found = this.grants.some(g => g.id === id && g.machineId === machineId && g.agentId === agentId)
