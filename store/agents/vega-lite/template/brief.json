@@ -1,0 +1,17 @@
+{
+  "title": "A question, made visible",
+  "question": "",
+  "description": "Explore your data with Vega-Lite.",
+  "source": "",
+  "stage": "question",
+  "artifact": "charts/main.vl.json",
+  "data": [],
+  "requirements": {
+    "minRows": 1,
+    "fields": [],
+    "marks": [],
+    "params": [],
+    "minPanels": 1,
+    "assertions": []
+  }
+}

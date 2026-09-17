@@ -1,0 +1,10 @@
+Vega-Lite 6.4.3
+Vega 6.4.0
+Vega-Embed 7.2.0
+AJV 8.18.0
+AJV Formats 3.0.1
+resvg-wasm 2.6.2 (chart snapshots, WebAssembly)
+opentype.js 2.0.0 (text metrics for snapshots)
+Inter 4 via @expo-google-fonts/inter 0.4.2 (OFL-1.1)
+Node >=20.19 via canonical runtimes.sh and the Harness runtime
+All npm transitive dependencies pinned with SHA-512 integrity in package-lock.json

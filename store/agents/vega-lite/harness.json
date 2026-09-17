@@ -1,0 +1,35 @@
+{
+  "spec": 1,
+  "id": "autonomous/vega-lite",
+  "name": "Vega-Lite",
+  "category": "Charts",
+  "author": "Vega / UW Interactive Data Lab",
+  "description": "Turn data and questions into interactive Vega-Lite charts, with live exploration, local exports, and explicit checks.",
+  "engine": "claude",
+  "workspace": {
+    "template": "template",
+    "marker": "brief.json",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": [
+      "skills"
+    ],
+    "env": {
+      "VEGA_LITE_TOOLCHAIN": "${dsh}/toolchain"
+    }
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "command": "toolchain/viewer.sh",
+    "url": "http://127.0.0.1:${port}/",
+    "artifactExtensions": [
+      ".json"
+    ]
+  },
+  "verdict": ".harness/verdict.json"
+}

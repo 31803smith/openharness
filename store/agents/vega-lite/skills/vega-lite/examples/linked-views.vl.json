@@ -1,0 +1,281 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+  "title": "Shorter trips, more cycling",
+  "description": "Synthetic linked views. Brush points to filter the summary; wheel to zoom the axes.",
+  "data": {
+    "values": [
+      {
+        "city": "City 1",
+        "region": "Coast",
+        "cycling": 10,
+        "distance": 25
+      },
+      {
+        "city": "City 2",
+        "region": "Inland",
+        "cycling": 11.8,
+        "distance": 26.4
+      },
+      {
+        "city": "City 3",
+        "region": "North",
+        "cycling": 13.6,
+        "distance": 27.8
+      },
+      {
+        "city": "City 4",
+        "region": "Coast",
+        "cycling": 15.4,
+        "distance": 29.2
+      },
+      {
+        "city": "City 5",
+        "region": "Inland",
+        "cycling": 17.2,
+        "distance": 22.6
+      },
+      {
+        "city": "City 6",
+        "region": "North",
+        "cycling": 19,
+        "distance": 24
+      },
+      {
+        "city": "City 7",
+        "region": "Coast",
+        "cycling": 20.8,
+        "distance": 25.4
+      },
+      {
+        "city": "City 8",
+        "region": "Inland",
+        "cycling": 22.6,
+        "distance": 26.8
+      },
+      {
+        "city": "City 9",
+        "region": "North",
+        "cycling": 24.4,
+        "distance": 20.2
+      },
+      {
+        "city": "City 10",
+        "region": "Coast",
+        "cycling": 26.2,
+        "distance": 21.6
+      },
+      {
+        "city": "City 11",
+        "region": "Inland",
+        "cycling": 28,
+        "distance": 23
+      },
+      {
+        "city": "City 12",
+        "region": "North",
+        "cycling": 29.8,
+        "distance": 24.4
+      },
+      {
+        "city": "City 13",
+        "region": "Coast",
+        "cycling": 31.6,
+        "distance": 17.8
+      },
+      {
+        "city": "City 14",
+        "region": "Inland",
+        "cycling": 33.400000000000006,
+        "distance": 19.2
+      },
+      {
+        "city": "City 15",
+        "region": "North",
+        "cycling": 35.2,
+        "distance": 20.6
+      },
+      {
+        "city": "City 16",
+        "region": "Coast",
+        "cycling": 37,
+        "distance": 22
+      },
+      {
+        "city": "City 17",
+        "region": "Inland",
+        "cycling": 38.8,
+        "distance": 15.4
+      },
+      {
+        "city": "City 18",
+        "region": "North",
+        "cycling": 40.6,
+        "distance": 16.8
+      },
+      {
+        "city": "City 19",
+        "region": "Coast",
+        "cycling": 42.4,
+        "distance": 18.200000000000003
+      },
+      {
+        "city": "City 20",
+        "region": "Inland",
+        "cycling": 44.2,
+        "distance": 19.6
+      },
+      {
+        "city": "City 21",
+        "region": "North",
+        "cycling": 46,
+        "distance": 13
+      },
+      {
+        "city": "City 22",
+        "region": "Coast",
+        "cycling": 47.800000000000004,
+        "distance": 14.4
+      },
+      {
+        "city": "City 23",
+        "region": "Inland",
+        "cycling": 49.6,
+        "distance": 15.8
+      },
+      {
+        "city": "City 24",
+        "region": "North",
+        "cycling": 51.4,
+        "distance": 17.200000000000003
+      }
+    ]
+  },
+  "hconcat": [
+    {
+      "width": 440,
+      "height": 280,
+      "params": [
+        {
+          "name": "brush",
+          "select": {
+            "type": "interval"
+          }
+        },
+        {
+          "name": "zoom",
+          "select": {
+            "type": "interval",
+            "encodings": [
+              "x",
+              "y"
+            ],
+            "on": "[mousedown[event.shiftKey], window:mouseup] > window:mousemove!",
+            "translate": "[mousedown[event.shiftKey], window:mouseup] > window:mousemove!"
+          },
+          "bind": "scales"
+        }
+      ],
+      "mark": {
+        "type": "circle",
+        "size": 100,
+        "tooltip": true
+      },
+      "encoding": {
+        "x": {
+          "field": "distance",
+          "type": "quantitative",
+          "axis": {
+            "title": "Trip distance (km)"
+          }
+        },
+        "y": {
+          "field": "cycling",
+          "type": "quantitative",
+          "axis": {
+            "title": "Cycling share (%)"
+          }
+        },
+        "color": {
+          "field": "region",
+          "type": "nominal",
+          "legend": {
+            "orient": "top"
+          }
+        },
+        "opacity": {
+          "condition": {
+            "param": "brush",
+            "value": 0.9
+          },
+          "value": 0.2
+        }
+      }
+    },
+    {
+      "width": 220,
+      "height": 280,
+      "transform": [
+        {
+          "filter": {
+            "param": "brush"
+          }
+        }
+      ],
+      "mark": {
+        "type": "bar",
+        "tooltip": true
+      },
+      "encoding": {
+        "x": {
+          "field": "region",
+          "type": "nominal",
+          "axis": {
+            "title": null,
+            "labelAngle": 0
+          }
+        },
+        "y": {
+          "aggregate": "count",
+          "type": "quantitative",
+          "axis": {
+            "title": "Selected cities"
+          }
+        },
+        "color": {
+          "field": "region",
+          "type": "nominal",
+          "legend": {
+            "orient": "top"
+          }
+        }
+      }
+    }
+  ],
+  "config": {
+    "view": {
+      "stroke": null
+    },
+    "axis": {
+      "domain": false,
+      "ticks": false,
+      "labelPadding": 8,
+      "titlePadding": 14,
+      "labelFontSize": 12,
+      "titleFontSize": 12
+    },
+    "title": {
+      "anchor": "start",
+      "fontSize": 22,
+      "fontWeight": 500,
+      "offset": 20
+    },
+    "range": {
+      "category": [
+        "#26836b",
+        "#db9562",
+        "#718ec4",
+        "#b896bf"
+      ]
+    }
+  }
+}

@@ -337,6 +337,16 @@ const _harnesses = <String, EngineIdentity>{
     color: Color(0xffe8894a),
     asset: 'assets/engine-icons/openmontage.png',
   ),
+  // The first harness the Harness Builder made, its logo from the Vega project's own
+  // logos repository (vega/logos, `VL_Color@512.png`).
+  'autonomous/vega-lite': EngineIdentity(
+    id: 'autonomous/vega-lite',
+    label: 'Vega-Lite',
+    category: 'Charts',
+    creator: 'Vega / UW Interactive Data Lab',
+    color: Color(0xff2450b2),
+    asset: 'assets/engine-icons/vega-lite.png',
+  ),
   // Harness's own package, so it wears Harness's own icon (`assets/app_icon.png`).
   'autonomous/harness-builder': EngineIdentity(
     id: 'autonomous/harness-builder',
@@ -370,6 +380,7 @@ const knownHarnessBase = <String, String>{
   'autonomous/circuitjs': 'codex',
   'autonomous/openmontage': 'claude',
   'autonomous/harness-builder': 'claude',
+  'autonomous/vega-lite': 'claude',
 };
 
 /// All known engines, in declaration order — for the New Agent engine picker.

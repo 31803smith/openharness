@@ -225,6 +225,9 @@ export function checkPackage(pkg, { reference, build, fresh, proofVerdicts = [] 
       for (const [i, ex] of examples.entries()) {
         if (!ex.prompt) findings.push(finding('error', 'store_example', `example ${i + 1} has no prompt`, 'store.json'))
         if (!ex.caption) findings.push(finding('warning', 'store_example', `example ${i + 1} has no caption`, 'store.json'))
+        // The registry's limits (StoreExampleSchema): a longer one is refused when the Store publishes.
+        else if (String(ex.caption).length > 120) findings.push(finding('error', 'store_example', `example ${i + 1}: the caption is ${String(ex.caption).length} characters; the Store takes 120`, 'store.json'))
+        if (ex.prompt && String(ex.prompt).length > 600) findings.push(finding('error', 'store_example', `example ${i + 1}: the prompt is ${String(ex.prompt).length} characters; the Store takes 600`, 'store.json'))
         // The Store reads pictures from an https URL and ignores anything else, so a path here is a
         // page with no picture — the one thing the page is for.
         if (ex.image !== undefined && !String(ex.image).startsWith('https://')) {

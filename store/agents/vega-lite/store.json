@@ -1,0 +1,36 @@
+{
+  "homepage": "https://vega.github.io/vega-lite/",
+  "upstream": "https://github.com/vega/vega-lite",
+  "license": "BSD-3-Clause",
+  "examples": [
+    {
+      "prompt": "Make a ranked bar chart of cycling's share of commutes in six made-up cities, with the percentage labelled on each bar.",
+      "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/vega-lite/easy.jpg",
+      "caption": "Six fictional cities ranked by cycling's share of commutes · direct labels, zero baseline, hover for values"
+    },
+    {
+      "prompt": "Chart a year of monthly solar generation for three fictional regions against a monthly target, from a CSV. I want an overview strip I can drag across to zoom the main chart, and a legend I can click to focus on one region.",
+      "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/vega-lite/medium.jpg",
+      "caption": "A year of solar generation for three regions against a target · drag the overview to zoom, click a region to focus"
+    },
+    {
+      "prompt": "Build a dashboard exploring made-up mobility data for 10 cities over 12 months: a scatterplot of average trip distance vs cycling share that I can brush, bars comparing the brushed cities with all cities by region, a monthly cycling trend for the selection, and a dropdown to filter by region.",
+      "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/vega-lite/hard.jpg",
+      "caption": "A linked dashboard over 120 city-months · brush the scatterplot and the bars and trend follow, plus a region filter"
+    }
+  ],
+  "evaluation": [
+    {
+      "method": "tool",
+      "by": "the Vega-Lite 6.4.3 schema, compiler and Vega renderer"
+    },
+    {
+      "method": "checks",
+      "by": "the brief: rows, fields, marks, parameters, assertions"
+    },
+    {
+      "method": "review",
+      "by": "a chart-reading rubric, by a fresh-context reviewer"
+    }
+  ]
+}

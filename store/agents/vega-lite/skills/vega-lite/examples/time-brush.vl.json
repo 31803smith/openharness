@@ -1,0 +1,331 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+  "title": "Solar generation through the year",
+  "description": "Synthetic monthly solar generation. Brush the overview; click a legend entry.",
+  "data": {
+    "values": [
+      {
+        "month": "2025-01-01",
+        "region": "Coast",
+        "generation": 42
+      },
+      {
+        "month": "2025-01-01",
+        "region": "Inland",
+        "generation": 55
+      },
+      {
+        "month": "2025-01-01",
+        "region": "North",
+        "generation": 68
+      },
+      {
+        "month": "2025-02-01",
+        "region": "Coast",
+        "generation": 49
+      },
+      {
+        "month": "2025-02-01",
+        "region": "Inland",
+        "generation": 62
+      },
+      {
+        "month": "2025-02-01",
+        "region": "North",
+        "generation": 75
+      },
+      {
+        "month": "2025-03-01",
+        "region": "Coast",
+        "generation": 56
+      },
+      {
+        "month": "2025-03-01",
+        "region": "Inland",
+        "generation": 69
+      },
+      {
+        "month": "2025-03-01",
+        "region": "North",
+        "generation": 82
+      },
+      {
+        "month": "2025-04-01",
+        "region": "Coast",
+        "generation": 63
+      },
+      {
+        "month": "2025-04-01",
+        "region": "Inland",
+        "generation": 76
+      },
+      {
+        "month": "2025-04-01",
+        "region": "North",
+        "generation": 89
+      },
+      {
+        "month": "2025-05-01",
+        "region": "Coast",
+        "generation": 70
+      },
+      {
+        "month": "2025-05-01",
+        "region": "Inland",
+        "generation": 83
+      },
+      {
+        "month": "2025-05-01",
+        "region": "North",
+        "generation": 96
+      },
+      {
+        "month": "2025-06-01",
+        "region": "Coast",
+        "generation": 77
+      },
+      {
+        "month": "2025-06-01",
+        "region": "Inland",
+        "generation": 90
+      },
+      {
+        "month": "2025-06-01",
+        "region": "North",
+        "generation": 103
+      },
+      {
+        "month": "2025-07-01",
+        "region": "Coast",
+        "generation": 77
+      },
+      {
+        "month": "2025-07-01",
+        "region": "Inland",
+        "generation": 90
+      },
+      {
+        "month": "2025-07-01",
+        "region": "North",
+        "generation": 103
+      },
+      {
+        "month": "2025-08-01",
+        "region": "Coast",
+        "generation": 70
+      },
+      {
+        "month": "2025-08-01",
+        "region": "Inland",
+        "generation": 83
+      },
+      {
+        "month": "2025-08-01",
+        "region": "North",
+        "generation": 96
+      },
+      {
+        "month": "2025-09-01",
+        "region": "Coast",
+        "generation": 63
+      },
+      {
+        "month": "2025-09-01",
+        "region": "Inland",
+        "generation": 76
+      },
+      {
+        "month": "2025-09-01",
+        "region": "North",
+        "generation": 89
+      },
+      {
+        "month": "2025-10-01",
+        "region": "Coast",
+        "generation": 56
+      },
+      {
+        "month": "2025-10-01",
+        "region": "Inland",
+        "generation": 69
+      },
+      {
+        "month": "2025-10-01",
+        "region": "North",
+        "generation": 82
+      },
+      {
+        "month": "2025-11-01",
+        "region": "Coast",
+        "generation": 49
+      },
+      {
+        "month": "2025-11-01",
+        "region": "Inland",
+        "generation": 62
+      },
+      {
+        "month": "2025-11-01",
+        "region": "North",
+        "generation": 75
+      },
+      {
+        "month": "2025-12-01",
+        "region": "Coast",
+        "generation": 42
+      },
+      {
+        "month": "2025-12-01",
+        "region": "Inland",
+        "generation": 55
+      },
+      {
+        "month": "2025-12-01",
+        "region": "North",
+        "generation": 68
+      }
+    ]
+  },
+  "vconcat": [
+    {
+      "width": 650,
+      "height": 270,
+      "params": [
+        {
+          "name": "region",
+          "select": {
+            "type": "point",
+            "fields": [
+              "region"
+            ]
+          },
+          "bind": "legend"
+        }
+      ],
+      "mark": {
+        "type": "line",
+        "point": true,
+        "tooltip": true
+      },
+      "encoding": {
+        "x": {
+          "field": "month",
+          "type": "temporal",
+          "axis": {
+            "title": null,
+            "format": "%b"
+          },
+          "scale": {
+            "domain": {
+              "param": "brush"
+            },
+            "padding": 14
+          }
+        },
+        "y": {
+          "field": "generation",
+          "type": "quantitative",
+          "axis": {
+            "title": "Solar generation (MWh)"
+          },
+          "scale": {
+            "zero": true
+          }
+        },
+        "color": {
+          "field": "region",
+          "type": "nominal",
+          "legend": {
+            "orient": "top",
+            "title": null
+          }
+        },
+        "opacity": {
+          "condition": {
+            "param": "region",
+            "value": 1
+          },
+          "value": 0.15
+        }
+      }
+    },
+    {
+      "width": 650,
+      "height": 65,
+      "params": [
+        {
+          "name": "brush",
+          "select": {
+            "type": "interval",
+            "encodings": [
+              "x"
+            ]
+          }
+        }
+      ],
+      "mark": {
+        "type": "line",
+        "tooltip": true
+      },
+      "encoding": {
+        "x": {
+          "field": "month",
+          "type": "temporal",
+          "axis": {
+            "title": null,
+            "format": "%b"
+          },
+          "scale": {
+            "padding": 14
+          }
+        },
+        "y": {
+          "field": "generation",
+          "type": "quantitative",
+          "axis": {
+            "title": null,
+            "tickCount": 2
+          },
+          "scale": {
+            "zero": true
+          }
+        },
+        "color": {
+          "field": "region",
+          "type": "nominal",
+          "legend": {
+            "orient": "top",
+            "title": null
+          }
+        }
+      }
+    }
+  ],
+  "config": {
+    "view": {
+      "stroke": null
+    },
+    "axis": {
+      "domain": false,
+      "ticks": false,
+      "labelPadding": 8,
+      "titlePadding": 14,
+      "labelFontSize": 12,
+      "titleFontSize": 12
+    },
+    "title": {
+      "anchor": "start",
+      "fontSize": 22,
+      "fontWeight": 500,
+      "offset": 20
+    },
+    "range": {
+      "category": [
+        "#26836b",
+        "#db9562",
+        "#718ec4",
+        "#b896bf"
+      ]
+    }
+  }
+}
