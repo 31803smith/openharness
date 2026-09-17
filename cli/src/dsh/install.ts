@@ -306,7 +306,7 @@ export async function installDsh(opts: DshInstallOptions): Promise<DshInstallRes
     const record: InstalledDshRecord = {
       id: manifest.id,
       dir,
-      source: opts.link ? resolve(opts.source) : opts.source,
+      source: opts.link || existsSync(opts.source) ? resolve(opts.source) : opts.source,
       ref: opts.ref ?? null,
       ...(opts.link || !opts.path ? {} : { path: opts.path }),
       commit,
@@ -374,6 +374,12 @@ export async function finishInstall(resolved: InstalledDsh, opts: DshInstallOpti
     } else {
       opts.onLine?.(`miss viewer ${uses} is not installed and not in the registry · install it first`)
     }
+  }
+
+  if (!recordDoctorFailure && uses && installedDsh(uses)?.manifest.kind !== 'viewer') {
+    const detail = `viewer ${uses} is not available; the previous package will be kept`
+    progress({ id: manifest.id, phase: 'failed', detail })
+    return { ok: false, error: 'VIEWER_UNAVAILABLE', detail }
   }
 
   progress({ id: manifest.id, phase: 'doctor' })

@@ -1258,9 +1258,7 @@ class _InstallLine extends StatelessWidget {
     } else if (run != null && run.failed) {
       status =
           run.log.where((line) => line.startsWith('miss')).lastOrNull ??
-          (installed
-              ? 'Update failed · previous version kept'
-              : 'Install failed');
+          (installed ? 'Update failed' : 'Install failed');
     } else if (installed) {
       status = row?.linked == true
           ? 'Installed · linked to a checkout'

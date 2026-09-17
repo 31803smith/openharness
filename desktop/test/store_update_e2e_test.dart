@@ -132,14 +132,16 @@ void main() {
       }
 
       Future<void> waitUntil(bool Function() done) async {
-        await tester.runAsync(() async {
-          final deadline = DateTime.now().add(const Duration(seconds: 30));
-          while (!done()) {
-            if (DateTime.now().isAfter(deadline))
-              fail('Update did not finish: $diagnostics');
-            await Future<void>.delayed(const Duration(milliseconds: 50));
+        final deadline = DateTime.now().add(const Duration(seconds: 30));
+        while (!done()) {
+          if (DateTime.now().isAfter(deadline)) {
+            fail('Update did not finish: $diagnostics');
           }
-        });
+          await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 50)),
+          );
+          await tester.pump();
+        }
         await tester.pumpAndSettle();
       }
 
@@ -179,7 +181,7 @@ void main() {
         () => connection.request('smoke_reopen'),
       );
       expect(reopened!['preview'], 'my finished project');
-      expect(reopened['instructions'], 'my custom instructions');
+      expect(reopened['instructions'], '<!-- harness:dsh acme/thing -->\noriginal instructions\n\nmy custom instructions\n');
       expect(reopened['skill'], 'skill version 3');
       expect(reopened['verdict'], {'ready': true, 'summary': 'finished'});
 

@@ -1,5 +1,7 @@
 # Harness package updates
 
+Status: implemented; final regression checks in progress.
+
 Add explicit updates through `harness dsh update <id>` and the desktop Store. The daemon reports the
 installed and available commits; catalog entries may also carry a package tree revision so publishing
 an unrelated monorepo change does not offer every package an update.
@@ -18,3 +20,8 @@ Verification: real local git repositories for whole-repo and subfolder updates, 
 rollback, linked installs, source identity, concurrent mutations and workspace preservation; wire and
 CLI tests; desktop parsing and Store interaction tests; CLI typecheck/full suite and Flutter analysis
 and relevant widget tests. Setup scripts' external side effects cannot be rolled back.
+
+Verified so far: 388 package/socket tests pass with 100% statements, branches, functions and lines
+across `update.ts`, `updates.ts`, `lock.ts` and `service.ts`. The real Store → daemon → Git → setup →
+doctor integration passes rollback, retry, independent viewer updates and reopening an unchanged
+workspace with a working viewer. Store regression tests pass. See `docs/development.md` for commands.

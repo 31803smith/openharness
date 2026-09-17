@@ -44,12 +44,15 @@ export const mutateDsh = async ({ id, url, ref, update }: { id?: string; url?: s
       if (!timer) timer = setTimeout(flushLine, 300)
     },
   }
-  const result = update ? await updateDsh({ ...options, id: id! }) : await installDsh(options)
-  if (timer) { clearTimeout(timer); timer = null }
-  if (!result.ok) {
-    console.warn(`[dsh] ${update ? 'update' : 'install'} of ${id ?? url} failed · ${result.error} · ${result.detail}`)
-    return { ok: false, error: result.error, detail: result.detail }
+  try {
+    const result = update ? await updateDsh({ ...options, id: id! }) : await installDsh(options)
+    if (!result.ok) {
+      console.warn(`[dsh] ${update ? 'update' : 'install'} of ${id ?? url} failed · ${result.error} · ${result.detail}`)
+      return { ok: false, error: result.error, detail: result.detail }
+    }
+    console.log(`[dsh] ${update ? 'updated' : 'installed'} ${result.installed.id} at ${result.installed.dir}`)
+    return { ok: true, id: result.installed.id }
+  } finally {
+    if (timer) clearTimeout(timer)
   }
-  console.log(`[dsh] installed ${result.installed.id} at ${result.installed.dir}`)
-  return { ok: true, id: result.installed.id }
 }

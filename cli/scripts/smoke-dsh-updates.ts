@@ -71,7 +71,7 @@ if (!installed.ok) throw new Error(installed.detail)
 mkdirSync(workspace)
 await materializeWorkspace(installedDsh(id)!, workspace)
 writeFileSync(join(workspace, 'project.txt'), 'my finished project')
-writeFileSync(join(workspace, 'AGENTS.md'), 'my custom instructions')
+writeFileSync(join(workspace, 'AGENTS.md'), readFileSync(join(workspace, 'AGENTS.md'), 'utf8') + '\nmy custom instructions\n')
 writeFileSync(join(workspace, '.harness', 'verdict.json'), '{"ready":true,"summary":"finished"}')
 publish(true)
 let viewerUrl: string | null = null

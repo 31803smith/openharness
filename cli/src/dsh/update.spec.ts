@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import { env } from '../config/env.js'
 import { dshInstallDir, installedDsh, invalidateInstalledDsh, readInstalledIndex, upsertInstalledRecord } from './installed.js'
 import { installDsh, removeDsh, type DshInstallProgress } from './install.js'
@@ -211,6 +211,26 @@ describe('package updates', () => {
     expect(dshUpdateInfo(installedDsh(id)!, unrelated).updateAvailable).toBe(false)
     expect((await update(unrelated)).ok).toBe(true)
     expect(installedDsh(id)?.commit).toBe(ref)
+  })
+
+  it('records local clone sources absolutely so updates do not depend on the original working directory', async () => {
+    const repo = create()
+    await installDsh({ source: relative(process.cwd(), repo) })
+    expect(readInstalledIndex()[0]!.source).toBe(repo)
+    write(repo, { 'AGENTS.md': '# Latest' })
+    const ref = commit(repo)
+    expect((await update()).ok).toBe(true)
+    expect(installedDsh(id)?.commit).toBe(ref)
+  })
+
+  it('restores the harness if its update introduces a viewer that cannot be installed', async () => {
+    const repo = create()
+    await installDsh({ source: repo })
+    const before = readInstalledIndex()
+    write(repo, { 'harness.json': JSON.stringify({ ...manifest, viewer: { use: 'acme/unpublished' } }) })
+    expect(await update(catalog(repo, commit(repo)))).toMatchObject({ ok: false, error: 'VIEWER_UNAVAILABLE' })
+    expect(readInstalledIndex()).toEqual(before)
+    expect(installedDsh(id)?.manifest.viewer).toBeUndefined()
   })
 
   it('skips unchanged package content even when another folder changed in the monorepo', async () => {
