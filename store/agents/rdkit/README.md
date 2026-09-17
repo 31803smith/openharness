@@ -21,7 +21,9 @@ linked atom-for-atom, its properties and rule badges, and the series it belongs 
   `design` works. PNG of the view, SVG, SDF (lowest or all conformers) and MOL export. Keyboard: `?`.
   The server reads `<name>.molecule.json`; for an SDF the toolchain did not write it asks a long-lived
   `harness_rdkit.py serve` worker, so older workspaces get the same pane.
-- `toolchain/setup.sh` — one venv with the pinned RDKit, numpy and pandas (`VERSIONS`) plus `npm ci`;
+- `toolchain/setup.sh` — one venv on Python 3.12 (uv brings it when the machine has none) with the
+  pinned RDKit, numpy and pandas (`VERSIONS`), plus `npm ci` (on Harness's own Node when the machine has
+  none) — Apple Silicon Macs and Linux, since the pinned RDKit has no Intel Mac build;
   `harness_rdkit.py` builds from SMILES, searches conformers (ETKDGv3 + MMFF94), describes the molecule
   (charges, groups, alerts, depiction, parent and change) and writes the SDFs, the depiction, the
   record, the series, the properties and the report; `verdict.py` judges Design / Embed / Review.

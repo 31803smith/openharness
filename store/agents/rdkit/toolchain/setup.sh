@@ -2,17 +2,20 @@
 # Runs once at install, cwd = the install dir. Two vendored toolchains, both inside this directory and
 # nothing on the user's machine: a venv with the pinned RDKit for the chemistry (the agent's toolchain,
 # and the pane's worker for SDFs the toolchain did not write), and node_modules with 3Dmol.js for the pane.
+# The pinned numpy wants Python 3.12+ and pandas has wheels up to 3.14, so the venv is on 3.12 whatever
+# this machine has (uv downloads it when it is not here); one already on 3.12–3.14 is kept. npm is the
+# one beside the Node the pane runs on: this machine's, else Harness's own.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 # shellcheck disable=SC1091
 . ./VERSIONS
-PY=""; for c in python3.12 python3.11 python3.13 python3; do if command -v "$c" >/dev/null 2>&1 && "$c" -c 'import sys; raise SystemExit(0 if (3, 10) <= sys.version_info < (3, 14) else 1)' 2>/dev/null; then PY="$c"; break; fi; done
-[ -n "$PY" ] || { echo "miss python 3.10–3.13 (brew install python@3.12)"; exit 1; }
-echo "ok   $($PY --version)"
-[ -x .venv/bin/python ] || "$PY" -m venv .venv
-.venv/bin/python -m pip install --quiet --upgrade pip >/dev/null 2>&1 || true
+# shellcheck source=runtimes.sh
+. toolchain/runtimes.sh
+# RDKit publishes no Intel Mac wheel since 2025.9.3: say so before downloading anything, not in a resolver error.
+if [ "$(uname -s)-$(uname -m)" = Darwin-x86_64 ]; then echo "miss rdkit ${RDKIT} has no Intel Mac build — this harness needs an Apple Silicon Mac, or Linux"; exit 1; fi
+harness_venv .venv 3.12 3.12 3.15 || exit 1
 echo "     installing rdkit ${RDKIT}"
-.venv/bin/python -m pip install --quiet "rdkit==${RDKIT}" "numpy==${NUMPY}" "pandas==${PANDAS}"
+harness_pip .venv "rdkit==${RDKIT}" "numpy==${NUMPY}" "pandas==${PANDAS}"
 echo "ok   rdkit $(.venv/bin/python -c 'import rdkit; print(rdkit.__version__)') · numpy $(.venv/bin/python -c 'import numpy; print(numpy.__version__)') · pandas $(.venv/bin/python -c 'import pandas; print(pandas.__version__)')"
 echo "     chemistry check (build, conformers, depict, describe, series)"
 PYTHONPATH="$PWD/toolchain" .venv/bin/python - <<'PY'
@@ -33,8 +36,8 @@ assert round(similarity("c1ccccc1O", "c1ccccc1O"), 3) == 1.0
 assert substructure(mol_from_smiles("c1ccccc1O"), "[OX2H]c1ccccc1")
 print("ok   conformer search, MMFF minimisation, Gasteiger charges, 2D depiction and the series work")
 PY
-command -v node >/dev/null 2>&1 || { echo "miss node >= 18 on PATH (the pane)"; exit 1; }
-command -v npm >/dev/null 2>&1 || { echo "miss npm on PATH (the pane)"; exit 1; }
+harness_node 18 || exit 1
+command -v npm >/dev/null 2>&1 || { echo "miss npm beside $(command -v node) (the pane)"; exit 1; }
 echo "     npm ci (3Dmol.js $(node -p "require('./package.json').dependencies['3dmol']"))"
 npm ci --silent --no-audit --no-fund
 [ -f node_modules/3dmol/build/3Dmol-min.js ] || { echo "miss the 3Dmol.js bundle after npm ci"; exit 1; }

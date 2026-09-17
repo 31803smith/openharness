@@ -342,8 +342,9 @@ esac''')
         self.node()
         self.uv()
         run = self.run_script("setup.sh", PIP_EXIT="2")
-        self.assertEqual(run.returncode, 2)
-        self.assertNotIn("numpy", run.stdout)
+        self.assertEqual(run.returncode, 1)
+        self.assertEqual(run.stdout.splitlines()[-1], "miss could not install numpy into .venv")
+        self.assertNotIn("ok   numpy", run.stdout)
         self.assertFalse((self.pkg / "upstream").exists())
 
     def test_setup_fails_with_the_projects_setup(self):

@@ -19,8 +19,9 @@
 #   harness_conda_env DIR SPEC…     DIR is a conda-forge environment with those packages
 #
 # Every function prints `miss …` and returns 1 when it cannot deliver, so `harness_node 18 || exit 1`
-# reads like the rest of a setup script. Nothing here touches the user's shell profile or anything
-# outside ~/.harness/runtime and the package's own directory.
+# reads like the rest of a setup script. Nothing here touches the user's shell profile; what it
+# installs lands in ~/.harness/runtime or the package's own directory (uv keeps its download cache
+# where it always does, which a venv does not depend on).
 #
 # ONE copy is written by hand: store/tools/runtimes.sh in the OpenHarness repository. Each package
 # carries an identical copy (a package installs alone, so it cannot reach this one);
@@ -149,7 +150,9 @@ harness_pip() {
   local dir="${1:?harness_pip needs a venv}"
   shift
   harness_uv || return 1
-  uv pip install --quiet --python "$dir/bin/python" "$@"
+  # uv's own error comes first; the miss line is last, so it is the line the store shows.
+  uv pip install --quiet --python "$dir/bin/python" "$@" \
+    || { echo "miss could not install $* into $dir"; return 1; }
 }
 
 harness_micromamba() {

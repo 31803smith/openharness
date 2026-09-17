@@ -16,7 +16,8 @@ saves over your file. You never start a server, never print a URL, never open a 
 - **The toolchain is one venv**, pinned: `$MARIMO_PYTHON` runs Python, `$MARIMO` is the CLI
   (`$MARIMO check notebook.py`, `$MARIMO export html notebook.py -o out/notebook.html`). numpy,
   pandas, polars, altair, matplotlib, duckdb, pyarrow are there; `"$MARIMO_PYTHON" -m pip install`
-  for anything else, and say so.
+  for anything else, and say so. Where marimo's skills write `uv run marimo …` or `uv run python …`,
+  run `$MARIMO …` or `"$MARIMO_PYTHON" …`: this machine may have no uv, and the venv is the toolchain.
 - **The verdict.** `.harness/verdict.json` is what the pane header shows. Write it after every
   change: `"$MARIMO_PYTHON" "$MARIMO_TOOLCHAIN/verdict.py"`. It runs `marimo check` and then the
   notebook top to bottom. Never edit it by hand.

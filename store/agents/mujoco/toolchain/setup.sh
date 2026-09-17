@@ -2,17 +2,19 @@
 # Runs once at install, cwd = the install dir. One venv with the pinned MuJoCo and the pieces that
 # turn a simulation into a video; the MuJoCo Menagerie robots the skill names, at a pinned commit,
 # sparsely (their meshes are most of the repository). Training extras are a second script.
+# MuJoCo has wheels for 3.10 on, the training extras (MuJoCo Playground) want 3.11+: the venv is on
+# 3.12 whatever this machine has (uv downloads it when it is not here); one already on 3.11–3.14 is kept.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 # shellcheck disable=SC1091
 . ./VERSIONS
-PY=""; for c in python3.12 python3.11 python3.13 python3; do if command -v "$c" >/dev/null 2>&1 && "$c" -c 'import sys; raise SystemExit(0 if (3, 10) <= sys.version_info < (3, 14) else 1)' 2>/dev/null; then PY="$c"; break; fi; done
-[ -n "$PY" ] || { echo "miss python 3.10–3.13 (brew install python@3.12)"; exit 1; }
-echo "ok   $($PY --version)"
-[ -x .venv/bin/python ] || "$PY" -m venv .venv
-.venv/bin/python -m pip install --quiet --upgrade pip >/dev/null 2>&1 || true
+# shellcheck source=runtimes.sh
+. toolchain/runtimes.sh
+# MuJoCo publishes no Intel Mac wheel since 3.10.0: say so before downloading anything, not in a resolver error.
+if [ "$(uname -s)-$(uname -m)" = Darwin-x86_64 ]; then echo "miss mujoco ${MUJOCO} has no Intel Mac build — this harness needs an Apple Silicon Mac, or Linux"; exit 1; fi
+harness_venv .venv 3.12 3.11 3.15 || exit 1
 echo "     installing mujoco ${MUJOCO}"
-.venv/bin/python -m pip install --quiet "mujoco==${MUJOCO}" numpy "imageio[ffmpeg]"
+harness_pip .venv "mujoco==${MUJOCO}" numpy "imageio[ffmpeg]"
 echo "ok   mujoco $(.venv/bin/python -c 'import mujoco; print(mujoco.__version__)')"
 if [ ! -f menagerie/.harness-commit ] || [ "$(cat menagerie/.harness-commit)" != "${MENAGERIE_COMMIT}" ]; then
   echo "     fetching MuJoCo Menagerie @ ${MENAGERIE_COMMIT} (${MENAGERIE_ROBOTS})"

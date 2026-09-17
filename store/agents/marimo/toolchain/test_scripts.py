@@ -1,6 +1,7 @@
 """setup.sh, doctor.sh, init-workspace.sh and viewer.sh, run for real against a scratch install whose
 PATH holds only stub commands (and the few coreutils the scripts use), so every ok / miss line is
-reached without a network, a venv or a marimo on the machine:
+reached without a network, a venv or a marimo on the machine. uv is a stub too: what runtimes.sh does
+when uv is not on PATH at all is store/tools/test_runtimes.py's business.
 
     python3 -m unittest toolchain/test_scripts.py
 """
@@ -11,8 +12,16 @@ PACKAGE = Path(__file__).resolve().parent.parent
 # A bash line tracer (BASH_ENV sourcing a DEBUG trap that appends to SHCOV_OUT) is passed through when set.
 TRACER = {k: os.environ[k] for k in ("BASH_ENV", "SHCOV_OUT") if k in os.environ}
 BASH = "/bin/bash"
-COREUTILS = ("dirname", "cat", "mkdir", "tail")
+COREUTILS = ("dirname", "cat", "mkdir", "tail", "rm", "cp", "mktemp", "cut", "shasum")
 VERSION = (PACKAGE / "MARIMO_VERSION").read_text().strip()
+
+# The venv's python: its version (VENV_PY; runtimes.sh's keep-or-replace probe answers VENV_PY_OK) and
+# everything else (verdict.py, viewer.py) answers PIP_EXIT.
+VENV_PYTHON = """case "$1" in
+  --version) echo "Python ${VENV_PY:-3.12.9}" ;;
+  -c) exit "${VENV_PY_OK:-0}" ;;
+  *) exit "${PIP_EXIT:-0}" ;;
+esac"""
 
 
 class Sandbox:
@@ -40,15 +49,26 @@ class Sandbox:
     def stub(self, name: str, body: str = "", where: Path | None = None) -> Path:
         path = (where or self.bin) / name
         path.parent.mkdir(parents=True, exist_ok=True)
+        path.unlink(missing_ok=True)  # never write through a link to a real command
         path.write_text(f'#!/bin/bash\necho "{name} $*" >> "$CALLS"\n{body}\n')
         path.chmod(0o755)
         return path
 
     def venv(self, root: Path | None = None) -> None:
-        """A .venv whose python logs pip and whose marimo prints a version the way marimo does."""
+        """A .venv whose python answers the version probes and whose marimo prints a version the way
+        marimo does."""
         bin_ = (root or self.install) / ".venv" / "bin"
-        self.stub("python", "exit ${PIP_EXIT:-0}", where=bin_)
+        self.stub("python", VENV_PYTHON, where=bin_)
         self.stub("marimo", f'echo "{VERSION}"', where=bin_)
+
+    def uv(self) -> None:
+        """uv on PATH: `uv venv … DIR` makes a stub venv in DIR; `uv pip install` answers UV_PIP_EXIT."""
+        self.venv(self.root / "template")
+        template = self.root / "template" / ".venv" / "bin"
+        self.stub("uv", f"""case "$1" in
+  venv) for last in "$@"; do :; done; mkdir -p "$last/bin" && cp "{template}/python" "{template}/marimo" "$last/bin/" ;;
+  pip) exit "${{UV_PIP_EXIT:-0}}" ;;
+esac""")
 
     def run(self, script: str, cwd: Path | None = None, **env: str) -> subprocess.CompletedProcess:
         return subprocess.run([BASH, str(self.install / script)], cwd=cwd or self.install,
@@ -71,62 +91,52 @@ class Doctor(unittest.TestCase):
         self.assertEqual((r.returncode, r.stdout), (1, "miss .venv/bin/marimo — run toolchain/setup.sh\n"))
 
 
-def python(version: str, fits: bool) -> str:
-    """A pythonX.Y stub: the version probe passes or not; `-m venv .venv` makes a stub venv."""
-    return (f'case "$1" in\n'
-            f'  -c) exit {0 if fits else 1} ;;\n'
-            f'  --version) echo "Python {version}" ;;\n'
-            f'  -m) mkdir -p .venv/bin; cp "$STUB_VENV/python" "$STUB_VENV/marimo" .venv/bin/ ;;\n'
-            f'esac')
-
-
 class Setup(unittest.TestCase):
-    def sandbox(self) -> Sandbox:
+    def test_makes_a_3_12_venv_and_installs_marimo_into_it(self):
         box = Sandbox(self)
-        box.venv(box.root / "template")          # what `python -m venv` copies in
-        (box.bin / "cp").symlink_to("/bin/cp")
-        return box
-
-    def run_setup(self, box: Sandbox, **env: str) -> subprocess.CompletedProcess:
-        return box.run("toolchain/setup.sh", STUB_VENV=str(box.root / "template" / ".venv" / "bin"), **env)
-
-    def test_the_first_python_that_fits_makes_the_venv(self):
-        box = self.sandbox()
-        box.stub("python3.12", python("3.12.9", fits=False))   # present but refused
-        box.stub("python3.11", python("3.11.4", fits=True))
-        box.stub("python3", python("3.9.6", fits=True))           # never reached
-        r = self.run_setup(box)
+        box.uv()
+        r = box.run("toolchain/setup.sh")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(r.stdout.splitlines(), ["ok   Python 3.11.4",
+        self.assertEqual(r.stdout.splitlines(), ["     python 3.12 in .venv (uv downloads it when this machine has none)",
+                                                 "ok   Python 3.12.9 in .venv",
                                                  f"     installing marimo {VERSION} and the usual libraries (a minute or two)",
                                                  f"ok   marimo {VERSION}"])
-        self.assertIn("python3.11 -m venv .venv", box.logged())
-        self.assertIn(f"python -m pip install --quiet marimo=={VERSION} numpy pandas polars altair matplotlib duckdb pyarrow", box.logged())
-        self.assertFalse(any(c.startswith("python3 ") for c in box.logged()))
+        self.assertIn("uv venv --quiet --seed --python 3.12 --python-preference only-managed .venv", box.logged())
+        self.assertIn(f"uv pip install --quiet --python .venv/bin/python marimo=={VERSION} numpy pandas polars altair matplotlib duckdb pyarrow",
+                      box.logged())
 
-    def test_an_existing_venv_is_reused_and_a_failed_pip_upgrade_is_not_fatal(self):
-        box = self.sandbox()
-        box.stub("python3.13", python("3.13.1", fits=True))
+    def test_an_existing_venv_in_range_is_reused(self):
+        box = Sandbox(self)
+        box.uv()
         box.venv()
-        # pip upgrade fails, the install itself succeeds
-        box.stub("python", 'case "$*" in *--upgrade*) exit 1 ;; esac', where=box.install / ".venv" / "bin")
-        r = self.run_setup(box)
+        r = box.run("toolchain/setup.sh", VENV_PY="3.13.1")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertNotIn("python3.13 -m venv .venv", box.logged())
-        self.assertIn("python -m pip install --quiet --upgrade pip", box.logged())
-        self.assertEqual(r.stdout.splitlines()[::2], ["ok   Python 3.13.1", f"ok   marimo {VERSION}"])
+        self.assertEqual(r.stdout.splitlines()[0], "ok   Python 3.13.1 in .venv")
+        self.assertFalse(any(c.startswith("uv venv") for c in box.logged()))
+        self.assertIn("python -c", "\n".join(box.logged()), "the venv's python was asked its version")
 
-    def test_no_python_that_fits_is_a_miss(self):
-        box = self.sandbox()
-        box.stub("python3", python("3.14.0", fits=False))
-        r = self.run_setup(box)
-        self.assertEqual((r.returncode, r.stdout), (1, "miss python 3.10–3.13 (brew install python@3.12)\n"))
+    def test_a_venv_on_a_python_out_of_range_is_replaced(self):
+        box = Sandbox(self)
+        box.uv()
+        box.venv()
+        r = box.run("toolchain/setup.sh", VENV_PY_OK="1")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("uv venv --quiet --seed --python 3.12 --python-preference only-managed .venv", box.logged())
+
+    def test_no_uv_and_no_network_is_a_miss(self):
+        box = Sandbox(self)
+        box.stub("uname", 'case "$1" in -s) echo Darwin ;; -m) echo arm64 ;; esac')
+        box.stub("curl", "exit 6")
+        r = box.run("toolchain/setup.sh", ADAPTER_RUNTIME_DIR=str(box.root / "runtime"))
+        self.assertEqual(r.returncode, 1)
+        self.assertEqual(r.stdout.splitlines()[-1], "miss could not download https://github.com/astral-sh/uv/releases/download/"
+                         "0.12.15/uv-aarch64-apple-darwin.tar.gz — check this machine's internet connection")
+        self.assertFalse((box.install / ".venv").exists())
 
     def test_a_failed_install_fails_setup(self):
-        box = self.sandbox()
-        box.stub("python3.12", python("3.12.9", fits=True))
-        box.stub("python", "exit 1", where=box.root / "template" / ".venv" / "bin")
-        r = self.run_setup(box)
+        box = Sandbox(self)
+        box.uv()
+        r = box.run("toolchain/setup.sh", UV_PIP_EXIT="1")
         self.assertNotEqual(r.returncode, 0)
         self.assertNotIn("ok   marimo", r.stdout)
 

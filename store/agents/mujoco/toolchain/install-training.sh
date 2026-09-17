@@ -6,7 +6,11 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 # shellcheck disable=SC1091
 . ./VERSIONS
+# shellcheck source=runtimes.sh
+. toolchain/runtimes.sh
+[ -x .venv/bin/python ] || { echo "miss .venv — run toolchain/setup.sh first"; exit 1; }
 # MJX releases with MuJoCo, version for version: pinned both, so the extras never move the MuJoCo
 # setup.sh installed (an unpinned mujoco-mjx pulls the newest mujoco along with it).
-.venv/bin/python -m pip install --quiet "jax" "mujoco==${MUJOCO}" "mujoco-mjx==${MUJOCO}" "playground"
-.venv/bin/python -c 'import jax; from mujoco import mjx; import mujoco_playground; print("ok   jax", jax.__version__, "· mjx · playground", mujoco_playground.__version__, "· devices", jax.devices())'
+harness_pip .venv "jax" "mujoco==${MUJOCO}" "mujoco-mjx==${MUJOCO}" "playground"
+# mujoco_playground has no __version__: the version is the distribution's.
+.venv/bin/python -c 'import jax; from mujoco import mjx; import mujoco_playground; from importlib.metadata import version; print("ok   jax", jax.__version__, "· mjx · playground", version("playground"), "· devices", jax.devices())'

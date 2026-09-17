@@ -416,7 +416,8 @@ class Pip(unittest.TestCase):
         r = box.run('harness_pip .venv "rdkit==2025.3.1" numpy')
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(box.logged(), ["uv pip install --quiet --python .venv/bin/python rdkit==2025.3.1 numpy"])
-        self.assertEqual(box.run('harness_pip .venv x || echo "rc=$?"', PIP_EXIT="4").stdout.strip(), "rc=4")
+        self.assertEqual(lines(box.run('harness_pip .venv x y || echo "rc=$?"', PIP_EXIT="4")),
+                         ["miss could not install x y into .venv", "rc=1"])
 
     def test_no_uv_to_be_had(self):
         box = Box(self)

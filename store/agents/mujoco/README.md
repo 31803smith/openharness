@@ -8,8 +8,9 @@ frame by frame. Menagerie robots (Unitree Go2, G1, H1, Berkeley Humanoid, Booste
 MJX and MuJoCo Playground are one script away for training. Runs on Claude Code.
 
 - `harness.json` — engine, template, skill, toolchain, `viewer.use: autonomous/mujoco-viewer`.
-- `toolchain/setup.sh` — one venv with the pinned MuJoCo (`VERSIONS`) and a sparse checkout of the
-  Menagerie robots at a pinned commit; `install-training.sh` adds JAX, MJX and Playground;
+- `toolchain/setup.sh` — one venv on Python 3.12 (uv brings it when the machine has none) with the
+  pinned MuJoCo (`VERSIONS`), which has no Intel Mac build — Apple Silicon Macs and Linux — and a sparse
+  checkout of the Menagerie robots at a pinned commit; `install-training.sh` adds JAX, MJX and Playground;
   `harness_mujoco.py` loads (`servos=` turns torque motors into position servos), records and holds
   poses; `verdict.py` judges the rollout and names the trajectory as the artifact — never the video.
 - **What a rollout is** (`record`, all under `out/`): `rollout.qpos.json` — per frame `time`, `qpos`,
