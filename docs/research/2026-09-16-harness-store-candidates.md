@@ -2,13 +2,13 @@
 
 Research date: September 16, 2026 (America/New_York).
 
-**Status: Deferred — documented for a future build session.** All ten candidates below are research-backed backlog items. The user has asked to save them and return to implementation later. No implementation is scheduled; the ordering below is a recommendation to revisit when work resumes.
+**Status: Implementation started.** [Game Studio / Godogen](../../store/agents/godogen/README.md) and [Film Director / OpenMontage](../../store/agents/openmontage/README.md) are implemented, with shared interactive viewers and reproducible browser checks. The other eight candidates remain research-backed backlog items. The research assessments below describe the original investigation; the package READMEs and testing notes record what has since been verified.
 
 To resume: refresh the chosen upstream's maintenance status, license, and dependencies; pin a commit; reproduce its proposed demonstration in isolation; then package the verified workflow for Harness. The experience names below describe product ideas. Package names and upstream credit should follow the [Store conventions](../../store/README.md).
 
 ## Recommendation
 
-Prototype **Game Studio with Godogen** and **Film Director with OpenMontage** first. Both already organize a coding agent around a complete creative workflow. For a more unusual flagship, explore **Instrument Maker** or a **Wind Tunnel** that accepts a CAD design. Keep **Robot Missions** as the ambitious hardware demonstration.
+**Game Studio with Godogen** and **Film Director with OpenMontage** are the first two implementations. Both organize a coding agent around a complete creative workflow. For a more unusual flagship, explore **Instrument Maker** or a **Wind Tunnel** that accepts a CAD design. Keep **Robot Missions** as the ambitious hardware demonstration.
 
 The benchmark is text-to-cad: an existing open-source project that gives Claude Code or Codex domain knowledge, executable tools, a useful output, and a way to inspect that output. A repository merely written with Claude does not meet that benchmark.
 
@@ -18,7 +18,7 @@ The current Store already has Blender, MuJoCo, Phaser, Remotion, Strudel, RDKit,
 
 I examined the current Store manifests, searched public projects and maker demonstrations, then retrieved metadata, READMEs, licenses, and selected implementation files directly from 13 relevant GitHub repositories. I also inspected Godogen's demo briefs and OpenMontage's Backlot screenshot and viewer documentation.
 
-This is a source and product assessment. I did **not** install these packages, generate a game or film, run their benchmarks, or operate hardware. Public examples are upstream demonstrations, not independently reproduced results. Every proposed demo below is a Harness product idea; it is not a claim that the exact prompt already succeeds upstream.
+The original September 16 research was a source and product assessment; it did **not** install the packages, generate a game or film, run benchmarks, or operate hardware. Subsequent implementation checks for Godogen and OpenMontage are documented in their packages. Public examples are upstream demonstrations, not independently reproduced results. Every proposed demo below is a Harness product idea; it is not a claim that the exact prompt already succeeds upstream.
 
 ## Ranked shortlist
 
