@@ -4,10 +4,12 @@ without a network, a Python 3.11 or a 300 MB bpy wheel:
 
     python3 -m unittest toolchain/test_scripts.py
 """
-import shutil, subprocess, tempfile, unittest
+import os, shutil, subprocess, tempfile, unittest
 from pathlib import Path
 
 PACKAGE = Path(__file__).resolve().parent.parent
+# A bash line tracer (BASH_ENV sourcing a DEBUG trap that appends to SHCOV_OUT) is passed through when set.
+TRACER = {k: os.environ[k] for k in ("BASH_ENV", "SHCOV_OUT") if k in os.environ}
 BASH = "/bin/bash"
 COREUTILS = ("dirname", "cat", "mkdir", "cp", "rm", "chmod", "grep")
 VERSION = (PACKAGE / "BPY_VERSION").read_text().strip()
@@ -32,7 +34,7 @@ class Sandbox:
         self.install = self.root / "install"
         (self.install / "toolchain").mkdir(parents=True)
         for script in PACKAGE.glob("toolchain/*.sh"):
-            shutil.copy(script, self.install / "toolchain" / script.name)
+            (self.install / "toolchain" / script.name).symlink_to(script)  # linked, not copied: a line tracer maps back to the source
         shutil.copy(PACKAGE / "BPY_VERSION", self.install / "BPY_VERSION")
         self.bin = self.root / "bin"
         self.bin.mkdir()
@@ -63,7 +65,7 @@ esac""")
 
     def run(self, script: str, cwd: Path | None = None, **env: str) -> subprocess.CompletedProcess:
         return subprocess.run([BASH, str(self.install / "toolchain" / script)], cwd=cwd or self.install,
-                              env={"PATH": str(self.bin), "CALLS": str(self.calls), **env},
+                              env={"PATH": str(self.bin), "CALLS": str(self.calls), **TRACER, **env},
                               capture_output=True, text=True, timeout=60)
 
     def logged(self) -> list[str]:
