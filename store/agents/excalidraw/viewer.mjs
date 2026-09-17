@@ -68,8 +68,11 @@ function readBody(req, limit = 64 * 1024 * 1024) {
 }
 
 createServer(async (req, res) => {
-  const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`)
-  const path = decodeURIComponent(url.pathname)
+  const url = new URL(req.url, `http://127.0.0.1:${port}`)
+  // A malformed escape (/%E0%A4%A) threw here, and a throw in this async handler is an unhandled
+  // rejection: it took the whole pane down.
+  let path
+  try { path = decodeURIComponent(url.pathname) } catch { res.writeHead(400); res.end('bad path'); return }
   if (path === '/') { send(res, join(PAGE, 'index.html'), req); return }
   if (path.startsWith('/viewer/')) { send(res, safe(PAGE, path.slice('/viewer/'.length)), req); return }
   if (path === '/events') {
@@ -81,7 +84,8 @@ createServer(async (req, res) => {
     // Exports land in the workspace, where the agent and the user can both find them: a WebKit pane
     // has no download manager, so a Save link would go nowhere.
     const name = basename(String(url.searchParams.get('name') || ''))
-    if (!/^[\w.@ -]+\.(png|svg)$/i.test(name)) { json(res, 400, { error: 'name must be a .png or .svg file name' }); return }
+    // Any file name the diagram has ("order flow (v2)", "café"), minus control characters.
+    if (!/^[^\x00-\x1f\x7f]+\.(png|svg)$/i.test(name)) { json(res, 400, { error: 'name must be a .png or .svg file name' }); return }
     try {
       const body = await readBody(req)
       mkdirSync(join(workspace, 'exports'), { recursive: true })
@@ -100,6 +104,7 @@ createServer(async (req, res) => {
 const pending = new Map()
 try {
   watch(workspace, { recursive: true }, (_event, name) => {
+    /* c8 ignore next -- fs.watch may pass no file name on some platforms; macOS always passes one */
     const n = String(name ?? '').split(sep).join('/')
     if (!n || n.split('/').some((part) => SKIP.has(part))) return
     clearTimeout(pending.get(n))
