@@ -3026,11 +3026,19 @@ class AppNotifier extends ChangeNotifier {
     ) async {
       if (_disposed ||
           status != AppStatus.authenticated ||
-          _sharingDiscoveryBusy)
+          _sharingDiscoveryBusy ||
+          machinesRefreshing) {
         return;
+      }
+      final discoveryRevision = _authRevision;
       _sharingDiscoveryBusy = true;
       try {
         await refreshMachines();
+      } catch (error) {
+        if (_authWorkCurrent(discoveryRevision)) {
+          _reportMachineLoadError(error, automatic: true);
+          notifyListeners();
+        }
       } finally {
         _sharingDiscoveryBusy = false;
       }

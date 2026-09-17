@@ -88,8 +88,8 @@ void main() {
         tester.view.physicalSize = Size(width, 760);
         tester.view.devicePixelRatio = 1;
         addTearDown(tester.view.reset);
-      final sockets = <WebSocket>[], requests = <Map<String, dynamic>>[];
-      final closingSockets = <WebSocket>{};
+        final sockets = <WebSocket>[], requests = <Map<String, dynamic>>[];
+        final closingSockets = <WebSocket>{};
         late HttpServer server;
         await tester.runAsync(() async {
           server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -97,10 +97,12 @@ void main() {
             final ws = await WebSocketTransformer.upgrade(request);
             sockets.add(ws);
             ws.listen((raw) {
-            if (closingSockets.contains(ws) || ws.readyState != WebSocket.open) return;
+              if (closingSockets.contains(ws) ||
+                  ws.readyState != WebSocket.open) {
+                return;
+              }
               if (raw is! String) {
                 fail('An observer sent terminal bytes');
-                return;
               }
               final frame = jsonDecode(raw) as Map<String, dynamic>;
               requests.add(frame);
@@ -216,6 +218,35 @@ void main() {
           isNot(contains('terminal_resize')),
         );
         expect(tester.takeException(), isNull);
+        void viewer(Map<String, dynamic> payload) => sockets.last.add(
+          jsonEncode({'type': 'observer_viewer', 'payload': payload}),
+        );
+        viewer({'state': 'loading'});
+        await settleNetwork(
+          () => find.text('Opening the viewer…').evaluate().isNotEmpty,
+        );
+        viewer({'state': 'live', 'data': 'not-base64!'});
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 30)),
+        );
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+        viewer({'state': 'live', 'data': 'aW52YWxpZC1pbWFnZQ=='});
+        await settleNetwork(
+          () => find
+              .text('Waiting for the next viewer frame.')
+              .evaluate()
+              .isNotEmpty,
+        );
+        viewer({
+          'state': 'live',
+          'data': 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lZkAAAAASUVORK5CYII=',
+        });
+        await settleNetwork(() => find.byType(Image).evaluate().isNotEmpty);
+        if (width < 880) {
+          await tester.tap(find.text('Terminal'));
+          await tester.pump();
+        }
         await tester.runAsync(() async {
           closingSockets.add(sockets.last);
           await sockets.last.close(1001, 'Owner disconnected');
@@ -244,6 +275,12 @@ void main() {
         await settleNetwork(
           () => sockets.length == 3 && find.text('Live').evaluate().isNotEmpty,
         );
+        hasAccess = false;
+        await draw();
+        expect(
+          find.text('Access removed or invitation expired.'),
+          findsOneWidget,
+        );
         await tester.tap(find.byTooltip('Close shared harness'));
         expect(closePressed, isTrue);
         await tester.pumpWidget(const SizedBox());
@@ -259,4 +296,44 @@ void main() {
       },
     );
   }
+  testWidgets(
+    'a restored pane without an invitation opens in the ended state',
+    (tester) async {
+      final app = AppNotifier(
+        config: const AppConfig(
+          apiBaseUrl: 'http://127.0.0.1:9',
+          localCliBaseUrl: 'http://127.0.0.1:9',
+        ),
+        authSession: AuthSession(),
+        configStore: null,
+      );
+      final grant = SharedHarness(
+        id: 'expired',
+        agentId: 'agent',
+        name: 'Demo',
+        expiresAt: DateTime(2000),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SharedHarnessPanel(
+              notifier: app,
+              pane: TerminalPane(id: 1, machineId: 'shared', agentId: 'agent'),
+              grant: grant,
+              hasAccess: false,
+              visible: true,
+              onClose: () {},
+            ),
+          ),
+        ),
+      );
+      expect(find.text('Sharing ended'), findsOneWidget);
+      expect(
+        find.text('Access removed or invitation expired.'),
+        findsOneWidget,
+      );
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+    },
+  );
 }

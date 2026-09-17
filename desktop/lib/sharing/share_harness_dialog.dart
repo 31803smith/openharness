@@ -217,6 +217,7 @@ class _ShareHarnessDialogState extends State<ShareHarnessDialog> {
                     hintText: 'ken@example.com, diego@example.com',
                   ),
                   onSubmitted: (_) => _invite(),
+                  onChanged: (_) => setState(() {}),
                 ),
                 const SizedBox(height: 12),
                 Row(
@@ -241,7 +242,9 @@ class _ShareHarnessDialogState extends State<ShareHarnessDialog> {
                 ),
                 const SizedBox(height: 12),
                 FilledButton(
-                  onPressed: _busy || _loading ? null : _invite,
+                  onPressed: _busy || _loading || _emails.text.trim().isEmpty
+                      ? null
+                      : _invite,
                   child: Text(_busy ? 'Saving…' : 'Share harness'),
                 ),
                 if (_error != null)
@@ -314,7 +317,8 @@ class _ShareHarnessDialogState extends State<ShareHarnessDialog> {
   Widget _recipient(Map<String, dynamic> share) {
     final email = share['email'] as String;
     final watching = (share['watching'] as num? ?? 0) > 0;
-    final expires = DateTime.tryParse(share['expiresAt'] as String? ?? '');
+    final expires = DateTime.tryParse(share['expiresAt'] as String? ?? '')
+        ?.toLocal();
     final subtitle =
         share['error'] as String? ??
         (share['pending'] == true
