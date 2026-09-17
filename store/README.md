@@ -148,7 +148,7 @@ Built-in entries derive this field from the manifest automatically.
 
 A package that is one folder of a bigger repository names it with `"path"`; install then fetches
 that folder alone. Run the conformance check and include a real example in the PR; the full test
-suite is currently triggered manually. Once merged, the next catalog publication lists it.
+suite is currently triggered manually. Once merged, the catalog publisher lists it automatically.
 The app offers the tile before the package is installed. `verified: true` marks built-in packages;
 community packages show their source on install.
 
@@ -160,14 +160,13 @@ and writes one `catalog.json` to the `store-catalog` branch. It uses GitHub only
 or release the app, run package setup scripts, or access cloud infrastructure. Authors do not
 edit a generated index.
 
-**Automation setup is pending.** The ready-to-install
-[workflow](tools/publish-store-catalog.workflow.yml) belongs at
-`.github/workflows/publish-store-catalog.yml`. A maintainer with permission to write workflow
-files can copy it there to publish automatically after package changes merge to `main`.
-It uses pinned official actions, limits write permission to the publishing job, and never runs
-on pull requests or forks. Until installed, a maintainer can publish from a clean, current
-`main` checkout with `node store/tools/catalog.mjs --publish`, supplying `GITHUB_TOKEN` with
-repository contents-write access.
+Package changes merged into `main` trigger
+[`Publish Store catalog`](../.github/workflows/publish-store-catalog.yml), which runs the publisher
+on `main` as merged; it uses pinned official actions, gives write permission to the publishing job
+alone, and never runs on pull requests or forks. **Actions → Publish Store catalog → Run workflow**
+republishes by hand. A maintainer can also publish from a clean, current `main` checkout with
+`node store/tools/catalog.mjs --publish`, supplying `GITHUB_TOKEN` with repository contents-write
+access.
 
 The CLI reads that public JSON over HTTPS, using conditional requests and a five-minute cache.
 Concurrent requests share one fetch. An open Store asks connected machines again every minute;

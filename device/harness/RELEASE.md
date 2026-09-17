@@ -59,7 +59,7 @@ commit + push** the `version.txt` bump). You can call the script directly too. I
 from `IDF_PATH` or `~/esp/esp-idf`; if a step fails before publishing, it reverts the `version.txt`
 bump so a failed run leaves no dangling version.
 
-**Publish prerequisites:** `gsutil` must be installed and authenticated (`gcloud auth login` /
+**Publish prerequisites:** `gcloud storage` must be installed and authenticated (`gcloud auth login` /
 service account) with write access to the bucket, and the bucket/objects must be **public-read** so
 devices can download without credentials.
 
