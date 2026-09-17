@@ -14,6 +14,7 @@ import * as C from './core.js'
 import { deriveTerminalBinaryKey, openTerminalBinary, sealTerminalBinary, type TerminalBinaryClear } from '../terminalBinary.js'
 import { pwCpaceGenerator, pwContext, stretchPassword } from './passwordPake.js'
 import { ReplayWindow } from './replayWindow.js'
+import { VIEWER_DOWN_TYPES } from '../viewerWire.js'
 
 type Frame = Record<string, unknown>
 
@@ -106,7 +107,8 @@ export class RelaySessionCrypto {
   /** Encrypt an outgoing (local app → remote machine) frame if its type requires it. */
   wrapOutgoing(frame: Frame): Frame {
     const type = frame.type as string | undefined
-    if (!type || !this.c2s || !C.isEncryptedDownType(type)) return frame
+    // CLI-to-CLI viewer forwarding is a negotiated extension; the shared crypto core stays byte-identical.
+    if (!type || !this.c2s || (!C.isEncryptedDownType(type) && !VIEWER_DOWN_TYPES.has(type))) return frame
     const payload = C.wrapPayload(this.c2s, 'p', this.c2sCounter++, type, undefined, frame.payload)
     return { ...frame, payload }
   }

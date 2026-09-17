@@ -4380,8 +4380,9 @@ class AppNotifier extends ChangeNotifier {
     final agent = machine?.agents.where((a) => a.id == agentId).firstOrNull;
     if (machine == null ||
         agent == null ||
-        (agent.viewerUrl == null && agent.viewerError == null))
+        (agent.viewerUrl == null && agent.viewerError == null)) {
       return;
+    }
     _dismissedViewers.remove(_viewerKey(machineId, agentId));
     _syncViewerPane(machine, agent);
     notifyListeners();

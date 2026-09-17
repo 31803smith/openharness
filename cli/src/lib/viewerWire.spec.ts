@@ -35,6 +35,18 @@ describe('viewer stream lifecycle and failure handling', () => {
     active.write(Buffer.from('data'))
     await vi.advanceTimersByTimeAsync(30001)
     expect(active.destroyed).toBe(true)
+    // Upload credit is not an HTTP response. A fully accepted POST still needs a header deadline.
+    const upload = new ViewerWire('c', () => true)
+    upload.write(Buffer.from('body'))
+    upload.handle('viewer_ack', { bytes: 4 })
+    await vi.advanceTimersByTimeAsync(30001)
+    expect(upload.destroyed).toBe(true)
+    // Headers do not forgive a stalled body in the opposite direction either.
+    const duplex = new ViewerWire('d', () => true)
+    duplex.write(Buffer.from('body'))
+    duplex.ready()
+    await vi.advanceTimersByTimeAsync(30001)
+    expect(duplex.destroyed).toBe(true)
   })
 
   it('handles failed sends, cancellation with queued writes and data arriving after close', () => {
