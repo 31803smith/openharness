@@ -596,8 +596,7 @@ class _NewAgentPageState extends State<NewAgentPage> {
                         // nothing to fold back to that the person would want.
                         if (!_moreEnginesOpen && _hiddenEngineCount > 0)
                           SettingsRow(
-                            title: '…',
-                            detail: '$_hiddenEngineCount more',
+                            title: '$_hiddenEngineCount more',
                             leading: Icon(
                               LucideIcons.ellipsis300,
                               size: 18,
