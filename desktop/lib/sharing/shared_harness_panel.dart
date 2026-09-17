@@ -41,6 +41,7 @@ class _SharedHarnessPanelState extends State<SharedHarnessPanel> {
   String _viewerMessage = 'Waiting for the live viewer…';
   Uint8List? _image;
   bool _viewerSelected = false, _ended = false;
+  int _generation = 0;
   @override
   void initState() {
     super.initState();
@@ -48,6 +49,7 @@ class _SharedHarnessPanelState extends State<SharedHarnessPanel> {
   }
 
   void _start() {
+    final generation = ++_generation;
     final uri = Uri.parse(widget.notifier.config.localCliBaseUrl)
         .replace(scheme: 'ws', path: '/api/local-ws');
     _terminal = TerminalSession(
@@ -69,9 +71,14 @@ class _SharedHarnessPanelState extends State<SharedHarnessPanel> {
       transportKind: WsTransportKind.localPlaintext,
       localWsUri: uri,
       accessTokenProvider: (_, _) async => '',
-      onAuthFailure: _end,
-      onLocalFailure: (code, reason) => _end(reason),
+      onAuthFailure: (reason) {
+        if (generation == _generation) _end(reason);
+      },
+      onLocalFailure: (code, reason) {
+        if (generation == _generation) _end(reason);
+      },
       onEvent: (frame) async {
+        if (generation != _generation) return;
         final type = frame['type'] as String,
             payload = Map<String, dynamic>.from(frame['payload'] as Map);
         if (type == 'observer_viewer') {
@@ -97,7 +104,7 @@ class _SharedHarnessPanelState extends State<SharedHarnessPanel> {
         }
       },
       onStatus: (status) {
-        if (!mounted || _ended) return;
+        if (!mounted || _ended || generation != _generation) return;
         setState(() {
           _status = status;
           _failure = null;
@@ -115,6 +122,7 @@ class _SharedHarnessPanelState extends State<SharedHarnessPanel> {
       },
     );
     _connection.onBinaryFrame = (bytes) async {
+      if (generation != _generation) return;
       final frame = decodeTerminalLocal(bytes);
       if (frame != null && !_ended) await _terminal.handleBinary(frame);
     };
@@ -142,6 +150,15 @@ class _SharedHarnessPanelState extends State<SharedHarnessPanel> {
     super.didUpdateWidget(oldWidget);
     if (!widget.hasAccess && !_ended) {
       _end('Access removed or invitation expired.');
+    } else if (widget.hasAccess &&
+        (!oldWidget.hasAccess || widget.grant.id != oldWidget.grant.id)) {
+      unawaited(_connection.close());
+      _terminal.dispose();
+      _ended = false;
+      _failure = null;
+      _image = null;
+      _status = ConnectionStatus.connecting;
+      _start();
     }
   }
 

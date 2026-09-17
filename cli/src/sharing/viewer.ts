@@ -71,6 +71,7 @@ export class ViewerCapture {
     })
     await new Promise<void>((resolve, reject) => {
       this.ws!.once('open', resolve); this.ws!.once('error', () => reject(new Error('The viewer renderer disconnected.')))
+      this.ws!.once('close', () => reject(new Error('The viewer renderer disconnected.')))
     })
     const page = await this.call('Target.createTarget', { url: 'about:blank' })
     const attached = await this.call('Target.attachToTarget', { targetId: page.targetId, flatten: true })
@@ -102,10 +103,10 @@ export class ViewerCapture {
     this.closed = true; this.failPending(); this.ws?.terminate(); this.ws = null
     const child = this.child; this.child = null
     if (child && child.exitCode === null && child.signalCode === null) {
-      child.kill('SIGTERM')
       await new Promise<void>(resolve => {
         const timer = setTimeout(() => { child.kill('SIGKILL'); resolve() }, 3000)
         child.once('exit', () => { clearTimeout(timer); resolve() })
+        child.kill('SIGTERM')
       })
     }
     const directory = this.directory; this.directory = null
@@ -129,6 +130,7 @@ export class SharedViewerPool {
       try {
         const next = viewerTarget(this.target(agentId))
         if (next !== current) { await capture?.stop(); capture = null; current = next }
+        if (stopped) return
         if (!next) send({ state: 'waiting', message: 'The viewer will appear when this harness produces an output.' })
         else {
           if (!capture) { send({ state: 'loading' }); capture = this.create(); await capture.start(next) }

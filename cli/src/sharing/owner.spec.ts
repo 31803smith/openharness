@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -8,7 +8,7 @@ import type { TerminalBackendCoordinator } from '../lib/terminalBackendCoordinat
 import type { TerminalStreamSink } from '../lib/terminalTypes.js'
 import { decodeTerminalLocal, TerminalBinaryKind } from '../lib/terminalBinary.js'
 import { HarnessGrantStore } from './grants.js'
-import { HarnessShareOwner } from './owner.js'
+import { HarnessShareOwner, type ShareOwnerDeps } from './owner.js'
 import { recipientHandshake, type ObserverCipher } from './crypto.js'
 
 describe('owner authority and read-only observation', () => {
@@ -16,7 +16,7 @@ describe('owner authority and read-only observation', () => {
   const identity = newIdentity()
   let frames: Array<{ id: string; type: string; payload: any }>
   let agents: Map<string, RegisteredSession>
-  let publish: ReturnType<typeof vi.fn>, send: ReturnType<typeof vi.fn>, watchViewer: ReturnType<typeof vi.fn>
+  let publish: Mock<ShareOwnerDeps['publish']>, send: Mock<ShareOwnerDeps['send']>, watchViewer: Mock<NonNullable<ShareOwnerDeps['watchViewer']>>
   let opened: Array<{ sink: TerminalStreamSink; handle: any }>
   let machineId: string
   beforeEach(() => {
@@ -26,13 +26,13 @@ describe('owner authority and read-only observation', () => {
     frames = []; opened = []; machineId = 'machine'
     agents = new Map([['agent', { agentId: 'agent', sessionId: 's', engine: 'codex',
       active: true, projectPath: '/tmp/project', runtimes: [{ backend: 'tmux', paneId: '%1' }],
-      primaryRuntimeKey: 'tmux:default:%1' } as RegisteredSession]])
+      primaryRuntimeKey: 'tmux:default:%1' } as unknown as RegisteredSession]])
     publish = vi.fn(async () => ({ status: 200, body: {} }))
     send = vi.fn((id, type, payload) => { frames.push({ id, type, payload }); return true })
     watchViewer = vi.fn((_id, callback) => { callback({ state: 'live', data: 'jpeg' }); return vi.fn() })
     owner = new HarnessShareOwner({ machineId: () => machineId, identity, grants: store,
       resolveAgent: id => agents.get(id), send, publish, watchViewer,
-      terminals: { openStream: async (_agent, _size, sink, readOnly) => {
+      terminals: { openStream: async (_agent: RegisteredSession, _size: unknown, sink: TerminalStreamSink, readOnly: boolean) => {
         expect(readOnly).toBe(true)
         const handle = { runtime: { backend: 'tmux', paneId: '%1' },
           snapshot: vi.fn(async () => ({ state: 'succeeded', value: { bytes: Buffer.from('hello'), cols: 120, rows: 40 } })),

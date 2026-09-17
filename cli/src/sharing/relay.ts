@@ -59,8 +59,9 @@ export class HarnessShareRelay {
               cipher = recipientHandshake(ephemeral, machineId, shareId, share.ownerPublicKey, frame.payload)
               ready()
             } else if (frame.type === 'observer_closed') {
-              onClosed(frame.payload?.retry === true ? 1012 : 4403, String(frame.payload?.reason || 'Sharing ended')); detach()
+              onClosed(frame.payload?.retry === true ? 1012 : 4403, String(frame.payload?.reason || 'Sharing ended'))
               if (!settled) { clearTimeout(timeout); reject(new Error('Sharing ended')) }
+              detach()
             } else if (frame.type === 'observer_frame' && cipher) {
               const clear = cipher.open(frame.payload)
               if (!clear) { onClosed(1011, 'Shared harness verification failed'); detach(); return }

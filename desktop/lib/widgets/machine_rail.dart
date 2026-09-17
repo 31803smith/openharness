@@ -873,7 +873,7 @@ class _AgentTree extends StatelessWidget {
       // nobody finds who does not already know it. Put where a new row would actually appear, it needs no
       // discovering. It joins `rows` rather than being appended after the loop so the guide's trunk runs
       // down to it and closes there, exactly as it would on a real last agent.
-      _NewAgentRow(
+      if (!state.machine.isShared) _NewAgentRow(
         notifier: notifier,
         machineId: state.machine.machineId,
         source: 'rail_tail',
@@ -1054,6 +1054,7 @@ class _AgentRowState extends State<_AgentRow> {
     final offlineSelectable =
         state.nodeOnline == false && agent.terminalAvailable;
     final enabled =
+        (state.machine.isShared && agent.terminalAvailable) ||
         offlineSelectable ||
         // `connected` never arrives until the local CLI has finished terminating E2EE for this
         // machine (or confirmed none is needed, for its own) — no separate readiness check left.
@@ -1082,7 +1083,7 @@ class _AgentRowState extends State<_AgentRow> {
       // Right-click opens the SAME menu the ⋯ does. Two menus carrying the same
       // two actions in two different shapes is the drift this avoids; the only
       // thing lost is opening at the cursor rather than at the button.
-      onSecondaryTap: _agentMenu.open,
+      onSecondaryTap: state.machine.isShared ? null : _agentMenu.open,
       child: Padding(
         // 28px is where a nested row's box starts, which is what the guide's
         // arm is drawn to reach (trunk at 19, arm 7 long, stopping 2px short of

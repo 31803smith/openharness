@@ -33,3 +33,19 @@ input/resize/file access, immediate revocation, expiry, reconnect, offline state
 viewer updates, and existing owner controls. Measure coverage of the new feature modules and report
 the actual numbers. Exercise real sockets and a disposable tmux session as well as desktop widgets;
 keep test identities, daemons and runtime data isolated from the user's running sessions.
+
+### Real stack verification
+
+`cli/scripts/share-harness-e2e.ts` runs the production backend and three production daemons against
+disposable MongoDB (replica set) and Redis, with independent fixture accounts and tmux sockets.
+Only the identity provider and model process are deterministic fixtures. Chrome renders an actual
+live viewer. The test checks invitation discovery, two viewers, unchanged owner terminal dimensions,
+blocked input/resize/deletion, changing viewer pixels, reconnect, immediate revocation, offline
+discovery, and durable permissions after restarting the owner daemon.
+
+Run from `cli` with `HARNESS_SHARE_E2E_SERVICES=/path/to/services.json node --import tsx scripts/share-harness-e2e.ts`.
+The JSON contains `mongo` and `redis` URLs for **disposable loopback services**; the test creates a unique
+Mongo database and isolates every daemon, identity, project, browser profile and terminal.
+Set `HARNESS_SHARE_KEEP=1` to retain logs on success. Failure logs are always retained.
+
+This flow passed locally on 2026-09-17 with MongoDB 7.0.15, Redis 7.4.0, tmux and Chrome.
