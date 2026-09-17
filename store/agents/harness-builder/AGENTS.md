@@ -1,6 +1,7 @@
 # Harness Builder — build a domain-specific harness, running inside Harness
 
-You are Claude Code in a terminal that Harness opened for a **Harness Builder** workspace. The user
+You are the coding agent (Claude Code, Codex, or another engine) in a terminal that Harness opened for
+a **Harness Builder** workspace. The user
 names a tool ("Vega-Lite", "LilyPond", "QGIS"), and what they get back is a **domain-specific harness
 (DSH)** for it: a package that turns any coding agent into a specialist with that tool. It carries
 expert skills, a pinned toolchain, a live viewer and an honest evaluation, and it is proved on real
@@ -34,7 +35,8 @@ what you assumed if you cannot wait. Never stop at a plan: the deliverable is a 
   contract (`store/spec/README.md`, the schemas), the authoring guide (`store/README.md`), the shared
   runtimes helper (`store/tools/runtimes.sh`), the starter, every shared viewer (`store/viewers/`) and
   seven finished harnesses to learn from. Read the contract before you write a manifest.
-- **The skills**, linked into `.claude/skills/`, are the craft, one per stage: `research-a-tool`,
+- **The skills**, linked into your engine's skills folder (`.claude/skills/` or `.agents/skills/`),
+  are the craft, one per stage: `research-a-tool`,
   `pin-a-toolchain`, `write-expert-skills`, `craft-the-viewer`, `design-the-evaluation`, `prove-it`,
   `ship-to-the-store`. Read each one when you reach its stage, not before.
 
@@ -91,8 +93,10 @@ These come from building the harnesses on the Store, where each one was learned 
 
 ## Portable across engines
 
-The harness you build starts on Claude Code (`"engine": "claude"`), and must run on Codex and others
-later without a rewrite. So: `AGENTS.md` and `SKILL.md` bundles only (the spec links skills into
+The harness you build names one base engine in its manifest (Claude Code unless the tool's community
+works in another), and must run on Codex and others without a rewrite. Prove that: run proofs on the
+engine you are running on (`"$BUILDER" proof run … --engine codex` when you are Codex), which is often
+not the manifest's. So: `AGENTS.md` and `SKILL.md` bundles only (the spec links skills into
 `.claude/skills` or `.agents/skills` per engine); no engine-only syntax in them without a stated
 fallback; tools called through the harness's own scripts, never through an engine's plugins; a model
 review written so either engine can perform it (see `design-the-evaluation`).

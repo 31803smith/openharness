@@ -29,6 +29,8 @@ const HELP = `builder — build a domain-specific harness in package/
   fresh [--keep]     setup, doctor and init on a simulated new machine; writes .builder/fresh.json
   proof open <id>    a workspace for the harness with its viewer running (shown live in the Studio)
   proof run <id> --prompt "…" [--engine claude|codex] [--every 15] [--timeout 45]
+                     (--engine defaults to $BUILDER_PROOF_ENGINE, else the harness's engine: run proofs on
+                     the engine you are, so they test the harness where you know it runs)
                      a fresh agent that knows only the harness turns the prompt into a result,
                      photographed as it works; returns at once — follow it with proof wait
   proof wait <id> [--minutes 9]
@@ -178,7 +180,7 @@ async function main() {
       }
       if (sub === 'run') {
         const started = await startProof(WORKSPACE, id, typeof a.prompt === 'string' ? a.prompt : '', {
-          engine: typeof a.engine === 'string' ? a.engine : undefined,
+          engine: typeof a.engine === 'string' ? a.engine : process.env.BUILDER_PROOF_ENGINE || undefined,
           every: Number(a.every ?? 15),
           timeoutMinutes: Number(a.timeout ?? 45),
           builderScript: SCRIPT,

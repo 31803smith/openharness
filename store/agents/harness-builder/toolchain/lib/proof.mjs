@@ -17,7 +17,9 @@ export const ENGINE_COMMANDS = {
   // Only the project's settings: the proof must not borrow this machine's personal instructions or
   // skills, or it proves the machine rather than the harness.
   claude: (prompt) => ['claude', ['-p', prompt, '--permission-mode', 'auto', '--output-format', 'stream-json', '--verbose', '--setting-sources', 'project,local']],
-  codex: (prompt) => ['codex', ['exec', '--approve-for-me', '--skip-git-repo-check', '--json', prompt]],
+  // Codex's automatic review inside the workspace-write sandbox, with network allowed: a harness's
+  // toolchain may fetch (a package index, map tiles) while it works.
+  codex: (prompt) => ['codex', ['exec', '--approve-for-me', '--skip-git-repo-check', '--json', '-c', 'sandbox_workspace_write.network_access=true', prompt]],
 }
 
 export function proofDir(workspace, id) {
@@ -119,11 +121,15 @@ function summarizeEvent(event) {
     return parts
   }
   if (event.type === 'result') return [{ kind: 'result', text: String(event.result ?? '').slice(0, 2000), isError: event.is_error, turns: event.num_turns, costUsd: event.total_cost_usd, ms: event.duration_ms }]
-  // codex exec --json
-  if (event.type === 'item.completed' || event.type === 'agent_message') {
-    const text = event.item?.text ?? event.message ?? ''
-    return text ? [{ kind: 'text', text: String(text).slice(0, 400) }] : []
+  // codex exec --json: items (messages, commands, file changes) and a usage line per turn.
+  if (event.type === 'item.completed') {
+    const item = event.item ?? {}
+    if (item.type === 'agent_message' && item.text) return [{ kind: 'text', text: String(item.text).slice(0, 2000) }]
+    if (item.type === 'command_execution') return [{ kind: 'tool', tool: 'shell', detail: String(item.command ?? '').slice(0, 200) }]
+    if (item.type === 'file_change') return [{ kind: 'tool', tool: 'edit', detail: (item.changes ?? []).map((c) => c.path?.split('/').slice(-2).join('/')).join(', ').slice(0, 200) }]
+    return []
   }
+  if (event.type === 'turn.completed') return [{ kind: 'usage', usage: event.usage }]
   return []
 }
 
@@ -144,6 +150,7 @@ export async function runProof(workspace, id) {
   const frames = []
   const started = Date.now()
   let finalMessage = null
+  let usage = null
 
   const child = spawn(bin, args, { cwd: ws, env: agentEnv(process.env, manifest, p.package, ws), detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
   let buffer = ''
@@ -157,8 +164,10 @@ export async function runProof(workspace, id) {
       buffer = buffer.slice(nl + 1)
       try {
         for (const item of summarizeEvent(JSON.parse(line))) {
+          if (item.kind === 'usage') { usage = item.usage; continue }
           activity.push({ at: Math.round((Date.now() - started) / 1000), ...item })
-          if (item.kind === 'result') finalMessage = item
+          // Claude Code ends with a result event; Codex's last agent message is its answer.
+          if (item.kind === 'result' || (item.kind === 'text' && proof.engine === 'codex')) finalMessage = item
         }
         if (activity.length > 200) activity.splice(0, activity.length - 200)
       } catch { /* a non-JSON line */ }
@@ -229,6 +238,7 @@ export async function runProof(workspace, id) {
     firstFrameWithContentAt: frames.find((f, i) => i > 0 && !f.error)?.at ?? null,
     verdict,
     finalMessage,
+    usage,
     frames,
     skillsLinked: existsSync(join(ws, skillsDirFor(proof.engine))) ? readdirSync(join(ws, skillsDirFor(proof.engine))) : [],
   }

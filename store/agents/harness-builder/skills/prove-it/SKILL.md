@@ -33,8 +33,9 @@ Write them as a user would: one or two sentences, concrete, no instructions abou
 
 It materializes a workspace from the package exactly as Harness does (template, init, `AGENTS.md`, skills
 linked for the engine), starts the harness's viewer on a free port (shown live in Builder Studio),
-installs the package with `harness dsh install --link` when the CLI is present, then runs a fresh
-**Claude Code** agent (`claude -p`, auto permission mode) in that workspace with the prompt. While it
+then runs a fresh agent in that workspace with the prompt: `claude -p` in auto permission mode, or
+`codex exec` with automatic review. Use `--engine` for the engine you are running on (Claude Code:
+`claude`; Codex: `codex`); skills are linked where that engine reads them. While it
 runs, it snapshots the viewer every few seconds into `.builder/proofs/easy/frames/` and records the
 verdict after each change. At the end it writes `.builder/proofs/easy/result.json` (the prompt, the
 final verdict, the agent's last message, timings, the frame list) and `viewer.png`.
