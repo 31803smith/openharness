@@ -1745,6 +1745,9 @@ void ui_init(void)
     lv_obj_set_style_text_font(s_na_eyebrow, &geist_reg_20, 0);
     lv_obj_set_style_text_color(s_na_eyebrow, COL_MUTED, 0);
     lv_obj_set_style_text_letter_space(s_na_eyebrow, 2, 0);
+    lv_obj_set_style_max_width(s_na_eyebrow, SAFE_CONTENT_W, 0);   // a tab or machine name: one line, dots after
+    lv_obj_set_height(s_na_eyebrow, lv_font_get_line_height(&geist_reg_20));
+    lv_label_set_long_mode(s_na_eyebrow, LV_LABEL_LONG_DOT);
     lv_label_set_text(s_na_eyebrow, "");
     s_na_title = lv_label_create(s_no_agents_tile);
     lv_obj_set_width(s_na_title, SAFE_CONTENT_W);
@@ -4738,7 +4741,14 @@ static void build_shell(proj_t *p)
     p->swarm_lbl = lv_label_create(ctl);
     lv_obj_set_style_text_font(p->swarm_lbl, CTL_CHIP_FONT, 0);   // the chip's own face and colour
     lv_obj_set_style_text_color(p->swarm_lbl, COL_FG, 0);
-    lv_obj_set_style_max_width(p->swarm_lbl, 260, 0);
+    // ONE LINE, ALWAYS. LONG_DOT only writes its dots when the text is taller than the label, and a
+    // label whose height is its content is never taller than its text — a long tab name wrapped to a
+    // second line inside a pill one line tall. Pin the height to the face's line and the dots come.
+    // 340 for the words, 364 with the pill's padding: the row sits at y≈130–175 on the round face, where
+    // the chord is 418 px wide at the narrowest, and SAFE_CONTENT_W is 384 for everything below it.
+    // It was 260 — "Autonomous Workshop" cut to "Autonomou…" with half the pill's room unused.
+    lv_obj_set_style_max_width(p->swarm_lbl, 340, 0);
+    lv_obj_set_height(p->swarm_lbl, lv_font_get_line_height(CTL_CHIP_FONT));
     lv_label_set_long_mode(p->swarm_lbl, LV_LABEL_LONG_DOT);
     // No ▾ after the name: the pill IS the affordance, as the Model chip was.
     p->model_lbl = NULL;    // the Model / Effort chips are off the tile; their painters accept NULL
@@ -5979,7 +5989,7 @@ static void swarm_picker_rebuild(void)
         lv_obj_t *nm = lv_label_create(row);
         lv_obj_set_style_text_font(nm, &geist_med_28, 0);
         lv_obj_set_style_text_color(nm, COL_FG, 0);
-        lv_obj_set_width(nm, lv_pct(100));
+        lv_obj_set_size(nm, lv_pct(100), lv_font_get_line_height(&geist_med_28));   // one line, dots after — see swarm_lbl
         lv_obj_set_style_text_align(nm, LV_TEXT_ALIGN_CENTER, 0);
         lv_label_set_long_mode(nm, LV_LABEL_LONG_DOT);
         lv_label_set_text(nm, w->name[0] ? w->name : "New swarm");
