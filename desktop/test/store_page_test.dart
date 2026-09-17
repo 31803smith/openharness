@@ -452,7 +452,10 @@ void main() {
         expect(_in('store-primary-action', find.text('Open')), findsOneWidget);
         await tester.tap(_key('store-primary-action'));
         await tester.pumpAndSettle();
-        expect(find.text('New Harness'), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('create-agent-submit')),
+          findsOneWidget,
+        );
         expect(app.swarms.length, tabs + 1);
         await tester.sendKeyEvent(LogicalKeyboardKey.escape);
         await tester.pumpAndSettle();
@@ -464,7 +467,10 @@ void main() {
 
         await tester.tap(_key('store-open:machine-1'));
         await tester.pumpAndSettle();
-        expect(find.text('New Harness'), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('create-agent-submit')),
+          findsOneWidget,
+        );
         await tester.sendKeyEvent(LogicalKeyboardKey.escape);
         await tester.pumpAndSettle();
         expect(app.swarms.length, tabs);
@@ -700,7 +706,7 @@ void main() {
       expect(_in('store-primary-action', find.text('Get')), findsOneWidget);
       await tester.tap(_key('store-primary-action'));
       await tester.pumpAndSettle();
-      expect(find.text('New Harness'), findsOneWidget);
+      expect(find.byKey(const ValueKey('create-agent-submit')), findsOneWidget);
       expect(app.installs, isEmpty);
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
       await tester.pumpAndSettle();

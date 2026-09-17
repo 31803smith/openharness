@@ -23,8 +23,10 @@ import 'package:harness/state/app_state.dart';
 import 'package:harness/core/project_folder.dart';
 import 'package:harness/state/pane_arrangement.dart';
 import 'package:harness/shared/widgets/app_choice_picker.dart';
-import 'package:harness/shared/widgets/app_select_field.dart';
+import 'package:harness/widgets/agent_picker.dart';
 import 'package:harness/widgets/new_agent_dialog.dart';
+
+import 'support/agent_picker.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -137,10 +139,7 @@ void main() {
       (engines) => engines.error = 'Check failed',
       app: app,
     );
-    await tester.ensureVisible(
-      find.byKey(const ValueKey('new-agent-quick-codex')),
-    );
-    await tester.tap(find.byKey(const ValueKey('new-agent-quick-codex')));
+    await chooseAgent(tester, 'codex');
     await tester.ensureVisible(find.byKey(const Key('new-agent-advanced')));
     await tester.tap(find.byKey(const Key('new-agent-advanced')));
     await tester.pumpAndSettle();
@@ -184,21 +183,14 @@ void main() {
     expect(retry, findsNothing);
     expect(find.text('20260907'), findsOneWidget);
     expect(find.text(pickedFolder), findsNothing);
-    expect(
-      tester
-          .widget<AppSelectField<String>>(
-            find.byKey(const Key('new-agent-engine-field')),
-          )
-          .value,
-      'codex',
-    );
+    expect(tester.widget<AgentPicker>(find.byType(AgentPicker)).value, 'codex');
     expect(app.profileChecks, ['machine-1']);
     expect(
       find.byKey(const Key('new-agent-codex-profile-field')),
       findsOneWidget,
     );
     expect(app.launches, isEmpty);
-    await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+    await tester.tap(find.byKey(const ValueKey('create-agent-submit')));
     await tester.pump();
     expect(app.launches.single, {
       'machine': 'machine-1',
@@ -237,10 +229,7 @@ void main() {
     await tester.ensureVisible(otherMachine);
     await tester.tap(otherMachine);
     await tester.pumpAndSettle();
-    await tester.ensureVisible(
-      find.byKey(const ValueKey('new-agent-quick-codex')),
-    );
-    await tester.tap(find.byKey(const ValueKey('new-agent-quick-codex')));
+    await chooseAgent(tester, 'codex');
     await tester.ensureVisible(find.byKey(const Key('new-agent-advanced')));
     await tester.tap(find.byKey(const Key('new-agent-advanced')));
     await tester.pumpAndSettle();
@@ -261,14 +250,7 @@ void main() {
           .value,
       'machine-2',
     );
-    expect(
-      tester
-          .widget<AppSelectField<String>>(
-            find.byKey(const Key('new-agent-engine-field')),
-          )
-          .value,
-      'codex',
-    );
+    expect(tester.widget<AgentPicker>(find.byType(AgentPicker)).value, 'codex');
     expect(find.text('20260907'), findsNothing);
     expect(app.launches, isEmpty);
     expect(tester.takeException(), isNull);

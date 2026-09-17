@@ -13,6 +13,8 @@ import 'package:harness/shared/theme/app_theme.dart' as grid;
 import 'package:harness/widgets/new_agent_dialog.dart';
 import 'package:harness/widgets/remote_folder_picker.dart';
 
+import 'support/agent_picker.dart';
+
 class _Folders extends AppNotifier {
   _Folders()
     : super(
@@ -393,10 +395,7 @@ void main() {
       );
       await tester.tap(find.text('Open'));
       await tester.pumpAndSettle();
-      await tester.ensureVisible(
-        find.byKey(const ValueKey('new-agent-quick-codex')),
-      );
-      await tester.tap(find.byKey(const ValueKey('new-agent-quick-codex')));
+      await chooseAgent(tester, 'codex');
       await tester.ensureVisible(
         find.byKey(const Key('new-agent-project-browse')),
       );
@@ -431,7 +430,7 @@ void main() {
       expect(find.text('target'), findsOneWidget);
       expect(find.text('/home/dev/target'), findsNothing);
       expect(app.launches, isEmpty);
-      await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+      await tester.tap(find.byKey(const ValueKey('create-agent-submit')));
       await tester.pumpAndSettle();
       expect(app.launches, [
         (machine: 'remote', engine: 'codex', folder: '/home/dev/target'),

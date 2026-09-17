@@ -13,6 +13,8 @@ import 'package:harness/state/app_state.dart';
 import 'package:harness/state/pane_arrangement.dart';
 import 'package:harness/widgets/new_agent_dialog.dart';
 
+import 'support/agent_picker.dart';
+
 class _Folders extends FileSelectorPlatform {
   @override
   Future<String?> getDirectoryPath({
@@ -215,10 +217,7 @@ void main() {
   ) async {
     final app = await open(tester);
     await pickMode(tester, 'Plan first');
-    await tester.ensureVisible(
-      find.byKey(const ValueKey('new-agent-quick-codex')),
-    );
-    await tester.tap(find.byKey(const ValueKey('new-agent-quick-codex')));
+    await chooseAgent(tester, 'codex');
     await tester.pumpAndSettle();
     expect(
       find.descendant(of: field, matching: find.text('Auto-approve')),
@@ -237,10 +236,7 @@ void main() {
   ) async {
     final app = await open(tester);
     await pickMode(tester, 'Ask first');
-    await tester.ensureVisible(
-      find.byKey(const ValueKey('new-agent-quick-codex')),
-    );
-    await tester.tap(find.byKey(const ValueKey('new-agent-quick-codex')));
+    await chooseAgent(tester, 'codex');
     await tester.pumpAndSettle();
     await create(tester);
     expect(app.launches.single, {

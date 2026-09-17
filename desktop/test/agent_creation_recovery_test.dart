@@ -630,14 +630,23 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('work'), findsOneWidget);
-      expect(find.widgetWithText(FilledButton, 'Create'), findsNothing);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('create-agent-submit')),
+          matching: find.text('New Harness'),
+        ),
+        findsNothing,
+      );
       final action = tester.widget<FilledButton>(
         find.widgetWithText(FilledButton, 'Check status'),
       );
       expect(action.focusNode!.hasFocus, isTrue);
       expect(find.text('Close'), findsOneWidget);
       // The original settings remain locked while the request is uncertain.
-      await tester.tap(find.text('Codex'), warnIfMissed: false);
+      await tester.tap(
+        find.byKey(const Key('new-agent-agent-field')),
+        warnIfMissed: false,
+      );
       await tester.pump();
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pump();

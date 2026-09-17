@@ -11,7 +11,7 @@ import 'package:harness/core/config.dart';
 import 'package:harness/core/engine_availability.dart';
 import 'package:harness/core/models.dart';
 import 'package:harness/shared/theme/app_theme.dart' as grid;
-import 'package:harness/shared/widgets/app_select_field.dart';
+import 'package:harness/widgets/agent_picker.dart';
 import 'package:harness/state/app_state.dart';
 import 'package:harness/store/store_controller.dart';
 import 'package:harness/store/store_editorial.dart';
@@ -411,13 +411,9 @@ void main() {
         find.byKey(const ValueKey('store-action:autonomous/blender')),
       );
       await tester.pumpAndSettle();
-      expect(find.text('New Harness'), findsOneWidget);
+      expect(find.byKey(const ValueKey('create-agent-submit')), findsOneWidget);
       expect(
-        tester
-            .widget<AppSelectField<String>>(
-              find.byKey(const Key('new-agent-engine-field')),
-            )
-            .value,
+        tester.widget<AgentPicker>(find.byType(AgentPicker)).value,
         'autonomous/blender',
       );
       expect(app.swarms.length, count + 1);
