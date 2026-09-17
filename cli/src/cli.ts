@@ -39,6 +39,7 @@ import { MachineListCache, machineListCachePath, withStaleMarker } from './devic
 import { DeviceLink } from './device/deviceLink.js'
 import { DeviceFleet } from './device/deviceFleet.js'
 import { registry, projectDisplayName, type RegisteredSession } from './lib/registry.js'
+import { engineSessionTitle } from './lib/sessionTitle.js'
 import { installAmpPlugin, installCodexHooks, installCommandCodeHooks, installCursorHooks, installDevinHooks, installGrokHooks, installAgyHooks, installCopilotHooks, installHermesHooks, installKiloPlugin, installOpencodePlugin, installPiExtension, installSessionHooks } from './lib/hooks.js'
 import { installOpencodeHarnessComputeSkill } from './lib/harnessComputeSkill.js'
 import { PID_FILE, daemonPort, isAlive, readPid } from './lib/daemonState.js'
@@ -1506,7 +1507,8 @@ async function runForeground(session: AuthSession): Promise<void> {
     const titles = await terminals.titles()
     if (titles.size === 0) return
     for (const session of registry.list()) {
-      const title = terminals.titleFor(session, titles)
+      // Codex's own thread name when it has one; otherwise what the engine put on its terminal.
+      const title = engineSessionTitle(session, terminals.titleFor(session, titles))
       if (!title) continue
       const before = projectDisplayName(session)
       const updated = registry.updateTitle(session.sessionId, title)

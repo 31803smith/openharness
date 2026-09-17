@@ -1048,7 +1048,7 @@ describe('agent identity: the process owns the agent, the session is bound to it
     expect(names.every((name) => typeof name === 'string' && name.length > 0)).toBe(true)
   })
 
-  it('gives new agents stable numbered names across binding and reload without changing custom names', async () => {
+  it('gives new agents stable numbered names until their session has a title, and a rename fixes a name', async () => {
     const { registry } = await loadRegistryModule()
     registry.load()
     const first = registry.openPendingAgent({ engine: 'opencode', runtimes: [{ backend: 'tmux', paneId: '%7' }], cwd: '/tmp/demo' })!
@@ -1056,11 +1056,16 @@ describe('agent identity: the process owns the agent, the session is bound to it
     expect(registry.displayName(first)).toBe('harness-1')
     expect(registry.displayName(second)).toBe('harness-2')
     const bound = registry.register({ engine: 'opencode', sessionId: 'session-numbered', tmuxPane: '%7', title: 'OC | Greeting' })!.entry
-    expect(registry.displayName(bound)).toBe('harness-1')
+    expect(registry.displayName(bound)).toBe('Greeting')
+    expect(bound.defaultName).toBe('harness-1')
+    registry.updateTitle('session-numbered', 'OC | Plan the launch')
+    expect(registry.displayName(bound)).toBe('Plan the launch')
     registry.rename(second.agentId, 'My project')
+    registry.updateTitle(second.agentId, 'OC | Something else')
+    expect(registry.displayName(registry.byAgent(second.agentId)!)).toBe('My project')
     const { registry: reloaded } = await loadRegistryModule()
     reloaded.load()
-    expect(reloaded.displayName(reloaded.byAgent(first.agentId)!)).toBe('harness-1')
+    expect(reloaded.displayName(reloaded.byAgent(first.agentId)!)).toBe('Plan the launch')
     expect(reloaded.displayName(reloaded.byAgent(second.agentId)!)).toBe('My project')
     const third = reloaded.openPendingAgent({ engine: 'codex', runtimes: [{ backend: 'tmux', paneId: '%9' }], cwd: '/tmp/demo' })!
     expect(reloaded.displayName(third)).toBe('harness-3')

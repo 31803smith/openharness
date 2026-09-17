@@ -15,6 +15,7 @@
 
 import { DSH_ID_RE } from '../dsh/manifest.js'
 import { AGENT_NAME_RE } from './engineLaunch.js'
+import { namingTitle } from './sessionTitle.js'
 import {
   closeSync,
   constants,
@@ -206,10 +207,24 @@ export interface RegisterInput {
 }
 
 /** Display name for a session's "project" tab/tile. A user rename (persisted override) is
- *  authoritative and FIXED. Harness-created agents start with a numbered name;
- *  discovered sessions retain their title/folder fallback. */
+ *  authoritative and FIXED. Until there is one, a session is called what its engine calls it — the
+ *  conversation title Claude Code puts on its terminal, Codex's thread name (sessionTitle.ts) — which
+ *  moves as the engine retitles it, and says what the agent is doing where harness-43 does not. The
+ *  numbered name a harness is created with stands in until the engine has a title, a name its creator
+ *  chose is kept like a rename, and a discovered session falls back to its folder. */
 export function projectDisplayName(s: RegisteredSession): string {
-  return NAME_OVERRIDES.get(s.sessionId) || NAME_OVERRIDES.get(s.agentId) || s.defaultName || titleDisplayName(s.title) || defaultProjectDisplayName(s)
+  // A name the creator chose ("Local model") is fixed like a rename; only a numbered default gives way.
+  const chosen = s.defaultName && !NUMBERED_DEFAULT_NAME.test(s.defaultName) ? s.defaultName : null
+  return NAME_OVERRIDES.get(s.sessionId) || NAME_OVERRIDES.get(s.agentId) || chosen
+    || sessionDisplayTitle(s) || s.defaultName || defaultProjectDisplayName(s)
+}
+
+/** The names a daemon numbers agents with: `harness-N`, and `agent-N` from before the rename. */
+const NUMBERED_DEFAULT_NAME = /^(?:harness|agent)-[1-9]\d*$/
+
+/** The engine's own name for this session, or null while it has none worth showing. */
+export function sessionDisplayTitle(s: RegisteredSession): string | null {
+  return namingTitle(titleDisplayName(s.title), { engine: s.engine, cwd: s.cwd, defaultName: s.defaultName })
 }
 
 const FILE = join(env.ADAPTER_DATA_DIR, 'registry.json')
