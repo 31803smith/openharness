@@ -291,6 +291,7 @@ class AppNotifier extends ChangeNotifier {
   final AuthSession session;
   AppConfig config;
   late ApiClient api;
+
   /// Signs in, and says whether this computer is signed in: the harness CLI in a desktop build,
   /// [ViewerServices.login] in a viewer build — which has no CLI — under one name, so every call
   /// site reads the same in both.
@@ -3458,6 +3459,7 @@ class AppNotifier extends ChangeNotifier {
         localModelEngines: capable is List
             ? capable.whereType<String>().map((e) => e.toLowerCase()).toSet()
             : null,
+        gridCli: GridCli.parse(response['gridCli']),
       );
     } catch (_) {
       // NOT `gridName: null` with an empty list — that is the shape of "this account has no grid",

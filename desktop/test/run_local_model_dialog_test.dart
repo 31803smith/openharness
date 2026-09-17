@@ -33,7 +33,7 @@ class _MemoryStore implements LocalKeyValueStore {
 /// rather than the dialog. Anything else asked of it (a terminal open after the create, say) is
 /// left pending, which is what a machine that has not answered yet looks like.
 class _Conn extends WsConn {
-  _Conn({required this.engines, required this.gridName})
+  _Conn({required this.engines, required this.gridName, this.gridCli})
     : super(
         wsBaseUrl: 'ws://fixture.invalid',
         autonomousEnv: 'test',
@@ -46,6 +46,10 @@ class _Conn extends WsConn {
 
   final List<Map<String, Object?>> engines;
   final String? gridName;
+
+  /// Which `grid` the machine would run — `managed`, `path` or `missing`; null = an older daemon
+  /// that does not say.
+  final String? gridCli;
 
   /// Every `agent_create` payload, verbatim — the wire is what the plan specifies.
   final creates = <Map<String, dynamic>>[];
@@ -60,7 +64,11 @@ class _Conn extends WsConn {
       case 'engines_probe':
         return Future.value({'engines': engines});
       case 'grid_models_list':
-        return Future.value({'gridName': gridName, 'models': <Object?>[]});
+        return Future.value({
+          'gridName': gridName,
+          'models': <Object?>[],
+          if (gridCli != null) 'gridCli': gridCli,
+        });
       case 'fs_list_dir':
         return Future.value({
           'path': '/home/remote',
@@ -95,10 +103,11 @@ void main() {
   void build({
     List<Map<String, Object?>> engines = _installed,
     String? gridName = 'someone-7f3a91c4',
+    String? gridCli,
     ConfigStore? configStore,
     bool local = true,
   }) {
-    conn = _Conn(engines: engines, gridName: gridName);
+    conn = _Conn(engines: engines, gridName: gridName, gridCli: gridCli);
     notifier = AppNotifier(
       config: AppConfig.dev,
       authSession: AuthSession(),
@@ -208,6 +217,37 @@ void main() {
     expect(statusText(tester), 'Sign in to Harness again to set this up.');
     expect(find.textContaining('grid'), findsNothing);
     expect(startEnabled(tester), isFalse);
+  });
+
+  testWidgets('a machine without the CLI says so, and disables Start', (
+    tester,
+  ) async {
+    // `gridCli: missing` is the daemon saying there is no `grid` on this computer to serve with —
+    // the agent it would start dies at the skill's second step. Said in the feature's name, never
+    // the binary's, like every other sentence here.
+    build(gridCli: 'missing');
+    await open(tester);
+
+    expect(
+      statusText(tester),
+      "Harness Compute isn't installed on this machine.",
+    );
+    expect(find.textContaining('grid'), findsNothing);
+    expect(startEnabled(tester), isFalse);
+  });
+
+  testWidgets('a missing CLI is said before a missing account grid', (
+    tester,
+  ) async {
+    // Both missing: the machine's is the one to fix first, and the sign-in sentence would send the
+    // person somewhere that cannot help until it is.
+    build(gridCli: 'missing', gridName: null);
+    await open(tester);
+
+    expect(
+      statusText(tester),
+      "Harness Compute isn't installed on this machine.",
+    );
   });
 
   testWidgets('Not now creates nothing', (tester) async {

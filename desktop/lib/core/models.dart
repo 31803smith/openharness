@@ -676,6 +676,25 @@ class GridModel {
   const GridModel({required this.id, required this.node});
 }
 
+/// Which `grid` a machine would run, as its daemon reports beside the model list (`gridCli`).
+///
+/// `managed` is the runtime Harness itself carries and pins; `path` is one the person installed
+/// (runnable, but not the pin); `missing` is nothing to run — the one value that changes what the
+/// picker and the Local model dialog say, because an agent started on that machine would die on
+/// its first `grid`. An older daemon sends no field, read as null: nothing is claimed either way.
+enum GridCli {
+  managed,
+  path,
+  missing;
+
+  static GridCli? parse(Object? raw) => switch (raw) {
+    'managed' => GridCli.managed,
+    'path' => GridCli.path,
+    'missing' => GridCli.missing,
+    _ => null,
+  };
+}
+
 /// The picker's whole answer: which grid was asked, and what it offers.
 ///
 /// `gridName` is null when the machine has no grid yet — told apart from "a grid with nothing on
@@ -689,6 +708,10 @@ class GridModels {
   /// daemon is older and sends no such list — read as "offer everything", the behaviour before.
   final Set<String>? localModelEngines;
 
+  /// Which `grid` the machine would run — see [GridCli]. Null when the daemon is older and does
+  /// not say, which claims nothing.
+  final GridCli? gridCli;
+
   /// Did the machine ANSWER? False when the request failed — offline, timed out, or a daemon too
   /// old to know the call.
   ///
@@ -701,15 +724,17 @@ class GridModels {
     required this.gridName,
     required this.models,
     this.localModelEngines,
+    this.gridCli,
     this.reachable = true,
   });
 
   /// The machine could not be asked. Says nothing about the account, because nothing is known —
-  /// including which engines it would have offered.
+  /// including which engines it would have offered, or whether it has a `grid`.
   const GridModels.unreachable()
     : gridName = null,
       models = const [],
       localModelEngines = null,
+      gridCli = null,
       reachable = false;
 
   /// Whether [engine] may be pointed at one of [models]: unknown engines are refused only when the

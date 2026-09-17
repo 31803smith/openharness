@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../core/models.dart';
 import '../shared/theme/app_theme.dart' as grid;
 import '../shared/widgets/app_checkbox.dart';
 import '../shared/widgets/app_dialog.dart';
@@ -37,7 +38,7 @@ Future<({bool skipNextTime})?> showRunLocalModelDialog(
 /// machine line's place, with Start disabled. Present and satisfied, nothing
 /// is said — a checklist of green ticks would make a two-second decision look
 /// like a setup screen.
-enum _Prerequisite { opencode, grid }
+enum _Prerequisite { opencode, gridCli, grid }
 
 class _RunLocalModelDialog extends StatefulWidget {
   const _RunLocalModelDialog({required this.notifier, required this.machineId});
@@ -54,6 +55,10 @@ class _RunLocalModelDialogState extends State<_RunLocalModelDialog> {
   /// machine answers; the sentence is only earned by an answer, the same rule
   /// New Agent keeps for a missing engine.
   bool? _hasGrid;
+
+  /// Which `grid` the machine would run, once it answers — null until then,
+  /// and null from a daemon too old to say, which claims nothing.
+  GridCli? _gridCli;
 
   bool _skipNextTime = false;
   bool _skipHovered = false;
@@ -77,7 +82,10 @@ class _RunLocalModelDialogState extends State<_RunLocalModelDialog> {
   Future<void> _readGrid() async {
     final models = await widget.notifier.gridModels(widget.machineId);
     if (!mounted) return;
-    setState(() => _hasGrid = models.gridName != null);
+    setState(() {
+      _hasGrid = models.gridName != null;
+      _gridCli = models.gridCli;
+    });
   }
 
   /// The first missing prerequisite, or null when nothing has been found
@@ -90,6 +98,9 @@ class _RunLocalModelDialogState extends State<_RunLocalModelDialog> {
         return _Prerequisite.opencode;
       }
     }
+    // The machine's own gap before the account's: a sign-in cannot help until
+    // there is a `grid` on this computer to sign in with.
+    if (_gridCli == GridCli.missing) return _Prerequisite.gridCli;
     if (_hasGrid == false) return _Prerequisite.grid;
     return null;
   }
@@ -106,6 +117,8 @@ class _RunLocalModelDialogState extends State<_RunLocalModelDialog> {
         // nothing about the machine: the body is the whole message.
         final status = switch (missing) {
           _Prerequisite.opencode => 'Needs opencode on this machine first.',
+          _Prerequisite.gridCli =>
+            "Harness Compute isn't installed on this machine.",
           _Prerequisite.grid => 'Sign in to Harness again to set this up.',
           null => null,
         };

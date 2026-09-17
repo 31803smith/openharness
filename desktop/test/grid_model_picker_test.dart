@@ -17,6 +17,7 @@ class _Conn extends WsConn {
     this.models, {
     this.localModelEngines,
     this.gridName,
+    this.gridCli,
     this.fails = false,
   }) : super(
          wsBaseUrl: 'ws://fixture.invalid',
@@ -38,6 +39,10 @@ class _Conn extends WsConn {
   /// be told apart from "no grid".
   final String? gridName;
 
+  /// Which `grid` the machine would run — `managed`, `path` or `missing`; null = an older daemon
+  /// that does not say.
+  final String? gridCli;
+
   /// Make the request FAIL, the way an offline machine or a daemon too old for the call does.
   final bool fails;
 
@@ -52,6 +57,7 @@ class _Conn extends WsConn {
       'gridName': gridName ?? (models.isEmpty ? null : 'someone-7f3a91c4'),
       'models': models,
       if (localModelEngines != null) 'localModelEngines': localModelEngines,
+      if (gridCli != null) 'gridCli': gridCli,
     };
   }
 }
@@ -63,6 +69,7 @@ void main() {
     List<Map<String, Object?>> models = const [],
     List<String>? localModelEngines,
     String? gridName,
+    String? gridCli,
     bool fails = false,
   }) {
     notifier = AppNotifier(
@@ -73,6 +80,7 @@ void main() {
         models,
         localModelEngines: localModelEngines,
         gridName: gridName,
+        gridCli: gridCli,
         fails: fails,
       ),
     );
@@ -161,6 +169,23 @@ void main() {
     // served, not a thing the picker asks anyone to know about.
     expect(find.textContaining('grid'), findsNothing);
   });
+
+  testWidgets(
+    'a machine without the CLI says so, ahead of anything about the account',
+    (tester) async {
+      // The account has a grid; the machine has no `grid` to serve it with. The machine's sentence
+      // wins — it is the one thing a person can act on — and, like the rest, names the feature and
+      // never the binary.
+      build(gridName: 'someone-7f3a91c4', gridCli: 'missing');
+      await open(tester);
+      expect(
+        find.text("Harness Compute isn't installed on this machine."),
+        findsOneWidget,
+      );
+      expect(find.text('No local models on this account yet.'), findsNothing);
+      expect(find.textContaining('grid'), findsNothing);
+    },
+  );
 
   testWidgets(
     'a grid serving nothing says nothing — the run row is the answer',
@@ -465,7 +490,15 @@ void main() {
       // A picker on an engine whose move has never been watched work is a menu that looks like a
       // choice and may not be one — and the cost of finding out is an agent answering on a model
       // nobody asked for.
-      for (final engine in ['cursor', 'hermes', 'grok', 'pi', 'kilo', 'amp', 'devin']) {
+      for (final engine in [
+        'cursor',
+        'hermes',
+        'grok',
+        'pi',
+        'kilo',
+        'amp',
+        'devin',
+      ]) {
         expect(modelPickerSupports(engine), isFalse, reason: engine);
       }
       // Unknown and absent are NO, not "probably fine".
@@ -502,10 +535,7 @@ void main() {
       expect(button.dy, greaterThan(caption.dy));
       // And the rule is a rule — a line either side of the caption, not just a label.
       expect(
-        find.descendant(
-          of: find.byType(Row),
-          matching: find.byType(Container),
-        ),
+        find.descendant(of: find.byType(Row), matching: find.byType(Container)),
         findsWidgets,
       );
     });

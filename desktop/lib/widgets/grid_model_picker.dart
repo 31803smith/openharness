@@ -265,7 +265,9 @@ class _GridModelPickerState extends State<GridModelPicker> {
         // the menu so it reads as the section's one action rather than as a wider row.
         //
         // Offered whatever THIS pane's engine can do: it opens a new pane, on an engine that can.
-        _ManagerInvitation(onPressed: () => close(const _Choice.runLocalModel())),
+        _ManagerInvitation(
+          onPressed: () => close(const _Choice.runLocalModel()),
+        ),
       ],
     );
     if (chosen == null) return;
@@ -291,6 +293,11 @@ class _GridModelPickerState extends State<GridModelPicker> {
   /// nothing (null): the "Talk to Local model manager" row under it is what a person does about that.
   String? _emptySentence(GridModels answer) {
     if (!answer.reachable) return 'Could not reach this machine.';
+    // The machine's gap before the account's: with no `grid` on this computer there is nothing a
+    // sign-in could set up here, and the feature's name is the only word for it a person knows.
+    if (answer.gridCli == GridCli.missing) {
+      return "Harness Compute isn't installed on this machine.";
+    }
     if (answer.gridName == null) return 'No local models on this account yet.';
     return null;
   }
@@ -395,12 +402,17 @@ class _GridModelPickerState extends State<GridModelPicker> {
   }
 
   static bool _sameAnswer(GridModels a, GridModels b) {
-    if (a.reachable != b.reachable || a.gridName != b.gridName) return false;
+    if (a.reachable != b.reachable ||
+        a.gridName != b.gridName ||
+        a.gridCli != b.gridCli) {
+      return false;
+    }
     if (a.models.length != b.models.length) return false;
     for (var i = 0; i < a.models.length; i += 1) {
       if (a.models[i].id != b.models[i].id ||
-          a.models[i].node != b.models[i].node)
+          a.models[i].node != b.models[i].node) {
         return false;
+      }
     }
     return true;
   }

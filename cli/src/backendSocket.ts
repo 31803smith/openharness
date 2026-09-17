@@ -27,6 +27,7 @@ import { registry, projectDisplayName, type RegisteredSession } from './lib/regi
 import { ENGINES, type AgentEngine } from './engines/types.js'
 import { listDir } from './lib/fsBrowse.js'
 import { linkCodexProfile, listCodexProfiles } from './lib/codexProfiles.js'
+import { gridCliPresence } from './lib/gridExec.js'
 import { gridCapableEngines, parseGridLaunchOverride, type GridLaunchOverride } from './lib/gridLaunch.js'
 import { listGridModels, resolveGridTarget } from './lib/gridModels.js'
 import { AGENT_NAME_RE, FirstPromptUnsupportedError, MAX_FIRST_PROMPT_CHARS, NamedAgentUnsupportedError, supportsFirstPrompt, supportsNamedAgent } from './lib/engineLaunch.js'
@@ -1484,6 +1485,11 @@ export class BackendSocket {
             // whose retarget the daemon would refuse. An older app ignores the field; an older
             // daemon omits it, which the app reads as "offer everything", as before.
             localModelEngines: gridCapableEngines(),
+            // Whether this MACHINE has a `grid` to run at all — `managed`, `path` or `missing` —
+            // as distinct from `gridName`, which is about the account. The Local model dialog was
+            // gating on the account alone and starting an agent whose second step is `grid`; this
+            // is what lets it, and the picker, say so first. An older app ignores the field.
+            gridCli: gridCliPresence(),
           })
           return
         }

@@ -1469,6 +1469,45 @@ describe('agent_create with a prompt, a name and a named agent', () => {
   })
 })
 
+/**
+ * The picker and the Local model dialog gate on `gridName` — whether the ACCOUNT has a grid — and
+ * had nothing to tell them whether the MACHINE has a `grid` to run at all. A user with no CLI got a
+ * dialog that started an agent, which died at the skill's second step. The answer travels beside
+ * the list, as `localModelEngines` does, and says which grid it is: the managed runtime, one found
+ * on PATH, or none.
+ */
+describe('grid_models_list says whether this machine has a grid CLI', () => {
+  const { gridName: GRID_NAME, plan } = fakeGridAnswers()
+
+  let fake: FakeGrid | null = null
+  afterEach(async () => {
+    fake?.dispose()
+    fake = null
+    wsMock.instances.length = 0
+  })
+
+  async function listModels(): Promise<Record<string, unknown> | undefined> {
+    const socket = new BackendSocket('token')
+    socket.connect()
+    const ws = wsMock.instances[0]
+    ws.open()
+    ws.message({ t: 'down', connId: 'web-1', frame: { type: 'machine_meta', payload: { name: 'mac', gridName: GRID_NAME } } })
+    ws.message({ t: 'down', connId: 'web-1', frame: { type: 'grid_models_list', payload: { requestId: 'r' } } })
+    await vi.waitFor(() => expect(parseSent(ws).some((item) => (item.frame as { type?: string } | undefined)?.type === 'grid_models_list_result')).toBe(true), { timeout: 10_000 })
+    const reply = parseSent(ws)
+      .map((item) => item.frame as { type?: string; payload?: Record<string, unknown> } | undefined)
+      .find((frame) => frame?.type === 'grid_models_list_result')
+    await socket.stop()
+    return reply?.payload
+  }
+
+  it('names the grid it would run — the fixture is a developer override, so `path`', async () => {
+    fake = installFakeGrid(plan)
+
+    expect(await listModels()).toMatchObject({ gridName: GRID_NAME, gridCli: 'path' })
+  })
+})
+
 /** The read-only hardware line for the run-a-harness-compute dialog, answered next to `grid_models_list`. */
 
 describe('Autonomous direct isolation from existing relay/browser behavior', () => {
