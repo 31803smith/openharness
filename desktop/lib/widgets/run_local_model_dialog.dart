@@ -212,7 +212,11 @@ class _RunLocalModelDialogState extends State<_RunLocalModelDialog> {
     final current = widget.notifier.stateOf(_machineId) ?? machines.firstOrNull;
     if (current == null) return const SizedBox.shrink();
     if (!widget.chooseMachine || machines.length < 2) {
-      return _machineRow(current, opens: false);
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [_machineRow(current, opens: false), _where(current)],
+      );
     }
     final visible = machines.take(3).toList();
     if (!visible.any((m) => m.machine.machineId == _machineId)) {
@@ -225,7 +229,7 @@ class _RunLocalModelDialogState extends State<_RunLocalModelDialog> {
         Padding(
           padding: const EdgeInsets.only(bottom: 8),
           child: Text(
-            'Pick the machine it should work on.',
+            'Which computer should it look after?',
             style: TextStyle(
               fontFamily: grid.AppFont.sans,
               fontSize: 12.5,
@@ -234,9 +238,32 @@ class _RunLocalModelDialogState extends State<_RunLocalModelDialog> {
           ),
         ),
         _chips(visible, machines),
+        _where(current),
       ],
     );
   }
+
+  /// One sentence under the machine, saying what the choice means in plain
+  /// words: where the model will live, and that the picker everywhere sees it.
+  /// "This computer" is said outright, because a hostname alone does not tell
+  /// a person which of their machines they are sitting at.
+  Widget _where(MachineState m) => Padding(
+    padding: const EdgeInsets.only(top: 8),
+    child: Text(
+      m.isLocalMachine
+          ? 'The model will run on this computer (${m.machine.displayName}). '
+                'Agents on any machine can use it.'
+          : 'The model will run on ${m.machine.displayName}, not on this '
+                'computer. Agents on any machine can use it.',
+      key: const Key('run-local-model-where'),
+      style: TextStyle(
+        fontFamily: grid.AppFont.sans,
+        fontSize: 12,
+        height: 1.4,
+        color: grid.AppPalette.textSecondary,
+      ),
+    ),
+  );
 
   Widget _chips(List<MachineState> visible, List<MachineState> machines) => Row(
     children: [
@@ -382,11 +409,12 @@ class _RunLocalModelDialogState extends State<_RunLocalModelDialog> {
                       ),
                       const TextSpan(
                         text:
-                            " is an agent that looks after the models on this "
-                            "computer. Say what you need and it helps you pick "
-                            "one that fits both this machine and the work, then "
-                            "sets it up for you. Once one is up, pick it in any "
-                            "agent's model picker.",
+                            " is an agent that looks after the models on one "
+                            "of your computers. Say what you need and it helps "
+                            "you pick a model that fits that computer and the "
+                            "work, then sets it up there. Once a model is up, "
+                            "every agent on every machine can switch to it "
+                            "from its model picker.",
                       ),
                     ],
                   ),

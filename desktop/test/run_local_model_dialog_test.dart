@@ -152,9 +152,10 @@ void main() {
     expect(find.text('Models that live on your machine'), findsOneWidget);
     expect(
       find.text(
-        "Local model manager is an agent that looks after the models on this computer. Say what "
-        "you need and it helps you pick one that fits both this machine and the work, then sets "
-        "it up for you. Once one is up, pick it in any agent's model picker.",
+        "Local model manager is an agent that looks after the models on one of your computers. "
+        "Say what you need and it helps you pick a model that fits that computer and the work, "
+        "then sets it up there. Once a model is up, every agent on every machine can switch to "
+        "it from its model picker.",
       ),
       findsOneWidget,
     );
@@ -181,8 +182,15 @@ void main() {
     expect(find.byKey(const Key('run-local-model-machine')), findsOneWidget);
     expect(find.text('studio-7'), findsOneWidget);
     expect(find.text('This machine'), findsOneWidget);
+    // And one plain sentence saying what that means.
+    expect(
+      find.text(
+        'The model will run on this computer (studio-7). Agents on any machine can use it.',
+      ),
+      findsOneWidget,
+    );
     // No chips, no "…", no prompt to pick: one machine is a statement, not a choice.
-    expect(find.text('Pick the machine it should work on.'), findsNothing);
+    expect(find.text('Which computer should it look after?'), findsNothing);
     expect(
       find.byKey(const ValueKey('run-local-model-machine-local')),
       findsNothing,
@@ -510,6 +518,13 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('studio-7'), findsOneWidget);
+    // Said plainly that this is NOT the computer the person is sitting at.
+    expect(
+      find.text(
+        'The model will run on studio-7, not on this computer. Agents on any machine can use it.',
+      ),
+      findsOneWidget,
+    );
     expect(
       find.byKey(const ValueKey('run-local-model-machine-local')),
       findsNothing,
@@ -518,7 +533,7 @@ void main() {
       find.byKey(const ValueKey('run-local-model-machine-studio')),
       findsNothing,
     );
-    expect(find.text('Pick the machine it should work on.'), findsNothing);
+    expect(find.text('Which computer should it look after?'), findsNothing);
 
     await tester.tap(start);
     await tester.pumpAndSettle();
@@ -581,7 +596,7 @@ void main() {
     await tester.pumpAndSettle();
     // Both machines as chips on one row, this computer first, the door's machine chosen — and
     // one sentence saying what the chips are for.
-    expect(find.text('Pick the machine it should work on.'), findsOneWidget);
+    expect(find.text('Which computer should it look after?'), findsOneWidget);
     final localChip = find.byKey(
       const ValueKey('run-local-model-machine-local'),
     );
