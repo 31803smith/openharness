@@ -505,7 +505,8 @@ class _ResultRowState extends State<_ResultRow> {
                   ],
                 ),
               ),
-              const SizedBox(width: 8),
+              // Carries its own leading gap, so an agent row that prints
+              // nothing here leaves no gutter behind either.
               _Action(row: row, openable: _openable),
             ],
           ),
@@ -560,18 +561,30 @@ class _Mark extends StatelessWidget {
 /// What a tap will do, said in a word.
 ///
 /// The desktop's picker labels its rows the same way, and on a list mixing two
-/// kinds the label is what separates "this opens a terminal" from "this asks you
-/// for a password" before anything is tapped.
+/// kinds the label is what separates "this asks you for a password" from "this
+/// just shows you the machine" before anything is tapped.
+///
+/// ⚠️ Agent rows no longer draw one. Their label only ever said "Open", which is
+/// what tapping any row does — a boxed word repeating that down the whole
+/// Agents section read as a button beside each line rather than a description
+/// of it, and it is the whole row that takes the tap. Machines keep theirs
+/// because theirs distinguishes: Unlock and View are two different destinations.
+///
+/// The exception is an agent whose terminal has gone. Dimming alone leaves the
+/// person tapping a row that cannot answer and reading nothing about why, so
+/// that one keeps its words.
 class _Action extends StatelessWidget {
   const _Action({required this.row, required this.openable});
 
   final PhoneSearchResult row;
   final bool openable;
 
-  String get _label {
+  /// Null where the row says nothing — an agent that opens, which is every
+  /// agent row bar the ones with no terminal left.
+  String? get _label {
     if (!openable) return 'No terminal';
     return switch (row.kind) {
-      PhoneSearchKind.agent => 'Open',
+      PhoneSearchKind.agent => null,
       PhoneSearchKind.machine =>
         row.machine?.needsLink ?? false ? 'Unlock' : 'View',
     };
@@ -580,18 +593,27 @@ class _Action extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     AppTheme.watch(context);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: AppGlass.hair),
-      ),
-      child: Text(
-        _label,
-        style: TextStyle(
-          color: AppPalette.textFaint,
-          fontSize: 11,
-          fontWeight: FontWeight.w600,
+    final label = _label;
+    // ⚠️ The gutter belongs to the label, not to the row. A bare
+    // [SizedBox.shrink] beside a gap the caller kept would leave an 8px column
+    // down the right of every agent row, holding space for a word that is no
+    // longer printed.
+    if (label == null) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(left: 8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: AppGlass.hair),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: AppPalette.textFaint,
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+          ),
         ),
       ),
     );
