@@ -91,4 +91,3 @@ async function updatePackage(opts: DshUpdateOptions): Promise<DshInstallResult> 
     }
   }
 }
-

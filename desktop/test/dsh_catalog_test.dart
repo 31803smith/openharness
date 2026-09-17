@@ -110,6 +110,84 @@ void main() {
       );
     },
   );
+  for (final (response, message) in <(Object, String)>[
+    ({'ok': false, 'detail': 'miss compiler'}, 'miss compiler'),
+    ({'ok': false}, 'Update failed on Test host'),
+    (
+      const WsRequestFailure(responseType: 'dsh_update', code: 'UNSUPPORTED'),
+      'Update the harness CLI on Test host to update harnesses',
+    ),
+    (
+      const WsRequestFailure(
+        responseType: 'dsh_update',
+        code: 'UNSUPPORTED_ON_REMOTE',
+      ),
+      'Update the harness CLI on Test host to update harnesses',
+    ),
+    (
+      const WsRequestFailure(
+        responseType: 'dsh_update',
+        code: 'DSH_BUSY',
+        detail: 'Another update is running',
+      ),
+      'Another update is running',
+    ),
+    (
+      const WsRequestFailure(responseType: 'dsh_update', code: 'INTERNAL'),
+      'Update failed on Test host (INTERNAL)',
+    ),
+    (
+      const WsRequestTimeout('dsh_update'),
+      'Test host is still updating. Try again in a few minutes.',
+    ),
+    (StateError('disconnected'), 'Update failed on Test host'),
+  ]) {
+    test(
+      'update failure $response preserves installed versions and allows retry',
+      () async {
+        final connection = _Connection()
+          ..answer = (_, _) async {
+            if (response is Map<String, dynamic>) return response;
+            throw response;
+          };
+        final app = createApp(connectionForTest: (_) => connection);
+        addTearDown(app.dispose);
+        final entry = DshEntry.fromJson({
+          ..._circuit,
+          'installed': true,
+          'installedCommit': 'a' * 40,
+          'availableCommit': 'b' * 40,
+          'updateAvailable': true,
+        })!;
+        final catalog = app.stateOf('m')!.dsh..replace([entry]);
+        expect(await app.updateDsh('m', entry.id), message);
+        expect(catalog[entry.id], same(entry));
+        expect(catalog[entry.id]!.hasUpdate, isTrue);
+        expect(catalog.runs[entry.id]!.failed, isTrue);
+        expect(connection.calls.map((call) => call.$1), ['dsh_update']);
+
+        final failedRun = catalog.runs[entry.id];
+        connection.answer = (type, _) async => type == 'dsh_update'
+            ? {'ok': true}
+            : {
+                'dsh': [
+                  {..._circuit, 'installed': true, 'installedCommit': 'b' * 40},
+                ],
+              };
+        expect(await app.updateDsh('m', entry.id), isNull);
+        expect(catalog.runs[entry.id], isNot(same(failedRun)));
+        expect(catalog[entry.id]!.installedCommit, 'b' * 40);
+        expect(catalog[entry.id]!.hasUpdate, isFalse);
+      },
+    );
+  }
+  test('updating a removed machine sends no request', () async {
+    final connection = _Connection();
+    final app = createApp(connectionForTest: (_) => connection);
+    addTearDown(app.dispose);
+    expect(await app.updateDsh('removed', 'acme/thing'), 'Machine not found');
+    expect(connection.calls, isEmpty);
+  });
   _authorAndKindTests();
   _productPageTests();
   _installRunTests();
