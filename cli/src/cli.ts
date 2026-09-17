@@ -888,6 +888,10 @@ async function startCommand(foreground: boolean, repair: boolean = false): Promi
     // lock, for the daemon that comes up while we are waiting our turn.
     const running = readPid()
     if (running && isAlive(running)) {
+      // `--repair` still does its provisioning here: it touches the managed runtimes, never the
+      // bundle, and the live daemon picks a grid laid down now up on its next resolve (see
+      // repairManagedRuntimes). Without this, a new pin could only be followed by a restart.
+      if (repair) await repairManagedRuntimes(false)
       console.log(`machine already running (pid ${running}) — it auto-reconnects.`)
       console.log('  check: harness status   ·   stop: harness stop   ·   update now: harness update')
       process.exit(0)
@@ -5008,6 +5012,24 @@ const launchDeps = defaultLaunchDeps(LOG_FILE, daemonPort())
 
 // ── daemon start / stop / status ───────────────────────────────────────────────────────────────
 
+/**
+ * `--repair`'s provisioning, in the open: the managed Node runtime (and the launcher that names it),
+ * then the managed grid. Returns the repaired Node, or null when there was nothing to repair.
+ *
+ * Called for the daemon a `start` is about to spawn — and for one that is ALREADY UP. The runtimes
+ * live beside the bundle, not in it, and the daemon reads `current-grid` on every resolve, so a grid
+ * laid down here is the one its next spawn runs, with no restart; the daemon's own call follows the
+ * pin quietly on every start (runForeground), and this is where a person watches it happen. A
+ * FOREGROUND start becomes the daemon itself and runForeground's own call prints to this same
+ * terminal — once is enough, so the grid step is skipped there.
+ */
+async function repairManagedRuntimes(foreground: boolean): Promise<string | null> {
+  const repaired = await ensureManagedRuntime((m) => console.log(m))
+  if (repaired) ensureLauncher(repaired, (m) => console.log(m))
+  if (!foreground) await ensureManagedGrid((m) => console.log(m))
+  return repaired
+}
+
 /** Daemonize (or run inline) with the saved SSO session. */
 async function launch(foreground: boolean, repair: boolean = false): Promise<void> {
   const session = readAuthSession()
@@ -5017,16 +5039,8 @@ async function launch(foreground: boolean, repair: boolean = false): Promise<voi
   // provisioning explicitly, for the rare machine whose launcher predates the managed runtime.
   let runtimeNode: string | null = managedNodePath()
   if (repair) {
-    const repaired = await ensureManagedRuntime((m) => console.log(m))
-    if (repaired) {
-      runtimeNode = repaired
-      ensureLauncher(repaired, (m) => console.log(m))
-    }
-    // The managed grid too, in the open, for the daemon this command is about to spawn: it follows
-    // its pin quietly on every start (runForeground), and `--repair` is where a person watches it
-    // happen. A FOREGROUND start becomes the daemon itself and runForeground's own call prints to
-    // this same terminal — once is enough.
-    if (!foreground) await ensureManagedGrid((m) => console.log(m))
+    const repaired = await repairManagedRuntimes(foreground)
+    if (repaired) runtimeNode = repaired
   }
   // Foreground mode (supervisor) OR dev/tsx (can't cleanly spawn a .ts detached) → run inline.
   if (foreground || SCRIPT_PATH.endsWith('.ts')) {
