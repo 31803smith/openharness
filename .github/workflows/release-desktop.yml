@@ -121,10 +121,6 @@ jobs:
   # means a broken one costs seconds. Runs beside `version`, so it is free in wall clock.
   preflight:
     runs-on: ubuntu-latest
-    env:
-      # The `secrets` context cannot be read from a step-level `if:`, so reduce it to a boolean
-      # here — job-level `env:` can see it. Holds "true"/"false", never the value itself.
-      HAS_WIF: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER != '' }}
     steps:
       # GCP auth, WITHOUT a long-lived key — the same pattern release.yml and production-be-build.yaml
       # already run. A service-account JSON key is a bearer credential with no expiry: it is only as
@@ -137,22 +133,14 @@ jobs:
       # that cannot use the external-account credential WIF issues, so it fails on every call while
       # the identical `gcloud storage` call works. Do not reintroduce gsutil here.
       #
-      # Two steps, not one, only for the duration of the cutover: WIF whenever the
-      # GCP_WORKLOAD_IDENTITY_PROVIDER secret exists, the key only when it does not. DELETE the
-      # second step (and the GCP_SA_KEY secret, and the key itself in GCP) once a desktop release has
-      # gone green on the first — an unused key that still authenticates is still a liability.
-      # NOTE release-tmux-runtime.yml still uses the key: check it before deleting the secret.
+      # Federation is the only path: the GCP_SA_KEY fallback and the key behind it were retired on
+      # 2026-09-17. If this step fails, fix the provider or the service account's binding — do not
+      # reintroduce a key.
       - name: Authenticate to GCP (workload identity federation)
-        if: env.HAS_WIF == 'true'
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-      - name: Authenticate to GCP (service-account key — legacy fallback)
-        if: env.HAS_WIF != 'true'
-        uses: google-github-actions/auth@v2
-        with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
       - uses: google-github-actions/setup-gcloud@v2
       - name: Verify GCS write access
         run: |
@@ -179,9 +167,6 @@ jobs:
       # The script's own env override, pointed at this build's scratch file instead of the real
       # manifest. The artifacts still land on their real GCS paths; only the keys land here.
       METADATA_PATH: ${{ needs.version.outputs.scratch_prefix }}/macos-${{ matrix.variant }}.json
-      # The `secrets` context cannot be read from a step-level `if:`, so reduce it to a boolean
-      # here — job-level `env:` can see it. Holds "true"/"false", never the value itself.
-      HAS_WIF: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER != '' }}
     defaults:
       run:
         working-directory: desktop
@@ -215,16 +200,10 @@ jobs:
           apple-app-password: ${{ secrets.APPLE_APP_PASSWORD }}
 
       - name: Authenticate to GCP (workload identity federation)
-        if: env.HAS_WIF == 'true'
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-      - name: Authenticate to GCP (service-account key — legacy fallback)
-        if: env.HAS_WIF != 'true'
-        uses: google-github-actions/auth@v2
-        with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
       - uses: google-github-actions/setup-gcloud@v2
 
       # SIGN_IDENTITY is read twice here: by publish-macos-variant.sh, re-signing the Intel build once
@@ -260,9 +239,6 @@ jobs:
     env:
       TARGET_ARCH: ${{ matrix.arch }}
       METADATA_PATH: ${{ needs.version.outputs.scratch_prefix }}/linux-${{ matrix.arch }}.json
-      # The `secrets` context cannot be read from a step-level `if:`, so reduce it to a boolean
-      # here — job-level `env:` can see it. Holds "true"/"false", never the value itself.
-      HAS_WIF: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER != '' }}
     defaults:
       run:
         working-directory: desktop
@@ -321,16 +297,10 @@ jobs:
           echo "APPIMAGETOOL=$RUNNER_TEMP/appimagetool" >> "$GITHUB_ENV"
 
       - name: Authenticate to GCP (workload identity federation)
-        if: env.HAS_WIF == 'true'
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-      - name: Authenticate to GCP (service-account key — legacy fallback)
-        if: env.HAS_WIF != 'true'
-        uses: google-github-actions/auth@v2
-        with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
       - uses: google-github-actions/setup-gcloud@v2
 
       - name: Build and upload linux-${{ matrix.arch }}
@@ -346,21 +316,12 @@ jobs:
     env:
       METADATA_PATH: ${{ needs.version.outputs.metadata_path }}
       SCRATCH_PREFIX: ${{ needs.version.outputs.scratch_prefix }}
-      # The `secrets` context cannot be read from a step-level `if:`, so reduce it to a boolean
-      # here — job-level `env:` can see it. Holds "true"/"false", never the value itself.
-      HAS_WIF: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER != '' }}
     steps:
       - name: Authenticate to GCP (workload identity federation)
-        if: env.HAS_WIF == 'true'
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-      - name: Authenticate to GCP (service-account key — legacy fallback)
-        if: env.HAS_WIF != 'true'
-        uses: google-github-actions/auth@v2
-        with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
       - uses: google-github-actions/setup-gcloud@v2
 
       - name: Merge every platform's key into the manifest in one write
@@ -491,22 +452,12 @@ jobs:
     needs: [version, build-macos, build-linux, publish]
     if: always()
     runs-on: ubuntu-latest
-    env:
-      # The `secrets` context cannot be read from a step-level `if:`, so reduce it to a boolean
-      # here — job-level `env:` can see it. Holds "true"/"false", never the value itself.
-      HAS_WIF: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER != '' }}
     steps:
       - name: Authenticate to GCP (workload identity federation)
-        if: env.HAS_WIF == 'true'
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-      - name: Authenticate to GCP (service-account key — legacy fallback)
-        if: env.HAS_WIF != 'true'
-        uses: google-github-actions/auth@v2
-        with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
       - uses: google-github-actions/setup-gcloud@v2
       - name: Remove the scratch manifests
         env:
