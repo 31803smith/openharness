@@ -244,10 +244,9 @@ class _TerminalPageState extends State<TerminalPage>
       widget.isActive && (_keyboardIsUp || _keyboardRequested);
 
   /// A tap on the terminal while no keyboard is up or coming: voice input,
-  /// already recording. Null while the keyboard is, so the tap is xterm's and
-  /// the keyboard stays.
-  VoidCallback? get _onInputTap =>
-      _shouldFocus ? null : () => unawaited(widget.voice.open());
+  /// waiting on its mic button. Null while the keyboard is, so the tap is
+  /// xterm's and the keyboard stays.
+  VoidCallback? get _onInputTap => _shouldFocus ? null : widget.voice.open;
 
   /// The Keyboard button in voice input. What was heard is typed into the
   /// prompt rather than dropped, so the keyboard picks up where the voice left

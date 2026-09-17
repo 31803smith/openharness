@@ -15,6 +15,8 @@ import 'voice_panel_parts.dart';
 /// the backend's `/api/voice/stt`, which transcribes a finished recording. Send
 /// works mid-take for that reason — it ends the take and sends what it heard.
 ///
+/// Opening it records nothing: the mic button starts a take.
+///
 /// It sits where the keyboard would, alone: [TerminalKeyBar] belongs to the
 /// keyboard, so this panel carries its own `⌄`.
 ///
@@ -52,8 +54,6 @@ class VoiceInputPanel extends StatelessWidget {
       listenable: voice,
       builder: (context, _) {
         final status = voice.status;
-        final hasWords = voice.transcript.isNotEmpty;
-        final canFinish = hasWords || status == VoiceInputStatus.listening;
         return ExcludeFocus(
           // Same reason as the key bar's: nothing here may take focus from the
           // terminal the keyboard button is about to hand it to.
@@ -90,10 +90,14 @@ class VoiceInputPanel extends StatelessWidget {
                           icon: LucideIcons.arrowUp300,
                           label: 'Send',
                           emphasized: true,
+                          // Live with nothing said too: Send is then Enter
+                          // for what is already in the prompt — see
+                          // `TerminalInputDock`. Dead only while a take is
+                          // opening or its words are still on the way.
                           onTap:
                               canSend &&
-                                  canFinish &&
                                   !voice.isSending &&
+                                  status != VoiceInputStatus.starting &&
                                   status != VoiceInputStatus.transcribing
                               ? onSend
                               : null,

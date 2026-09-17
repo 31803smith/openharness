@@ -4,6 +4,7 @@ import 'package:harness_mobile/phone/terminal_input_dock.dart';
 import 'package:harness_mobile/phone/terminal_key_bar.dart';
 import 'package:harness_mobile/phone/voice_input_controller.dart';
 import 'package:harness_mobile/phone/voice_input_panel.dart';
+import 'package:harness_mobile/terminal/terminal_binary.dart';
 import 'package:harness_mobile/terminal/terminal_session.dart';
 
 import 'voice_fakes.dart';
@@ -14,6 +15,7 @@ void main() {
   late VoiceInputController voice;
   late TerminalSession session;
   late List<(String, Map<String, dynamic>)> frames;
+  late List<TerminalBinaryFrame> keystrokes;
   late int dismissals;
   late int keyboardRequests;
 
@@ -27,6 +29,7 @@ void main() {
       preferredLocales: const [],
     );
     frames = [];
+    keystrokes = [];
     dismissals = 0;
     keyboardRequests = 0;
     session =
@@ -39,7 +42,10 @@ void main() {
               frames.add((type, payload));
               return true;
             },
-            sendBinary: (_) async => true,
+            sendBinary: (frame) async {
+              keystrokes.add(frame);
+              return true;
+            },
           )
           ..status = TerminalSessionStatus.controlling
           ..streamId = 's';
@@ -86,14 +92,19 @@ void main() {
     tester,
   ) async {
     await pumpDock(tester);
-    await voice.open();
+    voice.open();
     await tester.pump();
 
     expect(find.byType(TerminalKeyBar), findsNothing);
     expect(find.byType(VoiceInputPanel), findsOneWidget);
-    expect(find.text('Listening…'), findsOneWidget);
+    // Open is not recording: the mic waits to be pressed.
+    expect(find.text('Tap the mic to talk'), findsOneWidget);
+    expect(recorder.starts, 0);
 
     backend.replies.add('summarise the diff');
+    await tester.tap(find.byKey(const ValueKey('voice-mic')));
+    await tester.pump();
+    expect(find.text('Listening…'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('voice-mic')));
     await tester.pump();
     expect(find.text('summarise the diff'), findsOneWidget);
@@ -112,7 +123,8 @@ void main() {
     session.status = TerminalSessionStatus.takenOver;
     await pumpDock(tester);
     backend.replies.add('hello');
-    await voice.open();
+    voice.open();
+    await voice.startListening();
     await voice.stopListening();
     await tester.pump();
 
@@ -125,7 +137,7 @@ void main() {
 
   testWidgets('Keyboard and ⌄ hand back to the page', (tester) async {
     await pumpDock(tester);
-    await voice.open();
+    voice.open();
     await tester.pump();
 
     await tester.tap(find.byKey(const ValueKey('voice-keyboard')));
@@ -133,8 +145,28 @@ void main() {
 
     expect(keyboardRequests, 1);
     expect(dismissals, 1);
-    // The page is what closes it; this dock only reports the taps.
-    voice.close();
+  });
+
+  testWidgets('with nothing said, Send is Enter for what the prompt holds', (
+    tester,
+  ) async {
+    await pumpDock(tester);
+    voice.open();
+    await tester.pump();
+
+    await tester.tap(find.byKey(const ValueKey('voice-send')));
+    await tester.pump();
+    // The input path queues its send on a future chain the fake clock does not
+    // drain; a real turn of the event loop does.
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+
+    expect(frames, isEmpty, reason: 'no message: nothing was said');
+    expect(
+      keystrokes
+          .where((frame) => frame.kind == TerminalBinaryKind.input)
+          .expand((frame) => frame.bytes),
+      [13],
+    );
   });
 
   testWidgets('Send mid-sentence finishes the take and sends it', (
@@ -142,7 +174,8 @@ void main() {
   ) async {
     backend.replies.add('ship it');
     await pumpDock(tester);
-    await voice.open();
+    voice.open();
+    await voice.startListening();
     await tester.pump();
 
     await tester.tap(find.byKey(const ValueKey('voice-send')));
@@ -156,7 +189,7 @@ void main() {
     tester,
   ) async {
     await pumpDock(tester);
-    await voice.open();
+    voice.open();
     await tester.pump();
     expect(find.text('EN'), findsOneWidget);
 
@@ -167,13 +200,12 @@ void main() {
 
     expect(find.text('VI'), findsOneWidget);
     expect(voice.language, 'vi');
-    voice.close();
-    await tester.pumpAndSettle();
   });
 
   testWidgets('the mic stops a take and starts the next', (tester) async {
     await pumpDock(tester);
-    await voice.open();
+    voice.open();
+    await voice.startListening();
     await tester.pump();
 
     await tester.tap(find.byKey(const ValueKey('voice-mic')));

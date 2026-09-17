@@ -102,11 +102,19 @@ class VoiceInputController extends ChangeNotifier {
   /// A code from [voiceLanguages].
   String get language => _language;
 
-  /// Opens the panel already recording — what a tap on the terminal does.
-  Future<void> open() {
-    _open.value = true;
-    return startListening();
-  }
+  /// Whether Send has speech to send: words already heard, or a take still
+  /// being recorded that Send will finish first.
+  bool get hasSpeech =>
+      _heard.isNotEmpty || _status == VoiceInputStatus.listening;
+
+  /// Opens the panel — what a tap on the terminal does. It does NOT record.
+  ///
+  /// ⚠️ The microphone is the mic button's alone. Opening straight into a
+  /// recording turned every tap on the terminal — to put the caret back, to
+  /// send what was already typed — into a take of room noise that came back
+  /// as "didn't catch that", and a microphone that switches itself on is not
+  /// one anybody asked for.
+  void open() => _open.value = true;
 
   /// Closes the panel, discarding anything not sent.
   void close() {

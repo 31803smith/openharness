@@ -31,17 +31,39 @@ void main() {
 
   tearDown(() => voice.dispose());
 
-  test('opening is recording: the panel is up and the mic is on', () async {
-    await voice.open();
+  test('opening puts the panel up and leaves the microphone off', () {
+    voice.open();
 
     expect(voice.isOpen, isTrue);
+    expect(voice.status, VoiceInputStatus.idle);
+    expect(recorder.starts, 0);
+  });
+
+  test('the mic button is what records', () async {
+    voice.open();
+
+    await voice.toggleListening();
+
     expect(voice.status, VoiceInputStatus.listening);
     expect(recorder.recording, isTrue);
   });
 
+  test(
+    'Send has speech only once something was said or is being said',
+    () async {
+      expect(voice.hasSpeech, isFalse);
+
+      await voice.startListening();
+      expect(voice.hasSpeech, isTrue);
+
+      await voice.stopListening();
+      expect(voice.hasSpeech, isFalse, reason: 'the take came back empty');
+    },
+  );
+
   test('stopping sends the take to the backend and keeps its words', () async {
     backend.replies.add('fix the failing test');
-    await voice.open();
+    await voice.startListening();
 
     await voice.stopListening();
 
@@ -54,7 +76,7 @@ void main() {
     'the words wait for the backend: nothing shows mid-transcription',
     () async {
       backend.pending = Completer<String>();
-      await voice.open();
+      await voice.startListening();
 
       final stopping = voice.stopListening();
       await Future<void>.delayed(Duration.zero);
@@ -69,7 +91,7 @@ void main() {
 
   test('a second take adds to what the first one heard', () async {
     backend.replies.addAll(['run the tests', 'then commit']);
-    await voice.open();
+    await voice.startListening();
     await voice.toggleListening();
 
     await voice.toggleListening();
@@ -80,20 +102,20 @@ void main() {
 
   test('a refused microphone says so, and the next open asks again', () async {
     recorder.permitted = false;
-    await voice.open();
+    await voice.startListening();
 
     expect(voice.status, VoiceInputStatus.unavailable);
     expect(voice.notice, VoiceNotice.unavailable);
 
     recorder.permitted = true;
     voice.close();
-    await voice.open();
+    await voice.startListening();
     expect(voice.status, VoiceInputStatus.listening);
   });
 
   test('closing while the permission prompt is up records nothing', () async {
     recorder.pendingPermission = Completer<bool>();
-    final opening = voice.open();
+    final opening = voice.startListening();
     expect(voice.status, VoiceInputStatus.starting);
 
     voice.close();
@@ -106,7 +128,7 @@ void main() {
 
   test('a failed transcription says so and adds nothing', () async {
     backend.fails = true;
-    await voice.open();
+    await voice.startListening();
 
     await voice.stopListening();
 
@@ -115,7 +137,7 @@ void main() {
   });
 
   test('an empty transcript comes back as a notice, not a message', () async {
-    await voice.open();
+    await voice.startListening();
 
     await voice.stopListening();
 
@@ -129,7 +151,7 @@ void main() {
       length: const Duration(seconds: 3),
       peak: 0,
     );
-    await voice.open();
+    await voice.startListening();
 
     await voice.stopListening();
 
@@ -139,7 +161,7 @@ void main() {
 
   test('a take with no audio at all is said so too', () async {
     recorder.captured = null;
-    await voice.open();
+    await voice.startListening();
 
     await voice.stopListening();
 
@@ -149,7 +171,7 @@ void main() {
 
   test('send hands over everything heard and empties the panel', () async {
     backend.replies.add('open a PR');
-    await voice.open();
+    await voice.startListening();
     await voice.stopListening();
 
     final delivered = <String>[];
@@ -164,7 +186,7 @@ void main() {
 
   test('send mid-sentence ends the take and sends it with the rest', () async {
     backend.replies.addAll(['open a PR', 'for this branch']);
-    await voice.open();
+    await voice.startListening();
     await voice.stopListening();
     await voice.startListening();
 
@@ -180,7 +202,7 @@ void main() {
 
   test('a take that fails mid-send sends none of the message', () async {
     backend.replies.add('delete the');
-    await voice.open();
+    await voice.startListening();
     await voice.stopListening();
     await voice.startListening();
     backend.fails = true;
@@ -195,7 +217,7 @@ void main() {
 
   test('a send that fails keeps the words for another try', () async {
     backend.replies.add('deploy');
-    await voice.open();
+    await voice.startListening();
     await voice.stopListening();
 
     await voice.submit((_) async => false);
@@ -207,7 +229,7 @@ void main() {
 
   test('closing mid-transcription drops the words when they arrive', () async {
     backend.pending = Completer<String>();
-    await voice.open();
+    await voice.startListening();
     final stopping = voice.stopListening();
     await Future<void>.delayed(Duration.zero);
 
@@ -220,7 +242,7 @@ void main() {
   });
 
   test('closing while recording throws the recording away', () async {
-    await voice.open();
+    await voice.startListening();
 
     voice.close();
 
@@ -232,7 +254,7 @@ void main() {
     'handing over to the keyboard transcribes the take in progress',
     () async {
       backend.replies.addAll(['rename the', 'module']);
-      await voice.open();
+      await voice.startListening();
       await voice.stopListening();
       await voice.startListening();
 
@@ -256,7 +278,7 @@ void main() {
     () async {
       await voice.selectLanguage('vi');
       backend.replies.add('xin chào');
-      await voice.open();
+      await voice.startListening();
       await voice.stopListening();
 
       expect(backend.calls.single.lang, 'vi');

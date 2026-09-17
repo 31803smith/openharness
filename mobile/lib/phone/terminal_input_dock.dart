@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:xterm/xterm.dart';
 
 import 'package:harness_mobile/terminal/terminal_session.dart';
 
@@ -39,6 +40,26 @@ class TerminalInputDock extends StatelessWidget {
   final VoidCallback? onPickImage;
   final VoidCallback? onTakePhoto;
 
+  /// Send: what was said, or — with nothing said — what is already in the
+  /// prompt.
+  ///
+  /// Speech goes the composer's own path, not as typed bytes: the machine
+  /// injects it as one turn and owns the submit Enter — see
+  /// `TerminalSession.sendComposerText`.
+  ///
+  /// ⚠️ With no speech, Send is Enter. The prompt can hold text this panel
+  /// never saw — typed, pasted, or dictated by the keyboard's own mic before
+  /// switching back — and a Send that stayed dead over it left no way to send
+  /// that text short of raising the keyboard again for its return key.
+  void _send() {
+    if (voice.hasSpeech) {
+      unawaited(voice.submit(session.sendComposerText));
+      return;
+    }
+    session.terminal.keyInput(TerminalKey.enter);
+    voice.clear();
+  }
+
   @override
   Widget build(BuildContext context) => ValueListenableBuilder<bool>(
     valueListenable: voice.openState,
@@ -63,10 +84,7 @@ class TerminalInputDock extends StatelessWidget {
               VoiceInputPanel(
                 voice: voice,
                 canSend: session.acceptsInput,
-                // The composer's own path, not typed bytes: the machine injects
-                // it as one turn and owns the submit Enter — see
-                // `TerminalSession.sendComposerText`.
-                onSend: () => unawaited(voice.submit(session.sendComposerText)),
+                onSend: _send,
                 onUseKeyboard: onUseKeyboard,
                 onDismiss: onDismiss,
               ),
