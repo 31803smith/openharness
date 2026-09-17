@@ -272,12 +272,12 @@ class _TerminalPageState extends State<TerminalPage>
   }
 
   /// Whether an input on screen is THIS page's — the keyboard, or voice input
-  /// in its place — the question the header chrome asks, which [_keyboardUp]
-  /// alone answers wrongly.
+  /// in its place — the question the machine row at the foot of the page asks,
+  /// which [_keyboardUp] alone answers wrongly.
   ///
   /// Voice input counts for the same reason the keyboard does: the panel takes
-  /// the keyboard's place, and the header actions and the machine row are
-  /// chrome the page does not need while someone is talking to the agent.
+  /// the keyboard's place, and a status line under it is a row the terminal
+  /// loses while someone is talking to the agent.
   ///
   /// ⚠️ [_keyboardUp] means "an inset exists", not "this page raised it". A
   /// pushed page with a text field — search, rename — raises one of its own,
@@ -285,7 +285,7 @@ class _TerminalPageState extends State<TerminalPage>
   /// and so still records the keyboard as up. It then stops receiving ticks
   /// once it is no longer the route being laid out, so the fall back to zero
   /// after that page closes never reaches it: the flag stays true forever and
-  /// the header controls it hides never come back.
+  /// the row it hides never comes back.
   ///
   /// [ModalRoute.isCurrent] is what separates the two. False while anything is
   /// stacked above, so an inset belonging to that page is not read as this
@@ -365,7 +365,7 @@ class _TerminalPageState extends State<TerminalPage>
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      // The panel opening or closing moves the header chrome — see
+      // The panel opening or closing hides or shows the machine row — see
       // [_ownsInput]. Its open STATE only: what it hears repaints the panel.
       listenable: Listenable.merge([widget.notifier, widget.voice.openState]),
       builder: (context, _) {
@@ -456,8 +456,7 @@ class _TerminalPageState extends State<TerminalPage>
                     // tab puts on its fab: creating needs the machine to list
                     // its folders and name its engines, so one that is offline
                     // or still wants its password cannot host a new agent.
-                    if (!_ownsInput &&
-                        machine != null &&
+                    if (machine != null &&
                         phoneMachineStatusOf(machine) ==
                             PhoneMachineStatus.ready)
                       _HeaderAction(
@@ -482,25 +481,30 @@ class _TerminalPageState extends State<TerminalPage>
                     // [openPhoneSearch] is the same search that spans agents
                     // and machines.
                     //
-                    // ⚠️ Hidden while the keyboard or voice input is up, with
-                    // `+`. The header is one row, and a terminal being typed or
-                    // talked into is the one moment neither is what the thumb is
-                    // reaching for.
+                    // ⚠️ Shown while the keyboard is up, and so is `+`. Both
+                    // were once hidden on `!_ownsInput`, to spare a one-row
+                    // header while typing — but the row is not what was short.
+                    // The title ellipses at the same width either way, so
+                    // hiding them bought the title nothing and only left a gap,
+                    // while the header's controls jumped position on every
+                    // keyboard raise. A header that holds still is worth more
+                    // than two columns of unused space.
+                    //
                     // ⚠️ Not [PhoneSearchButton], which pushes and forgets. A
                     // page that pops back onto the top gets no rebuild of its
-                    // own, so [_ownsInput] would keep answering with what
-                    // was true while the search was covering it. Awaiting the
-                    // push is what turns "the search closed" into a frame.
-                    if (!_ownsInput)
-                      _HeaderAction(
-                        icon: LucideIcons.search300,
-                        size: 21,
-                        tooltip: 'Search',
-                        onPressed: () async {
-                          await openPhoneSearch(context, widget.notifier);
-                          if (mounted) setState(() {});
-                        },
-                      ),
+                    // own, so anything read from [_ownsInput] — the machine
+                    // bar below still does — would keep answering with what was
+                    // true while the search was covering it. Awaiting the push
+                    // is what turns "the search closed" into a frame.
+                    _HeaderAction(
+                      icon: LucideIcons.search300,
+                      size: 21,
+                      tooltip: 'Search',
+                      onPressed: () async {
+                        await openPhoneSearch(context, widget.notifier);
+                        if (mounted) setState(() {});
+                      },
+                    ),
                     // Null while the agent is not loaded: there is nothing to act on yet, and a
                     // menu of actions that all fail is worse than no menu.
                     if (agent != null)
