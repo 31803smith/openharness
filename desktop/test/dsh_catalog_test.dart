@@ -46,6 +46,70 @@ const _circuit = {
 };
 
 void main() {
+  test('update versions are optional, validated, and offered only for installed clones', () {
+    final old = DshEntry.fromJson(_circuit)!;
+    expect(old.installedCommit, isNull);
+    expect(old.hasUpdate, isFalse);
+    final version = {
+      ..._circuit,
+      'installed': true,
+      'installedCommit': 'a' * 40,
+      'availableCommit': 'b' * 40,
+      'updateAvailable': true,
+    };
+    final entry = DshEntry.fromJson(version)!;
+    expect(entry.installedCommit, 'a' * 40);
+    expect(entry.availableCommit, 'b' * 40);
+    expect(entry.hasUpdate, isTrue);
+    expect(DshEntry.fromJson({...version, 'linked': true})!.hasUpdate, isFalse);
+    expect(
+      DshEntry.fromJson({...version, 'installed': false})!.hasUpdate,
+      isFalse,
+    );
+    expect(
+      DshEntry.fromJson({...version, 'updateAvailable': 'yes'})!.hasUpdate,
+      isFalse,
+    );
+    expect(
+      DshEntry.fromJson({...version, 'installedCommit': 'main'})!
+          .installedCommit,
+      isNull,
+    );
+    expect(
+      DshEntry.fromJson({...version, 'availableCommit': 123})!.availableCommit,
+      isNull,
+    );
+  });
+
+  test(
+    'updates use their own request and refresh the installed version',
+    () async {
+      final connection = _Connection();
+      final app = createApp(connectionForTest: (_) => connection);
+      addTearDown(app.dispose);
+      connection.answer = (type, payload) async => type == 'dsh_update'
+          ? {'ok': true}
+          : {
+              'dsh': [
+                {
+                  ..._circuit,
+                  'installed': true,
+                  'installedCommit': 'b' * 40,
+                  'updateAvailable': false,
+                },
+              ],
+            };
+      expect(await app.updateDsh('m', _circuit['id']! as String), isNull);
+      expect(connection.calls.map((call) => call.$1), [
+        'dsh_update',
+        'dsh_list',
+      ]);
+      expect(
+        app.stateOf('m')!.dsh[_circuit['id']! as String]!.installedCommit,
+        'b' * 40,
+      );
+    },
+  );
   _authorAndKindTests();
   _productPageTests();
   _installRunTests();
@@ -299,34 +363,28 @@ void _installRunTests() {
     expect(done.inProgress, isFalse);
   });
 
-  test(
-    'a push is read defensively: ids, phases, and lines without control characters',
-    () {
-      expect(DshInstallProgress.fromJson(null), isNull);
-      expect(DshInstallProgress.fromJson({'id': '', 'phase': 'setup'}), isNull);
-      expect(DshInstallProgress.fromJson({'id': 'a/b', 'phase': ''}), isNull);
-      expect(DshInstallProgress.fromJson({'id': 1, 'phase': 'setup'}), isNull);
-      final escape = String.fromCharCode(27);
-      final bell = String.fromCharCode(7);
-      final push = DshInstallProgress.fromJson({
-        'id': 'a/b',
-        'phase': 'setup',
-        'detail': '   ',
-        'line': '$escape[32madded$bell ${'n' * 300}',
-      })!;
-      expect(push.detail, isNull);
-      expect(push.line, hasLength(200));
-      expect(push.line, startsWith('[32madded  n'));
-      expect(
-        DshInstallProgress.fromJson({
-          'id': 'a/b',
-          'phase': 'setup',
-          'line': 3,
-        })!.line,
-        isNull,
-      );
-    },
-  );
+  test('a push is read defensively: ids, phases, and lines without control characters', () {
+    expect(DshInstallProgress.fromJson(null), isNull);
+    expect(DshInstallProgress.fromJson({'id': '', 'phase': 'setup'}), isNull);
+    expect(DshInstallProgress.fromJson({'id': 'a/b', 'phase': ''}), isNull);
+    expect(DshInstallProgress.fromJson({'id': 1, 'phase': 'setup'}), isNull);
+    final escape = String.fromCharCode(27);
+    final bell = String.fromCharCode(7);
+    final push = DshInstallProgress.fromJson({
+      'id': 'a/b',
+      'phase': 'setup',
+      'detail': '   ',
+      'line': '$escape[32madded$bell ${'n' * 300}',
+    })!;
+    expect(push.detail, isNull);
+    expect(push.line, hasLength(200));
+    expect(push.line, startsWith('[32madded  n'));
+    expect(
+      DshInstallProgress.fromJson({'id': 'a/b', 'phase': 'setup', 'line': 3})!
+          .line,
+      isNull,
+    );
+  });
 
   test(
     'a run keeps its phases in order, a bounded log, and how long each took',
@@ -337,7 +395,11 @@ void _installRunTests() {
       expect(run.inProgress, isTrue);
       expect(run.took('clone'), isNull);
       run.apply(
-        const DshInstallProgress(id: 'a/b', phase: 'clone', detail: 'Resolving'),
+        const DshInstallProgress(
+          id: 'a/b',
+          phase: 'clone',
+          detail: 'Resolving',
+        ),
         now: t0,
       );
       run.apply(
