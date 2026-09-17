@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
-import '../screens/login_screen.dart';
 import '../state/app_state.dart';
 import '../shared/theme/app_theme.dart' as grid;
 import '../shared/widgets/app_menu.dart';
@@ -40,16 +39,9 @@ class _AccountFooterState extends State<AccountFooter> {
     grid.AppTheme.watch(context);
     final profile = widget.notifier.currentUser;
     final isLocal = widget.notifier.localManualFixture != null;
-    final guest = widget.notifier.isGuest;
-    // A guest's pill says so, and says what signing in is for — this is the
-    // one place in the rail the account lives, so it is where the absence of
-    // one is read.
-    final primary = guest
-        ? 'Not signed in'
-        : profile?.email ?? (isLocal ? 'local terminal' : 'signed in');
-    final secondary = guest
-        ? 'THIS COMPUTER ONLY'
-        : (isLocal ? 'LOCAL SESSION' : null);
+    final primary =
+        profile?.email ?? (isLocal ? 'local terminal' : 'signed in');
+    final secondary = isLocal ? 'LOCAL SESSION' : null;
 
     return MenuAnchor(
       controller: _menu,
@@ -104,31 +96,20 @@ class _AccountFooterState extends State<AccountFooter> {
           },
         ),
         const AppMenuDivider(),
-        if (guest)
-          AppMenuItem(
-            key: const Key('sign-in-menu-item'),
-            icon: LucideIcons.logIn300,
-            label: 'Sign in…',
-            onPressed: () {
-              _menu.close();
-              unawaited(showSignInSheet(context, widget.notifier));
-            },
-          )
-        else
-          AppMenuItem(
-            key: const Key('sign-out-menu-item'),
-            icon: LucideIcons.logOut300,
-            label: isLocal ? 'Disconnect local session' : 'Sign out',
-            // The one row here that ENDS something. It sat in a group of its own
-            // already, which said "this is different" — but drew in the same ink
-            // as Settings, which said the opposite louder. [AppMenuItem] has
-            // carried the treatment all along; this row simply never asked.
-            danger: true,
-            onPressed: () {
-              _menu.close();
-              widget.notifier.logout();
-            },
-          ),
+        AppMenuItem(
+          key: const Key('sign-out-menu-item'),
+          icon: LucideIcons.logOut300,
+          label: isLocal ? 'Disconnect local session' : 'Sign out',
+          // The one row here that ENDS something. It sat in a group of its own
+          // already, which said "this is different" — but drew in the same ink
+          // as Settings, which said the opposite louder. [AppMenuItem] has
+          // carried the treatment all along; this row simply never asked.
+          danger: true,
+          onPressed: () {
+            _menu.close();
+            widget.notifier.logout();
+          },
+        ),
       ],
       builder: (context, controller, child) => Padding(
         // The pill floats inside the rail rather than spanning it. A full-width
@@ -139,25 +120,13 @@ class _AccountFooterState extends State<AccountFooter> {
             ? Center(
                 child: _AvatarButton(
                   onTap: controller.isOpen ? controller.close : controller.open,
-                  initials:
-                      profile?.initials ??
-                      (isLocal
-                          ? 'L'
-                          : guest
-                          ? '·'
-                          : '?'),
+                  initials: profile?.initials ?? (isLocal ? 'L' : '?'),
                 ),
               )
             : _AccountPill(
                 open: controller.isOpen,
                 onTap: controller.isOpen ? controller.close : controller.open,
-                initials:
-                    profile?.initials ??
-                    (isLocal
-                        ? 'L'
-                        : guest
-                        ? '·'
-                        : '?'),
+                initials: profile?.initials ?? (isLocal ? 'L' : '?'),
                 primary: primary,
                 secondary: secondary,
               ),
@@ -295,7 +264,6 @@ class _AccountSummary extends StatelessWidget {
     grid.AppTheme.watch(context);
     final profile = notifier.currentUser;
     final isLocal = notifier.localManualFixture != null;
-    final guest = notifier.isGuest;
     return Padding(
       // 15 = the row gutter (6) plus a row's own inner padding (9), so this
       // block starts on the same left edge as the glyphs under it instead of
@@ -304,13 +272,7 @@ class _AccountSummary extends StatelessWidget {
       child: Row(
         children: [
           _Avatar(
-            initials:
-                profile?.initials ??
-                (isLocal
-                    ? 'L'
-                    : guest
-                    ? '·'
-                    : '?'),
+            initials: profile?.initials ?? (isLocal ? 'L' : '?'),
             large: true,
           ),
           const SizedBox(width: 12),
@@ -320,11 +282,7 @@ class _AccountSummary extends StatelessWidget {
               children: [
                 Text(
                   profile?.displayName ??
-                      (isLocal
-                          ? 'Local session'
-                          : guest
-                          ? 'Not signed in'
-                          : 'Autonomous user'),
+                      (isLocal ? 'Local session' : 'Autonomous user'),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   // Semibold, not w700: the weight ladder has three steps and
@@ -349,11 +307,7 @@ class _AccountSummary extends StatelessWidget {
                 const SizedBox(height: 3),
                 Text(
                   profile?.email ??
-                      (isLocal
-                          ? 'loopback backend'
-                          : guest
-                          ? 'Sign in to reach your other machines'
-                          : 'profile unavailable'),
+                      (isLocal ? 'loopback backend' : 'profile unavailable'),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(

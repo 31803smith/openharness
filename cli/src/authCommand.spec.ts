@@ -116,9 +116,7 @@ describe('harness auth status --json', () => {
     const root = tempRoot()
     const result = runSync(root, ['auth', 'status', '--json'], 'http://127.0.0.1:1') // port 1: would fail fast if ever called
     expect(result.status).toBe(0)
-    // The computer id travels even signed out: the daemon serves this computer under it until a sign-in
-    // hands out a machineId, and the app keys the local machine by whichever the daemon is wearing.
-    expect(JSON.parse(result.stdout.trim())).toEqual({ loggedIn: false, computerId: expect.any(String) })
+    expect(JSON.parse(result.stdout.trim())).toEqual({ loggedIn: false })
   })
 
   it('falls back to human text without --json', () => {
