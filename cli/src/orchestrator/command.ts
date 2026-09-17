@@ -57,10 +57,25 @@ export async function orchestratorCommand(argv: readonly string[]): Promise<numb
   try {
     const { port, machineId, payload } = parseOrchestratorArgs(argv)
     const reply = await localOrchestratorRequest(port, machineId, payload)
-    console.log(JSON.stringify(reply, null, 2))
+    console.log(JSON.stringify(summarizeOrchestratorReply(reply), null, 2))
     return reply.error ? 1 : 0
   } catch (error) {
     console.error(error instanceof Error ? error.message : 'Orchestrator request failed.')
     return 1
   }
+}
+
+/** Tool output is a work ledger, not a repeated copy of the director's whole
+ * conversation and every specialist brief. The UI still receives full state. */
+export function summarizeOrchestratorReply(reply: Record<string, unknown>): Record<string, unknown> {
+  if (!reply.project || typeof reply.project !== 'object' || Array.isArray(reply.project)) return reply
+  const { fingerprint: _fingerprint, messages, tasks, ...project } = reply.project as Record<string, unknown>
+  return { ...reply, project: {
+    ...project,
+    tasks: Array.isArray(tasks) ? tasks.map(({ prompt: _prompt, ...task }) => task) : [],
+    deliveries: Array.isArray(messages) ? messages.filter(m => m.delivery).slice(-20).map(m => ({
+      id: m.id, targetAgentId: m.targetAgentId, delivery: m.delivery,
+      deliveryReason: m.deliveryReason, text: String(m.text).slice(0, 160),
+    })) : [],
+  } }
 }

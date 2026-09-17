@@ -7,6 +7,7 @@ import 'package:harness/orchestrator/orchestrator_controller.dart';
 import 'package:harness/orchestrator/orchestrator_launcher.dart';
 import 'package:harness/orchestrator/orchestrator_workspace.dart';
 import 'package:harness/shortcuts/app_shortcuts.dart';
+import 'package:harness/state/pending_question.dart';
 import 'package:harness/widgets/terminal_panel.dart';
 import 'package:harness/widgets/web_pane_panel.dart';
 import 'package:harness/ws/ws_conn.dart';
@@ -236,6 +237,27 @@ void main() {
       expect(find.byType(WebPanePanel), findsNWidgets(2));
       expect(app.panes, isEmpty);
       expect(tester.takeException(), isNull);
+      app.machineStates['m']!.blockedAgents['agent-cad'] = PendingQuestion(
+        machineId: 'm',
+        agentId: 'agent-cad',
+        requestId: 'approval',
+        answerKey: 'Continue?',
+        prompt: 'Which material should I use?',
+        options: const ['Wood', 'Metal'],
+        multi: false,
+        since: DateTime.now(),
+      );
+      app.notifyListeners();
+      await tester.pump();
+      expect(
+        find.textContaining('Needs your input: Which material'),
+        findsOneWidget,
+      );
+      expect(tester.widget<TextField>(composer).focusNode!.hasFocus, isTrue);
+      app.machineStates['m']!.blockedAgents.clear();
+      app.notifyListeners();
+      await tester.pump();
+      expect(find.textContaining('Needs your input:'), findsNothing);
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pump();
       expect(

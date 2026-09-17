@@ -118,10 +118,11 @@ export class OrchestratorService {
     // A recovered project continues queued work only when it is requested again.
     this.pump(run)
     this.dispatchPending(run)
+    const viewerHarnesses = new Set(this.catalog().filter(h => h.viewer).map(h => h.id))
     return {
       ...structuredClone(run),
       directorAvailable: !!run.directorId && this.deps.agent(run.directorId) !== null,
-      tasks: run.tasks.map(t => ({ ...structuredClone(t), hasViewer: this.catalog().some(h => h.id === t.harness && h.viewer), runtime: t.agentId ? this.deps.agent(t.agentId) : null })),
+      tasks: run.tasks.map(t => ({ ...structuredClone(t), hasViewer: viewerHarnesses.has(t.harness), runtime: t.agentId ? this.deps.agent(t.agentId) : null })),
     }
   }
 

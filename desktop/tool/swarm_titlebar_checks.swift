@@ -610,10 +610,7 @@ private extension SwarmTitlebar {
     canClosePane = true
     try checkTitlebar(validateMenuItem(closePane), "Remove Agent is enabled for a focused pane")
     let create = agent.items.first(where: { $0.representedObject as? String == "new" })!
-    canCreateSwarm = false
-    try checkTitlebar(!validateMenuItem(create), "Native New Swarm respects the tab capacity")
-    canCreateSwarm = true
-    try checkTitlebar(validateMenuItem(create), "Native New Swarm returns below capacity")
+    try checkTitlebar(validateMenuItem(create), "Native New Tab remains available without the retired tab capacity")
     let machineRows: [[String: Any]] = [
       ["id": "office", "name": "iMac – Office", "status": "Online", "local": true, "agentCount": 2,
        "agents": [["id": "one", "title": "App work", "engine": "codex", "canOpen": true],
@@ -679,11 +676,12 @@ private extension SwarmTitlebar {
     try checkTitlebar(!validateMenuItem(destinations[0]) && !validateMenuItem(agentItems[0]) &&
       machineMenu.item(withTitle: "No Machines Linked")?.isEnabled == false,
       "Unlinking computers clears destinations and invalidates stale actions")
-    let recentRows: [[String: Any]] = (0..<20).map { index -> [String: Any] in
+    var recentRows: [[String: Any]] = (0..<20).map { index -> [String: Any] in
       ["id": "agent:\(index)", "title": "Agent \(index) — Machine",
        "detail": "Project \(index)", "machineName": "M2", "current": index == 0,
        "engine": index == 0 ? "claude" : "codex"]
-    } + [["id": "swarm:recent", "title": "Recent Swarm", "swarm": true]]
+    }
+    recentRows.append(["id": "swarm:recent", "title": "Recent Swarm", "swarm": true])
     let closedRows: [[String: Any]] = (0..<14).map {
       ["id": "closed-\($0)", "title": "Closed Swarm \($0)", "detail": "3 agents", "swarm": true, "canReopen": true]
     }

@@ -42,7 +42,12 @@ class _OrchestratorWorkspaceState extends State<OrchestratorWorkspace> {
   void initState() {
     super.initState();
     model.addListener(_changed);
+    widget.notifier.addListener(_attentionChanged);
     model.watch();
+  }
+
+  void _attentionChanged() {
+    if (mounted) setState(() {});
   }
 
   void _changed() {
@@ -63,6 +68,7 @@ class _OrchestratorWorkspaceState extends State<OrchestratorWorkspace> {
   @override
   void dispose() {
     model.removeListener(_changed);
+    widget.notifier.removeListener(_attentionChanged);
     model.unwatch();
     _composer.dispose();
     _composerFocus.dispose();
@@ -268,6 +274,9 @@ class _OrchestratorWorkspaceState extends State<OrchestratorWorkspace> {
 
   Widget _task(OrchestratorTask task) {
     final paneKey = '${task.id}/${task.attempt}';
+    final question = task.agentId == null
+        ? null
+        : widget.notifier.questionFor(widget.machineId, task.agentId!);
     Widget content;
     final viewerUrl = task.viewerUrl;
     final uri = viewerUrl == null ? null : Uri.tryParse(viewerUrl);
@@ -356,11 +365,11 @@ class _OrchestratorWorkspaceState extends State<OrchestratorWorkspace> {
                         overflow: TextOverflow.ellipsis,
                       ),
                       Text(
-                        '${task.harness} · ${task.state}${task.attempt > 1 ? ' · attempt ${task.attempt}' : ''}',
+                        '${task.harness} · ${question != null ? 'needs input' : task.state}${task.attempt > 1 ? ' · attempt ${task.attempt}' : ''}',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          color: task.error == null
+                          color: task.error == null && question == null
                               ? grid.AppPalette.textSecondary
                               : grid.AppPalette.warn,
                           fontSize: 12,
@@ -392,6 +401,16 @@ class _OrchestratorWorkspaceState extends State<OrchestratorWorkspace> {
               ],
             ),
           ),
+          if (question != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+              child: Text(
+                'Needs your input: ${question.prompt}\nUse Inspect to answer in the original agent.',
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: grid.AppPalette.warn),
+              ),
+            ),
           if (safeViewer && task.error != null)
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
@@ -424,6 +443,16 @@ class _OrchestratorWorkspaceState extends State<OrchestratorWorkspace> {
           ),
         ),
         const Divider(height: 1),
+        if (model.directorId != null &&
+            widget.notifier.questionFor(widget.machineId, model.directorId!) !=
+                null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 10, 18, 0),
+            child: Text(
+              'The director needs your input. Use Inspect director to answer.',
+              style: TextStyle(color: grid.AppPalette.warn),
+            ),
+          ),
         Expanded(
           child: SelectionArea(
             child: ListView.builder(

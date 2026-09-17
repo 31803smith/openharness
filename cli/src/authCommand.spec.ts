@@ -49,6 +49,10 @@ function envFor(root: string, backendUrl?: string): NodeJS.ProcessEnv {
     HOME: root,
     HARNESS_AUTH_DIR: join(root, 'auth'),
     ADAPTER_DATA_DIR: join(root, 'data'),
+    ADAPTER_RUNTIME_DIR: join(root, 'runtime'),
+    // These tests assert the no-grid handoff. A developer's installed grid
+    // must not turn this local auth fixture into a real network login attempt.
+    HARNESS_GRID_BIN: join(root, 'grid-not-installed'),
     ADAPTER_CLI_DIR: join(root, 'cli'),
     ADAPTER_COMPUTER_ID_FILE: join(root, 'computer-id'),
     ADAPTER_UPDATE_DISABLE: 'true',
