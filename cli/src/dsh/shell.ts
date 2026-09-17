@@ -73,7 +73,8 @@ export function runDshCommand(script: string, opts: DshCommandOptions): Promise<
     try {
       child = spawnDshCommand(script, { cwd: opts.cwd, env: opts.env })
     } catch (error) {
-      const line = `could not start: ${error instanceof Error ? error.message : String(error)}`
+      // spawn throws only Errors (an invalid argument: a NUL in the cwd, say).
+      const line = `could not start: ${(error as Error).message}`
       opts.onLine?.(line)
       resolve({ code: 127, signal: null, lines: [line], timedOut: false })
       return
