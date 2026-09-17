@@ -85,9 +85,9 @@ export async function createStudio({workspace, packageDir, port = 0, jobTimeout 
     }
   };
   const server = http.createServer(async (req,res) => {
-    const send = (status, data, type = 'application/json; charset=utf-8') => {
+    const send = (status, data, type = 'application/json; charset=utf-8', raw = false) => {
       res.writeHead(status, {'Content-Type':type, 'Cache-Control':'no-store', 'X-Content-Type-Options':'nosniff', 'Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'self'"});
-      res.end(type.startsWith('application/json') ? JSON.stringify(data) : data);
+      res.end(!raw && type.startsWith('application/json') ? JSON.stringify(data) : data);
     };
     try {
       const expectedHost = `127.0.0.1:${server.address().port}`;
@@ -154,10 +154,26 @@ export async function createStudio({workspace, packageDir, port = 0, jobTimeout 
       if (s.size > 256*1024*1024) throw new Problem(413,'Open this large artifact from your workspace.');
       const type = TYPES[extname(target)] ?? 'application/octet-stream';
       if (url.searchParams.has('download')) res.setHeader('Content-Disposition',`attachment; filename="${target.split(sep).at(-1).replace(/[^a-zA-Z0-9._-]/g,'_')}"`);
+      res.setHeader('Accept-Ranges','bytes');
+      // WebKit probes audio with bytes=0-1 and requires a proper partial response.
+      if (req.method === 'GET' && req.headers.range) {
+        const match = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range);
+        let start = 0, end = s.size-1;
+        if (match && (match[1] || match[2])) {
+          if (match[1]) {start=Number(match[1]);if (match[2]) end=Math.min(end,Number(match[2]));}
+          else start=Math.max(0,s.size-Number(match[2]));
+        } else start=s.size;
+        if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start>end || start>=s.size) {
+          res.setHeader('Content-Range',`bytes */${s.size}`);
+          throw new Problem(416,'This byte range is outside the artifact.');
+        }
+        res.setHeader('Content-Range',`bytes ${start}-${end}/${s.size}`);
+        res.setHeader('Content-Length',end-start+1);
+        return send(206,(await readFile(target)).subarray(start,end+1),type,true);
+      }
+      res.setHeader('Content-Length',s.size);
       const data = req.method === 'HEAD' ? Buffer.alloc(0):await readFile(target);
-      // JSON artifacts are already serialized bytes, unlike API responses.
-      if (type === 'application/json') return send(200,JSON.parse(data.length ? data.toString():'null'));
-      return send(200,data,type);
+      return send(200,data,type,true);
     } catch(error) {
       const status = error.status ?? (error.code === 'ENOENT' ? 404:500);
       return send(status,{error:status === 500 ? 'The studio could not read the project. Check studio.json and the latest result.':error.message});
