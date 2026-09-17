@@ -1,8 +1,12 @@
 // The DSH wire contract (store/spec/README.md § Wire): what dsh_list rows say, and what dsh_install and
 // dsh_remove accept from a payload and answer.
-import { describe, expect, it } from 'vitest'
-import type { InstalledDsh } from './installed.js'
-import { HARNESS_MONOREPO, type DshRegistryEntry } from './registry.js'
+import { describe, expect, it, vi } from 'vitest'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { env } from '../config/env.js'
+import { invalidateInstalledDsh, type InstalledDsh } from './installed.js'
+import { HARNESS_MONOREPO, resetBundledDshRegistry, type DshRegistryEntry } from './registry.js'
 import { dshInstallReply, dshInstallRequest, dshInstallStatus, dshListRows, dshRemoveId, dshRemoveReply } from './wire.js'
 
 const installed = (manifest: InstalledDsh['manifest'], linked = false): InstalledDsh => ({
@@ -59,8 +63,21 @@ describe('dshListRows', () => {
     expect(offered).toMatchObject({ description: 'Typeset.', category: 'Documents', author: 'Autonomous', viewerUse: 'autonomous/doc-viewer' })
   })
 
-  it('reads this machine and the bundled registry when given nothing', () => {
-    expect(Array.isArray(dshListRows())).toBe(true)
+  it('reads this machine\'s index and the bundled registry when given nothing', () => {
+    const saved = env.DSH_DIR
+    env.DSH_DIR = mkdtempSync(join(tmpdir(), 'dsh-wire-'))
+    vi.stubGlobal('__DSH_REGISTRY__', JSON.stringify([{ id: 'acme/bare', name: 'Bare', repo: 'https://example.com/bare.git', engine: 'codex' }]))
+    resetBundledDshRegistry()
+    invalidateInstalledDsh()
+    try {
+      expect(dshListRows().map((row) => [row.id, row.installed])).toEqual([['acme/bare', false]])
+    } finally {
+      rmSync(env.DSH_DIR, { recursive: true, force: true })
+      env.DSH_DIR = saved
+      vi.unstubAllGlobals()
+      resetBundledDshRegistry()
+      invalidateInstalledDsh()
+    }
   })
 })
 
