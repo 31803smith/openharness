@@ -13,7 +13,8 @@
  */
 import chokidar, { type FSWatcher } from 'chokidar'
 import type { ChildProcess } from 'node:child_process'
-import { createServer, connect } from 'node:net'
+import { createServer, connect, type AddressInfo } from 'node:net'
+import { relative } from 'node:path'
 import { isCandidateArtifact, isArtifactDirIgnored, newestArtifact } from './artifacts.js'
 import { installedDsh, type InstalledDsh } from './installed.js'
 import { isViewerPackage } from './manifest.js'
@@ -89,7 +90,6 @@ interface ViewerState {
   stopping: boolean
   /** Exit timestamps inside the restart window — three in a minute and we give up. */
   exits: number[]
-  generation: number
 }
 
 const PORT_TIMEOUT_MS = 60_000
@@ -104,9 +104,9 @@ export async function freeLoopbackPort(): Promise<number> {
     server.unref()
     server.on('error', reject)
     server.listen(0, '127.0.0.1', () => {
-      const address = server.address()
-      const port = typeof address === 'object' && address ? address.port : 0
-      server.close(() => (port ? resolve(port) : reject(new Error('no port'))))
+      // A TCP server that is listening always has an address with a port.
+      const { port } = server.address() as AddressInfo
+      server.close(() => resolve(port))
     })
   })
 }
@@ -140,6 +140,12 @@ export function buildViewerUrl(template: string, port: number, artifact: string 
 
 export class DshViewerManager {
   private readonly states = new Map<string, ViewerState>()
+  /**
+   * What each agent's verdict last named, whether or not its viewer is running. The daemon watches the
+   * verdict BEFORE it starts the viewer, and the watch publishes the verdict already on disk at once;
+   * kept here, a restored agent's pane opens on that artifact instead of on none.
+   */
+  private readonly verdictArtifacts = new Map<string, string | null>()
 
   constructor(private readonly deps: DshViewerDeps) {}
 
@@ -161,12 +167,13 @@ export class DshViewerManager {
     }
     const viewer = resolved.viewer
     const current = this.states.get(agentId)
-    if (current && current.dsh.realDir === dsh.realDir && current.viewer.dir === viewer.dir && current.workspace === workspace && !current.stopping) return
-    if (current) await this.stop(agentId)
+    if (current && current.dsh.realDir === dsh.realDir && current.viewer.dir === viewer.dir && current.workspace === workspace) return
+    // A restart keeps what the verdict last said; only stop() forgets it.
+    if (current) await this.halt(current)
     const state: ViewerState = {
       agentId, dsh, viewer, workspace, port: null, child: null, url: null,
-      verdictArtifact: null, scannedArtifact: null, watcher: null, rescanTimer: null,
-      stopping: false, exits: [], generation: 0,
+      verdictArtifact: this.verdictArtifacts.get(agentId) ?? null, scannedArtifact: null, watcher: null, rescanTimer: null,
+      stopping: false, exits: [],
     }
     this.states.set(agentId, state)
     if (viewer.artifactExtensions.length) {
@@ -178,6 +185,7 @@ export class DshViewerManager {
 
   /** The verdict named (or stopped naming) an artifact. */
   setVerdictArtifact(agentId: string, artifact: string | null): void {
+    this.verdictArtifacts.set(agentId, artifact)
     const state = this.states.get(agentId)
     if (!state || state.verdictArtifact === artifact) return
     state.verdictArtifact = artifact
@@ -206,7 +214,8 @@ export class DshViewerManager {
         && path.slice(state.workspace.length).split(/[\\/]/).some((segment) => segment && (isArtifactDirIgnored(segment) || segment.startsWith('.'))),
     })
     const bump = (path: string): void => {
-      if (!isCandidateArtifact(path, extensions)) return
+      // Judged inside the workspace: a workspace under a `build/` or `inputs/` folder is not ignored.
+      if (!isCandidateArtifact(relative(state.workspace, path), extensions)) return
       if (state.rescanTimer) clearTimeout(state.rescanTimer)
       state.rescanTimer = setTimeout(() => {
         state.rescanTimer = null
@@ -224,7 +233,6 @@ export class DshViewerManager {
 
   private async launch(state: ViewerState): Promise<void> {
     const viewer = state.viewer
-    const generation = ++state.generation
     let port: number
     try {
       port = await (this.deps.freePort ?? freeLoopbackPort)()
@@ -232,8 +240,7 @@ export class DshViewerManager {
       this.log(`[dsh] ${state.dsh.id} viewer: no free port · ${error instanceof Error ? error.message : error}`)
       return
     }
-    if (state.stopping || state.generation !== generation) return
-    state.port = port
+    if (state.stopping) return
     // A used viewer runs in ITS directory with ITS files, and is told which harness it draws for:
     // HARNESS_DSH/_DIR stay the harness's (the contract every DSH script relies on), HARNESS_VIEWER
     // and HARNESS_VIEWER_DIR name the package. A harness's own viewer sees both pairs agree.
@@ -283,13 +290,22 @@ export class DshViewerManager {
       killProcessGroup(child)
       return
     }
+    // Only now is there a URL to hand the pane. A pane sent to a port nobody serves yet shows a
+    // connection error and never recovers, so nothing — a verdict, a new artifact — publishes before.
+    state.port = port
     this.log(`[dsh] ${state.dsh.id} viewer up on 127.0.0.1:${port} for ${state.workspace}`)
     this.publish(state)
   }
 
+  /** The agent's viewer is done: stop it and forget what its verdict named. */
   async stop(agentId: string): Promise<void> {
+    this.verdictArtifacts.delete(agentId)
     const state = this.states.get(agentId)
-    if (!state) return
+    if (state) await this.halt(state)
+  }
+
+  private async halt(state: ViewerState): Promise<void> {
+    const agentId = state.agentId
     state.stopping = true
     this.states.delete(agentId)
     if (state.rescanTimer) clearTimeout(state.rescanTimer)
