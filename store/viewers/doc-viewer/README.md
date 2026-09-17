@@ -49,14 +49,14 @@ Typst uses it; anything that compiles to PDF can (LaTeX, LibreOffice exports of 
 | `viewer.sh`, `viewer.mjs` | the loopback server Harness starts: the reader, pdf.js from `node_modules`, the workspace read-only under `/ws/`, `/api/state`, `/events` (SSE), `/api/open` |
 | `lib/workspace.mjs` | the document state: the PDFs, the newest source, the verdict, `idle` / `building` / `failed`, error snippets |
 | `app/` | the reader: `index.html`, `app.css`, `app.js` (pdf.js viewer components, no build step) |
-| `test/` | `npm test`: the state rules and the server, on temp workspaces |
+| `test/` | `npm test`: the state rules, the server (routes, opening, the live feed) and the shell scripts, on temp workspaces |
 
 pdf.js's modern build needs the newest WebKit (`Map.getOrInsertComputed`, `Math.sumPrecise`, …); an
 older macOS gets pdf.js's legacy build from the same package instead. `?legacy=1` forces it.
 
 ```sh
 ./setup.sh && ./doctor.sh           # pdf.js into node_modules, from the lockfile
-npm test                            # the state and the server
+npm test                            # the state, the server and the scripts
 harness dsh check .                 # conformance
 harness dsh install "$PWD" --link   # this checkout as the installed viewer
 ```
