@@ -79,6 +79,8 @@ class TerminalSession extends ChangeNotifier {
   final TerminalFrameSender send;
   final TerminalBinarySender sendBinary;
   final Duration resyncTimeout;
+  // A controllable clock keeps coalescing tests independent of host scheduling.
+  final DateTime Function() _now;
 
   /// Forces a fresh transport dial (see `WsConn.forceReconnect`) — called once when the very first
   /// `terminal_open` never gets a `terminal_ready` back within [resyncTimeout]. Covers the relay
@@ -96,7 +98,8 @@ class TerminalSession extends ChangeNotifier {
     required this.sendBinary,
     this.onOpenStalled,
     this.resyncTimeout = const Duration(seconds: 4),
-  }) {
+    DateTime Function()? now,
+  }) : _now = now ?? DateTime.now {
     terminal = _newTerminal();
   }
 
@@ -1027,8 +1030,7 @@ class TerminalSession extends ChangeNotifier {
       // the window still rides the trailing timer, so the frame rate stays bounded.
       final last = _lastInputFlushAt;
       final idle =
-          last == null ||
-          DateTime.now().difference(last) >= _inputCoalesceWindow;
+          last == null || _now().difference(last) >= _inputCoalesceWindow;
       if (_inputTimer == null && idle) {
         unawaited(_flushInput());
       } else {
@@ -1049,7 +1051,7 @@ class TerminalSession extends ChangeNotifier {
     }
     final bytes = List<int>.from(_inputBytes);
     _inputBytes.clear();
-    _lastInputFlushAt = DateTime.now();
+    _lastInputFlushAt = _now();
     final currentStreamId = streamId;
     if (currentStreamId == null) return;
     final generation = _generation;
@@ -1131,8 +1133,7 @@ class TerminalSession extends ChangeNotifier {
     _pendingRows = _clampRows(height);
     final last = _lastResizeFlushAt;
     final idle =
-        last == null ||
-        DateTime.now().difference(last) >= _resizeCoalesceWindow;
+        last == null || _now().difference(last) >= _resizeCoalesceWindow;
     if (_resizeTimer == null && idle) {
       unawaited(_flushResize());
       return;
@@ -1158,7 +1159,7 @@ class TerminalSession extends ChangeNotifier {
     if (nextCols == cols && nextRows == rows) return;
     cols = nextCols;
     rows = nextRows;
-    _lastResizeFlushAt = DateTime.now();
+    _lastResizeFlushAt = _now();
     final generation = _generation;
     final sent = await send('terminal_resize', {
       'streamId': streamId,

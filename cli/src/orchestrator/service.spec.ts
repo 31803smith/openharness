@@ -1,10 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import * as filesystem from 'node:fs/promises'
+import * as privateState from '../lib/secureState.js'
 import { OrchestratorService, type OrchestratorDependencies } from './service.js'
 import { OrchestratorError, type Task } from './model.js'
 import { orchestratorRequest } from './wire.js'
+
+vi.mock('node:fs/promises', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return { ...actual, rm: vi.fn(actual.rm) }
+})
 
 const id = '0123456789abcdef0123456789abcdef'
 const task = (id: string, dependsOn: string[] = [], harness = 'test/cad') => ({ id, title: id, harness, prompt: `Build ${id} and verify it`, dependsOn })
@@ -32,7 +39,7 @@ describe('durable orchestrator lifecycle', () => {
     }
     service = new OrchestratorService(deps)
   })
-  afterEach(() => { service.stop(); rmSync(root, { recursive: true, force: true }) })
+  afterEach(() => { service.stop(); vi.restoreAllMocks(); rmSync(root, { recursive: true, force: true }) })
 
   it('starts once, preserves permissions, and rejects a conflicting creation retry', async () => {
     await Promise.all([start(), start()]); await active()
@@ -246,5 +253,204 @@ describe('durable orchestrator lifecycle', () => {
     expect(await orchestratorRequest(service, { action: 'status', id: '../escape' })).toMatchObject({ error: 'INVALID_REQUEST' })
     expect(await orchestratorRequest(service, { action: 'status', id })).toMatchObject({ error: 'PROJECT_NOT_FOUND' })
     expect(await orchestratorRequest(service, { action: 'install' })).toMatchObject({ error: 'INVALID_REQUEST' })
+  })
+  it('deduplicates simultaneous creation after asynchronous folder validation', async () => {
+    const spec = { id, engine: 'claude', prompt: 'Use this existing folder', cwd: root }
+    await Promise.all([service.start(spec), service.start(spec)]); await active()
+    expect(launches).toHaveLength(1)
+    expect(launches[0].cwd).toBe(join(realpathSync(root), '.harness-projects', id))
+  })
+  it('lists recent projects in order without exposing their full briefs', async () => {
+    await start(); await active()
+    const second = 'f'.repeat(32)
+    await service.start({ id: second, engine: 'claude', prompt: 'A'.repeat(500) })
+    await vi.waitFor(() => expect(service.snapshot(second).state).toBe('active'))
+    service.chat(second, '1'.repeat(32), 'More detail')
+    expect(service.list().map(r => r.id)).toEqual([second, id])
+    expect(String(service.list()[0].prompt)).toHaveLength(160)
+  })
+  it('preserves corrupt state and refuses to overwrite its identity', async () => {
+    mkdirSync(deps.stateDir, { recursive: true })
+    const file = join(deps.stateDir, `${id}.json`)
+    writeFileSync(file, '{not valid JSON')
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(service.list()).toEqual([])
+    await expect(start()).rejects.toMatchObject({ code: 'CORRUPT_STATE' })
+    expect(readFileSync(file, 'utf8')).toBe('{not valid JSON')
+    expect(launches).toHaveLength(0)
+  })
+  it('recovers interrupted director and worker launches conservatively', async () => {
+    await start(); await active(); service.plan(id, [task('a')]); await running('a'); service.stop()
+    const file = join(deps.stateDir, `${id}.json`), saved = JSON.parse(readFileSync(file, 'utf8'))
+    saved.state = 'starting'; saved.directorId = null; saved.tasks[0].state = 'launching'
+    writeFileSync(file, JSON.stringify(saved)); service = new OrchestratorService(deps)
+    expect(service.snapshot(id)).toMatchObject({ state: 'paused', directorAvailable: false, tasks: [{ state: 'blocked', uncertain: true }] })
+    expect(() => service.resume(id)).toThrow(/original director/)
+    expect(launches).toHaveLength(2)
+  })
+  it.each([new Error('Engine not authenticated'), 'unknown process refusal'])('records a director creation failure without hiding it: %s', async failure => {
+    deps.create = async () => { throw failure }
+    await start()
+    await vi.waitFor(() => expect(service.snapshot(id).state).toBe('failed'))
+    expect(service.snapshot(id).error).toBe(failure instanceof Error ? failure.message : 'Director launch failed.')
+  })
+  it('never overwrites an existing workspace, even without a saved run', async () => {
+    mkdirSync(join(deps.workspaceDir, id), { recursive: true })
+    await expect(start()).rejects.toMatchObject({ code: 'WORKSPACE_EXISTS' })
+    expect(launches).toHaveLength(0)
+  })
+  it('refuses unsupported engines and invalid folder forms before creation', async () => {
+    await expect(service.start({ id, engine: 'codex', prompt: 'Test' })).rejects.toMatchObject({ code: 'ENGINE_UNSUPPORTED' })
+    const file = join(root, 'file'); writeFileSync(file, 'not a directory')
+    for (const cwd of ['relative/path', `${root}\n`, file]) await expect(service.start({ id, engine: 'claude', prompt: 'Test', cwd })).rejects.toMatchObject({ code: 'INVALID_CWD' })
+    expect(launches).toHaveLength(0)
+  })
+  it('does not start cancelled work while its folder is being prepared', async () => {
+    await start(); await active(); service.plan(id, [task('a')]); service.cancel(id, 'a')
+    await new Promise(resolve => setTimeout(resolve, 30))
+    expect(tasks()[0].state).toBe('cancelled'); expect(launches).toHaveLength(1)
+  })
+  it('handles a removed harness without mistaking it for an uncertain spawn', async () => {
+    await start(); await active(); service.plan(id, [task('a')]); deps.catalog = () => []
+    await vi.waitFor(() => expect(tasks()[0].state).toBe('failed'))
+    expect(tasks()[0]).toMatchObject({ uncertain: false, error: expect.stringContaining('no longer installed') })
+    expect(launches).toHaveLength(1)
+  })
+  it('can run general-purpose work, resume, and add a new revision after completion', async () => {
+    await start(); await active(); service.plan(id, [task('notes', [], 'engine:claude')]); await running('notes')
+    expect(launches[1].dsh).toBeNull()
+    await service.finish(id, 'notes', 1, 'Verified notes', [])
+    await service.finish(id, 'notes', 1, 'Same completed result', [])
+    service.complete(id, 'Done'); service.chat(id, '2'.repeat(32), 'Create a revision')
+    expect(service.snapshot(id).state).toBe('active')
+    service.plan(id, [task('revision', ['notes'], 'engine:claude')]); await running('revision')
+    service.cancel(id); service.resume(id)
+    expect(service.snapshot(id).state).toBe('active')
+    expect(tasks()[0].state).toBe('succeeded'); expect(tasks()[1].state).toBe('cancelled')
+    expect(launches).toHaveLength(3)
+  })
+  it('reports the same failure only once and rejects overlapping result commits', async () => {
+    await start(); await active(); service.plan(id, [task('a'), task('b')]); await running('a'); await running('b')
+    await service.finish(id, 'a', 1, 'Missing tool', [], true)
+    await service.finish(id, 'a', 1, 'Missing tool', [], true)
+    expect(sent).toHaveLength(1)
+    const first = service.finish(id, 'b', 1, 'Verified', [])
+    await expect(service.finish(id, 'b', 1, 'Verified', [])).rejects.toMatchObject({ code: 'FINISH_IN_PROGRESS' })
+    await first
+  })
+  it.each([new Error('Input route disappeared'), 'unknown dispatch failure'])('retains uncertain guidance instead of resending: %s', async failure => {
+    await start(); await active(); deps.send = vi.fn(() => { throw failure })
+    service.chat(id, '3'.repeat(32), 'Make it taller')
+    service.chat(id, '3'.repeat(32), 'Make it taller')
+    expect(deps.send).toHaveBeenCalledTimes(1)
+    expect(service.snapshot(id).messages).toEqual(expect.arrayContaining([expect.objectContaining({ delivery: 'unknown', deliveryReason: failure instanceof Error ? failure.message : 'Message delivery could not be confirmed.' })]))
+  })
+  it('leaves a recovered pending receipt pending when no director was recorded', async () => {
+    await start(); await active(); service.stop()
+    const file = join(deps.stateDir, `${id}.json`), saved = JSON.parse(readFileSync(file, 'utf8'))
+    saved.directorId = null; saved.messages.push({ id: '4'.repeat(32), role: 'system', text: 'Saved result', at: Date.now(), delivery: 'pending' })
+    writeFileSync(file, JSON.stringify(saved)); service = new OrchestratorService(deps)
+    expect(service.snapshot(id).messages).toEqual(expect.arrayContaining([expect.objectContaining({ delivery: 'pending' })]))
+    expect(sent).toHaveLength(0)
+  })
+  it('flushes coalesced transcript changes and bounds retained messages', async () => {
+    await start(); await active()
+    for (let i = 0; i < 205; i++) {
+      service.ingest({ type: 'turn_started', agentId: 'agent-1' })
+      service.ingest({ type: 'text_delta', agentId: 'agent-1', payload: { content: `Reply ${i}` } })
+    }
+    service.ingest({ type: 'error', agentId: 'agent-1', payload: { message: 'Connection lost' } })
+    service.ingest({ type: 'unknown', agentId: 'agent-1' })
+    service.ingest({ type: 'text_delta', agentId: 'agent-1', replay: true, payload: { content: 'duplicate replay' } })
+    await vi.waitFor(() => expect(JSON.parse(readFileSync(join(deps.stateDir, `${id}.json`), 'utf8')).error).toBe('Connection lost'))
+    expect(service.snapshot(id).messages).toHaveLength(200)
+    service.delivery({ deliveryId: 'missing', sessionId: 'not-this-project', state: 'rejected' })
+    service.stop()
+    const before = service.snapshot(id)
+    service.delivery({ deliveryId: 'missing', sessionId: 'agent-1', state: 'started' })
+    service.ingest({ type: 'error', agentId: 'agent-1', payload: { message: 'ignored after shutdown' } })
+    expect(service.snapshot(id)).toEqual(before)
+  })
+  it('pauses after a real background storage failure without duplicating the agent', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    let resolve!: (value: { agentId: string }) => void
+    deps.create = () => new Promise(r => { resolve = r })
+    await start()
+    const backup = join(root, 'state-backup')
+    renameSync(deps.stateDir, backup); writeFileSync(deps.stateDir, 'blocked directory')
+    try {
+      resolve({ agentId: 'created-before-storage-failure' })
+      await vi.waitFor(() => expect(service.snapshot(id).state).toBe('paused'))
+      expect(service.snapshot(id).error).toMatch(/background error/)
+    } finally { unlinkSync(deps.stateDir); renameSync(backup, deps.stateDir) }
+    service.stop(); service = new OrchestratorService(deps)
+    expect(service.snapshot(id).directorId).toBe('created-before-storage-failure')
+  })
+  it('keeps cancellation authoritative when director creation later rejects', async () => {
+    let reject!: (error: Error) => void
+    deps.create = () => new Promise((_resolve, r) => { reject = r })
+    await start(); service.plan(id, [task('queued-before-director')]); service.cancel(id)
+    reject(new Error('Spawn rejected after cancellation'))
+    await vi.waitFor(() => expect(service.snapshot(id).error).toBe('Spawn rejected after cancellation'))
+    expect(service.snapshot(id).state).toBe('cancelled')
+    expect(tasks()[0].state).toBe('cancelled')
+  })
+  it('keeps cancellation authoritative when worker creation later rejects', async () => {
+    await start(); await active()
+    let reject!: (error: Error) => void
+    deps.create = () => new Promise((_resolve, r) => { reject = r })
+    service.plan(id, [task('a')]); await vi.waitFor(() => expect(reject).toBeTypeOf('function'))
+    service.cancel(id, 'a'); reject(new Error('Late spawn refusal'))
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(tasks()[0]).toMatchObject({ state: 'cancelled', uncertain: false })
+  })
+  it('does not downgrade a very fast worker result while creation is returning', async () => {
+    await start(); await active()
+    deps.create = async () => {
+      await service.finish(id, 'fast', 1, 'Already verified', [])
+      return { agentId: 'fast-worker' }
+    }
+    service.plan(id, [task('fast')])
+    await vi.waitFor(() => expect(tasks()[0].agentId).toBe('fast-worker'))
+    expect(tasks()[0].state).toBe('succeeded')
+  })
+  it('normalizes non-Error worker failures and explicit input rejection', async () => {
+    await start(); await active()
+    deps.create = async () => { throw 'untyped refusal' }
+    service.plan(id, [task('a')]); await vi.waitFor(() => expect(tasks()[0].state).toBe('blocked'))
+    expect(tasks()[0].error).toBe('Could not start this specialist.')
+    const receipt = '9'.repeat(32)
+    service.chat(id, receipt, 'Explain the blocker')
+    service.delivery({ deliveryId: receipt, sessionId: 'agent-1', state: 'rejected', reason: 'Input route closed' })
+    expect(service.snapshot(id).messages).toEqual(expect.arrayContaining([expect.objectContaining({ id: receipt, delivery: 'failed', deliveryReason: 'Input route closed' })]))
+  })
+  it('preserves orphaned worker results without inventing a director', async () => {
+    await start(); await active(); service.plan(id, [task('a')]); await running('a'); service.stop()
+    const file = join(deps.stateDir, `${id}.json`), saved = JSON.parse(readFileSync(file, 'utf8'))
+    saved.directorId = null; writeFileSync(file, JSON.stringify(saved)); service = new OrchestratorService(deps)
+    await service.finish(id, 'a', 1, 'Verified despite disconnected director', [])
+    expect(tasks()[0].state).toBe('succeeded'); expect(sent).toHaveLength(0)
+    expect(service.snapshot(id).messages).toEqual(expect.arrayContaining([expect.objectContaining({ delivery: 'pending' })]))
+  })
+  it('does not lose a committed result if staging cleanup itself fails', async () => {
+    await start(); await active(); service.plan(id, [task('a')]); await running('a')
+    vi.mocked(filesystem.rm).mockRejectedValueOnce(new Error('Cleanup refused'))
+    await service.finish(id, 'a', 1, 'Verified', [])
+    expect(tasks()[0].state).toBe('succeeded')
+  })
+  it('normalizes untyped private-state and background notification failures', async () => {
+    await start(); await active(); service.stop()
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.spyOn(privateState, 'readPrivateStateFile').mockImplementationOnce(() => { throw 'untyped state failure' })
+    service = new OrchestratorService(deps); expect(service.list()).toEqual([])
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('invalid state'))
+    service.stop(); service = new OrchestratorService(deps)
+    let failOnce = true
+    deps.changed = () => { if (failOnce) { failOnce = false; throw 'untyped observer failure' } }
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const other = 'e'.repeat(32)
+    await service.start({ id: other, engine: 'claude', prompt: 'Another project' })
+    await vi.waitFor(() => expect(service.snapshot(other).state).toBe('paused'))
+    expect(service.snapshot(other).error).toContain('unknown error')
   })
 })

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { WebSocketServer } from 'ws'
+import * as authSession from '../lib/authSession.js'
 import { summarizeOrchestratorReply, parseOrchestratorArgs, localOrchestratorRequest, orchestratorCommand } from './command.js'
 
 describe('orchestrator tool output', () => {
@@ -32,6 +33,7 @@ describe('orchestrator tool output', () => {
 })
 
 describe('orchestrator argument validation', () => {
+  afterEach(() => vi.restoreAllMocks())
   const parse = (...args: string[]) => parseOrchestratorArgs(['--port', '1234', '--machine', 'local-test', ...args]).payload
   it.each(['list', 'catalog', 'status', 'resume'])('parses %s without changing its identity', action => {
     expect(parse(action, 'project')).toEqual({ action, id: 'project' })
@@ -54,6 +56,14 @@ describe('orchestrator argument validation', () => {
     expect(() => parse('install')).toThrow(/Usage/)
     for (const port of ['0', '65536', '1.1', 'no']) expect(() => parseOrchestratorArgs(['--port', port, '--machine', 'local', 'list'])).toThrow(/running local daemon/)
     expect(() => parseOrchestratorArgs(['--port', '1234', '--machine'])).toThrow(/identity/)
+  })
+  it('uses a saved local identity and safely formats untyped configuration failures', async () => {
+    vi.spyOn(authSession, 'readAuthSession').mockReturnValue({ machineId: 'saved-machine' } as ReturnType<typeof authSession.readAuthSession>)
+    expect(parseOrchestratorArgs(['--port', '1234', 'list']).machineId).toBe('saved-machine')
+    vi.spyOn(authSession, 'readAuthSession').mockImplementation(() => { throw 'untyped configuration failure' })
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    expect(await orchestratorCommand(['list'])).toBe(1)
+    expect(error).toHaveBeenCalledWith('Orchestrator request failed.')
   })
 })
 

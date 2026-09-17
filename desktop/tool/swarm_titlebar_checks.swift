@@ -90,8 +90,10 @@ private extension SwarmTabButton {
   func checkCloseVisibility(_ visible: Bool) throws {
     try checkTitlebar(closeButton.showsGlyph == visible,
       "A tab reveals its close mark only for hover or keyboard focus")
-    try checkTitlebar(!closeButton.isHidden && closeButton.accessibilityLabel() == "Close \(name)",
-      "A quiet close mark remains an accessible action")
+    try checkTitlebar(closeButton.isHidden == compact,
+      "Only compact icon-only tabs hide the close control")
+    try checkTitlebar(closeButton.accessibilityLabel() == "Close \(name)",
+      "The close action retains its accessible label")
   }
 
   func clickBothActions() {
@@ -186,7 +188,7 @@ private extension SwarmTabStrip {
     try checkTitlebar(tabs[0].showsDivider && tabs[1].showsDivider, "Separators return when the pointer leaves")
     try checkTitlebar(!tabs[10].showsDivider && !tabs[11].showsDivider, "Selected tab remains joined without neighboring separators")
     try checkTitlebar(tabs.count == 24, "All overflow tabs exist")
-    try checkTitlebar(!newButton.isEnabled, "New Harness is disabled at capacity")
+    try checkTitlebar(newButton.isEnabled, "New Tab remains available with overflow tabs")
     for (index, tab) in tabs.enumerated() {
       try tab.checkAccessibility(expectedName: "Swarm \(index)", active: index == 11)
     }
@@ -232,8 +234,8 @@ private extension SwarmTabStrip {
       "New Tab can reveal an existing starter at the tab limit")
     fullWithStarter["canOpenNewTab"] = false
     update(fullWithStarter)
-    try checkTitlebar(!newButton.isEnabled,
-      "New Tab respects the workspace's availability")
+    try checkTitlebar(newButton.isEnabled,
+      "The retired canOpenNewTab capacity flag no longer disables New Tab")
     update(state([["id": "swarm-0", "name": "Renamed tab"]], active: "swarm-0"))
     try checkTitlebar(newButton.toolTip == nil && openButton.toolTip == nil,
       "Titlebar actions add no hover hints")
@@ -525,7 +527,7 @@ private extension SwarmTitlebar {
     try checkTitlebar(strip.newButton.accessibilityLabel() == "New Tab", "The plus announces New Tab")
     try checkTitlebar(main.defersToInput(event("n", 45, .command)) && main.defersToInput(event("o", 31, .command)),
       "Command-N and Command-O reach their separate New and Open actions")
-    try checkTitlebar(!main.defersToInput(event("p", 35, .command)), "Command-P no longer opens Navigate")
+    try checkTitlebar(main.defersToInput(event("p", 35, .command)), "Command-P reaches the Orchestrator launcher")
     try checkTitlebar(main.defersToInput(event("p", 35, [.command, .shift])), "Command-Shift-P reaches command search")
     flutterKeyContext = "picker"
     syncMenuKeys()
