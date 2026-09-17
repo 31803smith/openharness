@@ -304,7 +304,9 @@ def main(argv: list[str]) -> int:
     target = target if target.is_absolute() else WS / target
     rel = os.path.relpath(target, WS)
     try:
-        text = target.read_text()
+        # As the pane reads it (served as UTF-8, decoded with replacement): a stray byte is a line
+        # to judge, not a crash that leaves the last verdict standing.
+        text = target.read_text(encoding="utf-8", errors="replace")
     except OSError:
         text = None
     verdict = judge(text, rel)
