@@ -372,12 +372,16 @@ runtime is ever adopted, since onefile self-extracts into `{CACHE_DIR}`.
   does — an existing uv link, and its version, stays in charge; (C) both. **Decided (2026-09-17): A** —
   the managed grid is a harness-internal runtime, like Node: visible to the daemon and to the panes
   it launches, and to nothing else. The user's own terminal keeps whichever `grid` they installed.
+  **Done** — `gridPanePrelude()` in `engineLaunch.ts`, after the shell's startup files, beside the
+  managed-Node prelude; pinned by a test whose startup file resets PATH to a decoy `grid`.
 - ⚠️ **C2 — `grid update` overwrites the pin in place.** The stale-version notice is suppressed only
   for `--json`, a non-TTY stderr, or `GRID_NO_UPDATE_CHECK` (grid `cli/update.py:208-225`). Daemon
   spawns are piped and safe; the pane's stderr IS a TTY, so the agent sees "Run `grid update`"
   (`update.py:296-300`), and `_update_binary` resolves `argv[0]` → `which grid` → `os.replace` over
   the managed file (`update.py:382-394,439`). Set `GRID_NO_UPDATE_CHECK=1` in every spawn and pane,
   forbid `grid update` in the skill, and lay the runtime down 0555 so `os.replace` fails loudly.
+  **Done** for the first two (`gridChildEnv()` in `gridExec.ts`, the pane prelude, a ground rule in
+  the skill); the 0555 lands with the installer.
 - **H1 — pin propagation.** A version-aware ensure (compare the `current-grid` dir name with the
   manifest pin) on daemon start and on the post-update restart — not only in `install.sh` and
   `--repair`. Add a test that the manifest pin ≥ `GRID_VERSION_FLOOR` (`gridExec.ts:36`).
@@ -406,8 +410,11 @@ runtime is ever adopted, since onefile self-extracts into `{CACHE_DIR}`.
   measure it against `gridExec`'s 30 s timeout (`gridExec.ts:43`).
 - **M5 — no desktop surface for a missing CLI.** Only `grid.webSearch` reaches the frame
   (`registry.ts:118`, `models.dart:120`); `GRID_CLI_MISSING` reaches nothing. A
-  `gridCli: managed | path | missing` field on `machine_meta` lets the picker and the local-model
-  dialog say "install grid".
+  `gridCli: managed | path | missing` field beside the model list lets the picker and the local-model
+  dialog say so. **Done** — `gridCliPresence()` rides the `grid_models_list` answer (not
+  `machine_meta`, which is the backend's frame); both surfaces say "Harness Compute isn't installed
+  on this machine." — the feature's name, never the binary's, and the machine's gap before the
+  account's.
 - Low: Windows is no gap (both Darwin/Linux only). The `current-grid` containment check is satisfied by
   `~/.harness/runtime/grid-<ver>-<key>/grid`; a `~/.local/bin` link is for PATH only, never the
   pointer. Pin against the release tag (0.3.47), not the checkout (0.3.46).
@@ -421,6 +428,12 @@ runtime is ever adopted, since onefile self-extracts into `{CACHE_DIR}`.
   `gridCommand.spec.ts` strips `HARNESS_GRID_BIN` from the inherited env.
 - cli: tsc clean; 2514 passed. The two failures in `install.spec.ts` (`brew install tmux` vs the
   script's `--force-bottle`) fail identically on HEAD — pre-existing, not from this pass.
+- C1 + C2: `gridPanePrelude()` puts the resolved grid first on the pane's PATH and turns grid's
+  update check off there; `gridChildEnv()` does the latter for every daemon spawn; the skill forbids
+  `grid update`. Specs: `engineLaunch.spec.ts` (incl. a decoy-on-PATH run through a fake startup
+  file), `gridExec.spec.ts`.
+- M5: `gridCli` on the `grid_models_list` answer (`gridCliPresence()`), parsed into `GridModels`;
+  the Local model dialog and the picker's empty sentence say when it is `missing`. Specs on both ends.
 
 ---
 
@@ -690,7 +703,8 @@ None. Every decision this plan waited on is recorded above:
 | `auto` / grid-router model | Excluded from the picker until the grid path is E2EE |
 | Local mode | Out of scope; every call passes `--remote` |
 | macOS signing of the managed grid | **Decided (2026-09-17)**: ad-hoc, like managed tmux — what the harness fetches is never quarantined, and quarantine is what kills an ad-hoc binary. Notarize only if it is ever a browser download |
-| Where the agent PANE finds `grid` (C1) | **Decided (2026-09-17): A** — the daemon prepends the managed runtime's dir to PATH of every pane it launches; `~/.local/bin/grid` stays grid's / uv's |
-| `grid update` under the pin (C2) | **Decided (2026-09-17)**: `GRID_NO_UPDATE_CHECK=1` on every spawn and pane; runtime laid down 0555; the skill forbids `grid update` |
+| Where the agent PANE finds `grid` (C1) | **Done (2026-09-17): A** — the pane's launch script prepends the resolved grid's dir to PATH after the shell's startup files (`gridPanePrelude`); `~/.local/bin/grid` stays grid's / uv's |
+| `grid update` under the pin (C2) | **Done (2026-09-17)**: `GRID_NO_UPDATE_CHECK=1` on every spawn and pane; the skill forbids `grid update`. Runtime laid down 0555 — with the installer |
+| How the desktop learns the machine has no `grid` (M5) | **Done (2026-09-17)**: `gridCli: managed \| path \| missing` beside the model list; "Harness Compute isn't installed on this machine." in the dialog and the picker |
 | How a pin bump reaches installed machines (H1) | **Decided (2026-09-17)**: version-aware ensure on daemon start and the post-update restart, not only `install.sh` / `--repair` |
 | Which binary signs in and out | **Done (2026-09-17)** — `gridHandoff.ts` and `gridLogout.ts` resolve through `gridBinaryPath()` |
