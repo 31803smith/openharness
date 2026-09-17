@@ -151,9 +151,11 @@ export class OrchestratorService {
   }
   private async launchDirector(run: Run): Promise<void> {
     try {
+      writeFileSync(join(run.root, 'ORCHESTRATOR.md'), directorPrompt(run, this.catalog(), this.deps.command), { mode: 0o600, flag: 'wx' })
       const result = await this.deps.create({
         engine: run.engine, cwd: run.root, dsh: null, bypassPermission: run.bypassPermission,
-        prompt: directorPrompt(run, this.catalog(), this.deps.command), name: `Director ${run.id.slice(0, 8)}`,
+        prompt: 'Read ORCHESTRATOR.md in this project folder. It contains the user’s request, your director role, the installed harness catalog, and the tools for coordinating specialists. Begin the project and keep the user informed.',
+        name: `Director ${run.id.slice(0, 8)}`,
       })
       run.directorId = result.agentId
       if (run.state === 'cancelled') this.deps.cancel(result.agentId)
@@ -209,11 +211,12 @@ export class OrchestratorService {
       if (task.state !== 'launching' || run.state !== 'active') return
       const harness = this.catalog().find(h => h.id === task.harness)
       requireThat(harness || task.harness === `engine:${run.engine}`, 'HARNESS_UNAVAILABLE', `${task.harness} is no longer installed.`)
+      writeFileSync(join(task.cwd, 'ORCHESTRATOR_TASK.md'), workerPrompt(run, task, this.deps.command), { mode: 0o600, flag: 'wx' })
       creating = true
       const result = await this.deps.create({
         engine: (harness?.engine ?? run.engine) as AgentEngine, cwd: task.cwd,
         dsh: harness?.id ?? null, bypassPermission: run.bypassPermission,
-        prompt: workerPrompt(run, task, this.deps.command), name: task.title,
+        prompt: 'Read ORCHESTRATOR_TASK.md in this folder and complete the specialist assignment using your harness. Verify the result, update the viewer/verdict, then report through the exact finish or fail command in that file.', name: task.title,
       })
       task.agentId = result.agentId
       if ((task as Task).state === 'cancelled' || (run as Run).state === 'cancelled') this.deps.cancel(result.agentId)

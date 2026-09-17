@@ -38,7 +38,8 @@ describe('durable orchestrator lifecycle', () => {
     await Promise.all([start(), start()]); await active()
     expect(launches).toHaveLength(1)
     expect(launches[0].bypassPermission).toBe(false)
-    expect(launches[0].prompt).toContain('test/blender')
+    expect(launches[0].prompt.length).toBeLessThan(2000)
+    expect(readFileSync(join(launches[0].cwd, 'ORCHESTRATOR.md'), 'utf8')).toContain('test/blender')
     await expect(service.start({ id, engine: 'claude', prompt: 'Different' })).rejects.toMatchObject({ code: 'PROJECT_CONFLICT' })
   })
   it('validates every dependency and harness before launching any task', async () => {
@@ -61,7 +62,7 @@ describe('durable orchestrator lifecycle', () => {
     const scene = await running('scene')
     expect(readFileSync(join(scene.cwd, 'inputs/part/part.step'), 'utf8')).toBe('verified CAD v1')
     expect(scene.inputs).toEqual({ part: 1, research: 1 })
-    expect(launches.find(l => l.cwd === scene.cwd)!.prompt).toContain('warm, minimal')
+    expect(readFileSync(join(scene.cwd, 'ORCHESTRATOR_TASK.md'), 'utf8')).toContain('warm, minimal')
     writeFileSync(join(scene.cwd, 'scene.png'), 'render fixture')
     await service.finish(id, 'scene', 1, 'Render checked', ['scene.png'])
     const film = await running('film')
