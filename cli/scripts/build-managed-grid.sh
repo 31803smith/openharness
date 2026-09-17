@@ -79,7 +79,8 @@ case "$PLATFORM" in
     echo ">> fetching $ASSET from $GRID_RELEASE_BASE"
     fetch "$GRID_RELEASE_BASE/$ASSET" "$WORK/$ASSET"
     fetch "$GRID_RELEASE_BASE/SHA256SUMS" "$WORK/SHA256SUMS"
-    want="$(grep -E "[[:space:]]${ASSET}\$" "$WORK/SHA256SUMS" | awk '{print $1}' | head -1)"
+    # One process, no pipe: under `pipefail` a `head -1` closing the pipe early would fail the line.
+    want="$(awk -v asset="$ASSET" '$2 == asset { print $1; exit }' "$WORK/SHA256SUMS")"
     [ -n "$want" ] || { echo "error: the release's SHA256SUMS names no $ASSET" >&2; exit 1; }
     got="$(sha256_of "$WORK/$ASSET")"
     [ "$got" = "$want" ] || {
@@ -112,7 +113,7 @@ fetch "$GRID_RAW_BASE/LICENSE" "$STAGE/LICENSE.grid"
 if [ "$(host_platform)" = "$PLATFORM" ]; then
   answered="$(GRID_NO_UPDATE_CHECK=1 "$STAGE/bin/grid" --version 2>&1 || true)"
   # The whole line, not a substring: `0.3.4` is inside `0.3.47`.
-  if printf '%s\n' "$answered" | grep -qxE "grid ${VERSION//./\\.}"; then
+  if grep -qxE "grid ${VERSION//./\\.}" <<< "$answered"; then
     echo ">> smoke: $answered"
   else
     echo "error: $STAGE/bin/grid --version answered '$answered', not 'grid $VERSION'" >&2
