@@ -59,7 +59,7 @@ The optional A/B smoke test uses isolated identities, two loopback WebSockets,
 the CLI's real E2EE handshake/media reader and ffmpeg-generated PNG/MP4 fixtures:
 
 ```bash
-REMOTE_MEDIA_CLI_ROOT=../autonomous-harness/cli flutter test test/remote_media_smoke_test.dart
+REMOTE_MEDIA_CLI_ROOT=../openharness/cli flutter test test/remote_media_smoke_test.dart
 ```
 
 Install the companion CLI's npm dependencies first; ffmpeg must be on PATH.
@@ -112,7 +112,7 @@ the backend is a sibling `autonomous-code` checkout. Their default layout is:
 ```text
 .../autonomous-ai/
   autonomous-code/
-  autonomous-harness/
+  openharness/
     cli/
     backend/
     desktop/        <- this app
