@@ -1,0 +1,10 @@
+{
+  "name": "openharness-studio-viewer",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "test:browser": "node test/studios.e2e.mjs"
+  },
+  "devDependencies": { "playwright": "1.58.2", "c8": "10.1.3" }
+}
