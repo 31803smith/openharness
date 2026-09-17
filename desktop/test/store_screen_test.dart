@@ -354,6 +354,50 @@ void main() {
     },
   );
 
+  testWidgets(
+    'leaving the store tab and coming back keeps the search and the open page',
+    (tester) async {
+      final (notifier, store) = await open(tester);
+      Future<void> mountAgain() async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: StoreTab(notifier: notifier, api: store, source: 'test'),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+      }
+
+      await tester.enterText(find.byKey(const ValueKey('store-search')), 'typ');
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('store-card:autonomous/typst')).first,
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('store-page:autonomous/typst')),
+        findsOneWidget,
+      );
+
+      // Another tab is shown: the store tab is not built at all.
+      await tester.pumpWidget(const SizedBox());
+      await mountAgain();
+      expect(
+        find.byKey(const ValueKey('store-page:autonomous/typst')),
+        findsOneWidget,
+      );
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const ValueKey('store-search')))
+            .controller!
+            .text,
+        'typ',
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('the catalog keeps real ratings and hides viewer dependencies', (
     tester,
   ) async {
