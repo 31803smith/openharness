@@ -273,8 +273,8 @@ class LocalCliDiscovery {
   /// and a spawn into that gap is a wasted process (the CLI's own lock refuses it), not a fix.
   ///
   /// Never surfaces ORDINARY failures to the caller (no exceptions, no
-  /// [AppNotifier]-visible error); [onSignedOut] is the single exception, and it is a notice, not a
-  /// failure — the account is gone, the daemon comes back signed out, and the window should say so —
+  /// [AppNotifier]-visible error); [onSignedOut] is the single exception, for the one state no
+  /// amount of respawning can recover from —
   /// this runs unattended in the background for the app's whole lifetime; callers that need a
   /// one-shot "start now and tell me if it worked" should use [ensureRunning] instead. Cancel the
   /// timer to stop supervising — this never touches the daemon process itself (it self-daemonizes and
@@ -344,16 +344,17 @@ class LocalCliDiscovery {
           if (DateTime.now().isBefore(nextSpawnAllowedAt)) return;
           if (!(spawnAllowedAt?.call(DateTime.now()) ?? true)) return;
           // A daemon that signed itself OUT — its machine was deleted from another machine, or its
-          // session expired — deletes its session file. It used to exit and refuse to start again
-          // without one, which made respawning it the one failure this loop could not fix; it now
-          // starts signed out and serves this computer, so the respawn goes ahead. The caller is
-          // still told: the window it is holding has become a guest, and should say so.
+          // session expired — deletes its session file and exits. Respawning it is the one failure
+          // this loop cannot fix: every replacement starts without a session and exits again,
+          // forever, silently. Stop instead, and let the caller send the user somewhere that helps.
           //
           // Asked here and not on every tick because it costs a `harness auth status` process, and
           // the respawn point is already rate-limited by the backoff above — so this runs once per
           // spawn attempt rather than once every [checkInterval].
           if (stillSignedIn != null && !await stillSignedIn()) {
+            timer.cancel();
             onSignedOut?.call();
+            return;
           }
           try {
             await _spawnCommand();
@@ -465,12 +466,7 @@ class LocalCliDiscovery {
     // it, so treating discovery-ready as "ready" raced the handshake and surfaced as a bogus 30s
     // receive-timeout right after boot. `connected` is the daemon's own backend-socket state
     // (missing field ⇒ older CLI ⇒ accepted, same idiom as above).
-    //
-    // Unless the daemon is running without an account: then there is no backend leg to wait for —
-    // `/api/machines` answers for this computer from the daemon itself — and "not connected" would
-    // hold the window on a spinner for a handshake that is never attempted. A daemon too old to say
-    // `signedIn` is one that refused to start signed out, so a missing field means signed in.
-    if (body['connected'] == false && body['signedIn'] != false) {
+    if (body['connected'] == false) {
       return LocalCliProbe.notReady(
         'not connected to the backend yet',
         pid: pid,
