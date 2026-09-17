@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
@@ -6,11 +8,14 @@ import 'package:harness_mobile/shared/widgets/empty_state.dart';
 import 'package:harness_mobile/state/app_state.dart';
 import 'package:harness_mobile/widgets/engine_identity.dart';
 
+import 'link_page.dart';
 import 'phone_navigation.dart';
 import 'phone_search_index.dart';
+import 'phone_sheet.dart';
 import 'phone_status.dart';
 import 'search_result_text.dart';
 import 'status_pill.dart';
+import 'unlink_machine.dart';
 
 /// One query over everything the account can reach — agents and machines
 /// together.
@@ -351,16 +356,57 @@ class _Results extends StatelessWidget {
     openAgentPager(context, notifier, phoneSearchAgentEntries(rows), entry);
   }
 
-  /// Opens the machine, on whichever of its two screens it needs — its password
-  /// form or its agent list. [openMachine] decides that from the machine's own
-  /// state, so a machine that gets linked while this page is open opens on the
-  /// right one.
+  /// A machine that wants its password opens the form for it. One that is
+  /// linked opens a sheet of what can be done TO it — reload its agents,
+  /// re-enter its password, unlink this phone — and no longer a list of its
+  /// agents: those are a swipe away in the terminal, and search already lists
+  /// them above.
   ///
-  /// No pager here. The machines a query returns are a scattering of the
-  /// Machines tab's order, and swiping along a set somebody assembled by typing
-  /// a word is not a list — it is three unrelated computers.
-  void _openMachine(BuildContext context, PhoneSearchResult row) =>
-      openMachine(context, notifier, row.machineId);
+  /// Read at the tap, not when the row was drawn, so a machine that got linked
+  /// while this page was open gets the sheet rather than a form it no longer
+  /// needs.
+  void _openMachine(BuildContext context, PhoneSearchResult row) {
+    final machine = notifier.stateOf(row.machineId);
+    if (machine == null) return;
+    switch (phoneMachineStatusOf(machine)) {
+      case PhoneMachineStatus.offline:
+        return;
+      case PhoneMachineStatus.needsPassword:
+        openMachine(context, notifier, row.machineId);
+        return;
+      case PhoneMachineStatus.connecting || PhoneMachineStatus.ready:
+        break;
+    }
+    final machineId = row.machineId;
+    showPhoneSheet(
+      context,
+      title: machine.machine.displayName,
+      actions: [
+        PhoneSheetAction(
+          icon: LucideIcons.refreshCw300,
+          label: 'Reload agents',
+          onTap: () => unawaited(notifier.reloadMachineData(machineId)),
+        ),
+        PhoneSheetAction(
+          icon: LucideIcons.keyRound300,
+          label: 'Re-enter password…',
+          onTap: () => Navigator.of(context).push(
+            phoneRoute(
+              (_) => LinkPage(notifier: notifier, machineId: machineId),
+            ),
+          ),
+        ),
+        // No confirmation, the same as the Machines tab: this sheet is the step
+        // between the tap and the unlink.
+        PhoneSheetAction(
+          icon: LucideIcons.unlink300,
+          label: 'Unlink this phone',
+          destructive: true,
+          onTap: () => unawaited(unlinkThisPhone(context, notifier, machine)),
+        ),
+      ],
+    );
+  }
 }
 
 class _GroupLabel extends StatelessWidget {
@@ -599,7 +645,9 @@ class _Action extends StatelessWidget {
           : phoneMachineStatusOf(machine)) {
         PhoneMachineStatus.offline => 'Offline',
         PhoneMachineStatus.needsPassword => 'Unlock',
-        _ => 'View',
+        // Its state, not a verb: the tap brings a sheet of actions, and "View" promised a screen
+        // that is no longer there.
+        _ => 'Connected',
       },
     };
   }

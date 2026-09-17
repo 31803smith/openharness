@@ -72,6 +72,7 @@ class _PhoneShellState extends State<PhoneShell> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _linkedMachineId.dispose();
+    _openAgentRequest.dispose();
     for (final controller in _heroControllers.values) {
       controller.dispose();
     }
@@ -116,6 +117,30 @@ class _PhoneShellState extends State<PhoneShell> with WidgetsBindingObserver {
       _tab = PhoneTab.agents;
       _tabCanPop =
           _navigators[PhoneTab.agents]?.currentState?.canPop() ?? false;
+    });
+  }
+
+  /// An agent somebody picked — from search, the new-agent form, the attention list — for
+  /// [AgentHome] to put on screen. A notifier for the reason [_linkedMachineId] is one.
+  final _openAgentRequest =
+      ValueNotifier<({String machineId, String agentId})?>(null);
+
+  /// Opens an agent AS the home screen rather than on top of it.
+  ///
+  /// ⚠️ **This is what took the back button off the terminal.** A terminal pushed over search, or
+  /// over the new-agent form, had a page under it, so its header drew a chevron back to a screen the
+  /// person had finished with. Every stack is emptied back to its root instead and the root terminal
+  /// switches agent, so there is never anything to go back to.
+  void _openAgentAtHome(String machineId, String agentId) {
+    for (final navigator in _navigators.values) {
+      navigator.currentState?.popUntil((route) => route.isFirst);
+    }
+    // Reset first, so picking the agent already requested last time still notifies.
+    _openAgentRequest.value = null;
+    _openAgentRequest.value = (machineId: machineId, agentId: agentId);
+    setState(() {
+      _tab = PhoneTab.agents;
+      _tabCanPop = false;
     });
   }
 
@@ -358,6 +383,7 @@ class _PhoneShellState extends State<PhoneShell> with WidgetsBindingObserver {
     PhoneTab.agents => AgentHome(
       notifier: widget.notifier,
       openMachineId: _linkedMachineId,
+      openAgent: _openAgentRequest,
     ),
     PhoneTab.machines => MachinesTab(notifier: widget.notifier),
     PhoneTab.settings => SettingsPage(notifier: widget.notifier),
@@ -409,6 +435,7 @@ class _PhoneShellState extends State<PhoneShell> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) => PhoneShellScope(
     onMachineLinked: _followLinkedMachine,
+    onOpenAgent: _openAgentAtHome,
     child: ListenableBuilder(
       listenable: widget.notifier,
       builder: (context, _) => PopScope<Object?>(

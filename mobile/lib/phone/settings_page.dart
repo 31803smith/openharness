@@ -13,6 +13,7 @@ import 'package:harness_mobile/terminal/terminal_font_store.dart';
 import 'package:harness_mobile/terminal/terminal_theme_store.dart';
 
 import 'phone_header.dart';
+import 'phone_input_mode_store.dart';
 import 'phone_sheet.dart';
 import 'settings_row.dart';
 import 'stats_entry.dart';
@@ -51,9 +52,13 @@ import 'usage_entry.dart';
 /// What a phone adds instead is the account and the machine links, which the desktop keeps in its
 /// rail footer — on a phone there is no rail, so this is the only way to reach either.
 class SettingsPage extends StatelessWidget {
-  const SettingsPage({super.key, required this.notifier});
+  const SettingsPage({super.key, required this.notifier, this.large = true});
 
   final AppNotifier notifier;
+
+  /// The tab's big title. Off when the page is pushed from a terminal's menu, where it needs the
+  /// back chevron a large header does not draw.
+  final bool large;
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
@@ -66,7 +71,7 @@ class SettingsPage extends StatelessWidget {
           bottom: false,
           child: Column(
             children: [
-              const PhoneHeader(large: true, title: 'Settings'),
+              PhoneHeader(large: large, title: 'Settings'),
               Expanded(child: _Body(notifier: notifier)),
             ],
           ),
@@ -116,7 +121,14 @@ class _Body extends StatelessWidget {
         ],
       ),
       const SettingsCaption('Terminal'),
-      SettingsGroup(children: [_FontRow(), _SizeRow(), _TerminalThemeRow()]),
+      SettingsGroup(
+        children: [
+          _InputModeRow(),
+          _FontRow(),
+          _SizeRow(),
+          _TerminalThemeRow(),
+        ],
+      ),
       const SettingsCaption('Appearance'),
       SettingsGroup(children: [_PaletteRow(), _TextSizeRow()]),
       const SettingsNote(
@@ -179,6 +191,38 @@ class _Avatar extends StatelessWidget {
       ),
     );
   }
+}
+
+/// What a tap on the terminal opens: voice input (the default) or the keyboard, as before voice.
+class _InputModeRow extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) => ValueListenableBuilder(
+    valueListenable: phoneInputModeStore,
+    builder: (context, mode, _) {
+      AppTheme.watch(context);
+      return SettingsRow(
+        title: 'Input',
+        value: mode.label,
+        onTap: () => showPhoneSheet(
+          context,
+          title: 'Tapping the terminal opens',
+          actions: [
+            for (final choice in PhoneInputMode.values)
+              PhoneSheetAction(
+                icon: choice == mode
+                    ? LucideIcons.check300
+                    : switch (choice) {
+                        PhoneInputMode.voice => LucideIcons.mic300,
+                        PhoneInputMode.keyboard => LucideIcons.keyboard300,
+                      },
+                label: choice.label,
+                onTap: () => unawaited(phoneInputModeStore.set(choice)),
+              ),
+          ],
+        ),
+      );
+    },
+  );
 }
 
 /// The terminal typeface. A sheet rather than a dropdown: a phone has room for the whole list.
