@@ -21,7 +21,7 @@ rollback, linked installs, source identity, concurrent mutations and workspace p
 CLI tests; desktop parsing and Store interaction tests; CLI typecheck/full suite and Flutter analysis
 and relevant widget tests. Setup scripts' external side effects cannot be rolled back.
 
-Verification completed on 2026-09-17:
+Verification completed on 2026-09-18, including a fresh full round before opening the PR:
 
 - 388 package/socket tests pass with 100% statements, branches, functions and lines in each of
   `update.ts`, `updates.ts`, `lock.ts` and `service.ts`: 155 statements, 146 branches, 17 functions and
@@ -34,13 +34,18 @@ Verification completed on 2026-09-17:
 - The real Store → daemon → Git → setup → doctor integration passes rollback, retry, independent
   viewer updates and reopening an unchanged workspace with a working viewer. Its isolated fixtures
   use real WebSockets and a running HTTP viewer, without accounts or model calls.
-- The full desktop run passed 1,949 tests, with two opt-in integrations skipped. Its only failure was
-  an install-panel test assuming the first frame renders in less than a second; after correcting
-  that assertion, all 11 panel tests passed. All 1,950 executed desktop cases are verified across the
-  full run and that recheck. An earlier terminal batching timing failure was fixed with a test clock
-  and passed in the full run. Login fixtures explicitly avoid Grid installation and real binaries.
+- The complete desktop suite passes: 1,950 tests, with two opt-in integrations skipped, using
+  Flutter 3.47.2 and the shipped Node 22.23.2 for the real update integration. The four-worker coverage
+  run hit a timeout in the unchanged keymap symlink-watcher test; all eight keymap tests and the
+  update integration passed in isolation, followed by a clean full run with two workers. An earlier
+  terminal batching timing failure was fixed with a test clock, and the install-panel test accepts
+  elapsed time instead of requiring the first frame within a second. Login fixtures explicitly
+  avoid the Grid installer and this machine's Grid binary.
 - Changed Flutter files pass analysis. Full Flutter analysis reports no errors or warnings, with
   15 existing informational style notices outside this feature.
+- Captured and visually checked the real Store's Update and Open states with the app theme. The
+  action retains the selected UI font and centers its workspace-preservation note. Review screenshots
+  are in `docs/images/harness-update-available.png` and `docs/images/harness-update-installed.png`.
 
 See `docs/development.md` for repeatable coverage and end-to-end test commands. Coverage percentages
 above apply to the four updater modules, not the entire repository. Updating does not restart live
