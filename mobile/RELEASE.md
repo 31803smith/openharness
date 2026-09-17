@@ -59,8 +59,9 @@ icon size in thirty seconds instead of in an email twenty minutes later.
 | `1.0.0 (7)` | 2026-09-17 | TestFlight. Voice input back, transcribed by the backend (`/api/voice/stt`); opens on the last agent's terminal |
 | `1.0.0 (8)` | 2026-09-17 | TestFlight. Search grouped by folder, most recent first, one-bar field; keyboard only from a tap on the prompt; hold-to-talk mic; slimmer terminal chrome |
 | `1.0.0 (9)` | 2026-09-17 | TestFlight. Terminal chrome rebuilt around a search bar, header folds away on scroll, ⋯ sheet grouped into Agent / Machines / App |
+| `1.0.0 (10)` | 2026-09-17 | TestFlight. Smoother swipes and scrolling: parked and keyboard-sliding terminals keep painting; the header folds over the terminal instead of resizing it |
 
-`pubspec.yaml` is therefore at `1.0.0+10`: the repo always holds the NEXT build number, so a release
+`pubspec.yaml` is therefore at `1.0.0+11`: the repo always holds the NEXT build number, so a release
 runs clean without anyone having to remember the last one.
 
 ### Why the app is iPhone-only
