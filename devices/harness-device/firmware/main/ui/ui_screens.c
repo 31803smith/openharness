@@ -270,8 +270,6 @@ static lv_obj_t *s_ov_loop_ico;        // the repeat-arrows image (recoloured, n
 static lv_obj_t *s_ov_goal_lbl, *s_ov_loop_lbl;
 static bool      s_ov_ready;           // last value overview_actions_apply() computed, for overview_mod_apply()
 static bool      s_overview_loading;   // true = agents not loaded yet → show s_overview_spin, hide the count
-// Agent to focus once a machine switched from a notification tap finishes loading ("" = land on Overview).
-static char s_notif_focus[48];
 static volatile bool s_machine_landing_pending;   // a machine was just selected → land (drop spinner + focus agent 1) once its NEW list is built
 // Which guide the Overview is standing in for, if any. One enum rather than a bool per state: they are
 // mutually exclusive, and a second bool is how a screen ends up claiming to be two things at once.
@@ -425,7 +423,7 @@ static void update_content_window(void); // (re)materialize the active-tile±win
 static void carousel_scroll_apply(void);   // let the strip scroll, or not on a ring of one (defined below)
 static void rebuild_settings_tile(void); // (re)build the trailing settings tile at the last column
 static void rebuild_machines_tile(void);   // (re)build the Machines carousel tile (ring 1)
-static void no_agents_apply(void);       // the empty state's two sentences: not connected, or no harnesses yet
+static void no_agents_apply(void);       // the empty state's three sentences: no app, no harnesses, empty tab
 static const lv_image_dsc_t *engine_mark(const char *engine, bool *recolor);   // the engine's product mark (defined with the tiles)
 static void clear_removed_project_transients_locked(const char *project_id, bool voice_aborted);
 static void settings_vlang_tap(lv_event_t *e);   // toggle voice language (defined below)
@@ -476,37 +474,24 @@ static void reader_close(lv_event_t *e); // swipe-down at top → back to projec
 static void reader_close_tap(lv_event_t *e); // the reader's X pill (defined below)
 static void voice_overlay_set(bool on);  // voice: dark overlay + free/restore tile content (RAM headroom)
 static void notif_pill_tap(lv_event_t *e);       // the bell → open the drawer (defined below)
-static void switch_close(void);                  // close the picker without picking (defined below)
 
-// ---- agent switcher ----
-// A picker over the MOST RECENT agents, opened by PULLING DOWN from the top. Swiping the carousel is the
-// only other way across, and it is one tile at a time: with a few dozen agents, reaching the one you want
-// means passing every one you don't.
+// ---- agent switcher: gone ----
+// There used to be a picker over EVERY agent on every machine, opened by pulling down from the top. It
+// existed because the carousel was a walk of one tile at a time through a few dozen agents, and it was
+// the reason the dial had to hold the whole fleet — "the only place a distant agent can be reached
+// without swiping past everything in between". The dial now holds the window's active tab and nothing
+// else (≤ 9 tiles: every agent is at most four swipes away) and the TABS picker below reaches the rest.
+// The pull-down went back to the notification drawer, which had it first (owner, 2026-09-17).
 //
-// It TOOK the pull-down from the notification drawer, and the drawer moved to a tap on the bell. The two
-// had been fighting for the same band at the top of the face: whichever control sat there was inside the
-// drawer's gesture, and a bell that only needs a tap has no business owning a whole edge of a round screen
-// while the thing you reach for constantly needs a button.
-// THE WHOLE LIST, not a recent-N slice. It was ten while the carousel held one machine's agents and ten
-// was most of them; now that it holds every machine's, a fixed slice would hide whole machines behind
-// whichever one happened to sort first — and the picker is the only place a distant agent can be reached
-// without swiping past everything in between.
-#define SWITCH_LIST_MAX MAX_PROJECTS
-static lv_obj_t *s_switch_screen;               // full-screen overlay on the top layer, hidden by default
 // The window's swarms, as the daemon last relayed them, and the swarm picker that lists them. The list
 // arrives whole (`swarms`), so this is a straight copy; the selected id is what every tile's swarm line
 // draws. Count 0 = no window, and the line is hidden.
 static EXT_RAM_BSS_ATTR cable_swarm_t s_swarms[SWARMS_MAX];
 static int  s_swarm_count;
 static char s_swarm_selected[SWARM_ID_MAX];
-static lv_obj_t *s_swarm_screen, *s_swarm_list;   // the picker: same shape as the agent switcher
+static lv_obj_t *s_swarm_screen, *s_swarm_list;   // the picker: a full-screen list over the face
 static void swarm_picker_close(void);
 static void swarm_picker_rebuild(void);
-static lv_obj_t *s_switch_list;                 // the scrollable column of rows inside it
-// The ids currently drawn, indexed by the row's user_data. Fixed storage rather than a strdup per row:
-// the array's life IS the picker's, and rows are rebuilt on every open. In PSRAM: at the full list size
-// this is several KB that has no business sitting in internal .bss.
-static EXT_RAM_BSS_ATTR char s_switch_ids[SWITCH_LIST_MAX][48];
 
 
 typedef struct {
@@ -516,7 +501,7 @@ typedef struct {
     char engine[12];      // MODEL: claude|codex|cursor|opencode|pi|hermes|commandcode|devin; empty hides the mark
     // WHICH MACHINE THIS AGENT LIVES ON. The carousel is no longer one machine's: it holds every agent on
     // every machine at once, in the same order the desktop app's rail reads them. `machine_id` is what a
-    // machine row uses to find its first agent to land on; `machine` is the name the switcher draws.
+    // machine row uses to find its first agent to land on; `machine` is the name the tile draws.
     char machine_id[48];
     char machine[NAME_MAX];
     char mode[8];        // MODEL: per-agent autonomy for voice turns — "plan" | "" (empty = auto/bypass)
@@ -640,23 +625,14 @@ static int s_ring;                      // which ring the strip is on
 #define MACHINES_TILE 0
 static void resize_spacer(void) { if (s_carousel_spacer) lv_obj_set_width(s_carousel_spacer, CAROUSEL_M * carousel_w()); }
 
-// How many agents the CAROUSEL walks, which is not how many the dial knows.
-//
-// The daemon builds the ring around the window's open tiles; an agent sitting between two of them in
-// list order is off neither edge, so a thumb never reaches it. It is still sent, and still counted on
-// the overview and listed in the pull-down switcher — leaving it out entirely is what made the dial
-// announce "5 agents" to someone who had eleven. Those agents come LAST in the pushed list, so a single
-// count splits it.
-//
-// 0 means "all of them": the daemon that predates the field says nothing, and so does one with nothing
-// to leave out.
-static int s_ring_agents;
-static int ring_agents(void)
-{
-    if (s_ring_agents <= 0 || s_ring_agents > s_proj_count) return s_proj_count;
-    return s_ring_agents;
-}
-static bool agent_on_ring(int i) { return i >= 0 && i < ring_agents(); }
+// How many agents the carousel walks: every one the dial holds. The daemon sends the window's active tab
+// and nothing else, so there is no longer a "known but not walked" tail — the fleet reaches this screen as
+// a number (`s_fleet_total`, the overview's) and as the name on a notification.
+static int ring_agents(void) { return s_proj_count; }
+static bool agent_listed(int i) { return i >= 0 && i < s_proj_count; }
+// The fleet the list was cut from — `agents.end.total` and whether `agents.end.tab` named a tab.
+static int  s_fleet_total;
+static bool s_has_window;
 static int ring_len(void)      { return s_ring == RING_AGENTS ? (ring_agents() > 0 ? ring_agents() : 1) : 1; }
 static int ring_agents_end(void) { return s_ring == RING_AGENTS ? ring_len() : 0; }   // first ring AFTER the agents (0 elsewhere: none)
 // The one-page rings. Naming one switches the strip to it — see the note above.
@@ -739,7 +715,7 @@ static void apply_active_from_col(void)
  * Say where the dial is looking, on purpose.
  *
  * The muted path above is for the carousel settling on its own; this is for the moves a person MAKES
- * through something other than a swipe — picking from the switcher, tapping a notification. Those go
+ * through something other than a swipe — tapping a notification. Those go
  * through code, so they are muted like any rebuild, and they have to say so explicitly. Nothing else may
  * call this: the whole fix is that a report means "a person did this".
  *
@@ -842,7 +818,7 @@ static lv_obj_t *make_spinner(lv_obj_t *parent, int size)
  * The close control every full-face screen wears: a 60x32 pill, white at 10%, with a white x.
  *
  * ONE definition on purpose. It started as the notification drawer's header and is now also on the
- * chooser wheels and the agent switcher — four screens that cover everything else and are left the same
+ * chooser wheels and the TABS picker — four screens that cover everything else and are left the same
  * way. Four copies of the same eight style calls is how the shape drifts on one of them.
  *
  * `y` is the offset from the parent's TOP, and callers pass it because it is not always 16 on screen: a
@@ -2363,9 +2339,9 @@ void ui_init(void)
     s_notif_pill = lv_obj_create(lv_layer_top());
     lv_obj_remove_style_all(s_notif_pill);
     lv_obj_clear_flag(s_notif_pill, LV_OBJ_FLAG_SCROLLABLE);
-    // THE BELL IS A BUTTON NOW. It used to be a read-only badge and the drawer opened by pulling down from
-    // the top; the pull-down became the agent switcher, which is reached far more often than a list of
-    // finished turns, so the drawer moved onto the badge that was already announcing it.
+    // THE BELL IS A BUTTON. It used to be a read-only badge with the drawer on the pull-down alone; while
+    // the pull-down belonged to the agent switcher (2026-09-15 → 09-17) the drawer moved onto the badge,
+    // and now that the pull-down is the drawer's again both stay: a tap here, a pull anywhere in the band.
     lv_obj_add_flag(s_notif_pill, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(s_notif_pill, notif_pill_tap, LV_EVENT_CLICKED, NULL);
     lv_obj_set_size(s_notif_pill, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
@@ -2374,7 +2350,7 @@ void ui_init(void)
     lv_obj_set_style_radius(s_notif_pill, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_pad_hor(s_notif_pill, 13, 0);
     lv_obj_set_style_pad_ver(s_notif_pill, 4, 0);
-    lv_obj_align(s_notif_pill, LV_ALIGN_TOP_MID, 0, 22);   // clear of the pull-down band it no longer owns
+    lv_obj_align(s_notif_pill, LV_ALIGN_TOP_MID, 0, 22);
     lv_obj_set_style_bg_opa(s_notif_pill, LV_OPA_80, LV_STATE_PRESSED);   // it presses now, so it says so
     lv_obj_set_flex_flow(s_notif_pill, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(s_notif_pill, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
@@ -2703,7 +2679,6 @@ void ui_land_after_reload(void)
     s_overview_loading = false;   // list arrived → overview shows the real count (drops the spinner)
     rebuild_overview_tile();
     if (!land) {
-        s_notif_focus[0] = '\0';
         update_content_window();
         rebuild_page_dots();
         display_unlock();
@@ -2711,30 +2686,13 @@ void ui_land_after_reload(void)
     }
     // ui_enter_machine_loading / ui_enter_boot_loading already centered the carousel at ~CAROUSEL_M/2, so this
     // slides (staying centered) to the Overview tile (ring 0) — the machine's home (name + agent count + Voice/Goal).
-    // Exception: a notification tap that switched machines is asking for ONE agent — land on that tile instead
-    // (falling back to the Overview if it's gone from the new list).
-    int target = ring_overview();
-    char detail[48] = "";
-    if (s_notif_focus[0]) {
-        int ni = find_proj(s_notif_focus);
-        snprintf(detail, sizeof detail, "%s", s_notif_focus);
-        s_notif_focus[0] = '\0';
-        if (ni >= 0) { target = ring_of_agent(ni); s_active_idx = ni; }
-    }
-    carousel_goto(col_for_ring_near(carousel_col(), target), LV_ANIM_ON);
+    // A notification tap no longer lands here: it sends `open` and holds its focus for the list the window
+    // pushes back (ui_apply_pending_focus), whichever machine the agent is on.
+    carousel_goto(col_for_ring_near(carousel_col(), ring_overview()), LV_ANIM_ON);
     apply_active_from_col();
     update_content_window();
     rebuild_page_dots();
     display_unlock();
-    // A notification whose agent lives on ANOTHER machine lands here instead, once that machine's list has
-    // arrived. Finish the same way the direct tap does — otherwise the same gesture would take you to two
-    // different places depending on which machine the notification came from. Called outside the lock.
-    if (detail[0]) {
-        open_agent_detail(detail);
-        // Same tap, finished late. Without this the notification that had to wait for another machine's
-        // list would open nothing in the window, while the one that did not would.
-        if (s_notif_open_pending) ui_report_active_agent();
-    }
 }
 
 // Boot landing: the agent list hasn't loaded yet, so DON'T flash the "No agents" empty tile. Park on the
@@ -2862,11 +2820,13 @@ static void rebuild_overview_tile(void)
         lv_obj_clear_flag(s_overview_spin, LV_OBJ_FLAG_HIDDEN);
     } else {
         if (s_overview_spin) { lv_obj_del(s_overview_spin); s_overview_spin = NULL; }   // stop its timer
+        // THE FLEET'S count, not the list's. The dial holds one tab; the number is how many agents the
+        // account has across every machine, which is what "N agents" always meant here.
         char t[24];
-        snprintf(t, sizeof t, "%d", s_proj_count);
+        snprintf(t, sizeof t, "%d", s_fleet_total);
         lv_label_set_text(s_overview_count_lbl, t);
         lv_obj_clear_flag(s_overview_count_lbl, LV_OBJ_FLAG_HIDDEN);
-        if (s_overview_agents_lbl) { lv_label_set_text(s_overview_agents_lbl, s_proj_count == 1 ? "agent" : "agents"); lv_obj_clear_flag(s_overview_agents_lbl, LV_OBJ_FLAG_HIDDEN); }
+        if (s_overview_agents_lbl) { lv_label_set_text(s_overview_agents_lbl, s_fleet_total == 1 ? "agent" : "agents"); lv_obj_clear_flag(s_overview_agents_lbl, LV_OBJ_FLAG_HIDDEN); }
     }
     if (!s_remote_offline_view) {
         if (s_overview_offline_hint_lbl) lv_obj_add_flag(s_overview_offline_hint_lbl, LV_OBJ_FLAG_HIDDEN);
@@ -4715,7 +4675,7 @@ static void apply_engine_label(proj_t *p)
 }
 
 // THE MACHINE LINE IS GONE from the agent tile (mockup/recap-done.html): the same fact is already on the
-// Overview eyebrow and on the switcher's second line. THE HEADER'S HEIGHT IS THE TILE'S LAYOUT: it is a
+// Overview eyebrow and in the drawer's rows. THE HEADER'S HEIGHT IS THE TILE'S LAYOUT: it is a
 // flex child of the tile, so its height is exactly what the "Done" block below it is pushed down by.
 //
 // THE TAB LINE (owner, 2026-09-16: the swarm-day layout again, with the concept renamed — the window
@@ -5017,6 +4977,92 @@ static void voice_overlay_set(bool on)
 // Remove a project's tile (its session ended and the tmux pane is gone). Deletes the tile's LVGL
 // subtree, shifts the model over the hole, re-columns the remaining tiles so the swipe stays
 // gap-free, rebuilds the trailing settings tile, and re-focuses a valid tile. Safe if id is unknown.
+
+// ── ONE RE-ANCHOR PER RECONCILE, NOT ONE PER AGENT ──────────────────────────────────────────────────
+//
+// add_proj and ui_project_remove each end with the same tail: re-assert the scroll range, rebuild the
+// trailing tiles, re-anchor the carousel under the new ring length, and re-materialise the content
+// window. For a single agent arriving or leaving that is right, and it is what keeps the tile under the
+// thumb from sliding when N changes.
+//
+// It is wrong for a WHOLE-LIST rebuild. A cable reconnect empties the list and refills it, so a dial
+// holding 78 agents runs that tail 156 times, and each run frees and re-materialises the window because
+// growing the ring by one remaps every column. Measured on the dial: ~130ms apiece, ~10s for the
+// reconcile, inside the single display_lock that refresh_projects takes. CONFIG_ESP_TASK_WDT_TIMEOUT_S
+// is 10 and CONFIG_ESP_TASK_WDT_PANIC is on, so the device did not merely stutter — it rebooted
+// mid-reconcile with `reset reason: TASK WATCHDOG` (owner, 2026-09-17).
+//
+// So a bulk edit sets a flag, the per-agent tails become bookkeeping only, and the tail runs ONCE at the
+// end. Capturing the centred page at BEGIN is also more honest than re-capturing it 156 times through
+// intermediate ring lengths that were never on screen: the person was looking at one agent the whole
+// time, and that is the agent to come back to.
+//
+// Nested because a caller may reconcile inside a reconcile; the depth counter means only the outermost
+// pair paints. Outside a batch every path below behaves exactly as it did before.
+static int  s_bulk_depth;
+static bool s_bulk_dirty;                 // did anything in this batch actually change the list?
+static char s_bulk_keep_id[ID_MAX];       // the agent centred when the batch opened ("" = none)
+static bool s_bulk_keep_settings, s_bulk_keep_machines;
+
+// True while a bulk edit is open: the per-agent tails skip their paint and mark the batch dirty instead.
+static bool bulk_defer_paint(void)
+{
+    if (s_bulk_depth <= 0) return false;
+    s_bulk_dirty = true;
+    return true;
+}
+
+// The shared tail. Caller holds the lock. `keep_*` name the page to come back to, captured under the
+// ring length that was on screen before the edit.
+static void projects_reanchor_locked(bool keep_settings, bool keep_machines, const char *keep_id)
+{
+    resize_spacer();           // the scroll range follows the agent count
+    rebuild_settings_tile();
+    rebuild_overview_tile();
+    rebuild_page_dots();
+    int target_ring;
+    if (keep_settings)          target_ring = ring_settings();
+    else if (keep_machines)     target_ring = ring_machines_home();
+    else if (s_proj_count == 0) target_ring = ring_of_agent(0);   // the "No agents" page
+    else {
+        // The agent by id, under its NEW index. One that left the list during the batch has no column of
+        // its own any more, and the first tile is the only answer that is always valid.
+        int ni = (keep_id && keep_id[0]) ? find_proj(keep_id) : -1;
+        target_ring = ring_of_agent(agent_listed(ni) ? ni : 0);
+    }
+    carousel_goto(col_for_ring_near(carousel_col(), target_ring), LV_ANIM_OFF);
+    apply_active_from_col();
+    update_content_window();
+}
+
+void ui_projects_bulk_begin(void)
+{
+    display_lock();
+    if (s_bulk_depth++ == 0) {
+        s_bulk_dirty = false;
+        s_bulk_keep_id[0] = '\0';
+        s_bulk_keep_settings = s_bulk_keep_machines = false;
+        if (s_proj_count > 0) {
+            int cc_ring = ring_of_col(carousel_col());
+            s_bulk_keep_settings = is_settings_ring(cc_ring);
+            s_bulk_keep_machines = is_machines_ring(cc_ring);
+            if (!s_bulk_keep_settings && !s_bulk_keep_machines && agent_of_ring(cc_ring) >= 0)
+                snprintf(s_bulk_keep_id, sizeof s_bulk_keep_id, "%s", s_proj[agent_of_ring(cc_ring)].id);
+        }
+    }
+    display_unlock();
+}
+
+void ui_projects_bulk_end(void)
+{
+    display_lock();
+    if (s_bulk_depth > 0 && --s_bulk_depth == 0 && s_bulk_dirty) {
+        s_bulk_dirty = false;
+        projects_reanchor_locked(s_bulk_keep_settings, s_bulk_keep_machines, s_bulk_keep_id);
+    }
+    display_unlock();
+}
+
 /**
  * Put the tiles in the order the daemon sent them.
  *
@@ -5033,45 +5079,14 @@ static void voice_overlay_set(bool on)
  * `ids` may omit agents the dial holds (a caller reconciles removals separately) — those keep their
  * relative order and follow the ones named here.
  */
-void ui_project_set_ring_count(int n)
+void ui_fleet_set(int total, bool has_window)
 {
     display_lock();
-    if (n != s_ring_agents) {
-        // CAPTURE BY ID FIRST, under the OLD ring length.
-        //
-        // `ring_of_col` divides by ring_len(), which this count changes — so reading the centred column
-        // after the assignment decodes an old position with a new modulo and names a different agent.
-        // Measured on the dial: a swipe pulled `fa69` into a tile, the window showed `fa69`, and the dial
-        // sat on `Worldcup` — the first agent, which is where the "kept" lookup fell through to. The two
-        // screens then disagreed silently, because a re-anchor no longer reports itself (carousel_goto).
-        //
-        // ui_project_apply_order has always done it this way; this function was written without noticing
-        // why.
-        char keep_id[ID_MAX] = "";
-        bool keep_settings = false, keep_machines = false;
-        if (s_proj_count > 0) {
-            int cc_ring = ring_of_col(carousel_col());
-            keep_settings = is_settings_ring(cc_ring);
-            keep_machines = is_machines_ring(cc_ring);
-            if (!keep_settings && !keep_machines && agent_of_ring(cc_ring) >= 0)
-                snprintf(keep_id, sizeof keep_id, "%s", s_proj[agent_of_ring(cc_ring)].id);
-        }
-
-        s_ring_agents = n;
-
-        if (s_proj_count > 0) {
-            // Back to the SAME agent under the new length. One that has left the ring — it is on neither
-            // side of the desk now — has no column to sit at, and the first tile is the only answer that
-            // is always valid.
-            int kept = keep_id[0] ? find_proj(keep_id) : -1;
-            int target = keep_settings ? ring_settings()
-                         : keep_machines ? ring_machines_home()
-                         : ring_of_agent(agent_on_ring(kept) ? kept : 0);
-            carousel_goto(col_for_ring_near(carousel_col(), target), LV_ANIM_OFF);
-            apply_active_from_col();
-            update_content_window();
-            rebuild_page_dots();
-        }
+    if (total != s_fleet_total || has_window != s_has_window) {
+        s_fleet_total = total;
+        s_has_window = has_window;
+        rebuild_overview_tile();   // the number
+        no_agents_apply();         // which of the three empty sentences
     }
     display_unlock();
 }
@@ -5161,6 +5176,11 @@ void ui_project_remove(const char *project_id)
     s_proj_count--;
     memset(&s_proj[s_proj_count], 0, sizeof(proj_t));
 
+    // In a bulk reconcile the paint belongs to ui_projects_bulk_end — see the note above it. The model is
+    // already correct here; everything below is the view catching up, and doing that once per removed
+    // agent is what walked the display lock past the task watchdog.
+    if (bulk_defer_paint()) { display_unlock(); return; }
+
     resize_spacer();           // scroll range shrank by one column
     rebuild_settings_tile();
     rebuild_overview_tile();
@@ -5244,10 +5264,18 @@ static int add_proj(const char *id)
     // this agent is inside the active window, and the whole tile is deleted when it leaves. A far-off agent
     // therefore holds ZERO LVGL objects; the spacer (resize_spacer) reserves its scroll column so scroll
     // positions stay absolute. The 64KB pool is bounded at ANY agent count → truly unlimited.
-    resize_spacer();           // (re)assert the huge fixed scroll range
-    rebuild_settings_tile();
-    rebuild_overview_tile();
-    rebuild_page_dots();
+
+    // Bulk reconcile: hold the paint for ui_projects_bulk_end. The first-agent jump below still runs — it
+    // is one carousel_goto with no tile work, and it is what puts the strip in the middle of the huge
+    // range rather than at column zero.
+    const bool deferred = bulk_defer_paint();
+
+    if (!deferred) {
+        resize_spacer();           // (re)assert the huge fixed scroll range
+        rebuild_settings_tile();
+        rebuild_overview_tile();
+        rebuild_page_dots();
+    }
     // First agent → jump scroll to the MIDDLE of the huge range (on agent0) BEFORE windowing, so the window
     // materializes around where we actually are (not around column 0). During an offline→online reload,
     // preserve Machine/Settings (or the Overview behind the E2EE screen) when the user left Overview before
@@ -5257,10 +5285,11 @@ static int add_proj(const char *id)
             ? (reload_on_settings ? ring_settings() : reload_on_machines ? ring_machines_home() : ring_overview())
             : ring_of_agent(0);
         carousel_goto(col_for_ring_near(CAROUSEL_M / 2, tr), LV_ANIM_OFF);
-    } else {
+    } else if (!deferred) {
         int tr = on_settings ? ring_settings() : on_machines ? ring_machines_home() : (on_agent >= 0 ? ring_of_agent(on_agent) : ring_settings());
         carousel_goto(col_for_ring_near(carousel_col(), tr), LV_ANIM_OFF);
     }
+    if (deferred) return i;
     apply_active_from_col();
     update_content_window();   // materialize the window at the current scroll column
     return i;
@@ -5518,20 +5547,18 @@ void ui_focus_project(const char *project_id)
     if (!project_id) return;
     display_lock();
     int i = find_proj(project_id);
-    // An agent the carousel does not walk has no column to centre. Picking one from the switcher still
-    // reports the focus upward, and the window opening it is what puts it on the desk — and the next
-    // list push then puts it on the ring, where the dial can land on it.
+    // An agent the dial does not hold has no column to centre. The window opening it is what puts it on
+    // the tab — and the list push that follows is what puts it here, where the dial can land on it.
     //
     // SAID OUT LOUD. This drop is the whole of "the window moved and the dial did not", and for as long
     // as it was silent the only way to tell it from a focus that never arrived was to guess. The daemon
-    // now pushes the ring before the focus that needs it (cableSession.followApp), so a line here means
-    // that ordering broke — not that the feature is missing.
-    if (!agent_on_ring(i)) {
+    // pushes the list before the focus that needs it (cableSession.followApp), so a line here means that
+    // ordering broke — not that the feature is missing.
+    if (!agent_listed(i)) {
         // Not "ignored" any more: HELD. The list that makes this landable is on its way — it is what put
-        // the agent on the desk in the first place — and ui_apply_pending_focus() runs the moment it lands.
+        // the agent on the tab in the first place — and ui_apply_pending_focus() runs the moment it lands.
         pending_focus_set(project_id);
-        ESP_LOGW(TAG, "focus %s: %s yet — held for the next list", project_id,
-                 i < 0 ? "not in the list" : "not on the ring");
+        ESP_LOGW(TAG, "focus %s: not in the list yet — held for the next one", project_id);
         display_unlock();
         return;
     }
@@ -5683,8 +5710,8 @@ static void notif_badge_apply(void)
     }
 }
 static void notif_ud_free(lv_event_t *e) { free(lv_obj_get_user_data(lv_event_get_target(e))); }
-// What a drawer row needs on tap: which agent, and which machine it belongs to (may not be the selected one).
-typedef struct { char proj[48]; char machine_id[40]; } notif_ref_t;
+// What a drawer row needs on tap: which agent. The daemon routes the `open` to its machine.
+typedef struct { char proj[48]; } notif_ref_t;
 // Remove ONE project's notification from the queue (compact the tail up). Caller holds the lock.
 static void notif_remove(const char *proj_id)
 {
@@ -5696,9 +5723,8 @@ static void notif_remove(const char *proj_id)
         }
     }
 }
-// Tap a row → remove ONLY that notification (Model B: the rest are kept), then go to that agent. A
-// notification from a machine the device ISN'T rendering (multi-attach background badge) switches machines
-// first — its tiles don't exist yet, so the jump is deferred to ui_land_after_reload via s_notif_focus.
+// Tap a row → remove ONLY that notification (Model B: the rest are kept), then ask the window to open that
+// agent — see notif_row_tap.
 // Focus an agent AND open its detail reader — where a notification tap should land. Same text source as
 // the swipe-up gesture (m_full, falling back to m_preview) so the two routes can never disagree about what
 // "detail" means. Keeps the one exception swipe-up already makes: while the agent is WORKING its tile shows
@@ -5727,49 +5753,23 @@ static void notif_row_tap(lv_event_t *e)
     // report is `open` rather than `focus` — see apply_active_from_col.
     s_notif_open_pending = true;
     const notif_ref_t *ref = (const notif_ref_t *)lv_obj_get_user_data(lv_event_get_target(e));
-    char id[48], machine[40];                                       // copy before close frees the rows
+    char id[48];                                                    // copy before close frees the rows
     snprintf(id, sizeof id, "%s", ref ? ref->proj : "");
-    snprintf(machine, sizeof machine, "%s", ref ? ref->machine_id : "");
     if (id[0]) notif_remove(id);
     ui_notif_close();
 
-    // EVERY machine's agents share one carousel, so the notified tile is almost always already on it —
-    // whichever machine sent the notification. Go straight there: switching machines first would land on
-    // that machine's FIRST agent, which is rarely the one the notification is about.
-    //
-    // THE OPEN NAMES THE NOTIFICATION'S AGENT, NOT THE TILE. It used to land the carousel first and then
-    // report whatever was active. The ring is the window's CURRENT TAB, so an agent open in another tab
-    // is known but not on the ring: the landing was held for a list that never came, and the report
-    // named the tile the dial happened to be on — the window then opened the wrong agent (owner,
-    // 2026-09-15: "bấm noti vào agent Kinh Te, nó không focus qua tab chứa Kinh Te"). Now the id goes
-    // up as-is; the window finds the tab that holds it (or opens one), pushes the ring, and the held
-    // landing below lands then.
-    if (id[0] && ui_project_known(id)) {
+    // THE OPEN NAMES THE NOTIFICATION'S AGENT, whether or not the dial holds it. The dial has the window's
+    // CURRENT TAB, and the agent that just finished is as likely as not on another one: the window finds
+    // the tab that holds it (or opens one), pushes that tab's list, and the landing held below lands then
+    // (owner, 2026-09-15: "bấm noti vào agent Kinh Te, nó không focus qua tab chứa Kinh Te"). It used to
+    // switch MACHINES first for an agent it did not hold, which landed on that machine's first agent —
+    // rarely the one the notification was about.
+    if (id[0]) {
         s_notif_open_pending = false;
         cable_client_send_open(id);
-        open_agent_detail(id);
+        open_agent_detail(id);   // held until the list arrives when the agent is off this tab
         return;
     }
-
-    // It is not on the carousel yet — a notification that arrived ahead of the list it belongs to. Select
-    // its machine and defer the focus to ui_land_after_reload, which is the one path that runs once the
-    // list is rebuilt. The landing flag is set HERE rather than by machine_switch_to: choosing a machine
-    // no longer waits for anything, and this is the only case left that does.
-    if (machine[0] && strcmp(machine, s_selected_machine) != 0) {
-        display_lock();
-        int fi = -1;
-        for (int k = 0; k < s_machine_count; k++) if (strcmp(s_machines[k].id, machine) == 0) { fi = k; break; }
-        if (fi >= 0) {
-            snprintf(s_notif_focus, sizeof s_notif_focus, "%s", id);   // focus this agent once its list arrives
-            s_machine_landing_pending = true;
-            machine_switch_to(fi);
-            display_unlock();
-            return;
-        }
-        display_unlock();   // machine no longer in the picker (deleted/unbound) → best-effort local focus below
-    }
-
-    if (id[0]) open_agent_detail(id);   // straight to the detail screen, not just the tile
     ui_report_active_agent();
 }
 static void notif_bg_tap(lv_event_t *e) { (void)e; ui_notif_close(); }   // tap empty area → close
@@ -5787,7 +5787,6 @@ static void notif_rebuild(void)
         notif_ref_t *ref = ram_psram_alloc(sizeof(notif_ref_t), "notif_row_ref");
         if (!ref) continue;
         snprintf(ref->proj, sizeof ref->proj, "%s", n->proj_id);
-        snprintf(ref->machine_id, sizeof ref->machine_id, "%s", n->machine_id);
         shown++;
         // Card (new Figma): a glassy dark rounded rect, COLUMN of [name row] over [recap]. The name row is
         // a green dot + the green agent name (grows) + a small muted time on the right (iOS-style — the
@@ -5874,172 +5873,16 @@ static void notif_rebuild(void)
     }
     if (s_notif_empty) set_hidden(s_notif_empty, shown > 0);
 }
-// ---- the agent switcher's picker ----
-
+// ---- the swarm picker's gate ----
 bool ui_switch_is_open(void)
 {
-    // Either picker over the face. touch.c asks this to keep the pull-down band and the tap-to-open from
-    // acting under an open list, and the swarm picker wants exactly that treatment.
-    return (s_switch_screen && !lv_obj_has_flag(s_switch_screen, LV_OBJ_FLAG_HIDDEN))
-        || (s_swarm_screen && !lv_obj_has_flag(s_swarm_screen, LV_OBJ_FLAG_HIDDEN));
+    // The TABS picker over the face. touch.c asks this to keep the pull-down band and the tap-to-open from
+    // acting under an open list. The name is from the agent switcher this once also covered; that picker
+    // is gone (see the note under "agent switcher" above) and this is the one list overlay left.
+    return s_swarm_screen && !lv_obj_has_flag(s_swarm_screen, LV_OBJ_FLAG_HIDDEN);
 }
 
-static void switch_close(void)
-{
-    if (s_switch_screen) lv_obj_add_flag(s_switch_screen, LV_OBJ_FLAG_HIDDEN);
-}
-
-static void switch_bg_tap(lv_event_t *e) { (void)e; switch_close(); }
-
-// Picking is the same move a swipe makes, and it has to stay that way: ui_focus_project centres the tile,
-// and apply_active_from_col is what SENDS the focus down the cable so the desktop window follows. Skipping
-// the second would leave the dial looking at one agent and the window at another — the two are one desk.
-static void switch_row_tap(lv_event_t *e)
-{
-    // current_target, not target: the row is what carries the index, and a click that landed on one of its
-    // labels bubbles up with target still pointing at the label.
-    int idx = (int)(intptr_t)lv_obj_get_user_data(lv_event_get_current_target(e));
-    if (idx < 0 || idx >= SWITCH_LIST_MAX) return;
-    char id[48];
-    snprintf(id, sizeof id, "%s", s_switch_ids[idx]);   // copy: closing rebuilds nothing, but a pick might
-    switch_close();
-    if (!id[0]) return;
-    // A PERSON picked this row, so the window is told — as an OPEN, the same as a notification tap (owner,
-    // 2026-09-15: "chọn agent từ list … cùng rule với noti"): the window lands on the tab that holds the
-    // agent, the current one first, or opens a tab for it. The id goes up as-is, before the local
-    // centring below: an agent in another tab is known but not on the ring, so that centring is held
-    // for the list the window pushes back — and reporting the tile afterwards would name the wrong one.
-    cable_client_send_open(id);
-    ui_focus_project(id);
-    display_lock();
-    apply_active_from_col();
-    display_unlock();
-}
-
-// Fill the picker from the FIRST tiles in the list.
-//
-// That is already the order the daemon sends and not an approximation of it. Sorting here would invent a
-// second opinion about recency out of data this device does not have, and it would disagree with the list
-// the window shows the moment either side reordered. Caller holds the lock.
-static void switch_rebuild(void)
-{
-    if (!s_switch_list) return;
-    lv_obj_clean(s_switch_list);
-    memset(s_switch_ids, 0, sizeof(s_switch_ids));
-    int n = s_proj_count < SWITCH_LIST_MAX ? s_proj_count : SWITCH_LIST_MAX;
-    for (int i = 0; i < n; i++) {
-        proj_t *p = &s_proj[i];
-        snprintf(s_switch_ids[i], sizeof(s_switch_ids[i]), "%s", p->id);
-        // ...and nothing is "here" when the page behind the picker is the Overview or Settings, which name
-        // no agent. Marking one anyway would point at whichever tile was last centred.
-        bool here = (i == s_active_idx) && !s_overview_active && !s_settings_active;
-
-        lv_obj_t *row = lv_button_create(s_switch_list);
-        lv_obj_set_width(row, lv_pct(100));
-        lv_obj_set_height(row, LV_SIZE_CONTENT);
-        lv_obj_set_style_bg_color(row, COL_CARD, 0);
-        lv_obj_set_style_bg_opa(row, here ? LV_OPA_COVER : LV_OPA_60, 0);
-        lv_obj_set_style_radius(row, 16, 0);
-        lv_obj_set_style_border_width(row, here ? 1 : 0, 0);
-        lv_obj_set_style_border_color(row, COL_ACCENT, 0);
-        lv_obj_set_style_shadow_width(row, 0, 0);
-        lv_obj_set_style_pad_hor(row, 16, 0);
-        lv_obj_set_style_pad_ver(row, 10, 0);
-        lv_obj_set_flex_flow(row, LV_FLEX_FLOW_COLUMN);
-        lv_obj_set_flex_align(row, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-        lv_obj_set_style_pad_row(row, 2, 0);
-        lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_set_user_data(row, (void *)(intptr_t)i);
-        lv_obj_add_event_cb(row, switch_row_tap, LV_EVENT_CLICKED, NULL);
-
-        // The agent's name, then the MACHINE it runs on under it. The engine used to be here and no longer
-        // earns the line: the list now spans every machine, so "which computer is this on" is the one
-        // question two identically-named agents raise and the engine cannot answer. The engine is still on
-        // the tile itself, as a product mark. Falls back to the engine for an agent whose machine the
-        // daemon did not name (an older daemon), so the line is never blank. An agent mid-turn says so in green.
-
-        lv_obj_t *nm = lv_label_create(row);
-        lv_obj_set_style_text_font(nm, &geist_med_28, 0);
-        lv_obj_set_style_text_color(nm, p->busy_model ? COL_VOICE : COL_FG, 0);
-        lv_obj_set_width(nm, lv_pct(100));
-        lv_obj_set_style_text_align(nm, LV_TEXT_ALIGN_CENTER, 0);
-        lv_label_set_long_mode(nm, LV_LABEL_LONG_DOT);
-        lv_label_set_text(nm, p->name[0] ? p->name : "Untitled");
-        const char *sub = p->machine[0] ? p->machine : p->engine;
-        if (sub[0]) {
-            lv_obj_t *en = lv_label_create(row);
-            lv_obj_set_style_text_font(en, &geist_reg_25, 0);
-            lv_obj_set_style_text_color(en, COL_MUTED, 0);
-            lv_obj_set_width(en, lv_pct(100));
-            lv_obj_set_style_text_align(en, LV_TEXT_ALIGN_CENTER, 0);
-            lv_label_set_long_mode(en, LV_LABEL_LONG_DOT);
-            lv_label_set_text(en, sub);
-        }
-
-    }
-    if (n == 0) make_label(s_switch_list, "No agents yet", COL_MUTED, &geist_med_28);
-}
-
-static void switch_build(void)
-{
-    if (s_switch_screen) return;
-    s_switch_screen = lv_obj_create(lv_layer_top());
-    lv_obj_remove_style_all(s_switch_screen);
-    lv_obj_set_size(s_switch_screen, lv_pct(100), lv_pct(100));
-    lv_obj_set_pos(s_switch_screen, 0, 0);
-    lv_obj_set_style_bg_color(s_switch_screen, COL_BG, 0);
-    lv_obj_set_style_bg_opa(s_switch_screen, LV_OPA_COVER, 0);
-    lv_obj_add_flag(s_switch_screen, LV_OBJ_FLAG_CLICKABLE);     // empty-area tap closes it
-    lv_obj_add_event_cb(s_switch_screen, switch_bg_tap, LV_EVENT_CLICKED, NULL);
-    lv_obj_add_flag(s_switch_screen, LV_OBJ_FLAG_HIDDEN);
-
-    // The same close pill the other full-face screens wear. Tapping the empty backdrop still closes it —
-    // that was once the ONLY way out, on the reasoning that a 466px circle always leaves ~40px of
-    // backdrop down each side. True, but it is a target you have to know about; every other screen that
-    // covers the face is left by an X, and guessing which one this is costs more than the pixels.
-    //
-    // The rows stay CENTRED rather than pinned below it: the pill is FLOATING, so it takes no space in
-    // the layout and a short list still sits in the middle of the face. Height is content-driven with a
-    // ceiling, so a full list clamps and scrolls.
-    make_close_pill(s_switch_screen, switch_bg_tap, 16);
-    s_switch_list = lv_obj_create(s_switch_screen);
-    lv_obj_remove_style_all(s_switch_list);
-    lv_obj_set_width(s_switch_list, SAFE_CONTENT_W);
-    lv_obj_set_height(s_switch_list, LV_SIZE_CONTENT);
-    lv_obj_set_style_max_height(s_switch_list, 360, 0);   // 360 keeps the end rows inside the round face
-    lv_obj_center(s_switch_list);
-    lv_obj_set_flex_flow(s_switch_list, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(s_switch_list, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_row(s_switch_list, 8, 0);
-    lv_obj_set_scroll_dir(s_switch_list, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(s_switch_list, LV_SCROLLBAR_MODE_OFF);
-}
-
-// The bell's tap. A plain wrapper so the pill can stay a bare object rather than growing a second meaning:
-// everything about WHEN the drawer may open already lives in ui_notif_open.
 static void notif_pill_tap(lv_event_t *e) { (void)e; ui_notif_open(); }
-
-void ui_switch_open(void)
-{
-    // From ANY carousel page, not only an agent tile: the gesture it inherited opened the drawer on the
-    // Overview and on Settings too, and a list of recent agents is if anything more useful from the home
-    // page than from one of the agents themselves.
-    if (ui_voice_is_active() || display_is_asleep() || lv_screen_active() != scr_projects) return;
-    display_lock();
-    switch_build();
-    switch_rebuild();
-    lv_obj_clear_flag(s_switch_screen, LV_OBJ_FLAG_HIDDEN);
-    // NOT lv_obj_move_foreground: the dim is a black overlay on this same layer, so raising the switcher
-    // past it renders the picker at full brightness on a screen the user dimmed right down — it looked
-    // like the one screen someone forgot to dim. `switch_build()` lands here after s_dim exists, so this
-    // is also what puts it below the dim in the first place, not just what keeps it there.
-    overlay_raise(s_switch_screen);
-
-    lv_obj_scroll_to_y(s_switch_list, 0, LV_ANIM_OFF);
-    display_unlock();
-    ESP_LOGI(TAG, "agent switcher: %d agents", s_proj_count < SWITCH_LIST_MAX ? s_proj_count : SWITCH_LIST_MAX);
-
-}
 
 // ---- Swarms ----------------------------------------------------------------------------------------
 //
@@ -6075,6 +5918,7 @@ void ui_swarms_replace(const cable_swarm_t *rows, int count, const char *selecte
     s_swarm_count = count;
     snprintf(s_swarm_selected, sizeof(s_swarm_selected), "%s", selected ? selected : "");
     swarm_lines_repaint();
+    no_agents_apply();   // the empty tab's eyebrow is the tab's name
     if (s_swarm_screen && !lv_obj_has_flag(s_swarm_screen, LV_OBJ_FLAG_HIDDEN)) swarm_picker_rebuild();
     display_unlock();
     ESP_LOGI(TAG, "swarms: %d (on %s)", count, s_swarm_selected[0] ? s_swarm_selected : "-");
@@ -6100,7 +5944,7 @@ static void swarm_row_tap(lv_event_t *e)
 }
 
 // The rows: the swarm's name, and how many agents it holds under it. The selected one is outlined the
-// way the agent switcher outlines "here". Caller holds the lock.
+// way a tile outlines "here". Caller holds the lock.
 static void swarm_picker_rebuild(void)
 {
     if (!s_swarm_list) return;
@@ -6192,7 +6036,9 @@ static void swarm_line_tap(lv_event_t *e)
     swarm_picker_build();
     swarm_picker_rebuild();
     lv_obj_clear_flag(s_swarm_screen, LV_OBJ_FLAG_HIDDEN);
-    overlay_raise(s_swarm_screen);   // below the dim, like the switcher — see ui_switch_open
+    // NOT lv_obj_move_foreground: the dim is a black overlay on this same layer, so raising the picker
+    // past it renders the list at full brightness on a screen the user dimmed right down.
+    overlay_raise(s_swarm_screen);
     lv_obj_scroll_to_y(s_swarm_list, 0, LV_ANIM_OFF);
     display_unlock();
     cable_client_list_swarms();      // and ask for a fresh list while it is open
@@ -6209,7 +6055,9 @@ bool ui_notif_pill_hit(uint16_t x, uint16_t y)
 void ui_notif_open(void)
 {
     if (!s_notif_drawer || s_notif_open) return;
-    if (lv_screen_active() != scr_projects || s_settings_active || s_machines_active) return;   // from a project tile OR the Overview home (badge shows on both)
+    // From ANY carousel page — a tile, the Overview, Settings: the pull-down is the same gesture on all
+    // of them, and a list of what finished is no less useful from the home page.
+    if (lv_screen_active() != scr_projects || ui_voice_is_active()) return;
     display_lock();
     notif_rebuild();   // notifications stay green (unread) until tapped away — viewing does NOT dim them
     s_notif_open = true;
@@ -6246,22 +6094,23 @@ void ui_notif_swipe_up(void)
 }
 
 // Push a done notification for project i (dedupe by id → refresh + move to top). Caller holds the lock.
-static void notif_push(const char *proj_id, int i)
+// `i` is the agent's tile, or -1 when the dial does not hold it — then the frame's `name`, `machine` and
+// `recap` are all the row has, and they are enough.
+static void notif_push(const char *proj_id, int i, const char *name, const char *machine, const char *recap)
 {
     notif_t rec = {0};
     snprintf(rec.proj_id, sizeof rec.proj_id, "%s", proj_id);
-    const char *nm = s_proj[i].name[0] ? s_proj[i].name : proj_id;   // MODEL, not the widget
-    snprintf(rec.name, sizeof rec.name, "%s", nm ? nm : proj_id);
-    const char *sm = s_proj[i].m_preview ? s_proj[i].m_preview : "";
+    const char *nm = (i >= 0 && s_proj[i].name[0]) ? s_proj[i].name : (name && name[0]) ? name : proj_id;   // MODEL, not the widget
+    snprintf(rec.name, sizeof rec.name, "%s", nm);
+    const char *sm = (i >= 0 && s_proj[i].m_preview) ? s_proj[i].m_preview : (recap ? recap : "");
     snprintf(rec.summary, sizeof rec.summary, "%s", sm);
-    // Tag which machine this notification belongs to (the machine selected right now). Store the NAME so the
-    // notif keeps it even if the machine is later renamed/removed.
-    if (s_selected_machine[0]) {
-        const char *fn = s_selected_machine;
-        for (int k = 0; k < s_machine_count; k++)
-            if (strcmp(s_machines[k].id, s_selected_machine) == 0) { fn = s_machines[k].name[0] ? s_machines[k].name : s_machines[k].id; break; }
-        snprintf(rec.machine, sizeof rec.machine, "%s", fn);
-        snprintf(rec.machine_id, sizeof rec.machine_id, "%s", s_selected_machine);
+    // Which machine it lives on — the tile's own, else the frame's name. Stored as a NAME so the row keeps
+    // it if the machine is later renamed or removed.
+    if (i >= 0 && s_proj[i].machine[0]) {
+        snprintf(rec.machine, sizeof rec.machine, "%s", s_proj[i].machine);
+        snprintf(rec.machine_id, sizeof rec.machine_id, "%s", s_proj[i].machine_id);
+    } else if (machine && machine[0]) {
+        snprintf(rec.machine, sizeof rec.machine, "%s", machine);
     }
     rec.ms = lv_tick_get();
     rec.unread = true; rec.used = true;
@@ -6281,26 +6130,26 @@ static void notif_push(const char *proj_id, int i)
 //   on what finished.
 // Runs on the WS task under display_lock (like ui_project_emit); display_lock is recursive, so calling
 // ui_notif_open (which locks) from here is safe.
-void ui_notify_task_done(const char *project_id)
+void ui_notify_task_done(const char *project_id, const char *name, const char *machine, const char *recap)
 {
     if (!project_id || !project_id[0]) return;
     display_lock();
+    // -1 is a normal answer now, not a miss: the dial holds one tab, and a turn can finish on any of them.
+    // An agent off this tab is never "being viewed", so it always gets its row.
     int i = find_proj(project_id);
-    if (i >= 0) {
-        bool viewing = !display_is_asleep() && !s_settings_active && !s_machines_active && !s_overview_active && !s_notif_open && s_active_idx == i;
-        if (!viewing) {
-            bool was_asleep = display_is_asleep();
-            notif_push(project_id, i);   // record it so the drawer/badge has the entry
-            if (was_asleep) {
-                // Woke from an off screen → open the notification list directly. ui_notif_open only opens
-                // over the projects carousel (not settings), so land there first.
-                display_wake();
-                if (lv_screen_active() != scr_projects) lv_screen_load(scr_projects);
-                ui_notif_open();
-            } else {
-                // Awake on a different agent → just badge, don't yank the user off what they're viewing.
-                notif_badge_apply();
-            }
+    bool viewing = i >= 0 && !display_is_asleep() && !s_settings_active && !s_machines_active && !s_overview_active && !s_notif_open && s_active_idx == i;
+    if (!viewing) {
+        bool was_asleep = display_is_asleep();
+        notif_push(project_id, i, name, machine, recap);   // record it so the drawer/badge has the entry
+        if (was_asleep) {
+            // Woke from an off screen → open the notification list directly. ui_notif_open only opens
+            // over the projects carousel, so land there first.
+            display_wake();
+            if (lv_screen_active() != scr_projects) lv_screen_load(scr_projects);
+            ui_notif_open();
+        } else {
+            // Awake on a different agent → just badge, don't yank the user off what they're viewing.
+            notif_badge_apply();
         }
     }
     display_unlock();
@@ -6977,7 +6826,7 @@ typedef struct {
 static EXT_RAM_BSS_ATTR struct {
     bool active;
     char request_id[80];
-    char session_id[64];
+    char who[64];                // the asker's name, from the frame — it may be on a tab the dial does not hold
     char project[48];
     qitem_t q[Q_MAX];
     char answer[Q_MAX][256];     // chosen label(s) or transcript, per question
@@ -7097,11 +6946,14 @@ static void q_render(void)
     // để user có thêm context ra quyết định"). The same question — "switch to the cheaper model?" —
     // means different things from a scratch agent and from the one mid-deploy. Muted, small, one line:
     // an eyebrow, not a second title.
+    //
+    // From the FRAME, not from the tile: the dial holds one tab, and the question may come from an agent
+    // on another. The tile's name is the fallback for a daemon that sent none.
     {
-        int ai = find_proj(s_q.project);
-        if (ai >= 0 && s_proj[ai].name[0]) {
+        int ai = s_q.who[0] ? -1 : find_proj(s_q.project);
+        if (s_q.who[0] || (ai >= 0 && s_proj[ai].name[0])) {
             static char who[64];
-            utf8_filter(s_proj[ai].name, who, sizeof(who));
+            utf8_filter(s_q.who[0] ? s_q.who : s_proj[ai].name, who, sizeof(who));
             lv_obj_t *l = lv_label_create(scr_question);
             lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
             lv_obj_set_width(l, lv_pct(100));
@@ -7248,7 +7100,7 @@ static void q_done_tap(lv_event_t *e)
     display_unlock();
 }
 
-void ui_question_show(const char *project_id, const char *session_id, const char *request_id, const struct cJSON *questions)
+void ui_question_show(const char *project_id, const char *agent_name, const char *request_id, const struct cJSON *questions)
 {
     if (!request_id || !questions) return;
     display_lock();
@@ -7257,7 +7109,7 @@ void ui_question_show(const char *project_id, const char *session_id, const char
     memset(&s_q, 0, sizeof(s_q));
     snprintf(s_q.request_id, sizeof(s_q.request_id), "%s", request_id);
     snprintf(s_q.project, sizeof(s_q.project), "%s", project_id ? project_id : "");
-    snprintf(s_q.session_id, sizeof(s_q.session_id), "%s", session_id ? session_id : "");
+    snprintf(s_q.who, sizeof(s_q.who), "%s", agent_name ? agent_name : "");
 
     int qi = 0;
     const cJSON *qn;
@@ -7595,27 +7447,42 @@ static void no_agents_apply(void)
         name = s_machines[i].name[0] ? s_machines[i].name : s_machines[i].id;
         break;
     }
-    // ONE empty state, because on this firmware there is one way to get an agent: start it on the computer
-    // at the other end of the cable. This used to fork on a `remote` flag and tell a LOCAL machine
-    // "Long-press to create one" — a gesture whose handler left with app_main's polling loop. touch.c still
-    // detected the hold and set its flag, nothing ever drained it, and the line sat on screen promising
-    // something no code did. The fork itself was already unreachable: the only writer of `remote` that
-    // still runs sets it to false, since both backend snapshot paths lost their callers with the socket.
-    // TWO HONEST STATES, one screen each (mockup/empty-state.html, A and B′). The daemon is either on the
-    // cable or it is not; when it is not, the machine's name, the action and the marks are all about a
-    // computer that is not talking to us yet, and the one thing to do is open the app there. When it is,
-    // the tile names the machine and the action.
+    // THREE HONEST STATES, one screen each (mockup/empty-state.html, A and B′, plus the tab case). The
+    // daemon is on the cable or it is not; when it is, the window is open or it is not; when it is, this
+    // tab has panes or it does not. Each is a different thing to do next, and the screen says that one
+    // thing in the app's own words.
+    //
+    // A: not connected — nothing is talking to us; the only move is to run the app on the computer.
+    //    Also the shape for "connected, no window": the daemon is up but the app is shut, and the one
+    //    thing to do is the same. The badge at the top says which of the two it is.
+    // B′: connected, window open, no agents ANYWHERE — name the machine, offer Cmd N.
+    // T: connected, window open, agents elsewhere, this tab empty — the tab's name, Cmd N, and a nudge
+    //    that the other tabs are a tap away (the eyebrow opens the TABS picker on the tiles; here it is
+    //    the hint's job).
     lv_obj_t *pill = s_na_cmd_lbl ? lv_obj_get_parent(s_na_cmd_lbl) : NULL;   // the words' label → the pill
-    if (!s_connected) {
+    if (!s_connected || !s_has_window) {
         set_hidden(s_na_eyebrow, true);   // absent, not "Machine": the row is for a name
         if (pill) set_hidden(pill, true);
         if (s_na_marks) set_hidden(s_na_marks, true);
         lv_label_set_text(s_na_title, "Run OpenHarness\non your computer");
-        lv_label_set_text(s_no_agents_hint_lbl, "The dial follows the app.\nIt connects on its own.");
+        lv_label_set_text(s_no_agents_hint_lbl, s_connected
+            ? "The dial follows the app.\nIt shows what the app shows."
+            : "The dial follows the app.\nIt connects on its own.");
         return;
     }
     set_hidden(s_na_eyebrow, false);
     if (pill) set_hidden(pill, false);
+    if (s_fleet_total > 0) {
+        // Agents exist, none on this tab. The eyebrow names the tab the way a tile's line does.
+        if (s_na_marks) set_hidden(s_na_marks, true);
+        const char *tab = NULL;
+        for (int i = 0; i < s_swarm_count; i++)
+            if (strcmp(s_swarms[i].id, s_swarm_selected) == 0) { tab = s_swarms[i].name[0] ? s_swarms[i].name : NULL; break; }
+        lv_label_set_text(s_na_eyebrow, tab ? tab : "This tab");
+        lv_label_set_text(s_na_title, "Nothing on this tab");
+        lv_label_set_text(s_no_agents_hint_lbl, "Create one in OpenHarness,\nor pick another tab in the app.");
+        return;
+    }
     if (s_na_marks) set_hidden(s_na_marks, false);
     // Name as-is, exactly like the Overview eyebrow: the device never upper-cases anything.
     lv_label_set_text(s_na_eyebrow, name ? name : "");
@@ -8074,7 +7941,7 @@ void ui_apply_pending_focus(void)
     snprintf(want, sizeof(want), "%s", s_pending_focus);
     const bool expired = want[0] && lv_tick_elaps(s_pending_focus_ms) > PENDING_FOCUS_MS;
     if (expired) {
-        ESP_LOGW(TAG, "focus %s: still not on the ring after %dms — dropped", want, (int)PENDING_FOCUS_MS);
+        ESP_LOGW(TAG, "focus %s: still not in the list after %dms — dropped", want, (int)PENDING_FOCUS_MS);
         pending_focus_clear();
     }
     display_unlock();
@@ -8419,7 +8286,7 @@ void ui_voice_stop(void)
 // ── what covers the face, as one line whenever it changes ───────────────────────────────────────────
 // A press eaten by an invisible clickable layer is indistinguishable from dead touch, and the dial has
 // half a dozen things that can be over a tile: the voice overlay, the dim, the notification drawer, the
-// agent switcher, the picker screen, the lock. Rather than a line at every show and hide site (there are
+// TABS picker, the picker screen, the lock. Rather than a line at every show and hide site (there are
 // dozens, on several tasks), this is ONE snapshot, taken on the LVGL task every loop and printed only
 // when it differs from the last one. Read beside touch.c's press/release lines, it says what the press
 // landed on.
@@ -8451,7 +8318,7 @@ void ui_log_state_if_changed(void)
              voice_ov ? " +voice-overlay" : "",
              ui_voice_is_active() ? " +voice-active" : "",
              s_notif_open ? " +drawer" : "",
-             ui_switch_is_open() ? " +switcher" : "",
+             ui_switch_is_open() ? " +tabs" : "",
              ui_lock_active() ? " +lock" : "",
              display_is_asleep() ? " asleep" : "",
              dimmed ? " dimmed" : "");

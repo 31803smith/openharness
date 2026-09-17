@@ -82,7 +82,7 @@ void ui_project_set_name(const char *project_id, const char *name);
 // Set the engine shown below an agent name. Invalid/empty values leave the label blank.
 void ui_project_set_engine(const char *project_id, const char *engine);
 
-// Which machine an agent lives on. The carousel spans machines, so this is what the switcher's second
+// Which machine an agent lives on. A tab spans machines, so this is what the tile's machine line and
 // line shows and what a machine row uses to find the first agent to land on.
 void ui_project_set_machine(const char *project_id, const char *machine_id, const char *machine);
 
@@ -99,6 +99,18 @@ void ui_service_model_picker(void);
 
 // Remove a project's tile (session ended / tmux pane gone). No-op if the id isn't shown.
 void ui_project_remove(const char *project_id);
+
+// Bracket a WHOLE-LIST rebuild (a cable reconnect drops every tile and adds them all back).
+//
+// Between these two calls the add/remove paths touch the model only: no re-anchor, no window rebuild, no
+// trailing-tile rebuild. The view catches up once, at bulk_end, and comes back to whichever page was
+// centred when bulk_begin ran. Nested calls are counted, so only the outermost pair paints.
+//
+// This is not an optimisation to be dropped when convenient. Painting per agent held the display lock for
+// about ten seconds on a 78-agent reconcile, which is the task watchdog's timeout with panic enabled, and
+// the dial rebooted in the middle of the refresh. See the block comment above the implementation.
+void ui_projects_bulk_begin(void);
+void ui_projects_bulk_end(void);
 // Copy the id of the project tile at index i into buf; false if out of range (poll reconcile).
 bool ui_project_id_at(int i, char *buf, size_t n);
 // Number of project tiles currently shown (for naming "Project N").
@@ -151,18 +163,20 @@ bool ui_action_hit(uint16_t x, uint16_t y);
 // A resolved single tap, at its PRESS coordinates in screen space. The point decides what it opens:
 // only a tap landing on the "Done" block opens the detail reader.
 void ui_tap(int32_t x, int32_t y);
-// Notification centre (touch.c drives open/close): open = pull-down from the top edge; close = swipe-up /
-// tap. is_open lets the gesture layer route input to the drawer instead of voice/detail.
+// Notification centre (touch.c drives open/close): open = pull-down from the top edge, or a tap on the
+// bell; close = swipe-up / tap. is_open lets the gesture layer route input to the drawer instead of
+// voice/detail. Opens over any carousel page (a tile, the Overview, Settings).
 void ui_notif_open(void);
 
-// The agent switcher: a picker over the most recent agents, opened by pulling down from the top. It took
-// that gesture from the notification drawer, which now opens on a tap of the bell — see ui_screens.c.
+// True while the TABS picker covers the face. touch.c keeps the pull-down band and the tap-to-open from
+// acting under it. (Named for the agent switcher it once also gated — that picker is gone; see
+// ui_screens.c "agent switcher: gone".)
 bool ui_switch_is_open(void);
-void ui_switch_open(void);
 void ui_notif_close(void);
 bool ui_notif_is_open(void);
 // True when a press lands on the bell pill. touch.c asks before capturing the top band, so the one
-// button that lives inside that band can be pressed — the drawer opens from the bell and nowhere else.
+// button that lives inside that band can be pressed — a tap on the bell reaches LVGL and opens the
+// drawer; a pull that starts anywhere else in the band opens it too.
 bool ui_notif_pill_hit(uint16_t x, uint16_t y);
 // A swipe-up inside the open drawer → close it, but only if the list is already scrolled to the top
 // (otherwise the gesture is just scrolling the list).
@@ -250,12 +264,13 @@ bool ui_take_agent_reload_req(void);
 bool ui_peek_agent_reload_req(void);   // non-consuming check (a slow per-agent restore bails on a new machine select)
 // Put the tiles in the order `ids` gives. Without this the carousel keeps the order it FIRST saw agents
 // in — ui_project_set_name appends — and once that disagrees with the list there is no path back.
-// How many of the agents just pushed the CAROUSEL walks; the rest are known but not swiped to (they
-// still count on the overview and list in the switcher). 0 = all of them. See ui_screens.c's ring_agents.
-void ui_project_set_ring_count(int n);
+// What the list just pushed was cut from: how many agents the account has in all (the overview's number —
+// the dial holds one tab, never the fleet) and whether a window is open at the far end (an empty list
+// with one is an empty tab; without one it is a shut app — see no_agents_apply).
+void ui_fleet_set(int total, bool has_window);
 
 // Tell the window where the dial is looking, on purpose. ONLY for a move a person made through something
-// other than a swipe (the switcher, a notification): those go through code, and code-driven moves are
+// other than a swipe (a notification): those go through code, and code-driven moves are
 // deliberately silent — see carousel_goto in ui_screens.c.
 void ui_report_active_agent(void);
 
@@ -280,9 +295,10 @@ void ui_cable_toast(const char *msg);
 // stops capture, restores the previous screen and shows a short non-fatal toast.
 void ui_voice_quota_status(int remaining_seconds);
 void ui_voice_quota_exceeded(void);
-// A turn finished for this project → wake the screen (if off) and jump to that project's tile. Called
-// on the completion beep so the user always lands on the finished project.
-void ui_notify_task_done(const char *project_id);
+// A turn finished for this agent → record it in the drawer, badge, and wake the screen if it was off.
+// `name`, `machine` and `recap` come from the frame: the dial holds one tab, and the agent may be on
+// another — the row has nobody else to ask. Any may be NULL; a held tile's own model wins when present.
+void ui_notify_task_done(const char *project_id, const char *name, const char *machine, const char *recap);
 // Append a commander event to a project's tile as a readable text card (keeps the last 2).
 // kind: "say" | "act" | "ask" | "done" | "error". session_id is the dbSessionId for voice resume.
 // `recap` (optional, may be NULL): a short headline shown on the tile at a glance; `text` is the
@@ -315,7 +331,7 @@ void ui_project_set_agents(const char *project_id, const struct cJSON *agents);
 // Show the question screen: tap an option row to answer (single/multi-select). Tap-only — there is no
 // voice answer. `questions` is the cJSON array from the `commander_question` frame; copied out
 // synchronously, so the caller may free the JSON right after this returns.
-void ui_question_show(const char *project_id, const char *session_id, const char *request_id, const struct cJSON *questions);
+void ui_question_show(const char *project_id, const char *agent_name, const char *request_id, const struct cJSON *questions);
 // That question was answered somewhere else (the app, or the pane by hand) — leave the screen instead of
 // waiting for an answer that can no longer be delivered. No-op unless THIS request is the one on screen.
 void ui_question_close(const char *project_id, const char *request_id);

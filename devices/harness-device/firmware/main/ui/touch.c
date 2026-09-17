@@ -423,7 +423,7 @@ static void touch_read(lv_indev_t *indev, lv_indev_data_t *data)
         if (pressed && !nprev) {
             // Not on the reader: notifications aren't openable there, and swallowing the top band would break
             // scrolling from the top of the text. The reader owns its whole surface for vertical scroll.
-            // Not under the switcher either: it covers the whole face, and its top rows are inside this
+            // Not under the TABS picker either: it covers the whole face, and its top rows are inside this
             // band — captured, they would be untappable in exactly the list you opened to tap.
             //
             // A chooser wheel is the same shape of thing and was the same bug: its close X sits at the
@@ -441,14 +441,14 @@ static void touch_read(lv_indev_t *indev, lv_indev_data_t *data)
             int d = ndyl - ndy0;
             ESP_LOGI(TAG, "band: released d=%+d → %s", d,
                      ui_notif_is_open() ? (d < -SWIPE_MIN_PX ? "close drawer" : "nothing")
-                                        : (d > SWIPE_MIN_PX ? "agent list" : "nothing"));
+                                        : (d > SWIPE_MIN_PX ? "open drawer" : "nothing"));
             if (ui_notif_is_open()) { if (d < -SWIPE_MIN_PX) ui_notif_swipe_up(); }  // up → close (only if list at top)
-            // Pull down from the top → the AGENT LIST (owner, 2026-09-15: "vuốt xuống hiển thị danh
-            // sách agent như cũ"). The notifications are the bell's alone now: the bell is a button,
-            // and a press that starts ON it is handed to LVGL rather than captured by this band — see
-            // the capture test above — so a tap on the bell opens the drawer and a tap anywhere else
-            // in the band does nothing.
-            else if (d > SWIPE_MIN_PX) ui_switch_open();
+            // Pull down from the top → the NOTIFICATION DRAWER. It had this gesture first; the agent
+            // switcher took it on 2026-09-15 and went away on 2026-09-17 with the fleet-wide list it
+            // listed (owner: "bỏ luôn cái vụ pull down hiển thị danh sách agent … pull down => show
+            // notification list"). The bell keeps its tap: a press that starts ON it is handed to LVGL
+            // rather than captured by this band — see the capture test above — so both roads lead here.
+            else if (d > SWIPE_MIN_PX) ui_notif_open();
             s_band_drag = false; ncap = true;
         }
         nprev = pressed;
@@ -461,7 +461,7 @@ static void touch_read(lv_indev_t *indev, lv_indev_data_t *data)
 
     // Swipes + tap-to-stop-voice. Skip while swallowing a consumed gesture (the wake tap) so the
     // release of that gesture isn't misread as a fresh tap.
-    // ...and not under the agent picker, whose rows are LVGL's to dispatch: swipe_track would read a row
+    // ...and not under the TABS picker, whose rows are LVGL's to dispatch: swipe_track would read a row
     // tap as the tap that opens the detail reader, and a scroll of the list as a carousel swipe, both
     // happening to the tile UNDERNEATH the overlay.
     if (!display_is_asleep() && !s_swallow_until_release && !ui_switch_is_open())

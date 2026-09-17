@@ -63,8 +63,8 @@ static bool boot_button_held(void)
 
 // ── the agent list ──────────────────────────────────────────────────────────────────────────────────
 
-// A hundred agents is too much for a task stack, and this is only ever touched by refresh_task, so one
-// lazily-allocated PSRAM block is both cheaper and safer than a stack array.
+// Only ever touched by refresh_task, so one lazily-allocated PSRAM block rather than a stack array — a
+// project_t is not small, and sixteen of them have no business on a task stack.
 static project_t *proj_scratch(void)
 {
     static project_t *s_scratch;
@@ -88,7 +88,14 @@ static int refresh_projects(void)
     // Apply the WHOLE reconcile atomically. With the huge-range circular carousel each add/remove
     // re-anchors the scroll to keep the viewed agent centred; locking per ui_* call (as they do
     // internally) lets the LVGL task render between them and the viewed tile visibly wobbles.
+    //
+    // ...and the bulk bracket is why holding the lock that long is affordable. A cable reconnect empties
+    // the list and refills it, so this function runs the add and remove paths once per agent; painting in
+    // each of them cost ~130ms, which on a 78-agent dial held the display lock for about ten seconds and
+    // tripped the task watchdog into a reboot. Inside the bracket the loops below move the MODEL only and
+    // the view catches up once, at bulk_end, on the page the person was already looking at.
     display_lock();
+    ui_projects_bulk_begin();
 
     for (int i = 0; i < n; i++) {
         ui_project_set_name(pr[i].id, pr[i].name);
@@ -117,12 +124,13 @@ static int refresh_projects(void)
     static const char *ids[MAX_PROJECTS];
     for (int i = 0; i < n; i++) ids[i] = pr[i].id;
 
+    ui_projects_bulk_end();   // one re-anchor and one window rebuild for the whole reconcile
     display_unlock();
 
     if (n > 1) ui_project_apply_order(ids, n);
-    // AFTER the order: the count names a PREFIX of the list, so it means nothing until the list is in
-    // the order the daemon sent.
-    ui_project_set_ring_count(cable_client_ring_count());
+    // The fleet behind the list: the overview's count, and whether the empty page means "no window" or
+    // "empty tab".
+    ui_fleet_set(cable_client_agent_total(), cable_client_has_window());
 
     // The list is built. If a landing is pending, LAND: drop the loading spinner and focus agent 1 (or the
     // No-agents page). No-op otherwise, so a periodic refresh never yanks the view.

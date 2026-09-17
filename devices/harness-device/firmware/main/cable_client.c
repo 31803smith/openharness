@@ -45,7 +45,7 @@ typedef struct {
     char model[24];
     char effort[16];
     char machine_id[ID_MAX];    // which machine this agent lives on ("" from a daemon that predates it)
-    char machine[NAME_MAX];     // that machine's name, drawn on the switcher's second line
+    char machine[NAME_MAX];     // that machine's name, drawn under the agent's
 } cable_agent_t;
 
 
@@ -342,16 +342,26 @@ void cable_client_fw_error(const char *message)
 
 const char *cable_client_machine_name(void) { return s_machine_name; }
 
-// Set by `agents.end`, read by the refresh that applies the list. See ui_project_set_ring_count.
-static int s_ring_agents;
+// Set by `agents.end`, read by the refresh that applies the list — see ui_fleet_set.
+static int  s_agents_total;
+static bool s_has_window;
 
-int cable_client_ring_count(void)
+int cable_client_agent_total(void)
 {
     if (!s_agents_lock) return 0;
     xSemaphoreTake(s_agents_lock, portMAX_DELAY);
-    const int n = s_ring_agents;
+    const int n = s_agents_total;
     xSemaphoreGive(s_agents_lock);
     return n;
+}
+
+bool cable_client_has_window(void)
+{
+    if (!s_agents_lock) return false;
+    xSemaphoreTake(s_agents_lock, portMAX_DELAY);
+    const bool w = s_has_window;
+    xSemaphoreGive(s_agents_lock);
+    return w;
 }
 
 int cable_client_list_agents(project_t *out, int max)
@@ -526,12 +536,15 @@ static void handle_agents_end(const cJSON *p)
     xSemaphoreTake(s_agents_lock, portMAX_DELAY);
     s_agents_building = false;
     const int n = s_agent_count;
-    // How many of them the carousel walks. The daemon puts those first, so one number splits the list;
-    // absent (or from an older daemon) means all of them, which is what the dial did before this existed.
-    const cJSON *ring = p ? cJSON_GetObjectItemCaseSensitive(p, "ring") : NULL;
-    s_ring_agents = cJSON_IsNumber(ring) ? (int)ring->valuedouble : 0;
+    // The list is the window's active tab. Beside it: how many agents the account has in all (the
+    // overview prints that, never the rows), and which tab this is — "" means no window, which is how an
+    // empty list reads as "the app is shut" rather than "this tab is empty".
+    const cJSON *total = p ? cJSON_GetObjectItemCaseSensitive(p, "total") : NULL;
+    const char *tab = p ? str_of(p, "tab") : NULL;
+    s_agents_total = cJSON_IsNumber(total) ? (int)total->valuedouble : n;
+    s_has_window = tab && tab[0];
     xSemaphoreGive(s_agents_lock);
-    ESP_LOGI(TAG, "agents: %d", n);
+    ESP_LOGI(TAG, "agents: %d of %d%s", n, s_agents_total, s_has_window ? "" : " (no window)");
     // app_main's refresh reads the list and rebuilds the tiles. Going through the same request the
     // backend path used means the carousel's landing, naming and removal logic has one implementation.
     ui_request_agent_reload();
@@ -685,8 +698,11 @@ static void handle_message(const cJSON *root)
         // own work when the dial is awake, on the carousel, and centred on this very agent.
         //
         // Absent field = false, so a daemon that predates this notifies exactly as it always did.
+        //
+        // WHO IT IS ABOUT rides on the frame. The dial holds one tab's agents, and this turn may have
+        // finished on any of them; the drawer row for one off this tab has nobody else to ask.
         if (!bool_of(p, "quiet")) {
-            ui_notify_task_done(agent_id);   // wake the screen (if off) + record the notification
+            ui_notify_task_done(agent_id, str_of(p, "name"), str_of(p, "machine"), str_of(p, "recap"));
         }
         return;
     }
@@ -697,7 +713,8 @@ static void handle_message(const cJSON *root)
     }
     if (strcmp(t, "question") == 0) {
         const cJSON *questions = cJSON_GetObjectItemCaseSensitive(p, "questions");
-        if (agent_id && questions) ui_question_show(agent_id, "", str_of(p, "id"), questions);
+        // The name rides on the frame for the same reason as on `summary`: the asker may be off this tab.
+        if (agent_id && questions) ui_question_show(agent_id, str_of(p, "name"), str_of(p, "id"), questions);
         return;
     }
     // Somebody else answered it. A question is a dialog in a tmux pane, not a shared object, so this is

@@ -73,10 +73,15 @@ const char *cable_fw_version(void);
 
 #define CABLE_PROTO_VERSION 3   // 3: + question.close (a question answered on another client)
 
-// Most agents the dial tracks at once — the size of the list this file hands the UI. The UI keeps only a
-// thin shell per agent and materialises the heavy content for the active tile ± a window, so a hundred
-// costs little more than a dozen.
-#define CABLE_MAX_AGENTS 100
+// Most agents the dial holds at once — the size of the list this file hands the UI.
+//
+// THE LIST IS ONE TAB. The daemon sends the window's active tab and nothing else (cableHost.listAgents):
+// a tab is at most nine panes, and the rest of the fleet reaches the dial as a count (`agents.end.total`)
+// and as the name on a notification. It used to be a hundred, back when every agent on every machine was
+// sent so the overview could count them and a pull-down switcher could list them — which is what let a
+// reconnect refill 78 tiles into a screen that shows one and trip the task watchdog. Sixteen leaves room
+// for a tile the window holds on a machine that dropped out.
+#define CABLE_MAX_AGENTS 16
 
 // The UI's own ceiling, kept as one name so the layer that receives the list and the layer that renders it
 // cannot disagree about how many there can be.
@@ -108,8 +113,13 @@ const char *cable_client_machine_name(void);
 // to read the backend's RPC answer.
 int cable_client_list_agents(project_t *out, int max);
 
-// How many of the agents above the CAROUSEL walks; the rest are known but never swiped to. 0 = all.
-int cable_client_ring_count(void);
+// How many agents the account has across every machine (`agents.end.total`) — the overview's number. The
+// list above is the active tab; this is the fleet it was cut from.
+int cable_client_agent_total(void);
+
+// Whether a window is open at the far end: `agents.end.tab` names the active tab, and is "" when the app
+// is shut. An empty list with a window is an empty tab; without one it is a closed app — different screens.
+bool cable_client_has_window(void);
 
 // ── WHAT THE DIAL SAYS ──────────────────────────────────────────────────────────────────────────────
 // Message CONSTRUCTION stays in cable_client.c even for messages whose logic lives elsewhere: voice.c
