@@ -152,37 +152,28 @@ class _RunLocalModelDialogState extends State<_RunLocalModelDialog> {
   /// lines, the name above, what it is below ("This machine", or online /
   /// offline for another). The row is the select's own trigger when there is
   /// more than one machine — same row, plus a chevron — and plain otherwise.
+  /// The machine, as one line under its label: "This machine (name)" or the
+  /// name — which one the person is sitting at is the fact a hostname alone
+  /// does not carry. The row is the select's own
+  /// trigger when there is more than one machine (plus a chevron), and plain
+  /// otherwise.
   Widget _machineRow(MachineState m, {required bool opens}) => Row(
     mainAxisSize: MainAxisSize.min,
     children: [
-      _machineMark(m, size: 22),
-      const SizedBox(width: 10),
+      _machineMark(m, size: 16),
+      const SizedBox(width: 8),
       Flexible(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              m.machine.displayName,
-              key: const Key('run-local-model-machine'),
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontFamily: grid.AppFont.sans,
-                fontSize: 12.5,
-                height: 1.2,
-                color: grid.AppPalette.textPrimary,
-              ),
-            ),
-            Text(
-              _kind(m),
-              style: TextStyle(
-                fontFamily: grid.AppFont.sans,
-                fontSize: 11.5,
-                height: 1.2,
-                color: grid.AppPalette.textSecondary,
-              ),
-            ),
-          ],
+        child: Text(
+          m.isLocalMachine
+              ? 'This machine (${m.machine.displayName})'
+              : m.machine.displayName,
+          key: const Key('run-local-model-machine'),
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontFamily: grid.AppFont.sans,
+            fontSize: 12.5,
+            color: grid.AppPalette.textPrimary,
+          ),
         ),
       ),
       if (opens) ...[
@@ -196,26 +187,20 @@ class _RunLocalModelDialogState extends State<_RunLocalModelDialog> {
     ],
   );
 
-  /// What a machine is, in two words, beside its name.
-  String _kind(MachineState m) => m.isLocalMachine
-      ? 'This machine'
-      : _online(m)
-      ? 'Online'
-      : 'Offline';
-
-  /// One machine: the slim row, nothing to choose. More: a row of small chips
-  /// — up to three, this computer first, the chosen one filled — and a "…"
-  /// that opens the pane menu (the same menu the pane's model picker draws,
-  /// the current row filled rather than ticked) with every machine. One row
-  /// whatever the count; the chosen machine always among the visible chips.
   Widget _machineLine(List<MachineState> machines) {
     final current = widget.notifier.stateOf(_machineId) ?? machines.firstOrNull;
     if (current == null) return const SizedBox.shrink();
     if (!widget.chooseMachine || machines.length < 2) {
+      // The same shape as the chooser below — a label, then the machine — so
+      // the two doors read as one dialog; only the verb differs, because here
+      // nothing is chosen.
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
-        children: [_machineRow(current, opens: false), _where(current)],
+        children: [
+          _label('The model will run on'),
+          _machineRow(current, opens: false),
+        ],
       );
     }
     final visible = machines.take(3).toList();
@@ -226,40 +211,26 @@ class _RunLocalModelDialogState extends State<_RunLocalModelDialog> {
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: Text(
-            'Which computer should it look after?',
-            style: TextStyle(
-              fontFamily: grid.AppFont.sans,
-              fontSize: 12.5,
-              color: grid.AppPalette.textSecondary,
-            ),
-          ),
-        ),
+        _label('Select the machine to run the model'),
         _chips(visible, machines),
-        _where(current),
       ],
     );
   }
 
-  /// One sentence under the machine, saying what the choice means in plain
-  /// words: where the model will live, and that the picker everywhere sees it.
-  /// "This computer" is said outright, because a hostname alone does not tell
-  /// a person which of their machines they are sitting at.
-  Widget _where(MachineState m) => Padding(
-    padding: const EdgeInsets.only(top: 8),
+  /// What a machine is, in two words, beside its name.
+  String _kind(MachineState m) => m.isLocalMachine
+      ? 'This machine'
+      : _online(m)
+      ? 'Online'
+      : 'Offline';
+
+  Widget _label(String text) => Padding(
+    padding: const EdgeInsets.only(bottom: 8),
     child: Text(
-      m.isLocalMachine
-          ? 'The model will run on this computer (${m.machine.displayName}). '
-                'Agents on any machine can use it.'
-          : 'The model will run on ${m.machine.displayName}, not on this '
-                'computer. Agents on any machine can use it.',
-      key: const Key('run-local-model-where'),
+      text,
       style: TextStyle(
         fontFamily: grid.AppFont.sans,
-        fontSize: 12,
-        height: 1.4,
+        fontSize: 12.5,
         color: grid.AppPalette.textSecondary,
       ),
     ),
