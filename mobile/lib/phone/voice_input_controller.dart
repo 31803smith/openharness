@@ -68,6 +68,18 @@ class VoiceInputController extends ChangeNotifier {
   /// silent: nothing was said, so nothing is announced.
   static const minTake = Duration(milliseconds: 350);
 
+  /// How long a notice stays on the row before it clears itself.
+  ///
+  /// These lines report something that has already finished — a take that came
+  /// back empty, a send that did not land — and the row they sit in is the one
+  /// that otherwise names the machine and what the mic is doing. Left up, a
+  /// notice holds that space against the thing it is there for, long after the
+  /// person has read it and moved on.
+  ///
+  /// Five seconds: long enough to read a sentence twice, short enough that the
+  /// row is back to itself before the next take is spoken.
+  static const noticeLinger = Duration(seconds: 5);
+
   final VoiceTranscriber transcriber;
   final VoiceRecorder _recorder;
 
@@ -81,6 +93,9 @@ class VoiceInputController extends ChangeNotifier {
   bool _isSending = false;
   bool _disposed = false;
   Timer? _takeLimit;
+
+  /// Clears [notice] once [noticeLinger] has passed — see [_restartNoticeTimer].
+  Timer? _noticeLimit;
 
   /// Bumped by everything that abandons a take, so a recording or a
   /// transcription still in flight from it lands nowhere — above all after
@@ -250,6 +265,7 @@ class VoiceInputController extends ChangeNotifier {
   @override
   void dispose() {
     _abandonTake();
+    _noticeLimit?.cancel();
     _disposed = true;
     unawaited(_recorder.dispose());
     super.dispose();
@@ -321,7 +337,33 @@ class VoiceInputController extends ChangeNotifier {
   void _setStatus(VoiceInputStatus status, {String? notice}) {
     _status = status;
     _notice = notice;
+    _restartNoticeTimer();
     _notify();
+  }
+
+  /// Starts the countdown that clears [notice], or stops it when there is none.
+  ///
+  /// ⚠️ **Restarted on EVERY status change, not only on the ones that carry a
+  /// notice.** A timer from a previous notice would otherwise still be running,
+  /// and it would clear whatever notice happens to be showing when it fires —
+  /// cutting a fresh one short by however long the old one had already been up.
+  ///
+  /// ⚠️ **[VoiceInputStatus.unavailable] keeps its notice indefinitely.** That
+  /// one is not a report of something that just happened; it is the standing
+  /// reason the mic cannot be used, and the row is the only place that says so.
+  /// Everything else is transient and goes.
+  void _restartNoticeTimer() {
+    _noticeLimit?.cancel();
+    _noticeLimit = null;
+    if (_notice == null || _status == VoiceInputStatus.unavailable) return;
+    _noticeLimit = Timer(noticeLinger, () {
+      _noticeLimit = null;
+      // Only if it is still the same notice: anything that has set another one
+      // since owns the row now, and has its own timer running for it.
+      if (_notice == null || _disposed) return;
+      _notice = null;
+      _notify();
+    });
   }
 
   void _notify() {
