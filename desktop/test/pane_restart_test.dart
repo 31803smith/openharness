@@ -62,7 +62,7 @@ void main() {
       await tester.tap(
         find.descendant(
           of: controls,
-          matching: find.byTooltip('Restart Agent'),
+          matching: find.byTooltip('Restart Harness'),
         ),
       );
       await tester.pump();
@@ -85,7 +85,7 @@ void main() {
           of: controls,
           matching: find.byWidgetPredicate(
             (widget) =>
-                widget is IconButton && widget.tooltip == 'Restart Agent',
+                widget is IconButton && widget.tooltip == 'Restart Harness',
           ),
         ),
       );

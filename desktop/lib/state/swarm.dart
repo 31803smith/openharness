@@ -12,8 +12,9 @@ class Swarm {
     : name = normalizeName(name);
 
   static const defaultName = 'New Tab';
-  // 'New Harness' was the default until 2026-09-15; a layout saved before then
-  // still carries it, and it must read as the same fresh tab.
+  // 'New Harness' was the default until 2026-09-15 and 'New Agent' for a day
+  // after; a layout saved then still carries one, and it must read as the same
+  // fresh tab.
   static String normalizeName(String name) =>
       const {
         'New swarm',

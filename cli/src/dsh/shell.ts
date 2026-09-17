@@ -32,10 +32,23 @@ export function isShellNoise(line: string): boolean {
   return /can't change option: zle$/.test(line) || /^\(eval\):\d+: can't change option: zle$/.test(line)
 }
 
-/** `[path, ...args]` that runs `script` through the user's shell, or `/bin/sh -c` when none is known. */
+/**
+ * `[path, ...args]` that runs `script` through the user's shell, or `/bin/sh -c` when none is known.
+ *
+ * AS A LOGIN SHELL, whatever the shell. interactiveEngineShell gives bash `-ic` on purpose for a pane
+ * (see tmuxOnPath.ts on why), but a bash user's PATH conventionally lives in `.bash_profile`, which
+ * only `-l` reads — and Terminal.app opens a login shell, so that file is what "on my terminal it
+ * works" means. Measured 2026-09-16: Solid's doctor answered `miss codex on PATH` from the daemon
+ * while `harness dsh doctor` in Terminal found it, because codex was an npm global under nvm and nvm
+ * is sourced from `.bash_profile`. A setup or a doctor is one process, so the reason bash panes avoid
+ * `-l` (a PATH built in .bashrc compounding across subshells) does not apply here.
+ */
 export function dshShellArgv(script: string): { path: string; args: string[] } {
   const shell = interactiveEngineShell()
-  if (shell) return { path: shell.path, args: [...shell.args, script] }
+  if (shell) {
+    const args = shell.args.map((a) => (a === '-ic' ? '-lic' : a))
+    return { path: shell.path, args: [...args, script] }
+  }
   return { path: '/bin/sh', args: ['-c', script] }
 }
 

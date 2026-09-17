@@ -241,7 +241,7 @@ void main() {
     // Its own close control, and no way to end an agent from it.
     expect(find.byTooltip('Close viewer'), findsOneWidget);
     expect(
-      find.byTooltip('Stop Agent'),
+      find.byTooltip('Stop Harness'),
       findsOneWidget,
       reason: 'the terminal keeps its own',
     );

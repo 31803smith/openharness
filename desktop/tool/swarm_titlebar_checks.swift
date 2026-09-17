@@ -186,7 +186,7 @@ private extension SwarmTabStrip {
     try checkTitlebar(tabs[0].showsDivider && tabs[1].showsDivider, "Separators return when the pointer leaves")
     try checkTitlebar(!tabs[10].showsDivider && !tabs[11].showsDivider, "Selected tab remains joined without neighboring separators")
     try checkTitlebar(tabs.count == 24, "All overflow tabs exist")
-    try checkTitlebar(!newButton.isEnabled, "New Agent is disabled at capacity")
+    try checkTitlebar(!newButton.isEnabled, "New Harness is disabled at capacity")
     for (index, tab) in tabs.enumerated() {
       try tab.checkAccessibility(expectedName: "Swarm \(index)", active: index == 11)
     }
@@ -224,7 +224,7 @@ private extension SwarmTabStrip {
     update(state([["id": "swarm-0", "name": "Renamed tab"]], active: "swarm-0"))
     try checkTitlebar(tabs.count == 1 && tabs[0] === original, "Closing tabs retains the surviving control")
     try original.checkAccessibility(expectedName: "Renamed tab", active: true)
-    try checkTitlebar(newButton.isEnabled, "New Agent returns below capacity")
+    try checkTitlebar(newButton.isEnabled, "New Harness returns below capacity")
     var fullWithStarter = state(rows, active: "swarm-0")
     fullWithStarter["canOpenNewTab"] = true
     update(fullWithStarter)
@@ -240,9 +240,9 @@ private extension SwarmTabStrip {
     try checkTitlebar(notificationButton.frame.maxX <= scroll.frame.minX,
       "The bell is before the tabs beside the traffic lights")
     try checkTitlebar((newButton.isHidden || newButton.frame.maxX <= createButton.frame.minX) && scroll.frame.maxX <= createButton.frame.minX && createButton.frame.maxX <= openButton.frame.minX,
-      "New and Open Agent have distinct targets on the right")
-    try checkTitlebar(openButton.title == "Open Agent" && createButton.title == "New Agent",
-      "The titlebar separates New and Open Agent")
+      "New and Open Harness have distinct targets on the right")
+    try checkTitlebar(openButton.title == "Open Harness" && createButton.title == "New Harness",
+      "The titlebar separates New and Open Harness")
     try checkTitlebar(!subviews.contains(where: { $0 is NSTextField }), "The titlebar has no competing text editor")
     events.removeAll()
     newButton.performClick(nil)
@@ -271,7 +271,7 @@ private extension SwarmTabStrip {
     try original.checkEnabled(false)
     try checkTitlebar(!newButton.isEnabled && !notificationButton.isEnabled && !openButton.isEnabled && !createButton.isEnabled, "Titlebar actions disable with a modal")
     try checkTitlebar(actionPixels == [createButton.renderedPixels(), openButton.renderedPixels()],
-      "New and Open Agent retain their colors behind a workspace modal")
+      "New and Open Harness retain their colors behind a workspace modal")
     original.clickBothActions()
     newButton.performClick(nil)
     notificationButton.performClick(nil)
@@ -488,7 +488,7 @@ private extension SwarmTitlebar {
     try checkTitlebar(newSwarm.keyEquivalent == "t" && newSwarm.toolTip == nil,
       "Native shortcuts display in the menu without duplicate hover hints")
     try checkTitlebar(addHarness.keyEquivalent == "o" && addHarness.keyEquivalentModifierMask == [.command],
-      "The exported keymap keeps Open Agent on Command-O")
+      "The exported keymap keeps Open Harness on Command-O")
     setKeymap(changed)
     try checkTitlebar(NSApp.mainMenu === main && newSwarm.keyEquivalent == "o",
       "Hot reload updates the existing menu to the remapped key")
@@ -584,10 +584,10 @@ private extension SwarmTitlebar {
     try checkTitlebar(settings.title == "Settings…" && settings.representedObject as? String == "settings", "Settings stays in the application menu")
     let agent = main.item(withTitle: "File")!.submenu!
     let addHarness = agent.items.first(where: { $0.representedObject as? String == "addAgent" })!
-    try checkTitlebar(addHarness.title == "Open Agent…" && addHarness.keyEquivalent == "o" && addHarness.keyEquivalentModifierMask == [.command],
-      "Open Agent advertises Command-O")
-    try checkTitlebar(agent.items.contains { $0.title == "New Agent…" && $0.keyEquivalent == "n" && $0.keyEquivalentModifierMask == [.command] && $0.representedObject as? String == "newAgent" },
-      "New Agent has its own Command-N menu action")
+    try checkTitlebar(addHarness.title == "Open Harness…" && addHarness.keyEquivalent == "o" && addHarness.keyEquivalentModifierMask == [.command],
+      "Open Harness advertises Command-O")
+    try checkTitlebar(agent.items.contains { $0.title == "New Harness…" && $0.keyEquivalent == "n" && $0.keyEquivalentModifierMask == [.command] && $0.representedObject as? String == "newAgent" },
+      "New Harness has its own Command-N menu action")
     let historyMenu = main.item(withTitle: "History")!.submenu!
     try checkTitlebar(agent.items.map { $0.isSeparatorItem ? "separator" : ($0.representedObject as? String ?? "") } == ["new", "newAgent", "addAgent", "renameActive", "closeActive", "separator", "splitRight", "splitDown", "zoomPane", "closePane"], "File groups Harness and Pane actions, without Pin or Add Project clutter")
     try checkTitlebar(agent.items.filter { !$0.isSeparatorItem }.allSatisfy { $0.image != nil && $0.toolTip == nil },

@@ -162,7 +162,12 @@ void main() {
         {'terminal_theme'},
       ]);
       expect(appearanceStorage.requests, [
-        {'app_ui_font_family', 'app_ui_font_size', 'app_color_palette'},
+        {
+          'app_ui_font_family',
+          'app_ui_font_size',
+          'app_color_palette',
+          'harness_start_background',
+        },
       ]);
       expect(counters.requested, isTrue);
       expect(finished, isFalse);

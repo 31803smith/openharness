@@ -1,7 +1,7 @@
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TmuxBackend, clearEnvArgs } from './tmuxBackend.js'
 
 const originalPath = process.env.PATH
@@ -58,6 +58,7 @@ esac
     writeFileSync(tmux, `#!/bin/sh
 printf '%s\\n' "$*" >> "$TMUX_BACKEND_CALLS"
 case "$1" in
+  set-option) sleep 0.05 ;;
   new-session) printf '%%7\\n' ;;
   list-panes) printf '%%7|100|harness-codex-1|/tmp/work\\n%%9|101|harness-claude-2|/tmp/other\\n' ;;
 esac
@@ -74,17 +75,18 @@ esac
     await backend.inventory()
     theme = { background: '#300a24', foreground: '#ffffff' }
     await backend.inventory()
-    await new Promise((resolve) => setTimeout(resolve, 50))
-
-    const styleCalls = readFileSync(calls, 'utf8').trim().split('\n').filter((line) => line.includes('window-style'))
-    expect(styleCalls).toEqual([
+    const styleCalls = () => readFileSync(calls, 'utf8').trim().split('\n').filter((line) => line.includes('window-style'))
+    await vi.waitFor(() => expect(styleCalls()).toEqual([
       'new-session -d -P -F #{pane_id} -c /tmp/work -s harness-codex-1 ; set-option -w remain-on-exit on ; set-option -w window-style bg=#171b29,fg=#f5f5f5',
       // The pane this daemon did not create is styled on the first scan; %7 already was.
       'set-option -w -t %9 window-style bg=#171b29,fg=#f5f5f5',
       // The app changed its palette: every live pane, once.
       'set-option -w -t %7 window-style bg=#300a24,fg=#ffffff',
       'set-option -w -t %9 window-style bg=#300a24,fg=#ffffff',
-    ])
+    ]))
+    await backend.inventory()
+    await new Promise((resolve) => setTimeout(resolve, 80))
+    expect(styleCalls()).toHaveLength(4)
   })
 
   it('carries tmux\'s own refusal into the failure reason', async () => {

@@ -24,6 +24,8 @@ import 'codex_profile_field.dart';
 import 'agent_picker.dart';
 import 'remote_folder_picker.dart';
 import 'new_agent_project_picker.dart';
+import 'new_harness_help.dart';
+import 'dsh_install_panel.dart';
 
 /// Mirrors the harness CLI's `BYPASS_PERMISSION_FLAGS`
 /// (autonomous-harness/cli/src/lib/engineLaunch.ts) 1:1 — this is UI-only display + gating, the CLI
@@ -250,10 +252,15 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
 
   /// The one-line install status while a harness install is running, read off
   /// the machine's own narration (`dsh_install_status`), or null.
-  String? get _installStatus {
-    if (!_installing) return null;
-    final progress = widget.notifier.stateOf(_machineId)?.dsh.installs[_engine];
-    return progress?.label ?? 'Installing…';
+  /// The install this dialog is watching for the chosen harness: the one in
+  /// flight, or the one that just failed (kept on screen so its verdict and
+  /// the fix it names stay readable under the Retry). Null otherwise.
+  DshInstallRun? get _installRun {
+    final run = widget.notifier.stateOf(_machineId)?.dsh.runs[_engine];
+    if (run == null) return null;
+    if (_installing) return run;
+    if (run.failed && _willInstallHarness(_engine)) return run;
+    return null;
   }
 
   Future<void> _loadAgentPreference() async {
@@ -411,8 +418,13 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     // A harness the machine does not have yet is installed FIRST, as its own
     // step with its own words: minutes of clone and toolchain under a button
     // that said "Creating agent…" would read as a create that hung. The
-    // machine's catalog decides "has it"; wait for its answer if it is out.
-    if (harness != null && !_confirmationPending && _harness(harness) == null) {
+    // machine's catalog decides "has it" — asked AGAIN at this moment, not
+    // read from the answer the dialog opened with: a harness removed or
+    // installed in the meantime (`harness dsh remove` in a terminal, another
+    // window) made the stale answer send a create for a harness the machine
+    // no longer had, and the create failed with "not installed" instead of
+    // installing. The answer is an index read on the machine; it is cheap.
+    if (harness != null && !_confirmationPending) {
       await _probeHarnesses();
       if (!mounted) return;
       // A machine whose Harness CLI predates harnesses refuses `dsh_list`
@@ -421,6 +433,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
       final catalog = widget.notifier.stateOf(_machineId)?.dsh;
       if (catalog != null && !catalog.loaded && catalog.error != null) {
         setState(() {
+          _submitting = false;
           _error =
               'Update Harness CLI on $_machineName to create a '
               '${_labelOf(harness)} agent.';
@@ -512,6 +525,8 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   }
 
   Widget _buildDialog(BuildContext context) {
+    final edgePadding = MediaQuery.sizeOf(context).width < 700 ? 24.0 : 36.0;
+    final compactHeight = MediaQuery.sizeOf(context).height < 800;
     final bypassFlag = kEngineBypassPermissionFlag[_baseEngine(_engine)];
     final canCreate =
         (_preparedFolder != null ||
@@ -532,33 +547,48 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
         },
       },
       child: AlertDialog(
-        constraints: const BoxConstraints.tightFor(width: _dialogWidth + 56),
+        constraints: BoxConstraints.tightFor(
+          width: _dialogWidth + edgePadding * 2,
+        ),
         backgroundColor: grid.AppPalette.swarmField,
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
         title: Text(switch (widget.split?.axis) {
-          PaneResizeAxis.x => 'New Agent to the right',
-          PaneResizeAxis.y => 'New Agent below',
-          null => 'New Agent',
+          PaneResizeAxis.x => 'New Harness to the right',
+          PaneResizeAxis.y => 'New Harness below',
+          null => 'New Harness',
         }),
         titleTextStyle: Theme.of(context).textTheme.headlineSmall?.copyWith(
-          fontSize: 24,
+          fontSize: 28,
+          height: 1.2,
           fontWeight: grid.AppFont.semibold,
           color: grid.AppPalette.textPrimary,
         ),
-        titlePadding: const EdgeInsets.fromLTRB(28, 28, 28, 0),
-        contentPadding: const EdgeInsets.fromLTRB(28, 24, 28, 16),
-        actionsPadding: const EdgeInsets.fromLTRB(28, 0, 28, 24),
+        titlePadding: EdgeInsets.fromLTRB(
+          edgePadding,
+          compactHeight ? 24 : 32,
+          edgePadding,
+          0,
+        ),
+        contentPadding: EdgeInsets.fromLTRB(
+          edgePadding,
+          compactHeight ? 24 : 32,
+          edgePadding,
+          40,
+        ),
+        actionsPadding: EdgeInsets.fromLTRB(
+          edgePadding,
+          0,
+          edgePadding,
+          compactHeight ? 24 : 28,
+        ),
         actionsOverflowButtonSpacing: 8,
         content: SizedBox(
           width: _dialogWidth,
           child: ConstrainedBox(
-            constraints: BoxConstraints(
-              maxHeight: math.min(
-                650,
-                math.max(220, MediaQuery.sizeOf(context).height - 230),
-              ),
-            ),
+            // AlertDialog gives the form the space left by its title and
+            // footer, including when the footer wraps or text is enlarged.
+            constraints: const BoxConstraints(maxHeight: 840),
             child: Scrollbar(
               controller: _choicesScroll,
               thickness: 4,
@@ -573,9 +603,31 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                       absorbing: _choicesLocked,
                       child: ExcludeFocus(
                         excluding: _choicesLocked,
-                        child: _choices(),
+                        // Clipped choices can overlap the fixed footer in
+                        // screen coordinates. Keep Tab in the form's order.
+                        child: FocusTraversalGroup(
+                          policy: WidgetOrderTraversalPolicy(),
+                          child: _choices(),
+                        ),
                       ),
                     ),
+                    // Under everything chosen, and OUTSIDE the AbsorbPointer
+                    // above: the choices lock while the install runs, and a
+                    // panel inside that lock cannot be clicked (owner,
+                    // 2026-09-16: "Show log bấm không được"). The install is
+                    // what happens after the choices, and reads that way here.
+                    if (!_confirmationPending && _installRun != null) ...[
+                      const SizedBox(height: _gapBlock),
+                      Semantics(
+                        liveRegion: true,
+                        child: DshInstallPanel(
+                          key: const Key('new-agent-install-status'),
+                          run: _installRun!,
+                          harnessName: _labelOf(_engine),
+                          machineName: _machineName,
+                        ),
+                      ),
+                    ],
                     if (_error != null) ...[
                       const SizedBox(height: _gapBlock),
                       Semantics(
@@ -607,7 +659,15 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                   spacing: 8,
                   runSpacing: 8,
                   children: [
-                    if (_confirmationPending)
+                    // Close belongs to the UNCERTAIN state — a create whose
+                    // reply was lost, where the person may leave and check
+                    // later. `awaitingConfirmation` is set the moment the
+                    // request goes out, so on its own it also covered every
+                    // ordinary create in flight, and a disabled Close sat
+                    // beside "Creating agent…" meaning nothing (owner,
+                    // 2026-09-16). Same gate as Find an agent below.
+                    if (_confirmationPending &&
+                        (!_submitting || _checkingCreation))
                       TextButton(
                         onPressed: _submitting
                             ? null
@@ -627,7 +687,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                                   Navigator.of(context)
                                       .pop(NewAgentDialogResult.findExisting),
                         icon: const Icon(LucideIcons.search, size: 16),
-                        label: const Text('Find an agent'),
+                        label: const Text('Find a harness'),
                       ),
                     FilledButton(
                       key: const ValueKey('create-agent-submit'),
@@ -682,7 +742,11 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                               ),
                             )
                           : Text(
-                              _confirmationPending ? 'Check status' : 'Create',
+                              _confirmationPending
+                                  ? 'Check status'
+                                  : _installRun?.failed == true
+                                  ? 'Retry'
+                                  : 'Create',
                             ),
                     ),
                   ],
@@ -716,36 +780,76 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     );
   }
 
-  Widget _sectionLabel(String label) => Padding(
-    padding: const EdgeInsets.only(bottom: 10),
-    child: Text(
-      label,
-      style: TextStyle(
-        fontSize: 14,
-        fontWeight: FontWeight.w500,
-        color: grid.AppPalette.textSecondary,
-      ),
+  Widget _sectionHeader(
+    String label,
+    String prompt,
+    HarnessHelpTopic helpTopic, {
+    required bool compactHeight,
+  }) => Padding(
+    padding: EdgeInsets.only(bottom: compactHeight ? 12 : 16),
+    child: OverflowBar(
+      alignment: MainAxisAlignment.spaceBetween,
+      overflowAlignment: OverflowBarAlignment.end,
+      spacing: 20,
+      overflowSpacing: 4,
+      children: [
+        Semantics(
+          header: true,
+          child: Text.rich(
+            TextSpan(
+              children: [
+                TextSpan(
+                  text: '$label.',
+                  style: TextStyle(
+                    fontWeight: grid.AppFont.semibold,
+                    color: grid.AppPalette.textPrimary,
+                  ),
+                ),
+                TextSpan(text: ' $prompt'),
+              ],
+            ),
+            style: TextStyle(
+              fontSize: 20,
+              height: 1.35,
+              fontWeight: grid.AppFont.regular,
+              color: grid.AppPalette.textSecondary,
+            ),
+          ),
+        ),
+        HarnessHelpLink(topic: helpTopic),
+      ],
     ),
   );
 
   Widget _choices() => LayoutBuilder(
     builder: (context, constraints) {
       final scaler = MediaQuery.textScalerOf(context);
-      final minimumTileWidth = 180 * math.min(1.3, scaler.scale(14) / 14);
-      final columns = constraints.maxWidth >= minimumTileWidth * 4 + 30
+      final compactHeight = MediaQuery.sizeOf(context).height < 800;
+      final sectionGap = compactHeight ? 24.0 : 32.0;
+      final minimumTileWidth = 172 * math.min(1.3, scaler.scale(16) / 16);
+      final columns =
+          constraints.maxWidth >= minimumTileWidth * 4 + AppChoiceTile.gap * 3
           ? 4
-          : constraints.maxWidth >= minimumTileWidth * 2 + 10
+          : constraints.maxWidth >= minimumTileWidth * 2 + AppChoiceTile.gap
           ? 2
           : 1;
       final tileSize = Size(
-        (constraints.maxWidth - 10 * (columns - 1)) / columns,
-        math.max(76, scaler.scale(14) * 2.5 + scaler.scale(12) * 1.25 + 24),
+        (constraints.maxWidth - AppChoiceTile.gap * (columns - 1)) / columns,
+        math.max(
+          compactHeight ? 96 : 100,
+          scaler.scale(16) * 2.5 + scaler.scale(14) * 1.25 + 38,
+        ),
       );
       return Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _sectionLabel('Choose a harness'),
+          _sectionHeader(
+            'Agent',
+            'Choose who you’ll work with.',
+            HarnessHelpTopic.agent,
+            compactHeight: compactHeight,
+          ),
           AgentPicker(
             compact: true,
             tileSize: tileSize,
@@ -784,10 +888,12 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
               setState(() {
                 unawaited(widget.notifier.agentPreference.select(value));
                 _engineChosenByUser = true;
-                _engine = value;
+                if (_engine != value) {
+                  _engine = value;
+                  _codexProfile = null;
+                  _codexProfilesBusy = true;
+                }
                 _error = null;
-                _codexProfile = null;
-                _codexProfilesBusy = true;
                 if (!kEngineBypassPermissionFlag.containsKey(
                   _baseEngine(value),
                 )) {
@@ -797,19 +903,6 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
               if (isHarnessId(value)) unawaited(_probeHarnesses());
             },
           ),
-          if (!_confirmationPending && _installStatus != null) ...[
-            const SizedBox(height: 6),
-            Semantics(
-              liveRegion: true,
-              child: Text(
-                key: const Key('new-agent-install-status'),
-                'Installing ${_labelOf(_engine)} on $_machineName… '
-                '$_installStatus',
-                style: Theme.of(context).textTheme.bodySmall
-                    ?.copyWith(color: grid.AppPalette.textSecondary),
-              ),
-            ),
-          ],
           if (!_confirmationPending && _engineCheckFailed) ...[
             const SizedBox(height: 6),
             Row(
@@ -832,11 +925,21 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
               ],
             ),
           ],
-          const SizedBox(height: _gapField),
-          _sectionLabel('Where will this agent run?'),
+          SizedBox(height: sectionGap),
+          _sectionHeader(
+            'Machine',
+            'Where would you like your agent to run?',
+            HarnessHelpTopic.machine,
+            compactHeight: compactHeight,
+          ),
           _machineOptions(tileSize),
-          const SizedBox(height: _gapField),
-          _sectionLabel('Which project will this agent work in?'),
+          SizedBox(height: sectionGap),
+          _sectionHeader(
+            'Project',
+            'Start something new or choose an existing project.',
+            HarnessHelpTopic.project,
+            compactHeight: compactHeight,
+          ),
           PageStorage(
             bucket: _projectChoices,
             child: NewAgentProjectPicker(
@@ -980,7 +1083,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     value: _machineId,
     moreKey: const Key('new-agent-machine-more'),
     moreLabel: 'More machines',
-    moreLeading: const Icon(LucideIcons.monitor, size: 18),
+    moreLeading: const Icon(LucideIcons.monitor, size: 22),
     optionKey: (id) => ValueKey('new-agent-machine-$id'),
     showDetails: true,
     compact: true,
@@ -994,14 +1097,14 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
         SelectOption(
           value: machine.machine.machineId,
           label: machine.machine.displayName,
-          detail: machine.isLocalMachine ? 'This machine' : null,
+          detail: machine.isLocalMachine ? 'This computer' : 'Remote',
           leading: () => Icon(
             _machineOnline(machine)
                 ? (machine.isLocalMachine
                       ? LucideIcons.laptop
                       : LucideIcons.monitor)
                 : LucideIcons.monitorOff,
-            size: 18,
+            size: 22,
             color: _machineOnline(machine)
                 ? grid.AppPalette.textPrimary
                 : grid.AppPalette.textFaint,
@@ -1034,9 +1137,6 @@ const double _dialogWidth = 1080;
 
 /// Blocks inside one card: the command, the facts, the reason.
 const double _gapBlock = 12;
-
-/// One field and the next, down the choices column.
-const double _gapField = 24;
 
 class _BypassCheck extends StatelessWidget {
   const _BypassCheck({

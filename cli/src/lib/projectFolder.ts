@@ -53,10 +53,10 @@ export async function prepareProjectFolder(
   try {
     await mkdir(root, { recursive: true })
     if (project.source === 'new') {
-      const numbers = (await readdir(root)).map(name => /^agent-([1-9]\d*)$/.exec(name)?.[1])
+      const numbers = (await readdir(root)).map(name => /^(?:harness|agent)-([1-9]\d*)$/.exec(name)?.[1])
       let next = numbers.reduce((max, value) => value && BigInt(value) > max ? BigInt(value) : max, 0n) + 1n
       for (;;) {
-        const folder = join(root, `agent-${next++}`)
+        const folder = join(root, `harness-${next++}`)
         try { await mkdir(folder); return folder }
         catch (error) {
           // mkdir reserves the name atomically, including simultaneous desktop

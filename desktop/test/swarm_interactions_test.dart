@@ -245,7 +245,7 @@ void main() {
       find.descendant(of: controls, matching: find.byType(IconButton)),
       findsNWidgets(5),
     );
-    expect(find.byTooltip('Stop Agent').first.hitTestable(), findsNothing);
+    expect(find.byTooltip('Stop Harness').first.hitTestable(), findsNothing);
     final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
     await mouse.addPointer(location: const Offset(1, 1));
     Future<void> hover() async {
@@ -272,10 +272,10 @@ void main() {
     await hover();
 
     await tester.tap(
-      find.descendant(of: controls, matching: find.byTooltip('Stop Agent')),
+      find.descendant(of: controls, matching: find.byTooltip('Stop Harness')),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Stop Agent'), findsNWidgets(2));
+    expect(find.text('Stop Harness'), findsNWidgets(2));
     expect(app.panes, contains(pane));
     expect(original.panes.single.session, same(session));
     await tester.tap(find.text('Cancel'));

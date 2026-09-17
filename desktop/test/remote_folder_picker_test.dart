@@ -365,7 +365,7 @@ void main() {
   );
 
   testWidgets(
-    'remote selection returns to New Agent without launching or losing choices',
+    'remote selection returns to New Harness without launching or losing choices',
     (tester) async {
       final app = _Folders();
       addTearDown(app.dispose);

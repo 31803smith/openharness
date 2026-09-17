@@ -22,6 +22,7 @@ class AppChoicePicker<T> extends StatefulWidget {
     this.wrap = true,
     this.compact = false,
     this.tileSize,
+    this.notifyOnReselect = false,
   });
 
   final T value;
@@ -36,6 +37,7 @@ class AppChoicePicker<T> extends StatefulWidget {
   final bool wrap;
   final bool compact;
   final Size? tileSize;
+  final bool notifyOnReselect;
 
   @override
   State<AppChoicePicker<T>> createState() => _AppChoicePickerState<T>();
@@ -100,7 +102,9 @@ class _AppChoicePickerState<T> extends State<AppChoicePicker<T>> {
   ];
 
   void _choose(T next) {
-    if (next != widget.value) widget.onChanged(next);
+    // Clicking the current choice is still explicit intent. Callers may need
+    // to pin it against an asynchronous discovery/default update.
+    if (next != widget.value || widget.notifyOnReselect) widget.onChanged(next);
   }
 
   @override
@@ -242,8 +246,8 @@ class _AppChoicePickerState<T> extends State<AppChoicePicker<T>> {
     final selectedExtra = extra != null && extra.value == widget.value;
     final size = widget.tileSize!;
     return Wrap(
-      spacing: 10,
-      runSpacing: 10,
+      spacing: AppChoiceTile.gap,
+      runSpacing: AppChoiceTile.gap,
       children: [
         for (final option in ordered.take(3))
           AppChoiceTile(
@@ -266,12 +270,13 @@ class _AppChoicePickerState<T> extends State<AppChoicePicker<T>> {
               onChanged: _choose,
               width: size.width,
               height: size.height,
+              padding: AppChoiceTile.padding,
               selected: selectedExtra,
               fillColor: selectedExtra
                   ? AppPalette.swarmAccent.withValues(alpha: .16)
                   : AppSurface.recess,
               trigger: AppChoiceTileContent(
-                label: extra?.label ?? 'More',
+                label: extra?.label ?? widget.moreLabel,
                 detail: extra?.detail,
                 leading: extra == null
                     ? widget.moreLeading
@@ -381,6 +386,9 @@ class _AppChoicePickerState<T> extends State<AppChoicePicker<T>> {
 
 /// A shared tile keeps engine, machine and project rows on the same grid.
 class AppChoiceTile extends StatelessWidget {
+  static const double gap = 12;
+  static const padding = EdgeInsets.symmetric(horizontal: 18, vertical: 16);
+
   const AppChoiceTile({
     super.key,
     required this.size,
@@ -415,7 +423,7 @@ class AppChoiceTile extends StatelessWidget {
               backgroundColor: selected
                   ? AppPalette.swarmAccent.withValues(alpha: .16)
                   : AppSurface.recess,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              padding: padding,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(AppControl.radius),
               ),
@@ -453,7 +461,7 @@ class AppChoiceTileContent extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Row(
     children: [
-      if (leading != null) ...[leading!, const SizedBox(width: 10)],
+      if (leading != null) ...[leading!, const SizedBox(width: 12)],
       Expanded(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -466,14 +474,14 @@ class AppChoiceTileContent extends StatelessWidget {
               style: TextStyle(
                 fontFamily: AppFont.sans,
                 fontFamilyFallback: AppFont.sansFallback,
-                fontSize: 14,
+                fontSize: 16,
                 height: 1.25,
-                fontWeight: FontWeight.w500,
+                fontWeight: AppFont.medium,
                 color: AppPalette.textPrimary,
               ),
             ),
             if (detail != null) ...[
-              const SizedBox(height: 2),
+              const SizedBox(height: 4),
               Text(
                 detail!,
                 maxLines: 1,
@@ -481,7 +489,7 @@ class AppChoiceTileContent extends StatelessWidget {
                 style: TextStyle(
                   fontFamily: AppFont.sans,
                   fontFamilyFallback: AppFont.sansFallback,
-                  fontSize: 12,
+                  fontSize: 14,
                   height: 1.25,
                   color: AppPalette.textSecondary,
                 ),
@@ -490,8 +498,10 @@ class AppChoiceTileContent extends StatelessWidget {
           ],
         ),
       ),
-      const SizedBox(width: 8),
-      SizedBox(width: 18, child: trailing),
+      if (trailing != null) ...[
+        const SizedBox(width: 8),
+        SizedBox(width: 18, child: trailing),
+      ],
     ],
   );
 }

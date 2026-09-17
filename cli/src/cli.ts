@@ -2174,12 +2174,40 @@ async function runForeground(session: AuthSession): Promise<void> {
   backend.onDshInstall = async ({ id, url, ref }, progress) => {
     const resolved = id ? resolveInstallSource(id) : url ? { source: url, ref } : null
     if (!resolved) return { ok: false, error: 'INVALID_DSH', detail: `${id ?? url} is not a known harness` }
+    // NARRATE THE LINES, NOT ONLY THE PHASES. A toolchain setup is minutes of npm and uv output, and
+    // a dialog that says "Setting up…" for all of it looks hung; the line the command is on is what
+    // says it is alive and what it is doing. Throttled: a setup can print hundreds of lines a second
+    // (`Updating files: 39%…` arrives as carriage returns on ONE line), and the window redraws on
+    // each push. The doctor's own ok/miss/warn lines go out at once — they are the ones a person
+    // reads, and there are seven of them.
+    let last: import('./dsh/install.js').DshInstallProgress | null = null
+    let pendingLine: string | null = null
+    let timer: NodeJS.Timeout | null = null
+    const flushLine = (): void => {
+      timer = null
+      if (last && pendingLine !== null && last.phase !== 'done' && last.phase !== 'failed') progress({ ...last, line: pendingLine })
+      pendingLine = null
+    }
     const result = await installDsh({
       source: resolved.source,
       ref: ref ?? resolved.ref,
-      onProgress: progress,
-      onLine: (line) => console.log(`[dsh] install · ${line}`),
+      onProgress: (p) => {
+        if (timer) { clearTimeout(timer); timer = null }
+        pendingLine = null
+        last = p
+        progress(p)
+      },
+      onLine: (raw) => {
+        console.log(`[dsh] install · ${raw}`)
+        // The last carriage-return segment is the line as a terminal would show it.
+        const line = raw.split('\r').filter((s) => s.trim()).pop()?.trim() ?? ''
+        if (!line) return
+        pendingLine = line.slice(0, 200)
+        if (/^(ok|miss|warn)\s/.test(line)) { if (timer) clearTimeout(timer); flushLine(); return }
+        if (!timer) timer = setTimeout(flushLine, 300)
+      },
     })
+    if (timer) { clearTimeout(timer); timer = null }
     if (!result.ok) {
       console.warn(`[dsh] install of ${id ?? url} failed · ${result.error} · ${result.detail}`)
       return { ok: false, error: result.error, detail: result.detail }
@@ -4747,6 +4775,9 @@ async function runForeground(session: AuthSession): Promise<void> {
     requestAppFocus: (agentId, expiresAt, focusRevision) => backend.sendFirstLocal({
       type: 'device_focus', payload: { machineId: backend.machineId, agentId, expiresAt, focusRevision },
     }),
+    // The dial's own carousel tick, borrowed: ring order and wrap from the cable host, `dial_focus` to
+    // the window, `app_focus` back. Without a window the forward is a no-op, so say so up front.
+    stepFocus: (direction, currentAgentId) => backend.hasLocalClient() ? cableHost.stepFocus(direction, currentAgentId) : Promise.resolve('no_app'),
     agents: () => registry.advertised().map(s => ({ agentId: s.agentId, name: projectDisplayName(s), engine: s.engine,
       state: turnStartedAt.has(s.sessionId) ? 'running' : 'idle' })),
     submit: submitAgent,

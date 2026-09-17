@@ -71,7 +71,7 @@ void main() {
         find.byWidgetPredicate(
           (w) =>
               w is TextField &&
-              w.decoration?.hintText == 'Find an agent or machine',
+              w.decoration?.hintText == 'Find a harness or machine',
         ),
         'Chess Set',
       );

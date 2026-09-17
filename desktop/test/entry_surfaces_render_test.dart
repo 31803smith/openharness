@@ -206,7 +206,7 @@ void main() {
         await capture('new');
         debugDisableShadows = previousShadows;
         expect(tester.takeException(), isNull);
-        for (final label in ['Codex', 'Claude Code', 'Cursor']) {
+        for (final label in ['Codex', 'Claude Code', 'OpenCode']) {
           if (tester
               .renderObject<RenderParagraph>(find.text(label))
               .didExceedMaxLines) {

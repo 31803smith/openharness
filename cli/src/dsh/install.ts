@@ -8,7 +8,7 @@
  * manifest's own id — which we cannot know until the clone exists. A manifest that fails to parse
  * leaves nothing behind.
  */
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { existsSync, lstatSync, mkdirSync, realpathSync, renameSync, rmSync, symlinkSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
@@ -30,6 +30,12 @@ export interface DshInstallProgress {
   id: string | null
   phase: DshInstallPhase
   detail?: string
+  /**
+   * The latest line the phase's command printed — what the install is ON right now, for a dialog
+   * that would otherwise say "Setting up…" for three minutes. Sent by the daemon's narrator, not by
+   * installDsh itself (which reports lines through `onLine`), throttled to a few a second.
+   */
+  line?: string
 }
 
 export interface DshInstallOptions {
@@ -91,14 +97,13 @@ async function cloneInstall(
   const root = dshRootDir()
   mkdirSync(root, { recursive: true, mode: 0o700 })
   const tmpDir = join(root, `.tmp-${randomUUID()}`)
-  const args = ['clone', '--depth', '1', ...(ref ? ['--branch', ref] : []), '--', source, tmpDir]
-  try {
-    const { stderr } = await execFileAsync('git', args, { timeout: 10 * 60_000, maxBuffer: 8 * 1024 * 1024 })
-    for (const line of stderr.split('\n')) if (line.trim()) onLine?.(line)
-  } catch (error) {
+  // `--progress` because stderr is not a tty here and git would otherwise stay silent until the end;
+  // streamed, not collected, so "Receiving objects: 39%" reaches the dialog while it is true.
+  const args = ['clone', '--depth', '1', '--progress', ...(ref ? ['--branch', ref] : []), '--', source, tmpDir]
+  const clone = await streamGit(args, onLine)
+  if (!clone.ok) {
     rmSync(tmpDir, { recursive: true, force: true })
-    const detail = error instanceof Error ? error.message : String(error)
-    return { ok: false, error: 'CLONE_FAILED', detail: detail.slice(0, 2000) }
+    return { ok: false, error: 'CLONE_FAILED', detail: clone.detail.slice(0, 2000) }
   }
   const manifest = readDshManifest(tmpDir)
   if (!manifest.ok) {
@@ -106,6 +111,35 @@ async function cloneInstall(
     return { ok: false, error: 'INVALID_MANIFEST', detail: manifest.error }
   }
   return { ok: true, tmpDir, manifest: manifest.manifest, commit: await gitHead(tmpDir) }
+}
+
+/** Run git, handing each stderr line (and each carriage-return progress segment) to `onLine` as it lands. */
+function streamGit(args: string[], onLine: ((line: string) => void) | undefined): Promise<{ ok: true } | { ok: false; detail: string }> {
+  return new Promise((resolve) => {
+    const child = spawn('git', args, { stdio: ['ignore', 'ignore', 'pipe'] })
+    const tail: string[] = []
+    let rest = ''
+    const timer = setTimeout(() => child.kill('SIGTERM'), 10 * 60_000)
+    child.stderr?.on('data', (chunk: Buffer) => {
+      rest += chunk.toString('utf8')
+      let at: number
+      while ((at = rest.search(/[\r\n]/)) >= 0) {
+        const line = rest.slice(0, at).trim()
+        rest = rest.slice(at + 1)
+        if (!line) continue
+        onLine?.(line)
+        tail.push(line)
+        if (tail.length > 20) tail.shift()
+      }
+    })
+    child.on('error', (error) => { clearTimeout(timer); resolve({ ok: false, detail: error.message }) })
+    child.on('exit', (code) => {
+      clearTimeout(timer)
+      if (rest.trim()) { onLine?.(rest.trim()); tail.push(rest.trim()) }
+      if (code === 0) resolve({ ok: true })
+      else resolve({ ok: false, detail: `git ${args[0]} exited ${code}: ${tail.filter((l) => !/^(Receiving|Resolving|Updating|remote:)/.test(l)).slice(-3).join(' · ') || tail.slice(-1).join('')}` })
+    })
+  })
 }
 
 /** Put the clone (or the link) at its final path, replacing whatever an earlier install left there. */
@@ -120,6 +154,15 @@ function placeAt(id: string, from: { tmpDir: string } | { linkTo: string }): str
   return dir
 }
 
+/**
+ * How long a doctor may take. Five minutes, not one: the FIRST run after setup is the slow one — a
+ * check like Solid's `import cadgen, build123d` loads OCP and vtk from packages downloaded seconds
+ * ago, and macOS verifies every one of those dylibs on first load. Measured 2026-09-16: over two
+ * minutes cold, five seconds warm. At 60s the install reported "doctor failed" after two `ok` lines
+ * on a machine that was fine.
+ */
+export const DOCTOR_TIMEOUT_MS = 5 * 60_000
+
 export async function runDshDoctor(installed: InstalledDsh, onLine?: (line: string) => void): Promise<DshDoctorResult> {
   const doctor = installed.manifest.toolchain?.doctor
   if (!doctor) return { ok: true, lines: [] }
@@ -127,8 +170,15 @@ export async function runDshDoctor(installed: InstalledDsh, onLine?: (line: stri
     cwd: installed.realDir,
     env: { HARNESS_DSH: installed.id, HARNESS_DSH_DIR: installed.realDir },
     onLine,
-    timeoutMs: 60_000,
+    timeoutMs: DOCTOR_TIMEOUT_MS,
   })
+  if (result.timedOut) {
+    // Said as what it is. A timeout reported as "failed" with the last three (passing) lines under
+    // it reads as a machine with a fault nobody can find.
+    const line = `miss doctor still running after ${DOCTOR_TIMEOUT_MS / 60_000} min — stopped; run \`harness dsh doctor ${installed.id}\` again`
+    result.lines.push(line)
+    onLine?.(line)
+  }
   return { ok: result.code === 0 && !result.timedOut, lines: result.lines }
 }
 

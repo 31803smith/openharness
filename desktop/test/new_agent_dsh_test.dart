@@ -77,7 +77,7 @@ class _Notifier extends AppNotifier {
   Future<String?> installDsh(String machineId, String id) {
     installs.add(id);
     final machine = machineStates[machineId]!;
-    machine.dsh.installs[id] = DshInstallProgress(id: id, phase: 'setup');
+    machine.dsh.applyInstall(DshInstallProgress(id: id, phase: 'setup'));
     notifyListeners();
     final pending = pendingInstall;
     if (pending == null) {
@@ -175,7 +175,11 @@ void main() {
     await tester.pumpAndSettle();
     // A new project needs no folder: the daemon prepares one. That keeps the
     // native folder panel out of these tests, which are about the harness.
-    await tester.tap(find.byKey(const ValueKey('new-agent-folder-newProject')));
+    final newProject = find.byKey(
+      const ValueKey('new-agent-folder-newProject'),
+    );
+    await tester.ensureVisible(newProject);
+    await tester.tap(newProject);
     await tester.pumpAndSettle();
     return notifier;
   }
@@ -337,6 +341,23 @@ void main() {
       ),
       findsOneWidget,
     );
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.byKey(const ValueKey('create-agent-submit')),
+          )
+          .onPressed,
+      isNotNull,
+      reason: 'An unsupported CLI must release the form for retry or another harness.',
+    );
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('new-agent-quick-claude')),
+    );
+    await tester.tap(find.byKey(const ValueKey('new-agent-quick-claude')));
+    await tester.pumpAndSettle();
+    await create(tester);
+    expect(app.launches.single['engine'], 'claude');
+    expect(app.launches.single['dsh'], isNull);
   });
 
   testWidgets('More lists the machine\'s harnesses after the engines', (

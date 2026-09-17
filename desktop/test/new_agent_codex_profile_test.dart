@@ -310,7 +310,7 @@ void main() {
         find.byKey(const Key('new-agent-machine-field')),
       );
       expect(machineField.options.single.label, 'This Mac');
-      expect(machineField.options.single.detail, isNull);
+      expect(machineField.options.single.detail, 'Remote');
       expect(find.widgetWithText(FilledButton, 'Create'), findsOneWidget);
       expect(find.byKey(const Key('new-agent-project-recent')), findsOneWidget);
       expect(

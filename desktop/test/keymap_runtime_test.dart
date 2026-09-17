@@ -358,7 +358,7 @@ void main() {
 
   for (final inline in [false, true]) {
     testWidgets(
-      'configured picker actions and hints stay in ${inline ? 'start-page' : 'Open Agent'} search',
+      'configured picker actions and hints stay in ${inline ? 'start-page' : 'Open Harness'} search',
       (tester) async {
         final map = MemoryKeymap()
           ..apply('''{"bindings":[
@@ -615,10 +615,7 @@ void main() {
         expect(find.byType(AlertDialog), findsOneWidget);
         expect(find.byType(SwarmSearchResults), findsNothing);
         expect(
-          tester
-              .widget<InkWell>(find.byKey(const Key('new-agent-folder')))
-              .focusNode!
-              .hasPrimaryFocus,
+          Focus.of(tester.element(find.text('New project'))).hasPrimaryFocus,
           isTrue,
         );
         await tester.sendKeyEvent(LogicalKeyboardKey.escape);

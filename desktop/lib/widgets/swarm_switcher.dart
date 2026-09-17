@@ -409,9 +409,9 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                           search.isCommandMode
                               ? 'No matching commands'
                               : search.adding && search.query.isEmpty
-                              ? 'Create a new agent to start fresh.'
+                              ? 'Create a new harness to start fresh.'
                               : search.adding
-                              ? 'No matching agents'
+                              ? 'No matching harnesses'
                               : 'No matching results',
                           style: const TextStyle(
                             fontSize: 14,
@@ -583,8 +583,8 @@ class _SwarmSearchResultsState extends State<SwarmSearchResults> {
                                 : selected!.isGroup &&
                                       selected.members.length >
                                           AppNotifier.maxPanes
-                                ? 'Open up to ${AppNotifier.maxPanes} agents at once'
-                                : 'No room to open this ${selected.isSwarm || selected.isGroup ? 'group' : 'agent'}',
+                                ? 'Open up to ${AppNotifier.maxPanes} harnesses at once'
+                                : 'No room to open this ${selected.isSwarm || selected.isGroup ? 'group' : 'harness'}',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(

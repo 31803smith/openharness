@@ -64,6 +64,15 @@ class TerminalPanel extends StatefulWidget {
   final (String, int)? paneLocation;
   final (int, int, int?)? layoutRequest;
   final bool compactHeader;
+
+  /// The tile's own header strip — engine, title, status, pin, close — and
+  /// whether it is built at all. False on the phone, where [PhoneHeader] already
+  /// names the agent above this panel, there is no tile to pin, close or drag,
+  /// and the pane takes the full remaining height (`phone/terminal_page.dart`
+  /// in the mobile package). Find has no way in there — every
+  /// [TerminalFindAction] caller lives in the desktop screens — so the row's
+  /// Find overlay goes with it.
+  final bool showHeader;
   final int focusRequest;
 
   /// Whether this tile's composer textbox is showing. Only consulted for a remote machine.
@@ -92,6 +101,7 @@ class TerminalPanel extends StatefulWidget {
     this.paneLocation,
     this.layoutRequest,
     this.compactHeader = false,
+    this.showHeader = true,
     this.focusRequest = 0,
     this.composerVisible = false,
     this.readOnly = false,
@@ -326,6 +336,28 @@ class _TerminalPanelState extends State<TerminalPanel>
   void _onSessionChanged() {
     if (!mounted) return;
     _syncCursorBlink();
+    // A pane can open BEFORE its screen exists: over the relay it mounts empty
+    // and the retained scrollback is replayed a moment later, so the jump in
+    // `_afterTerminalMounted` lands on nothing and the screen then fills in
+    // above the reader. xterm does not close this — its own `_scrollToBottom`
+    // answers typing and the keyboard opening, never new output.
+    //
+    // Gated on [_followTail], which is kept as "the view is showing its end",
+    // so a pane the reader has scrolled up in — or one restored to a saved
+    // position — is not at the end, and is never followed.
+    // Visible only. A parked pane holds the offset it was left at while output
+    // arrives behind it — `swarm_screen_test` pins that — and comes back to the
+    // end through `_afterTerminalMounted`, which is where returning is handled.
+    if (_followTail && widget.visible) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !widget.visible) return;
+        if (!_followTail || !_scrollController.hasClients) return;
+        final position = _scrollController.position;
+        if (position.pixels != position.maxScrollExtent) {
+          position.jumpTo(position.maxScrollExtent);
+        }
+      });
+    }
     if (!_composerFocusPending) return;
     if (!widget.focused || !_showsComposer) {
       _composerFocusPending = false;
@@ -1132,73 +1164,80 @@ class _TerminalPanelState extends State<TerminalPanel>
         color: grid.AppPalette.windowBg,
         child: Column(
           children: [
-            Stack(
-              children: [
-                Visibility(
-                  visible: _find == null,
-                  maintainSize: true,
-                  maintainAnimation: true,
-                  maintainState: true,
-                  child: _buildHeader(context),
-                ),
-                // Attach the focused pane's input before Find is requested.
-                // Hidden/unfocused panes need no dormant editor or index.
-                if (_find != null || (widget.visible && widget.focused))
-                  Positioned.fill(
-                    child: Offstage(
-                      offstage: _find == null,
-                      child: LayoutBuilder(
-                        builder: (context, constraints) => Row(
-                          children: [
-                            if (constraints.maxWidth > 520)
-                              Expanded(
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: _stripPadding,
-                                  ),
-                                  child: Text(
-                                    session.agentName,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      fontSize: 13,
-                                      color: Colors.white70,
+            if (widget.showHeader)
+              Stack(
+                children: [
+                  Visibility(
+                    visible: _find == null,
+                    maintainSize: true,
+                    maintainAnimation: true,
+                    maintainState: true,
+                    child: _buildHeader(context),
+                  ),
+                  // Attach the focused pane's input before Find is requested.
+                  // Hidden/unfocused panes need no dormant editor or index.
+                  if (_find != null || (widget.visible && widget.focused))
+                    Positioned.fill(
+                      child: Offstage(
+                        offstage: _find == null,
+                        child: LayoutBuilder(
+                          builder: (context, constraints) => Row(
+                            children: [
+                              if (constraints.maxWidth > 520)
+                                Expanded(
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: _stripPadding,
+                                    ),
+                                    child: Text(
+                                      session.agentName,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontSize: 13,
+                                        color: Colors.white70,
+                                      ),
                                     ),
                                   ),
-                                ),
-                              )
-                            else
-                              const Spacer(),
-                            SizedBox(
-                              width: math.min(constraints.maxWidth, 380),
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 6,
-                                  vertical: 4,
-                                ),
-                                child: TerminalFindBar(
-                                  key: _findBarKey,
-                                  search: _find,
-                                  initialQuery: _lastFindQuery,
-                                  initialCaseSensitive: _lastFindCaseSensitive,
-                                  readOnly:
-                                      widget.readOnly || !session.acceptsInput,
-                                  onQuery: _queryFind,
-                                  onStep: _stepFind,
-                                  onClose: _closeFind,
-                                  onFocus: () => widget.onRendererFocus?.call(),
+                                )
+                              else
+                                const Spacer(),
+                              SizedBox(
+                                width: math.min(constraints.maxWidth, 380),
+
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 4,
+                                  ),
+                                  child: TerminalFindBar(
+                                    key: _findBarKey,
+                                    search: _find,
+                                    initialQuery: _lastFindQuery,
+                                    initialCaseSensitive:
+                                        _lastFindCaseSensitive,
+                                    readOnly:
+                                        widget.readOnly ||
+                                        !session.acceptsInput,
+                                    onQuery: _queryFind,
+                                    onStep: _stepFind,
+                                    onClose: _closeFind,
+                                    onFocus: () =>
+                                        widget.onRendererFocus?.call(),
+                                  ),
                                 ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
                     ),
-                  ),
-              ],
-            ),
+                ],
+              ),
 
-            Divider(height: 1, color: AppColors.border),
+            // Goes with the row above it: the phone draws its own rule under
+            // [PhoneHeader], and keeping this one would stack two.
+            if (widget.showHeader) Divider(height: 1, color: AppColors.border),
             Expanded(
               child: Stack(
                 children: [

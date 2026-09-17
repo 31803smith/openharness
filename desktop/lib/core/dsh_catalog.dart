@@ -82,11 +82,17 @@ class DshInstallProgress {
     required this.id,
     required this.phase,
     this.detail,
+    this.line,
   });
 
   final String id;
   final String phase;
   final String? detail;
+
+  /// The line the phase's command is on right now, as the machine narrates it
+  /// (throttled there). What turns "Setting up…" for three minutes into
+  /// "Installed 61 packages".
+  final String? line;
 
   bool get done => phase == 'done';
   bool get failed => phase == 'failed';
@@ -110,16 +116,81 @@ class DshInstallProgress {
       return null;
     }
     final detail = raw['detail'];
+    final line = raw['line'];
     return DshInstallProgress(
       id: id,
       phase: phase,
       detail: detail is String && detail.trim().isNotEmpty
-          ? detail
-                .replaceAll(RegExp(r'[\x00-\x1f\x7f]'), ' ')
-                .trim()
-                .substring(0, detail.trim().length.clamp(0, 500))
+          ? _clean(detail, 500)
           : null,
+      line: line is String && line.trim().isNotEmpty ? _clean(line, 200) : null,
     );
+  }
+
+  static String _clean(String raw, int max) {
+    final text = raw.replaceAll(RegExp(r'[\x00-\x1f\x7f]'), ' ').trim();
+    return text.length > max ? text.substring(0, max) : text;
+  }
+}
+
+/// One install as the dialog watches it: every phase the machine reported,
+/// when each began, and the lines it printed on the way — the material for a
+/// panel that says what is happening rather than that something is.
+///
+/// Kept beside [MachineDsh.installs] (the latest phase, which older callers
+/// read) rather than replacing it.
+class DshInstallRun {
+  DshInstallRun(this.id, {DateTime? startedAt})
+    : startedAt = startedAt ?? DateTime.now();
+
+  final String id;
+  final DateTime startedAt;
+
+  /// Phases in the order they began, with when. `done`/`failed` close the run.
+  final List<({String phase, DateTime at})> phases = [];
+
+  /// What the phases printed, oldest first, bounded.
+  final List<String> log = [];
+  static const int maxLog = 40;
+
+  String? line;
+  String? detail;
+
+  String get phase => phases.isEmpty ? 'clone' : phases.last.phase;
+  bool get done => phase == 'done';
+  bool get failed => phase == 'failed';
+  bool get inProgress => !done && !failed;
+
+  /// The doctor's verdict lines (`ok …`, `miss …`, `warn …`) seen so far.
+  List<String> get checks => log
+      .where((l) => RegExp(r'^(ok|miss|warn)\s').hasMatch(l))
+      .toList(growable: false);
+
+  /// How long [phase] took, once the next one began.
+  Duration? took(String phase) {
+    for (var i = 0; i < phases.length; i++) {
+      if (phases[i].phase != phase) continue;
+      if (i + 1 < phases.length) {
+        return phases[i + 1].at.difference(phases[i].at);
+      }
+      return null;
+    }
+    return null;
+  }
+
+  bool reached(String phase) => phases.any((p) => p.phase == phase);
+
+  void apply(DshInstallProgress progress, {DateTime? now}) {
+    final at = now ?? DateTime.now();
+    if (phases.isEmpty || phases.last.phase != progress.phase) {
+      phases.add((phase: progress.phase, at: at));
+    }
+    if (progress.detail != null) detail = progress.detail;
+    if (progress.line != null && progress.line != line) {
+      line = progress.line;
+      log.add(progress.line!);
+      if (log.length > maxLog) log.removeAt(0);
+    }
   }
 }
 
@@ -145,6 +216,22 @@ class MachineDsh {
 
   /// Installs the user asked for, by harness id, at their latest reported phase.
   final Map<String, DshInstallProgress> installs = {};
+
+  /// The same installs with their history — see [DshInstallRun].
+  final Map<String, DshInstallRun> runs = {};
+
+  /// Record a progress push against both views. A push for a run nobody here
+  /// started (another window asked) opens one, so it can still be watched.
+  void applyInstall(DshInstallProgress progress, {DateTime? now}) {
+    installs[progress.id] = progress;
+    var run = runs[progress.id];
+    // A fresh push after a closed run is a new attempt.
+    if (run == null || run.done || run.failed) {
+      run = DshInstallRun(progress.id, startedAt: now);
+      runs[progress.id] = run;
+    }
+    run.apply(progress, now: now);
+  }
 
   DshEntry? operator [](String id) => byId[id];
 

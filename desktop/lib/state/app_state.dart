@@ -9,14 +9,18 @@ import 'dart:ui' show Color;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart' show BuildContext;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../analytics/analytics.dart';
 import '../api/api_client.dart';
+import '../viewer/sign_in_browser.dart';
+import '../viewer/viewer_services.dart';
 import '../auth/auth_session.dart';
+import '../auth/peer_link_client.dart';
+import '../auth/sign_in_client.dart';
 import '../auth/cli_link.dart';
 import '../auth/cli_login.dart';
 import '../bootstrap/environment_provisioner.dart';
+import '../core/viewer_mode.dart';
 import '../core/config.dart';
 import '../core/agent_preference.dart';
 import '../core/dsh_catalog.dart';
@@ -287,8 +291,19 @@ class AppNotifier extends ChangeNotifier {
   final AuthSession session;
   AppConfig config;
   late ApiClient api;
-  final CliLogin cliLogin;
+  /// Signs in, and says whether this computer is signed in: the harness CLI in a desktop build,
+  /// [ViewerServices.login] in a viewer build — which has no CLI — under one name, so every call
+  /// site reads the same in both.
+  late final SignInClient cliLogin;
   final CliLink cliLink;
+
+  /// Links to other machines by remote password: [cliLink] in a desktop build, the app itself in a
+  /// viewer. THIS machine's own remote password stays on [cliLink] — a viewer is not a machine, and
+  /// has no password for anyone to link to.
+  late final PeerLinkClient peerLinks;
+
+  /// A viewer build's stand-ins for the harness CLI (`lib/viewer/`); null on a desktop build.
+  final ViewerServices? viewer;
   final ConfigStore? _store;
 
   /// Spoken tasks waiting for a palette. Broadcast because the screen subscribes and unsubscribes with
@@ -1084,8 +1099,10 @@ class AppNotifier extends ChangeNotifier {
     this.environmentProvisioner,
     this.desktopUpdater,
     this.connectionForTest,
-    CliLogin? cliLogin,
+    SignInClient? cliLogin,
     CliLink? cliLink,
+    PeerLinkClient? peerLinks,
+    ViewerServices? viewer,
     PaneLayoutStore? paneLayoutStore,
     this.turnActivityTimeout = const Duration(seconds: 12),
   }) : _paneLayout = paneLayoutStore,
@@ -1097,17 +1114,30 @@ class AppNotifier extends ChangeNotifier {
        projectHistory = ProjectHistory(paneLayoutStore?.storage),
        session = authSession,
        _store = configStore,
-       cliLogin = cliLogin ?? CliLogin(),
        cliLink = cliLink ?? CliLink(),
-       config = configStore?.config ?? config {
+       config = configStore?.config ?? config,
+       viewer =
+           viewer ??
+           (kViewerMode
+               ? ViewerServices(
+                   config: configStore?.config ?? config,
+                   session: authSession,
+                 )
+               : null) {
+    this.cliLogin = cliLogin ?? this.viewer?.login ?? CliLogin();
+    this.peerLinks = peerLinks ?? this.viewer?.links ?? this.cliLink;
     _autonomousEnv = this.config.autonomousEnv;
-    api = ApiClient(config: this.config, session: session);
+    api = _newApiClient();
     // `grid.AppTheme.palette`, not the prefs store: main.dart copies the saved
     // choice into the palette notifier while rebuilding, so the store fires
     // before the colours the panes actually use have moved.
     grid.AppTheme.palette.addListener(_announceTerminalThemeEverywhere);
     terminalThemeStore.addListener(_announceTerminalThemeEverywhere);
   }
+
+  /// Through the local CLI in a desktop build; straight to the backend, signed, in a viewer.
+  ApiClient _newApiClient() =>
+      ApiClient(config: config, session: session, auth: viewer?.auth);
 
   String? get lastError => _lastError;
 
@@ -1772,12 +1802,17 @@ class AppNotifier extends ChangeNotifier {
         // history) — a stale `stag` value saved before that removal must
         // never silently resurrect it.
         _autonomousEnv = 'prod';
-        api = ApiClient(config: config, session: session);
+        api = _newApiClient();
         _skippedDesktopUpdateVersion = _store.skippedDesktopUpdateVersion;
       }
-      _startUpdateChecking();
-      final environmentReady = await _prepareEnvironment();
-      if (!environmentReady) return;
+      // A viewer installs nothing and is updated by its store: provisioning and the updater both
+      // serve a computer that runs the harness CLI. The updater is not merely useless there — it
+      // throws on an architecture it has no channel for (`ios_arm64`), from inside bootstrap.
+      if (viewer == null) {
+        _startUpdateChecking();
+        final environmentReady = await _prepareEnvironment();
+        if (!environmentReady) return;
+      }
       await _continueAfterEnvironmentReady();
     } catch (error, stack) {
       debugPrint('bootstrap: fallback to login after error: $error\n$stack');
@@ -1814,6 +1849,14 @@ class AppNotifier extends ChangeNotifier {
   /// runtime were absent; provisioning now makes that a visible, recoverable
   /// first-run phase instead.
   Future<bool> _prepareEnvironment() async {
+    // A viewer has nothing to provision. The provisioner looks for a shell, the
+    // POSIX tools, tmux and a managed Node runtime under `~/.harness` — all of
+    // which exist to host the local `harness` CLI, which a viewer build does
+    // not have and does not want. Running it on a phone reported every step
+    // missing and parked the app on a setup screen whose two actions, Retry
+    // and Switch to Manual, could not succeed either. Treated as ready so
+    // bootstrap goes on to ask about sign-in, which a viewer can answer.
+    if (viewer != null) return true;
     if (_environmentSetupInFlight) return false;
     _environmentSetupInFlight = true;
     status = AppStatus.checkingEnvironment;
@@ -1888,7 +1931,12 @@ class AppNotifier extends ChangeNotifier {
     final revision = _authRevision;
     if (!_authWorkCurrent(revision)) return;
     _cancelEnvironmentRecheckTimer();
-    status = AppStatus.checkingEnvironment;
+    // A viewer skipped the preflight (see [_prepareEnvironment]), so there is no
+    // preflight screen to hold while the sign-in is checked — it stays on the
+    // boot spinner instead.
+    status = viewer == null
+        ? AppStatus.checkingEnvironment
+        : AppStatus.bootstrapping;
     notifyListeners();
     // Auth now lives entirely with the local `harness` CLI — it owns the SSO session on disk and
     // refreshes it itself. This app never reads, stores, or refreshes a token of its own; it just
@@ -2086,7 +2134,7 @@ class AppNotifier extends ChangeNotifier {
   void _bootstrapLocalManual(LocalManualFixture fixture) {
     _autonomousEnv = 'prod';
     config = AppConfig(apiBaseUrl: fixture.apiBaseUrl);
-    api = ApiClient(config: config, session: session);
+    api = _newApiClient();
     currentUser = const CurrentUserProfile.local();
     final machine = Machine(
       machineId: fixture.machineId,
@@ -2206,6 +2254,8 @@ class AppNotifier extends ChangeNotifier {
   }
 
   Future<void> ensureCliDaemonReady() async {
+    // A viewer has no daemon to start: it reaches every machine through the relay.
+    if (viewer != null) return;
     final revision = _authRevision;
     final discovery = _discovery;
     final probe = await discovery.ensureRunning();
@@ -2448,9 +2498,10 @@ class AppNotifier extends ChangeNotifier {
           _resetLoginBrowser();
           pendingAuthorizeUrl = url;
           notifyListeners();
-          // Must be the system browser, not an embedded webview: this SSO page's Google button uses
-          // Google's popup-based Identity Services flow (a real popup window posts the result back to
-          // its opener), which only a real browser can satisfy.
+          // Through [openLoginBrowser] rather than straight to the launcher, so
+          // the first handoff is the same one the login screen's retry button
+          // takes and reports its outcome the same way. WHICH browser it opens
+          // is decided in `viewer/sign_in_browser.dart`.
           unawaited(openLoginBrowser());
         },
       );
@@ -2482,6 +2533,9 @@ class AppNotifier extends ChangeNotifier {
         error is CliNotAvailableException ? 'cli_missing' : 'failed',
       );
     } finally {
+      // Takes the in-app browser view down once the redirect has landed; a no-op
+      // where the page opened in a browser of its own.
+      unawaited(closeSignInPage());
       // Cleared last, and only here: everything above may still be running when the URL goes, and
       // dropping the flag any earlier is what put a bare spinner over the user's own screen.
       if (_authWorkCurrent(revision)) {
@@ -2515,7 +2569,17 @@ class AppNotifier extends ChangeNotifier {
       if (uri != null &&
           uri.hasAuthority &&
           (uri.scheme == 'https' || uri.scheme == 'http')) {
-        opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+        // Not `launchUrl(..., externalApplication)` directly: on a desktop
+        // [openSignInPage] IS that call, and on a phone it must not be. Handing
+        // a phone to Safari suspends this app, and with it the loopback listener
+        // the page redirects back to — the sign-in could then never land.
+        // ⚠️ The reason the desktop insists on a real browser survives here: this
+        // SSO page's Google button uses Google's popup-based Identity Services
+        // flow, where a popup window posts the result back to its opener. Whether
+        // an in-app browser view can satisfy that is open, and flagged in
+        // `sign_in_browser.dart`; it is why the phone case is confined to phones
+        // rather than made the rule.
+        opened = await openSignInPage(uri);
       }
     } catch (_) {
       // Browser handoff failure is recoverable within the same sign-in. Never
@@ -2621,16 +2685,22 @@ class AppNotifier extends ChangeNotifier {
     _pool = WsPool(
       wsBaseUrl: config.wsBaseUrl,
       autonomousEnv: _autonomousEnv,
-      // Every real WsConn now dials the local CLI's loopback WS (transportKind.localPlaintext, see
+      // Every real desktop WsConn dials the local CLI's loopback WS (transportKind.localPlaintext, see
       // _conn()), which never calls this — only the compile-time-only local-manual dev fixture (see
       // LocalManualFixture) still dials a backend directly with a token.
-      accessTokenProvider: (_, _) async {
+      accessTokenProvider: (force, failedToken) async {
+        final directAuth = viewer?.auth;
+        if (directAuth != null) {
+          return directAuth.accessToken(force: force, failedToken: failedToken);
+        }
         final fixture = localManualFixture;
         if (fixture != null) return fixture.apiKey;
         throw StateError(
-          'unreachable: only the local-manual dev fixture uses a token-bearing WS transport',
+          'unreachable: only a viewer build and the local-manual dev fixture use a token-bearing WS transport',
         );
       },
+      relayCodecs: viewer?.relayCodecs,
+      transportPlugins: viewer?.transportPlugins,
       onAuthFailure: _signedOutAtRuntime,
       onLocalFailure: _onLocalFailure,
       onEvent: _handleEvent,
@@ -2796,12 +2866,17 @@ class AppNotifier extends ChangeNotifier {
   }
 
   Future<void> _refreshMachines(int revision) async {
-    final discovery = _discovery;
+    // No machine is "this computer" to a viewer, which has no local CLI: every one — even the one
+    // it runs on — is reached through the relay.
+    final discovery = viewer == null ? _discovery : null;
     // The CLI computer id is the local identity source of truth. The loopback
     // status endpoint is trusted only when it advertises that same identity.
-    final localComputerId = await discovery.computerId();
+    final localComputerId = await discovery?.computerId();
     if (!_authWorkCurrent(revision)) return;
-    final localFuture = discovery.discover(expectedComputerId: localComputerId);
+    // Null in a viewer build, which has no local CLI to probe — see `discovery` above.
+    final localFuture =
+        discovery?.discover(expectedComputerId: localComputerId) ??
+        Future<LocalCliEndpoint?>.value();
     // The two legs stay independent. The loopback probe reads a local file and asks 127.0.0.1, so it
     // cannot fail for a network reason — but awaiting it BEHIND the backend call meant a cloud outage
     // threw first and threw away an answer that was already correct, while awaiting it FIRST would let a
@@ -3044,7 +3119,7 @@ class AppNotifier extends ChangeNotifier {
     void Function(String stage)? onProgress,
   }) async {
     if (password.isEmpty) return 'Enter the remote password first';
-    final result = await cliLink.connect(
+    final result = await peerLinks.connect(
       machineId,
       password,
       onProgress: onProgress,
@@ -3087,7 +3162,7 @@ class AppNotifier extends ChangeNotifier {
   Future<void> refreshLinkedMachines() async {
     linkedMachinesLoading = true;
     notifyListeners();
-    final result = await cliLink.list();
+    final result = await peerLinks.list();
     linkedMachinesLoading = false;
     linkedMachinesError = result.error;
     linkedMachines = result.machines;
@@ -3096,7 +3171,7 @@ class AppNotifier extends ChangeNotifier {
 
   /// Removes a linked machine's trust pin, then refreshes the list. Returns null on success.
   Future<String?> unlinkMachine(String machineId) async {
-    final error = await cliLink.unlink(machineId);
+    final error = await peerLinks.unlink(machineId);
     if (error == null) await refreshLinkedMachines();
     return error;
   }
@@ -3503,7 +3578,7 @@ class AppNotifier extends ChangeNotifier {
     // goes through the local CLI daemon regardless of whether it's this computer's own machine or a
     // relayed one: the CLI proxies foreign machines to backend transparently (see `remoteRelay.ts` in
     // the harness CLI repo), so this app never dials backend's WS directly anymore.
-    final connection = localManualFixture != null
+    final connection = localManualFixture != null || viewer != null
         ? _pool!.connFor(machineId, transportKind: WsTransportKind.cloudE2ee)
         : _pool!.connFor(
             machineId,
@@ -3783,7 +3858,10 @@ class AppNotifier extends ChangeNotifier {
     final machine = machineStates[machineId];
     if (machine == null) return 'Machine not found';
     final machineName = machine.machine.displayName;
-    machine.dsh.installs[id] = DshInstallProgress(id: id, phase: 'clone');
+    // A new run every time the button is pressed: a retry after a failure is
+    // its own attempt, with its own clock.
+    machine.dsh.runs.remove(id);
+    machine.dsh.applyInstall(DshInstallProgress(id: id, phase: 'clone'));
     notifyListeners();
     try {
       final result = await _conn(machineId).request(
@@ -3819,7 +3897,7 @@ class AppNotifier extends ChangeNotifier {
     } catch (_) {
       return _finishInstall(machine, id, 'Install failed on $machineName');
     }
-    machine.dsh.installs[id] = DshInstallProgress(id: id, phase: 'done');
+    machine.dsh.applyInstall(DshInstallProgress(id: id, phase: 'done'));
     notifyListeners();
     // The stored answer just became stale by the dialog's own hand.
     await probeDsh(machineId, force: true);
@@ -3827,10 +3905,8 @@ class AppNotifier extends ChangeNotifier {
   }
 
   String _finishInstall(MachineState machine, String id, String error) {
-    machine.dsh.installs[id] = DshInstallProgress(
-      id: id,
-      phase: 'failed',
-      detail: error,
+    machine.dsh.applyInstall(
+      DshInstallProgress(id: id, phase: 'failed', detail: error),
     );
     notifyListeners();
     return error;
@@ -4746,7 +4822,7 @@ class AppNotifier extends ChangeNotifier {
             failure.code == 'UNSUPPORTED_ON_REMOTE' ||
             failure.code == 'E2EE_REQUIRED') {
           return '$machineName cannot check this creation. '
-              'Use Find an agent to look for it before creating another.';
+              'Use Find a harness to look for it before creating another.';
         }
         return unconfirmed;
       }
@@ -4795,15 +4871,15 @@ class AppNotifier extends ChangeNotifier {
         // receipt-aware version. Missing is not proof that nothing started.
         // Check status stays read-only, even across upgrades and reconnects.
         return '$machineName has no record of this request. '
-            'Use Find an agent to look for it before creating another.';
+            'Use Find a harness to look for it before creating another.';
       case 'pending':
         return '$machineName is still starting your agent. Check again in a moment.';
       case 'unconfirmed':
         return '$machineName could not confirm whether this agent started. '
-            'Use Open Agent to look for it before creating another.';
+            'Use Open Harness to look for it before creating another.';
       case 'unavailable':
         return creation._complete(
-          'This agent was created but is no longer available. '
+          'This harness was created but is no longer available. '
           'You can create a new one.',
         );
       case 'failed':
@@ -4849,8 +4925,8 @@ class AppNotifier extends ChangeNotifier {
     notifyListeners();
     if (_creationPlacementError(targetId, split) != null) {
       _lastError =
-          'The agent was created, but its original tab or layout changed. '
-          'Use Open Agent to find it.';
+          'The harness was created, but its original tab or layout changed. '
+          'Use Open Harness to find it.';
       _lastErrorRetryable = false;
       notifyListeners();
       return null;
@@ -5087,11 +5163,14 @@ class AppNotifier extends ChangeNotifier {
             agent.terminalAvailable &&
             machine.terminalCapabilityAvailable) {
           machine.pendingOfflineAgentId = null;
-          // Only reattach the terminal if the user is still on THIS machine — recovery can finish
-          // well after the user has moved on to a different machine/agent, and forcing selectAgent
-          // here would yank their focus back to what they were looking at before, mid-navigation.
-          // The recovered agent still shows normally in the rail; they can click it themselves.
-          if (selectedMachineId == machineId) {
+          // Loading already reattaches retained panes across every tab. Selecting that agent
+          // again would insert it into the current tab and steal focus from the user's work.
+          // Only fulfill a pending selection when it has no pane yet and the user is still on
+          // this machine; a reconnect must preserve the layout and selection they left open.
+          final hasPane = allPanes.any(
+            (pane) => pane.machineId == machineId && pane.agentId == agentId,
+          );
+          if (!hasPane && selectedMachineId == machineId) {
             await selectAgent(machineId, agentId);
           } else {
             notifyListeners();
@@ -5405,6 +5484,13 @@ class AppNotifier extends ChangeNotifier {
           _conn(pane.machineId).sendTerminalFrame(type, payload),
       sendBinary: (frame) => _sendTerminalBinary(pane.machineId, frame),
       onOpenStalled: () => _conn(pane.machineId).forceReconnect(),
+      // A `terminal_open` can round-trip app → local CLI → (for a relayed
+      // machine) the E2EE relay → the remote peer → tmux → back, possibly
+      // negotiating P2P on the way, so a cold open legitimately takes several
+      // seconds. Give the open watchdog 15s before it forces a full redial, so
+      // a merely slow open is not mistaken for a stale session and re-dialled
+      // needlessly; the forced-reconnect recovery still runs if it elapses.
+      resyncTimeout: const Duration(seconds: 15),
     );
     pane.session = terminal;
     terminal.addListener(notifyListeners);
@@ -6324,7 +6410,7 @@ class AppNotifier extends ChangeNotifier {
         // Only ever advances a known install: a phase for an id nobody here
         // asked about is still worth showing, so it is recorded either way.
         final progress = DshInstallProgress.fromJson(payload);
-        if (progress != null) machine.dsh.installs[progress.id] = progress;
+        if (progress != null) machine.dsh.applyInstall(progress);
         break;
       case 'commander_question':
         final agentId = _eventAgentId(machine, event, payload);
