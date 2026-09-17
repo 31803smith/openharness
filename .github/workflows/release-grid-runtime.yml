@@ -118,10 +118,30 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.13'
+      # Nuitka's cache, kept between runs: its ccache object cache above all — a compile of every C
+      # file it generates, which is where a cold macOS build spends its time (19 min on macos-15,
+      # 11 on macos-15-intel, against 10 s for a Linux wrap) — plus its downloaded helpers and the
+      # module cache. Between two grid versions almost every compiled module is the same (the
+      # stdlib, fastapi, uvicorn, h11…), so the key names the version but restores from the nearest
+      # older one. The pip cache rides along: Nuitka and its wheels are re-downloaded every run
+      # otherwise. Linux caches nothing; it builds nothing.
+      - if: ${{ startsWith(matrix.platform, 'darwin') }}
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ runner.temp }}/nuitka-cache
+            ~/Library/Caches/pip
+          key: grid-nuitka-${{ matrix.platform }}-${{ inputs.grid_version }}-${{ hashFiles('cli/scripts/build-managed-grid.sh') }}
+          restore-keys: |
+            grid-nuitka-${{ matrix.platform }}-${{ inputs.grid_version }}-
+            grid-nuitka-${{ matrix.platform }}-
       - name: Build grid ${{ inputs.grid_version }} for ${{ matrix.platform }}
         env:
           GRID_VERSION: ${{ inputs.grid_version }}
           PLATFORM: ${{ matrix.platform }}
+          # The cache root Nuitka reads (nuitka/utils/AppDirs.py); ccache, downloads and
+          # module-cache live under it. Set for every platform, harmless where nothing compiles.
+          NUITKA_CACHE_DIR: ${{ runner.temp }}/nuitka-cache
         run: |
           set -euo pipefail
           bash cli/scripts/build-managed-grid.sh "$PLATFORM" "$GRID_VERSION" "$RUNNER_TEMP/dist"
