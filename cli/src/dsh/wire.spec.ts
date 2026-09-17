@@ -21,6 +21,7 @@ describe('dshListRows', () => {
       repo: HARNESS_MONOREPO, ref: 'main', path: 'store/agents/typst', tier: 2, verified: true, viewerUse: 'autonomous/doc-viewer',
       homepage: 'https://typst.example.com', upstream: 'https://example.com/typst', license: 'MIT', screenshots: ['https://example.com/1.png'],
       examples: [{ prompt: 'A spec sheet for an M3 standoff.', image: 'https://example.com/spec.jpg', caption: 'Spec sheet · PDF' }],
+      evaluation: [{ method: 'tool', by: 'Typst compiler' }, { method: 'checks', by: 'brief: pages, fonts' }],
     },
     { id: 'autonomous/doc-viewer', kind: 'viewer', name: 'Doc Viewer', repo: HARNESS_MONOREPO, ref: 'main', path: 'store/viewers/doc-viewer', tier: 2, verified: true },
     { id: 'acme/bare', name: 'Bare', repo: 'https://example.com/bare.git', engine: 'codex' },
@@ -38,21 +39,22 @@ describe('dshListRows', () => {
         verified: true, repo: `${HARNESS_MONOREPO}/tree/main/store/agents/typst`, homepage: 'https://typst.example.com',
         upstream: 'https://example.com/typst', license: 'MIT', screenshots: ['https://example.com/1.png'],
         examples: [{ prompt: 'A spec sheet for an M3 standoff.', image: 'https://example.com/spec.jpg', caption: 'Spec sheet · PDF' }],
+        evaluation: [{ method: 'tool', by: 'Typst compiler' }, { method: 'checks', by: 'brief: pages, fonts' }],
       },
       {
         id: 'acme/private', kind: 'viewer', name: 'Private', description: null, category: null, author: null, engine: null,
         installed: true, linked: false, viewer: true, viewerUse: null, tier: 2,
-        verified: false, repo: null, homepage: null, upstream: null, license: null, screenshots: [], examples: [],
+        verified: false, repo: null, homepage: null, upstream: null, license: null, screenshots: [], examples: [], evaluation: [],
       },
       {
         id: 'autonomous/doc-viewer', kind: 'viewer', name: 'Doc Viewer', description: null, category: null, author: null, engine: null,
         installed: false, linked: false, viewer: true, viewerUse: null, tier: 2,
-        verified: true, repo: `${HARNESS_MONOREPO}/tree/main/store/viewers/doc-viewer`, homepage: null, upstream: null, license: null, screenshots: [], examples: [],
+        verified: true, repo: `${HARNESS_MONOREPO}/tree/main/store/viewers/doc-viewer`, homepage: null, upstream: null, license: null, screenshots: [], examples: [], evaluation: [],
       },
       {
         id: 'acme/bare', kind: 'agent', name: 'Bare', description: null, category: null, author: null, engine: 'codex',
         installed: false, linked: false, viewer: false, viewerUse: null, tier: 0,
-        verified: false, repo: 'https://example.com/bare.git', homepage: null, upstream: null, license: null, screenshots: [], examples: [],
+        verified: false, repo: 'https://example.com/bare.git', homepage: null, upstream: null, license: null, screenshots: [], examples: [], evaluation: [],
       },
     ])
   })

@@ -23,6 +23,21 @@ export interface DshPhase {
   artifact: string | null
 }
 
+export type DshEvaluationMethod = 'tool' | 'checks' | 'review' | 'none'
+
+/**
+ * One entry of the verdict's `evaluation`: what judged the output (the domain's own verifier, the
+ * request's measured claims, a rubric review, or honestly nothing), whether it passed — null while it
+ * has not run, and always for `none` — and whether `ready` depends on it.
+ */
+export interface DshEvaluation {
+  method: DshEvaluationMethod
+  by: string | null
+  passed: boolean | null
+  gate: boolean
+  detail: string | null
+}
+
 export interface DshVerdict {
   ready: boolean
   summary: string | null
@@ -31,11 +46,15 @@ export interface DshVerdict {
   artifact: string | null
   /** In order, at most 12; empty when the harness names none. */
   phases: DshPhase[]
+  /** Strongest first, at most 8; empty when the harness does not say how it decided. */
+  evaluation: DshEvaluation[]
   updatedAt: string | null
 }
 
 const PHASE_STATES: ReadonlySet<string> = new Set(['done', 'active', 'pending', 'failed'])
 const MAX_PHASES = 12
+const EVALUATION_METHODS: ReadonlySet<string> = new Set(['tool', 'checks', 'review', 'none'])
+const MAX_EVALUATION = 8
 
 function cleanLabel(value: unknown, max: number): string | null {
   if (typeof value !== 'string') return null
@@ -58,6 +77,27 @@ function parsePhases(raw: unknown): DshPhase[] {
     phases.push({ id, name, state, artifact: cleanRelative(entry.artifact) })
   }
   return phases
+}
+
+/** The evaluation a verdict declares, sanitised: an unknown method drops the entry; `none` never passes. */
+function parseEvaluation(raw: unknown): DshEvaluation[] {
+  if (!Array.isArray(raw)) return []
+  const entries: DshEvaluation[] = []
+  for (const item of raw) {
+    if (entries.length >= MAX_EVALUATION) break
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue
+    const entry = item as Record<string, unknown>
+    if (typeof entry.method !== 'string' || !EVALUATION_METHODS.has(entry.method)) continue
+    const method = entry.method as DshEvaluationMethod
+    entries.push({
+      method,
+      by: cleanLabel(entry.by, 80),
+      passed: method === 'none' || typeof entry.passed !== 'boolean' ? null : entry.passed,
+      gate: method !== 'none' && entry.gate === true,
+      detail: cleanLabel(entry.detail, 200),
+    })
+  }
+  return entries
 }
 
 function cleanRelative(value: unknown): string | null {
@@ -93,7 +133,14 @@ export function parseVerdict(text: string): DshVerdict | null {
     ? raw.updatedAt
     : null
   return {
-    ready: raw.ready, summary, errors, warnings, artifact: cleanRelative(raw.artifact), phases: parsePhases(raw.phases), updatedAt,
+    ready: raw.ready,
+    summary,
+    errors,
+    warnings,
+    artifact: cleanRelative(raw.artifact),
+    phases: parsePhases(raw.phases),
+    evaluation: parseEvaluation(raw.evaluation),
+    updatedAt,
   }
 }
 

@@ -29,6 +29,7 @@ describe('parseVerdict', () => {
       warnings: 1,
       artifact: 'boards/main.board.json',
       phases: [],
+      evaluation: [],
       updatedAt: '2026-09-14T20:00:00Z',
     })
   })
@@ -58,6 +59,35 @@ describe('parseVerdict', () => {
     }))
     expect(many?.phases).toHaveLength(12)
     expect(parseVerdict(JSON.stringify({ spec: 1, ready: true, phases: 'later' }))?.phases).toEqual([])
+  })
+
+  it('keeps what ready rests on: known methods, strongest first, none never passing or gating', () => {
+    const verdict = parseVerdict(JSON.stringify({
+      spec: 1,
+      ready: false,
+      evaluation: [
+        { method: 'tool', by: ' LilyPond 2.24.4 ', passed: true, gate: true },
+        { method: 'checks', by: 'brief: key, 16 bars', passed: false, gate: true, detail: '12 of 16 bars' },
+        { method: 'review', by: 'engraving rubric', passed: 'maybe', gate: 'yes' },
+        { method: 'none', passed: true, gate: true },
+        { method: 'vibes', passed: true },
+        { by: 'nothing' },
+        'tool',
+      ],
+    }))
+    expect(verdict?.evaluation).toEqual([
+      { method: 'tool', by: 'LilyPond 2.24.4', passed: true, gate: true, detail: null },
+      { method: 'checks', by: 'brief: key, 16 bars', passed: false, gate: true, detail: '12 of 16 bars' },
+      { method: 'review', by: 'engraving rubric', passed: null, gate: false, detail: null },
+      { method: 'none', by: null, passed: null, gate: false, detail: null },
+    ])
+    const many = parseVerdict(JSON.stringify({
+      spec: 1, ready: true, evaluation: Array.from({ length: 12 }, () => ({ method: 'checks', by: 'x'.repeat(100), detail: 'y'.repeat(300) })),
+    }))
+    expect(many?.evaluation).toHaveLength(8)
+    expect(many?.evaluation[0]?.by).toHaveLength(80)
+    expect(many?.evaluation[0]?.detail).toHaveLength(200)
+    expect(parseVerdict(JSON.stringify({ spec: 1, ready: true, evaluation: { method: 'tool' } }))?.evaluation).toEqual([])
   })
 
   it('refuses what is not a verdict, and scrubs an artifact that leaves the workspace', () => {
@@ -118,7 +148,7 @@ describe('readVerdictFile and the edges of parseVerdict', () => {
     const dir = mkdtempSync(join(tmpdir(), 'dsh-verdict-file-'))
     try {
       writeFileSync(join(dir, 'verdict.json'), JSON.stringify({ spec: 1, ready: true, summary: '   ', findings: 'none', artifact: '' }))
-      expect(readVerdictFile(join(dir, 'verdict.json'))).toEqual({ ready: true, summary: null, errors: 0, warnings: 0, artifact: null, phases: [], updatedAt: null })
+      expect(readVerdictFile(join(dir, 'verdict.json'))).toEqual({ ready: true, summary: null, errors: 0, warnings: 0, artifact: null, phases: [], evaluation: [], updatedAt: null })
       expect(readVerdictFile(join(dir, 'missing.json'))).toBeNull()
     } finally {
       rmSync(dir, { recursive: true, force: true })

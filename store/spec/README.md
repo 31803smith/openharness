@@ -92,6 +92,11 @@ daemon runs the viewer's command in the VIEWER's directory with the usual env pl
     { "id": "checks", "name": "Checks", "state": "active" },
     { "id": "fab", "name": "Fab", "state": "pending" }
   ],                                      // state ∈ done | active | pending | failed; ≤ 12 phases
+  "evaluation": [                         // optional; how ready was decided, strongest first, ≤ 8
+    { "method": "tool", "by": "KiCad 9 DRC", "passed": true, "gate": true },
+    { "method": "checks", "by": "brief: 2 layers, 50 × 50 mm", "passed": false, "gate": true, "detail": "board is 62 × 50 mm" },
+    { "method": "review", "by": "layout rubric", "passed": null, "gate": false }
+  ],                                      // method ∈ tool | checks | review | none; passed null = not run
   "updatedAt": "2026-09-14T20:00:00Z"
 }
 ```
@@ -101,6 +106,13 @@ end. The pane is the product, and it must move while the agent works — a harne
 final verdict is not progressive. `phases` is how the header says "you are here"; `ready` stays the
 one final truth.
 
+`evaluation` says what `ready` rests on, because domains differ in what can be checked. `tool` is
+the domain's own verifier (a compiler, a design-rule check, a simulator); `checks` measure the
+request's claims on the output (sizes, counts, keys); `review` is a fresh-context model or a person
+grading snapshots against a written rubric; `none` says honestly that nothing trustworthy verifies
+this domain and the person is the judge. `ready` is true only when every entry with `gate: true`
+passed and no finding is an error. Never claim more than was checked.
+
 Lifted from Circuit's `.board.json` and TV's `.episode.json` sidecars (same severity gate). Circuit
 writes it beside the sidecar in `circuitpy.generation`; Workshop writes it from `verify_project`.
 
@@ -109,7 +121,7 @@ writes it beside the sidecar in `circuitpy.generation`; Workshop writes it from 
 - `agent_create` payload gains `dsh?: string`. Refused with `INVALID_DSH` when not installed on
   this machine or when `engine` is not the DSH's base.
 - `AgentFrame` gains `dsh: string | null`, `dshName: string | null`, `viewerUrl: string | null`,
-  `verdict: { ready, summary, errors, warnings, artifact, phases, updatedAt } | null`. Null is a real answer
+  `verdict: { ready, summary, errors, warnings, artifact, phases, evaluation, updatedAt } | null`. Null is a real answer
   (see `agentFrame.ts`'s doc on erased fields).
 - `dsh_list` → `{ dsh: [{ id, name, description, category, engine, installed, viewer, tier }] }`: installed
   DSHs on this machine merged with the bundled registry (the `store/` folders and `store/registry/`).
@@ -121,8 +133,10 @@ writes it beside the sidecar in `circuitpy.generation`; Workshop writes it from 
 
 ### The store's facts
 
-A registry entry may also carry `homepage`, `upstream`, `license`, `screenshots` and `examples` (see
-`cli/src/dsh/registry.ts`); a built-in package keeps them in `store.json` beside its manifest. They are
+A registry entry may also carry `homepage`, `upstream`, `license`, `screenshots`, `examples` and
+`evaluation` (see `cli/src/dsh/registry.ts`); a built-in package keeps them in `store.json` beside its
+manifest. `evaluation` is how the harness judges its output, before anyone runs it:
+`[{ method, by }]`, ≤ 4, the same methods as the verdict's. They are
 the store page's, not the package's: a manifest never has them,
 and `dsh_list` rows forward them from the registry whether or not the package is installed, with
 `repo` and `linked` beside them. `dsh_remove { id }` uninstalls from the answering machine.

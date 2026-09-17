@@ -154,3 +154,24 @@ Initial contract. Lifted from the `.board.json` (Circuit) and `.episode.json` (T
 - **Mechanism:** `StoreExampleSchema` in `cli/src/dsh/registry.ts`, `cli/scripts/lib/dshRegistry.mjs`,
   `cli/src/dsh/wire.ts`, the publisher's checks in `store/tools/catalog.mjs`, and the desktop
   `StoreExample` / `StoreShowcase`.
+
+## 2026-09-17 — `evaluation`: what ready rests on
+
+- **Change:** the verdict may include `evaluation` (≤ 8): `[{ method, by?, passed, gate?, detail? }]`
+  with `method ∈ tool | checks | review | none`, `passed` true, false or null (not run; always null
+  for `none`), `gate` true when `ready` depends on it. The daemon forwards it on
+  `AgentFrame.verdict.evaluation`; the pane's status tooltip lists it. Registry entries and
+  `store.json` may include `evaluation` (≤ 4): `[{ method, by }]`, how the harness judges its output
+  before anyone runs it; `dsh_list` forwards it and the product page shows it.
+- **Why:** "ready" means different things in different domains. A board passed a design-rule check; a
+  score compiled and matched the request's key and bar count; a slide deck was graded by a model
+  against a rubric; a song was only produced, and the person is the judge. A person deciding whether
+  to trust the result, or to try a harness, needs to know which, and a harness should never claim
+  more than it checked.
+- **Backward compatible:** yes. Both fields are optional; the verdict schema already allowed
+  additional properties, and a catalog is parsed with unknown keys stripped. An app that predates it
+  shows no evaluation; a daemon that predates it forwards none.
+- **Mechanism:** `parseVerdict` in `cli/src/dsh/verdict.ts`; `StoreEvaluationSchema` in
+  `cli/src/dsh/registry.ts`, `cli/scripts/lib/dshRegistry.mjs`, `cli/src/dsh/wire.ts`, the publisher's
+  checks in `store/tools/catalog.mjs`; the desktop `AgentVerdict.evaluation`, `VerdictStatus` and
+  `StoreEvaluation` on the product page.

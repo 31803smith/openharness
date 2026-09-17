@@ -94,6 +94,51 @@
           }
         }
       }
+    },
+    "evaluation": {
+      "type": "array",
+      "maxItems": 8,
+      "description": "How ready was decided, strongest method first: what judged the output, whether it passed, and whether ready depends on it. Optional; absent means the harness does not say.",
+      "items": {
+        "type": "object",
+        "required": [
+          "method"
+        ],
+        "additionalProperties": true,
+        "properties": {
+          "method": {
+            "enum": [
+              "tool",
+              "checks",
+              "review",
+              "none"
+            ],
+            "description": "tool: the domain's own verifier (a compiler, validator, simulator). checks: the request's measurable claims, measured on the output. review: a fresh-context model or a person graded it against a rubric. none: nothing trustworthy verifies this domain; the person is the judge."
+          },
+          "by": {
+            "type": "string",
+            "maxLength": 80,
+            "description": "What judged it: \"LilyPond 2.24.4\", \"brief: key, 16 bars\", \"engraving rubric\"."
+          },
+          "passed": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Null while it has not run, and always for none."
+          },
+          "gate": {
+            "type": "boolean",
+            "default": false,
+            "description": "True when ready depends on it: ready is true only if every gate passed."
+          },
+          "detail": {
+            "type": "string",
+            "maxLength": 200,
+            "description": "One line: what it measured, or why it failed."
+          }
+        }
+      }
     }
   }
 }

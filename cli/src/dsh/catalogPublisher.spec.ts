@@ -53,6 +53,23 @@ describe('Store publication', () => {
     }
   })
 
+  it('publishes how a package is judged, and refuses an unknown method, an overlong judge, a verdict-only field or too many', () => {
+    const root = fixture()
+    const evaluation = [{ method: 'tool', by: 'Godot headless run' }, { method: 'none' }]
+    writeFileSync(join(root, 'agents', 'game', 'store.json'), JSON.stringify({ evaluation }))
+    expect(createStoreCatalog(root, ref).entries[0]!.evaluation).toEqual(evaluation)
+    expect(parseStoreCatalog(createStoreCatalog(root, ref)).entries[0]!.evaluation).toEqual(evaluation)
+    for (const [bad, message] of [
+      [[{ method: 'vibes' }], /tool, checks, review or none/],
+      [[{ method: 'tool', by: 'b'.repeat(81) }], /invalid evaluation by/],
+      [[{ method: 'tool', passed: true }], /unknown evaluation field passed/],
+      [Array.from({ length: 5 }, () => ({ method: 'checks' })), /invalid evaluation/],
+    ] as const) {
+      writeFileSync(join(root, 'agents', 'game', 'store.json'), JSON.stringify({ evaluation: bad }))
+      expect(() => createStoreCatalog(root, ref)).toThrow(message)
+    }
+  })
+
   it('rejects a new harness whose shared viewer is not also published', () => {
     const root = fixture()
     const manifest = { spec: 1, id: 'autonomous/game', name: 'Game', engine: 'claude', viewer: { use: 'acme/not-listed' } }

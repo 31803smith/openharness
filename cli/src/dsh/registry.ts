@@ -38,6 +38,18 @@ export const StoreExampleSchema = z.object({
 
 export type StoreExample = z.infer<typeof StoreExampleSchema>
 
+/**
+ * How a harness judges what it makes, before anyone runs it — the same methods a verdict's `evaluation`
+ * reports: the domain's own verifier (`tool`), the request's claims measured (`checks`), a rubric
+ * review (`review`), or honestly nothing (`none`); `by` names it ("KiCad DRC", "brief: size, layers").
+ */
+export const StoreEvaluationSchema = z.object({
+  method: z.enum(['tool', 'checks', 'review', 'none']),
+  by: z.string().trim().min(1).max(80).optional(),
+})
+
+export type StoreEvaluation = z.infer<typeof StoreEvaluationSchema>
+
 /** A folder inside a repo: relative, forward slashes, no `.`/`..` segments, no trailing slash. */
 export const PACKAGE_PATH_RE = /^(?!\/)(?!.*\/$)(?!.*\/\/)(?!(?:.*\/)?\.{1,2}(?:\/|$))[A-Za-z0-9._\-/]+$/
 
@@ -72,6 +84,8 @@ export const DshRegistryEntrySchema = z.strictObject({
   screenshots: z.array(z.string().url().max(2048)).max(8).optional(),
   /** What a person types and what comes out, for the product page — see StoreExampleSchema. */
   examples: z.array(StoreExampleSchema).max(8).optional(),
+  /** How it judges its output — see StoreEvaluationSchema. */
+  evaluation: z.array(StoreEvaluationSchema).max(4).optional(),
 }).refine((entry) => entry.kind === 'viewer' || entry.engine !== undefined, { path: ['engine'], message: 'an agent entry needs an engine' })
 
 export type DshRegistryEntry = z.infer<typeof DshRegistryEntrySchema>
@@ -83,6 +97,7 @@ export const StoreFactsSchema = z.strictObject({
   license: z.string().min(1).max(40).optional(),
   screenshots: z.array(z.string().url().max(2048)).max(8).optional(),
   examples: z.array(StoreExampleSchema.strict()).max(8).optional(),
+  evaluation: z.array(StoreEvaluationSchema.strict()).max(4).optional(),
 })
 
 export type StoreFacts = z.infer<typeof StoreFactsSchema>
@@ -102,7 +117,7 @@ export function storeEntry(path: string, manifest: Record<string, unknown>, fact
   if (manifest.kind !== undefined) entry.kind = manifest.kind
   for (const key of ['name', 'category', 'author', 'description']) if (manifest[key] !== undefined) entry[key] = manifest[key]
   Object.assign(entry, { repo: HARNESS_MONOREPO, ref: 'main', path })
-  for (const key of ['homepage', 'upstream', 'license', 'screenshots', 'examples']) if (facts[key] !== undefined) entry[key] = facts[key]
+  for (const key of ['homepage', 'upstream', 'license', 'screenshots', 'examples', 'evaluation']) if (facts[key] !== undefined) entry[key] = facts[key]
   if (manifest.engine !== undefined) entry.engine = manifest.engine
   const viewer = manifest.viewer as { use?: unknown } | undefined
   if (typeof viewer?.use === 'string') entry.viewerUse = viewer.use

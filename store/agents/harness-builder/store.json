@@ -1,0 +1,9 @@
+{
+  "homepage": "https://github.com/autonomous-ai/openharness/tree/main/store/agents/harness-builder",
+  "license": "MIT",
+  "evaluation": [
+    { "method": "tool", "by": "harness dsh check and a fresh-machine install" },
+    { "method": "checks", "by": "the Builder's quality bar" },
+    { "method": "review", "by": "three proofs, reviewed frame by frame" }
+  ]
+}

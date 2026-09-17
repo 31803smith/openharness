@@ -9,7 +9,7 @@ import { pathToFileURL } from 'node:url'
 import { env } from '../config/env.js'
 import {
   bundledDshRegistry, HARNESS_MONOREPO, readRegistryDir, readStoreDir, registryEntry, registrySourceUrl,
-  resetBundledDshRegistry, storeEntry, StoreExampleSchema, StoreFactsSchema,
+  resetBundledDshRegistry, storeEntry, StoreEvaluationSchema, StoreExampleSchema, StoreFactsSchema,
 } from './registry.js'
 
 // @ts-expect-error — plain ESM with no declaration file, imported to hold the build to the runtime
@@ -36,13 +36,25 @@ describe('StoreExampleSchema: what a product page example may hold', () => {
   })
 })
 
+describe('StoreEvaluationSchema: how a product page says a harness is judged', () => {
+  it('takes a known method and what judges it; a catalog entry drops unknown fields, store.json refuses them', () => {
+    expect(StoreEvaluationSchema.parse({ method: 'tool', by: '  KiCad DRC ', later: 1 })).toEqual({ method: 'tool', by: 'KiCad DRC' })
+    expect(StoreEvaluationSchema.parse({ method: 'none' })).toEqual({ method: 'none' })
+    expect(StoreEvaluationSchema.safeParse({ method: 'vibes' }).success).toBe(false)
+    expect(StoreEvaluationSchema.safeParse({ method: 'review', by: 'x'.repeat(81) }).success).toBe(false)
+    expect(StoreFactsSchema.safeParse({ evaluation: [{ method: 'tool', gate: true }] }).success).toBe(false)
+    expect(StoreFactsSchema.safeParse({ evaluation: Array.from({ length: 5 }, () => ({ method: 'checks' })) }).success).toBe(false)
+    expect(StoreFactsSchema.parse({ evaluation: [{ method: 'review', by: 'rubric' }] })).toEqual({ evaluation: [{ method: 'review', by: 'rubric' }] })
+  })
+})
+
 describe('storeEntry', () => {
   const cases: Array<[string, Record<string, unknown>, Record<string, unknown>]> = [
     ['a bare agent: tier 0, only what the manifest says', { spec: 1, id: 'autonomous/bare', name: 'Bare', engine: 'claude' }, {}],
     ['a verdict: tier 1', { spec: 1, id: 'autonomous/checked', name: 'Checked', engine: 'codex', verdict: '.harness/verdict.json' }, {}],
     ['a used viewer: tier 2 and its dependency', { spec: 1, id: 'autonomous/cad', name: 'CAD', category: 'CAD', author: 'Autonomous', description: 'd', engine: 'claude', viewer: { use: 'autonomous/cad-viewer' } }, { homepage: 'https://example.com', license: 'MIT' }],
     ['a viewer package: its kind and no engine', { spec: 1, kind: 'viewer', id: 'autonomous/pane', name: 'Pane', viewer: { command: 'v.sh', url: 'http://127.0.0.1:${port}/' } }, { upstream: 'https://example.com/up', screenshots: ['https://example.com/1.png'] }],
-    ['examples: carried as written', { spec: 1, id: 'autonomous/lamp', name: 'Lamp', engine: 'claude', viewer: { use: 'autonomous/model-viewer' } }, { examples: [{ prompt: 'A desk lamp.', image: 'https://example.com/lamp.jpg', caption: 'Lamp · glTF' }] }],
+    ['examples: carried as written', { spec: 1, id: 'autonomous/lamp', name: 'Lamp', engine: 'claude', viewer: { use: 'autonomous/model-viewer' } }, { examples: [{ prompt: 'A desk lamp.', image: 'https://example.com/lamp.jpg', caption: 'Lamp · glTF' }], evaluation: [{ method: 'tool', by: 'glTF validator' }] }],
   ]
   for (const [what, manifest, facts] of cases) {
     it(`${what}, the same from the build`, () => {
@@ -55,6 +67,7 @@ describe('storeEntry', () => {
   it('says exactly what each case ships', () => {
     const [bare, checked, cad, pane, lamp] = cases.map(([, manifest, facts]) => storeEntry('p', manifest, facts))
     expect(lamp.examples).toEqual([{ prompt: 'A desk lamp.', image: 'https://example.com/lamp.jpg', caption: 'Lamp · glTF' }])
+    expect(lamp.evaluation).toEqual([{ method: 'tool', by: 'glTF validator' }])
     expect(bare).toEqual({ id: 'autonomous/bare', name: 'Bare', repo: HARNESS_MONOREPO, ref: 'main', path: 'p', engine: 'claude', tier: 0, verified: true })
     expect(checked.tier).toBe(1)
     expect(cad).toMatchObject({ category: 'CAD', author: 'Autonomous', description: 'd', homepage: 'https://example.com', license: 'MIT', viewerUse: 'autonomous/cad-viewer', tier: 2 })
