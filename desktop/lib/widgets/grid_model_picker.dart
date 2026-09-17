@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../core/models.dart';
+import '../core/test_run.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
 import '../usage/models_menu_controller.dart';
@@ -109,7 +110,10 @@ class _GridModelPickerState extends State<GridModelPicker> {
     // row's provider name and percentage, and skipping it left that row falling back to the bare
     // engine label with no status beside it.
     _usage ??= ModelsMenuController(remote: widget.notifier.readRemoteUsage);
-    unawaited(_usage!.refresh().catchError((_) {}));
+    // Not under `flutter test`: a refresh reads the Keychain and asks the vendors, the same reads the
+    // usage rail keeps out of tests (kUnderTest) — here every test that drew a pane header left that
+    // work's timers pending after the tree was gone. Opening the menu still refreshes.
+    if (!kUnderTest) unawaited(_usage!.refresh().catchError((_) {}));
     final answer = await widget.notifier.gridModels(widget.machineId);
     if (mounted) _last = answer;
   }
@@ -481,39 +485,44 @@ class _GridModelPickerState extends State<GridModelPicker> {
         // person sees while hovering this was whatever the surface underneath asked for — so a
         // control that opens a menu did not look like one until you clicked it.
         cursor: SystemMouseCursors.click,
-        child: InkWell(
-          onTap: _open,
-          // Stated on the InkWell as well as on the MouseRegion above it. The cursor a person sees is
-          // the INNERMOST annotation under the pointer, and InkWell installs one of its own — so an
-          // ancestor asking for a hand is not, by itself, the thing that decides.
-          mouseCursor: SystemMouseCursors.click,
-          borderRadius: BorderRadius.circular(4),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // No leading glyph: the word carries the control, and a header this dense reads
-                // better with one fewer mark in it. The spinner takes that space only while a read
-                // is in flight, so the label does not shift when nothing is happening.
-                if (_loading) ...[
-                  const SizedBox(
-                    width: 11,
-                    height: 11,
-                    child: CircularProgressIndicator(strokeWidth: 1.5),
+        // Its own ink surface: an InkWell needs a Material above it, and a pane header is not
+        // always inside one — every test that drew a header threw "No Material widget found".
+        child: Material(
+          type: MaterialType.transparency,
+          child: InkWell(
+            onTap: _open,
+            // Stated on the InkWell as well as on the MouseRegion above it. The cursor a person sees is
+            // the INNERMOST annotation under the pointer, and InkWell installs one of its own — so an
+            // ancestor asking for a hand is not, by itself, the thing that decides.
+            mouseCursor: SystemMouseCursors.click,
+            borderRadius: BorderRadius.circular(4),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // No leading glyph: the word carries the control, and a header this dense reads
+                  // better with one fewer mark in it. The spinner takes that space only while a read
+                  // is in flight, so the label does not shift when nothing is happening.
+                  if (_loading) ...[
+                    const SizedBox(
+                      width: 11,
+                      height: 11,
+                      child: CircularProgressIndicator(strokeWidth: 1.5),
+                    ),
+                    const SizedBox(width: 5),
+                  ],
+                  Text(
+                    'Model',
+                    style: TextStyle(fontSize: 11, color: AppColors.textSoft),
                   ),
-                  const SizedBox(width: 5),
+                  Icon(
+                    Icons.arrow_drop_down,
+                    size: 14,
+                    color: AppColors.mutedStrong,
+                  ),
                 ],
-                Text(
-                  'Model',
-                  style: TextStyle(fontSize: 11, color: AppColors.textSoft),
-                ),
-                Icon(
-                  Icons.arrow_drop_down,
-                  size: 14,
-                  color: AppColors.mutedStrong,
-                ),
-              ],
+              ),
             ),
           ),
         ),
