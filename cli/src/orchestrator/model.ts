@@ -34,7 +34,10 @@ export const Task = TaskSpec.extend({
 })
 export const Message = z.object({
   id: z.string(), role: z.enum(['user', 'assistant', 'system']), text: z.string(),
-  at: z.number(), delivery: z.enum(['accepted', 'failed']).optional(),
+  at: z.number(),
+  targetAgentId: z.string().optional(),
+  delivery: z.enum(['pending', 'accepted', 'queued', 'delivered', 'started', 'failed', 'unknown']).optional(),
+  deliveryReason: z.string().optional(),
 })
 export const Run = z.object({
   version: z.literal(1), id: RunId, fingerprint: z.string(), prompt: text,

@@ -45,7 +45,7 @@ if (role === 'director') {
       if (reply.project.tasks.every((t: { state: string }) => t.state === 'succeeded') && reply.project.state === 'active') {
         await tool('complete', 'All four fixture specialists finished and their exact artifact versions were handed off.')
       }
-      await event('text_delta', text.startsWith('[Orchestrator result]') ? 'A specialist result arrived and I checked project status.' : `Received your direction: ${text}`)
+      await event('text_delta', text.startsWith('[Orchestrator update]') ? 'A specialist result arrived and I checked project status.' : `Received your direction: ${text}`)
       await event('turn_ended')
     }).catch(error => console.error(error))
   })

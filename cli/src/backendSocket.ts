@@ -45,6 +45,7 @@ import { OrchestratorService } from './orchestrator/service.js'
 import { OrchestratorError } from './orchestrator/model.js'
 import { orchestratorRequest } from './orchestrator/wire.js'
 import { shellQuote } from './orchestrator/prompts.js'
+import type { SessionInputDelivery } from './lib/sessionInput.js'
 import { engineLabel } from './lib/agentNames.js'
 import { DSH_ID_RE } from './dsh/manifest.js'
 import { refreshDshRegistry } from './dsh/catalog.js'
@@ -387,6 +388,10 @@ export class BackendSocket {
   engineProbeProvider: typeof probeEngines = probeEngines
   /** Entrypoint override for isolated integration fixtures; never a wire option. */
   orchestratorCommand: string | null = null
+  onCancelOrchestratorMessage: ((deliveryId: string) => boolean) | null = null
+  orchestratorDelivery(event: SessionInputDelivery): void {
+    this.orchestratorService?.delivery(event)
+  }
   private orchestratorService: OrchestratorService | null = null
   private orchestration(): OrchestratorService {
     return this.orchestratorService ??= new OrchestratorService({
@@ -405,10 +410,11 @@ export class BackendSocket {
         if (!result.ok) throw new OrchestratorError(result.error, result.detail ?? result.error)
         return { agentId: result.session.agentId }
       },
-      send: (id, text) => {
-        if (!this.onMessage || !registry.resolve(id)) throw new OrchestratorError('AGENT_UNAVAILABLE', 'The director is not available to receive a message.')
-        this.onMessage(id, text)
+      send: (id, text, deliveryId) => {
+        if (!this.onMessage || !registry.resolve(id)) throw new OrchestratorError('AGENT_UNAVAILABLE', 'The agent is not available to receive a message.')
+        this.onMessage(id, text, deliveryId)
       },
+      cancelDelivery: id => this.onCancelOrchestratorMessage?.(id) ?? false,
       cancel: id => this.onCancel?.(id),
       agent: id => {
         const agent = registry.resolve(id)
@@ -442,7 +448,7 @@ export class BackendSocket {
       | { ok: false; error: string; detail?: string }
     >) | null = null
   /** Called when the web/device sends chat input to an agent terminal. */
-  onMessage: ((sessionId: string, content: string) => void) | null = null
+  onMessage: ((sessionId: string, content: string, deliveryId?: string) => void) | null = null
   /** Best-effort terminal-native title sync after a user renames an agent. */
   onAgentRename: ((session: RegisteredSession, name: string) => void) | null = null
   /** Called when a device answers an AskUserQuestion (`question_response`) — cli.ts drives the CLI's own

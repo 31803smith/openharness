@@ -9,6 +9,7 @@ import '../shared/widgets/app_dialog.dart';
 import '../shared/widgets/app_icon_button.dart';
 import '../shared/widgets/app_select_field.dart';
 import '../state/app_state.dart';
+import '../ws/ws_conn.dart';
 import 'orchestrator_controller.dart';
 
 Future<void> showOrchestratorLauncher(
@@ -108,10 +109,22 @@ class _OrchestratorLauncherState extends State<OrchestratorLauncher> {
       // Retain the exact id and payload after an uncertain reply. A second click
       // asks about the same launch instead of starting another director.
       if (mounted) {
-        setState(
-          () => _error =
-              '${e.toString()}\nRetry checks the same launch; it will not create a duplicate.',
-        );
+        final refused =
+            e is WsRequestFailure &&
+            const {
+              'INVALID_REQUEST',
+              'INVALID_CWD',
+              'ENGINE_UNSUPPORTED',
+              'LOCAL_ONLY',
+              'UNSUPPORTED',
+              'WORKSPACE_EXISTS',
+            }.contains(e.code);
+        setState(() {
+          if (refused) _attempt = null;
+          _error = refused
+              ? e.toString()
+              : '${e.toString()}\nRetry checks the same launch; it will not create a duplicate.';
+        });
       }
     } finally {
       if (mounted) setState(() => _starting = false);

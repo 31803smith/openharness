@@ -29,15 +29,17 @@ void main() {
                 final value = jsonDecode(line);
                 if (value is Map<String, dynamic> &&
                     value.containsKey('port') &&
-                    !ready.isCompleted)
+                    !ready.isCompleted) {
                   ready.complete(value);
+                }
               } catch (_) {
                 /* daemon diagnostics */
               }
             },
             onDone: () {
-              if (!ready.isCompleted)
+              if (!ready.isCompleted) {
                 ready.completeError(StateError('Fixture exited: $errors'));
+              }
             },
           );
       addTearDown(() async {

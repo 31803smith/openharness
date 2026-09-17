@@ -322,6 +322,8 @@ class _OrchestratorWorkspaceState extends State<OrchestratorWorkspace> {
                           ? task.summary
                           : task.state == 'queued'
                           ? 'Waiting for upstream results or an available worker.'
+                          : !task.hasViewer
+                          ? 'This specialist works in the background. Its summary and files will appear here.'
                           : 'The specialist’s live view will appear when its viewer is ready.'),
                   textAlign: TextAlign.center,
                 ),
@@ -390,6 +392,14 @@ class _OrchestratorWorkspaceState extends State<OrchestratorWorkspace> {
               ],
             ),
           ),
+          if (safeViewer && task.error != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+              child: Text(
+                task.error!,
+                style: TextStyle(color: grid.AppPalette.warn),
+              ),
+            ),
           Expanded(child: content),
         ],
       ),
@@ -443,10 +453,25 @@ class _OrchestratorWorkspaceState extends State<OrchestratorWorkspace> {
                       ),
                       const SizedBox(height: 6),
                       Text(message['text'] as String? ?? ''),
-                      if (message['delivery'] == 'failed')
+                      if (message['delivery'] == 'failed' ||
+                          message['delivery'] == 'unknown')
                         Text(
-                          'Delivery failed. Inspect the director before resending.',
+                          message['delivery'] == 'failed'
+                              ? 'Message not delivered. ${message['deliveryReason'] ?? 'Inspect the agent before resending.'}'
+                              : 'Delivery unconfirmed. Inspect the agent before resending.',
                           style: TextStyle(color: grid.AppPalette.warn),
+                        ),
+                      if (const [
+                        'pending',
+                        'accepted',
+                        'queued',
+                      ].contains(message['delivery']))
+                        Text(
+                          'Queued for the agent',
+                          style: TextStyle(
+                            color: grid.AppPalette.textSecondary,
+                            fontSize: 12,
+                          ),
                         ),
                     ],
                   ),

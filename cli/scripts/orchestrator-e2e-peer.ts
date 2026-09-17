@@ -86,12 +86,14 @@ backend.onCreateAgent = async input => {
   if (dsh?.manifest.viewer) track(viewers.start(result.pending.agentId, dsh, input.cwd))
   return { ok: true, session: result.pending }
 }
-backend.onMessage = (id, text) => {
+backend.onMessage = (id, text, deliveryId) => {
   const agent = registry.resolve(id)
   if (!agent?.tmuxPane) throw new Error('Fixture director unavailable')
   inputs.push(text)
+  if (deliveryId) backend.orchestratorDelivery({ sessionId: id, deliveryId, state: 'queued' })
   track(exec('tmux', ['-S', socket, 'send-keys', '-t', agent.tmuxPane, '-l', Buffer.from(text).toString('base64')])
-    .then(() => exec('tmux', ['-S', socket, 'send-keys', '-t', agent.tmuxPane!, 'Enter'])))
+    .then(() => exec('tmux', ['-S', socket, 'send-keys', '-t', agent.tmuxPane!, 'Enter']))
+    .then(() => { if (deliveryId) backend.orchestratorDelivery({ sessionId: id, deliveryId, state: 'delivered' }) }))
 }
 backend.onCancel = id => {
   const pane = registry.resolve(id)?.tmuxPane

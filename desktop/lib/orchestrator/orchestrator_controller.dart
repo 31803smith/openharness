@@ -27,6 +27,7 @@ class OrchestratorTask {
   String? get error => data['error'] as String? ?? runtime?['error'] as String?;
   String get summary => data['summary'] as String? ?? '';
   bool get uncertain => data['uncertain'] == true;
+  bool get hasViewer => data['hasViewer'] != false;
   Map<String, dynamic>? get runtime =>
       (data['runtime'] as Map?)?.cast<String, dynamic>();
   String? get viewerUrl => runtime?['viewerUrl'] as String?;

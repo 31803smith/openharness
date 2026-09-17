@@ -4,11 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/orchestrator/orchestrator_controller.dart';
+import 'package:harness/orchestrator/orchestrator_launcher.dart';
 import 'package:harness/orchestrator/orchestrator_workspace.dart';
 import 'package:harness/shortcuts/app_shortcuts.dart';
-import 'package:harness/state/app_state.dart';
 import 'package:harness/widgets/terminal_panel.dart';
 import 'package:harness/widgets/web_pane_panel.dart';
+import 'package:harness/ws/ws_conn.dart';
 
 import 'swarm_state_test.dart' show createApp, MemoryStore;
 
@@ -44,7 +45,79 @@ Map<String, dynamic> task(String id, {String state = 'running', String? url}) =>
       'runtime': {'viewerUrl': url, 'viewerName': '$id view'},
     };
 
+class _LaunchConnection extends WsConn {
+  _LaunchConnection(this.failure)
+    : super(
+        wsBaseUrl: 'ws://fixture.invalid',
+        autonomousEnv: 'test',
+        machineId: 'm',
+        accessTokenProvider: (_, _) async => '',
+        onAuthFailure: (_) {},
+        onEvent: (_) {},
+        onStatus: (_) {},
+      );
+  final Exception failure;
+  final starts = <Map<String, dynamic>>[];
+  @override
+  Future<Map<String, dynamic>> request(
+    String type, {
+    Map<String, dynamic> payload = const {},
+    Duration timeout = const Duration(seconds: 20),
+  }) async {
+    if (payload['action'] == 'list') return {'projects': []};
+    starts.add(payload);
+    throw failure;
+  }
+}
+
 void main() {
+  for (final refused in [true, false]) {
+    testWidgets(
+      'launch ${refused ? 'refusal allows editing' : 'timeout preserves the exact request'}',
+      (tester) async {
+        final connection = _LaunchConnection(
+          refused
+              ? const WsRequestFailure(
+                  responseType: 'orchestrator_result',
+                  code: 'INVALID_CWD',
+                  detail: 'Choose an existing folder.',
+                )
+              : const WsRequestTimeout('orchestrator'),
+        );
+        final app = createApp(connectionForTest: (_) => connection);
+        app.machineStates['m']!.localOnly = true;
+        addTearDown(app.dispose);
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(body: OrchestratorLauncher(notifier: app)),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final prompt = find.byKey(const ValueKey('orchestrator-prompt'));
+        final start = find.byKey(const ValueKey('orchestrator-start'));
+        await tester.enterText(prompt, 'Build a lamp');
+        await tester.pump();
+        await tester.ensureVisible(start);
+        await tester.tap(start);
+        await tester.pumpAndSettle();
+        expect(tester.widget<TextField>(prompt).readOnly, !refused);
+        if (refused) await tester.enterText(prompt, 'Build a revised lamp');
+        await tester.pump();
+        await tester.ensureVisible(start);
+        await tester.tap(start);
+        await tester.pumpAndSettle();
+        expect(connection.starts, hasLength(2));
+        expect(
+          connection.starts[0]['id'] == connection.starts[1]['id'],
+          !refused,
+        );
+        if (!refused) expect(connection.starts[0], connection.starts[1]);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
+      },
+    );
+  }
+
   test('Cmd-P is two keys and leaves Cmd-B and Shift-Cmd-P distinct', () {
     final shortcut = kAppShortcuts
         .singleWhere((s) => s.action == ShortcutAction.orchestrate)
@@ -229,7 +302,12 @@ void main() {
       final restored = createApp(store: store);
       addTearDown(restored.dispose);
       await restored.restorePaneLayoutForTest();
-      expect(restored.swarms.singleWhere((s) => s.orchestratorId == projectId).isOrchestrator, isTrue);
+      expect(
+        restored.swarms
+            .singleWhere((s) => s.orchestratorId == projectId)
+            .isOrchestrator,
+        isTrue,
+      );
     },
   );
 }

@@ -48,7 +48,8 @@ export function parseOrchestratorArgs(argv: readonly string[]): { port: number; 
       Object.assign(payload, { taskId: rest[0], attempt: Number(rest[1]), summary: rest[2], artifacts: rest.slice(3) }); break
     case 'complete': payload.summary = rest[0]; break
     case 'message': Object.assign(payload, { text: rest[0], messageId: rest[1] ?? randomBytes(16).toString('hex') }); break
-    default: throw new Error('Usage: harness orchestrator [--port N --machine ID] list|catalog|status|plan|finish|fail|retry|cancel|resume|complete|message [project-id] [arguments]')
+    case 'steer': Object.assign(payload, { taskId: rest[0], attempt: Number(rest[1]), text: rest[2], messageId: rest[3] ?? randomBytes(16).toString('hex') }); break
+    default: throw new Error('Usage: harness orchestrator [--port N --machine ID] list|catalog|status|plan|finish|fail|retry|cancel|resume|complete|message|steer [project-id] [arguments]')
   }
   return { port, machineId, payload }
 }

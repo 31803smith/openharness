@@ -1964,7 +1964,10 @@ async function runForeground(session: AuthSession): Promise<void> {
   }
   const input = new SessionInputController({
     getSession: (id) => registry.resolve(id),
-    onDelivery: (event) => autonomousDeviceService?.delivery(event),
+    onDelivery: (event) => {
+      autonomousDeviceService?.delivery(event)
+      backend.orchestratorDelivery(event)
+    },
     validateRuntime: validateTerminal,
     inject: submitTerminalAction,
     sendKey: keyTerminalAction,
@@ -4518,7 +4521,8 @@ async function runForeground(session: AuthSession): Promise<void> {
     console.log(`[msg] ${sid(sessionId)} recv · engine=${engine} · bytes=${Buffer.byteLength(adapted, 'utf8')}`)
     input.submit(record?.agentId ?? sessionId, adapted, deliveryId)
   }
-  backend.onMessage = (id, content) => submitAgent(id, content)
+  backend.onMessage = (id, content, deliveryId) => submitAgent(id, content, deliveryId)
+  backend.onCancelOrchestratorMessage = id => input.cancelDelivery(id)
 
   // Keep the log file under its cap. This daemon writes it through an inherited stdout fd, so a size
   // check on a timer is the only place that can see it grow — `prepareLogFile` at spawn time alone

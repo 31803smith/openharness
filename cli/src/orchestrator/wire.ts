@@ -4,7 +4,7 @@ import type { OrchestratorService } from './service.js'
 
 export async function orchestratorRequest(service: OrchestratorService, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
   try {
-    const action = z.enum(['list', 'catalog', 'start', 'status', 'plan', 'finish', 'fail', 'retry', 'cancel', 'resume', 'complete', 'message']).parse(payload.action)
+    const action = z.enum(['list', 'catalog', 'start', 'status', 'plan', 'finish', 'fail', 'retry', 'cancel', 'resume', 'complete', 'message', 'steer']).parse(payload.action)
     if (action === 'list') return { projects: service.list() }
     if (action === 'catalog') return { harnesses: service.catalog() }
     if (action === 'start') return { project: await service.start(payload) }
@@ -21,6 +21,7 @@ export async function orchestratorRequest(service: OrchestratorService, payload:
       case 'resume': service.resume(id); break
       case 'complete': service.complete(id, z.string().parse(payload.summary)); break
       case 'message': service.chat(id, RunId.parse(payload.messageId), z.string().parse(payload.text)); break
+      case 'steer': service.steer(id, TaskId.parse(payload.taskId), z.number().int().min(1).parse(payload.attempt), RunId.parse(payload.messageId), z.string().parse(payload.text)); break
     }
     return { project: service.snapshot(id) }
   } catch (error) {
