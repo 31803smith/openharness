@@ -3559,7 +3559,7 @@ class AppNotifier extends ChangeNotifier {
     if (decision == null) return;
     // The dialog may list the machines, and the person may have moved the choice.
     machineId = decision.machineId;
-    final error = await _startLocalModelAgent(machineId);
+    final error = await _startLocalModelAgent(machineId, prompt: decision.prompt);
     if (error != null) {
       _lastError = error;
       _lastErrorRetryable = false;
@@ -3579,12 +3579,19 @@ class AppNotifier extends ChangeNotifier {
         machineStates.values.firstOrNull;
   }
 
-  /// What Start stands for: opencode, in the user's home, opened as the
-  /// `harness-compute` agent and waiting for the person to type. Home rather than
-  /// a project because the model is not about any one repo; no first prompt,
-  /// because the person opens the conversation. Null on success, else the
-  /// sentence for the person.
-  Future<String?> _startLocalModelAgent(String machineId) async {
+  /// What a start stands for: opencode, in the user's home, opened as the
+  /// `harness-compute` agent. Home rather than a project because the model is
+  /// not about any one repo.
+  ///
+  /// [prompt] is the opening move the dialog's button stood for, handed to
+  /// opencode's own `--prompt`: the pane opens with that message already
+  /// submitted, so the first thing in it is the manager's answer rather than an
+  /// empty composer. Null is the third option — the plain door, for a person who
+  /// would rather word it themselves — and then nothing is sent, exactly as
+  /// before this dialog had buttons.
+  ///
+  /// Null on success, else the sentence for the person.
+  Future<String?> _startLocalModelAgent(String machineId, {String? prompt}) async {
     final machine = machineStates[machineId];
     if (machine == null) return 'Machine not found';
     final home = await _homeFolderOf(machine);
@@ -3597,6 +3604,7 @@ class AppNotifier extends ChangeNotifier {
       folder: home,
       agent: localModelAgent,
       name: localModelAgentName,
+      prompt: prompt,
     );
     if (error != null) return error;
     // A daemon that predates `agent`/`name` does not refuse them — it ignores

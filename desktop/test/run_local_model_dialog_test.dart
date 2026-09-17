@@ -142,30 +142,35 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  final start = find.byKey(const Key('run-local-model-start'));
+  // The three ways to begin ARE the action now, so "is Start enabled" became "does an option
+  // lead anywhere". They fail together — every one opens the same pane.
+  final start = find.text('Open Model manager');
+  final coding = find.text('A model for coding');
   final status = find.byKey(const Key('run-local-model-status'));
   String statusText(WidgetTester tester) => tester.widget<Text>(status).data!;
-  bool startEnabled(WidgetTester tester) =>
-      tester.widget<FilledButton>(start).onPressed != null;
+  bool startEnabled(WidgetTester tester) => tester
+      .widget<InkWell>(find.ancestor(of: start, matching: find.byType(InkWell)).first)
+      .onTap != null;
 
   testWidgets('the copy is the plan\'s, and names no plumbing', (tester) async {
     await open(tester);
 
-    expect(find.text('Models that live on your machine'), findsOneWidget);
+    expect(find.text('Run a model on this machine'), findsOneWidget);
     expect(
       find.text(
-        "Model manager is an agent that looks after the models on one of your computers. "
-        "Say what you need and it helps you pick a model that fits that computer and the work, "
-        "then sets it up there. Once a model is up, every agent on every machine can switch to "
-        "it from its model picker.",
+        "Model manager is an agent that finds a model to fit this computer, downloads it, and "
+        "keeps it running. Once it is up, any agent on any of your machines can switch to it.",
       ),
       findsOneWidget,
     );
     // No "Don't show this again": the dialog is where the machine is chosen, and a dialog that
     // could be waved off would take the choice with it.
     expect(find.text("Don't show this again"), findsNothing);
-    expect(find.text('Not now'), findsOneWidget);
-    expect(find.text('Start'), findsOneWidget);
+    expect(find.text('Cancel'), findsOneWidget);
+    // No Start beside the options: it would be a fourth way to begin that means the same as one
+    // of them. Pressing an option IS the start.
+    expect(find.text('Start'), findsNothing);
+    expect(start, findsOneWidget);
     // The product's two rules for this dialog: never the CLI's name, never one vendor's noun for
     // a computer. The app runs on Linux too.
     expect(find.textContaining('grid'), findsNothing);
@@ -183,8 +188,8 @@ void main() {
     // One slim row, not a control: with one machine there is nothing to choose.
     expect(find.byKey(const Key('run-local-model-machine')), findsOneWidget);
     expect(find.text('This machine (studio-7)'), findsOneWidget);
-    // No chips, no "…", no prompt to pick: one machine is a statement, not a choice.
-    expect(find.text('Select the machine to run the model'), findsNothing);
+    // No chips and no "…": one machine is a statement, not a choice. The LABEL is the same either
+    // way — "Runs on" reads right for both — so the chips are what say which of the two this is.
     expect(
       find.byKey(const ValueKey('run-local-model-machine-local')),
       findsNothing,
@@ -193,58 +198,41 @@ void main() {
     expect(find.textContaining('(this computer)'), findsNothing);
   });
 
-  testWidgets(
-    'two starter prompts, each copied to the clipboard on its button',
-    (tester) async {
-      // An empty composer is where people stall; two things to say, copied rather than typed. The
-      // clipboard is faked so the copy is observable and never touches the real one.
-      final copied = <String>[];
-      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
-        SystemChannels.platform,
-        (call) async {
-          if (call.method == 'Clipboard.setData') {
-            copied.add((call.arguments as Map)['text'] as String);
-          }
-          return null;
-        },
-      );
-      addTearDown(
-        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
-          SystemChannels.platform,
-          null,
-        ),
-      );
-      await open(tester);
+  testWidgets('an opener starts the manager WITH its message', (tester) async {
+    // These were example sentences with a copy button each — the best a dialog could do when the
+    // pane did not exist yet: copy, open, paste, send. The pane is created from what this dialog
+    // returns, so the button carries the message itself and the other three steps disappear.
+    await open(tester);
 
-      expect(find.text('Try saying'), findsOneWidget);
-      expect(
-        find.text(
-          'Set up a model for my coding work, just for me on this machine',
-        ),
-        findsOneWidget,
-      );
-      expect(
-        find.text(
-          'I want a model for chat and writing. What fits this machine?',
-        ),
-        findsOneWidget,
-      );
+    expect(find.text('Start with'), findsOneWidget);
+    expect(coding, findsOneWidget);
+    expect(find.text('A model for chat and writing'), findsOneWidget);
+    // Nothing to copy any more, so nothing claims there is.
+    expect(find.text('Try saying'), findsNothing);
+    expect(find.byIcon(LucideIcons.copy), findsNothing);
 
-      await tester.tap(
-        find.byKey(const ValueKey('run-local-model-prompt-copy-1')),
-      );
-      await tester.pump();
-      expect(copied, [
-        'I want a model for chat and writing. What fits this machine?',
-      ]);
-      // The button says so for a moment, then goes back to being a copy button.
-      expect(find.byIcon(LucideIcons.check), findsOneWidget);
-      await tester.pump(const Duration(seconds: 3));
-      expect(find.byIcon(LucideIcons.check), findsNothing);
-      // Copying starts nothing.
-      expect(conn.creates, isEmpty);
-    },
-  );
+    await tester.tap(coding);
+    await tester.pumpAndSettle();
+
+    expect(conn.creates, hasLength(1));
+    expect(
+      conn.creates.single['prompt'],
+      'Set up a model for my coding work on this machine.',
+    );
+  });
+
+  testWidgets('the plain door sends nothing', (tester) async {
+    // The third option is for a person who would rather word it themselves, so it must not put
+    // words in their mouth — `prompt` absent, exactly as before this dialog had buttons.
+    await open(tester);
+
+    expect(find.text('Decide what you need in the conversation'), findsOneWidget);
+    await tester.tap(start);
+    await tester.pumpAndSettle();
+
+    expect(conn.creates, hasLength(1));
+    expect(conn.creates.single.containsKey('prompt'), isFalse);
+  });
 
   testWidgets('missing opencode is said, and disables Start', (tester) async {
     build(
@@ -260,7 +248,7 @@ void main() {
     expect(startEnabled(tester), isFalse);
     await tester.tap(start, warnIfMissed: false);
     await tester.pumpAndSettle();
-    expect(find.text('Start'), findsOneWidget);
+    expect(start, findsOneWidget);
     expect(conn.creates, isEmpty);
   });
 
@@ -565,7 +553,7 @@ void main() {
     await tester.pumpAndSettle();
 
     // Named plainly, under the same label the chooser wears, and NOT called this machine.
-    expect(find.text('The model will run on'), findsOneWidget);
+    expect(find.text('Runs on'), findsOneWidget);
     expect(find.text('studio-7'), findsOneWidget);
     expect(find.textContaining('This machine'), findsNothing);
     expect(
@@ -576,7 +564,6 @@ void main() {
       find.byKey(const ValueKey('run-local-model-machine-studio')),
       findsNothing,
     );
-    expect(find.text('Select the machine to run the model'), findsNothing);
 
     await tester.tap(start);
     await tester.pumpAndSettle();
@@ -639,7 +626,7 @@ void main() {
     await tester.pumpAndSettle();
     // Both machines as chips on one row, this computer first, the door's machine chosen — and
     // one sentence saying what the chips are for.
-    expect(find.text('Select the machine to run the model'), findsOneWidget);
+    expect(find.text('Runs on'), findsOneWidget);
     final localChip = find.byKey(
       const ValueKey('run-local-model-machine-local'),
     );

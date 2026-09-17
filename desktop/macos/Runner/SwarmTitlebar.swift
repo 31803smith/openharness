@@ -477,15 +477,22 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
         modelsMenu.addItem(item)
       }
     }
-    // The last row of Local, drawn as one of its models: the thing a person picks when the model
-    // they want is not there yet, so it sits in the same list rather than in a section of its own.
+    // The Local section's one ACTION, in the shape the in-app picker gives it: a captioned rule that
+    // says the listing has ended, then a button that spans the menu. It was the last ROW of Local,
+    // which read as one more model — a place the agent could go — when it is the thing a person
+    // picks BECAUSE the model they want is not there yet. Present whether or not anything is served.
+    //
     // It replaces the `Add Model` placeholder that dispatched nothing, and is wired like Link
-    // Machine…, through the guarded channel handler. Present whether or not anything is served.
+    // Machine…, through the guarded channel handler.
     //
     // The manager opens ON a machine — the one whose models it will manage — and with more than one
-    // linked, this row is the only place the menu can say which. So it becomes a submenu of the
-    // machines, one row each, this computer marked as such; every child dispatches the same command
-    // with the machine's id. With one machine, or none, it stays a plain row and the app picks.
+    // linked, this is the only place the menu can say which. So it keeps a submenu of the machines,
+    // one row each, this computer marked as such; every child dispatches the same command with the
+    // machine's id. With one machine, or none, the button dispatches directly and the app picks.
+    let caption = NSMenuItem(title: "Want to manage local models?", action: nil, keyEquivalent: "")
+    caption.view = SwarmMenuCaptionView(text: caption.title, width: rowWidth)
+    caption.isEnabled = false
+    modelsMenu.addItem(caption)
     let run = NSMenuItem(title: "Talk to Model manager", action: nil, keyEquivalent: "")
     run.identifier = NSUserInterfaceItemIdentifier(HarnessKeymapMenu.actionPrefix + "runLocalModel")
     if machines.count > 1 {
@@ -503,6 +510,9 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
       run.action = #selector(menuAction(_:))
       run.representedObject = "runLocalModel"
     }
+    // Set AFTER the submenu is decided: the view draws a chevron only when there is one to open,
+    // and AppKit does not draw its own over a custom view.
+    run.view = SwarmMenuButtonView(title: run.title, width: rowWidth)
     modelsMenu.addItem(run)
   }
 
@@ -738,6 +748,125 @@ private struct SwarmSubscriptionEntry: Equatable {
 
   var accessibilityLabel: String {
     [title, account, status].filter { !$0.isEmpty }.joined(separator: ", ")
+  }
+}
+
+/// The captioned rule that introduces the Local section's one action.
+///
+/// The same shape the in-app picker draws: a hairline, a question, a hairline. It marks where the
+/// menu stops LISTING and starts OFFERING — the rows above are places an agent can go, and what
+/// follows starts something instead. Without it the action read as one more model, which is the
+/// mistake the in-app menu made before it grew this block.
+private final class SwarmMenuCaptionView: NSView {
+  private static let font = NSFont.menuFont(ofSize: NSFont.smallSystemFontSize - 1)
+  private let caption: NSTextField
+
+  init(text: String, width: CGFloat) {
+    caption = NSTextField(labelWithString: text)
+    super.init(frame: NSRect(x: 0, y: 0, width: width, height: 24))
+    autoresizingMask = [.width]
+    caption.font = Self.font
+    caption.textColor = .secondaryLabelColor
+    caption.alignment = .center
+    addSubview(caption)
+    caption.setAccessibilityElement(false)
+    setAccessibilityElement(true)
+    setAccessibilityRole(.staticText)
+    setAccessibilityLabel(text)
+  }
+
+  required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+  override func layout() {
+    super.layout()
+    let size = caption.intrinsicContentSize
+    caption.frame = NSRect(x: (bounds.width - size.width) / 2,
+      y: (bounds.height - size.height) / 2, width: size.width, height: size.height)
+  }
+
+  override func draw(_ dirtyRect: NSRect) {
+    super.draw(dirtyRect)
+    NSColor.separatorColor.setFill()
+    let y = (bounds.height / 2).rounded()
+    // A gap either side of the words, so the rule reads as interrupted by them rather than struck
+    // through them.
+    let gap: CGFloat = 8
+    let left = NSRect(x: 18, y: y, width: max(0, caption.frame.minX - gap - 18), height: 1)
+    let rightX = caption.frame.maxX + gap
+    let right = NSRect(x: rightX, y: y, width: max(0, bounds.width - 18 - rightX), height: 1)
+    left.fill()
+    right.fill()
+  }
+}
+
+/// The Local section's one ACTION, drawn as a button rather than as a row.
+///
+/// Every other row in this menu is a destination — pick it and the agent moves. This starts
+/// something, so it wears a border and spans the menu, which is what tells the eye it is not a
+/// fifth model. A custom view gets no highlight from AppKit and performs no action on click, so
+/// both are done here: the fill follows `isHighlighted`, and the mouse dispatches the item's own
+/// target/action the way the menu would have.
+private final class SwarmMenuButtonView: NSView {
+  private static let font = NSFont.menuFont(ofSize: 0)
+  private let label: NSTextField
+
+  init(title: String, width: CGFloat) {
+    label = NSTextField(labelWithString: title)
+    super.init(frame: NSRect(x: 0, y: 0, width: width, height: 34))
+    autoresizingMask = [.width]
+    label.font = Self.font
+    label.textColor = .labelColor
+    label.alignment = .center
+    addSubview(label)
+    label.setAccessibilityElement(false)
+    setAccessibilityElement(true)
+    setAccessibilityRole(.button)
+    setAccessibilityLabel(title)
+  }
+
+  required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+  private var box: NSRect {
+    // Inset from the menu's own edges, so the border is a button's edge and not the menu's.
+    bounds.insetBy(dx: 14, dy: 5)
+  }
+
+  override func layout() {
+    super.layout()
+    let size = label.intrinsicContentSize
+    label.frame = NSRect(x: (bounds.width - size.width) / 2,
+      y: (bounds.height - size.height) / 2, width: size.width, height: size.height)
+  }
+
+  override func draw(_ dirtyRect: NSRect) {
+    super.draw(dirtyRect)
+    let highlighted = enclosingMenuItem?.isHighlighted ?? false
+    let path = NSBezierPath(roundedRect: box, xRadius: 6, yRadius: 6)
+    if highlighted {
+      NSColor.selectedContentBackgroundColor.withAlphaComponent(0.25).setFill()
+      path.fill()
+    }
+    NSColor.separatorColor.setStroke()
+    path.lineWidth = 1
+    path.stroke()
+    label.textColor = highlighted ? .labelColor : .secondaryLabelColor
+    if enclosingMenuItem?.submenu != nil {
+      // A custom view suppresses AppKit's own submenu arrow, and an item that opens one must still
+      // say so — otherwise the machine list appears out of nowhere.
+      let chevron = NSAttributedString(string: "›", attributes: [
+        .font: Self.font, .foregroundColor: NSColor.tertiaryLabelColor,
+      ])
+      chevron.draw(at: NSPoint(x: box.maxX - 16, y: (bounds.height - chevron.size().height) / 2))
+    }
+  }
+
+  override func mouseUp(with event: NSEvent) {
+    guard let item = enclosingMenuItem, item.submenu == nil else { return }
+    let menu = item.menu
+    menu?.cancelTracking()
+    if let action = item.action, let target = item.target {
+      NSApp.sendAction(action, to: target, from: item)
+    }
   }
 }
 
