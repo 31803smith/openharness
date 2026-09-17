@@ -3,9 +3,9 @@
 set -u; cd "$(dirname "$0")/.."; bad=0
 command -v yosys >/dev/null 2>&1 || export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 
-line() { # line <label> <command...>
-  local label="$1"; shift
-  if v="$("$@" 2>&1 | head -1)" && [ -n "$v" ]; then echo "ok   $label — $v"; else echo "miss $label"; bad=1; fi
+line() { # line <label> <command...> — ok with the command's first line only when the command succeeds
+  local label="$1" out; shift
+  if out="$("$@" 2>&1)" && v="${out%%$'\n'*}" && [ -n "$v" ]; then echo "ok   $label — $v"; else echo "miss $label"; bad=1; fi
 }
 
 if command -v yosys >/dev/null 2>&1; then line "yosys, the synthesiser" yosys -V; else echo "miss yosys — run toolchain/setup.sh"; bad=1; fi
@@ -17,7 +17,7 @@ if command -v iverilog >/dev/null 2>&1; then line "iverilog, the simulator" iver
 if command -v iceprog >/dev/null 2>&1; then echo "ok   iceprog, to flash a board over USB"; else echo "info iceprog not found — synthesis works, flashing a real board does not"; fi
 
 if [ -x node_modules/.bin/netlistsvg ]; then echo "ok   netlistsvg $(node -p "require('netlistsvg/package.json').version" 2>/dev/null), the schematic"; else echo "miss node_modules — run toolchain/setup.sh"; bad=1; fi
-if command -v node >/dev/null 2>&1; then echo "ok   node $(node -v) for the viewer"; else echo "miss node for the viewer"; bad=1; fi
+if command -v node >/dev/null 2>&1 && v="$(node -v 2>/dev/null)"; then echo "ok   node $v for the viewer"; else echo "miss node for the viewer"; bad=1; fi
 # The pane's Board and Chip tabs map package pins to the die with IceStorm's chip database.
 chipdb=""
 if command -v icepack >/dev/null 2>&1; then

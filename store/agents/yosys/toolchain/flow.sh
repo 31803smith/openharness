@@ -104,6 +104,7 @@ step_sim() {
   [ ${#RTL[@]} -gt 0 ] || { echo "no rtl/*.v to simulate"; return 1; }
   [ -f "$TB" ] || { echo "no testbench at $TB"; return 1; }
   iverilog -g2012 -Wall -o out/sim.vvp "${RTL[@]}" "$TB" || return 1
+  rm -f out/sim.vcd  # the last run's dump must not pass for this one's
   vvp out/sim.vvp || return 1
   [ -f out/sim.vcd ] || { echo "no out/sim.vcd — the testbench needs \$dumpfile(\"out/sim.vcd\") and \$dumpvars"; return 1; }
 }
