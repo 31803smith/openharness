@@ -151,7 +151,16 @@ describe('harness login --json', () => {
     const result = await runAsync(root, ['login', '--json'], base)
     expect(result.status).toBe(0)
     const lines = result.stdout.trim().split('\n').map((l) => JSON.parse(l))
-    expect(lines).toEqual([{ type: 'result', status: 'success', alreadySignedIn: true }])
+    // The sign-in now also hands its token to `grid` and makes sure the account's private grid
+    // exists — best-effort, reported on this line rather than allowed to change its status. There is
+    // no `grid` on PATH in this test, so it reports the attempt and the harness sign-in still
+    // succeeds, which is the property worth pinning.
+    expect(lines).toEqual([{
+      type: 'result',
+      status: 'success',
+      alreadySignedIn: true,
+      grid: { signedIn: false, code: expect.any(String) },
+    }])
   })
 
   it('emits a BACKEND_ERROR result line (not a stack trace) when authorize-native is unreachable', async () => {
@@ -200,6 +209,12 @@ describe('harness login --json', () => {
     expect(exitCode).toBe(0)
     // Drain any trailing buffered line after exit.
     if (stdout.trim()) lines.push(JSON.parse(stdout.trim()))
-    expect(lines[1]).toEqual({ type: 'result', status: 'success' })
+    // Same contract as the already-signed-in line: the grid hand-off is reported here, and its
+    // failure (no `grid` on PATH in this test) never changes `status`.
+    expect(lines[1]).toEqual({
+      type: 'result',
+      status: 'success',
+      grid: { signedIn: false, code: expect.any(String) },
+    })
   }, 15_000)
 })

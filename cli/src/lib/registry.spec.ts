@@ -1069,6 +1069,43 @@ describe('agent identity: the process owns the agent, the session is bound to it
     expect(reloaded.displayName(fourth)).toBe('harness-11')
   })
 
+  it('opens a pane under the name its creator asked for, keeps it through binding and reload, and does not spend a number on it', async () => {
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    const named = registry.openPendingAgent({ engine: 'opencode', runtimes: [{ backend: 'tmux', paneId: '%7' }], cwd: '/tmp/demo', defaultName: ' Local model ' })!
+    expect(named.defaultName).toBe('Local model')
+    expect(registry.displayName(named)).toBe('Local model')
+    // The engine reporting a session title does not retitle a pane that was named at creation.
+    const bound = registry.register({ engine: 'opencode', sessionId: 'session-named', tmuxPane: '%7', title: 'OC | Greeting' })!.entry
+    expect(registry.displayName(bound)).toBe('Local model')
+    // Blank means "number it", the same as absent — and the named agent took no number.
+    const numbered = registry.openPendingAgent({ engine: 'opencode', runtimes: [{ backend: 'tmux', paneId: '%8' }], cwd: '/tmp/demo', defaultName: '  ' })!
+    expect(registry.displayName(numbered)).toBe('harness-1')
+    const { registry: reloaded } = await loadRegistryModule()
+    reloaded.load()
+    expect(reloaded.displayName(reloaded.byAgent(named.agentId)!)).toBe('Local model')
+    expect(reloaded.displayName(reloaded.byAgent(numbered.agentId)!)).toBe('harness-1')
+  })
+
+  it('keeps the named agent a pane was opened as through binding and reload, and drops one that is not an identifier', async () => {
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    const named = registry.openPendingAgent({ engine: 'opencode', runtimes: [{ backend: 'tmux', paneId: '%7' }], cwd: '/tmp/demo', agent: 'harness-compute', defaultName: 'Local model' })!
+    expect(named.agent).toBe('harness-compute')
+    // A hook-triggered bind carries it forward, like `dsh` and `codexHome`.
+    const bound = registry.register({ engine: 'opencode', sessionId: 'session-agent', tmuxPane: '%7', title: 'OC | Greeting' })!.entry
+    expect(bound.agent).toBe('harness-compute')
+    // Absent is a general session; a shape the engine could not look a file up by is not kept.
+    const plain = registry.openPendingAgent({ engine: 'opencode', runtimes: [{ backend: 'tmux', paneId: '%8' }], cwd: '/tmp/demo' })!
+    expect(plain.agent).toBeNull()
+    const odd = registry.openPendingAgent({ engine: 'opencode', runtimes: [{ backend: 'tmux', paneId: '%9' }], cwd: '/tmp/demo', agent: '../etc' })!
+    expect(odd.agent).toBeNull()
+    const { registry: reloaded } = await loadRegistryModule()
+    reloaded.load()
+    expect(reloaded.byAgent(named.agentId)!.agent).toBe('harness-compute')
+    expect(reloaded.byAgent(plain.agentId)!.agent).toBeNull()
+  })
+
   it('persists a failed launch for reconnect while keeping its terminal route', async () => {
     const { registry } = await loadRegistryModule()
     registry.load()
@@ -1320,9 +1357,10 @@ describe('registry across a reboot and pane loss', () => {
       runtimes: [{ backend: 'tmux', paneId: '%9' }],
       cwd: '/tmp/demo',
       grid: { baseUrl: GRID_LAUNCH.baseUrl, model: 'gpt-5' },
-      gridLaunch: GRID_LAUNCH,
+      gridLaunchRecord: { override: GRID_LAUNCH, webSearch: 'on' },
     })!
     expect(pending.gridLaunch).toEqual(GRID_LAUNCH)
+    expect(pending.gridWebSearch).toBe('on')
     expect(pending.launch).toEqual({ state: 'starting' })
 
     const bound = registry.register({ sessionId: 'session-g', transcriptPath, tmuxPane: '%9', cwd: '/tmp/demo' })
@@ -1330,6 +1368,7 @@ describe('registry across a reboot and pane loss', () => {
     expect(bound?.entry).toMatchObject({
       grid: { baseUrl: GRID_LAUNCH.baseUrl, model: 'gpt-5' },
       gridLaunch: GRID_LAUNCH,
+      gridWebSearch: 'on',
       gateway: null,
     })
     // The hook is the engine reporting in: the launch is over and the frame reads ready.
@@ -1339,6 +1378,36 @@ describe('registry across a reboot and pane loss', () => {
     expect(registry.setGridLaunch(pending.agentId, null)).toBe(true)
     expect(registry.register({ sessionId: 'session-g', transcriptPath, tmuxPane: '%9', cwd: '/tmp/demo' })?.entry.gridLaunch).toBeNull()
     expect(registry.setGridLaunch('nobody', null)).toBe(false)
+  })
+
+  it('keeps the remembered subscription model across a reload', async () => {
+    // ⚠️ REGRESSION. A row is rebuilt from an explicit field list on load, so a field added to the
+    // type and the setter but NOT to that list is written to disk and silently dropped by the next
+    // load. It reads as "the setter never ran", which is where a day went — so what is pinned here
+    // is survival across a RELOAD, not merely that the setter returned true.
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    const pending = registry.openPendingAgent({
+      engine: 'claude',
+      runtimes: [{ backend: 'tmux', paneId: '%21' }],
+      cwd: '/tmp/demo',
+    })!
+    expect(registry.setSubscriptionModel(pending.agentId, 'opus')).toBe(true)
+    expect(registry.setSubscriptionModel('nobody', 'opus')).toBe(false)
+
+    // The reload is the whole test: a field missing from the rehydration list survives the write and
+    // dies here.
+    const { registry: reloaded } = await loadRegistryModule()
+    reloaded.load()
+    expect(reloaded.byAgent(pending.agentId)?.subscriptionModel).toBe('opus')
+
+    // ...and the SECOND way it was lost: a hook bind rebuilds the row from named fields, so a field
+    // the rebuild does not name is still on disk while memory has already forgotten it.
+    const transcriptPath = join(dataDir, 'session-sub.jsonl')
+    writeFileSync(transcriptPath, '{}\n')
+    const bound = reloaded.register({ sessionId: 'session-sub', transcriptPath, tmuxPane: '%21', cwd: '/tmp/demo' })
+    expect(bound?.entry.agentId).toBe(pending.agentId)
+    expect(bound?.entry.subscriptionModel).toBe('opus')
   })
 
   it('drops any launch state on the hook that proves the engine is up', async () => {

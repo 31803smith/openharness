@@ -27,7 +27,10 @@ import { registry, projectDisplayName, type RegisteredSession } from './lib/regi
 import { ENGINES, type AgentEngine } from './engines/types.js'
 import { listDir } from './lib/fsBrowse.js'
 import { linkCodexProfile, listCodexProfiles } from './lib/codexProfiles.js'
-import { parseGridLaunchOverride, type GridLaunchOverride } from './lib/gridLaunch.js'
+import { gridCliPresence } from './lib/gridExec.js'
+import { gridCapableEngines, parseGridLaunchOverride, type GridLaunchOverride } from './lib/gridLaunch.js'
+import { listGridModels, resolveGridTarget } from './lib/gridModels.js'
+import { AGENT_NAME_RE, FirstPromptUnsupportedError, MAX_FIRST_PROMPT_CHARS, NamedAgentUnsupportedError, supportsFirstPrompt, supportsNamedAgent } from './lib/engineLaunch.js'
 import { readAccountUsage, type AccountUsageReading } from './lib/accountUsage.js'
 import { probeEngines } from './lib/engineProbe.js'
 import { AgentCreationReceipts, AgentCreationReceiptError, creationFingerprint, validCreationId, type AgentCreationStatus } from './lib/agentCreationReceipt.js'
@@ -351,6 +354,16 @@ export class BackendSocket {
     codexHome: string | null
     /** The domain-specific harness to create this agent as (installed here, base engine = `engine`). */
     dsh: string | null
+    /** The message the session opens with, already submitted (`FIRST_PROMPT_ARGS` in engineLaunch.ts);
+     *  null when the pane opens on an empty input. Validated here — length, and that the engine has a
+     *  contract for it — so cli.ts never sees one it cannot hand over. Never logged. */
+    prompt: string | null
+    /** The name the pane opens under, instead of the next `agent-N`; null to number it. */
+    name: string | null
+    /** The engine's named agent the pane opens AS (`NAMED_AGENT_ARGS` in engineLaunch.ts; opencode
+     *  `--agent <name>`); null for a general session. Validated here — shape, and that the engine has
+     *  a contract for it. Unlike `prompt`, kept on the row so a relaunch opens as it again. */
+    agent: string | null
   }) =>
     Promise<{ ok: true; session: RegisteredSession } | { ok: false; error: string; detail?: string }>) | null = null
   /** Called on `dsh_install` — cli.ts clones/sets up/doctors the harness and reports each phase. */
@@ -578,6 +591,13 @@ export class BackendSocket {
   remotePasswordStatus(): ReturnType<E2eeManager['remotePasswordStatus']> {
     return this.e2ee.remotePasswordStatus()
   }
+
+  /** The account's private harness grid name, as the backend last reported it. Null until the first
+   *  `machine_meta` lands, or when this account has none yet. */
+  private harnessGridName: string | null = null
+
+  /** Which grid this machine's agents can be pointed at — for `harness status` and the models RPC. */
+  gridName(): string | null { return this.harnessGridName }
 
   connect(): void {
     if (this.closed || this.ws || this.connecting) return
@@ -1195,7 +1215,12 @@ export class BackendSocket {
 
     // Machine display name (seed on connect + web renames) — mirrored locally for `harness status`.
     if (type === 'machine_meta') {
-      const name = (frame.payload as { name?: unknown } | undefined)?.name
+      const meta = frame.payload as { name?: unknown; gridName?: unknown } | undefined
+      const name = meta?.name
+      // The account's private grid, pushed on every connect. Held in memory only: it is the
+      // backend's value, and a daemon that cached it on disk would keep answering with a stale one
+      // after the account's grid changed.
+      this.harnessGridName = typeof meta?.gridName === 'string' && meta.gridName.trim() ? meta.gridName.trim() : null
       this.onMachineMeta?.(typeof name === 'string' && name.trim() ? name.trim() : null)
       return
     }
@@ -1495,6 +1520,28 @@ export class BackendSocket {
           return
         }
 
+        case 'grid_models_list': {
+          // Only the account's OWN private grid: the picker is "models my machines serve", not a
+          // catalogue of every grid this computer's `grid` CLI happens to be signed into.
+          reply(type, requestId, {
+            gridName: this.harnessGridName,
+            models: await listGridModels(this.harnessGridName),
+            // Which engines a Local model can be offered to at all. Static per CLI version — it is
+            // the set of launch contracts in `gridLaunch.ts` — and answered here, beside the list,
+            // so the picker can say "Cursor runs only on its own login" instead of offering a row
+            // whose retarget the daemon would refuse. An older app ignores the field; an older
+            // daemon omits it, which the app reads as "offer everything", as before.
+            localModelEngines: gridCapableEngines(),
+            // Whether this MACHINE has a `grid` to run at all — `managed`, `path` or `missing` —
+            // as distinct from `gridName`, which is about the account. The Local model dialog was
+            // gating on the account alone and starting an agent whose second step is `grid`; this
+            // is what lets it, and the picker, say so first. An older app ignores the field.
+            gridCli: gridCliPresence(),
+          })
+          return
+        }
+
+
         case 'models_list': {
           const sessionId = typeof payload.agentId === 'string' && payload.agentId
             ? payload.agentId
@@ -1730,6 +1777,37 @@ export class BackendSocket {
             }
             dsh = installed.id
           }
+          // A first prompt is refused BEFORE any pane exists: an engine with no way to take one would
+          // otherwise open on an empty input and look like the person's request had been heard. The
+          // length bound is a first message's, not a document's. The text itself is never logged.
+          let prompt: string | null = null
+          if (payload.prompt !== undefined && payload.prompt !== null) {
+            if (typeof payload.prompt !== 'string') { reply(type, requestId, { error: 'INVALID_PROMPT', detail: 'prompt must be a string' }); return }
+            const trimmed = payload.prompt.trim()
+            if (trimmed.length > MAX_FIRST_PROMPT_CHARS) {
+              reply(type, requestId, { error: 'PROMPT_TOO_LONG', detail: `prompt is longer than ${MAX_FIRST_PROMPT_CHARS} characters` }); return
+            }
+            if (trimmed && !supportsFirstPrompt(engine)) {
+              reply(type, requestId, { error: 'PROMPT_UNSUPPORTED', detail: new FirstPromptUnsupportedError(engine).message }); return
+            }
+            prompt = trimmed || null
+          }
+          // Blank is "number it", the same as absent — a client that sends an empty field is not
+          // asking for an agent with no name.
+          const name = typeof payload.name === 'string' && payload.name.trim() ? payload.name.trim() : null
+          // The engine's named agent is refused BEFORE any pane exists, like the prompt: an engine with
+          // no way to open as one would otherwise come up as a general session under that agent's
+          // name. The shape is an identifier the engine looks a file up by — never a path.
+          let agent: string | null = null
+          if (payload.agent !== undefined && payload.agent !== null) {
+            if (typeof payload.agent !== 'string' || !AGENT_NAME_RE.test(payload.agent)) {
+              reply(type, requestId, { error: 'INVALID_AGENT', detail: 'agent must be 1-64 letters, digits, `-` or `_`' }); return
+            }
+            if (!supportsNamedAgent(engine)) {
+              reply(type, requestId, { error: 'AGENT_UNSUPPORTED', detail: new NamedAgentUnsupportedError(engine).message }); return
+            }
+            agent = payload.agent
+          }
           const input = {
             engine,
             cwd: typeof cwd === 'string' ? cwd : '',
@@ -1737,6 +1815,9 @@ export class BackendSocket {
             grid: grid.state === 'ok' ? grid.override : null,
             codexHome,
             dsh,
+            prompt,
+            name,
+            agent,
           }
           if (creationId !== undefined) {
             // Reserve before spawning. A transport retry carries the SAME creationId; a deliberate
@@ -1792,6 +1873,19 @@ export class BackendSocket {
           if (!agentId) { reply(type, requestId, { error: 'MISSING_AGENT_ID' }); return }
           if (!this.onRetargetAgent) { reply(type, requestId, { error: 'UNSUPPORTED_ON_REMOTE' }); return }
           const clear = payload.clearGrid === true
+          // `gridModel` is the header picker's frame: a model id and nothing else. The endpoint and
+          // the credential are resolved HERE, from this machine's own signed-in `grid`, so neither
+          // ever crosses the relay and the app cannot be the source of truth for an address it does
+          // not know. A client that sends the full `grid` object still works unchanged.
+          const picked = typeof payload.gridModel === 'string' ? payload.gridModel : ''
+          if (picked && payload.grid === undefined && !clear) {
+            const resolved = await resolveGridTarget(this.harnessGridName, picked)
+            if (!resolved) {
+              reply(type, requestId, { error: 'GRID_UNAVAILABLE', detail: 'Could not read this machine\'s grid endpoint.' })
+              return
+            }
+            payload.grid = resolved
+          }
           const target = parseGridLaunchOverride(payload.grid)
           // Exactly one, and `clearGrid` is a separate field rather than `grid: null` on purpose:
           // parseGridLaunchOverride already answers `absent` for both undefined and null, so

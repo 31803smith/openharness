@@ -654,4 +654,45 @@ void main() {
       app.dispose();
     },
   );
+
+  // The three refusals a grid launch can raise before anything starts, each with the sentence the
+  // daemon actually sends beside its code (`backendSocket.ts` / `launchOverrides.ts`). What the
+  // person reads must be that sentence, never the bare code.
+  for (final (code, detail) in const [
+    ('INVALID_GRID', 'grid is missing networkId, apiKey'),
+    (
+      'TMUX_TOO_OLD_FOR_GRID',
+      "this machine's tmux is older than 3.2, which is the first version that can give a pane its own environment — so claude could not be pointed at grid Team grid.",
+    ),
+    (
+      'GRID_CONFIG_FAILED',
+      "could not write pi's grid configuration · EACCES: permission denied",
+    ),
+  ]) {
+    test('a $code refusal reads as a sentence, not a code', () async {
+      final connection = _Connection();
+      final app = createApp(connectionForTest: (_) => connection);
+      addTearDown(app.dispose);
+      final attempt = AgentCreationAttempt();
+      final create = app.createAgent(
+        'm',
+        engine: 'claude',
+        folder: '/work',
+        attempt: attempt,
+      );
+      connection.calls.last.reply.completeError(
+        WsRequestFailure(
+          responseType: 'agent_create_result',
+          code: code,
+          detail: detail,
+        ),
+      );
+      final message = await create;
+      expect(message, isNotNull);
+      expect(message, contains(detail));
+      expect(message, isNot(contains(code)));
+      // Refused before a launch: nothing to recover, and a second Create is safe.
+      expect(attempt.awaitingConfirmation, isFalse);
+    });
+  }
 }

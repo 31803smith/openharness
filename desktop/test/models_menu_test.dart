@@ -4,14 +4,72 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/screens/swarm_screen.dart';
+import 'package:harness/state/app_state.dart';
 import 'package:harness/state/swarm_catalog.dart';
 import 'package:harness/usage/models_menu_controller.dart';
 import 'package:harness/usage/usage_accounts.dart';
 import 'package:harness/usage/usage_controller.dart';
 import 'package:harness/usage/usage_source.dart';
 import 'package:harness/usage/usage_window.dart';
+import 'package:harness/ws/ws_conn.dart';
 
 import 'swarm_state_test.dart' show createApp;
+
+/// Answers what the Talk to Local model manager dialog reads on opening and records the
+/// create it sends on Start. Anything else asked (the terminal the new pane
+/// opens, say) is left pending, which is what a machine that has not answered
+/// yet looks like — the same shape as the dialog's own test.
+class _LocalModelConn extends WsConn {
+  _LocalModelConn()
+    : super(
+        wsBaseUrl: 'ws://fixture.invalid',
+        autonomousEnv: 'test',
+        machineId: 'm',
+        accessTokenProvider: (_, _) async => '',
+        onAuthFailure: (_) {},
+        onEvent: (_) {},
+        onStatus: (_) {},
+      );
+
+  final creates = <Map<String, dynamic>>[];
+
+  @override
+  Future<Map<String, dynamic>> request(
+    String type, {
+    Map<String, dynamic> payload = const {},
+    Duration timeout = const Duration(seconds: 20),
+  }) {
+    switch (type) {
+      case 'engines_probe':
+        return Future.value({
+          'engines': [
+            {'engine': 'opencode', 'installed': true},
+          ],
+        });
+      case 'grid_models_list':
+        return Future.value({'gridName': 'someone-7f3a91c4', 'models': []});
+      case 'fs_list_dir':
+        return Future.value({
+          'path': '/home/remote',
+          'entries': [],
+          'truncated': false,
+        });
+      case 'agent_create':
+        creates.add(Map.of(payload));
+        return Future.value({
+          'creationId': payload['creationId'],
+          'state': 'created',
+          'agent': {
+            'id': 'lm1',
+            'name': 'Local model manager',
+            'engine': 'opencode',
+          },
+        });
+      default:
+        return Completer<Map<String, dynamic>>().future;
+    }
+  }
+}
 
 class _Source implements UsageSource {
   _Source(this.provider, this.answer);
@@ -251,6 +309,69 @@ void main() {
       );
       menu.dispose();
       usage.dispose();
+      app.dispose();
+      projects.dispose();
+    },
+  );
+
+  testWidgets(
+    'native runLocalModel opens the dialog, and Start creates the agent',
+    (tester) async {
+      // The Models menu's one command arrives as a bare method call with no
+      // arguments, the way Link Machine… does. It must reach the notifier's
+      // action through this screen's context — the dialog is the proof the
+      // door is wired, and the create is the proof it leads somewhere.
+      tester.view.physicalSize = const Size(1200, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      const channel = MethodChannel('harness/swarm_tabs');
+      final messenger = tester.binding.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(channel, (call) async => true);
+      addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+      final conn = _LocalModelConn();
+      final app = createApp(connectionForTest: (_) => conn);
+      // A create on a machine the app believes offline parks the agent and
+      // polls for the node — a timer that never lets the frame settle. The
+      // fixture host is answering, so say so.
+      app.machineStates['m']!.nodeOnline = true;
+      final projects = SwarmProjectStore();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SwarmScreen(
+            notifier: app,
+            nativeTabs: true,
+            projectStore: projects,
+          ),
+        ),
+      );
+      final reply = Completer<void>();
+      messenger.handlePlatformMessage(
+        channel.name,
+        const StandardMethodCodec().encodeMethodCall(
+          const MethodCall('runLocalModel'),
+        ),
+        (_) => reply.complete(),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Models that live on your machine'), findsOneWidget);
+      // Nothing is missing on this machine, so nothing about it is said.
+      expect(find.byKey(const Key('run-local-model-status')), findsNothing);
+      expect(conn.creates, isEmpty);
+
+      await tester.tap(find.byKey(const Key('run-local-model-start')));
+      await tester.pumpAndSettle();
+      // The handler answers only once the dialog is done, the way every
+      // dialog door does, so native focus is not handed back mid-dialog.
+      await reply.future;
+      expect(find.text('Models that live on your machine'), findsNothing);
+      final create = conn.creates.single;
+      expect(create['engine'], 'opencode');
+      expect(create['agent'], AppNotifier.localModelAgent);
+      expect(create['name'], AppNotifier.localModelAgentName);
+      expect(create.containsKey('prompt'), isFalse);
+      expect(create['cwd'], '/home/remote');
+
+      await tester.pumpWidget(const SizedBox());
       app.dispose();
       projects.dispose();
     },

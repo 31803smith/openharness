@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:io' show exit, pid;
+import 'dart:io' show Platform, exit, pid;
 import 'dart:math' show Random;
 
 import 'package:dio/dio.dart';
@@ -7,6 +7,7 @@ import 'package:dio/dio.dart';
 import 'dart:ui' show Color;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart' show BuildContext;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../analytics/analytics.dart';
@@ -42,6 +43,7 @@ import '../logging/app_log.dart';
 import '../shared/theme/app_theme.dart' as grid;
 import '../terminal/remote_media_download.dart';
 import '../widgets/engine_identity.dart' show allEngines, engineIdentity;
+import '../widgets/run_local_model_dialog.dart' show showRunLocalModelDialog;
 import 'dial_status.dart';
 import 'pane_layout_store.dart';
 import 'terminal_pane.dart';
@@ -50,6 +52,7 @@ import '../terminal/terminal_binary.dart';
 import '../update/desktop_updater.dart';
 import '../update/manual_update_check.dart';
 import '../ws/ws_conn.dart';
+import 'retarget_refusal.dart';
 import '../ws/local_cli_discovery.dart';
 import '../ws/ws_pool.dart';
 import 'pane_preset.dart';
@@ -3398,6 +3401,207 @@ class AppNotifier extends ChangeNotifier {
     }
   }
 
+  /// Put one agent back on its own vendor login — the Claude / Codex subscription it had before a
+  /// grid model was chosen.
+  ///
+  /// `clearGrid` is a separate flag rather than `gridModel: null` on purpose: the daemon treats an
+  /// absent field as "I did not mention the grid", so overloading null would make a forgotten field
+  /// and a deliberate "put it back" the same frame. Same pane respawn as picking a model.
+  Future<void> clearAgentGrid(String machineId, String agentId) async {
+    try {
+      await _conn(machineId).request(
+        'agent_retarget',
+        payload: {'agentId': agentId, 'clearGrid': true},
+        timeout: const Duration(seconds: 30),
+      );
+    } on WsRequestFailure catch (failure) {
+      _reportRetargetRefusal(machineId, agentId, failure.code);
+    } catch (_) {
+      // A transport failure or a timeout: the daemon may well have done the move, and the frame
+      // that follows says where the agent is. A guess here would tell a story the pane contradicts.
+    }
+  }
+
+  /// A refusal happens BEFORE the daemon touches the pane — an engine with no way onto a Local
+  /// model, a busy agent, a machine that cannot resolve its Local models — so nothing in the
+  /// terminal ever says why, and until this existed the click simply did nothing. One sentence, in
+  /// the app's own words (`retargetRefusalMessage`); the daemon's detail names the grid.
+  void _reportRetargetRefusal(String machineId, String agentId, String code) {
+    final agent = machineStates[machineId]?.agents
+        .where((a) => a.id == agentId)
+        .firstOrNull;
+    final label = engineIdentity(agent?.engine).label;
+    _lastError = retargetRefusalMessage(code, engineLabel: label);
+    _lastErrorRetryable = false;
+    notifyListeners();
+  }
+
+  /// Point one agent at a model on the account's private grid.
+  ///
+  /// Sends the model id and nothing else: the daemon on that machine resolves the endpoint and the
+  /// credential from its own signed-in `grid`, so neither travels over the relay and the app never
+  /// holds a grid key. Moving an agent re-execs its pane, which is why this is an explicit choice in
+  /// a menu rather than something that can happen by hovering.
+  Future<void> retargetAgentToGridModel(
+    String machineId,
+    String agentId,
+    String modelId,
+  ) async {
+    try {
+      await _conn(machineId).request(
+        'agent_retarget',
+        payload: {'agentId': agentId, 'gridModel': modelId},
+        timeout: const Duration(seconds: 30),
+      );
+    } on WsRequestFailure catch (failure) {
+      _reportRetargetRefusal(machineId, agentId, failure.code);
+    } catch (_) {
+      // See `clearAgentGrid`: a transport failure is not a refusal, and the next frame is the truth.
+    }
+  }
+
+  /// Live models on the account's private harness grid, for the pane header's picker.
+  ///
+  /// Asked of the machine the pane belongs to rather than kept in app state: the answer is whatever
+  /// that machine's `grid` reports at this moment (an engine can join or leave between two opens),
+  /// and a cached list would offer a model nobody is serving any more.
+  ///
+  /// Never throws — a machine whose daemon is too old to know the RPC, one with no grid, and one
+  /// that timed out are all "nothing to offer", which is what the picker shows.
+  Future<GridModels> gridModels(String machineId) async {
+    try {
+      final response = await _conn(machineId)
+          .request('grid_models_list', timeout: const Duration(seconds: 12));
+      final models = (response['models'] as List<dynamic>? ?? [])
+          .whereType<Map<String, dynamic>>()
+          .map(
+            (m) => GridModel(
+              id: (m['id'] as String?) ?? '',
+              node: (m['node'] as String?) ?? '',
+            ),
+          )
+          .where((m) => m.id.isNotEmpty)
+          .toList();
+      final capable = response['localModelEngines'];
+      return GridModels(
+        gridName: response['gridName'] as String?,
+        models: models,
+        localModelEngines: capable is List
+            ? capable.whereType<String>().map((e) => e.toLowerCase()).toSet()
+            : null,
+        gridCli: GridCli.parse(response['gridCli']),
+      );
+    } catch (_) {
+      // NOT `gridName: null` with an empty list — that is the shape of "this account has no grid",
+      // and a caller cannot tell it from "the machine did not answer". A signed-in user whose daemon
+      // was offline was told to sign in again, which was both wrong and unactionable.
+      return const GridModels.unreachable();
+    }
+  }
+
+  /// The opencode agent the pane is opened AS (`opencode --agent harness-compute`):
+  /// the definition `harness start` installs beside the harness-compute skill,
+  /// whose whole job is that skill. Not a first prompt — the person opens the
+  /// conversation, and the agent's identity is what makes the pane read as
+  /// "the thing that starts a local model" rather than a terminal that happens
+  /// to be running opencode.
+  static const localModelAgent = 'harness-compute';
+
+  /// What the pane is called before, and if never, the engine names its
+  /// session.
+  static const localModelAgentName = 'Local model manager';
+
+  /// The one action behind every "Talk to Local model manager" entry: explain once,
+  /// then open opencode as the agent that starts one.
+  ///
+  /// Runs on the computer the app is on ([MachineState.isLocalMachine]) — a
+  /// local model is about THIS hardware — and falls back to the focused
+  /// machine only when there is no local one, in which case the dialog's
+  /// machine line says so by naming it. With the dialog waved off for good
+  /// ([ConfigStore.runLocalModelSkipDialog]) the agent is created straight
+  /// away; otherwise the dialog decides, and Start is what creates. Nothing
+  /// here reports progress: the pane appearing is the confirmation, and a
+  /// refusal lands in [lastError] like any other create.
+  ///
+  /// Takes the caller's [context] because the dialog needs one and this
+  /// notifier holds none — the same shape as every other dialog a door opens.
+  Future<void> runLocalModel(BuildContext context) async {
+    final machine = _localModelMachine();
+    if (machine == null) {
+      _lastError = 'Connect a machine before starting a local model.';
+      _lastErrorRetryable = false;
+      notifyListeners();
+      return;
+    }
+    final machineId = machine.machine.machineId;
+    if (_store?.runLocalModelSkipDialog != true) {
+      final decision = await showRunLocalModelDialog(context, this, machineId);
+      if (decision == null) return;
+      if (decision.skipNextTime) {
+        try {
+          await _store?.saveRunLocalModelSkipDialog(true);
+        } catch (_) {
+          // A state file that cannot be written costs one more look at the
+          // dialog next time, not the agent being asked for now.
+        }
+      }
+    }
+    final error = await _startLocalModelAgent(machineId);
+    if (error != null) {
+      _lastError = error;
+      _lastErrorRetryable = false;
+      notifyListeners();
+    }
+  }
+
+  /// The machine a local model belongs on: this computer's own when the app
+  /// has one, else whatever the person is looking at.
+  MachineState? _localModelMachine() {
+    final local = machineStates.values
+        .where((state) => state.isLocalMachine)
+        .firstOrNull;
+    if (local != null) return local;
+    final focused = focusedPane?.machineId ?? selectedMachineId;
+    return (focused == null ? null : machineStates[focused]) ??
+        machineStates.values.firstOrNull;
+  }
+
+  /// What Start stands for: opencode, in the user's home, opened as the
+  /// `harness-compute` agent and waiting for the person to type. Home rather than
+  /// a project because the model is not about any one repo; no first prompt,
+  /// because the person opens the conversation. Null on success, else the
+  /// sentence for the person.
+  Future<String?> _startLocalModelAgent(String machineId) async {
+    final machine = machineStates[machineId];
+    if (machine == null) return 'Machine not found';
+    final home = await _homeFolderOf(machine);
+    if (home == null) {
+      return 'Could not find the home folder on ${machine.machine.displayName}.';
+    }
+    return createAgent(
+      machineId,
+      engine: 'opencode',
+      folder: home,
+      agent: localModelAgent,
+      name: localModelAgentName,
+    );
+  }
+
+  /// The user's home on [machine]. This computer's is in the environment; a
+  /// remote machine's is known only to that machine, which is what
+  /// `fs_list_dir` with no path answers from (its `listDir` defaults to the
+  /// home directory).
+  Future<String?> _homeFolderOf(MachineState machine) async {
+    if (machine.isLocalMachine) {
+      final home =
+          Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
+      if (home != null && home.isNotEmpty) return home;
+    }
+    final listing = await listRemoteFolder(machine.machine.machineId, null);
+    final path = listing['path'];
+    return path is String && path.isNotEmpty ? path : null;
+  }
+
   WsConn _conn(String machineId) {
     final testConnection = connectionForTest;
     if (testConnection != null) return testConnection(machineId);
@@ -4496,6 +4700,9 @@ class AppNotifier extends ChangeNotifier {
     bool bypassPermission = false,
     String? codexHome,
     String? dsh,
+    String? prompt,
+    String? name,
+    String? agent,
     String? swarmId,
     PaneSplitRequest? split,
     AgentCreationAttempt? attempt,
@@ -4510,6 +4717,19 @@ class AppNotifier extends ChangeNotifier {
       // The harness this agent is created from. `engine` above is its BASE —
       // the machine refuses the pair when they disagree (`INVALID_DSH`).
       'dsh': ?dsh,
+      // A first message the engine is opened with, and the pane's name before
+      // the engine reports a session title. Both absent unless asked for: a
+      // daemon that predates them ignores an unknown field, but one that knows
+      // them refuses a prompt for an engine with no way to take one
+      // (`PROMPT_UNSUPPORTED`), and an empty field would trip that for every
+      // ordinary create.
+      'prompt': ?prompt,
+      'name': ?name,
+      // The engine's own named agent to open AS (opencode `--agent <name>`):
+      // the pane is that agent, with its name and system prompt, rather than
+      // a general session. Same absent-unless-asked rule as `prompt`, and the
+      // same refusal for an engine that has no such thing (`AGENT_UNSUPPORTED`).
+      'agent': ?agent,
     };
     if (creation._choices != null &&
         (creation._machineId != machineId ||
@@ -4582,6 +4802,10 @@ class AppNotifier extends ChangeNotifier {
         'INVALID_DSH' =>
           'This harness is not installed on $machine. '
               '${detail ?? 'Install it there, then try again.'}',
+        'PROMPT_UNSUPPORTED' =>
+          'This engine cannot be opened with a first message on $machine.',
+        'AGENT_UNSUPPORTED' =>
+          'This engine cannot be opened as a named agent on $machine.',
         _ => 'Create agent failed: ${detail ?? code}',
       };
 
@@ -4688,6 +4912,8 @@ class AppNotifier extends ChangeNotifier {
         'INVALID_GRID',
         'INVALID_CODEX_HOME',
         'INVALID_DSH',
+        'PROMPT_UNSUPPORTED',
+        'AGENT_UNSUPPORTED',
         'TMUX_UNAVAILABLE',
         'TMUX_TOO_OLD_FOR_GRID',
         'GRID_CONFIG_FAILED',

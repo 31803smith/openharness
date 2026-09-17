@@ -27,6 +27,7 @@ import { homedir, hostname } from 'os'
 import { env } from './config/env.js'
 import { VERSION } from './version.js'
 import { sqlitePreflightMessage } from './lib/sqliteAvailability.js'
+import { binaryOnPath } from './lib/binaryOnPath.js'
 import { warmLoginShellEnvironment } from './lib/loginShellEnv.js'
 import { ensureUtf8Locale } from './lib/childLocale.js'
 import { DialLog } from './cable/dialLog.js'
@@ -39,6 +40,7 @@ import { DeviceLink } from './device/deviceLink.js'
 import { DeviceFleet } from './device/deviceFleet.js'
 import { registry, projectDisplayName, type RegisteredSession } from './lib/registry.js'
 import { installAmpPlugin, installCodexHooks, installCommandCodeHooks, installCursorHooks, installDevinHooks, installGrokHooks, installAgyHooks, installCopilotHooks, installHermesHooks, installKiloPlugin, installOpencodePlugin, installPiExtension, installSessionHooks } from './lib/hooks.js'
+import { installOpencodeHarnessComputeSkill } from './lib/harnessComputeSkill.js'
 import { PID_FILE, daemonPort, isAlive, readPid } from './lib/daemonState.js'
 import {
   BIND_WAIT_MS, connectFailure, defaultLaunchDeps, removePidFileIf, waitForBind, waitForReady,
@@ -51,13 +53,15 @@ import { readOrMintComputerId } from './lib/computerIdentity.js'
 import { renderLoginSuccessHtml } from './lib/loginPage.js'
 import { AuthSessionError, AuthSessionManager, clearAuthSession, readAuthSession, writeAuthSession, type AuthSession } from './lib/authSession.js'
 import { handOffToGrid } from './lib/gridHandoff.js'
+import { ensureHarnessGrid } from './lib/gridEnsure.js'
 import { passThroughToGridLogout } from './lib/gridLogout.js'
+import { clearGridMcpUrlCache } from './lib/gridMcpUrl.js'
 import { warnIfGridSignInRemains } from './lib/gridCredentials.js'
 import { ENGINE_CLI_COMMANDS, ENGINES, engineBin, enginePathOverride } from './lib/engineBin.js'
 import type { AgentEngine } from './engines/types.js'
 import { engineInstallRecipe } from './lib/engineInstall.js'
-import { buildEngineCommandArgv, buildEngineLaunchArgv, commandAvailableInInteractiveShell } from './lib/engineLaunch.js'
-import { buildGridEngineLaunch, describeGridLaunch, gridConflictingEnvToClear, gridEnvVarNames, type GridEngineLaunch } from './lib/gridLaunch.js'
+import { buildEngineCommandArgv, buildEngineLaunchArgv, commandAvailableInInteractiveShell, namedAgentArgs } from './lib/engineLaunch.js'
+import { buildGridEngineLaunch, describeGridLaunch, gridConflictingEnvToClear, gridEnvVarNames, type GridLaunchMachine, type GridWebSearchStatus } from './lib/gridLaunch.js'
 import { HERMES_SYSTEM_MANAGED_DIR } from './lib/gridWebMcp.js'
 import { writeGridConfigDir } from './lib/gridConfigDir.js'
 import { tmuxSupportsSessionEnv, TMUX_SESSION_ENV_MIN } from './lib/tmuxVersion.js'
@@ -69,7 +73,8 @@ import { TmuxBackend } from './lib/tmuxBackend.js'
 import { DEFAULT_HOST_THEME, loadHostTheme, saveHostTheme, type HostTheme } from './lib/hostTheme.js'
 import { createAndRegisterPane } from './lib/createAgentPane.js'
 import { restoreAgents } from './lib/restoreAgents.js'
-import { buildLaunchOverrides, validateLaunchOverrides, type LaunchOverridesDeps, type LaunchOverridesResult, type LaunchSource } from './lib/launchOverrides.js'
+import { buildLaunchOverrides, validateLaunchOverrides, type LaunchOverrides, type LaunchOverridesDeps, type LaunchOverridesResult, type LaunchSource } from './lib/launchOverrides.js'
+import { prepareCodexResume } from './engines/codex/portableHistory.js'
 import { buildHarnessSessionLabel } from './lib/harnessSessionLabel.js'
 import { installedDsh } from './dsh/installed.js'
 import { dshVerdictPath } from './dsh/manifest.js'
@@ -144,7 +149,7 @@ import {
   type Poller, type UpdateEntry,
 } from './lib/selfUpdate.js'
 import { managedNodePath } from './lib/nodeRuntime.js'
-import { ensureLauncher, ensureManagedRuntime } from './lib/runtimeInstall.js'
+import { ensureLauncher, ensureManagedGrid, ensureManagedRuntime } from './lib/runtimeInstall.js'
 import { stat } from 'fs/promises'
 import { CodexNormalizer, codexTaskError, lastCodexTurnText } from './engines/codex/normalizer.js'
 import { codexSubagentResolverFor } from './engines/codex/subagent.js'
@@ -154,6 +159,7 @@ import { CursorSubagentManager } from './engines/cursor/subagent.js'
 import { CursorTaskHookQueue } from './engines/cursor/taskHookQueue.js'
 import { loadCursorPendingTasks, removeCursorPendingTasks } from './engines/cursor/pendingTasks.js'
 import { OpencodeReader, readOpencodeMessages } from './engines/opencode/reader.js'
+import { opencodeModelFromArgv, setOpencodeSessionModel } from './engines/opencode/sessionModel.js'
 import { lastOpencodeTurnText } from './engines/opencode/normalizer.js'
 import { KiloReader, readKiloMessages } from './engines/kilo/reader.js'
 import { lastKiloTurnText } from './engines/kilo/normalizer.js'
@@ -182,7 +188,7 @@ import { probeGridAssignment, sameGridAssignment } from './lib/gridAssignment.js
 import { agentFrame, type AgentFrame } from './lib/agentFrame.js'
 import { SessionInputController } from './lib/sessionInput.js'
 import { adaptSlashCommand } from './lib/goalCommand.js'
-import { RuntimeProfileManager } from './lib/runtimeProfile.js'
+import { RuntimeProfileManager, parseRuntimeProfile } from './lib/runtimeProfile.js'
 import { RuntimeProfileController, inspectRuntimePane } from './lib/runtimeProfileController.js'
 import { deviceErrorText } from './lib/deviceErrors.js'
 import { correlateAgentEvent, turnHeartbeatFrame } from './lib/agentEvent.js'
@@ -502,6 +508,42 @@ type SignInOutcome =
   /** Refused. Under `--json` its own coded result line has already been emitted. */
   | { signedIn: false }
 
+/**
+ * Sign this computer in to its grid too, and make sure the account's private harness grid exists.
+ *
+ * ⚠️ **Best-effort, always.** A machine with no `grid`, one too old for `--harness`, a grid sign-in
+ * that fails, a backend that predates `POST /api/grid/name` — every one of them is a sentence on
+ * stderr and a harness sign-in that still succeeds. The harness is what the person asked for; the
+ * grid is what it can usually also arrange. `harness grid login` stays the explicit path, where the
+ * same failure IS the command's failure and exits non-zero.
+ *
+ * Returns what happened, so `--json` callers can carry it on their own result line.
+ */
+async function attachGridToSignIn(token: string, json: boolean): Promise<Record<string, unknown>> {
+  const note = (line: string): void => { if (!json) console.error(`  · ${line}`) }
+  const handoff = await handOffToGrid(token, { json: true })
+  if (handoff.code !== 'OK') {
+    note(handoff.message)
+    return { grid: { signedIn: false, code: handoff.code } }
+  }
+  // The name is the backend's to mint and remember — this CLI holds neither the account's email nor
+  // its id (see backend/src/routes/grid.ts). A backend without the route is simply an older backend:
+  // no grid is ensured, nothing fails, and the next sign-in after it ships picks this up.
+  let gridName: string | null = null
+  try {
+    const { headers } = await controlPlaneAuth()
+    gridName = (await postJson<{ gridName?: string }>('/api/grid/name', {}, headers)).gridName ?? null
+  } catch (err) {
+    note(`Could not read this account's grid name (${(err as Error).message}); skipping grid setup.`)
+    return { grid: { signedIn: true, ensured: 'skipped' } }
+  }
+  if (!gridName) return { grid: { signedIn: true, ensured: 'skipped' } }
+  const ensured = await ensureHarnessGrid(gridName)
+  if (ensured.status === 'failed' || ensured.status === 'skipped') note(ensured.message)
+  else if (ensured.status === 'created') note(`Created your private grid '${gridName}'.`)
+  return { grid: { signedIn: true, ensured: ensured.status, name: gridName } }
+}
+
 async function loginCommand(
   foreground: boolean,
   force: boolean,
@@ -510,9 +552,21 @@ async function loginCommand(
 ): Promise<SignInOutcome> {
   if (foreground) throw new Error('`harness login` does not run the adapter. Use `harness start -f`.')
   const emit = (line: Record<string, unknown>): void => { if (json) console.log(JSON.stringify(line)) }
-  const succeed = (alreadySignedIn: boolean): SignInOutcome => {
+  const succeed = async (alreadySignedIn: boolean): Promise<SignInOutcome> => {
+    // `chained` is `harness grid login`, which runs the hand-off itself and reports it as its own
+    // result — doing it here too would sign in to the grid twice and print two answers for one act.
+    let grid: Record<string, unknown> = {}
+    if (!opts.chained) {
+      try {
+        grid = await attachGridToSignIn(await new AuthSessionManager(backendHttpBase()).accessToken(), json)
+      } catch {
+        // The harness session is already saved and valid; a grid step that throws is still only a
+        // grid step. Never let it turn a completed sign-in into a failure.
+        grid = {}
+      }
+    }
     if (opts.chained) return { signedIn: true, alreadySignedIn }
-    if (json) emit(alreadySignedIn ? { type: 'result', status: 'success', alreadySignedIn: true } : { type: 'result', status: 'success' })
+    if (json) emit(alreadySignedIn ? { type: 'result', status: 'success', alreadySignedIn: true, ...grid } : { type: 'result', status: 'success', ...grid })
     else if (alreadySignedIn) console.log('\n  ✓ Already signed in. Run `harness start` to connect this computer.\n')
     else console.log('\n  ✓ Signed in. Run `harness start` to connect this computer.\n')
     return { signedIn: true, alreadySignedIn }
@@ -535,7 +589,7 @@ async function loginCommand(
       }
       throw err
     }
-    return succeed(true)
+    return await succeed(true)
   }
   // A forced login may intentionally switch SSO accounts. The old daemon must not keep streaming
   // under its existing socket while this process replaces the durable session.
@@ -628,7 +682,7 @@ async function loginCommand(
       if (json) { emit({ type: 'result', status: 'error', code: 'BACKEND_ERROR', message: (err as Error).message }); process.exitCode = 1; return { signedIn: false } }
       throw err
     }
-    return succeed(false)
+    return await succeed(false)
   } finally {
     await new Promise<void>((resolve) => callback.close(() => resolve()))
   }
@@ -956,26 +1010,36 @@ async function updateCommand(force: boolean): Promise<void> {
 /**
  * Stop the local adapter and discard this computer's SSO session — local, and unable to fail.
  *
- * ⚠️ **This never touches the grid credential store, and must not learn to.** Two reasons, and both
- * matter: `grid logout` can refuse and exit non-zero over a serve child it cannot confirm stopped,
- * so cascading would let a grid condition block a harness sign-out for a reason that has nothing to
- * do with the harness; and the store may predate the harness entirely, having been written by a
- * browser sign-in this CLI knows nothing about. All that is owed is the sentence below, so that a
- * long-lived credential is not left behind in silence.
+ * **This DOES sign the grid out too, as of the one-sign-in flow.** That reverses the rule this
+ * comment used to state, so the reversal is written down rather than left to be rediscovered: one
+ * sign-in creates the grid session, so one sign-out ends it. The two objections that rule was built
+ * on are both answered rather than ignored —
+ *
+ *   * `grid logout` can refuse and exit non-zero over a serve child it cannot confirm stopped. So
+ *     its refusal is REPORTED, never propagated: a grid condition must not block a harness sign-out.
+ *   * the grid store may predate the harness, written by a browser sign-in this CLI knows nothing
+ *     about. Ending that session is now the intended behaviour, not an overreach — and when no
+ *     `grid` can be run at all, the old sentence is still printed so nothing is left behind silently.
+ *
+ * It runs BEFORE the harness session is cleared, because `grid logout` tears down every serve child
+ * on this box first, while the token that makes their deregistration authoritative still exists.
  */
 async function logout(): Promise<void> {
   // Through the lock-taking stop, not an inline kill: a logout that lands mid-handoff would otherwise
   // SIGTERM the OLD daemon, leave the new one coming up, and then delete the session under it.
   await stopDaemonProcess()
+  // Before clearAuthSession: see the note above on serve children. Its exit code is deliberately
+  // dropped — this command cannot fail — and its own words have already reached the terminal.
+  const gridOut = await passThroughToGridLogout([])
   clearAuthSession()
   rmSync(MACHINE_NAME_FILE, { force: true })
   // Same reason as the name above: the cached machine list describes the account that just left, and the
   // local `/api/machines` fallback would otherwise hand it to whoever signs in next on this computer.
   rmSync(machineListCachePath(), { force: true })
   console.log('Signed out. Run `harness login`, then `harness start`, to reconnect this computer.')
-  // Existence is the whole of the test — nothing is read out of the store, and nothing is written
-  // into it. On stderr, so a script reading this command's output is unaffected by it.
-  warnIfGridSignInRemains()
+  // Only when there was no `grid` to run at all. A child that ran has already said what it did, and
+  // repeating "your grid sign-in is still here" after a successful sign-out would be false.
+  if (!gridOut.ran) warnIfGridSignInRemains()
   process.exit(0)
 }
 
@@ -1031,6 +1095,14 @@ async function runForeground(session: AuthSession): Promise<void> {
   process.on('uncaughtException', (err) => {
     console.error('[fatal-guard] uncaughtException:', err instanceof Error ? (err.stack ?? err.message) : err)
   })
+
+  // The managed grid follows its pin on EVERY daemon start — this one, and the restart a self-update
+  // ends in — not only on `--repair`: the pin is expected to move, and a machine installed last month
+  // has to notice. Not awaited: a download must never hold the control port back, and every grid
+  // call resolves the binary afresh (`gridBinaryPath`), so whatever lands is picked up as it lands.
+  // Best-effort by construction — it returns rather than throws — and the fatal guard above is the
+  // net under the promise itself.
+  void ensureManagedGrid((m) => console.log(`[grid-runtime] ${m}`))
 
   registry.load()
   // Persisted locators are hints until this process has observed their terminal root and PID/start marker.
@@ -3403,6 +3475,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     installCodexHooks(hookPort)
     installCursorHooks(hookPort)
     installOpencodePlugin(hookPort)
+    installOpencodeHarnessComputeSkill()
     installKiloPlugin(hookPort)
     installPiExtension(hookPort)
     // A self-update refreshes plugin files here; running engine processes pick them up according to each
@@ -3519,23 +3592,17 @@ async function runForeground(session: AuthSession): Promise<void> {
     }
   }
   /**
-   * The config directory a grid launch should actually be given on THIS machine, or none.
+   * What the launch builder needs to know about THIS machine, read at launch time.
    *
-   * Only Hermes can lose one. Its web tools ride a managed-scope overlay, and `HERMES_MANAGED_DIR`
-   * REPLACES `/etc/hermes` rather than adding to it — so on a machine where an administrator pinned
-   * Hermes settings there, writing ours would take their policy away for as long as the agent runs.
-   * The agent still launches on the grid; it launches without web tools, which is the smaller loss
-   * and the one that can be said out loud.
-   *
-   * Here rather than in the contract because it is a fact about the machine: a `build()` that
-   * stats the filesystem answers differently on two of them, and its spec would follow.
+   * The one fact is whether an administrator pinned Hermes settings in `/etc/hermes`: Hermes's web
+   * tools ride a managed-scope overlay that REPLACES that directory rather than adding to it, and the
+   * builder drops the overlay on such a machine (the agent launches on the grid without web tools,
+   * and the app says so). Read here rather than in the contract because it is a fact about the
+   * machine: a `build()` that stats the filesystem answers differently on two of them, and its spec
+   * would follow. What is DONE with the fact lives in the builder, so create, retarget and restore
+   * cannot disagree about it.
    */
-  const gridConfigDirFor = (engine: AgentEngine, launch: GridEngineLaunch): GridEngineLaunch['configDir'] => {
-    if (!launch.configDir || engine !== 'hermes' || !existsSync(HERMES_SYSTEM_MANAGED_DIR)) return launch.configDir
-    console.warn(`[grid] ${engine} starts without web tools · ${HERMES_SYSTEM_MANAGED_DIR} pins this `
-      + `machine's Hermes settings, and the overlay carrying the web tools would replace it`)
-    return undefined
-  }
+  const gridLaunchMachine = (): GridLaunchMachine => ({ hermesSystemManaged: existsSync(HERMES_SYSTEM_MANAGED_DIR) })
 
   /**
    * What a relaunch of `session` must be given, beyond the engine's argv, to come back where it was —
@@ -3544,7 +3611,7 @@ async function runForeground(session: AuthSession): Promise<void> {
    * keyed on the agent, so relaunching the same agent rewrites one directory instead of leaving a trail.
    */
   const launchOverridesDeps: LaunchOverridesDeps = {
-    configDirFor: gridConfigDirFor,
+    machine: gridLaunchMachine,
     writeGridConfigDir,
     tmuxSupportsSessionEnv,
     installCodexHooks: (codexHome) => { if (!env.DISABLE_HOOK_INSTALL) installCodexHooks(hookPort, codexHome) },
@@ -3557,10 +3624,34 @@ async function runForeground(session: AuthSession): Promise<void> {
       return dshLaunch(installed, workspace)
     },
   }
-  // Whatever the source (the row itself, or a grid override the desktop just sent), the agent's DSH
-  // and workspace come from the row: a retarget must not silently drop the harness the agent is.
+  // Whatever the source (the row itself, or a grid override the desktop just sent), the agent's DSH,
+  // workspace and named agent come from the row: a retarget must not silently drop the harness the
+  // agent is, or bring a pane opened as `harness-compute` back as a general session.
   const relaunchOverrides = (session: RegisteredSession, source: LaunchSource = session): Promise<LaunchOverridesResult> =>
-    buildLaunchOverrides(launchOverridesDeps, session.engine, { dsh: session.dsh ?? null, cwd: session.cwd, ...source }, session.agentId)
+    buildLaunchOverrides(launchOverridesDeps, session.engine, { dsh: session.dsh ?? null, cwd: session.cwd, agent: session.agent ?? null, ...source }, session.agentId)
+
+  /**
+   * A restart or a post-reboot restore rebuilds the ROW's own launch, and the machine may decide
+   * differently about web search this time than it did when the row was written (an administrator
+   * pinned `/etc/hermes` since, or unpinned it). The override is the row's already; what is
+   * refreshed is the decision, so the frame describes the pane that actually came up. Retarget
+   * does not go through here — its override is new, and it records the pair itself once the move
+   * has succeeded.
+   */
+  const refreshGridWebSearch = (agentId: string, overrides: LaunchOverrides): void => {
+    if (overrides.gridLaunchRecord) registry.setGridLaunch(agentId, overrides.gridLaunchRecord)
+  }
+
+  const prepareSessionResume = (session: RegisteredSession): void => {
+    const repair = prepareCodexResume(session)
+    if (repair.repairedItems) {
+      // The rollout we tail was just shrunk in place. Move the tail to the repaired length now, before
+      // the resumed engine appends, or the watcher would read the whole repaired history as new lines
+      // and the live normalizer would replay the conversation into web/device. See Watcher.setTail.
+      if (repair.repairedBytes !== undefined) watcher.setTail(session.sessionId, repair.repairedBytes)
+      console.log(`[resume] repaired ${repair.repairedItems} Codex reasoning items · backup: ${repair.backupPath}`)
+    }
+  }
 
   watcher.start()
   await cursorDiscovery.start()
@@ -3584,6 +3675,14 @@ async function runForeground(session: AuthSession): Promise<void> {
         // own shell.
         const built = await relaunchOverrides(entry)
         if (!built.ok) return { error: built.error, detail: built.detail }
+        if (opts.resumeSessionId) {
+          try { prepareSessionResume(entry) } catch (error) {
+            return { error: 'RESUME_PREPARATION_FAILED', detail: error instanceof Error ? error.message : String(error) }
+          }
+        }
+        // Before the pane comes up rather than after: restore has no later hook per agent, and a
+        // pane that fails to come up is reported failed by the frame regardless of this field.
+        refreshGridWebSearch(entry.agentId, built.overrides)
         const { env: launchEnv, extraArgs, clearEnv } = built.overrides
         const argv = buildEngineLaunchArgv(entry.engine, {
           ...opts,
@@ -3763,7 +3862,7 @@ async function runForeground(session: AuthSession): Promise<void> {
    * pass can miss it — retry `triggerHint` a few times with backoff before giving up.
    */
 
-  backend.onCreateAgent = async ({ engine, cwd, bypassPermission, grid, codexHome, dsh }) => {
+  backend.onCreateAgent = async ({ engine, cwd, bypassPermission, grid, codexHome, dsh, prompt, name, agent }) => {
     if (!tmuxBackend) return { ok: false, error: 'TMUX_UNAVAILABLE' }
     try {
       if (!statSync(cwd).isDirectory()) return { ok: false, error: 'CWD_NOT_FOUND' }
@@ -3817,9 +3916,9 @@ async function runForeground(session: AuthSession): Promise<void> {
     // A grid is the user's answer to "where should this run", so every way of not honouring it is a
     // refusal rather than a fallback — an agent silently started on the engine's own login spends the
     // wrong account and looks identical to one that worked.
-    let gridLaunch: { env: Record<string, string>; args: string[] } | undefined
+    let gridLaunch: { env: Record<string, string>; args: string[]; webSearch: GridWebSearchStatus } | undefined
     if (grid) {
-      const built = buildGridEngineLaunch(engine, grid)
+      const built = buildGridEngineLaunch(engine, grid, gridLaunchMachine())
       if (!built.ok) {
         console.warn(`[agent] create ${engine} refused · ${built.detail}`)
         return { ok: false, error: built.error, detail: built.detail }
@@ -3832,12 +3931,11 @@ async function runForeground(session: AuthSession): Promise<void> {
         console.warn(`[agent] create ${engine} refused · ${detail}`)
         return { ok: false, error: 'TMUX_TOO_OLD_FOR_GRID', detail }
       }
-      gridLaunch = { env: { ...built.launch.env }, args: built.launch.args }
+      gridLaunch = { env: { ...built.launch.env }, args: built.launch.args, webSearch: built.launch.webSearch }
       // An engine whose provider lives in a file gets a directory this daemon owns, never the
       // user's own dotfiles. The label is unique per creation, so two agents never share one.
-      const createConfigDir = gridConfigDirFor(engine, built.launch)
-      if (createConfigDir) {
-        const { envVar, files, pointAt, links } = createConfigDir
+      if (built.launch.configDir) {
+        const { envVar, files, pointAt, links } = built.launch.configDir
         try {
           const dir = await writeGridConfigDir(label, files, links)
           // Pi is handed the directory; OpenCode's OPENCODE_CONFIG wants the file inside it.
@@ -3850,7 +3948,7 @@ async function runForeground(session: AuthSession): Promise<void> {
       }
       // Named in the log because the pane itself gives nothing away: the engine looks exactly like a
       // normally launched one. The key is never printed.
-      console.log(describeGridLaunch(engine, grid))
+      console.log(describeGridLaunch(engine, grid, built.launch.webSearch))
     }
     // A Codex agent pointed at a profile OTHER than this machine's default reads hooks.json from
     // THAT folder, not the one `harness login` already installed into — without this, such an agent
@@ -3867,8 +3965,13 @@ async function runForeground(session: AuthSession): Promise<void> {
     // only `invalid x-api-key`. Nothing is cleared when no grid is in play: an agent on its own login
     // is supposed to use exactly these variables.
     const clearEnv = gridLaunch ? gridConflictingEnvToClear(gridLaunch) : undefined
-    const extraArgs = [...(gridLaunch?.args ?? []), ...dshArgs]
-    const launchOptions = { bypassPermission, extraArgs: extraArgs.length ? extraArgs : undefined, installIfMissing, clearEnv, cwd, harnessNode: dsh ? true : undefined }
+    // The named agent takes the same argv slot on every relaunch (`buildLaunchOverrides` appends it
+    // from the row's `agent`, after the grid's and the DSH's argv, exactly as here). The engine was
+    // checked for a contract at the wire (AGENT_UNSUPPORTED), so this cannot throw.
+    const extraArgs = [...(gridLaunch?.args ?? []), ...dshArgs, ...(agent ? namedAgentArgs(engine, agent) : [])]
+    // The first prompt is a launch option only — never part of `extraArgs`, which the registry row
+    // carries into a relaunch (engineLaunch.ts, `firstPrompt`).
+    const launchOptions = { bypassPermission, extraArgs: extraArgs.length ? extraArgs : undefined, installIfMissing, clearEnv, cwd, harnessNode: dsh ? true : undefined, ...(prompt ? { firstPrompt: prompt } : {}) }
     const command = buildEngineCommandArgv(engine, launchOptions)
     const argv = buildEngineLaunchArgv(engine, launchOptions)
     // A tmux route is enough to stream its screen. Register it before looking for a process so both
@@ -3890,10 +3993,12 @@ async function runForeground(session: AuthSession): Promise<void> {
       argv,
       env: mergedLaunchEnv(gridLaunch?.env ?? (codexHome ? { CODEX_HOME: codexHome } : undefined), dshEnv),
       grid: grid ? { baseUrl: grid.baseUrl, model: grid.model ?? null } : null,
-      gridLaunch: grid ?? null,
+      gridLaunchRecord: grid && gridLaunch ? { override: grid, webSearch: gridLaunch.webSearch } : null,
       codexHome,
       dsh,
+      agent,
       bypassPermission,
+      defaultName: name,
     })
     if (!result.ok) return { ok: false, error: result.error, detail: result.detail }
     const { spawned, pending } = result
@@ -3969,6 +4074,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     runtime: TmuxRuntimeRef,
     launch: { env?: Record<string, string>; extraArgs?: readonly string[]; clearEnv?: readonly string[] } = {},
   ): RestartAgentDeps => ({
+    prepareResume: () => prepareSessionResume(session),
     holdOpen: async () => {
       const result = await tmuxBackend!.holdOpen(runtime)
       return result.state === 'succeeded'
@@ -4059,10 +4165,63 @@ async function runForeground(session: AuthSession): Promise<void> {
     // validate, and respawning over a pane whose occupant we cannot identify is how you replace
     // something that was not ours.
     if (!session.processIdentity) return { ok: false, error: 'NO_ACTIVE_PROCESS' }
+    // Leaving for a grid is the LAST moment this agent's own model is observable: once the pane is on
+    // the grid, the engine reports the grid's model and the previous choice exists nowhere. So it is
+    // read now and kept, and a later move back returns the person to it rather than to whatever
+    // default the engine would otherwise fall to. Read from the live engine, not from the row.
+    //
+    // Coming back reads what was kept. Not cleared on the way home: an agent bounced between a grid
+    // and its own login should land on the same model every time, not only the first.
+    // ⚠️ `selectedModel` answers an ENCODED runtime-profile id (`runtime-v1:…`), not a model name —
+    // handing that to an engine would point it at a model that does not exist. Decode it and take
+    // the model. For claude the decoded value is already the vendor's alias (`opus`), which is what
+    // ANTHROPIC_MODEL wants. Null when the daemon has not observed this pane's model yet, which is a
+    // real answer: there is then nothing to come back to and the engine decides, as it did before.
+    // ⚠️ The profile's OWN engine has to match, not just the session it was read under. A model is
+    // only meaningful to the engine that named it — `opencode/big-pickle` handed back as
+    // ANTHROPIC_MODEL is not a Claude model, and Claude Code says so ("It may not exist or you may
+    // not have access to it") on a pane the user never chose it for. The keying bug that let one
+    // agent read another's model is fixed at its source in RuntimeProfileManager; this is the second
+    // lock, because the cost of being wrong here is a pane that answers on nothing.
+    const profile = parseRuntimeProfile(runtimeProfiles.selectedModel(session))
+    const observed = profile && profile.engine === session.engine ? profile.model : null
+    const remembered = grid
+      // Two guards, and both come from watching this go wrong:
+      //
+      //  * Capture only when the agent is on its OWN LOGIN. Moving grid→grid must not overwrite the
+      //    memory with the first grid's model — the subscription choice has not changed, and the
+      //    whole point is to still have it on the way home.
+      //
+      //  * Never remember the model being moved TO. An engine can keep REPORTING a grid model after
+      //    it has come back (Claude Code restores it from its own session file and says so), so a
+      //    later move to that same grid would otherwise capture the grid's model as the
+      //    "subscription" one and hand it straight back — teaching the bug to itself.
+      ? (!session.grid && observed !== grid.model ? observed : (session.subscriptionModel ?? null))
+      : (session.subscriptionModel ?? null)
     // What this machine cannot do at all is said first, before the pane is even looked at.
-    const target: LaunchSource = { gridLaunch: grid, codexHome: session.codexHome }
+    const target: LaunchSource = {
+      gridLaunch: grid,
+      codexHome: session.codexHome,
+      ...(grid ? {} : { subscriptionModel: remembered }),
+    }
     const valid = await validateLaunchOverrides(launchOverridesDeps, session.engine, target)
     if (!valid.ok) return { ok: false, error: valid.error, detail: valid.detail }
+    // A resumed opencode session takes its model from its own rows in opencode.db, not from `-m`
+    // (see below), and those rows are written through the `sqlite3` CLI. Without it the respawn
+    // would land the right provider, key and argv on a pane that then answers on the OLD model —
+    // the failure this handler exists to refuse — so it is refused here, before the pane is touched.
+    // Only when the launch will name a model: a grid launch always does; a move home does only when
+    // the remembered model carries its provider (`subscriptionModel.ts`), and otherwise the engine
+    // decides, as it always did.
+    const rewritesOpencodeSession = session.engine === 'opencode' && !!session.sessionId
+      && (!!grid || !!remembered?.includes('/'))
+    if (rewritesOpencodeSession && !binaryOnPath('sqlite3')) {
+      return {
+        ok: false,
+        error: 'OPENCODE_SQLITE_MISSING',
+        detail: 'the sqlite3 CLI is not on PATH, and a resumed opencode session keeps its model unless its store is rewritten — install sqlite3 and retry',
+      }
+    }
     // Mid-turn is the one state where restarting costs real work: the conversation comes back but
     // whatever the engine was doing does not. The app is told which agents these are so the user can
     // move them once they are done, rather than being asked to choose between losing a turn and losing
@@ -4107,6 +4266,26 @@ async function runForeground(session: AuthSession): Promise<void> {
       // already cleared but its live process untouched would leave that process still talking to the
       // grid while the retarget reports failed — the exact half-applied state this handler exists to
       // refuse.
+      //
+      // OpenCode's TUI drops `-m` when it RESUMES a session: it restores the model from the session's
+      // LAST USER MESSAGE (`data.model`), and its server falls back to the `session.model` column
+      // (measured on 1.18.31; upstream anomalyco/opencode #26901). Nothing else — config, model.json,
+      // `--fork` — changes a resumed session's model; the picker is the only writer opencode ships,
+      // and those two rows are what it writes. So they are written here, through SQL, before the
+      // respawn, with the exact `provider/model` the respawn's own `-m` names — and the TUI opens
+      // already on it, with nothing typed into the pane. Before the live process is touched, so a
+      // write that fails refuses the move with that process still on its old target. A session with
+      // no user message yet has nothing to restore from and takes `-m` on launch, so it is skipped.
+      if (rewritesOpencodeSession) {
+        const model = opencodeModelFromArgv(built.overrides.extraArgs)
+        if (model) {
+          const written = await setOpencodeSessionModel(OPENCODE_DB, session.sessionId, model)
+          if (!written.ok && written.code !== 'OPENCODE_SESSION_NOT_FOUND') {
+            console.warn(`[grid] retarget ${sid(session.agentId)} refused · ${written.code} · ${written.detail}`)
+            return { ok: false, error: written.code, detail: written.detail }
+          }
+        }
+      }
       if (!grid) {
         const cleared = await tmuxBackend.clearEnv(pane, gridEnvVarNames(session.engine))
         if (cleared.state !== 'succeeded') {
@@ -4128,8 +4307,14 @@ async function runForeground(session: AuthSession): Promise<void> {
         probeGridAssignment(outcome.processIdentity, session.engine, outcome.processIdentity.executable),
       ])
       registry.updateProcessIdentity(session.agentId, outcome.processIdentity, gateway.kind, assignment)
-      // The launch that just worked is the one a restart or a post-reboot restore must repeat.
-      registry.setGridLaunch(session.agentId, grid)
+      // The launch that just worked is the one a restart or a post-reboot restore must repeat — and
+      // what it decided about web search is what the app shows for this agent from now on. Null for
+      // a move home: the block, and the status with it, leave the frame together.
+      registry.setGridLaunch(session.agentId, built.overrides.gridLaunchRecord ?? null)
+      // Persisted only on the way OUT, and only once the move actually succeeded — a refused move
+      // must not overwrite the model the agent is still sitting on. Survives a daemon restart, so an
+      // agent left on a grid for a week still knows where it came from.
+      if (grid && remembered) registry.setSubscriptionModel(session.agentId, remembered)
       registry.setActive(session.agentId, true)
       await clearPaneRemainOnExit(pane.paneId)
       const refreshed = registry.byAgent(session.agentId)
@@ -4137,8 +4322,14 @@ async function runForeground(session: AuthSession): Promise<void> {
       // would leave the banner up over an agent that had already been moved.
       if (refreshed) announceSession(refreshed)
       const how = outcome.resumed ? 'resumed' : 'fresh session'
-      const where = grid ? describeGridLaunch(session.engine, grid) : `${session.engine} on its own login`
+      const record = built.overrides.gridLaunchRecord
+      const where = record
+        ? describeGridLaunch(session.engine, record.override, record.webSearch)
+        : `${session.engine} on its own login`
       console.log(`${where} · retargeted ${sid(session.agentId)} · ${how}`)
+      // Nothing is typed into the pane after the respawn. A resumed opencode session used to be put
+      // on its model through the `/models` picker here (MODEL_SELECT_FAILED); its store is rewritten
+      // before the respawn instead, see above.
       return { ok: true }
     } finally {
       release()
@@ -4226,6 +4417,7 @@ async function runForeground(session: AuthSession): Promise<void> {
       )
 
       if (!outcome.ok) return { ok: false, error: 'RESTART_FAILED', detail: outcome.detail }
+      refreshGridWebSearch(session.agentId, built.overrides)
 
       // Address the CANONICAL agentId from the resolved session, not the raw RPC input — `resolve()`
       // accepts either an agentId or a bare sessionId, but `setActive`/`byAgent` only ever key on the
@@ -4480,6 +4672,9 @@ async function runForeground(session: AuthSession): Promise<void> {
   backend.onRevoked = () => {
     console.log('[cli] this computer was removed from the machine — clearing credentials and stopping')
     clearAuthSession()
+    // The web-tools cache lives exactly as long as the sign-in. `harness logout` and `reset` stop
+    // the daemon outright; this is the one sign-out the daemon learns of from inside.
+    clearGridMcpUrlCache()
     void shutdown('revoked')
   }
 
@@ -4774,6 +4969,11 @@ async function launch(foreground: boolean, repair: boolean = false): Promise<voi
       runtimeNode = repaired
       ensureLauncher(repaired, (m) => console.log(m))
     }
+    // The managed grid too, in the open, for the daemon this command is about to spawn: it follows
+    // its pin quietly on every start (runForeground), and `--repair` is where a person watches it
+    // happen. A FOREGROUND start becomes the daemon itself and runForeground's own call prints to
+    // this same terminal — once is enough.
+    if (!foreground) await ensureManagedGrid((m) => console.log(m))
   }
   // Foreground mode (supervisor) OR dev/tsx (can't cleanly spawn a .ts detached) → run inline.
   if (foreground || SCRIPT_PATH.endsWith('.ts')) {

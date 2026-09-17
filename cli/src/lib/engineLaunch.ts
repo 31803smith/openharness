@@ -5,7 +5,9 @@ import type { AgentEngine } from '../engines/types.js'
 import { binaryOnPath } from './binaryOnPath.js'
 import { engineBin } from './engineBin.js'
 import type { EngineInstallRecipe } from './engineInstall.js'
+import { GRID_NO_UPDATE_CHECK_VAR, gridBinaryPath } from './gridExec.js'
 import { managedNodePath } from './nodeRuntime.js'
+import { RAISE_OPEN_FILES_SH } from './openFiles.js'
 
 /**
  * Best-effort "skip permission prompts" flag per engine, confirmed against each vendor's own docs.
@@ -30,10 +32,131 @@ export const BYPASS_PERMISSION_FLAGS: Readonly<Record<AgentEngine, string[] | nu
   copilot: null,
 }
 
+/**
+ * How each engine takes a FIRST prompt on launch: the interactive session opens with that message
+ * already submitted, so the pane's first visible thing is the agent's answer rather than an empty
+ * input waiting for one. `null` = no documented mechanism; the caller refuses (`PROMPT_UNSUPPORTED`)
+ * rather than guess, the way `gridLaunch.ts` refuses an engine with no endpoint contract.
+ *
+ * An entry is the argv placed BEFORE the text: a flag (`['--prompt']`) or nothing at all for an
+ * engine that reads a bare positional. Each entry cites where it was read from.
+ */
+export const FIRST_PROMPT_ARGS: Readonly<Record<AgentEngine, readonly string[] | null>> = {
+  // `opencode --help`: `--prompt  prompt to use`, a TUI flag — the interactive session starts with
+  // the message submitted. A flag rather than a positional because opencode's own positional is
+  // `[project]`, a directory: handed the text bare, it would try to open a folder by that name.
+  opencode: ['--prompt'],
+  // `claude --help`: `Usage: claude [options] [command] [prompt]`, "prompt: Your prompt".
+  claude: [],
+  // Per vendor CLI help: `codex [OPTIONS] [PROMPT]`, the optional positional the interactive TUI
+  // opens with. Not verified on a local install when this entry was written.
+  codex: [],
+  // No documented first-prompt argument for an interactive launch. Not guessed.
+  cursor: null,
+  pi: null,
+  hermes: null,
+  commandcode: null,
+  devin: null,
+  muse: null,
+  amp: null,
+  kilo: null,
+  grok: null,
+  agy: null,
+  copilot: null,
+}
+
+/** A first prompt is a message, not a document. Enforced at the wire (`agent_create`) before any pane
+ *  exists, so an over-long one is refused rather than truncated into something the agent was not asked. */
+export const MAX_FIRST_PROMPT_CHARS = 2000
+
+/** The refusal for an engine with no entry in [FIRST_PROMPT_ARGS]. `code` is the wire error. */
+export class FirstPromptUnsupportedError extends Error {
+  readonly code = 'PROMPT_UNSUPPORTED' as const
+  constructor(readonly engine: AgentEngine) {
+    super(`${engine} has no documented way to start with a first prompt, so the agent was not created.`)
+    this.name = 'FirstPromptUnsupportedError'
+  }
+}
+
+export function supportsFirstPrompt(engine: AgentEngine): boolean {
+  return FIRST_PROMPT_ARGS[engine] !== null
+}
+
+/** The argv that hands `prompt` to `engine` as its first message. Throws [FirstPromptUnsupportedError]
+ *  for an engine with no contract, so a caller cannot build an argv that silently drops the prompt. */
+export function firstPromptArgs(engine: AgentEngine, prompt: string): string[] {
+  const lead = FIRST_PROMPT_ARGS[engine]
+  if (lead === null) throw new FirstPromptUnsupportedError(engine)
+  return [...lead, prompt]
+}
+
+/**
+ * How each engine opens AS one of its named agents — its own name in the footer, its own system
+ * prompt — rather than as a general session. `null` = no documented mechanism; the caller refuses
+ * (`AGENT_UNSUPPORTED`) before a pane exists, the way [FIRST_PROMPT_ARGS] does for a prompt.
+ *
+ * An entry is the argv placed BEFORE the name. Unlike a first prompt, the agent IS part of the
+ * relaunch record (`RegisteredSession.agent`, carried by `launchOverrides.ts`): a pane opened as
+ * `harness-compute` comes back as `harness-compute`.
+ */
+export const NAMED_AGENT_ARGS: Readonly<Record<AgentEngine, readonly string[] | null>> = {
+  // `opencode --help`: `--agent  agent to use`. The name is one of opencode's own agents
+  // (`~/.config/opencode/agents/<name>.md`, `mode: primary`).
+  opencode: ['--agent'],
+  // No documented "open as this named agent" argument for an interactive launch. Not guessed.
+  claude: null,
+  codex: null,
+  cursor: null,
+  pi: null,
+  hermes: null,
+  commandcode: null,
+  devin: null,
+  muse: null,
+  amp: null,
+  kilo: null,
+  grok: null,
+  agy: null,
+  copilot: null,
+}
+
+/** An agent name is an identifier the engine looks a file up by — never a path, never prose. */
+export const AGENT_NAME_RE = /^[A-Za-z0-9_-]{1,64}$/
+
+/** The refusal for an engine with no entry in [NAMED_AGENT_ARGS]. `code` is the wire error. */
+export class NamedAgentUnsupportedError extends Error {
+  readonly code = 'AGENT_UNSUPPORTED' as const
+  constructor(readonly engine: AgentEngine) {
+    super(`${engine} has no documented way to open as a named agent, so the agent was not created.`)
+    this.name = 'NamedAgentUnsupportedError'
+  }
+}
+
+export function supportsNamedAgent(engine: AgentEngine): boolean {
+  return NAMED_AGENT_ARGS[engine] !== null
+}
+
+/** The argv that opens `engine` as its named agent `agent`. Throws [NamedAgentUnsupportedError] for
+ *  an engine with no contract, so a caller cannot build an argv that silently drops the name. */
+export function namedAgentArgs(engine: AgentEngine, agent: string): string[] {
+  const lead = NAMED_AGENT_ARGS[engine]
+  if (lead === null) throw new NamedAgentUnsupportedError(engine)
+  return [...lead, agent]
+}
+
 export interface LaunchCommandOptions {
   bypassPermission?: boolean
   /** Resume this engine session id on launch, when a launch-resume flag is known for the engine. */
   resumeSessionId?: string
+  /**
+   * The message the session opens with, already submitted — see [FIRST_PROMPT_ARGS]. Appended LAST,
+   * after every flag, because two of the three engines take it positionally and a positional is only
+   * unambiguous once the options are exhausted.
+   *
+   * A launch option and nothing more: it is never written to the registry row, so a relaunch (which
+   * resumes a session that already has its first turn) never repeats it. Never logged either — it is
+   * what the user typed.
+   */
+  firstPrompt?: string
   /**
    * Extra argv the caller has already composed, appended last.
    *
@@ -141,6 +264,7 @@ export function buildEngineCommandArgv(engine: AgentEngine, opts: LaunchCommandO
     argv.push(...resumeFlag, opts.resumeSessionId)
   }
   if (opts.extraArgs?.length) argv.push(...opts.extraArgs)
+  if (opts.firstPrompt) argv.push(...firstPromptArgs(engine, opts.firstPrompt))
   return argv
 }
 
@@ -188,6 +312,7 @@ export function buildEngineLaunchArgv(
   opts: LaunchCommandOptions = {},
   shell: string | undefined = undefined,
   runtimeNode: string = managedNodePath(),
+  gridBinary: string = gridBinaryPath(),
 ): string[] {
   const command = buildEngineCommandArgv(engine, opts)
   const interactive = interactiveEngineShell(shell)
@@ -196,19 +321,55 @@ export function buildEngineLaunchArgv(
   // of this shell and inherits what it inherits: `npm` is not going to spend someone's Anthropic key,
   // but an install script that probes for credentials to configure itself would, and the whole point
   // of this launch is that the agent's environment is the one the user asked for.
-  const prelude = clearEnvPrelude(opts.clearEnv) + (opts.harnessNode ? harnessNodePrelude(runtimeNode) : '')
+  // Then the grid's PATH entry at the FRONT (its dir holds only `grid`), and — for a DSH agent — Harness's
+  // Node at the END, only when the shell found none. The two never meet: one prepends, one appends.
+  const prelude = clearEnvPrelude(opts.clearEnv) + gridPanePrelude(gridBinary) + (opts.harnessNode ? harnessNodePrelude(runtimeNode) : '')
   // rc files (notably nvm) call getcwd() before running this command. Start the shell in a safe
   // directory and enter the selected workspace only after those files have loaded: an IDE can replace
   // a workspace inode between the desktop picker resolving it and tmux spawning the pane.
   const cwdPrelude = opts.cwd
-    ? `if ! cd -- "$1"; then printf '%s\\n' 'harness: the selected working directory is unavailable.' >&2; exit 1; fi\nshift\n`
+    ? `if ! cd -- "$1"; then printf '%s\\n' 'harness: the selected working directory is unavailable.' >&2; exit 1; fi\n`
+      + unreadableCwdGuard()
+      + 'shift\n'
     : ''
   const body = opts.installIfMissing
     ? installIfMissingThenExecScript(opts.installIfMissing, runtimeNode)
     : opts.installFirst
       ? installThenExecScript(opts.installFirst)
       : 'exec "$@"'
-  return [interactive.path, ...interactive.args, prelude + cwdPrelude + body, 'harness-engine', ...(opts.cwd ? [opts.cwd] : []), ...command]
+  // The open-files raise goes ahead of everything, the installer included: a pane inherits the tmux
+  // SERVER's soft limit, which is launchd's 256 whenever the desktop app started the daemon that
+  // started the server, and an engine (Claude Code refuses outright) or an npm install under 256 is
+  // the failure the person then reads in the pane. See openFiles.ts.
+  return [interactive.path, ...interactive.args, RAISE_OPEN_FILES_SH + prelude + cwdPrelude + body, 'harness-engine', ...(opts.cwd ? [opts.cwd] : []), ...command]
+}
+
+/**
+ * Refuse a workspace the shell could enter but cannot read, and say why — before the engine finds
+ * out on its own terms.
+ *
+ * `cd` succeeding proves only the search bit. macOS privacy protection (TCC) leaves exactly that:
+ * a process whose responsible app was never granted Documents, Desktop or Downloads may enter the
+ * folder and is refused its first readdir with EPERM. The engine then dies with nothing to go on —
+ * Claude Code printed "An unknown error occurred (Unexpected)" on a machine whose tmux server had
+ * been started by a terminal app without Documents access, and every pane the daemon opened on
+ * that server inherited the refusal — so the check is made here, where the reason can be given.
+ * `[ -r . ]` is `access(2)`, which TCC answers the same way as the readdir would.
+ *
+ * The hint names the fix for the platform this daemon generates the script on, which is the one
+ * the pane runs on. `$PWD` is left to the shell so the message names the folder as entered. Short
+ * lines, the action first: a dialog that relays the pane's last lines keeps about 180 characters
+ * (agentCreateDiagnosis.ts), and the folder path alone can take half of that.
+ */
+export function unreadableCwdGuard(platform: NodeJS.Platform = process.platform): string {
+  const hints = platform === 'darwin'
+    ? [
+        'harness: on macOS, grant Full Disk Access to the app that started tmux (and to Harness), then run: tmux kill-server',
+        'harness: or pick a folder outside Documents, Desktop and Downloads (System Settings › Privacy & Security).',
+      ]
+    : ['harness: check the folder\'s permissions for this user.']
+  return `if ! [ -r . ]; then printf '%s\\n' "harness: cannot read $PWD — the agent was not started." `
+    + `${hints.map(shellSingleQuote).join(' ')} >&2; exit 1; fi\n`
 }
 
 /** Harness's Node at the end of PATH when the shell found none — see `LaunchCommandOptions.harnessNode`. */
@@ -302,6 +463,31 @@ function npmRuntimePrelude(recipe: EngineInstallRecipe, runtimeNode: string, req
       'fi',
     ] : []),
   ].join('\n')
+}
+
+/**
+ * The `grid` this pane's agent gets is the one the daemon resolved — and stays it.
+ *
+ * `grid` is not only the daemon's subprocess: the Harness Compute skill has the AGENT run it, in
+ * this pane, by name. A managed grid under `~/.harness/runtime` is invisible to a shell's PATH, and
+ * a login file that puts `~/.local/bin` first is ordinary — which is where grid's own installer
+ * (uv, on a Mac) leaves a `grid` of some other version. So the prepend is made HERE, after those
+ * files have run, the way [npmRuntimePrelude] does for the managed Node — never by a symlink in
+ * `~/.local/bin`, which would fight the installer for one file. Two versions of `grid` writing one
+ * `~/.grid` is the outcome this exists to prevent.
+ *
+ * Without an absolute path to prepend — the bare name of the PATH fallback, or an override that is
+ * not one — PATH is left alone. Either way grid's update check is off for the pane —
+ * [GRID_NO_UPDATE_CHECK_VAR]: the agent is the process most likely to read "run `grid update`" and
+ * do it, and under a managed runtime that overwrites the pin.
+ *
+ * Interactive shells only, like the npm prelude: a direct launch has no script to carry this.
+ */
+export function gridPanePrelude(binary: string): string {
+  const onPath = isAbsolute(binary)
+    ? [`PATH=${shellSingleQuote(dirname(binary))}"\${PATH:+:$PATH}"`, 'export PATH', 'hash -r 2>/dev/null || true']
+    : []
+  return [...onPath, `${GRID_NO_UPDATE_CHECK_VAR}=1`, `export ${GRID_NO_UPDATE_CHECK_VAR}`, ''].join('\n')
 }
 
 /**

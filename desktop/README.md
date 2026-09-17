@@ -7,8 +7,8 @@ planned and its runner is unexercised. Embedded harness viewers currently requir
 
 ## Development
 
-Install a compatible Flutter SDK, then run the project from this repository
-root:
+Install a compatible Flutter SDK, then run the project from this directory
+(`desktop/` in the monorepo):
 
 ```bash
 cd desktop

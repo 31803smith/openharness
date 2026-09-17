@@ -12,6 +12,8 @@ import * as projectFolder from './lib/projectFolder.js'
 import * as projectPreview from './lib/projectPreview.js'
 import * as storeCatalog from './dsh/catalog.js'
 import { randomUUID } from 'node:crypto'
+import { fakeGridAnswers, installFakeGrid, type FakeGrid } from './lib/__fixtures__/fakeGrid.js'
+import { clearGridMcpUrlCache } from './lib/gridMcpUrl.js'
 
 const wsMock = vi.hoisted(() => {
   const instances: MockWebSocket[] = []
@@ -644,12 +646,12 @@ describe('BackendSocket outbound queue', () => {
     })).toBe(true)
 
     socket.handleLocalFrame('local:test', {
-      type: 'models_list', payload: { requestId: 'local-models' },
+      type: 'models_list', payload: { requestId: 'harness-computes' },
     })
     await vi.waitFor(() => expect(frames).toContainEqual({
       type: 'models_list_result',
       payload: {
-        requestId: 'local-models',
+        requestId: 'harness-computes',
         models: [{ id: 'runtime-v1:s1:codex:gpt-5.6-sol@high', displayName: 'Sol / High' }],
       },
     }))
@@ -1403,6 +1405,207 @@ describe('agent_retarget clearGrid', () => {
     expect(seen).toHaveLength(0)
   })
 })
+
+/**
+ * The desktop's retarget names a Local model and nothing else; the daemon resolves everything from
+ * its own signed-in `grid`. This is that resolution through the real frame handler, against the
+ * plan-driven fake `grid` — the seam `gridEnsure.spec.ts` established.
+ */
+describe('agent_retarget onto a Local model resolves web tools', () => {
+  const { gridName: GRID_NAME, networkId, baseUrl: BASE_URL, mcpUrl: MCP_URL, token: TOKEN, plan } = fakeGridAnswers()
+
+  let fake: FakeGrid | null = null
+  afterEach(async () => {
+    fake?.dispose()
+    fake = null
+    clearGridMcpUrlCache()
+    wsMock.instances.length = 0
+    vi.restoreAllMocks()
+  })
+
+  async function retargetOntoLocalModel(model: string) {
+    const seen: Array<{ agentId: string; grid: unknown }> = []
+    const socket = new BackendSocket('token')
+    socket.onRetargetAgent = async (input) => { seen.push(input); return { ok: true } }
+    socket.connect()
+    const ws = wsMock.instances[0]
+    ws.open()
+    // The grid name is the backend's, pushed on connect; the daemon holds it in memory only.
+    ws.message({ t: 'down', connId: 'web-1', frame: { type: 'machine_meta', payload: { name: 'mac', gridName: GRID_NAME } } })
+    ws.message({ t: 'down', connId: 'web-1', frame: { type: 'agent_retarget', payload: { requestId: 'r', agentId: 'a1', gridModel: model } } })
+    await vi.waitFor(() => expect(parseSent(ws).some((item) => (item.frame as { type?: string } | undefined)?.type === 'agent_retarget_result')).toBe(true), { timeout: 10_000 })
+    const reply = parseSent(ws)
+      .map((item) => item.frame as { type?: string; payload?: Record<string, unknown> } | undefined)
+      .find((frame) => frame?.type === 'agent_retarget_result')
+    await socket.stop()
+    return { seen, reply }
+  }
+
+  it('yields a launch override whose MCP URL is exactly the printed url, asking `mcp config` before `info --env`', async () => {
+    fake = installFakeGrid(plan)
+    const { seen, reply } = await retargetOntoLocalModel('GLM-4.7-Flash')
+    expect(reply?.payload).toMatchObject({ retargeted: true })
+    expect(seen).toEqual([{
+      agentId: 'a1',
+      grid: {
+        networkId,
+        networkName: GRID_NAME,
+        baseUrl: BASE_URL,
+        apiKey: TOKEN,
+        model: 'GLM-4.7-Flash',
+        mcpUrl: MCP_URL,
+      },
+    }])
+    expect(fake.verbs()).toEqual(['mcp', 'info', 'ls'])
+    expect(fake.calls()[0]).toEqual(['--remote', 'mcp', 'config', GRID_NAME, '--json'])
+  })
+
+  it('still retargets, with no MCP URL, when the binary is too old for `mcp config`', async () => {
+    const warned: string[] = []
+    vi.spyOn(console, 'warn').mockImplementation((...parts: unknown[]) => { warned.push(parts.map(String).join(' ')) })
+    fake = installFakeGrid({ ...plan, mcp: { exit: 2, stderr: "grid: error: invalid choice: 'mcp'\n" } })
+    const { seen, reply } = await retargetOntoLocalModel('GLM-4.7-Flash')
+    expect(reply?.payload).toMatchObject({ retargeted: true })
+    expect(seen).toHaveLength(1)
+    expect(seen[0]!.grid).toMatchObject({ baseUrl: BASE_URL, apiKey: TOKEN, model: 'GLM-4.7-Flash' })
+    expect(seen[0]!.grid).not.toHaveProperty('mcpUrl')
+    // The reason reaches the daemon log, and nothing else — the retarget error path is untouched.
+    expect(warned.join('\n')).toMatch(/web tools unavailable .* older than/)
+    expect(reply?.payload).not.toHaveProperty('error')
+  })
+})
+
+/**
+ * `agent_create` carrying a first prompt, a name and a named agent — the fields the run-a-harness-compute
+ * entry can send (it sends `name` and `agent`). All are validated at the wire, before any pane
+ * exists; what reaches `onCreateAgent` is exactly what cli.ts hands to the launch and the registry.
+ */
+describe('agent_create with a prompt, a name and a named agent', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  const pending: RegisteredSession = {
+    schemaVersion: 2, active: true, launch: { state: 'starting' },
+    agentId: 'named-1', sessionId: '', boundAt: null, engine: 'opencode',
+    transcriptPath: null, projectDir: 'home', cwd: '/home/someone', defaultName: 'Local model',
+    runtimes: [{ backend: 'tmux', paneId: '%11' }], primaryRuntimeKey: 'tmux/%11', tmuxPane: '%11',
+    source: null, title: null, model: null, cliVersion: null, processIdentity: null,
+    registeredAt: 1, updatedAt: 1, lastHookAt: 1, lastTranscriptAt: 1,
+  }
+
+  async function create(choices: Record<string, unknown>) {
+    const socket = new BackendSocket('token')
+    const frames: Array<Record<string, unknown>> = []
+    socket.registerLocalClient('local:named', { sendFrame: (frame) => { frames.push(frame); return true }, sendBinary: () => true })
+    const seen: unknown[] = []
+    socket.onCreateAgent = async (input) => { seen.push(input); return { ok: true, session: pending } }
+    try {
+      socket.handleLocalFrame('local:named', { type: 'agent_create', payload: { requestId: 'r', engine: 'opencode', cwd: '/home/someone', ...choices } })
+      await vi.waitFor(() => expect(frames.some((frame) => frame.type === 'agent_create_result')).toBe(true))
+    } finally {
+      await socket.unregisterLocalClient('local:named')
+      await socket.stop()
+    }
+    const reply = frames.find((frame) => frame.type === 'agent_create_result')?.payload as Record<string, unknown>
+    return { seen, reply }
+  }
+
+  it('passes both through, trimmed, and the name becomes the row\'s defaultName', async () => {
+    const { seen, reply } = await create({ prompt: '  Start a local model on this machine ', name: ' Local model ' })
+    expect(seen).toEqual([expect.objectContaining({ engine: 'opencode', prompt: 'Start a local model on this machine', name: 'Local model' })])
+    expect(reply).toMatchObject({ agent: expect.objectContaining({ id: 'named-1', name: 'Local model' }) })
+  })
+
+  it('sends null for both when neither was given, or when they are blank', async () => {
+    expect((await create({})).seen).toEqual([expect.objectContaining({ prompt: null, name: null })])
+    expect((await create({ prompt: '   ', name: '' })).seen).toEqual([expect.objectContaining({ prompt: null, name: null })])
+  })
+
+  it('refuses an over-long prompt before any pane exists', async () => {
+    const { seen, reply } = await create({ prompt: 'x'.repeat(2001) })
+    expect(reply).toMatchObject({ error: 'PROMPT_TOO_LONG' })
+    expect(seen).toHaveLength(0)
+    expect((await create({ prompt: 'x'.repeat(2000) })).seen).toHaveLength(1)
+  })
+
+  it('refuses a prompt for an engine with no documented mechanism, naming the engine', async () => {
+    const { seen, reply } = await create({ engine: 'cursor', prompt: 'Start a local model on this machine' })
+    expect(reply).toMatchObject({ error: 'PROMPT_UNSUPPORTED', detail: expect.stringContaining('cursor') })
+    expect(seen).toHaveLength(0)
+  })
+
+  it('refuses a prompt that is not text', async () => {
+    const { seen, reply } = await create({ prompt: ['Start a local model'] })
+    expect(reply).toMatchObject({ error: 'INVALID_PROMPT' })
+    expect(seen).toHaveLength(0)
+  })
+
+  it('passes the named agent through for opencode, and null when none was given', async () => {
+    const { seen, reply } = await create({ agent: 'harness-compute', name: 'Local model' })
+    expect(seen).toEqual([expect.objectContaining({ engine: 'opencode', agent: 'harness-compute', name: 'Local model', prompt: null })])
+    expect(reply).toMatchObject({ agent: expect.objectContaining({ id: 'named-1' }) })
+    expect((await create({})).seen).toEqual([expect.objectContaining({ agent: null })])
+    expect((await create({ agent: null })).seen).toEqual([expect.objectContaining({ agent: null })])
+  })
+
+  it('refuses a named agent for an engine with no documented mechanism, naming the engine, before any pane exists', async () => {
+    for (const engine of ['claude', 'codex', 'cursor']) {
+      const { seen, reply } = await create({ engine, agent: 'harness-compute' })
+      expect(reply).toMatchObject({ error: 'AGENT_UNSUPPORTED', detail: expect.stringContaining(engine) })
+      expect(seen).toHaveLength(0)
+    }
+  })
+
+  it('refuses a named agent that is not an identifier — a path, prose, blank, over-long, or not text', async () => {
+    for (const agent of ['', '  ', 'local model', '../etc/passwd', 'a/b', 'x'.repeat(65), ['harness-compute'], 7]) {
+      const { seen, reply } = await create({ agent })
+      expect(reply).toMatchObject({ error: 'INVALID_AGENT' })
+      expect(seen).toHaveLength(0)
+    }
+  })
+})
+
+/**
+ * The picker and the Local model dialog gate on `gridName` — whether the ACCOUNT has a grid — and
+ * had nothing to tell them whether the MACHINE has a `grid` to run at all. A user with no CLI got a
+ * dialog that started an agent, which died at the skill's second step. The answer travels beside
+ * the list, as `localModelEngines` does, and says which grid it is: the managed runtime, one found
+ * on PATH, or none.
+ */
+describe('grid_models_list says whether this machine has a grid CLI', () => {
+  const { gridName: GRID_NAME, plan } = fakeGridAnswers()
+
+  let fake: FakeGrid | null = null
+  afterEach(async () => {
+    fake?.dispose()
+    fake = null
+    wsMock.instances.length = 0
+  })
+
+  async function listModels(): Promise<Record<string, unknown> | undefined> {
+    const socket = new BackendSocket('token')
+    socket.connect()
+    const ws = wsMock.instances[0]
+    ws.open()
+    ws.message({ t: 'down', connId: 'web-1', frame: { type: 'machine_meta', payload: { name: 'mac', gridName: GRID_NAME } } })
+    ws.message({ t: 'down', connId: 'web-1', frame: { type: 'grid_models_list', payload: { requestId: 'r' } } })
+    await vi.waitFor(() => expect(parseSent(ws).some((item) => (item.frame as { type?: string } | undefined)?.type === 'grid_models_list_result')).toBe(true), { timeout: 10_000 })
+    const reply = parseSent(ws)
+      .map((item) => item.frame as { type?: string; payload?: Record<string, unknown> } | undefined)
+      .find((frame) => frame?.type === 'grid_models_list_result')
+    await socket.stop()
+    return reply?.payload
+  }
+
+  it('names the grid it would run — the fixture is a developer override, so `path`', async () => {
+    fake = installFakeGrid(plan)
+
+    expect(await listModels()).toMatchObject({ gridName: GRID_NAME, gridCli: 'path' })
+  })
+})
+
+/** The read-only hardware line for the run-a-harness-compute dialog, answered next to `grid_models_list`. */
 
 describe('Autonomous direct isolation from existing relay/browser behavior', () => {
   it('permits offline PAKE only for the exact live direct pending connection', async () => {

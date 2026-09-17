@@ -70,11 +70,16 @@ RUNTIME_METADATA_URL="${HARNESS_RUNTIME_METADATA_URL:-https://storage.googleapis
 # Published by release-tmux-runtime.yml (`make upload-tmux-runtime`): macOS tmux built against static
 # libevent/ncurses, its own manifest because the Node one already has a "darwin-arm64" key.
 TMUX_METADATA_URL="${HARNESS_TMUX_METADATA_URL:-https://storage.googleapis.com/s3-autonomous-upgrade-3/harness/runtime/tmux/metadata.json}"
+# Published by release-grid-runtime.yml: the grid CLI at the version this harness release PINS, in its
+# own manifest for the reason tmux has one. This installer lays the first one down (step 3b); the
+# daemon follows the pin on every start after that (ensureManagedGrid, cli/src/lib/runtimeInstall.ts).
+GRID_METADATA_URL="${HARNESS_GRID_METADATA_URL:-https://storage.googleapis.com/s3-autonomous-upgrade-3/harness/runtime/grid/metadata.json}"
 HARNESS_KEY="${HARNESS_KEY:-cli}"
 CLI_DIR="$HOME/.harness/cli"
 RUNTIME_DIR="$HOME/.harness/runtime"
 CURRENT_NODE_FILE="$RUNTIME_DIR/current-node"
 CURRENT_TMUX_FILE="$RUNTIME_DIR/current-tmux"
+CURRENT_GRID_FILE="$RUNTIME_DIR/current-grid"
 BIN_DIR="$HOME/.local/bin"
 LAUNCHER="$BIN_DIR/harness"
 
@@ -150,6 +155,74 @@ case "$(basename "${SHELL:-/bin/sh}")" in
         grep -qF "$marker" "$rc" 2>/dev/null || printf '\n%s\nfish_add_path %s\n' "$marker" "$HOME/.local/bin" >> "$rc" ;;
   *)    ensure_rc "$HOME/.profile" ;;
 esac
+}
+
+# The managed grid for this computer: download, verify, unpack under ~/.harness/runtime and record it
+# in current-grid (what the daemon reads, like current-node). Returns non-zero, having said why,
+# instead of exiting: the caller decides that a missing grid is not a failed install — the harness
+# works without one, and the daemon fetches it on its next start. Laid down READ-ONLY, the bin
+# directory too: `grid update` replaces the binary with a rename INTO that directory, and a directory
+# it cannot write to is what makes that fail loudly instead of overwriting the pin. Never linked into
+# ~/.local/bin — see the call site.
+install_managed_grid() {
+  platform="$(manifest_platform)"
+  [ -n "$platform" ] || {
+    echo "  ✗ No managed grid is published for $(uname -s)/$(uname -m)." >&2
+    return 1
+  }
+  grid_manifest="$(curl -fsSL "$GRID_METADATA_URL")" || {
+    echo "  ✗ Could not fetch the grid manifest: $GRID_METADATA_URL" >&2
+    return 1
+  }
+  grid_entry="$(manifest_entry "$grid_manifest" "$platform")"
+  grid_url="$(entry_field "$grid_entry" url)"
+  grid_sha="$(entry_field "$grid_entry" sha256)"
+  grid_root="$(entry_field "$grid_entry" archiveRoot)"
+  grid_version="$(entry_field "$grid_entry" version)"
+  if [ -z "$grid_url" ] || [ -z "$grid_sha" ] || [ -z "$grid_root" ] || [ -z "$grid_version" ]; then
+    echo "  ✗ The grid manifest has no usable '$platform' entry." >&2
+    return 1
+  fi
+  grid_target="$RUNTIME_DIR/$grid_root"
+  if [ ! -x "$grid_target/bin/grid" ]; then
+    mkdir -p "$RUNTIME_DIR"
+    chmod 700 "$RUNTIME_DIR" 2>/dev/null || true
+    grid_staging="$RUNTIME_DIR/.grid-staging-$$"
+    rm -rf "$grid_staging"
+    mkdir -p "$grid_staging"
+    echo "  ▸ downloading grid $grid_version ($platform)…"
+    if ! curl -fsSL "$grid_url" -o "$grid_staging/grid.tar.gz"; then
+      echo "  ✗ Could not download $grid_url" >&2
+      rm -rf "$grid_staging"
+      return 1
+    fi
+    grid_got="$(sha256_of "$grid_staging/grid.tar.gz")"
+    if [ "$grid_got" != "$grid_sha" ]; then
+      echo "  ✗ grid download failed checksum verification (expected $grid_sha, got $grid_got)" >&2
+      rm -rf "$grid_staging"
+      return 1
+    fi
+    if ! tar -xzf "$grid_staging/grid.tar.gz" -C "$grid_staging" || [ ! -x "$grid_staging/$grid_root/bin/grid" ]; then
+      echo "  ✗ The grid archive has no $grid_root/bin/grid" >&2
+      rm -rf "$grid_staging"
+      return 1
+    fi
+    # A half-laid-down target from an earlier attempt may already be read-only; give it back first.
+    chmod -R u+w "$grid_target" 2>/dev/null || true
+    rm -rf "$grid_target"
+    mv "$grid_staging/$grid_root" "$grid_target"
+    rm -rf "$grid_staging"
+  fi
+  chmod 555 "$grid_target/bin/grid" "$grid_target/bin" 2>/dev/null || true
+  # Its update check off, as the daemon keeps it: this binary is the pin, not grid's to replace.
+  if ! GRID_NO_UPDATE_CHECK=1 "$grid_target/bin/grid" --version >/dev/null 2>&1; then
+    echo "  ✗ The managed grid does not run on this computer: $grid_target/bin/grid" >&2
+    return 1
+  fi
+  printf '%s\n' "$grid_target/bin/grid" > "$CURRENT_GRID_FILE"
+  chmod 600 "$CURRENT_GRID_FILE" 2>/dev/null || true
+  echo "  ✓ installed grid $grid_version → $grid_target"
+  return 0
 }
 
 # 1. Host requirements (standalone and --host). The CLI runs tmux, `ps`, and on a Linux desktop the
@@ -570,6 +643,17 @@ const bin = path.join(os.homedir(), '.local', 'bin')
   console.log('  ✓ installed harness ' + entry.version + ' → ' + dir)
 })().catch((err) => { console.error('✗ install failed: ' + err.message); process.exit(1) })
 HARNESSJS
+
+# 3b. The managed grid — the grid CLI this release pins, beside Node and tmux: the daemon shells out
+#     to it, and an agent's pane runs it by name. Optional where Node and tmux are not: the harness
+#     works without it (every grid call says so, in a sentence), and the daemon follows the pin on
+#     every start, so a download that fails here is retried by `harness start`. Never linked into
+#     ~/.local/bin — that path is grid's own installer's (uv's, on a Mac) — the daemon puts the
+#     managed grid on an agent pane's PATH itself. Host mode installs no CLI, so no grid either.
+if [ "$INSTALL_MODE" != "host" ]; then
+  echo "▸ Installing the managed grid into $RUNTIME_DIR"
+  install_managed_grid || echo "  · the grid runtime will be fetched by the daemon on its next start"
+fi
 
 # 4. Ensure ~/.local/bin is on PATH (per shell), idempotently — defined up with the other helpers.
 ensure_path_rc

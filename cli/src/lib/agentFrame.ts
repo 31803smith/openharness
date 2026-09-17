@@ -21,8 +21,17 @@
 import { stat } from 'node:fs/promises'
 import { agentProject, type AgentProject } from './agentProject.js'
 import type { GridAssignment } from './gridAssignment.js'
+import type { GridWebSearchStatus } from './gridLaunch.js'
 import { projectDisplayName, type RegisteredSession, titleDisplayName } from './registry.js'
 import type { DshVerdict } from '../dsh/verdict.js'
+
+/**
+ * The grid block on the wire: where the agent's inference goes, and — when the daemon built the
+ * launch — whether it can search the web. `webSearch` is absent, not null, when there is nothing to
+ * say: a discovered grid agent, or a row from before the daemon recorded it. The app shows nothing
+ * for absent and for `on`; the two degraded words each get a sentence.
+ */
+export type GridFrameBlock = GridAssignment & { webSearch?: GridWebSearchStatus }
 
 /**
  * One agent as it travels to every client.
@@ -50,7 +59,7 @@ export type AgentFrame = {
   terminal: { available: boolean; primary: string; runtimes: RegisteredSession['runtimes'] }
   engine: RegisteredSession['engine']
   selectedModel: string | null
-  grid: GridAssignment | null
+  grid: GridFrameBlock | null
   codexHome: string | null
   project: AgentProject | null
   /** The domain-specific harness this agent was created as, or null for a plain engine. */
@@ -116,8 +125,9 @@ export async function agentFrame(
     // Where this agent's inference actually goes, so a client can tell which agents a newly picked
     // grid has left behind. Read off the live process by discovery; carries no credential. Null is
     // a real answer ("on no grid") and must be sent as one — omitting the key would make every push
-    // indistinguishable from a daemon too old to know about grids.
-    grid: s.grid ?? null,
+    // indistinguishable from a daemon too old to know about grids. The web-search status rides on
+    // the block — decided by the launch, kept on the row — so it is gone the moment the block is.
+    grid: s.grid ? { ...s.grid, ...(s.gridWebSearch ? { webSearch: s.gridWebSearch } : {}) } : null,
     // The Codex profile folder this agent launched against, if one was chosen instead of the
     // engine's own login. Codex only; null is a real answer ("uses ~/.codex") for the same reason
     // `grid: null` is above.
