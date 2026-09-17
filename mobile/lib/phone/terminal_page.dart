@@ -24,7 +24,8 @@ import 'phone_search_page.dart' show openPhoneSearch;
 import 'phone_sheet.dart';
 import 'phone_status.dart';
 import 'status_pill.dart';
-import 'terminal_key_bar.dart';
+import 'terminal_input_dock.dart';
+import 'voice_input_controller.dart';
 
 /// One agent's terminal, filling the phone. The header says whose it is and whether it is live;
 /// everything below it is the same [TerminalPanel] a desktop tile draws, minus that tile's own
@@ -38,12 +39,17 @@ class TerminalPage extends StatefulWidget {
     required this.notifier,
     required this.machineId,
     required this.agentId,
+    required this.voice,
     this.isActive = true,
   });
 
   final AppNotifier notifier;
   final String machineId;
   final String agentId;
+
+  /// Voice input, shared by every page of the pager this page is in — see
+  /// [VoiceInputController] for why it is not this page's own.
+  final VoiceInputController voice;
 
   /// Whether this is the page being LOOKED AT, rather than one parked beside it in the pager.
   ///
@@ -64,42 +70,24 @@ class TerminalPage extends StatefulWidget {
 /// Whether the software keyboard is up, as one fact rather than as a flag each
 /// page keeps for itself.
 ///
-/// ⚠️ Per-page state cannot answer the question the pager asks. A page keeps
-/// [_TerminalPageState._claimSpent] to stop itself re-summoning a keyboard the
-/// person dismissed — but that flag is only ever armed by a keyboard this page
-/// WATCHED rise. Swiping A → B → C and hiding the keyboard at C leaves B
-/// having mounted while it was already down: its claim was never spent, so on
-/// the way back it looked exactly like a page arriving fresh and pulled the
-/// keyboard up again. Whether the keyboard is up is a property of the SCREEN,
-/// not of any one page, so it is kept once here.
+/// ⚠️ Per-page state cannot answer the question the pager asks. Swiping to the
+/// next agent while typing must HOLD the keyboard — the outgoing page releases
+/// focus, and unless the incoming one takes it in the same frame the platform
+/// closes the keyboard — and a page built while the keyboard was down, then
+/// swiped to after it rose, never watched it rise. Whether the keyboard is up is
+/// a property of the SCREEN, not of any one page, so it is kept once here.
 ///
 /// Written by every mounted page's `didChangeMetrics` — they all see the same
 /// inset, so they all write the same value.
 bool _keyboardIsUp = false;
 
-/// Whether the keyboard has been PUT AWAY while the pager was open, as opposed
-/// to never having been raised.
-///
-/// ⚠️ The pager's second half, and per-page state cannot hold it either. A page
-/// raises the keyboard on arrival because that is what opening an agent should
-/// do — but once somebody has dismissed it, every page reached by swiping after
-/// that must leave it down, including pages that have never been on screen and
-/// so have nothing of their own to remember. It is the PERSON's choice, made
-/// once, and it outlives any one page.
-///
-/// Set when the inset falls to zero with the pager open; cleared when it rises
-/// again, so tapping a pane to type re-arms the ordinary behaviour.
-bool _keyboardDismissed = false;
-
 /// Forgets what the keyboard did during the last run of terminal pages.
 ///
-/// Called when a pager opens. The dismissal above is deliberately sticky ACROSS
-/// pages so a swipe cannot undo it, which makes it sticky across whole visits
-/// too unless something clears it — and "I put the keyboard away on that agent
-/// an hour ago" should not decide what opening a different agent does now.
+/// Called when a pager opens. A pager popped with the keyboard up is disposed
+/// before the inset falls, so no page is left to see it fall — and the next
+/// pager would otherwise open believing the keyboard is up, and summon it.
 void resetKeyboardSession() {
   _keyboardIsUp = false;
-  _keyboardDismissed = false;
 }
 
 class _TerminalPageState extends State<TerminalPage>
@@ -116,44 +104,18 @@ class _TerminalPageState extends State<TerminalPage>
   /// TerminalPage still sitting in the Agents tab's stack.
   bool _hadPane = false;
 
-  /// Whether this page has already used its one chance to summon the keyboard.
+  /// Whether the Keyboard button in voice input has asked for the keyboard,
+  /// and it has not risen yet.
   ///
-  /// It starts `false`, so the terminal is focused on arrival and the keyboard
-  /// rises by itself. It flips the moment the keyboard IS up, and NEVER goes
-  /// back: from then on `TerminalPanel` is passed `focused: false` and stops
-  /// claiming, for the life of the page. Bringing the keyboard back is the
-  /// terminal's own job — xterm's tap handler calls `requestKeyboard()` without
-  /// consulting this flag, so nothing here needs to re-arm.
+  /// What makes [TerminalPanel] claim focus at all: arriving on a page raises
+  /// nothing, and a tap on the terminal opens voice input, so this is the one
+  /// way the keyboard is SUMMONED. Spent the moment the keyboard is up — from
+  /// then on [_keyboardIsUp] holds it — so Back or `⌄` can put it away without
+  /// a claim fetching it straight back.
   ///
-  /// ⚠️ Without this, Back could not put the keyboard away at all:
-  /// `TerminalPanel._claimFocus` calls `TerminalView.requestKeyboard()`, which
-  /// RE-TAKES focus when it finds none, so the keyboard returned a frame after
-  /// the system dismissed it. Measured on a Pixel 8 Pro — `onRequestShow`
-  /// ELEVEN times against a single `onRequestHide`.
-  ///
-  /// ⚠️ It flips on the keyboard APPEARING, not on it going away, and that is
-  /// the difference between Back working on the first press and on the second.
-  /// `_claimFocus` runs from a post-frame callback and BEATS `didChangeMetrics`
-  /// to the news that the keyboard is gone:
-  ///
-  ///     onDispatched            keyboard hidden
-  ///     CLAIM focused=true      claim ran first — re-took focus
-  ///     onRequestShow           keyboard on its way back
-  ///     KB raw=0.0              our metrics callback, one beat too late
-  ///
-  /// Arming on the way up removes the race: by the time any Back arrives,
-  /// claiming has been off for as long as the keyboard has been visible.
-  bool _claimSpent = false;
-
-  /// Whether this page has already had a turn on screen and been swiped away.
-  ///
-  /// ⚠️ What separates "arriving" from "coming back", which [_claimSpent]
-  /// cannot. A page the pager built while the keyboard was down never spent its
-  /// claim, so on its second turn it looked exactly like one opened fresh — and
-  /// summoned the keyboard again after the person had dismissed it two agents
-  /// away. A page raises the keyboard on its FIRST turn only; after that it
-  /// holds whatever is there and summons nothing.
-  bool _hasHadATurn = false;
+  /// It stays set when no inset ever arrives, which is what a hardware keyboard
+  /// looks like: the terminal keeps its focus, and the key bar stays for `esc`.
+  bool _keyboardRequested = false;
 
   /// Whether the software keyboard is up, and with it [TerminalKeyBar].
   ///
@@ -201,10 +163,9 @@ class _TerminalPageState extends State<TerminalPage>
   void didUpdateWidget(TerminalPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.isActive && !widget.isActive) {
-      // Marked on the way OUT, not on the way in: the flag means "has had its
-      // turn", and a page still on its first one must keep the summon it has
-      // not used yet.
-      _hasHadATurn = true;
+      // A keyboard asked for and still on its way belongs to the page that
+      // asked; a parked page must not claim it when it comes.
+      _keyboardRequested = false;
       _cancelSettle();
       if (_keyboardSettling) setState(() => _keyboardSettling = false);
     }
@@ -232,19 +193,16 @@ class _TerminalPageState extends State<TerminalPage>
     super.didChangeMetrics();
     if (!mounted) return;
     final inset = View.of(context).viewInsets.bottom;
-    // The FIRST frame of the keyboard rising is enough — it need not finish.
-    // Spending the claim this early is the point: it is off long before any
-    // Back press can arrive.
     final up = inset > 0;
     // Every mounted page writes it, and they all see the same inset — so a page
     // that was parked while the keyboard came and went still reads the truth.
-    if (up != _keyboardIsUp) {
-      _keyboardIsUp = up;
-      // Falling to zero is a dismissal; rising again is somebody asking for it
-      // back, which restores what a freshly opened agent does.
-      _keyboardDismissed = !up;
-    }
-    final claim = _claimSpent || up;
+    _keyboardIsUp = up;
+    // The FIRST frame of the keyboard rising spends the request — it need not
+    // finish. Spending it this early is the point: it is off long before any
+    // Back press can arrive.
+    final requested = _keyboardRequested && !up;
+    // One input at a time. Whatever raised the keyboard, voice input yields.
+    if (up && widget.voice.isOpen) widget.voice.close();
 
     // Every tick that MOVES the inset is the animation still running; the run
     // ends when one window passes without another move. Gated on a real change
@@ -267,47 +225,61 @@ class _TerminalPageState extends State<TerminalPage>
 
     final settling = _settleTimer != null;
     if (up == _keyboardUp &&
-        claim == _claimSpent &&
+        requested == _keyboardRequested &&
         settling == _keyboardSettling) {
       return;
     }
     setState(() {
       _keyboardUp = up;
-      _claimSpent = claim;
+      _keyboardRequested = requested;
       _keyboardSettling = settling;
     });
   }
 
-  /// Whether [TerminalPanel] should hold the input connection.
+  /// Whether [TerminalPanel] should hold the input connection: while the
+  /// keyboard is up, and while one is on its way — see [_keyboardRequested].
   ///
-  /// Two different questions, and [_claimSpent] alone can only answer one:
-  ///
-  ///  - **Raise a keyboard that is down.** One chance per page, spent the
-  ///    moment the keyboard appears, so Back can put it away without the claim
-  ///    fetching it straight back — see [_claimSpent].
-  ///  - **Hold a keyboard that is already up.** What swiping between agents
-  ///    needs: the outgoing page releases focus, and unless the incoming one
-  ///    takes it in the same frame the platform closes the keyboard.
-  ///
-  /// ⚠️ The second case reads [_keyboardIsUp], the one screen-wide fact, rather
-  /// than anything this page remembers. Per-page flags get the pager wrong in
-  /// both directions: [_claimSpent] is armed by a parked neighbour merely
-  /// WATCHING the keyboard rise, and it is never armed at all on a page built
-  /// while the keyboard was down — so a page coming back for its second turn
-  /// was indistinguishable from one opened fresh, and summoned a keyboard the
-  /// person had dismissed two agents away. [_hasHadATurn] closes that: the
-  /// summon belongs to a page's first turn only.
+  /// ⚠️ Holding reads [_keyboardIsUp], the one screen-wide fact, rather than
+  /// anything this page remembers — see that flag for why swiping needs it.
   bool get _shouldFocus =>
-      widget.isActive &&
-      (_keyboardIsUp || (!_claimSpent && !_hasHadATurn && !_keyboardDismissed));
+      widget.isActive && (_keyboardIsUp || _keyboardRequested);
 
-  /// Puts the keyboard away without leaving the page — the `⌄` key on
-  /// [TerminalKeyBar]. Dropping focus is what closes the input connection;
-  /// xterm reopens it on the next tap in the pane.
-  void _dismissKeyboard() => FocusManager.instance.primaryFocus?.unfocus();
+  /// A tap on the terminal while no keyboard is up or coming: voice input,
+  /// already recording. Null while the keyboard is, so the tap is xterm's and
+  /// the keyboard stays.
+  VoidCallback? get _onInputTap =>
+      _shouldFocus ? null : () => unawaited(widget.voice.open());
 
-  /// Whether the keyboard on screen is THIS page's — the question the header
-  /// chrome asks, which [_keyboardUp] alone answers wrongly.
+  /// The Keyboard button in voice input. What was heard is typed into the
+  /// prompt rather than dropped, so the keyboard picks up where the voice left
+  /// off — to correct a word, or to finish the sentence. A take still being
+  /// recorded is transcribed first: pressing Keyboard mid-sentence is asking to
+  /// fix that sentence, not to lose it.
+  Future<void> _useKeyboard(TerminalSession session) async {
+    final heard = await widget.voice.takeTranscript();
+    if (!mounted) return;
+    widget.voice.close();
+    if (heard.isNotEmpty && session.acceptsInput) {
+      session.terminal.textInput(heard);
+    }
+    setState(() => _keyboardRequested = true);
+  }
+
+  /// Puts away whichever input is up without leaving the page — the `⌄` key on
+  /// [TerminalKeyBar]. Dropping focus is what closes the input connection.
+  void _dismissInput() {
+    widget.voice.close();
+    FocusManager.instance.primaryFocus?.unfocus();
+    if (_keyboardRequested) setState(() => _keyboardRequested = false);
+  }
+
+  /// Whether an input on screen is THIS page's — the keyboard, or voice input
+  /// in its place — the question the header chrome asks, which [_keyboardUp]
+  /// alone answers wrongly.
+  ///
+  /// Voice input counts for the same reason the keyboard does: the panel takes
+  /// the keyboard's place, so the fab would float over its Send button and the
+  /// machine row would sit under it.
   ///
   /// ⚠️ [_keyboardUp] means "an inset exists", not "this page raised it". A
   /// pushed page with a text field — search, rename — raises one of its own,
@@ -324,8 +296,9 @@ class _TerminalPageState extends State<TerminalPage>
   /// Not used for [_shouldFocus] or for the key bar: those are about the
   /// keyboard ITSELF, which is screen-wide, and a covered page must keep
   /// tracking it to know what to do when it is uncovered.
-  bool get _ownsKeyboard =>
-      _keyboardUp && (ModalRoute.of(context)?.isCurrent ?? true);
+  bool get _ownsInput =>
+      (_keyboardUp || widget.voice.isOpen) &&
+      (ModalRoute.of(context)?.isCurrent ?? true);
 
   /// Guards against a second picker while one is already up.
   ///
@@ -394,7 +367,9 @@ class _TerminalPageState extends State<TerminalPage>
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: widget.notifier,
+      // The panel opening or closing moves the header chrome — see
+      // [_ownsInput]. Its open STATE only: what it hears repaints the panel.
+      listenable: Listenable.merge([widget.notifier, widget.voice.openState]),
       builder: (context, _) {
         AppTheme.watch(context);
         final pane = widget.notifier.panes
@@ -443,12 +418,12 @@ class _TerminalPageState extends State<TerminalPage>
           // password cannot host a new agent. Null rather than disabled, the
           // convention [PhoneFab] documents.
           //
-          // ⚠️ Gone while the keyboard is up, for the reason the header
-          // controls are: a Scaffold's fab floats over the body, so it would
-          // sit on top of [TerminalKeyBar] — the one row the thumb is actually
-          // aiming at while typing.
+          // ⚠️ Gone while the keyboard or voice input is up, for the reason
+          // the header controls are: a Scaffold's fab floats over the body, so
+          // it would sit on top of [TerminalKeyBar] — the one row the thumb is
+          // actually aiming at while typing — or on voice input's Send.
           floatingActionButton:
-              !_ownsKeyboard &&
+              !_ownsInput &&
                   machine != null &&
                   phoneMachineStatusOf(machine) == PhoneMachineStatus.ready
               ? PhoneFab(
@@ -514,16 +489,16 @@ class _TerminalPageState extends State<TerminalPage>
                     // creates something; the fab says that by being the only
                     // filled thing on the page.
                     //
-                    // ⚠️ Still hidden while the keyboard is up. The header is
-                    // one row, and a terminal being typed into is the one
-                    // moment search is not what the thumb is reaching for —
-                    // the key bar directly under it is.
+                    // ⚠️ Still hidden while the keyboard or voice input is
+                    // up. The header is one row, and a terminal being typed or
+                    // talked into is the one moment search is not what the
+                    // thumb is reaching for.
                     // ⚠️ Not [PhoneSearchButton], which pushes and forgets. A
                     // page that pops back onto the top gets no rebuild of its
-                    // own, so [_ownsKeyboard] would keep answering with what
+                    // own, so [_ownsInput] would keep answering with what
                     // was true while the search was covering it. Awaiting the
                     // push is what turns "the search closed" into a frame.
-                    if (!_ownsKeyboard)
+                    if (!_ownsInput)
                       AppIconButton(
                         icon: LucideIcons.search300,
                         size: 22,
@@ -556,17 +531,6 @@ class _TerminalPageState extends State<TerminalPage>
                       Expanded(
                         child: pane == null || session == null
                             ? const _Attaching()
-                            // ⚠️ Nothing re-arms [_claimSpent] on tap, and that
-                            // is deliberate. A `Listener` doing so was written
-                            // and removed: xterm's own `_onTapDown` already
-                            // calls `requestKeyboard()`, so the tap opened the
-                            // keyboard and THEN the re-armed claim asked for it
-                            // a second time — Android answers a show arriving
-                            // mid-animation by cancelling and restarting it.
-                            // Measured: two `onRequestShow` and two
-                            // `onCancelled at PHASE_CLIENT_APPLY_ANIMATION` per
-                            // tap. The claim exists only to raise the keyboard
-                            // on arrival; after that the terminal handles it.
                             : TerminalPanel(
                                 key: ValueKey(pane.id),
                                 notifier: widget.notifier,
@@ -586,47 +550,51 @@ class _TerminalPageState extends State<TerminalPage>
                                 // must NOT release focus — the animation being
                                 // waited on is the one that focus started.
                                 settling: _keyboardSettling,
+                                // ⚠️ The tap is taken in the panel, not by a
+                                // `Listener` over it. xterm's own `_onTapDown`
+                                // calls `requestKeyboard()`, so anything that
+                                // merely ALSO reacted to the tap would get the
+                                // keyboard rising under voice input — and a
+                                // re-armed claim on top of it was measured
+                                // asking Android twice per tap, which answers a
+                                // show mid-animation by cancelling and
+                                // restarting it.
+                                onInputTap: _onInputTap,
                                 showHeader: false,
                                 // No composer, and so no grip above it: the
                                 // page hands the pane its full height and the
                                 // software keyboard drives the terminal
-                                // directly — `TerminalPanel` autofocuses the
-                                // view precisely when no box is covering it.
-                                // What goes with the box is the batched send,
-                                // and the Esc/Tab/Ctrl an on-screen keyboard
-                                // never had anyway.
+                                // directly. Voice input's Send is what kept
+                                // the composer's batched turn.
                               ),
                       ),
                       // The bottom of this page IS just above the keyboard:
                       // `PhoneShell`'s Scaffold has already resized for it —
                       // the same resize that empties this page's MediaQuery
                       // insets (see [didChangeMetrics]).
-                      if (_keyboardUp && session != null)
-                        ListenableBuilder(
-                          listenable: session,
-                          builder: (context, _) => TerminalKeyBar(
-                            terminal: session.terminal,
-                            enabled: session.acceptsInput,
-                            controlArmed: session.controlArmed,
-                            onControlToggle: session.armControl,
-                            onDismissKeyboard: _dismissKeyboard,
-                            // Only where the far side can actually take one: an
-                            // older CLI never advertises the binary kind, so the
-                            // upload would go nowhere silently. Null leaves the
-                            // buttons undrawn rather than drawn dead.
-                            onPickImage:
-                                machine?.terminalImagePasteAvailable == true
-                                ? () => unawaited(
-                                    _sendImage(session, ImageSource.gallery),
-                                  )
-                                : null,
-                            onTakePhoto:
-                                machine?.terminalImagePasteAvailable == true
-                                ? () => unawaited(
-                                    _sendImage(session, ImageSource.camera),
-                                  )
-                                : null,
-                          ),
+                      if (session != null)
+                        TerminalInputDock(
+                          session: session,
+                          voice: widget.voice,
+                          keyboardUp: _keyboardUp || _keyboardRequested,
+                          onDismiss: _dismissInput,
+                          onUseKeyboard: () => unawaited(_useKeyboard(session)),
+                          // Only where the far side can actually take one: an
+                          // older CLI never advertises the binary kind, so the
+                          // upload would go nowhere silently. Null leaves the
+                          // buttons undrawn rather than drawn dead.
+                          onPickImage:
+                              machine?.terminalImagePasteAvailable == true
+                              ? () => unawaited(
+                                  _sendImage(session, ImageSource.gallery),
+                                )
+                              : null,
+                          onTakePhoto:
+                              machine?.terminalImagePasteAvailable == true
+                              ? () => unawaited(
+                                  _sendImage(session, ImageSource.camera),
+                                )
+                              : null,
                         ),
                       // Which computer this is running on, and whether it is
                       // still answering — the pair that used to sit under the
@@ -643,7 +611,7 @@ class _TerminalPageState extends State<TerminalPage>
                       // tall, and a status line wedged under it is a row of
                       // chrome the terminal loses for nothing — state is not
                       // what is being read mid-typing.
-                      if (!_ownsKeyboard)
+                      if (!_ownsInput)
                         _MachineBar(
                           name: machine?.machine.displayName ?? '',
                           // ⚠️ The machine ALONE once the reclaim button is up.

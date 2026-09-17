@@ -1,0 +1,121 @@
+import 'dart:async';
+import 'dart:typed_data';
+
+import 'package:record/record.dart';
+
+import 'voice_wav.dart';
+
+/// One finished recording: the WAV to upload, how long it ran, and the loudest
+/// sample in it — which is what tells "nobody spoke" apart from "no sound ever
+/// reached the microphone".
+typedef VoiceTake = ({Uint8List wav, Duration length, int peak});
+
+/// The microphone behind [VoiceInputController], as the four things voice
+/// input asks of it. Words are not its business: it hands back a WAV, and the
+/// backend turns that into text.
+///
+/// A seam rather than `AudioRecorder` itself: the plugin is a platform channel,
+/// and a widget test that reached it would hang on a call no recorder answers.
+abstract interface class VoiceRecorder {
+  /// Asks for the microphone the first time it runs. False once refused.
+  Future<bool> allowed();
+
+  /// Starts a recording. Throws when the microphone cannot be opened.
+  Future<void> start();
+
+  /// Ends the recording, or returns null when not one buffer was captured.
+  Future<VoiceTake?> stop();
+
+  /// Ends the recording and throws it away.
+  Future<void> cancel();
+
+  Future<void> dispose();
+}
+
+/// [VoiceRecorder] over the phone's microphone.
+///
+/// Streams raw PCM and wraps it here, rather than recording a file: a file
+/// needs somewhere to live and something to delete it, and a phrase of speech
+/// is a few hundred kilobytes that are about to be uploaded anyway.
+class MicVoiceRecorder implements VoiceRecorder {
+  /// What the backend's transcription is tuned on — the dial sends 8–16 kHz
+  /// mono — and a minute of it is under 2 MB to upload.
+  static const _requested = RecordConfig(
+    encoder: AudioEncoder.pcm16bits,
+    sampleRate: 16000,
+    numChannels: 1,
+  );
+
+  final AudioRecorder _recorder = AudioRecorder();
+  final BytesBuilder _pcm = BytesBuilder(copy: false);
+  StreamSubscription<Uint8List>? _subscription;
+  Completer<void>? _drained;
+
+  /// What the platform actually records at. ⚠️ Not always [_requested]: a
+  /// device may refuse 16 kHz and say so through `setOnConfigChanged`, and a
+  /// WAV header stating the wrong rate plays back — and transcribes — at the
+  /// wrong speed.
+  int _sampleRate = _requested.sampleRate;
+  int _channels = _requested.numChannels;
+
+  @override
+  Future<bool> allowed() => _recorder.hasPermission();
+
+  @override
+  Future<void> start() async {
+    await _discardTake();
+    _sampleRate = _requested.sampleRate;
+    _channels = _requested.numChannels;
+    await _recorder.setOnConfigChanged((config) {
+      _sampleRate = config.sampleRate;
+      _channels = config.numChannels;
+    });
+    final stream = await _recorder.startStream(_requested);
+    final drained = _drained = Completer<void>();
+    void finish([Object? _]) {
+      if (!drained.isCompleted) drained.complete();
+    }
+
+    _subscription = stream.listen(_pcm.add, onDone: finish, onError: finish);
+  }
+
+  @override
+  Future<VoiceTake?> stop() async {
+    final drained = _drained;
+    if (drained == null) return null;
+    await _recorder.stop();
+    // The plugin's own rule: the last buffer arrives with the stream's close,
+    // not with `stop()`, so the take is only whole once the stream is done.
+    await drained.future.timeout(const Duration(seconds: 2), onTimeout: () {});
+    _subscription = null;
+    _drained = null;
+    final pcm = _pcm.takeBytes();
+    if (pcm.isEmpty) return null;
+    final samples = pcm.length ~/ (2 * _channels);
+    return (
+      wav: wavFromPcm16(pcm, sampleRate: _sampleRate, channels: _channels),
+      length: Duration(microseconds: samples * 1000000 ~/ _sampleRate),
+      peak: pcm16Peak(pcm),
+    );
+  }
+
+  @override
+  Future<void> cancel() async {
+    if (_drained == null) return;
+    await _recorder.cancel();
+    await _discardTake();
+  }
+
+  @override
+  Future<void> dispose() async {
+    await _discardTake();
+    await _recorder.dispose();
+  }
+
+  Future<void> _discardTake() async {
+    await _subscription?.cancel();
+    _subscription = null;
+    _drained = null;
+    _pcm.clear();
+  }
+}

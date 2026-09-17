@@ -89,6 +89,16 @@ class TerminalPanel extends StatefulWidget {
   final bool showHeader;
   final int focusRequest;
 
+  /// Takes over the tap that would raise the software keyboard. Null leaves it
+  /// to xterm, which is what every desktop tile does.
+  ///
+  /// Set on the phone, where that tap opens voice input instead
+  /// (`phone/terminal_page.dart`). Claimed on tap DOWN — xterm then neither
+  /// raises the keyboard nor reports the click to a mouse-tracking program —
+  /// but run on tap UP, so a scroll that began as a press opens nothing. A tap
+  /// that clears a selection, or opens a link, is still exactly that.
+  final VoidCallback? onInputTap;
+
   /// Whether this tile's composer textbox is showing. Only consulted for a remote machine.
   final bool composerVisible;
   final bool readOnly;
@@ -118,6 +128,7 @@ class TerminalPanel extends StatefulWidget {
     this.compactHeader = false,
     this.showHeader = true,
     this.focusRequest = 0,
+    this.onInputTap,
     this.composerVisible = false,
     this.readOnly = false,
     this.notice,
@@ -193,6 +204,9 @@ class _TerminalPanelState extends State<TerminalPanel>
     null,
   );
   String? _pressedLink;
+
+  /// Whether the tap in progress was claimed for [TerminalPanel.onInputTap].
+  bool _inputTapClaimed = false;
   bool _openingLink = false;
   bool _linkRefreshPending = false;
   bool _followTail = true;
@@ -1153,6 +1167,24 @@ class _TerminalPanelState extends State<TerminalPanel>
     _hoveredLink.value = target;
   }
 
+  bool _onTerminalTapDown(TapDownDetails details, CellOffset cell) {
+    _inputTapClaimed = false;
+    if (_onLinkTapDown(details, cell)) return true;
+    if (widget.onInputTap == null || _controller.selection != null) {
+      return false;
+    }
+    return _inputTapClaimed = true;
+  }
+
+  void _onTerminalTapUp(TapUpDetails details, CellOffset cell) {
+    if (!_inputTapClaimed) {
+      _onLinkTapUp(details, cell);
+      return;
+    }
+    _inputTapClaimed = false;
+    widget.onInputTap?.call();
+  }
+
   bool _onLinkTapDown(TapDownDetails details, CellOffset cell) {
     _pressedLink = _linkModifierPressed
         ? _linkAtPointer(details.globalPosition)
@@ -1374,8 +1406,8 @@ class _TerminalPanelState extends State<TerminalPanel>
                           allowedMimeTypes: const ['image/png'],
                           onContentInserted: _onContentInserted,
                           onKeyEvent: _onTerminalKey,
-                          onTapDown: _onLinkTapDown,
-                          onTapUp: _onLinkTapUp,
+                          onTapDown: _onTerminalTapDown,
+                          onTapUp: _onTerminalTapUp,
                           // Constant on purpose. The click cursor is applied by
                           // [_LinkTooltip]'s own MouseRegion, which repaints
                           // without rebuilding this view.
