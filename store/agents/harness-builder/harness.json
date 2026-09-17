@@ -1,0 +1,31 @@
+{
+  "spec": 1,
+  "id": "autonomous/harness-builder",
+  "name": "Harness Builder",
+  "category": "Harnesses",
+  "author": "Autonomous",
+  "description": "Name a tool; get a domain-specific harness for it: researched, pinned, with expert skills, a live viewer and an honest evaluation, proved on real prompts.",
+  "engine": "claude",
+  "workspace": {
+    "template": "template",
+    "marker": ".builder/build.json",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": ["skills"],
+    "env": {
+      "BUILDER": "${dsh}/toolchain/builder",
+      "BUILDER_REFERENCE": "${dsh}/reference/openharness"
+    }
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "command": "toolchain/viewer.sh",
+    "url": "http://127.0.0.1:${port}/"
+  },
+  "verdict": ".harness/verdict.json"
+}
