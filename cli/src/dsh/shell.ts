@@ -5,8 +5,7 @@
  * same shell selection) `engineLaunch.ts` uses to exec an engine in a pane.
  */
 import { spawn, type ChildProcess } from 'node:child_process'
-import { dirname } from 'node:path'
-import { interactiveEngineShell, shellSingleQuote } from '../lib/engineLaunch.js'
+import { harnessNodePrelude, interactiveEngineShell } from '../lib/engineLaunch.js'
 import { managedNodePath } from '../lib/nodeRuntime.js'
 
 export interface DshCommandOptions {
@@ -64,8 +63,7 @@ export function dshShellArgv(script: string): { path: string; args: string[] } {
  * files, so a profile that assigns PATH outright cannot drop it.
  */
 export function dshNodeFallback(): string {
-  const bin = shellSingleQuote(dirname(managedNodePath()))
-  return `if ! command -v node >/dev/null 2>&1; then PATH="\${PATH:+$PATH:}"${bin}; export PATH; fi`
+  return harnessNodePrelude(managedNodePath()).trimEnd()
 }
 
 export function spawnDshCommand(script: string, opts: { cwd: string; env?: Record<string, string> }): ChildProcess {

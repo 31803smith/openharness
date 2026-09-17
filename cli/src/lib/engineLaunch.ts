@@ -72,6 +72,14 @@ export interface LaunchCommandOptions {
    * machine keeps everything it had.
    */
   clearEnv?: readonly string[]
+  /**
+   * A DSH agent: when the pane's shell, rc files and all, has no `node`, the Node this daemon runs on
+   * joins the END of its PATH before the engine starts, so the agent's own tool calls can run what the
+   * harness's skills tell them to (`node "$MARP_TOOLCHAIN/check.mjs"`, a package's tscircuit CLI). A
+   * machine with no node on PATH is the normal case since the runtime went private; a plain engine
+   * launch is left exactly as it was.
+   */
+  harnessNode?: boolean
   /** Workspace entered after interactive-shell startup, not before it. */
   cwd?: string
 }
@@ -188,7 +196,7 @@ export function buildEngineLaunchArgv(
   // of this shell and inherits what it inherits: `npm` is not going to spend someone's Anthropic key,
   // but an install script that probes for credentials to configure itself would, and the whole point
   // of this launch is that the agent's environment is the one the user asked for.
-  const prelude = clearEnvPrelude(opts.clearEnv)
+  const prelude = clearEnvPrelude(opts.clearEnv) + (opts.harnessNode ? harnessNodePrelude(runtimeNode) : '')
   // rc files (notably nvm) call getcwd() before running this command. Start the shell in a safe
   // directory and enter the selected workspace only after those files have loaded: an IDE can replace
   // a workspace inode between the desktop picker resolving it and tmux spawning the pane.
@@ -201,6 +209,11 @@ export function buildEngineLaunchArgv(
       ? installThenExecScript(opts.installFirst)
       : 'exec "$@"'
   return [interactive.path, ...interactive.args, prelude + cwdPrelude + body, 'harness-engine', ...(opts.cwd ? [opts.cwd] : []), ...command]
+}
+
+/** Harness's Node at the end of PATH when the shell found none — see `LaunchCommandOptions.harnessNode`. */
+export function harnessNodePrelude(runtimeNode: string = managedNodePath()): string {
+  return `if ! command -v node >/dev/null 2>&1; then PATH="\${PATH:+$PATH:}"${shellSingleQuote(dirname(runtimeNode))}; export PATH; fi\n`
 }
 
 /**

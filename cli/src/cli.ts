@@ -3592,6 +3592,7 @@ async function runForeground(session: AuthSession): Promise<void> {
           ...(entry.cwd ? { cwd: entry.cwd } : {}),
           ...(extraArgs.length ? { extraArgs } : {}),
           ...(clearEnv.length ? { clearEnv } : {}),
+          ...(launchEnv.HARNESS_DSH ? { harnessNode: true } : {}),
         })
         return { argv, ...(Object.keys(launchEnv).length ? { env: launchEnv } : {}) }
       },
@@ -3867,7 +3868,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     // is supposed to use exactly these variables.
     const clearEnv = gridLaunch ? gridConflictingEnvToClear(gridLaunch) : undefined
     const extraArgs = [...(gridLaunch?.args ?? []), ...dshArgs]
-    const launchOptions = { bypassPermission, extraArgs: extraArgs.length ? extraArgs : undefined, installIfMissing, clearEnv, cwd }
+    const launchOptions = { bypassPermission, extraArgs: extraArgs.length ? extraArgs : undefined, installIfMissing, clearEnv, cwd, harnessNode: dsh ? true : undefined }
     const command = buildEngineCommandArgv(engine, launchOptions)
     const argv = buildEngineLaunchArgv(engine, launchOptions)
     // A tmux route is enough to stream its screen. Register it before looking for a process so both
@@ -4019,6 +4020,7 @@ async function runForeground(session: AuthSession): Promise<void> {
       // a swap that sets no grid — back to the engine's own login, or a Codex profile's CODEX_HOME —
       // clears nothing. There the user's own variables are the point.
       ...(launch.clearEnv?.length ? { clearEnv: launch.clearEnv } : {}),
+      ...(launch.env?.HARNESS_DSH ? { harnessNode: true } : {}),
     }),
     log: (message) => console.log(message),
   })
