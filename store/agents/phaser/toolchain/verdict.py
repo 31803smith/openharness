@@ -46,7 +46,7 @@ def source_files(ws: Path) -> list[Path]:
     skip = {"node_modules", "out", "dist", ".vite"}
     return sorted(
         p for p in (ws / "src").rglob("*")
-        if p.suffix in (".js", ".mjs", ".ts") and p.is_file() and not (skip & set(p.parts))
+        if p.suffix in (".js", ".mjs", ".ts") and p.is_file() and not (skip & set(p.relative_to(ws).parts))
     )
 
 
@@ -62,10 +62,8 @@ def build_message(output: str) -> str:
             # message is the part a person can act on; the stack is noise in a pane header.
             rest: list[str] = []
             for candidate in lines[i + 1:i + 6]:
-                text = candidate.strip()
-                if not text:
-                    continue
-                if text.startswith(("file:", "at ", "    at ")):
+                text = candidate.strip()  # never empty: blank lines were dropped above
+                if text.startswith(("file:", "at ")):
                     break
                 rest.append(text)
             if rest:
