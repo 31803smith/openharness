@@ -33,6 +33,7 @@ class WebPanePanel extends StatefulWidget {
     super.key,
     required this.notifier,
     required this.pane,
+    this.title = 'Viewer',
     required this.ownerName,
     required this.ownerEngine,
     this.ownerDisplayName,
@@ -47,7 +48,10 @@ class WebPanePanel extends StatefulWidget {
   final AppNotifier notifier;
   final TerminalPane pane;
 
-  /// The agent this viewer belongs to, for the header.
+  /// What the pane is called in its header ("3D Viewer"); see viewerPaneName.
+  final String title;
+
+  /// The harness this viewer belongs to — in the header's tooltip, beside the URL.
   final String ownerName;
   final String? ownerEngine;
   final String? ownerDisplayName;
@@ -198,13 +202,16 @@ class _WebPanePanelState extends State<WebPanePanel> {
               // would only repeat what the pane shows. A status, not a history.
               Expanded(
                 child: Tooltip(
-                  message: widget.pane.url ?? '',
+                  message: [
+                    widget.ownerName,
+                    ?widget.pane.url,
+                  ].join('\n'),
                   waitDuration: const Duration(milliseconds: 700),
                   child: Row(
                     children: [
                       Flexible(
                         child: Text(
-                          widget.ownerName,
+                          widget.title,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(

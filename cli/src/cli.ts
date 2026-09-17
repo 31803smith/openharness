@@ -79,7 +79,7 @@ import { buildLaunchOverrides, validateLaunchOverrides, type LaunchOverrides, ty
 import { prepareCodexResume } from './engines/codex/portableHistory.js'
 import { buildHarnessSessionLabel } from './lib/harnessSessionLabel.js'
 import { installedDsh } from './dsh/installed.js'
-import { dshVerdictPath } from './dsh/manifest.js'
+import { dshVerdictPath, dshViewerName } from './dsh/manifest.js'
 import { catalogEntry, refreshDshRegistry } from './dsh/catalog.js'
 import { installDsh, resolveInstallSource, removeDsh } from './dsh/install.js'
 import { preTrustClaudeProject, preTrustCodexProject } from './lib/claudeTrust.js'
@@ -1457,6 +1457,8 @@ async function runForeground(session: AuthSession): Promise<void> {
       id: installed?.id ?? s.dsh,
       name: installed?.manifest.name ?? catalogEntry(s.dsh)?.name ?? null,
       viewerUrl: state?.viewerUrl ?? null,
+      // The pane beside the terminal says what it is, so the harness's name is not printed twice.
+      viewerName: installed ? dshViewerName(installed.manifest, (id) => installedDsh(id)?.manifest.name ?? catalogEntry(id)?.name) : null,
       verdict: state?.verdict ?? null,
     }
   }

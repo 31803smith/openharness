@@ -3129,6 +3129,7 @@ class AppNotifier extends ChangeNotifier {
           prev.dsh != agent.dsh ||
           prev.dshName != agent.dshName ||
           prev.viewerUrl != agent.viewerUrl ||
+          prev.viewerName != agent.viewerName ||
           prev.verdict != agent.verdict) {
         return false;
       }

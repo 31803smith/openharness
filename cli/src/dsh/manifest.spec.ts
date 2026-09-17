@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { DshManifestSchema, dshSkillsDirFor, dshTier, dshVerdictPath, expandDshValue, parseDshManifest, readDshManifest , isViewerPackage, dshEngine, viewerUse} from './manifest.js'
+import { DshManifestSchema, dshSkillsDirFor, dshTier, dshVerdictPath, dshViewerName, expandDshValue, parseDshManifest, readDshManifest , isViewerPackage, dshEngine, viewerUse} from './manifest.js'
 
 const STARTER = fileURLToPath(new URL('../../../store/starter', import.meta.url))
 
@@ -50,6 +50,28 @@ describe('parseDshManifest', () => {
   it('requires env keys to look like environment variables', () => {
     expect(parseDshManifest(JSON.stringify({ ...base, agent: { env: { 'lower-case': 'x' } } })).ok).toBe(false)
     expect(parseDshManifest(JSON.stringify({ ...base, agent: { env: { CIRCUIT_TOOLCHAIN: '${dsh}/toolchain' } } })).ok).toBe(true)
+  })
+})
+
+describe('dshViewerName: what the viewer pane beside a harness is called', () => {
+  const agent = (viewer?: Record<string, unknown>) => DshManifestSchema.parse({
+    spec: 1, id: 'autonomous/blender', name: 'Blender', engine: 'claude', ...(viewer ? { viewer } : {}),
+  })
+  const names: Record<string, string> = { 'autonomous/model-viewer': ' 3D Viewer ' }
+  const nameOf = (id: string) => names[id]
+
+  it('is the shared viewer package’s own name', () => {
+    expect(dshViewerName(agent({ use: 'autonomous/model-viewer' }), nameOf)).toBe('3D Viewer')
+  })
+
+  it('is the harness’s name and Viewer when it ships its own', () => {
+    expect(dshViewerName(agent({ command: './viewer.sh', url: 'http://127.0.0.1:${port}/' }), nameOf)).toBe('Blender Viewer')
+  })
+
+  it('is null without a viewer, or when the used package’s name is not known here', () => {
+    expect(dshViewerName(agent(), nameOf)).toBeNull()
+    expect(dshViewerName(agent({ use: 'someone/unknown-viewer' }), nameOf)).toBeNull()
+    expect(dshViewerName(agent({ use: 'autonomous/model-viewer' }), () => '   ')).toBeNull()
   })
 })
 

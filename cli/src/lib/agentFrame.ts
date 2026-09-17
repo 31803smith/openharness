@@ -68,6 +68,8 @@ export type AgentFrame = {
   dshName: string | null
   /** Where this agent's viewer is being served right now, or null when it has none up. */
   viewerUrl: string | null
+  /** What its viewer pane is called ("3D Viewer", "Marp Viewer"); null with no viewer or none known. */
+  viewerName: string | null
   /** The DSH's last verdict for this workspace, reduced for the pane header; null when none yet. */
   verdict: DshVerdict | null
 }
@@ -78,6 +80,8 @@ export interface AgentDshContext {
   id: string | null
   name: string | null
   viewerUrl: string | null
+  /** manifest.ts, dshViewerName. */
+  viewerName?: string | null
   verdict: DshVerdict | null
 }
 
@@ -133,11 +137,12 @@ export async function agentFrame(
     // `grid: null` is above.
     codexHome: s.codexHome ?? null,
     project: await agentProject(s.cwd),
-    // All four are real answers when null, for the reason the module doc gives: a frame that omits
+    // All five are real answers when null, for the reason the module doc gives: a frame that omits
     // them would erase a viewer URL or a verdict an earlier frame had reported.
     dsh: dsh?.id ?? s.dsh ?? null,
     dshName: dsh?.name ?? null,
     viewerUrl: dsh?.viewerUrl ?? null,
+    viewerName: dsh?.viewerName ?? null,
     verdict: dsh?.verdict ?? null,
   }
 }

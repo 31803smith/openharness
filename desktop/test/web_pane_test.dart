@@ -17,6 +17,7 @@ import 'swarm_state_test.dart' show createApp;
 Map<String, dynamic> _frame(
   String id, {
   String? viewerUrl,
+  String? viewerName,
   Map<String, dynamic>? verdict,
 }) => {
   'id': id,
@@ -25,6 +26,7 @@ Map<String, dynamic> _frame(
   'dsh': 'autonomous/autonomous-circuit',
   'dshName': 'Autonomous Circuit',
   'viewerUrl': ?viewerUrl,
+  'viewerName': ?viewerName,
   'verdict': ?verdict,
   'terminal': {
     'available': true,
@@ -38,10 +40,18 @@ Future<void> _synced(
   AppNotifier app,
   String id, {
   String? viewerUrl,
+  String? viewerName,
   Map<String, dynamic>? verdict,
 }) => app.handleEventForTest('m', {
   'type': 'agent_synced',
-  'payload': {'agent': _frame(id, viewerUrl: viewerUrl, verdict: verdict)},
+  'payload': {
+    'agent': _frame(
+      id,
+      viewerUrl: viewerUrl,
+      viewerName: viewerName,
+      verdict: verdict,
+    ),
+  },
 });
 
 List<TerminalPane> _viewers(AppNotifier app) =>
@@ -289,6 +299,53 @@ void main() {
   });
 
   testWidgets(
+    'the viewer is called what it is, not the harness again — the harness name moves to the tooltip',
+    (tester) async {
+      final app = createApp();
+      addTearDown(app.dispose);
+      app.stateOf('m')!.nodeOnline = true;
+      final input = <TerminalBinaryFrame>[];
+      app.adoptSessionForTest(terminal('a0', input));
+      await mount(tester, app);
+      await _synced(
+        app,
+        'a0',
+        viewerUrl: 'http://127.0.0.1:4179/',
+        viewerName: '3D Viewer',
+      );
+      await tester.pump();
+      final header = find.byType(WebPanePanel);
+      expect(
+        find.descendant(of: header, matching: find.text('3D Viewer')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: header, matching: find.text('Agent a0')),
+        findsNothing,
+      );
+      expect(
+        find.descendant(
+          of: header,
+          matching: find.byTooltip('Agent a0\nhttp://127.0.0.1:4179/'),
+        ),
+        findsOneWidget,
+      );
+      // A daemon that predates viewerName: the harness's name and Viewer.
+      await _synced(app, 'a0', viewerUrl: 'http://127.0.0.1:4179/');
+      await tester.pump();
+      expect(
+        find.descendant(
+          of: header,
+          matching: find.text('Autonomous Circuit Viewer'),
+        ),
+        findsOneWidget,
+      );
+      // Let the terminal's batched resize run out.
+      await tester.pump(const Duration(milliseconds: 300));
+    },
+  );
+
+  testWidgets(
     'a working agent\'s viewer says Working, keeps the last check for its tooltip, and goes back when the turn ends',
     (tester) async {
       final app = createApp();
@@ -305,7 +362,10 @@ void main() {
       );
       await tester.pump();
       final status = find.byKey(const ValueKey('pane-status'));
-      expect(find.descendant(of: status, matching: find.text('Ready')), findsOneWidget);
+      expect(
+        find.descendant(of: status, matching: find.text('Ready')),
+        findsOneWidget,
+      );
 
       Future<void> turn(String type) => app.handleEventForTest('m', {
         'type': type,
@@ -314,20 +374,30 @@ void main() {
       });
       await turn('turn_started');
       await tester.pump();
-      expect(find.descendant(of: status, matching: find.text('Working')), findsOneWidget);
-      expect(find.descendant(of: status, matching: find.text('Ready')), findsNothing);
+      expect(
+        find.descendant(of: status, matching: find.text('Working')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: status, matching: find.text('Ready')),
+        findsNothing,
+      );
       expect(
         find.byWidgetPredicate(
           (widget) =>
               widget is Tooltip &&
-              widget.message == 'The agent is working · last check: deck.pdf · 5 slides',
+              widget.message ==
+                  'The agent is working · last check: deck.pdf · 5 slides',
         ),
         findsOneWidget,
       );
 
       await turn('turn_ended');
       await tester.pump();
-      expect(find.descendant(of: status, matching: find.text('Ready')), findsOneWidget);
+      expect(
+        find.descendant(of: status, matching: find.text('Ready')),
+        findsOneWidget,
+      );
       // Let the tile's working ring wind down.
       await tester.pump(const Duration(milliseconds: 300));
       expect(tester.takeException(), isNull);

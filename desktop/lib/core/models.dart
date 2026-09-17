@@ -195,6 +195,11 @@ class Agent {
   /// when there is none (yet). A change means the viewer pane must navigate.
   final String? viewerUrl;
 
+  /// What the harness's viewer pane is called — the shared viewer's own name ("3D Viewer"), or
+  /// the harness's name and "Viewer" for one it ships ("Marp Viewer") — as the daemon worked it
+  /// out. Null from an older daemon or with no viewer; see [PaneGrid] for what stands in.
+  final String? viewerName;
+
   /// The harness's last verdict on this workspace, or null when it has not written one.
   final AgentVerdict? verdict;
 
@@ -220,6 +225,7 @@ class Agent {
     this.dsh,
     this.dshName,
     this.viewerUrl,
+    this.viewerName,
     this.verdict,
   });
 
@@ -281,6 +287,7 @@ class Agent {
       dsh: _safeDsh(j['dsh']),
       dshName: _safeLabel(j['dshName']),
       viewerUrl: _safeViewerUrl(j['viewerUrl']),
+      viewerName: _safeLabel(j['viewerName']),
       verdict: AgentVerdict.fromJson(j['verdict']),
     );
   }
@@ -307,6 +314,7 @@ class Agent {
     dsh: dsh,
     dshName: dshName,
     viewerUrl: viewerUrl,
+    viewerName: viewerName,
     verdict: verdict,
   );
 
