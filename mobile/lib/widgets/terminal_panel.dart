@@ -59,19 +59,22 @@ class TerminalPanel extends StatefulWidget {
   /// True while the software keyboard is mid-animation and the pane's height is
   /// still a moving target.
   ///
-  /// Freezes the renderer for the duration, WITHOUT touching focus — that is
+  /// Holds the remote resize for the duration, WITHOUT touching focus — that is
   /// the whole reason this is not just `visible: false`, which releases the
   /// keyboard this animation is raising.
   ///
-  /// ⚠️ What actually stutters is not painting, it is the RESIZE. Every frame
-  /// of the keyboard sliding gives the view a new height, xterm re-derives rows
-  /// from it in `performLayout` and fires `onResize` → `session.resize` → a
-  /// `terminal_resize` frame and a real SIGWINCH on the far machine. A full-screen
-  /// TUI redraws for each one, and those redraws come back as keyframes that
-  /// repaint the pane while it is still moving. `renderingEnabled: false` gates
-  /// both halves of that loop in the vendored renderer (see
+  /// ⚠️ What stutters is the RESIZE, not painting. Every frame of the keyboard
+  /// sliding gives the view a new height, xterm re-derives rows from it in
+  /// `performLayout` and fires `onResize` → `session.resize` → a
+  /// `terminal_resize` frame and a real SIGWINCH on the far machine. A
+  /// full-screen TUI redraws for each one, and those redraws come back as
+  /// keyframes. `autoResize: false` is what closes that loop (see
   /// `RenderTerminal._resizeTerminalIfNeeded`), so the shell is asked exactly
   /// once, for the height the keyboard settles at.
+  ///
+  /// ⚠️ **It does not stop painting, and it used to.** `renderingEnabled: false`
+  /// closed the same loop but froze the output for the whole slide as well —
+  /// see [_TerminalPanelState._live].
   final bool settling;
   final Size? viewportSize;
 
@@ -387,11 +390,20 @@ class _TerminalPanelState extends State<TerminalPanel>
   /// is `remote` (see the filter in `_loadMachines`), so `isRemote` is true for every pane,
   /// including this very computer. What separates them is whether the machine's computerId is this
   /// one, which is what puts it on the loopback transport.
-  /// Whether the renderer is allowed to paint and to resize the remote shell.
+  /// Whether the renderer may resize the remote shell to this view's height,
+  /// and run the cursor clock.
   ///
-  /// A parked page stops both because nobody is looking; a settling one stops
-  /// them because its height is still moving. Focus is deliberately NOT part of
-  /// this — see [TerminalPanel.settling].
+  /// A parked page may not because it is not the one being read; a settling one
+  /// may not because its height is still moving. Focus is deliberately NOT part
+  /// of this — see [TerminalPanel.settling].
+  ///
+  /// ⚠️ **Painting is not gated on it, and on a phone it must not be.** A
+  /// mounted panel there is on screen: the pager builds only the pages the
+  /// viewport touches. Gating paint on [TerminalPanel.visible] meant the agent
+  /// sliding in never laid out — its scroll offset sat at zero, so it drew the
+  /// OLDEST lines of its scrollback until the swipe passed halfway, then jumped
+  /// to the end — while the agent sliding out froze. Gating it on settling
+  /// stopped the output dead for the whole keyboard slide.
   bool get _live => widget.visible && !widget.settling;
 
   bool get _showsComposer {
@@ -1379,7 +1391,6 @@ class _TerminalPanelState extends State<TerminalPanel>
                           controller: _controller,
                           autoResize: _live,
                           resizeBuffer: false,
-                          renderingEnabled: _live,
                           scrollController: _scrollController,
                           focusNode: _focusNode,
                           autofocus: widget.focused && !showComposer,

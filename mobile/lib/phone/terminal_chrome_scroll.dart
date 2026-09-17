@@ -40,23 +40,23 @@ import 'package:flutter/widgets.dart';
 /// nothing else. Notifying the page on every tick would rebuild the whole
 /// terminal sixty times a second while somebody drags it.
 ///
-/// The page is told exactly twice per move, through [onMovingChanged]: once when
-/// the row starts changing size, once when it is still again. That is what the
-/// terminal's resize gate hangs on — see [moving].
+/// ⚠️ **Nothing here may change the terminal's size.** The header slides over
+/// the terminal rather than out of its column (`_SlideAway` in
+/// `terminal_page.dart`): a fold that changed the row count resized the far
+/// machine's shell, and brought back a keyframe and a full TUI redraw, on every
+/// change of scroll direction.
 class TerminalChromeScroll {
-  TerminalChromeScroll({required TickerProvider vsync, this.onMovingChanged})
+  TerminalChromeScroll({required TickerProvider vsync})
     : _header = AnimationController(
         vsync: vsync,
         // ⚠️ **This one value paces the whole hand-over, which is why it is
-        // longer than a plain hide would want.** The row shrinking is only half
+        // longer than a plain hide would want.** The row sliding away is only half
         // of it: the three floating buttons fly out of the header on this same
         // clock, and each is staggered up to 0.2 behind the first — so the last
         // one gets barely two thirds of whatever is set here. At 200 the
         // sequence read as a snap rather than as a move.
         duration: const Duration(milliseconds: 340),
-      ) {
-    _header.addStatusListener(_onStatus);
-  }
+      );
 
   /// What everything reads, rather than the controller underneath it.
   ///
@@ -70,9 +70,6 @@ class TerminalChromeScroll {
   );
 
   final AnimationController _header;
-
-  /// Called when [moving] flips, and only then.
-  final ValueChanged<bool>? onMovingChanged;
 
   /// How far the content must move before the header is asked to do anything.
   ///
@@ -100,27 +97,8 @@ class TerminalChromeScroll {
   /// Whether the scroll now running was begun by a finger. See [onNotification].
   bool _dragging = false;
 
-  bool _moving = false;
-
   /// 0 fully down, 1 fully off the top.
   Animation<double> get header => _curved;
-
-  /// Whether the header is part-way in or out right now.
-  ///
-  /// ⚠️ **What keeps a scroll from resizing the remote shell dozens of times.**
-  /// The row gives its height back as it goes, so the terminal beside it grows
-  /// frame by frame — xterm re-derives its grid from each new height and fires
-  /// `onResize`, which is a `terminal_resize` frame and a real SIGWINCH per
-  /// frame. `TerminalPanel.settling` gates exactly that loop, so the shell is
-  /// asked once, for the height the header settles at.
-  bool get moving => _moving;
-
-  void _onStatus(AnimationStatus _) {
-    final moving = _header.isAnimating;
-    if (moving == _moving) return;
-    _moving = moving;
-    onMovingChanged?.call(moving);
-  }
 
   /// Puts the header back on screen, at once and without animating.
   ///
@@ -134,9 +112,6 @@ class TerminalChromeScroll {
     // off the top behind the overlay.
     _dragging = false;
     _header.value = 0;
-    // A jump, not an animation, so no status listener fires — and a move left
-    // running by whatever was interrupted would never be cleared.
-    _onStatus(AnimationStatus.dismissed);
   }
 
   /// Feeds one scroll notification in. Returns false so the notification carries
@@ -210,7 +185,6 @@ class TerminalChromeScroll {
   }
 
   void dispose() {
-    _header.removeStatusListener(_onStatus);
     // ⚠️ Before the controller it wraps: a CurvedAnimation holds a listener on
     // its parent, and disposing the parent first leaves that registration
     // pointing at a controller that has gone.
