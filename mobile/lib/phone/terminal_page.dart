@@ -19,9 +19,12 @@ import 'package:harness_mobile/widgets/terminal_panel.dart';
 import 'agents_page.dart' show openNewAgent;
 import 'delete_agent.dart';
 import 'phone_header.dart';
+import 'phone_input_mode_store.dart';
+import 'phone_navigation.dart' show phoneRoute;
 import 'phone_search_page.dart' show openPhoneSearch;
 import 'phone_sheet.dart';
 import 'phone_status.dart';
+import 'settings_page.dart';
 import 'status_pill.dart';
 import 'terminal_input_dock.dart';
 import 'voice_input_controller.dart';
@@ -246,7 +249,19 @@ class _TerminalPageState extends State<TerminalPage>
   /// A tap on the terminal while no keyboard is up or coming: voice input,
   /// waiting on its mic button. Null while the keyboard is, so the tap is
   /// xterm's and the keyboard stays.
-  VoidCallback? get _onInputTap => _shouldFocus ? null : widget.voice.open;
+  ///
+  /// In [PhoneInputMode.keyboard] the same tap asks for the keyboard instead, the way the phone
+  /// worked before voice input — through [_keyboardRequested], the path the Keyboard button in voice
+  /// input already takes, so the two ways of getting a keyboard behave identically once it is up.
+  VoidCallback? get _onInputTap {
+    if (_shouldFocus) return null;
+    return switch (phoneInputModeStore.value) {
+      PhoneInputMode.voice => widget.voice.open,
+      PhoneInputMode.keyboard => () => setState(
+        () => _keyboardRequested = true,
+      ),
+    };
+  }
 
   /// The Keyboard button in voice input. What was heard is typed into the
   /// prompt rather than dropped, so the keyboard picks up where the voice left
@@ -367,7 +382,13 @@ class _TerminalPageState extends State<TerminalPage>
     return ListenableBuilder(
       // The panel opening or closing hides or shows the machine row — see
       // [_ownsInput]. Its open STATE only: what it hears repaints the panel.
-      listenable: Listenable.merge([widget.notifier, widget.voice.openState]),
+      // The input mode too: Settings is pushed over this page, and what a tap opens has to follow a
+      // change made there the moment the person comes back.
+      listenable: Listenable.merge([
+        widget.notifier,
+        widget.voice.openState,
+        phoneInputModeStore,
+      ]),
       builder: (context, _) {
         AppTheme.watch(context);
         final pane = widget.notifier.panes
@@ -686,6 +707,17 @@ class _TerminalPageState extends State<TerminalPage>
           icon: LucideIcons.refreshCw300,
           label: 'Restart agent',
           onTap: () => unawaited(_restart()),
+        ),
+        // Settings lives here now that the tab bar is hidden and the phone opens into a terminal:
+        // this sheet is the one menu every screen the person actually sits on reaches.
+        PhoneSheetAction(
+          icon: LucideIcons.settings300,
+          label: 'Settings',
+          onTap: () => Navigator.of(context).push(
+            phoneRoute(
+              (_) => SettingsPage(notifier: widget.notifier, large: false),
+            ),
+          ),
         ),
         // Last, and alone in red: the two above are recoverable and this one is
         // not, so it does not sit where a thumb lands on the way to them.

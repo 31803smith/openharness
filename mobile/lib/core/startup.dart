@@ -1,3 +1,4 @@
+import '../phone/phone_input_mode_store.dart';
 import '../shared/theme/appearance_prefs_store.dart';
 import '../stats/harness_stats.dart';
 import '../terminal/terminal_font_store.dart';
@@ -20,6 +21,7 @@ Future<void> loadPersistedSettings({
   TerminalThemeStore? terminalTheme,
   AppearancePrefsStore? appearance,
   HarnessStats? stats,
+  PhoneInputModeStore? inputMode,
 }) async {
   // Independent stores may load together, but all must finish before runApp.
   // Font and appearance share a serialized file store; each reads its related
@@ -36,5 +38,8 @@ Future<void> loadPersistedSettings({
     // Counters begin moving with the first agent event. Loading them later
     // could overwrite a new event with the old count from disk.
     (stats ?? harnessStats).load(),
+    // What the first tap on a terminal opens. Read late, that tap could open voice input for
+    // somebody who chose the keyboard.
+    (inputMode ?? phoneInputModeStore).load(),
   ]);
 }
