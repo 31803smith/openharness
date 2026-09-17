@@ -7,6 +7,23 @@ import 'package:harness/core/local_key_value_store.dart';
 import 'package:harness/settings/config_store.dart';
 import 'package:harness/state/app_state.dart';
 
+/// Past setup a signed-out desktop boots home as a guest; this one never reaches for a real daemon.
+class _GuestApp extends AppNotifier {
+  _GuestApp({
+    required super.config,
+    required super.authSession,
+    super.configStore,
+    super.cliLogin,
+    super.environmentProvisioner,
+  });
+
+  @override
+  Future<void> ensureCliDaemonReady() async {}
+
+  @override
+  Future<void> refreshMachines() async {}
+}
+
 class _FakeCliLogin extends CliLogin {
   @override
   Future<CliAuthStatus> checkStatus() async =>
@@ -79,7 +96,7 @@ void main() {
       mode: EnvironmentSetupMode.automatic,
     );
     final provisioner = _ScriptedProvisioner([review, waiting, ready]);
-    final app = AppNotifier(
+    final app = _GuestApp(
       config: AppConfig.dev,
       authSession: AuthSession(),
       configStore: ConfigStore(storage: _FakeKeyValueStore()),
@@ -99,7 +116,8 @@ void main() {
     expect(provisioner.installCalls, [false, true, false]);
     expect(app.environmentReadiness.isReady, isTrue);
     expect(app.environmentRecheckPending, isFalse);
-    expect(app.status, AppStatus.unauthenticated);
+    expect(app.status, AppStatus.authenticated);
+    expect(app.isGuest, isTrue, reason: 'signed out, a desktop opens on this computer as a guest');
     app.dispose();
   });
 }

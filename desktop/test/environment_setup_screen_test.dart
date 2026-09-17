@@ -28,6 +28,24 @@ class _Login extends CliLogin {
       const CliAuthStatus(loggedIn: false);
 }
 
+/// A desktop that never reaches for a real daemon: past setup, a signed-out window boots onto home
+/// as a guest (the sign-in is a sheet raised later), the way boot_flow_widget_test's fixture does.
+class _GuestApp extends AppNotifier {
+  _GuestApp({
+    required super.config,
+    required super.authSession,
+    super.configStore,
+    super.cliLogin,
+    super.environmentProvisioner,
+  });
+
+  @override
+  Future<void> ensureCliDaemonReady() async {}
+
+  @override
+  Future<void> refreshMachines() async {}
+}
+
 class _Attempt {
   _Attempt(this.install, this.progress);
   final bool install;
@@ -84,8 +102,8 @@ Future<void> _mount(
       ),
       home: ListenableBuilder(
         listenable: app,
-        builder: (_, _) => app.status == AppStatus.unauthenticated
-            ? const Scaffold(body: Text('Sign-in reached'))
+        builder: (_, _) => app.status == AppStatus.authenticated
+            ? const Scaffold(body: Text('Home reached'))
             : EnvironmentSetupScreen(notifier: app),
       ),
     ),
@@ -94,7 +112,7 @@ Future<void> _mount(
 }
 
 AppNotifier _app(_Provisioner provisioner) =>
-    AppNotifier(
+    _GuestApp(
         config: AppConfig.dev,
         authSession: AuthSession(),
         configStore: null,
@@ -226,7 +244,7 @@ void main() {
     });
   }
 
-  testWidgets('Enter installs and retries once before reaching sign-in', (
+  testWidgets('Enter installs and retries once, then a signed-out desktop opens as a guest', (
     tester,
   ) async {
     final provisioner = _Provisioner();
@@ -266,7 +284,8 @@ void main() {
     );
     await tester.pump();
     await tester.pump();
-    expect(find.text('Sign-in reached'), findsOneWidget);
+    expect(find.text('Home reached'), findsOneWidget);
+    expect(app.isGuest, isTrue);
     expect(provisioner.attempts.map((attempt) => attempt.install), [
       true,
       true,
