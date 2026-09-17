@@ -29,9 +29,12 @@ void main() {
       authSession: AuthSession(),
       configStore: null,
     );
+    // A signed-in footer: the profile alone is not the account (it loads
+    // after), and a window without one is a guest with a Sign in row instead.
+    notifier.signedIn = true;
     notifier.currentUser = const CurrentUserProfile(
-      name: 'Tony at Autonomous',
-      email: 'tony@autonomous.ai',
+      name: 'Avery Example',
+      email: 'avery@example.com',
     );
     addTearDown(notifier.dispose);
 
@@ -119,8 +122,8 @@ void main() {
   ) async {
     await pumpMenu(tester, brightness: Brightness.dark);
 
-    expect(find.text('Tony at Autonomous'), findsOneWidget);
+    expect(find.text('Avery Example'), findsOneWidget);
     // Twice: once in the pill that opened the menu, once in the panel's summary.
-    expect(find.text('tony@autonomous.ai'), findsNWidgets(2));
+    expect(find.text('avery@example.com'), findsNWidgets(2));
   });
 }

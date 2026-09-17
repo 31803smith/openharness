@@ -36,12 +36,14 @@ import { probeEngines } from './lib/engineProbe.js'
 import { AgentCreationReceipts, AgentCreationReceiptError, creationFingerprint, validCreationId, type AgentCreationStatus } from './lib/agentCreationReceipt.js'
 import { engineInstallRecipe } from './lib/engineInstall.js'
 import { parseProjectFolder, prepareProjectFolder, ProjectFolderError } from './lib/projectFolder.js'
+import { preTrustClaudeProject, preTrustCodexProject } from './lib/claudeTrust.js'
 import { projectPreview } from './lib/projectPreview.js'
 import { agentFrame, type AgentDshContext, type AgentFrame } from './lib/agentFrame.js'
-import { installedDsh, listInstalledDsh } from './dsh/installed.js'
-import { DSH_ID_RE, dshTier } from './dsh/manifest.js'
-import { bundledDshRegistry } from './dsh/registry.js'
+import { installedDsh } from './dsh/installed.js'
+import { DSH_ID_RE } from './dsh/manifest.js'
+import { refreshDshRegistry } from './dsh/catalog.js'
 import type { DshInstallProgress } from './dsh/install.js'
+import { dshInstallReply, dshInstallRequest, dshInstallStatus, dshListRows, dshRemoveId, dshRemoveReply } from './dsh/wire.js'
 import { routeVoiceTask } from './lib/voiceRouter.js'
 import { tailFile } from './lib/sessions.js'
 import { messagesToEvents, windowRawLines, subagentStatsFromRawLines, type SessionEvent } from './lib/normalize.js'
@@ -357,6 +359,8 @@ export class BackendSocket {
   /** Called on `dsh_install` — cli.ts clones/sets up/doctors the harness and reports each phase. */
   onDshInstall: ((input: { id?: string; url?: string; ref?: string }, progress: (p: DshInstallProgress) => void) =>
     Promise<{ ok: true; id: string } | { ok: false; error: string; detail: string }>) | null = null
+  /** Called on `dsh_remove` — cli.ts uninstalls the harness from this machine. */
+  onDshRemove: ((id: string) => { ok: true } | { ok: false; error: string; detail: string }) | null = null
   /** What the daemon knows about an agent's DSH companions (viewer URL, verdict); null when nothing. */
   dshFrameProvider: ((session: RegisteredSession) => AgentDshContext | null) | null = null
   private readonly agentCreations = new AgentCreationReceipts(join(env.ADAPTER_DATA_DIR, 'agent-creations'))
@@ -1513,40 +1517,22 @@ export class BackendSocket {
         }
 
         case 'dsh_list': {
-          // Which domain-specific harnesses this machine has, plus what the bundled registry offers —
-          // answered here, on the machine in question, for the same reason `engines_probe` is.
-          const installed = listInstalledDsh()
-          const seen = new Set<string>()
-          const rows: Record<string, unknown>[] = []
-          for (const entry of installed) {
-            seen.add(entry.id)
-            rows.push({
-              id: entry.id,
-              name: entry.manifest.name,
-              description: entry.manifest.description ?? null,
-              category: entry.manifest.category ?? null,
-              engine: entry.manifest.engine,
-              installed: true,
-              viewer: !!entry.manifest.viewer,
-              tier: dshTier(entry.manifest),
-              verified: bundledDshRegistry().some((known) => known.id === entry.id && known.verified === true),
-            })
-          }
-          for (const entry of bundledDshRegistry()) {
-            if (seen.has(entry.id)) continue
-            rows.push({
-              id: entry.id,
-              name: entry.name,
-              description: entry.description ?? null,
-              category: entry.category ?? null,
-              engine: entry.engine,
-              installed: false,
-              viewer: (entry.tier ?? 0) >= 2,
-              tier: entry.tier ?? 0,
-              verified: entry.verified === true,
-            })
-          }
-          reply(type, requestId, { dsh: rows })
+          // Keep catalog I/O off this connection's ordered RPC queue.
+          void refreshDshRegistry()
+            .then(catalog => reply(type, requestId, { dsh: dshListRows(undefined, catalog) }))
+            .catch(error => reply(type, requestId, { error: 'INTERNAL', detail: error instanceof Error ? error.message : String(error) }))
+          return
+        }
+
+        case 'dsh_remove': {
+          // Uninstall a harness from THIS machine: the clone under ~/.harness/dsh goes (a linked
+          // install loses only its link), the index forgets it, and a `dsh_list` after this no
+          // longer says installed. Agents already running from it keep running — their processes
+          // hold what they need — and the store is what asks; it refreshes the list itself.
+          if (!this.onDshRemove) { reply(type, requestId, { error: 'UNSUPPORTED_ON_REMOTE' }); return }
+          const id = dshRemoveId(payload)
+          if (!id) { reply(type, requestId, { error: 'INVALID_DSH', detail: 'dsh_remove needs an id' }); return }
+          reply(type, requestId, dshRemoveReply(id, this.onDshRemove(id)))
           return
         }
 
@@ -1555,12 +1541,10 @@ export class BackendSocket {
           // it is detached from the ordered RPC chain like `engines_probe`, and progress travels as
           // `dsh_install_status` pushes the app renders in the create dialog.
           if (!this.onDshInstall) { reply(type, requestId, { error: 'UNSUPPORTED_ON_REMOTE' }); return }
-          const id = typeof payload.id === 'string' && DSH_ID_RE.test(payload.id) ? payload.id : undefined
-          const url = typeof payload.url === 'string' && payload.url.length <= 2048 && !/[\x00-\x1f\x7f]/.test(payload.url) ? payload.url : undefined
-          const ref = typeof payload.ref === 'string' && payload.ref.length <= 200 ? payload.ref : undefined
-          if (!id && !url) { reply(type, requestId, { error: 'INVALID_DSH', detail: 'dsh_install needs an id or a url' }); return }
-          void this.onDshInstall({ id, url, ref }, (p) => this.send({ type: 'dsh_install_status', payload: { ...p, id: p.id ?? id ?? null } }))
-            .then((result) => reply(type, requestId, result.ok ? { ok: true, id: result.id } : { error: result.error, detail: result.detail }))
+          const request = dshInstallRequest(payload)
+          if (!request) { reply(type, requestId, { error: 'INVALID_DSH', detail: 'dsh_install needs an id or a url' }); return }
+          void this.onDshInstall(request, (p) => this.send({ type: 'dsh_install_status', payload: dshInstallStatus(p, request) }))
+            .then((result) => reply(type, requestId, dshInstallReply(result)))
             .catch((error) => reply(type, requestId, { error: 'INTERNAL', detail: error instanceof Error ? error.message : String(error) }))
           return
         }
@@ -1742,6 +1726,9 @@ export class BackendSocket {
             if (!installed) {
               reply(type, requestId, { error: 'INVALID_DSH', detail: `${payload.dsh} is not installed on this machine` }); return
             }
+            if (installed.manifest.kind === 'viewer') {
+              reply(type, requestId, { error: 'INVALID_DSH', detail: `${payload.dsh} is a viewer package, not an agent` }); return
+            }
             if (installed.manifest.engine !== engine) {
               reply(type, requestId, { error: 'INVALID_DSH', detail: `${payload.dsh} runs on ${installed.manifest.engine}, not ${engine}` }); return
             }
@@ -1803,6 +1790,11 @@ export class BackendSocket {
                     return { state: 'failed', error: error instanceof ProjectFolderError ? error.code : 'PROJECT_PREPARATION_FAILED',
                       detail: error instanceof ProjectFolderError ? error.message : 'Could not prepare the project folder.' }
                   }
+                  // A folder this daemon just made is one Claude Code need not ask about.
+                  try {
+                    if (input.engine === 'claude') preTrustClaudeProject(preparedFolder)
+                    if (input.engine === 'codex') preTrustCodexProject(preparedFolder)
+                  } catch (error) { console.warn(`[agent] pre-trust ${preparedFolder} · ${error instanceof Error ? error.message : error}`) }
                 }
                 const result = await create(preparedFolder ? { ...input, cwd: preparedFolder } : input)
                 if (result.ok) return { state: 'created', agentId: result.session.agentId }

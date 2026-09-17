@@ -1,9 +1,28 @@
 import 'package:flutter/material.dart';
 
 import '../shared/theme/app_theme.dart' as grid;
+import '../screens/login_screen.dart';
 import '../shared/widgets/app_dialog.dart';
 import '../state/app_state.dart';
 import 'swarm_dialogs.dart';
+
+/// Link Machine, behind the sign-in when there is no account: linking is the
+/// one thing a guest cannot do, and the sheet says so on its own line.
+Future<void> linkMachineOrSignIn(
+  BuildContext context,
+  AppNotifier notifier,
+) async {
+  if (notifier.isGuest) {
+    final signedIn = await showSignInSheet(
+      context,
+      notifier,
+      reason: 'Sign in to link your other machines and see their agents here.',
+    );
+    if (!signedIn || !context.mounted) return;
+  }
+  if (!context.mounted) return;
+  await showSwarmLinkDialog(context, notifier);
+}
 
 Future<void> showMachinesManager(BuildContext context, AppNotifier notifier) =>
     showAppDialog<void>(
@@ -95,14 +114,29 @@ class _MachinesManagerState extends State<_MachinesManager> {
                             if (machines[i].needsLink) 'Link required',
                           ].join(' · '),
                         ),
-                        trailing: TextButton(
-                          onPressed: () => showMachineRenameDialog(
-                            context,
-                            widget.notifier,
-                            machines[i].machine.machineId,
-                            machines[i].machine.displayName,
-                          ),
-                          child: const Text('Rename'),
+                        // A guest's one machine is named by its hostname and
+                        // has no record on the backend to rename.
+                        trailing: widget.notifier.isGuest
+                            ? null
+                            : TextButton(
+                                onPressed: () => showMachineRenameDialog(
+                                  context,
+                                  widget.notifier,
+                                  machines[i].machine.machineId,
+                                  machines[i].machine.displayName,
+                                ),
+                                child: const Text('Rename'),
+                              ),
+                      ),
+                    ],
+                    if (widget.notifier.isGuest) ...[
+                      const Divider(height: 1),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        child: Text(
+                          'Link another computer to see its agents here — '
+                          'sign in to start.',
+                          style: Theme.of(context).textTheme.bodySmall,
                         ),
                       ),
                     ],
@@ -117,7 +151,7 @@ class _MachinesManagerState extends State<_MachinesManager> {
               child: Text(_refreshing ? 'Refreshing…' : 'Refresh'),
             ),
             TextButton.icon(
-              onPressed: () => showSwarmLinkDialog(context, widget.notifier),
+              onPressed: () => linkMachineOrSignIn(context, widget.notifier),
               icon: const Icon(Icons.add, size: 18),
               label: const Text('Link Machine'),
             ),

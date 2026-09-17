@@ -17,6 +17,7 @@ import { sid } from './lib/log.js'
 import { VERSION } from './version.js'
 import { env } from './config/env.js'
 import { hookCredentialMatches, loadOrCreateHookCredential } from './lib/hookAuth.js'
+import { routeStoreRequest, type StoreHandler } from './lib/storeProxy.js'
 import type { HookTerminalHint } from './lib/terminalTypes.js'
 import { ENGINES, type AgentEngine } from './engines/types.js'
 
@@ -118,7 +119,12 @@ export interface HookServerHandlers {
   onMachineDelete?: (machineId: string) => Promise<PairOutcome>
   /** GET /api/auth/me — proxy the signed-in user's profile from backend. */
   onAuthMe?: () => Promise<PairOutcome>
+  /** /api/store/* — proxy the Harness Store's ratings and reviews to backend the same way: reads
+   *  ungated like the machine list, writes (PUT/DELETE) CSRF-guarded like a rename. See storeProxy.ts. */
+  onStore?: StoreHandler
 }
+
+export { STORE_PATH_RE } from './lib/storeProxy.js'
 
 const MAX_HOOK_BODY_BYTES = 256 * 1024
 const HOOK_BODY_FIELDS = new Set([
@@ -624,6 +630,16 @@ export function startHookServer(
         const machineId = decodeURIComponent(url.slice('/api/machines/'.length))
         if (!machineId) { json(400, { error: 'MISSING_MACHINE_ID' }); return }
         await proxied(() => remove(machineId)); return
+      }
+
+      // The Harness Store: ratings and reviews in the backend, through this daemon's own session. The
+      // rules (reads ungated, writes behind the local header, the paths it forwards) are storeProxy.ts's.
+      if (url.startsWith('/api/store/')) {
+        // A request an http.Server hands over always has its url; `url` above is it without the query.
+        const route = await routeStoreRequest({ method: req.method, url: req.url as string, localOk, readBody: () => readBody(req) }, handlers.onStore)
+        if ('forward' in route) await proxied(route.forward)
+        else json(route.status, route.body)
+        return
       }
 
       // `harness pairings` — list paired browsers.

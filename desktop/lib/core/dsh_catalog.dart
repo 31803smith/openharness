@@ -18,7 +18,16 @@ class DshEntry {
     this.category,
     this.installed = false,
     this.viewer = false,
+    this.viewerUse,
     this.tier = 0,
+    this.kind = 'agent',
+    this.author,
+    this.repo,
+    this.homepage,
+    this.upstream,
+    this.license,
+    this.screenshots = const [],
+    this.linked = false,
   });
 
   /// `owner/name` — the install directory on the machine and the wire id.
@@ -37,24 +46,71 @@ class DshEntry {
 
   /// Whether it ships a viewer, i.e. whether a web pane will open beside it.
   final bool viewer;
+
+  /// Shared viewer package used by this agent, if the daemon reports one.
+  final String? viewerUse;
   final int tier;
+
+  /// `agent` — a harness, one tile; `viewer` — a pane other packages point at
+  /// with `viewer.use`, installed alongside them and never a tile (spec 1.1).
+  final String kind;
+  bool get isViewerPackage => kind == 'viewer';
+
+  /// A built-in engine (Claude Code, Codex…) as the store lists it: never on
+  /// the wire — the store builds these rows from [allEngines] and the machines'
+  /// engine probes, so the Code shelf and the harness shelves are one list.
+  bool get isEngine => kind == 'engine';
+
+  /// Who made it — "Autonomous" for everything under autonomous/ — beside the category on the tile.
+  final String? author;
+
+  /// The store's product page, from the registry: the package's repo, the
+  /// project's homepage, the upstream it wraps, the wrapper's licence, pictures.
+  final String? repo;
+  final String? homepage;
+  final String? upstream;
+  final String? license;
+  final List<String> screenshots;
+
+  /// Installed as a link to a checkout (`--link`) rather than a clone: a
+  /// developer's own working copy, which Remove would only unlink.
+  final bool linked;
 
   static DshEntry? fromJson(Object? raw) {
     if (raw is! Map) return null;
     final id = raw['id'];
-    final engine = raw['engine'];
+    final kind = raw['kind'] == 'viewer' ? 'viewer' : 'agent';
+    final engine = kind == 'viewer' ? '' : raw['engine'];
     if (id is! String || !_validId(id)) return null;
-    if (engine is! String || engine.isEmpty || engine.length > 64) return null;
+    if (kind != 'viewer' &&
+        (engine is! String || engine.isEmpty || engine.length > 64)) {
+      return null;
+    }
     final name = raw['name'];
     final description = raw['description'];
     final category = raw['category'];
+    final author = raw['author'];
     final tier = raw['tier'];
+    final screenshots = raw['screenshots'];
     return DshEntry(
       id: id,
+      repo: _httpUrl(raw['repo']),
+      homepage: _httpUrl(raw['homepage']),
+      upstream: _httpUrl(raw['upstream']),
+      license: _short(raw['license'], 40),
+      screenshots: screenshots is List
+          ? screenshots
+                .map(_httpUrl)
+                .whereType<String>()
+                .take(8)
+                .toList(growable: false)
+          : const [],
+      linked: raw['linked'] == true,
       name: name is String && name.trim().isNotEmpty
           ? name.trim().substring(0, name.trim().length.clamp(0, 40))
           : id.substring(id.indexOf('/') + 1),
-      engine: engine,
+      engine: engine is String ? engine : '',
+      kind: kind,
       description: description is String && description.trim().isNotEmpty
           ? description.trim().substring(
               0,
@@ -64,11 +120,36 @@ class DshEntry {
       category: category is String && category.trim().isNotEmpty
           ? category.trim().substring(0, category.trim().length.clamp(0, 24))
           : null,
+      author: author is String && author.trim().isNotEmpty
+          ? author.trim().substring(0, author.trim().length.clamp(0, 80))
+          : null,
       installed: raw['installed'] == true,
       viewer: raw['viewer'] == true,
+      viewerUse:
+          raw['viewerUse'] is String && _validId(raw['viewerUse'] as String)
+          ? raw['viewerUse'] as String
+          : null,
       tier: tier is num && tier >= 0 && tier <= 9 ? tier.toInt() : 0,
     );
   }
+
+  /// An https URL, or nothing: the page opens what the registry says, so it
+  /// must never be a `file:` or `javascript:` link.
+  static String? _httpUrl(Object? raw) {
+    if (raw is! String) return null;
+    final uri = Uri.tryParse(raw.trim());
+    if (uri == null ||
+        !uri.hasAuthority ||
+        (uri.scheme != 'https' && uri.scheme != 'http')) {
+      return null;
+    }
+    return raw.trim().length > 2048 ? null : raw.trim();
+  }
+
+  static String? _short(Object? raw, int max) =>
+      raw is String && raw.trim().isNotEmpty
+      ? raw.trim().substring(0, raw.trim().length.clamp(0, max))
+      : null;
 
   static bool _validId(String id) =>
       id.length <= 129 &&

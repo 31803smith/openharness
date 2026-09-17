@@ -27,8 +27,8 @@ class AgentPicker extends StatelessWidget {
     'codex',
     'claude',
     'opencode',
-    'autonomous/copper',
-    'autonomous/solid',
+    'autonomous/autonomous-circuit',
+    'autonomous/autonomous-workshop',
     'autonomous/marp',
   ];
 
@@ -52,6 +52,11 @@ class AgentPicker extends StatelessWidget {
         ),
     ],
     preferredValues: quickAgents,
+    // In More, the harnesses come before the engines. What is left after the
+    // three tiles is eleven more coding engines — which a person who wanted a
+    // coding engine has already been offered — and the domain harnesses, which
+    // are the reason to open this menu at all.
+    overflowFirst: isHarnessId,
     onChanged: onChanged,
     notifyOnReselect: true,
     optionKey: (id) => ValueKey('new-agent-quick-$id'),

@@ -29,7 +29,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 /// status is set directly, so bootstrap/login (which call platform
 /// channels and the network) never run.
 AppNotifier makeNotifier(AppStatus status) {
-  final app = AppNotifier(
+  final app = _GuestApp(
     config: AppConfig.dev,
     authSession: AuthSession(),
     configStore: null,
@@ -38,8 +38,8 @@ AppNotifier makeNotifier(AppStatus status) {
   app.status = status;
   app.currentUser = const CurrentUserProfile(
     id: 'user-1',
-    name: 'Diego',
-    email: 'diego@autonomous.ai',
+    name: 'Sam',
+    email: 'sam@example.com',
   );
   return app;
 }
@@ -56,6 +56,26 @@ class _FakeCliLogin extends CliLogin {
   @override
   Future<CliAuthStatus> checkStatus() async =>
       CliAuthStatus(loggedIn: loggedIn);
+}
+
+/// A window that never reaches for a real daemon. A signed-out boot used to
+/// stop at the login wall before the daemon mattered; it now lands on home as a
+/// guest, which is past the daemon gate — and a test must not shell out for it.
+class _GuestApp extends AppNotifier {
+  _GuestApp({
+    required super.config,
+    required super.authSession,
+    super.configStore,
+    super.cliLogin,
+    super.environmentProvisioner,
+    super.localManualFixture,
+  });
+
+  @override
+  Future<void> ensureCliDaemonReady() async {}
+
+  @override
+  Future<void> refreshMachines() async {}
 }
 
 class _ControlledCliLogin extends CliLogin {
@@ -163,7 +183,7 @@ void main() {
   );
 
   test('local manual fixture boots without SSO or persisted state', () async {
-    final app = AppNotifier(
+    final app = _GuestApp(
       config: const AppConfig(apiBaseUrl: 'http://127.0.0.1:12345'),
       authSession: AuthSession(),
       localManualFixture: const LocalManualFixture(
@@ -190,7 +210,7 @@ void main() {
     'config-store failure falls back without resetting auth preferences',
     () async {
       final store = _BrokenConfigStore();
-      final app = AppNotifier(
+      final app = _GuestApp(
         config: AppConfig.dev,
         authSession: AuthSession(),
         configStore: store,
@@ -200,7 +220,8 @@ void main() {
 
       await app.bootstrap();
 
-      expect(app.status, AppStatus.unauthenticated);
+      expect(app.status, AppStatus.authenticated);
+      expect(app.isGuest, isTrue);
       expect(app.config.apiBaseUrl, ConfigStore.defaultBaseUrl);
       expect(app.autonomousEnv, 'prod');
       expect(store.resetCalls, 0);
@@ -213,7 +234,7 @@ void main() {
       final storage = _FakeKeyValueStore()
         ..values['environment_setup_version'] = '3';
       final provisioner = _ReadyEnvironmentProvisioner();
-      final app = AppNotifier(
+      final app = _GuestApp(
         config: AppConfig.dev,
         authSession: AuthSession(),
         configStore: ConfigStore(storage: storage),
@@ -225,8 +246,9 @@ void main() {
 
       expect(provisioner.called, isTrue);
       expect(app.environmentReadiness.isReady, isTrue);
-      // Reached the login check rather than getting stuck on preparingEnvironment.
-      expect(app.status, AppStatus.unauthenticated);
+      // Reached the sign-in check rather than getting stuck on preparingEnvironment.
+      expect(app.status, AppStatus.authenticated);
+      expect(app.isGuest, isTrue);
     },
   );
 
@@ -235,7 +257,7 @@ void main() {
     () async {
       final storage = _FakeKeyValueStore();
       final provisioner = _ReadyEnvironmentProvisioner();
-      final app = AppNotifier(
+      final app = _GuestApp(
         config: AppConfig.dev,
         authSession: AuthSession(),
         configStore: ConfigStore(storage: storage),
@@ -269,7 +291,7 @@ void main() {
         mode: EnvironmentSetupMode.automatic,
       );
       final provisioner = _ScriptedEnvironmentProvisioner([missing, ready]);
-      final app = AppNotifier(
+      final app = _GuestApp(
         config: AppConfig.dev,
         authSession: AuthSession(),
         configStore: ConfigStore(storage: _FakeKeyValueStore()),
@@ -288,7 +310,8 @@ void main() {
       );
       await app.startEnvironmentSetup();
       expect(provisioner.installCalls, [isFalse, isTrue]);
-      expect(app.status, AppStatus.unauthenticated);
+      expect(app.status, AppStatus.authenticated);
+      expect(app.isGuest, isTrue);
       expect(app.environmentReadiness.phase, EnvironmentSetupPhase.ready);
       expect(
         painted,
@@ -322,7 +345,7 @@ void main() {
       );
       final storage = _FakeKeyValueStore();
       final provisioner = _ScriptedEnvironmentProvisioner([stuck, ready]);
-      final app = AppNotifier(
+      final app = _GuestApp(
         config: AppConfig.dev,
         authSession: AuthSession(),
         configStore: ConfigStore(storage: storage),
@@ -343,7 +366,8 @@ void main() {
       // what lets the provisioner skip the already-`ready` harness step during the recheck.
       expect(provisioner.resumeFromCalls.last, same(stuck));
       expect(app.environmentReadiness.isReady, isTrue);
-      expect(app.status, AppStatus.unauthenticated);
+      expect(app.status, AppStatus.authenticated);
+      expect(app.isGuest, isTrue);
       expect(storage.values['environment_setup_version'], isNull);
       expect(app.environmentRecheckPending, isFalse);
       app.dispose();
@@ -363,7 +387,7 @@ void main() {
       );
       final storage = _FakeKeyValueStore();
       final provisioner = _ScriptedEnvironmentProvisioner([stuck, stuck]);
-      final app = AppNotifier(
+      final app = _GuestApp(
         config: AppConfig.dev,
         authSession: AuthSession(),
         configStore: ConfigStore(storage: storage),
@@ -412,7 +436,7 @@ void main() {
           [probing, reviewed],
         ],
       );
-      final app = AppNotifier(
+      final app = _GuestApp(
         config: AppConfig.dev,
         authSession: AuthSession(),
         configStore: ConfigStore(storage: _FakeKeyValueStore()),
@@ -463,7 +487,7 @@ void main() {
         ],
       );
       final provisioner = _ScriptedEnvironmentProvisioner([waiting, waiting]);
-      final app = AppNotifier(
+      final app = _GuestApp(
         config: AppConfig.dev,
         authSession: AuthSession(),
         configStore: ConfigStore(storage: _FakeKeyValueStore()),
@@ -551,7 +575,7 @@ void main() {
     'ready pre-flight is visible while auth resolves, then opens login',
     (tester) async {
       final cliLogin = _ControlledCliLogin();
-      final app = AppNotifier(
+      final app = _GuestApp(
         config: AppConfig.dev,
         authSession: AuthSession(),
         configStore: ConfigStore(storage: _FakeKeyValueStore()),
@@ -578,8 +602,10 @@ void main() {
       await bootstrap;
       await tester.pump();
 
-      expect(app.status, AppStatus.unauthenticated);
-      expect(find.text('Sign in'), findsOneWidget);
+      // A signed-out desktop boots onto home as a guest; the sign-in is a
+      // sheet it raises later, not a wall here.
+      expect(app.status, AppStatus.authenticated);
+      expect(app.isGuest, isTrue);
       app.dispose();
     },
   );
@@ -662,7 +688,7 @@ void main() {
           phase: EnvironmentSetupPhase.ready,
         ),
       ]);
-      final app = AppNotifier(
+      final app = _GuestApp(
         config: AppConfig.dev,
         authSession: AuthSession(),
         configStore: null,
@@ -689,8 +715,10 @@ void main() {
       await tester.tap(find.text('Install 1 tool'));
       await tester.pump();
       expect(provisioner.installCalls, [true]);
-      expect(app.status, AppStatus.unauthenticated);
-      expect(find.text('Sign in'), findsOneWidget);
+      // A signed-out desktop boots onto home as a guest; the sign-in is a
+      // sheet it raises later, not a wall here.
+      expect(app.status, AppStatus.authenticated);
+      expect(app.isGuest, isTrue);
       await tester.pumpWidget(const SizedBox());
       app.dispose();
     },
@@ -874,13 +902,14 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Account'));
     await tester.pumpAndSettle();
-    expect(find.text('Diego'), findsOneWidget);
-    expect(find.text('diego@autonomous.ai'), findsOneWidget);
+    expect(find.text('Sam'), findsOneWidget);
+    expect(find.text('sam@example.com'), findsOneWidget);
     await tester.tap(find.byKey(const Key('settings-sign-out-button')));
-    // The login relay diagram keeps animating after sign-out.
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
-    expect(app.status, AppStatus.unauthenticated);
+    // Signing out leaves the desk where it is, as a guest's.
+    expect(app.status, AppStatus.authenticated);
+    expect(app.isGuest, isTrue);
     expect(find.text('Account'), findsNothing);
     await tester.pumpWidget(const SizedBox());
     app.dispose();

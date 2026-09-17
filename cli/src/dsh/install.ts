@@ -11,14 +11,16 @@
 import { execFile, spawn } from 'node:child_process'
 import { existsSync, lstatSync, mkdirSync, realpathSync, renameSync, rmSync, symlinkSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
-import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import {
-  dshInstallDir, dshRootDir, installedDsh, readInstalledIndex, removeInstalledRecord, resolveInstalled,
-  upsertInstalledRecord, isBrokenDsh, type InstalledDsh, type InstalledDshRecord,
+  dshInstallDir, dshRootDir, installedDsh, readInstalledIndex, removeInstalledRecord, upsertInstalledRecord,
+  type InstalledDsh, type InstalledDshRecord,
 } from './installed.js'
-import { readDshManifest, type DshManifest } from './manifest.js'
-import { registryEntry } from './registry.js'
+import { readDshManifest, viewerUse, type DshManifest } from './manifest.js'
+import { PACKAGE_PATH_RE, type DshRegistryEntry } from './registry.js'
+import { catalogEntry, refreshDshRegistry } from './catalog.js'
+import { resolveDshCommand } from './materialize.js'
 import { runDshCommand } from './shell.js'
 
 const execFileAsync = promisify(execFile)
@@ -41,13 +43,22 @@ export interface DshInstallProgress {
 export interface DshInstallOptions {
   /** A git URL, or a local path (cloned unless `link`). */
   source: string
+  /** A catalog install must resolve to the package the user selected. */
+  expectedId?: string
   ref?: string
+  /**
+   * The folder inside `source` that is the package (`store/agents/typst` of the Harness monorepo).
+   * Only that folder is fetched — a sparse, blob-less clone — and only that folder is installed.
+   */
+  path?: string
   /** Symlink a local checkout instead of cloning it — the development loop. */
   link?: boolean
   onProgress?: (progress: DshInstallProgress) => void
   /** Setup/doctor output, line by line. */
   onLine?: (line: string) => void
   setupTimeoutMs?: number
+  /** Where a `viewer.use` id resolves to a repo; the bundled registry by default. Test seam. */
+  registry?: (id: string) => DshRegistryEntry | undefined
 }
 
 export interface DshDoctorResult {
@@ -59,10 +70,13 @@ export type DshInstallResult =
   | { ok: true; installed: InstalledDsh; doctor: DshDoctorResult; setupLines: string[] }
   | { ok: false; error: string; detail: string }
 
-/** A registry id (`autonomous/copper`) resolves to its repo and ref; anything else is a source. */
-export function resolveInstallSource(idOrSource: string): { source: string; ref?: string; id?: string } | null {
-  const entry = registryEntry(idOrSource)
-  if (entry) return { source: entry.repo, ref: entry.ref, id: entry.id }
+/** A registry id (`autonomous/typst`) resolves to its repo, ref and folder; anything else is a source. */
+export function resolveInstallSource(
+  idOrSource: string,
+  registry: (id: string) => DshRegistryEntry | undefined = catalogEntry,
+): { source: string; ref?: string; path?: string; id?: string } | null {
+  const entry = registry(idOrSource)
+  if (entry) return { source: entry.repo, ref: entry.ref, ...(entry.path ? { path: entry.path } : {}), id: entry.id }
   if (!idOrSource || /[\x00-\x1f\x7f]/.test(idOrSource)) return null
   return { source: idOrSource }
 }
@@ -86,31 +100,85 @@ function linkInstall(source: string): { ok: true; realDir: string; manifest: Dsh
   }
   const manifest = readDshManifest(realDir)
   if (!manifest.ok) return { ok: false, error: 'INVALID_MANIFEST', detail: manifest.error }
+  // Placing the link first clears the install directory. When the checkout IS that directory (a clone
+  // installed earlier), or lives inside it, that would delete the only copy before linking to it.
+  const installDir = dshInstallDir(manifest.manifest.id)
+  let placed: ReturnType<typeof lstatSync> | null = null
+  try { placed = lstatSync(installDir) } catch { placed = null }
+  if (placed && !placed.isSymbolicLink()) {
+    const installed = realpathSync(installDir)
+    if (realDir === installed || realDir.startsWith(installed + sep)) {
+      return { ok: false, error: 'INVALID_SOURCE', detail: `${source} is inside the installed copy of ${manifest.manifest.id}; link a checkout that lives elsewhere` }
+    }
+  }
   return { ok: true, realDir, manifest: manifest.manifest }
 }
 
 async function cloneInstall(
   source: string,
   ref: string | undefined,
+  path: string | undefined,
   onLine: ((line: string) => void) | undefined,
 ): Promise<{ ok: true; tmpDir: string; manifest: DshManifest; commit: string | null } | { ok: false; error: string; detail: string }> {
   const root = dshRootDir()
   mkdirSync(root, { recursive: true, mode: 0o700 })
   const tmpDir = join(root, `.tmp-${randomUUID()}`)
-  // `--progress` because stderr is not a tty here and git would otherwise stay silent until the end;
-  // streamed, not collected, so "Receiving objects: 39%" reaches the dialog while it is true.
-  const args = ['clone', '--depth', '1', '--progress', ...(ref ? ['--branch', ref] : []), '--', source, tmpDir]
-  const clone = await streamGit(args, onLine)
-  if (!clone.ok) {
-    rmSync(tmpDir, { recursive: true, force: true })
-    return { ok: false, error: 'CLONE_FAILED', detail: clone.detail.slice(0, 2000) }
+  const fail = (error: string, detail: string, ...dirs: string[]): { ok: false; error: string; detail: string } => {
+    for (const dir of [tmpDir, ...dirs]) rmSync(dir, { recursive: true, force: true })
+    return { ok: false, error, detail: detail.slice(0, 2000) }
+  }
+  if (path !== undefined && !PACKAGE_PATH_RE.test(path)) return fail('INVALID_SOURCE', `${path} is not a folder inside the repo`)
+  let commit: string | null
+  if (path === undefined) {
+    // `--progress` because stderr is not a tty here and git would otherwise stay silent until the end;
+    // streamed, not collected, so "Receiving objects: 39%" reaches the dialog while it is true.
+    const clone = await cloneRepo(source, ref, tmpDir, false, onLine)
+    if (!clone.ok) return fail('CLONE_FAILED', clone.detail)
+    commit = await gitHead(tmpDir)
+  } else {
+    // A package that is ONE FOLDER of a bigger repo — the built-in shelf is `store/*/*` of the Harness
+    // monorepo, whose other folders are the app, the CLI and the backend. A blob-less, sparse clone
+    // fetches the tree of one commit and the file contents of that folder alone; the folder is then
+    // moved out and the rest of the clone thrown away, so the install is laid out exactly like a
+    // whole-repo one (the manifest at its root) and nothing else of the monorepo lands on the machine.
+    const repoDir = join(root, `.tmp-${randomUUID()}`)
+    const clone = await cloneRepo(source, ref, repoDir, true, onLine)
+    if (!clone.ok) return fail('CLONE_FAILED', clone.detail, repoDir)
+    const sparse = await streamGit(['-C', repoDir, 'sparse-checkout', 'set', '--', path], onLine)
+    if (!sparse.ok) return fail('CLONE_FAILED', sparse.detail, repoDir)
+    const folder = join(repoDir, ...path.split('/'))
+    let isFolder = false
+    try { isFolder = lstatSync(folder).isDirectory() } catch { isFolder = false }
+    if (!isFolder) return fail('CLONE_FAILED', `${source}${ref ? ` at ${ref}` : ''} has no folder ${path}`, repoDir)
+    commit = await gitHead(repoDir)
+    renameSync(folder, tmpDir)
+    rmSync(repoDir, { recursive: true, force: true })
   }
   const manifest = readDshManifest(tmpDir)
-  if (!manifest.ok) {
-    rmSync(tmpDir, { recursive: true, force: true })
-    return { ok: false, error: 'INVALID_MANIFEST', detail: manifest.error }
+  if (!manifest.ok) return fail('INVALID_MANIFEST', manifest.error)
+  return { ok: true, tmpDir, manifest: manifest.manifest, commit }
+}
+
+/** How long one git command may take: a clone of a large repository over a slow link, not a hang. */
+const GIT_TIMEOUT_MS = 10 * 60_000
+
+/** Catalogs pin built-ins to the commit they describe; `git clone --branch` cannot take a SHA. */
+async function cloneRepo(source: string, ref: string | undefined, dir: string, sparse: boolean, onLine: DshInstallOptions['onLine']): Promise<{ ok: true } | { ok: false; detail: string }> {
+  if (!ref || !/^[a-f0-9]{40}$/i.test(ref)) {
+    return streamGit(['clone', '--depth', '1', ...(sparse ? ['--filter=blob:none', '--sparse'] : []), '--progress', ...(ref ? ['--branch', ref] : []), '--', source, dir], onLine)
   }
-  return { ok: true, tmpDir, manifest: manifest.manifest, commit: await gitHead(tmpDir) }
+  const steps = [
+    ['init', '--quiet', dir],
+    ['-C', dir, 'remote', 'add', 'origin', source],
+    ['-C', dir, 'fetch', '--depth', '1', ...(sparse ? ['--filter=blob:none'] : []), '--progress', 'origin', ref],
+    ...(sparse ? [['-C', dir, 'sparse-checkout', 'init', '--cone']] : []),
+    ['-C', dir, 'checkout', '--detach', 'FETCH_HEAD'],
+  ]
+  for (const args of steps) {
+    const result = await streamGit(args, onLine)
+    if (!result.ok) return result
+  }
+  return { ok: true }
 }
 
 /** Run git, handing each stderr line (and each carriage-return progress segment) to `onLine` as it lands. */
@@ -119,7 +187,8 @@ function streamGit(args: string[], onLine: ((line: string) => void) | undefined)
     const child = spawn('git', args, { stdio: ['ignore', 'ignore', 'pipe'] })
     const tail: string[] = []
     let rest = ''
-    const timer = setTimeout(() => child.kill('SIGTERM'), 10 * 60_000)
+    let timedOut = false
+    const timer = setTimeout(() => { timedOut = true; child.kill('SIGTERM') }, GIT_TIMEOUT_MS)
     child.stderr?.on('data', (chunk: Buffer) => {
       rest += chunk.toString('utf8')
       let at: number
@@ -133,11 +202,14 @@ function streamGit(args: string[], onLine: ((line: string) => void) | undefined)
       }
     })
     child.on('error', (error) => { clearTimeout(timer); resolve({ ok: false, detail: error.message }) })
-    child.on('exit', (code) => {
+    child.on('exit', (code, signal) => {
       clearTimeout(timer)
       if (rest.trim()) { onLine?.(rest.trim()); tail.push(rest.trim()) }
-      if (code === 0) resolve({ ok: true })
-      else resolve({ ok: false, detail: `git ${args[0]} exited ${code}: ${tail.filter((l) => !/^(Receiving|Resolving|Updating|remote:)/.test(l)).slice(-3).join(' · ') || tail.slice(-1).join('')}` })
+      if (code === 0) { resolve({ ok: true }); return }
+      const what = `git ${args[0] === '-C' ? args[2] : args[0]}`
+      const said = tail.filter((l) => !/^(Receiving|Resolving|Updating|remote:)/.test(l)).slice(-3).join(' · ') || tail.slice(-1).join('')
+      const how = timedOut ? `${what} was still running after ${GIT_TIMEOUT_MS / 60_000} min` : `${what} exited ${code ?? signal}`
+      resolve({ ok: false, detail: said ? `${how}: ${said}` : how })
     })
   })
 }
@@ -166,7 +238,8 @@ export const DOCTOR_TIMEOUT_MS = 5 * 60_000
 export async function runDshDoctor(installed: InstalledDsh, onLine?: (line: string) => void): Promise<DshDoctorResult> {
   const doctor = installed.manifest.toolchain?.doctor
   if (!doctor) return { ok: true, lines: [] }
-  const result = await runDshCommand(doctor, {
+  // Resolved inside the harness, as check.ts reads it: a bare `doctor.sh` is that file, not a PATH lookup.
+  const result = await runDshCommand(resolveDshCommand(installed, doctor), {
     cwd: installed.realDir,
     env: { HARNESS_DSH: installed.id, HARNESS_DSH_DIR: installed.realDir },
     onLine,
@@ -184,23 +257,33 @@ export async function runDshDoctor(installed: InstalledDsh, onLine?: (line: stri
 
 export async function installDsh(opts: DshInstallOptions): Promise<DshInstallResult> {
   const progress = (p: DshInstallProgress): void => opts.onProgress?.(p)
+  const wrongId = (actual: string): DshInstallResult => {
+    const detail = `Catalog requested ${opts.expectedId}, but the package declares ${actual}`
+    progress({ id: opts.expectedId ?? null, phase: 'failed', detail })
+    return { ok: false, error: 'PACKAGE_ID_MISMATCH', detail }
+  }
   let manifest: DshManifest
   let dir: string
   let commit: string | null = null
   let realDir: string
 
-  progress({ id: null, phase: 'clone', detail: opts.link ? `linking ${opts.source}` : `cloning ${opts.source}` })
+  progress({ id: null, phase: 'clone', detail: opts.link ? `linking ${opts.source}` : `cloning ${opts.source}${opts.path ? ` · ${opts.path}` : ''}` })
   if (opts.link) {
     const linked = linkInstall(opts.source)
     if (!linked.ok) { progress({ id: null, phase: 'failed', detail: linked.detail }); return linked }
     manifest = linked.manifest
+    if (opts.expectedId && manifest.id !== opts.expectedId) return wrongId(manifest.id)
     realDir = linked.realDir
     dir = placeAt(manifest.id, { linkTo: realDir })
     commit = await gitHead(realDir)
   } else {
-    const cloned = await cloneInstall(opts.source, opts.ref, opts.onLine)
+    const cloned = await cloneInstall(opts.source, opts.ref, opts.path, opts.onLine)
     if (!cloned.ok) { progress({ id: null, phase: 'failed', detail: cloned.detail }); return cloned }
     manifest = cloned.manifest
+    if (opts.expectedId && manifest.id !== opts.expectedId) {
+      rmSync(cloned.tmpDir, { recursive: true, force: true })
+      return wrongId(manifest.id)
+    }
     commit = cloned.commit
     dir = placeAt(manifest.id, { tmpDir: cloned.tmpDir })
     realDir = realpathSync(dir)
@@ -211,20 +294,18 @@ export async function installDsh(opts: DshInstallOptions): Promise<DshInstallRes
     dir,
     source: opts.link ? resolve(opts.source) : opts.source,
     ref: opts.ref ?? null,
+    ...(opts.link || !opts.path ? {} : { path: opts.path }),
     commit,
     linked: opts.link === true,
     installedAt: Date.now(),
   }
-  const resolved = resolveInstalled(record)
-  if (isBrokenDsh(resolved)) {
-    progress({ id: manifest.id, phase: 'failed', detail: resolved.error })
-    return { ok: false, error: 'INVALID_MANIFEST', detail: resolved.error }
-  }
+  // Exactly what was just read and placed; resolving the record from disk again would read it twice.
+  const resolved: InstalledDsh = { ...record, manifest, realDir }
 
   const setupLines: string[] = []
   if (manifest.toolchain?.setup) {
     progress({ id: manifest.id, phase: 'setup', detail: manifest.toolchain.setup })
-    const setup = await runDshCommand(manifest.toolchain.setup, {
+    const setup = await runDshCommand(resolveDshCommand({ realDir }, manifest.toolchain.setup), {
       cwd: realDir,
       env: { HARNESS_DSH: manifest.id, HARNESS_DSH_DIR: realDir },
       onLine: (line) => { setupLines.push(line); opts.onLine?.(line) },
@@ -236,6 +317,38 @@ export async function installDsh(opts: DshInstallOptions): Promise<DshInstallRes
         : `setup exited ${setup.code ?? setup.signal} · ${setup.lines.slice(-5).join(' · ')}`.slice(0, 2000)
       progress({ id: manifest.id, phase: 'failed', detail })
       return { ok: false, error: 'SETUP_FAILED', detail }
+    }
+  }
+
+  // The viewer it points at is part of the install: without it the tile opens with no pane. The
+  // registry names the package's repo; a package not in the registry is the author's to install
+  // first (`harness dsh install <url>`), and the doctor says so rather than the pane going blank.
+  const uses = viewerUse(manifest)
+  if (uses && !installedDsh(uses)) {
+    if (!opts.registry && !catalogEntry(uses)) await refreshDshRegistry()
+    const entry = (opts.registry ?? catalogEntry)(uses)
+    if (entry) {
+      opts.onLine?.(`viewer ${uses} · installing`)
+      // The viewer's own phases are narrated UNDER THE HARNESS: the dialog watches the id it asked
+      // for, and a frame carrying the viewer's id would land in a run nobody is looking at — the
+      // install would read as hung for the minutes OpenCascade takes to arrive. The viewer's `done`
+      // is not the harness's done, so it reports as the harness's setup still going.
+      const dep = await installDsh({
+        source: entry.repo, expectedId: entry.id, ref: entry.ref, path: entry.path, registry: opts.registry, setupTimeoutMs: opts.setupTimeoutMs, onLine: opts.onLine,
+        onProgress: (p) => {
+          if (p.phase === 'failed') return // reported below, once, with the viewer named
+          const phase: DshInstallPhase = p.phase === 'done' ? 'setup' : p.phase
+          progress({ id: manifest.id, phase, detail: `viewer ${uses} · ${p.phase}${p.detail ? ` · ${p.detail}` : ''}`.slice(0, 300) })
+        },
+      })
+      if (!dep.ok) {
+        const detail = `viewer ${uses} · ${dep.detail}`.slice(0, 2000)
+        progress({ id: manifest.id, phase: 'failed', detail })
+        return { ok: false, error: dep.error, detail }
+      }
+      progress({ id: manifest.id, phase: 'setup', detail: `viewer ${uses} · installed` })
+    } else {
+      opts.onLine?.(`miss viewer ${uses} is not installed and not in the registry · install it first`)
     }
   }
 
@@ -263,7 +376,8 @@ export function removeDsh(id: string): { ok: true } | { ok: false; error: string
     if (isLink) rmSync(record.dir, { force: true })
     else if (existsSync(record.dir)) rmSync(record.dir, { recursive: true, force: true })
   } catch (error) {
-    return { ok: false, error: 'REMOVE_FAILED', detail: error instanceof Error ? error.message : String(error) }
+    // rmSync throws only system errors (EACCES, EBUSY).
+    return { ok: false, error: 'REMOVE_FAILED', detail: (error as Error).message }
   }
   removeInstalledRecord(id)
   return { ok: true }

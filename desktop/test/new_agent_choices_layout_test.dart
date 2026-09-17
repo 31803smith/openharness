@@ -63,6 +63,9 @@ class _ChoicesApp extends AppNotifier {
     String? swarmId,
     PaneSplitRequest? split,
     String? dsh,
+    String? prompt,
+    String? name,
+    String? agent,
     AgentCreationAttempt? attempt,
   }) async {
     createCalls++;
@@ -176,7 +179,7 @@ void main() {
             'cursor.png',
             'kilo.png',
             'solid.png',
-            'copper.png',
+            'autonomous-circuit.png',
             'marp.png',
           ]) {
             await precacheImage(

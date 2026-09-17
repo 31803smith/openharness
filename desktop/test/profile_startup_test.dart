@@ -341,13 +341,17 @@ void main() {
           await logout;
         }
         await tester.pump(const Duration(minutes: 2));
-        expect(api.lists, hasLength(1));
+        // A sign-out reads the list ONCE more — this computer's, as a guest —
+        // and the recovery timer that was retrying the account's is gone.
+        expect(api.lists, hasLength(closeApp ? 1 : 2));
         disposeApp();
       },
     );
   }
 
   test('a late profile response cannot restore a signed-out account', () async {
+    // A desktop signs in from its desk, never from a wall.
+    app.status = AppStatus.authenticated;
     final start = app.login();
     await Future<void>.delayed(Duration.zero);
     await app.logout();
@@ -357,7 +361,9 @@ void main() {
       list.complete([_machine]);
     }
     await start;
-    expect(app.status, AppStatus.unauthenticated);
+    // Signed out on a desktop is a guest on the same desk, not a login wall.
+    expect(app.status, AppStatus.authenticated);
+    expect(app.isGuest, isTrue);
     expect(app.currentUser, isNull);
     expect(analyticsAccount.current.id, isNull);
     expect(app.machines, isEmpty);
@@ -420,18 +426,21 @@ void main() {
   test(
     'old sign-in completion cannot replace a new account or its loading state',
     () async {
+      app.status = AppStatus.authenticated; // signed in from the desk
       final oldLogin = app.login();
       await _tick();
       await app.logout();
+      await _tick();
       final newLogin = app.login();
       await _tick();
+      // Two profiles, one per sign-in; three list reads — the sign-out reads
+      // this computer's own list, as a guest, between them.
       expect(api.profiles, hasLength(2));
-      expect(api.lists, hasLength(2));
+      expect(api.lists, hasLength(3));
       api.profiles.first.complete(_profile('old'));
       api.lists.first.complete([_machine]);
       await oldLogin;
       expect(app.signingIn, isTrue);
-      expect(app.machinesLoading, isTrue);
       expect(app.currentUser, isNull);
       expect(app.machines, isEmpty);
       api.profiles.last.complete(_profile('new'));
@@ -455,9 +464,16 @@ void main() {
       await app.logout();
       app.daemon!.complete();
       await start;
-      expect(app.status, AppStatus.unauthenticated);
+      await _tick();
+      // The account's workspace never loaded: no profile, and the one list
+      // read is the sign-out's own, for this computer as a guest.
       expect(api.profiles, isEmpty);
-      expect(api.lists, isEmpty);
+      expect(api.lists, hasLength(1));
+      api.lists.single.complete([_machine]);
+      await _tick();
+      expect(app.status, AppStatus.authenticated);
+      expect(app.isGuest, isTrue);
+      expect(api.profiles, isEmpty);
     },
   );
 

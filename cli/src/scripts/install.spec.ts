@@ -203,7 +203,7 @@ describe("scripts/install.sh command contract", () => {
       });
 
       expect(result.status).toBe(0);
-      expect(readFileSync(invocations, "utf8")).toContain("install tmux\n");
+      expect(readFileSync(invocations, "utf8")).toContain("install --force-bottle tmux\n");
       expect(result.stdout).not.toContain("managed");
       expect(() => readFileSync(fetched, "utf8")).toThrow();
     } finally {
@@ -330,7 +330,7 @@ describe("scripts/install.sh command contract", () => {
       });
 
       expect(result.status).toBe(0);
-      expect(result.stdout).toContain("Homebrew could not install tmux");
+      expect(result.stdout).toContain("No Homebrew tmux bottle for this Mac; using the managed build instead.");
       expect(readlinkSync(join(home, ".local", "bin", "tmux"))).toContain(root);
     } finally {
       rmSync(scratch, { recursive: true, force: true });

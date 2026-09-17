@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -15,6 +16,7 @@ import {
   commandAvailableInInteractiveShell,
   firstPromptArgs,
   gridPanePrelude,
+  harnessNodePrelude,
   namedAgentArgs,
   supportsFirstPrompt,
   supportsNamedAgent,
@@ -165,6 +167,39 @@ describe('buildEngineLaunchArgv', () => {
       expect(firstHint.length).toBeGreaterThan(0)
       expect(firstHint.length).toBeLessThanOrEqual(120)
     })
+  })
+
+  it('a DSH agent gets Harness\'s Node at the end of a PATH that has none; a plain launch is unchanged', () => {
+    const argv = buildEngineLaunchArgv('claude', { harnessNode: true }, '/bin/zsh', '/opt/harness runtime/bin/node')
+    // On this branch every pane script opens with the open-files raise and the grid prelude; the Node
+    // line lands after them, and a launch without `harnessNode` is exactly the baseline above.
+    expect(argv[2]).toBe(`${RAISE_OPEN_FILES_SH}${GRID_PRELUDE}${harnessNodePrelude('/opt/harness runtime/bin/node')}exec "$@"`)
+    expect(harnessNodePrelude('/opt/harness runtime/bin/node')).toBe(
+      'if ! command -v node >/dev/null 2>&1; then PATH="${PATH:+$PATH:}"\'/opt/harness runtime/bin\'; export PATH; fi\n')
+    expect(buildEngineLaunchArgv('claude', { harnessNode: false }, '/bin/zsh')[2]).toBe(`${RAISE_OPEN_FILES_SH}${GRID_PRELUDE}exec "$@"`)
+  })
+
+  it('the DSH prelude, run by a real shell, reaches the engine\'s PATH only when node is missing', () => {
+    const home = mkdtempSync(join(tmpdir(), 'harness-node-prelude-'))
+    try {
+      const runtimeBin = join(home, 'runtime', 'bin')
+      mkdirSync(runtimeBin, { recursive: true })
+      writeFileSync(join(runtimeBin, 'node'), '#!/bin/sh\n', { mode: 0o755 })
+      const run = (path: string) => {
+        const argv = buildEngineLaunchArgv('claude', { harnessNode: true }, '/bin/sh', join(runtimeBin, 'node'))
+        const script = argv[2]
+        return execFileSync('/bin/sh', ['-c', script, 'harness-engine', '/bin/sh', '-c', 'echo "$PATH"; command -v node'], {
+          env: { HOME: home, PATH: path }, encoding: 'utf8',
+        }).trim().split('\n')
+      }
+      expect(run('/usr/bin:/bin')).toEqual([`/usr/bin:/bin:${runtimeBin}`, join(runtimeBin, 'node')])
+      const own = join(home, 'own')
+      mkdirSync(own)
+      writeFileSync(join(own, 'node'), '#!/bin/sh\n', { mode: 0o755 })
+      expect(run(`${own}:/usr/bin:/bin`)).toEqual([`${own}:/usr/bin:/bin`, join(own, 'node')])
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
   })
 
   it('falls back to direct execution when no absolute shell is available', () => {

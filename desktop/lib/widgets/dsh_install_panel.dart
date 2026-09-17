@@ -39,12 +39,15 @@ class _DshInstallPanelState extends State<DshInstallPanel> {
     super.initState();
     // The elapsed clock. Not under test: a periodic timer is a pumpAndSettle
     // that never settles, and the tests drive the run by hand.
-    if (!kUnderTest) {
-      _tick = Timer.periodic(const Duration(seconds: 1), (_) {
-        if (mounted && widget.run.inProgress) setState(() {});
-      });
-    }
+    _tick = kUnderTest ? null : _startClock();
   }
+
+  // coverage:ignore-start
+  // Never runs under flutter test (see initState), where coverage is measured.
+  Timer _startClock() => Timer.periodic(const Duration(seconds: 1), (_) {
+    if (mounted && widget.run.inProgress) setState(() {});
+  });
+  // coverage:ignore-end
 
   @override
   void dispose() {
@@ -198,11 +201,11 @@ class _DshInstallPanelState extends State<DshInstallPanel> {
     }
     if (run.phase != phase || !run.inProgress) return null;
     if (run.line != null) return run.line;
+    // [phase] is one of the three steps, so the last arm is the check.
     return switch (phase) {
       'clone' => run.detail ?? 'Fetching…',
       'setup' => 'Setting up the toolchain…',
-      'doctor' => 'Checking the machine…',
-      _ => null,
+      _ => 'Checking the machine…',
     };
   }
 }
