@@ -18,10 +18,10 @@ import { prisma } from './prisma.js'
 import { utcDayKey, utcDayStart } from '../types/analytics.js'
 
 /**
- * Mark a user online for the UTC day containing `now`. The signal is the desktop app's own
- * `app_presence` ping, relayed by its local `harness` daemon over adapter-ws (src/lib/adapterWs.ts):
- * `isNewConnection: true` when the app just opened its loopback socket to the daemon (bumps
- * `connections`), `false` for the periodic ping (just touches `lastSeenAt`, at most every
+ * Mark a user online for the UTC day containing `now`. The signal is the `harness` daemon's
+ * `app_presence` frame over adapter-ws (src/lib/adapterWs.ts), sent about its own loopback clients:
+ * `isNewConnection: true` when a desktop window just attached to the daemon (bumps `connections`),
+ * `false` for the periodic ping while one stays attached (just touches `lastSeenAt`, at most every
  * USER_PRESENCE_WRITE_MS). Not the web-ws upgrade — the app never dials that itself.
  *
  * `connections` counts app sessions OPENED on that day: a touch that is the first write of a new
