@@ -51,7 +51,31 @@ spec's fields, what was evaluated:
 - `ready` is true only when every entry with `gate: true` passed and no finding is an error.
 - `phases` are the brief's stages; the state of each comes from what exists and what passed.
 - `findings` say what to fix, precisely enough that the agent can fix it without asking.
-- An entry with `method: "none"` has `passed: null` and `gate: false`.
+- An entry with `method: "none"` has `passed: null` and `gate: false`, and stands alone.
+- `passed: null` on any other method means it has not run yet: the pane says "not run yet", never
+  "passed".
+
+Harness shows these to the person: the pane's status tooltip lists each entry as a line
+("✓ Verified by LilyPond 2.24.4", "✗ Checked against brief: key, 16 bars — 12 of 16 bars"), so write
+`by` as the words that finish "Verified by …", "Checked against …", "Reviewed against …", and keep
+`detail` to one line a person can act on.
+
+## Say it on the store page too
+
+`package/store.json` declares the same methods before anyone runs the harness, and the product page
+shows them under the name:
+
+```json
+"evaluation": [
+  { "method": "tool", "by": "the LilyPond compiler" },
+  { "method": "checks", "by": "the request: key, meter, bars" },
+  { "method": "review", "by": "an engraving rubric" }
+]
+```
+
+One to four entries, `method` and `by` only (`passed` and `gate` belong to a run, in the verdict).
+`"$BUILDER" check` holds the page to the proofs: a method the page declares that no proof's verdict
+reported is an error, and one the verdicts report that the page leaves out is a warning.
 
 ## The checker script
 

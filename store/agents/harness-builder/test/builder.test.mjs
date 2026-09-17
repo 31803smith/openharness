@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, describe, it } from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { checkPackage, privateDataIn } from '../toolchain/lib/check.mjs'
+import { checkPackage, evaluationFindings, privateDataIn } from '../toolchain/lib/check.mjs'
 import { launchEnv, materialize } from '../toolchain/lib/materialize.mjs'
 import { agentEnv, fingerprint } from '../toolchain/lib/proof.mjs'
 import { scaffold, slug } from '../toolchain/lib/scaffold.mjs'
@@ -130,6 +130,24 @@ describe('the quality bar', () => {
     const kinds = checkPackage(pkg, {}).findings.filter((f) => f.severity === 'error').map((f) => f.kind)
     assert.ok(kinds.includes('global_install'))
     assert.equal(kinds.filter((k) => k === 'private_data').length, 1)
+  })
+
+  it('holds the store page\'s evaluation to what the proofs\' verdicts reported', () => {
+    const kinds = (declared, verdicts) => evaluationFindings(declared, verdicts).map((f) => `${f.severity}:${f.kind}`)
+    const tool = { method: 'tool', by: 'the Vega-Lite compiler' }
+    const checks = { method: 'checks', by: 'the request' }
+    assert.deepEqual(kinds(undefined), ['warning:store_evaluation'])
+    assert.deepEqual(kinds([]), ['error:store_evaluation'])
+    assert.deepEqual(kinds([{ method: 'vibes' }]), ['error:store_evaluation'])
+    assert.deepEqual(kinds([{ ...tool, passed: true }]), ['error:store_evaluation'])
+    assert.deepEqual(kinds([tool, { method: 'none' }]), ['error:store_evaluation'])
+    assert.deepEqual(kinds([tool, checks]), [], 'no proofs yet: nothing to hold it to')
+    const reported = { ready: true, evaluation: [{ method: 'tool', passed: true, gate: true }] }
+    assert.deepEqual(kinds([tool], [reported, null]), [])
+    assert.deepEqual(kinds([tool, checks], [reported]), ['error:store_evaluation_unproved'])
+    assert.deepEqual(kinds([checks], [reported]), ['error:store_evaluation_unproved', 'warning:store_evaluation_missing'])
+    assert.deepEqual(kinds([tool], [{ ready: true }]), ['warning:verdict_evaluation'])
+    assert.deepEqual(kinds([{ method: 'none' }], [{ ready: true, evaluation: [{ method: 'none', passed: null }] }]), [])
   })
 
   it('tells private data from placeholders', () => {

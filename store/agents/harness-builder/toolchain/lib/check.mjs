@@ -67,8 +67,50 @@ function checkSkill(dir, pkg, findings) {
   if (text.length < 600) findings.push(finding('warning', 'skill_thin', 'the skill is very short for an expert workflow', rel))
 }
 
+export const EVALUATION_METHODS = ['tool', 'checks', 'review', 'none']
+
+/**
+ * How the harness says it judges its output, on the store page (`store.json` `evaluation`), against
+ * what its verdicts reported in the proofs: declared, well formed, honest (`none` alone), and the
+ * same methods the harness actually ran — a page may not promise a check the verdict never reports.
+ */
+export function evaluationFindings(declared, proofVerdicts = []) {
+  const findings = []
+  if (declared === undefined) {
+    findings.push(finding('warning', 'store_evaluation', 'store.json does not say how the harness judges its output (evaluation: [{ method, by }])', 'store.json'))
+    return findings
+  }
+  if (!Array.isArray(declared) || declared.length === 0 || declared.length > 4) {
+    findings.push(finding('error', 'store_evaluation', 'store.json evaluation is one to four { method, by } entries', 'store.json'))
+    return findings
+  }
+  for (const [i, entry] of declared.entries()) {
+    if (!EVALUATION_METHODS.includes(entry?.method)) findings.push(finding('error', 'store_evaluation', `evaluation ${i + 1}: method is tool, checks, review or none`, 'store.json'))
+    if (entry?.by !== undefined && (typeof entry.by !== 'string' || !entry.by.trim() || entry.by.length > 80)) findings.push(finding('error', 'store_evaluation', `evaluation ${i + 1}: by is a short phrase (≤ 80 characters)`, 'store.json'))
+    for (const key of Object.keys(entry ?? {})) if (!['method', 'by'].includes(key)) findings.push(finding('error', 'store_evaluation', `evaluation ${i + 1}: unknown field ${key} (passed and gate belong in the verdict)`, 'store.json'))
+  }
+  const methods = new Set(declared.map((e) => e?.method))
+  if (methods.has('none') && methods.size > 1) findings.push(finding('error', 'store_evaluation', 'evaluation "none" means nothing verifies the output; it cannot sit beside a check', 'store.json'))
+
+  const reported = proofVerdicts.filter(Boolean)
+  if (reported.length) {
+    const ran = new Set(reported.flatMap((v) => (Array.isArray(v.evaluation) ? v.evaluation : []).map((e) => e?.method)))
+    if (ran.size === 0) {
+      findings.push(finding('warning', 'verdict_evaluation', 'no proof verdict says what ready rests on: write evaluation into .harness/verdict.json', 'toolchain/check'))
+    } else {
+      for (const method of methods) {
+        if (method !== 'none' && !ran.has(method)) findings.push(finding('error', 'store_evaluation_unproved', `store.json declares a ${method} evaluation no proof verdict reported`, 'store.json'))
+      }
+      for (const method of ran) {
+        if (!methods.has(method)) findings.push(finding('warning', 'store_evaluation_missing', `the proofs' verdicts report a ${method} evaluation store.json does not declare`, 'store.json'))
+      }
+    }
+  }
+  return findings
+}
+
 /** The whole bar, for the package at `pkg`. `options.reference` is the OpenHarness copy. */
-export function checkPackage(pkg, { reference, build, fresh } = {}) {
+export function checkPackage(pkg, { reference, build, fresh, proofVerdicts = [] } = {}) {
   const findings = []
   const manifestPath = join(pkg, 'harness.json')
   if (!existsSync(manifestPath)) {
@@ -184,6 +226,7 @@ export function checkPackage(pkg, { reference, build, fresh } = {}) {
         if (!ex.prompt) findings.push(finding('error', 'store_example', `example ${i + 1} has no prompt`, 'store.json'))
         if (!ex.caption) findings.push(finding('warning', 'store_example', `example ${i + 1} has no caption`, 'store.json'))
       }
+      findings.push(...evaluationFindings(store.evaluation, proofVerdicts))
     }
   }
 

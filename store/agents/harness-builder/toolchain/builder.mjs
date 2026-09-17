@@ -9,7 +9,7 @@ import { readManifest } from './lib/materialize.mjs'
 import { markProof, openProof, proofDir, proofStatus, runProof, startProof, stopProof } from './lib/proof.mjs'
 import { scaffold } from './lib/scaffold.mjs'
 import { snapshot } from './lib/snapshot.mjs'
-import { STAGES, ensureWorkspace, log, paths, readBuild, readJson, saveBuild, setStage, writeJsonAtomic } from './lib/state.mjs'
+import { PROOF_IDS, STAGES, ensureWorkspace, log, paths, readBuild, readJson, saveBuild, setStage, writeJsonAtomic } from './lib/state.mjs'
 import { alive, currentArtifact, resolveViewer, startViewer, viewerUrl } from './lib/viewer.mjs'
 
 const SCRIPT = fileURLToPath(import.meta.url)
@@ -69,7 +69,9 @@ function runCheck(json) {
   const p = paths(WORKSPACE)
   const build = readBuild(WORKSPACE)
   const fresh = readJson(p.fresh, null)
-  const result = checkPackage(p.package, { reference: REFERENCE, build, fresh })
+  // The final verdict of each proof that ran: what the harness reported it checked, for the store page.
+  const proofVerdicts = PROOF_IDS.map((id) => readJson(join(p.proofs, id, 'result.json'), null)?.verdict ?? null)
+  const result = checkPackage(p.package, { reference: REFERENCE, build, fresh, proofVerdicts })
   if (existsSync(join(p.package, 'harness.json'))) {
     const dsh = harnessDshCheck(p.package)
     if (dsh) {

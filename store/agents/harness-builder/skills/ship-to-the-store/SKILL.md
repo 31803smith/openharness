@@ -30,8 +30,13 @@ empty pane. If a proof's final frame is not Store-worthy, the proof did not pass
 
 ```json
 { "homepage": "https://…", "upstream": "https://github.com/…", "license": "MIT",
+  "evaluation": [{ "method": "tool", "by": "…" }],
   "examples": [{ "prompt": "…", "image": "…", "caption": "…" }] }
 ```
+
+`evaluation` is what the evaluation stage declared (the `design-the-evaluation` skill): the methods
+the proofs' verdicts actually reported, worded to finish "Verified by …", "Checked against …",
+"Reviewed against …". Never a method the harness does not run.
 
 ## Credit and licences
 
