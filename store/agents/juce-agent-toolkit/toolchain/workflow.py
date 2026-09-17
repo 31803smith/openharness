@@ -13,7 +13,7 @@ def summarize(p, out, engine):
             raise ValueError("Expected a 16-bit mono recording")
         samples = array.array("h", f.readframes(f.getnframes()))
         rate = f.getframerate()
-    peak = max(abs(x) for x in samples) / 32768
+    peak = max((abs(x) for x in samples), default=0) / 32768
     if peak >= .999 or not samples:
         raise ValueError("The recording clipped or was empty")
     rms = math.sqrt(sum((x / 32768) ** 2 for x in samples) / len(samples))

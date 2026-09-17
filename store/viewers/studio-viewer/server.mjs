@@ -1,8 +1,8 @@
 import http from 'node:http';
-import {readFile, writeFile, mkdir, readdir, realpath, stat} from 'node:fs/promises';
+import {readFile, writeFile, rename, rm, readdir, realpath, stat} from 'node:fs/promises';
 import {resolve, join, relative, sep, extname} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {createHash} from 'node:crypto';
+import {createHash, randomUUID} from 'node:crypto';
 import {spawn} from 'node:child_process';
 
 const UI = fileURLToPath(new URL('./web/', import.meta.url));
@@ -28,7 +28,7 @@ export function validateParameters(config, parameters) {
   if (Object.keys(parameters).some(k => !keys.has(k))) throw new Problem(400, 'Unknown studio control.');
   const out = {};
   for (const c of config.controls) {
-    const v = parameters[c.id] ?? c.value;
+    const v = Object.hasOwn(parameters,c.id) ? parameters[c.id] : c.value;
     if (c.type === 'number') {
       if (typeof v !== 'number' || !Number.isFinite(v) || v < c.min || v > c.max || (c.integer && !Number.isInteger(v))) throw new Problem(400, `${c.label} must be between ${c.min} and ${c.max}.`);
     } else if (c.type === 'select') {
@@ -58,6 +58,7 @@ export async function createStudio({workspace, packageDir, port = 0, jobTimeout 
   let job = null;
   let child = null;
   let timer = null;
+  let starting = false;
   const project = async () => jsonFile(workspace, 'studio.json');
   const readState = async () => {
     const p = await project();
@@ -88,7 +89,9 @@ export async function createStudio({workspace, packageDir, port = 0, jobTimeout 
       if (req.headers.host !== expectedHost && req.headers.host !== `localhost:${server.address().port}`) throw new Problem(403, 'Open this studio on its local address.');
       if (req.headers.origin && req.headers.origin !== `http://${req.headers.host}`) throw new Problem(403, 'Requests must come from this studio.');
       const url = new URL(req.url, `http://${expectedHost}`);
-      const path = decodeURIComponent(url.pathname);
+      let path;
+      try { path = decodeURIComponent(url.pathname); }
+      catch { throw new Problem(400, 'This address is malformed.'); }
       if (req.method === 'GET' && path === '/api/state') return send(200, await readState());
       if (req.method === 'GET' && path === '/api/run') {
         const id = url.searchParams.get('id');
@@ -102,16 +105,23 @@ export async function createStudio({workspace, packageDir, port = 0, jobTimeout 
         return send(200, {ok:true});
       }
       if (req.method === 'POST' && path === '/api/run') {
-        if (child) throw new Problem(409, 'A run is already in progress.');
+        if (child || starting) throw new Problem(409, 'A run is already in progress.');
+        starting = true;
+        try {
         if (!req.headers['content-type']?.startsWith('application/json')) throw new Problem(415, 'Send studio controls as JSON.');
         const input = await body(req);
+        if (!input || Array.isArray(input) || typeof input !== 'object') throw new Problem(400, 'Provide the studio action and controls.');
         const action = config.actions.find(a => a.id === input.action);
         if (!action) throw new Problem(400, 'Choose a studio action.');
         const p = await project();
         if (input.revision !== revision(p)) throw new Problem(409, 'The agent changed this project. Refresh to load its latest controls.');
         const parameters = validateParameters(config,input.parameters);
-        await confined(workspace, 'studio.json');
-        await writeFile(join(workspace,'studio.json'), JSON.stringify({...p,parameters},null,2)+'\n');
+        const target = await confined(workspace, 'studio.json');
+        const temporary = join(workspace,`.studio-${randomUUID()}.json`);
+        try {
+          await writeFile(temporary,JSON.stringify({...p,parameters},null,2)+'\n',{flag:'wx'});
+          await rename(temporary,target);
+        } finally { await rm(temporary,{force:true}); }
         const script = await confined(packageDir,'toolchain/run.sh');
         job = {status:'running', action:action.id, label:action.label, startedAt:new Date().toISOString(), message:'Preparing your run…', log:''};
         child = spawn(script, [action.id], {cwd:workspace, detached:true, env:{...process.env,HARNESS_WORKSPACE:workspace,HARNESS_DSH_DIR:packageDir},stdio:['ignore','pipe','pipe']});
@@ -124,6 +134,7 @@ export async function createStudio({workspace, packageDir, port = 0, jobTimeout 
         });
         timer = setTimeout(() => {job = {...job,status:'failed',message:'This run reached its time limit. Your last result is safe.'}; endChild();},jobTimeout);
         return send(202,{ok:true});
+        } finally { starting = false; }
       }
       if (req.method !== 'GET' && req.method !== 'HEAD') throw new Problem(405,'This action is not supported.');
       let root = UI, file = path === '/' ? 'index.html':path.slice(1);

@@ -71,7 +71,7 @@
       "min": 80,
       "max": 800,
       "step": 40,
-      "integer": false,
+      "integer": true,
       "unit": "",
       "hint": ""
     }

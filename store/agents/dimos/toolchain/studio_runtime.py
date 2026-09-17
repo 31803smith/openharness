@@ -27,11 +27,16 @@ def contained(path):
 def atomic_json(path, data):
     path = contained(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, prefix=".studio-", delete=False) as f:
-        json.dump(data, f, indent=2, allow_nan=False)
-        f.write("\n")
-        temp = f.name
-    os.replace(temp, path)
+    temp = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, prefix=".studio-", delete=False) as f:
+            temp = f.name
+            json.dump(data, f, indent=2, allow_nan=False)
+            f.write("\n")
+        os.replace(temp, path)
+    finally:
+        if temp and os.path.exists(temp):
+            os.unlink(temp)
 
 
 def command(argv, cwd=None, timeout=120, env=None):

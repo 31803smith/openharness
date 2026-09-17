@@ -5,7 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 . toolchain/runtimes.sh
 if [ -x .sumo/bin/sumo ] && [ -x .sumo/bin/netconvert ]; then exit 0; fi
-harness_conda_env .sumo 'xerces-c=3.3.0'
+harness_conda_env .sumo 'xerces-c=3.3.0=h32b985b_2' 'icu=78.3=py313hbf1d544_2' 'libcxx=23.1.1=h19cb2f5_0'
 if [ "$(uname -s)" = Darwin ]; then
   export SDKROOT="$(xcrun --show-sdk-path)"
   if [ -d "$SDKROOT/usr/include/c++/v1" ]; then

@@ -52,17 +52,21 @@ def generate(p,out):
 def comfy(p,out):
     base=os.environ.get('COMFYUI_URL','http://127.0.0.1:8188').rstrip('/')
     url=urllib.parse.urlparse(base)
-    if url.scheme!='http' or url.hostname not in ('127.0.0.1','localhost','::1') or url.username or url.password or url.path:
+    if url.scheme!='http' or url.hostname not in ('127.0.0.1','localhost','::1') or url.username or url.password or url.path or url.query or url.fragment:
         raise ValueError('This local studio expects COMFYUI_URL to be a loopback HTTP address.')
     path=contained(workspace()/'workflow.json')
     if path.stat().st_size>1_000_000:raise ValueError('workflow.json is too large')
     workflow=json.loads(path.read_text())
     if not isinstance(workflow,dict) or not workflow or any(not isinstance(v,dict) or not isinstance(v.get('class_type'),str) for v in workflow.values()):
         raise ValueError('Save an API-format ComfyUI workflow in workflow.json.')
+    class LocalOnly(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *args, **kwargs):
+            raise urllib.error.URLError('Local ComfyUI requests cannot follow redirects.')
+    opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),LocalOnly())
     def request(endpoint,data=None):
         req=urllib.request.Request(base+endpoint,data=json.dumps(data).encode() if data is not None else None,headers={'Content-Type':'application/json'})
         try:
-            with urllib.request.urlopen(req,timeout=5) as response:
+            with opener.open(req,timeout=5) as response:
                 return json.loads(response.read(2_000_000))
         except urllib.error.URLError as exc:
             raise RuntimeError('Start local ComfyUI on port 8188, then run again. '+str(exc)) from exc
@@ -83,7 +87,7 @@ def comfy(p,out):
     for output in job['outputs'].values():
         for asset in output.get('images',[]):
             query=urllib.parse.urlencode({k:asset[k] for k in ['filename','subfolder','type'] if k in asset})
-            with urllib.request.urlopen(base+'/view?'+query,timeout=10) as response:
+            with opener.open(base+'/view?'+query,timeout=10) as response:
                 content=response.read(32*1024*1024+1)
             if len(content)>32*1024*1024:raise RuntimeError('A ComfyUI image exceeded the local download limit.')
             if not content.startswith(b'\x89PNG\r\n\x1a\n'):raise RuntimeError('This image workflow must produce PNG outputs.')

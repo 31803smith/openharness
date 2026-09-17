@@ -19,9 +19,9 @@
     "sparse": [
       "src",
       "build_config",
-      "data/xsd",
       "tools/build_config",
-      "tools/sumolib"
+      "tools/sumolib",
+      "data"
     ]
   }
 ]

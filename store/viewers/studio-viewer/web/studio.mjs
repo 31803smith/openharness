@@ -1,6 +1,6 @@
 const $ = id => document.getElementById(id);
 const text = (tag, value, className) => {const e=document.createElement(tag);e.textContent=value;if(className)e.className=className;return e;};
-let state, parameters, domain, draftRevision, dirty=false, selected=null, motion=!matchMedia('(prefers-reduced-motion: reduce)').matches, lastResult='', pending=false;
+let state, parameters, domain, draftRevision, dirty=false, selected=null, motion=!matchMedia('(prefers-reduced-motion: reduce)').matches, lastResult='', pending=false, refreshing=false;
 const abort = new AbortController();
 const artifactURL = path => '/artifacts/'+path.split('/').map(encodeURIComponent).join('/');
 const announce = message => {$('announcement').textContent=message;};
@@ -46,15 +46,17 @@ async function run(action){
   try{await api('/api/run',{action,parameters,revision:draftRevision??state.revision});dirty=false;selected=null;await refresh();announce('Run started.');}catch(e){notice(e.message,true);}finally{pending=false;$('run').disabled=state?.job?.status==='running';}
 }
 async function refresh(){
+  if(refreshing)return;
+  refreshing=true;
   try{
     const next=await api('/api/state');
     const changed=state&&next.revision!==state.revision;
-    if(!state){state=next;parameters={...state.project.parameters};const c=state.config;document.title=c.title+' · Harness';$('title').textContent=c.title;$('description').textContent=c.description;$('category').textContent=c.category.toUpperCase();$('scene-label').textContent=c.scene.toUpperCase();$('hint').textContent=c.hint;$('tip').textContent=c.tip;$('credit').textContent=c.credit;$('run').textContent=c.actions[0].label;for(const [key,value] of Object.entries(c.theme??{}))document.documentElement.style.setProperty('--'+key,value);controls(c);for(const a of c.actions.slice(1)){const b=text('button',a.label);b.type='button';b.title=a.description??a.label;b.addEventListener('click',()=>run(a.id));$('extra-actions').append(b);}const module=await import('/domain.mjs');domain=module.mount($('stage'),{getParameters:()=>parameters,setParameter,announce,artifactURL,signal:abort.signal,run:()=>run(c.actions[0].id)});}
+    if(!state){state=next;parameters={...state.project.parameters};const c=state.config;document.title=c.title+' · Harness';$('title').textContent=c.title;$('description').textContent=c.description;$('category').textContent=c.category.toUpperCase();$('scene-label').textContent=c.scene.toUpperCase();$('hint').textContent=c.hint;$('tip').textContent=c.tip;$('credit').textContent=c.credit;$('run').textContent=c.actions[0].label;for(const [key,value] of Object.entries(c.theme??{}))document.documentElement.style.setProperty('--'+key,value);controls(c);for(const a of c.actions.slice(1)){const b=text('button',a.label);b.type='button';b.title=a.description??a.label;b.addEventListener('click',()=>run(a.id));$('extra-actions').append(b);}const module=await import('/domain.mjs');$('stage').replaceChildren();domain=module.mount($('stage'),{getParameters:()=>parameters,setParameter,announce,artifactURL,signal:abort.signal,run:()=>run(c.actions[0].id)});}
     state=next;
     if(changed&&dirty){$('remote').hidden=false;}else if(changed){parameters={...state.project.parameters};draftRevision=state.revision;controls(state.config);$('remote').hidden=true;}
     $('connection').textContent='Workspace connected';$('app').setAttribute('aria-busy','false');
     $('dirty').textContent=dirty?'UNSAVED':'SAVED';
-    const running=state.job?.status==='running';$('run').disabled=running||pending;
+    const running=state.job?.status==='running';$('run').disabled=running||pending;for(const b of $('extra-actions').children)b.disabled=running||pending;
     $('job-details').hidden=!state.job;$('log').textContent=state.job?.log??'';
     if(state.job?.status==='failed')notice(state.job.message,true);
     else if(running){notice(state.job.message);if(!$('cancel')){const b=text('button','Stop run');b.id='cancel';b.addEventListener('click',async()=>{try{await api('/api/cancel',{});await refresh();}catch(e){notice(e.message,true);}});$('notice').append(' ',b);}}
@@ -62,7 +64,7 @@ async function refresh(){
     else if(state.job?.status==='done')notice('');
     const stamp=state.result?.id??'';
     if(stamp!==lastResult||changed||!lastResult){lastResult=stamp;renderResult(selected??state.result);renderHistory();}
-  }catch(e){if(!domain){state=null;$('extra-actions').replaceChildren();}$('connection').textContent='Reconnecting';notice(e.message,true);}
+  }catch(e){if(!domain){state=null;$('extra-actions').replaceChildren();}$('connection').textContent='Reconnecting';notice(e.message,true);}finally{refreshing=false;}
 }
 $('run').addEventListener('click',()=>run(state.config.actions[0].id));
 $('controls').addEventListener('submit',e=>e.preventDefault());
