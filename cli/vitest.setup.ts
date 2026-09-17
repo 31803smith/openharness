@@ -12,3 +12,7 @@ import { join } from 'node:path'
 
 process.env.ADAPTER_DATA_DIR = mkdtempSync(join(tmpdir(), 'adapter-test-data-'))
 process.env.DSH_DIR = join(process.env.ADAPTER_DATA_DIR, 'dsh')
+// The Store catalog is fetched from GitHub by dsh_list; a test must never depend on what that branch
+// holds today (a published catalog turned a fixture registry of two into the live shelf of 23).
+// Loopback port 9 refuses at once, so the live catalog falls back to the registry each test stubs.
+process.env.HARNESS_STORE_CATALOG_URL ??= 'http://127.0.0.1:9/catalog.json'
