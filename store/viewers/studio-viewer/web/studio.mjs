@@ -1,12 +1,13 @@
 const $ = id => document.getElementById(id);
 const text = (tag, value, className) => {const e=document.createElement(tag);e.textContent=value;if(className)e.className=className;return e;};
-let state, parameters, domain, dirty=false, selected=null, motion=!matchMedia('(prefers-reduced-motion: reduce)').matches, lastResult='', pending=false;
+let state, parameters, domain, draftRevision, dirty=false, selected=null, motion=!matchMedia('(prefers-reduced-motion: reduce)').matches, lastResult='', pending=false;
 const abort = new AbortController();
 const artifactURL = path => '/artifacts/'+path.split('/').map(encodeURIComponent).join('/');
 const announce = message => {$('announcement').textContent=message;};
 function notice(message, error=false) {$('notice').textContent=message;$('notice').hidden=!message;$('notice').classList.toggle('error',error);}
 async function api(path, body) {const r=await fetch(path,body ? {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{});const v=await r.json();if(!r.ok)throw Error(v.error);return v;}
 function setParameter(id,value) {
+  if(!dirty)draftRevision=state.revision;
   parameters[id]=value;dirty=true;$('dirty').textContent='UNSAVED';
   const input=document.querySelector(`[name="${CSS.escape(id)}"]`);if(input){input.value=value;input.dispatchEvent(new Event('studio-value'));}
   domain?.update(parameters,selected??state.result,motion);
@@ -14,6 +15,7 @@ function setParameter(id,value) {
 function controls(config) {
   $('controls').replaceChildren();
   for(const c of config.controls){
+    if(c.hidden)continue;
     const label=text('label','', 'control'), head=text('span','', 'control-head'), caption=text('span',c.label), output=text('output','');
     let input;
     if(c.type==='select'){input=document.createElement('select');for(const o of c.options){const opt=text('option',o.label);opt.value=o.value;input.append(opt);}}
@@ -41,7 +43,7 @@ function renderHistory(){
 async function run(action){
   if(pending)return;
   pending=true;notice('');$('run').disabled=true;
-  try{await api('/api/run',{action,parameters,revision:state.revision});dirty=false;selected=null;await refresh();announce('Run started.');}catch(e){notice(e.message,true);}finally{pending=false;$('run').disabled=state?.job?.status==='running';}
+  try{await api('/api/run',{action,parameters,revision:draftRevision??state.revision});dirty=false;selected=null;await refresh();announce('Run started.');}catch(e){notice(e.message,true);}finally{pending=false;$('run').disabled=state?.job?.status==='running';}
 }
 async function refresh(){
   try{
@@ -49,7 +51,7 @@ async function refresh(){
     const changed=state&&next.revision!==state.revision;
     if(!state){state=next;parameters={...state.project.parameters};const c=state.config;document.title=c.title+' · Harness';$('title').textContent=c.title;$('description').textContent=c.description;$('category').textContent=c.category.toUpperCase();$('scene-label').textContent=c.scene.toUpperCase();$('hint').textContent=c.hint;$('tip').textContent=c.tip;$('credit').textContent=c.credit;$('run').textContent=c.actions[0].label;for(const [key,value] of Object.entries(c.theme??{}))document.documentElement.style.setProperty('--'+key,value);controls(c);for(const a of c.actions.slice(1)){const b=text('button',a.label);b.type='button';b.title=a.description??a.label;b.addEventListener('click',()=>run(a.id));$('extra-actions').append(b);}const module=await import('/domain.mjs');domain=module.mount($('stage'),{getParameters:()=>parameters,setParameter,announce,artifactURL,signal:abort.signal,run:()=>run(c.actions[0].id)});}
     state=next;
-    if(changed&&dirty){$('remote').hidden=false;}else if(changed){parameters={...state.project.parameters};controls(state.config);$('remote').hidden=true;}
+    if(changed&&dirty){$('remote').hidden=false;}else if(changed){parameters={...state.project.parameters};draftRevision=state.revision;controls(state.config);$('remote').hidden=true;}
     $('connection').textContent='Workspace connected';$('app').setAttribute('aria-busy','false');
     $('dirty').textContent=dirty?'UNSAVED':'SAVED';
     const running=state.job?.status==='running';$('run').disabled=running||pending;
@@ -60,12 +62,12 @@ async function refresh(){
     else if(state.job?.status==='done')notice('');
     const stamp=state.result?.id??'';
     if(stamp!==lastResult||changed||!lastResult){lastResult=stamp;renderResult(selected??state.result);renderHistory();}
-  }catch(e){$('connection').textContent='Reconnecting';notice(e.message,true);}
+  }catch(e){if(!domain){state=null;$('extra-actions').replaceChildren();}$('connection').textContent='Reconnecting';notice(e.message,true);}
 }
 $('run').addEventListener('click',()=>run(state.config.actions[0].id));
 $('controls').addEventListener('submit',e=>e.preventDefault());
 $('reset').addEventListener('click',()=>{for(const c of state.config.controls)setParameter(c.id,c.value);notice('Controls reset. Run to save a new exploration.');});
-$('refresh').addEventListener('click',()=>{parameters={...state.project.parameters};dirty=false;controls(state.config);$('remote').hidden=true;$('dirty').textContent='SAVED';domain.update(parameters,selected??state.result,motion);});
+$('refresh').addEventListener('click',()=>{parameters={...state.project.parameters};draftRevision=state.revision;dirty=false;controls(state.config);$('remote').hidden=true;$('dirty').textContent='SAVED';domain.update(parameters,selected??state.result,motion);});
 $('latest').addEventListener('click',()=>{selected=null;$('latest').hidden=true;renderResult(state.result);renderHistory();});
 $('motion').addEventListener('click',()=>{motion=!motion;setMotion();});
 function setMotion(){$('motion').setAttribute('aria-pressed',String(motion));$('motion').textContent=motion?'Pause motion':'Resume motion';domain?.update(parameters,selected??state?.result,motion);}
