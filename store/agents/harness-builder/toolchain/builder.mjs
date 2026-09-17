@@ -42,8 +42,9 @@ const HELP = `builder — build a domain-specific harness in package/
                      stop a proof's viewer (and its agent, if still running)
   snapshot <proof-id> [--out file.png|.jpg] [--theme dark|light] [--width 1600] [--height 1000]
                      a picture of what that proof's viewer shows right now
-  showcase <proof-id>…
-                     Store pictures (1600×1000 JPEG) from passed proofs, and examples in store.json
+  showcase <proof-id>… [--base-url https://…/showcase]
+                     Store pictures (1600×1000 JPEG) from passed proofs into package/showcase/, and
+                     examples in store.json; --base-url is where those files will be served from
   help               this`
 
 function args(argv) {
@@ -280,12 +281,18 @@ async function main() {
       const storePath = join(p.package, 'store.json')
       const store = readJson(storePath, { examples: [] }) ?? { examples: [] }
       store.examples = Array.isArray(store.examples) ? store.examples : []
-      mkdirSync(p.showcase, { recursive: true })
+      // The pictures belong to the package, so they travel with it. The Store shows them from an https
+      // URL (the spec: a catalog carries pictures without carrying bytes), which only the place the
+      // package will live can say — `--base-url https://…/showcase`, else the picture waits for one.
+      const baseUrl = typeof a['base-url'] === 'string' ? a['base-url'].replace(/\/+$/, '') : null
+      if (baseUrl && !baseUrl.startsWith('https://')) fail('--base-url must be an https URL')
+      const showcaseDir = join(p.package, 'showcase')
+      mkdirSync(showcaseDir, { recursive: true })
       for (const id of ids) {
         const proof = build.proofs[id]
         if (!proof) fail(`no proof "${id}"`)
         if (proof.state !== 'passed') fail(`proof "${id}" has not passed; only passed proofs go on the Store`)
-        const out = join(p.showcase, `${id}.jpg`)
+        const out = join(showcaseDir, `${id}.jpg`)
         let quality = 86
         const ws = join(WORKSPACE, proof.workspace)
         let viewer = proof.viewer
@@ -303,10 +310,10 @@ async function main() {
           quality -= 6
         }
         const existing = store.examples.find((ex) => ex.prompt === proof.prompt)
-        const image = `showcase/${id}.jpg`
-        if (existing) existing.image = image
-        else store.examples.push({ prompt: proof.prompt, image, caption: '' })
-        console.log(`${out} (${Math.round(statSync(out).size / 1024)} KB)`)
+        const image = baseUrl ? `${baseUrl}/${id}.jpg` : undefined
+        if (existing) { if (image) existing.image = image; else delete existing.image }
+        else store.examples.push({ prompt: proof.prompt, ...(image ? { image } : {}), caption: '' })
+        console.log(`${out} (${Math.round(statSync(out).size / 1024)} KB)${image ? ` → ${image}` : ''}`)
       }
       writeFileSync(storePath, JSON.stringify(store, null, 2) + '\n')
       const next = readBuild(WORKSPACE)

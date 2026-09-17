@@ -167,6 +167,26 @@ describe('the quality bar', () => {
     assert.deepEqual(kinds([{ method: 'none' }], [{ ready: true, evaluation: [{ method: 'none', passed: null }] }]), [])
   })
 
+  it('refuses a store picture the Store cannot show', () => {
+    const pkg = join(tmp(), 'package')
+    scaffold(pkg, { id: 'example/tool', tool: 'Tool', reference: join(REPO_STORE, '..') })
+    mkdirSync(join(pkg, 'showcase'), { recursive: true })
+    writeFileSync(join(pkg, 'showcase', 'easy.jpg'), 'not really a jpeg')
+    const store = { homepage: 'https://example.com', examples: [{ prompt: 'A chart.', image: 'showcase/easy.jpg', caption: 'A chart · 6 bars' }] }
+    writeFileSync(join(pkg, 'store.json'), JSON.stringify(store))
+    const paths = checkPackage(pkg, {}).findings.filter((f) => f.kind === 'store_example_image')
+    assert.deepEqual(paths.map((f) => f.severity), ['error', 'warning'], 'the path is wrong, and the picture it names reaches nobody')
+
+    delete store.examples[0].image
+    writeFileSync(join(pkg, 'store.json'), JSON.stringify(store))
+    const waiting = checkPackage(pkg, {}).findings.filter((f) => f.kind === 'store_example_image')
+    assert.deepEqual(waiting.map((f) => f.severity), ['warning'], 'a picture with no URL yet is a warning')
+
+    store.examples[0].image = 'https://example.com/showcase/easy.jpg'
+    writeFileSync(join(pkg, 'store.json'), JSON.stringify(store))
+    assert.deepEqual(checkPackage(pkg, {}).findings.filter((f) => f.kind === 'store_example_image'), [])
+  })
+
   it('tells private data from placeholders', () => {
     assert.deepEqual(privateDataIn('/Users/example/work and you@example.com and /home/runner/x'), [])
     assert.equal(privateDataIn('see /home/bob/.config').length, 1)

@@ -18,10 +18,15 @@ mock-up:
 "$BUILDER" showcase easy medium hard
 ```
 
-That writes a 1600×1000 JPEG of each proof's final frame to `.builder/showcase/<id>.jpg` (under
+That writes a 1600×1000 JPEG of each proof's final frame to `package/showcase/<id>.jpg` (under
 350 KB) and an `examples` list into `store.json` with each proof's prompt and a caption you then
 edit: one line naming what came out and one fact that makes it concrete ("Seattle rainfall ·
-12 months · wettest month highlighted"). The image URLs are filled in when the package is published.
+12 months · wettest month highlighted").
+
+The pictures ship inside the package; the Store reads them from an **https URL**, and a path is the
+same as no picture. Pass where they will be served from when you know it — for the built-in shelf,
+`--base-url https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/<name>`
+— and leave the URLs out until then; `"$BUILDER" check` says the page has no pictures yet.
 
 Look at each picture. It shows the viewer's final state: no error overlay, no half-rendered frame, no
 empty pane. If a proof's final frame is not Store-worthy, the proof did not pass: go back.

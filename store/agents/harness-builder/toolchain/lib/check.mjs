@@ -225,6 +225,15 @@ export function checkPackage(pkg, { reference, build, fresh, proofVerdicts = [] 
       for (const [i, ex] of examples.entries()) {
         if (!ex.prompt) findings.push(finding('error', 'store_example', `example ${i + 1} has no prompt`, 'store.json'))
         if (!ex.caption) findings.push(finding('warning', 'store_example', `example ${i + 1} has no caption`, 'store.json'))
+        // The Store reads pictures from an https URL and ignores anything else, so a path here is a
+        // page with no picture — the one thing the page is for.
+        if (ex.image !== undefined && !String(ex.image).startsWith('https://')) {
+          findings.push(finding('error', 'store_example_image', `example ${i + 1}: an image is an https URL, not "${ex.image}"; pass --base-url to "$BUILDER" showcase`, 'store.json'))
+        }
+      }
+      const shots = existsSync(join(pkg, 'showcase')) ? readdirSync(join(pkg, 'showcase')).filter((f) => /\.(jpe?g|png)$/i.test(f)) : []
+      if (shots.length && !examples.some((ex) => String(ex.image ?? '').startsWith('https://'))) {
+        findings.push(finding('warning', 'store_example_image', `showcase/ has ${shots.length} picture${shots.length === 1 ? '' : 's'} no example points at; the page shows none until they have a public URL`, 'store.json'))
       }
       findings.push(...evaluationFindings(store.evaluation, proofVerdicts))
     }
