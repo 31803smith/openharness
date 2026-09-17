@@ -80,7 +80,8 @@ def parse_sim_log(text: str) -> dict:
         diagnostics.append({"severity": "warning" if kind.lower() == "warning" else "error",
                             "message": message.strip(), "ref": f"{file}:{line}"})
     checks = [l.strip() for l in text.splitlines() if re.match(r"\s*(ok|PASS|FAIL)\b", l.strip())]
-    failures = [l for l in checks if l.upper().startswith("FAIL") or " FAIL" in l.upper()]
+    # The word FAIL, as the testbenches print it: not "fail" inside a passing check's description.
+    failures = [l for l in checks if re.search(r"\bFAIL\b", l)]
     # "FAIL  blink: 2 checks failed" is the testbench's own tally, not a third failing check.
     tallies = [l for l in failures if re.search(r"\bchecks?\s+failed", l, re.I)]
     # A testbench that never says PASS or FAIL has not been asked a question.
