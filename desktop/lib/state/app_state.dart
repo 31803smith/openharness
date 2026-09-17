@@ -766,7 +766,7 @@ class AppNotifier extends ChangeNotifier {
                         (agent) => agent.id == removed.panes.single.agentId,
                       )
                       .firstOrNull
-                      ?.engine ??
+                      ?.identityEngine ??
                   removed.panes.single.session?.engineId
             : null,
       ),

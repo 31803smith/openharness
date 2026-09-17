@@ -436,8 +436,10 @@ class _SwarmScreenState extends State<SwarmScreen> {
                   {
                     'id': agent.id,
                     'title': agent.name,
-                    'engine': agent.engine,
-                    'iconAsset': engineIdentity(agent.engine).asset,
+                    // Drawn as what it is: a Godogen agent wears Godogen, not
+                    // the Claude Code it runs on.
+                    'engine': agent.identityEngine,
+                    'iconAsset': agentIdentity(agent).asset,
                     'canOpen':
                         agent.terminalAvailable ||
                         openAgents.contains((

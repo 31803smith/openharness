@@ -1039,7 +1039,10 @@ private final class SwarmHistoryIcons {
       }
     } else {
       image = NSImage(size: size, flipped: false) { _ in
-        let initial = String(id.first ?? "A").uppercased() as NSString
+        // A harness id is `owner/name`: its initial is the name's, not the owner's — every
+        // `autonomous/…` harness without artwork used to read "A".
+        let name = id.split(separator: "/").last.map(String.init) ?? id
+        let initial = String(name.first ?? "A").uppercased() as NSString
         let attributes: [NSAttributedString.Key: Any] = [
           .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .bold),
           .foregroundColor: NSColor.black,

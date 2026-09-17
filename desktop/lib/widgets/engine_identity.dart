@@ -327,6 +327,16 @@ const _harnesses = <String, EngineIdentity>{
     color: Color(0xff50fa78),
     asset: 'assets/engine-icons/circuitjs.png',
   ),
+  // OpenMontage's own logo (`assets/logo.png` in its repository), trimmed to
+  // its outer ring so the play mark reads at tab size.
+  'autonomous/openmontage': EngineIdentity(
+    id: 'autonomous/openmontage',
+    label: 'OpenMontage',
+    category: 'Video',
+    creator: 'calesthio',
+    color: Color(0xffe8894a),
+    asset: 'assets/engine-icons/openmontage.png',
+  ),
 };
 
 /// The base engine each first-party harness runs on, so the Create dialog can
@@ -349,6 +359,7 @@ const knownHarnessBase = <String, String>{
   'autonomous/rdkit': 'codex',
   'autonomous/yosys': 'claude',
   'autonomous/circuitjs': 'codex',
+  'autonomous/openmontage': 'claude',
 };
 
 /// All known engines, in declaration order — for the New Agent engine picker.

@@ -277,7 +277,7 @@ void main() {
         lessThanOrEqualTo(size.height),
       );
       await capture('search-open');
-      await tester.enterText(agentSearch, 'o');
+      await tester.enterText(agentSearch, 'openc');
       await tester.pumpAndSettle();
       expect(agentRows(tester).first, 'opencode');
       await capture('search');
