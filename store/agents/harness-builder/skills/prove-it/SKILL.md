@@ -54,6 +54,8 @@ Read `result.json`, the agent's log (`agent.log`), and **look at the frames in o
    brief's gallery examples, not against "it rendered".
 4. **Is the viewer delightful at the end?** Try the interactions in the live viewer yourself with
    `"$BUILDER" snapshot` at a few states, or read the viewer's page to confirm the controls exist.
+   Judge the final frame at its real pixel size: a result that fills half the pane, or whose labels
+   you have to squint at, fails this point however correct it is.
 5. **Did the evaluation tell the truth?** `ready: true` on a visibly wrong result is an evaluation bug;
    `ready: false` on a good result is too.
 6. **Did the agent struggle?** Retries, wrong commands, reading the toolchain source, asking what to do:
