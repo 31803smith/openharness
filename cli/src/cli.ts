@@ -5836,6 +5836,8 @@ async function logsExportCommand(json: boolean): Promise<void> {
   process.exit(0)
 }
 
+import { orchestratorCommand } from './orchestrator/command.js'
+
 // ── arg parse ──────────────────────────────────────────────────────────────────────────────────
 const [, , cmd, ...rest] = process.argv
 const flags = rest.filter((a) => a.startsWith('-'))
@@ -5863,6 +5865,9 @@ const onError = (err: unknown): never => {
 }
 
 switch (cmd) {
+  case 'orchestrator':
+    orchestratorCommand(rest).then(code => { process.exitCode = code }).catch(onError)
+    break
   case 'login':
     loginCommand(foreground, flags.includes('--force'), flags.includes('--json')).catch(onError)
     break

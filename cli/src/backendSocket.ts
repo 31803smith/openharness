@@ -19,7 +19,7 @@ import { WebSocket } from 'ws'
 import { watchSocketLiveness, type LivenessWatch } from './lib/wsLiveness.js'
 import { stat, readFile } from 'fs/promises'
 import { isAbsolute, join } from 'path'
-import { hostname } from 'os'
+import { hostname, homedir } from 'os'
 import { env } from './config/env.js'
 import { AuthSessionManager, AuthSessionError } from './lib/authSession.js'
 import { VERSION } from './version.js'
@@ -40,7 +40,11 @@ import { parseProjectFolder, prepareProjectFolder, ProjectFolderError } from './
 import { preTrustClaudeProject, preTrustCodexProject } from './lib/claudeTrust.js'
 import { projectPreview } from './lib/projectPreview.js'
 import { agentFrame, type AgentDshContext, type AgentFrame } from './lib/agentFrame.js'
-import { installedDsh } from './dsh/installed.js'
+import { installedDsh, listInstalledDsh } from './dsh/installed.js'
+import { OrchestratorService } from './orchestrator/service.js'
+import { OrchestratorError } from './orchestrator/model.js'
+import { orchestratorRequest } from './orchestrator/wire.js'
+import { shellQuote } from './orchestrator/prompts.js'
 import { engineLabel } from './lib/agentNames.js'
 import { DSH_ID_RE } from './dsh/manifest.js'
 import { refreshDshRegistry } from './dsh/catalog.js'
@@ -381,6 +385,38 @@ export class BackendSocket {
   private readonly agentCreations = new AgentCreationReceipts(join(env.ADAPTER_DATA_DIR, 'agent-creations'))
   /** Injectable for queue-isolation tests; production uses the machine-local probe. */
   engineProbeProvider: typeof probeEngines = probeEngines
+  private orchestratorService: OrchestratorService | null = null
+  private orchestration(): OrchestratorService {
+    return this.orchestratorService ??= new OrchestratorService({
+      stateDir: join(env.ADAPTER_DATA_DIR, 'orchestrator'),
+      workspaceDir: join(homedir(), 'harnesses', 'orchestrated'),
+      command: `${shellQuote(process.execPath)} ${shellQuote(process.argv[1])} orchestrator --port ${env.PORT} --machine ${shellQuote(this.machineId)}`,
+      catalog: () => listInstalledDsh().filter(d => d.manifest.kind !== 'viewer' && !!d.manifest.engine && supportsFirstPrompt(d.manifest.engine)).map(d => ({
+        id: d.id, name: d.manifest.name, description: d.manifest.description ?? '', engine: d.manifest.engine!, viewer: !!d.manifest.viewer,
+      })),
+      supportsEngine: engine => ENGINES.includes(engine as AgentEngine) && supportsFirstPrompt(engine as AgentEngine),
+      create: async input => {
+        if (!this.onCreateAgent) throw new OrchestratorError('UNSUPPORTED', 'This daemon cannot create agents.')
+        const available = await this.engineProbeProvider([input.engine])
+        if (!available.some(e => e.engine === input.engine && e.installed)) throw new OrchestratorError('ENGINE_NOT_INSTALLED', `${input.engine} must be installed before starting this specialist.`)
+        const result = await this.onCreateAgent({ ...input, grid: null, codexHome: null, agent: null, permissionMode: null })
+        if (!result.ok) throw new OrchestratorError(result.error, result.detail ?? result.error)
+        return { agentId: result.session.agentId }
+      },
+      send: (id, text) => {
+        if (!this.onMessage || !registry.resolve(id)) throw new OrchestratorError('AGENT_UNAVAILABLE', 'The director is not available to receive a message.')
+        this.onMessage(id, text)
+      },
+      cancel: id => this.onCancel?.(id),
+      agent: id => {
+        const agent = registry.resolve(id)
+        if (!agent) return null
+        const context = this.dshFrameProvider?.(agent)
+        return { viewerUrl: context?.viewerUrl, viewerName: context?.viewerName, error: agent.launch?.state === 'failed' ? agent.launch.detail ?? agent.launch.error : null }
+      },
+      changed: (id, revision) => this.sendLocal({ type: 'orchestrator_changed', payload: { id, revision } }),
+    })
+  }
   /**
    * Called on `agent_retarget` — cli.ts re-execs an EXISTING agent's pane against a different grid,
    * or, when `grid` is null, back onto its own login.
@@ -756,6 +792,7 @@ export class BackendSocket {
 
   async stop(): Promise<void> {
     this.closed = true
+    this.orchestratorService?.stop()
     if (this.heartbeat) this.heartbeat.stop()
     if (this.appPing) clearInterval(this.appPing)
     await this.terminalStreams?.stop()
@@ -767,6 +804,9 @@ export class BackendSocket {
   /** Send an up-frame (event or RPC reply) to the WEB audience. Queued while disconnected.
    *  User-content events are group-encrypted (E2EE) here; system frames pass through as plaintext. */
   send(frame: Frame): void {
+    // Only an already-open orchestration service observes events; ordinary sessions
+    // do not create project state or incur disk work. Project payloads stay local.
+    this.orchestratorService?.ingest(frame)
     if (env.LOG_FRAMES) logFrame('→', 'web', frame)
     for (const [connId, sink] of this.localClients) {
       if (!sink.sendFrame(frame)) void this.unregisterLocalClient(connId)
@@ -1179,7 +1219,7 @@ export class BackendSocket {
     // than as an opaque __e2e envelope.
     // Terminal frames contain raw keystrokes, paste text and screen bytes after
     // unwrap. Never pass them to the frame logger, even in diagnostic mode.
-    if (env.LOG_FRAMES && !type.startsWith('terminal_') && type !== 'agent_read_file' && type !== 'project_preview') {
+    if (env.LOG_FRAMES && !type.startsWith('terminal_') && type !== 'agent_read_file' && type !== 'project_preview' && type !== 'orchestrator') {
       logFrame('←', connId ? `conn:${sid(connId)}` : 'backend', frame)
     }
     const reply = (t: string, rid: unknown, p: Record<string, unknown>): void => this.emitReply(connId, t, rid, p)
@@ -1244,6 +1284,17 @@ export class BackendSocket {
 
     const payload = (frame.payload ?? {}) as Record<string, unknown>
     const requestId = payload.requestId
+
+    // Same-host only until remote viewer transport and remote task ownership exist.
+    // Refuse before parsing project content; never send it to the relay as plaintext.
+    if (type === 'orchestrator') {
+      if (!local) { reply(type, requestId, { error: 'LOCAL_ONLY', detail: 'Orchestrator projects run on the local machine.' }); return }
+      // Detached: a large artifact snapshot must not block cancel/status on this connection.
+      void orchestratorRequest(this.orchestration(), payload)
+        .then(result => reply(type, requestId, result))
+        .catch(() => reply(type, requestId, { error: 'ORCHESTRATOR_FAILED' }))
+      return
+    }
 
     if (type.startsWith('terminal_')) {
       this.noteTerminalInputRoute(connId, type, payload, transport)
