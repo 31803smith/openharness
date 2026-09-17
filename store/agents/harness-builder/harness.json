@@ -5,7 +5,7 @@
   "category": "Harnesses",
   "author": "Autonomous",
   "description": "Name a tool; get a domain-specific harness for it: researched, pinned, with expert skills, a live viewer and an honest evaluation, proved on real prompts.",
-  "engine": "codex",
+  "engine": "claude",
   "workspace": {
     "template": "template",
     "marker": ".builder/build.json",
@@ -17,7 +17,7 @@
     "env": {
       "BUILDER": "${dsh}/toolchain/builder",
       "BUILDER_REFERENCE": "${dsh}/reference/openharness",
-      "BUILDER_PROOF_ENGINE": "codex"
+      "BUILDER_PROOF_ENGINE": "claude"
     }
   },
   "toolchain": {

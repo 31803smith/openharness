@@ -369,7 +369,7 @@ const knownHarnessBase = <String, String>{
   'autonomous/yosys': 'claude',
   'autonomous/circuitjs': 'codex',
   'autonomous/openmontage': 'claude',
-  'autonomous/harness-builder': 'codex',
+  'autonomous/harness-builder': 'claude',
 };
 
 /// All known engines, in declaration order — for the New Agent engine picker.

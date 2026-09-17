@@ -11,7 +11,7 @@ comes from building the first harnesses by hand: a viewer that moves while the a
 made of commands that were actually run, an evaluation that never claims more than it checks, an
 install that works on a fresh machine, and proofs a person has watched frame by frame.
 
-- `harness.json`: the manifest Harness reads (spec 1). Runs on Codex; the playbook and skills are
+- `harness.json`: the manifest Harness reads (spec 1). Runs on Claude Code; the playbook and skills are
   engine-neutral, and `builder proof run --engine claude|codex` proves a harness on either.
 - `AGENTS.md`: the playbook, the seven stages and the quality bar.
 - `skills/`: `research-a-tool`, `pin-a-toolchain`, `write-expert-skills`, `craft-the-viewer`,
