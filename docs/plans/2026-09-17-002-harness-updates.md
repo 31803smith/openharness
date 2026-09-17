@@ -1,6 +1,6 @@
 # Harness package updates
 
-Status: implemented; final regression checks in progress.
+Status: implemented and verified.
 
 Add explicit updates through `harness dsh update <id>` and the desktop Store. The daemon reports the
 installed and available commits; catalog entries may also carry a package tree revision so publishing
@@ -21,7 +21,27 @@ rollback, linked installs, source identity, concurrent mutations and workspace p
 CLI tests; desktop parsing and Store interaction tests; CLI typecheck/full suite and Flutter analysis
 and relevant widget tests. Setup scripts' external side effects cannot be rolled back.
 
-Verified so far: 388 package/socket tests pass with 100% statements, branches, functions and lines
-across `update.ts`, `updates.ts`, `lock.ts` and `service.ts`. The real Store → daemon → Git → setup →
-doctor integration passes rollback, retry, independent viewer updates and reopening an unchanged
-workspace with a working viewer. Store regression tests pass. See `docs/development.md` for commands.
+Verification completed on 2026-09-17:
+
+- 388 package/socket tests pass with 100% statements, branches, functions and lines in each of
+  `update.ts`, `updates.ts`, `lock.ts` and `service.ts`: 155 statements, 146 branches, 17 functions and
+  115 lines. Verified on the development runtime and the shipped Node 22.23.2. The on-demand CI
+  workflow enforces the same coverage gate.
+- CLI typecheck and the full suite pass: 2,959 tests passed, 52 existing opt-in tests skipped.
+  Development and release builds pass. A smoke test of the actual release bundle on both runtimes
+  verifies install, update, installed-version display, setup at the stable path, preserved work and
+  doctor-failure rollback.
+- The real Store → daemon → Git → setup → doctor integration passes rollback, retry, independent
+  viewer updates and reopening an unchanged workspace with a working viewer. Its isolated fixtures
+  use real WebSockets and a running HTTP viewer, without accounts or model calls.
+- The full desktop run passed 1,949 tests, with two opt-in integrations skipped. Its only failure was
+  an install-panel test assuming the first frame renders in less than a second; after correcting
+  that assertion, all 11 panel tests passed. All 1,950 executed desktop cases are verified across the
+  full run and that recheck. An earlier terminal batching timing failure was fixed with a test clock
+  and passed in the full run. Login fixtures explicitly avoid Grid installation and real binaries.
+- Changed Flutter files pass analysis. Full Flutter analysis reports no errors or warnings, with
+  15 existing informational style notices outside this feature.
+
+See `docs/development.md` for repeatable coverage and end-to-end test commands. Coverage percentages
+above apply to the four updater modules, not the entire repository. Updating does not restart live
+sessions or migrate project contents; setup scripts can still have external side effects.
