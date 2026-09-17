@@ -31,7 +31,7 @@ import { gridCliPresence } from './lib/gridExec.js'
 import { gridCapableEngines, parseGridLaunchOverride, type GridLaunchOverride } from './lib/gridLaunch.js'
 import { listGridModels, resolveGridTarget } from './lib/gridModels.js'
 import { deriveHarnessGridName } from './lib/gridDerive.js'
-import { AGENT_NAME_RE, FirstPromptUnsupportedError, MAX_FIRST_PROMPT_CHARS, NamedAgentUnsupportedError, supportsFirstPrompt, supportsNamedAgent } from './lib/engineLaunch.js'
+import { AGENT_NAME_RE, FirstPromptUnsupportedError, MAX_FIRST_PROMPT_CHARS, NamedAgentUnsupportedError, permissionModeApproves, permissionModeFlags, supportsFirstPrompt, supportsNamedAgent } from './lib/engineLaunch.js'
 import { readAccountUsage, type AccountUsageReading } from './lib/accountUsage.js'
 import { probeEngines } from './lib/engineProbe.js'
 import { AgentCreationReceipts, AgentCreationReceiptError, creationFingerprint, validCreationId, type AgentCreationStatus } from './lib/agentCreationReceipt.js'
@@ -366,6 +366,9 @@ export class BackendSocket {
      *  `--agent <name>`); null for a general session. Validated here — shape, and that the engine has
      *  a contract for it. Unlike `prompt`, kept on the row so a relaunch opens as it again. */
     agent: string | null
+    /** A mode from `PERMISSION_MODES` for this engine; null when the client sent only
+     *  `bypassPermission`, which then decides. Validated here (`INVALID_PERMISSION_MODE`). */
+    permissionMode: string | null
   }) =>
     Promise<{ ok: true; session: RegisteredSession } | { ok: false; error: string; detail?: string }>) | null = null
   /** Called on `dsh_install` — cli.ts clones/sets up/doctors the harness and reports each phase. */
@@ -1823,11 +1826,22 @@ export class BackendSocket {
             }
             agent = payload.agent
           }
+          // A permission mode picked in New Harness. A client that predates the choice sends only
+          // `bypassPermission`; one that sends a mode this engine does not have is refused rather than
+          // quietly launched in some other mode.
+          let permissionMode: string | null = null
+          if (payload.permissionMode !== undefined && payload.permissionMode !== null) {
+            if (typeof payload.permissionMode !== 'string' || !permissionModeFlags(engine, payload.permissionMode)) {
+              reply(type, requestId, { error: 'INVALID_PERMISSION_MODE', detail: `${engine} has no permission mode ${JSON.stringify(payload.permissionMode)}` }); return
+            }
+            permissionMode = payload.permissionMode
+          }
           const input = {
             engine,
             cwd: typeof cwd === 'string' ? cwd : '',
             // On unless a client says otherwise: a harness works without stopping to ask for each command.
-            bypassPermission: payload.bypassPermission !== false,
+            bypassPermission: permissionMode ? permissionModeApproves(permissionMode) : payload.bypassPermission !== false,
+            permissionMode,
             grid: grid.state === 'ok' ? grid.override : null,
             codexHome,
             dsh,

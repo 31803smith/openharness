@@ -752,7 +752,7 @@ describe('BackendSocket outbound queue', () => {
       source: null, title: null, model: null, cliVersion: null, processIdentity: null,
       registeredAt: 1, updatedAt: 1, lastHookAt: 1, lastTranscriptAt: 1,
     })
-    const create = vi.fn(async (input: { bypassPermission: boolean }) => ({ ok: true as const, session: pending(`b-${create.mock.calls.length}`) }))
+    const create = vi.fn(async (input: { bypassPermission: boolean; permissionMode: string | null }) => ({ ok: true as const, session: pending(`b-${create.mock.calls.length}`) }))
     socket.onCreateAgent = create
     const ask = (requestId: string, extra: Record<string, unknown>) => socket.handleLocalFrame('local:bypass', {
       type: 'agent_create', payload: { requestId, engine: 'claude', cwd: '/tmp/work', ...extra },
@@ -763,6 +763,17 @@ describe('BackendSocket outbound queue', () => {
       ask('off', { bypassPermission: false })
       await vi.waitFor(() => expect(create).toHaveBeenCalledTimes(3))
       expect(create.mock.calls.map(([input]) => input.bypassPermission)).toEqual([true, true, false])
+
+      // A mode decides, whatever bypassPermission says; one the engine lacks is refused.
+      ask('plan', { permissionMode: 'plan', bypassPermission: true })
+      ask('full', { permissionMode: 'full', bypassPermission: false })
+      await vi.waitFor(() => expect(create).toHaveBeenCalledTimes(5))
+      expect(create.mock.calls.slice(3).map(([input]) => [input.permissionMode, input.bypassPermission]))
+        .toEqual([['plan', false], ['full', true]])
+      ask('bogus', { permissionMode: 'readOnly' })
+      ask('shape', { permissionMode: 7 })
+      await vi.waitFor(() => expect(frames.filter((frame) => (frame.payload as { error?: string } | undefined)?.error === 'INVALID_PERMISSION_MODE')).toHaveLength(2))
+      expect(create).toHaveBeenCalledTimes(5)
     } finally {
       await socket.unregisterLocalClient('local:bypass')
       await socket.stop()

@@ -1329,6 +1329,35 @@ describe('registry across a reboot and pane loss', () => {
     expect(registry.byProcess('claude', processIdentity(4242))?.agentId).toBe('agent-a')
   })
 
+  it('keeps the permission mode from agent_create through a bind and a reload', async () => {
+    const transcriptPath = join(dataDir, 'session-p.jsonl')
+    writeFileSync(transcriptPath, '{}\n')
+    const { registry } = await loadRegistryModule()
+    registry.load()
+
+    const pending = registry.openPendingAgent({
+      engine: 'claude',
+      runtimes: [{ backend: 'tmux', paneId: '%7' }],
+      cwd: '/tmp/demo',
+      permissionMode: 'plan',
+    })
+    expect(pending?.permissionMode).toBe('plan')
+    const bound = registry.register({ sessionId: 'session-p', transcriptPath, tmuxPane: '%7', cwd: '/tmp/demo' })
+    expect(bound?.entry.permissionMode).toBe('plan')
+
+    const again = await loadRegistryModule()
+    again.registry.load()
+    expect(again.registry.byAgent(pending!.agentId)?.permissionMode).toBe('plan')
+
+    const bogus = registry.openPendingAgent({
+      engine: 'claude',
+      runtimes: [{ backend: 'tmux', paneId: '%8' }],
+      cwd: '/tmp/demo',
+      permissionMode: '--dangerously-skip-permissions',
+    })
+    expect(bogus).not.toHaveProperty('permissionMode')
+  })
+
   it('carries bypassPermission from agent_create through the first hook bind', async () => {
     const transcriptPath = join(dataDir, 'session-b.jsonl')
     writeFileSync(transcriptPath, '{}\n')

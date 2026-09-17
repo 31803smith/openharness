@@ -100,6 +100,7 @@ class _Notifier extends AppNotifier {
     required String engine,
     required String folder,
     bool bypassPermission = false,
+    String? permissionMode,
     String? codexHome,
     String? dsh,
     String? prompt,

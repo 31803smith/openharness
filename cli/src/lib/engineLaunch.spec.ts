@@ -11,6 +11,7 @@ import {
   LAUNCH_RESUME_FLAG,
   NAMED_AGENT_ARGS,
   NamedAgentUnsupportedError,
+  PERMISSION_MODES,
   buildEngineCommandArgv,
   buildEngineLaunchArgv,
   commandAvailableInInteractiveShell,
@@ -216,6 +217,32 @@ describe('buildEngineLaunchArgv', () => {
       .toEqual([engineBin('cursor'), '--force'])
     expect(buildEngineCommandArgv('opencode', { bypassPermission: true }))
       .toEqual([engineBin('opencode'), '--auto'])
+  })
+
+  it('launches each permission mode with its own flags, and a mode outranks bypassPermission', () => {
+    expect(buildEngineCommandArgv('claude', { permissionMode: 'plan' }))
+      .toEqual([engineBin('claude'), '--permission-mode', 'plan'])
+    expect(buildEngineCommandArgv('claude', { permissionMode: 'acceptEdits', bypassPermission: true }))
+      .toEqual([engineBin('claude'), '--permission-mode', 'acceptEdits'])
+    expect(buildEngineCommandArgv('claude', { permissionMode: 'ask', bypassPermission: true }))
+      .toEqual([engineBin('claude')])
+    expect(buildEngineCommandArgv('claude', { permissionMode: 'full' }))
+      .toEqual([engineBin('claude'), '--dangerously-skip-permissions'])
+    expect(buildEngineCommandArgv('codex', { permissionMode: 'readOnly' }))
+      .toEqual([engineBin('codex'), '--sandbox', 'read-only'])
+    expect(buildEngineCommandArgv('codex', { permissionMode: 'full' }))
+      .toEqual([engineBin('codex'), '--dangerously-bypass-approvals-and-sandbox'])
+    // A mode the engine lacks falls back to the yes/no.
+    expect(buildEngineCommandArgv('opencode', { permissionMode: 'plan', bypassPermission: true }))
+      .toEqual([engineBin('opencode'), '--auto'])
+    expect(buildEngineCommandArgv('pi', { permissionMode: 'auto' })).toEqual([engineBin('pi')])
+  })
+
+  it('makes auto the same flags as bypassPermission, for every engine with modes', () => {
+    for (const [engine, modes] of Object.entries(PERMISSION_MODES)) {
+      expect(modes?.auto, engine).toEqual(BYPASS_PERMISSION_FLAGS[engine as keyof typeof BYPASS_PERMISSION_FLAGS])
+      expect(modes?.ask, engine).toEqual([])
+    }
   })
 
   it('is a no-op for engines with no confirmed flag, even when bypass is requested', () => {

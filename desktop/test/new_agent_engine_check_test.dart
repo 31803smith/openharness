@@ -144,9 +144,13 @@ void main() {
     await tester.ensureVisible(find.byKey(const Key('new-agent-advanced')));
     await tester.tap(find.byKey(const Key('new-agent-advanced')));
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('Auto-approve'));
-    await tester.tap(find.text('Auto-approve'));
-    await tester.pump();
+    await tester.ensureVisible(
+      find.byKey(const Key('new-agent-permission-mode')),
+    );
+    await tester.tap(find.byKey(const Key('new-agent-permission-mode')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Ask first').last);
+    await tester.pumpAndSettle();
     final retry = find.byKey(const Key('new-agent-retry-check'));
     await tester.ensureVisible(retry);
     final pending = app.pending['machine-1'] = Completer<void>();
@@ -200,7 +204,7 @@ void main() {
       'machine': 'machine-1',
       'engine': 'codex',
       'folder': pickedFolder,
-      // On by default; the click above turned it off, and the retry kept that choice.
+      // Auto-approve by default; Ask first was picked above, and the retry kept that choice.
       'bypass': false,
     });
     expect(tester.takeException(), isNull);
@@ -316,6 +320,7 @@ class _RetryNotifier extends AppNotifier {
     required String folder,
     ProjectFolderRequest? projectFolder,
     bool bypassPermission = false,
+    String? permissionMode,
     String? codexHome,
     String? dsh,
     String? prompt,

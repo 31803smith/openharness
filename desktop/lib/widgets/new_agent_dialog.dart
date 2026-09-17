@@ -11,10 +11,10 @@ import '../state/pane_arrangement.dart';
 import '../core/engine_availability.dart';
 import '../core/codex_profiles.dart';
 import '../core/dsh_catalog.dart';
+import '../core/permission_modes.dart';
 import '../core/project_folder.dart';
 import '../core/repository_clone.dart';
 import '../shared/theme/app_theme.dart' as grid;
-import '../shared/widgets/app_checkbox.dart';
 import '../shared/widgets/app_icon_button.dart';
 import '../shared/widgets/app_choice_picker.dart';
 import '../shared/widgets/app_dialog.dart';
@@ -27,17 +27,6 @@ import 'remote_folder_picker.dart';
 import 'new_agent_project_picker.dart';
 import 'new_harness_help.dart';
 import 'dsh_install_panel.dart';
-
-/// Mirrors the harness CLI's `BYPASS_PERMISSION_FLAGS`
-/// (autonomous-harness/cli/src/lib/engineLaunch.ts) 1:1 — this is UI-only display + gating, the CLI
-/// is the actual enforcement point. An engine absent here shows no checkbox at all rather than
-/// guessing a flag for a CLI we haven't verified. Keep both maps in sync.
-const Map<String, String> kEngineBypassPermissionFlag = {
-  'claude': '--permission-mode auto',
-  'codex': '--approve-for-me',
-  'cursor': '--force',
-  'opencode': '--auto',
-};
 
 enum NewAgentDialogResult { created, findExisting, backToSearch }
 
@@ -63,9 +52,11 @@ Future<NewAgentDialogResult?> showNewAgentDialog(
   Future<void>? initialEngineProbe,
   bool offerFindExisting = false,
   bool offerBackToSearch = false,
+
   /// Open with this engine or harness already chosen — the store's Get and
   /// Open buttons, which know exactly which one the person is looking at.
   String? initialEngine,
+
   /// The harness's first message, sent as it starts — the store's "Try this prompt".
   String? initialPrompt,
 }) {
@@ -151,9 +142,19 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   late String? _folder = widget.initialFolder;
   LocalCodexProfile? _codexProfile;
   bool _codexProfilesBusy = true;
-  /// On unless the person turns it off: a new harness works without stopping to ask for each
-  /// command — Claude Code's manual mode was what every harness opened in before.
-  bool _bypassPermission = true;
+
+  /// Auto-approve unless the person picks otherwise: a new harness works without stopping to ask
+  /// for each command — Claude Code's manual mode was what every harness opened in before. Kept
+  /// across engine changes; an engine without the picked mode uses its default instead.
+  String _permissionMode = kDefaultPermissionMode;
+
+  /// The mode [engine] launches in: the picked one when it has it.
+  String _permissionModeFor(String engine) {
+    final modes = permissionModesOf(engine);
+    return modes.any((mode) => mode.id == _permissionMode)
+        ? _permissionMode
+        : kDefaultPermissionMode;
+  }
 
   /// Whether the fold is open. Closed on every open of the dialog, deliberately:
   /// it is shut for the case it exists to serve, and a drawer that remembers
@@ -180,7 +181,8 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     final remembered = widget.notifier.agentPreference.value;
     final asked = widget.initialEngine;
     if (asked != null &&
-        (isHarnessId(asked) || allEngines.any((identity) => identity.id == asked))) {
+        (isHarnessId(asked) ||
+            allEngines.any((identity) => identity.id == asked))) {
       // Chosen before the dialog opened: counts as the person's choice, so no
       // probe or remembered preference moves it.
       _engine = asked;
@@ -394,7 +396,6 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   }
 
   bool _picking = false;
-  bool _bypassHovered = false;
   String? _error;
 
   /// Whether the machine this agent will run on is the computer the app is
@@ -458,8 +459,10 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     final harness = _engineIsHarness ? choice : null;
     final engine = _baseEngine(choice);
     final profile = _codexProfile;
+    final hasModes = permissionModesOf(engine).isNotEmpty;
+    final permissionMode = hasModes ? _permissionModeFor(engine) : null;
     final bypassPermission =
-        _bypassPermission && kEngineBypassPermissionFlag.containsKey(engine);
+        permissionMode != null && permissionModeApproves(permissionMode);
     if (!_confirmationPending) _creation = AgentCreationAttempt();
     setState(() {
       _checkingCreation = _confirmationPending;
@@ -518,6 +521,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
       swarmId: widget.swarmId,
       split: widget.split,
       bypassPermission: bypassPermission,
+      permissionMode: permissionMode,
       // Keep the explicit choice even if machine discovery changes mid-submit.
       // The notifier must reject a now-remote target, never use its default login.
       codexHome: engine == 'codex' ? profile?.path : null,
@@ -544,7 +548,11 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
       });
       return;
     }
-    analytics.agentCreated(engine: choice, bypassPermission: bypassPermission);
+    analytics.agentCreated(
+      engine: choice,
+      bypassPermission: bypassPermission,
+      permissionMode: permissionMode,
+    );
     Navigator.of(context).pop(NewAgentDialogResult.created);
   }
 
@@ -579,7 +587,6 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   Widget _buildDialog(BuildContext context) {
     final edgePadding = MediaQuery.sizeOf(context).width < 700 ? 24.0 : 36.0;
     final compactHeight = MediaQuery.sizeOf(context).height < 800;
-    final bypassFlag = kEngineBypassPermissionFlag[_baseEngine(_engine)];
     final canCreate =
         (_preparedFolder != null ||
             (_folderSource == _FolderSource.local
@@ -822,7 +829,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                   children: [
                     Flexible(
                       fit: stacked ? FlexFit.loose : FlexFit.tight,
-                      child: _settingsRow(bypassFlag),
+                      child: _settingsRow(),
                     ),
                     SizedBox(width: stacked ? 0 : 16, height: stacked ? 12 : 0),
                     Align(alignment: Alignment.centerRight, child: actions),
@@ -1131,7 +1138,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     ),
   );
 
-  Widget _settingsRow(String? bypassFlag) => Wrap(
+  Widget _settingsRow() => Wrap(
     spacing: 12,
     runSpacing: 8,
     crossAxisAlignment: WrapCrossAlignment.center,
@@ -1151,18 +1158,46 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
           ),
         ),
       ),
-      _setting(
-        _BypassCheck(
-          value: bypassFlag != null && _bypassPermission,
-          hovered: _bypassHovered,
-          onHover: (value) => setState(() => _bypassHovered = value),
-          onChanged: bypassFlag == null
-              ? null
-              : (value) => setState(() => _bypassPermission = value),
-        ),
-      ),
+      if (permissionModesOf(_baseEngine(_engine)) case final modes
+          when modes.isNotEmpty)
+        _setting(_permissionModeField(modes)),
       if (_baseEngine(_engine) == 'codex') _setting(_profileOptions()),
     ],
+  );
+
+  /// How far the agent may go without asking. The field shows the mode; the menu says what each
+  /// one does, since "Accept edits" and "Plan first" mean little on their own.
+  Widget _permissionModeField(List<PermissionMode> modes) => SizedBox(
+    width: 156 * math.min(1.4, MediaQuery.textScalerOf(context).scale(13) / 13),
+    height: 34,
+    child: AppSelectField<String>(
+      key: const Key('new-agent-permission-mode'),
+      height: 34,
+      menuWidth: 340,
+      value: _permissionModeFor(_baseEngine(_engine)),
+      options: [
+        for (final mode in modes)
+          SelectOption(
+            value: mode.id,
+            label: mode.label,
+            detail: mode.detail,
+            leading: () => Icon(
+              mode.risky
+                  ? LucideIcons.shieldOff
+                  : mode.id == kDefaultPermissionMode
+                  ? LucideIcons.shieldCheck
+                  : LucideIcons.shield,
+              size: 16,
+              color: mode.risky
+                  ? grid.AppPalette.dangerFill
+                  : grid.AppPalette.textSecondary,
+            ),
+          ),
+      ],
+      onChanged: (mode) {
+        if (!_choicesLocked) setState(() => _permissionMode = mode);
+      },
+    ),
   );
 
   Widget _setting(Widget child) => Offstage(
@@ -1258,51 +1293,3 @@ const double _dialogWidth = 1080;
 
 /// Blocks inside one card: the command, the facts, the reason.
 const double _gapBlock = 12;
-
-class _BypassCheck extends StatelessWidget {
-  const _BypassCheck({
-    required this.value,
-    required this.hovered,
-    required this.onHover,
-    required this.onChanged,
-  });
-  final bool value;
-  final bool hovered;
-  final ValueChanged<bool> onHover;
-  final ValueChanged<bool>? onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    grid.AppTheme.watch(context);
-    return MouseRegion(
-      cursor: onChanged == null
-          ? SystemMouseCursors.basic
-          : SystemMouseCursors.click,
-      onEnter: (_) => onHover(true),
-      onExit: (_) => onHover(false),
-      child: GestureDetector(
-        onTap: onChanged == null ? null : () => onChanged!(!value),
-        behavior: HitTestBehavior.opaque,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 10),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              AppCheckbox(value: value, hovered: hovered, onChanged: onChanged),
-              const SizedBox(width: 10),
-              Text(
-                'Auto-approve',
-                style: TextStyle(
-                  fontSize: 13,
-                  color: onChanged == null
-                      ? grid.AppPalette.textFaint
-                      : grid.AppPalette.textPrimary,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}

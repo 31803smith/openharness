@@ -3740,6 +3740,7 @@ async function runForeground(session: AuthSession): Promise<void> {
         const argv = buildEngineLaunchArgv(entry.engine, {
           ...opts,
           bypassPermission: entry.bypassPermission === true,
+          ...(entry.permissionMode ? { permissionMode: entry.permissionMode } : {}),
           installIfMissing: enginePathOverride(entry.engine) ? undefined : engineInstallRecipe(entry.engine),
           ...(entry.cwd ? { cwd: entry.cwd } : {}),
           ...(extraArgs.length ? { extraArgs } : {}),
@@ -3915,7 +3916,7 @@ async function runForeground(session: AuthSession): Promise<void> {
    * pass can miss it — retry `triggerHint` a few times with backoff before giving up.
    */
 
-  backend.onCreateAgent = async ({ engine, cwd, bypassPermission, grid, codexHome, dsh, prompt, name, agent }) => {
+  backend.onCreateAgent = async ({ engine, cwd, bypassPermission, permissionMode, grid, codexHome, dsh, prompt, name, agent }) => {
     if (!tmuxBackend) return { ok: false, error: 'TMUX_UNAVAILABLE' }
     try {
       if (!statSync(cwd).isDirectory()) return { ok: false, error: 'CWD_NOT_FOUND' }
@@ -4027,7 +4028,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     const extraArgs = [...(gridLaunch?.args ?? []), ...dshArgs, ...(agent ? namedAgentArgs(engine, agent) : [])]
     // The first prompt is a launch option only — never part of `extraArgs`, which the registry row
     // carries into a relaunch (engineLaunch.ts, `firstPrompt`).
-    const launchOptions = { bypassPermission, extraArgs: extraArgs.length ? extraArgs : undefined, installIfMissing, clearEnv, cwd, harnessNode: dsh ? true : undefined, ...(prompt ? { firstPrompt: prompt } : {}) }
+    const launchOptions = { bypassPermission, ...(permissionMode ? { permissionMode } : {}), extraArgs: extraArgs.length ? extraArgs : undefined, installIfMissing, clearEnv, cwd, harnessNode: dsh ? true : undefined, ...(prompt ? { firstPrompt: prompt } : {}) }
     const command = buildEngineCommandArgv(engine, launchOptions)
     const argv = buildEngineLaunchArgv(engine, launchOptions)
     // A tmux route is enough to stream its screen. Register it before looking for a process so both
@@ -4054,6 +4055,7 @@ async function runForeground(session: AuthSession): Promise<void> {
       dsh,
       agent,
       bypassPermission,
+      permissionMode,
       defaultName: name,
       label: dshLabel,
     })
@@ -4171,6 +4173,9 @@ async function runForeground(session: AuthSession): Promise<void> {
     },
     buildArgv: (opts) => buildEngineLaunchArgv(session.engine, {
       ...opts,
+      // The mode picked at create outranks what the live argv said: `bypassPermission` is a yes/no, and
+      // Plan or Accept edits would come back as Ask without it.
+      ...(session.permissionMode ? { permissionMode: session.permissionMode } : {}),
       ...(session.cwd ? { cwd: session.cwd } : {}),
       ...(launch.extraArgs?.length ? { extraArgs: launch.extraArgs } : {}),
       // A pane swap onto a grid has to clear the same vendor credentials a fresh create does, for the

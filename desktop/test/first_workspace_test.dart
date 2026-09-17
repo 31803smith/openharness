@@ -77,6 +77,7 @@ class _FirstUseApp extends AppNotifier {
     required String folder,
     ProjectFolderRequest? projectFolder,
     bool bypassPermission = false,
+    String? permissionMode,
     String? codexHome,
     String? dsh,
     String? prompt,

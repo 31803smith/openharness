@@ -59,6 +59,7 @@ class _ChoicesApp extends AppNotifier {
     required String folder,
     ProjectFolderRequest? projectFolder,
     bool bypassPermission = false,
+    String? permissionMode,
     String? codexHome,
     String? swarmId,
     PaneSplitRequest? split,

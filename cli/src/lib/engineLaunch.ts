@@ -36,6 +36,44 @@ export const BYPASS_PERMISSION_FLAGS: Readonly<Record<AgentEngine, string[] | nu
 }
 
 /**
+ * The permission modes a person can pick for a new agent (New Harness ▸ Advanced), per engine, and the
+ * argv each one launches with. `auto` is the default and is exactly [BYPASS_PERMISSION_FLAGS]; `ask`
+ * adds nothing, so the engine behaves as its own settings say; the rest are the engines' documented
+ * modes (`claude --help`: `--permission-mode acceptEdits|plan`; `codex --help`: `--sandbox read-only`,
+ * `--dangerously-bypass-approvals-and-sandbox`). An engine absent here offers no choice.
+ *
+ * The desktop mirrors this table in `lib/core/permission_modes.dart` — keep both in step.
+ */
+export const PERMISSION_MODES: Readonly<Partial<Record<AgentEngine, Readonly<Record<string, readonly string[]>>>>> = {
+  claude: {
+    auto: ['--permission-mode', 'auto'],
+    acceptEdits: ['--permission-mode', 'acceptEdits'],
+    plan: ['--permission-mode', 'plan'],
+    ask: [],
+    full: ['--dangerously-skip-permissions'],
+  },
+  codex: {
+    auto: ['--approve-for-me'],
+    readOnly: ['--sandbox', 'read-only'],
+    ask: [],
+    full: ['--dangerously-bypass-approvals-and-sandbox'],
+  },
+  cursor: { auto: ['--force'], ask: [] },
+  opencode: { auto: ['--auto'], ask: [] },
+}
+
+/** The argv of [mode] for [engine], or null when the engine has no such mode. */
+export function permissionModeFlags(engine: AgentEngine, mode: string): readonly string[] | null {
+  const modes = PERMISSION_MODES[engine]
+  return modes && Object.hasOwn(modes, mode) ? modes[mode] : null
+}
+
+/** Whether [mode] lets the agent act without stopping to ask — what `bypassPermission` records. */
+export function permissionModeApproves(mode: string): boolean {
+  return mode === 'auto' || mode === 'full'
+}
+
+/**
  * How each engine takes a FIRST prompt on launch: the interactive session opens with that message
  * already submitted, so the pane's first visible thing is the agent's answer rather than an empty
  * input waiting for one. `null` = no documented mechanism; the caller refuses (`PROMPT_UNSUPPORTED`)
@@ -148,6 +186,9 @@ export function namedAgentArgs(engine: AgentEngine, agent: string): string[] {
 
 export interface LaunchCommandOptions {
   bypassPermission?: boolean
+  /** A mode from [PERMISSION_MODES]; when the engine has it, it decides the flags and
+   *  `bypassPermission` is ignored. */
+  permissionMode?: string
   /** Resume this engine session id on launch, when a launch-resume flag is known for the engine. */
   resumeSessionId?: string
   /**
@@ -259,7 +300,10 @@ export function buildEngineCommandArgv(engine: AgentEngine, opts: LaunchCommandO
   if (resumeIsSubcommand && resumeFlag && opts.resumeSessionId) {
     argv.push(...resumeFlag, opts.resumeSessionId)
   }
-  if (opts.bypassPermission) {
+  const modeFlags = opts.permissionMode ? permissionModeFlags(engine, opts.permissionMode) : null
+  if (modeFlags) {
+    argv.push(...modeFlags)
+  } else if (opts.bypassPermission) {
     const flags = BYPASS_PERMISSION_FLAGS[engine]
     if (flags) argv.push(...flags)
   }

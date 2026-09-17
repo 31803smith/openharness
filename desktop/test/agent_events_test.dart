@@ -62,6 +62,7 @@ class FakeCreateAgentNotifier extends AppNotifier {
     required String folder,
     ProjectFolderRequest? projectFolder,
     bool bypassPermission = false,
+    String? permissionMode,
     String? codexHome,
     String? dsh,
     String? prompt,
@@ -184,10 +185,11 @@ void main() {
     testWidgets('carries the engine and the bypass flag', (tester) async {
       await create(tester);
 
-      // Auto-approve is on unless the person turns it off.
+      // Auto-approve unless the person picks another mode.
       expect(tracked.paramsOf('agent_created'), {
         'engine': 'claude',
         'bypass_permission': true,
+        'permission_mode': 'auto',
       });
     });
 

@@ -4725,6 +4725,7 @@ class AppNotifier extends ChangeNotifier {
     required String folder,
     ProjectFolderRequest? projectFolder,
     bool bypassPermission = true,
+    String? permissionMode,
     String? codexHome,
     String? dsh,
     String? prompt,
@@ -4740,6 +4741,10 @@ class AppNotifier extends ChangeNotifier {
       if (projectFolder == null) 'cwd': folder,
       ...?projectFolder?.payload,
       'bypassPermission': bypassPermission,
+      // The mode picked in New Harness (`permission_modes.dart`). A daemon that
+      // predates modes ignores it and goes by `bypassPermission`, which the
+      // dialog derives from the same choice.
+      'permissionMode': ?permissionMode,
       'codexHome': ?codexHome,
       // The harness this agent is created from. `engine` above is its BASE —
       // the machine refuses the pair when they disagree (`INVALID_DSH`).

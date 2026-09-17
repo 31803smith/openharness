@@ -34,12 +34,15 @@ export interface CreateAgentPaneDeps {
     dsh?: string | null
     agent?: string | null
     bypassPermission?: boolean
+    permissionMode?: string | null
     defaultName?: string | null
     label?: string | null
   }) => RegisteredSession | null }
   engine: AgentEngine
   cwd?: string | null
   bypassPermission?: boolean
+  /** The permission mode it was launched in (`PERMISSION_MODES`), kept so a relaunch reapplies it. */
+  permissionMode?: string | null
   /** The name the creator asked for (`agent_create`'s `name`); without one the registry names the agent. */
   defaultName?: string | null
   /** Who the agent is when a DSH says ("Blender") — the name the registry gives is built from it. */
@@ -95,6 +98,7 @@ export async function createAndRegisterPane(deps: CreateAgentPaneDeps): Promise<
       dsh: deps.dsh,
       agent: deps.agent,
       bypassPermission: deps.bypassPermission,
+      permissionMode: deps.permissionMode,
       defaultName: deps.defaultName,
       label: deps.label,
     })

@@ -162,6 +162,13 @@ export interface RegisteredSession {
    * to read it from. Like `codexHome`, chosen at launch and carried forward, never re-derived.
    */
   bypassPermission?: boolean
+  /**
+   * The permission mode picked in New Harness (`PERMISSION_MODES` in engineLaunch.ts: `auto`, `ask`,
+   * `acceptEdits`, `plan`, `readOnly`, `full`). Recorded at launch and reapplied on every relaunch, so
+   * an agent started in Plan stays in Plan across a restart. Absent on rows from before the choice
+   * existed and on agents Harness did not launch; those relaunch from `bypassPermission`.
+   */
+  permissionMode?: string
   /** Legacy launcher-owned snapshots may still contain this field. New records never write it. */
   launcherId?: string
   transcriptPath: string | null
@@ -262,6 +269,12 @@ function normalizedDshId(value: unknown): string | null {
  *  accepts, so a hand-edited row cannot put a path or prose into the relaunch argv. */
 function normalizedAgentName(value: unknown): string | null {
   return typeof value === 'string' && AGENT_NAME_RE.test(value) ? value : null
+}
+
+/** A persisted permission mode, or null. Only its shape is checked here — the launch looks it up per
+ *  engine (`permissionModeFlags`), and a name the engine lacks launches as `bypassPermission` says. */
+function permissionModeName(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Za-z]{1,24}$/.test(value)
 }
 
 function normalizedAgentEngine(value: unknown): AgentEngine {
@@ -840,6 +853,7 @@ class Registry {
             ? { subscriptionModel: raw.subscriptionModel }
             : {}),
           ...(raw.bypassPermission === true ? { bypassPermission: true } : {}),
+          ...(permissionModeName(raw.permissionMode) ? { permissionMode: raw.permissionMode } : {}),
           transcriptPath,
           defaultName: normalizedDefaultName(raw.defaultName),
           title: titleDisplayName(typeof raw.title === 'string' ? raw.title : null),
@@ -1067,6 +1081,7 @@ class Registry {
     /** The engine's named agent the pane was opened as (`agent_create`'s `agent`), validated upstream. */
     agent?: string | null
     bypassPermission?: boolean
+    permissionMode?: string | null
     /** The name the creator asked for. Blank or absent means Harness names it (agentNames.ts). */
     defaultName?: string | null
     /** Who the agent is, for the name Harness gives it: a DSH's own name ("Blender"); the engine's by default. */
@@ -1095,6 +1110,7 @@ class Registry {
       dsh: input.dsh ?? null,
       agent: normalizedAgentName(input.agent),
       ...(input.bypassPermission ? { bypassPermission: true } : {}),
+      ...(permissionModeName(input.permissionMode) ? { permissionMode: input.permissionMode } : {}),
       transcriptPath: null,
       projectDir: basename(input.cwd ?? '') || agentId,
       cwd: input.cwd ?? null,
@@ -1286,6 +1302,7 @@ class Registry {
       dsh: existing?.dsh ?? null,
       agent: existing?.agent ?? null,
       ...(existing?.bypassPermission ? { bypassPermission: true } : {}),
+      ...(existing?.permissionMode ? { permissionMode: existing.permissionMode } : {}),
       processIdentity: validProcessIdentity(input.processIdentity) ? input.processIdentity : existing?.processIdentity ?? null,
       registeredAt: existing?.registeredAt ?? now,
       updatedAt: now,
