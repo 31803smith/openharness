@@ -1,19 +1,50 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const db = vi.hoisted(() => ({
+  userPresenceUpsert: vi.fn(),
   machinePresenceUpsert: vi.fn(),
   agentPresenceUpsert: vi.fn(),
 }))
 
 vi.mock('./prisma.js', () => ({
   prisma: {
+    userDailyPresence: { upsert: db.userPresenceUpsert },
     machineDailyPresence: { upsert: db.machinePresenceUpsert },
     agentDailyPresence: { upsert: db.agentPresenceUpsert },
   },
 }))
 
-import { presenceWriteDue, recordTurnStarted, touchMachineOnlineDay } from './dailyTracking.js'
+import { presenceWriteDue, recordTurnStarted, touchMachineOnlineDay, touchUserOnlineDay } from './dailyTracking.js'
 import { utcDayStart } from '../types/analytics.js'
+
+describe('touchUserOnlineDay', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    db.userPresenceUpsert.mockResolvedValue({})
+  })
+
+  it('an app `open` upserts the (user, UTC day) row and bumps connections', async () => {
+    const now = new Date('2026-09-16T10:15:30.000Z')
+    await touchUserOnlineDay('user-1', now, { isNewConnection: true })
+
+    expect(db.userPresenceUpsert).toHaveBeenCalledTimes(1)
+    const call = db.userPresenceUpsert.mock.calls[0][0]
+    expect(call.where).toEqual({ userId_dayUtc: { userId: 'user-1', dayUtc: utcDayStart(now) } })
+    expect(call.create).toEqual({
+      userId: 'user-1', dayUtc: utcDayStart(now), connections: 1, firstSeenAt: now, lastSeenAt: now,
+    })
+    expect(call.update).toEqual({ lastSeenAt: now, connections: { increment: 1 } })
+  })
+
+  it('an app `ping` only touches lastSeenAt — a session spanning midnight opens no connection that day', async () => {
+    const now = new Date('2026-09-16T00:00:20.000Z')
+    await touchUserOnlineDay('user-1', now, { isNewConnection: false })
+
+    const call = db.userPresenceUpsert.mock.calls[0][0]
+    expect(call.update).toEqual({ lastSeenAt: now })
+    expect(call.create.connections).toBe(0)
+  })
+})
 
 describe('touchMachineOnlineDay', () => {
   beforeEach(() => {

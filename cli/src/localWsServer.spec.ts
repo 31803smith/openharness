@@ -212,6 +212,36 @@ describe('local CLI WebSocket', () => {
     ws.close()
   })
 
+  it('hands the window\'s presence ping to the daemon, and keeps it off the wire', async () => {
+    const backend = new FakeBackend()
+    const kinds: string[] = []
+    server = http.createServer((_req, res) => { res.statusCode = 404; res.end() })
+    local = attachLocalWsServer(server, {
+      machineId,
+      backend,
+      onAppPresence: (kind) => kinds.push(kind),
+    })
+    await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve))
+    const ws = new WebSocket(`ws://127.0.0.1:${(server.address() as AddressInfo).port}/api/local-ws`)
+    await onceOpen(ws)
+    const connected = onceMessage(ws)
+    ws.send(JSON.stringify({ type: 'machine_select', payload: { machineId, localProtocolVersion: 1 } }))
+    await connected
+
+    ws.send(JSON.stringify({ type: 'app_presence', payload: { kind: 'open' } }))
+    ws.send(JSON.stringify({ type: 'app_presence', payload: { kind: 'ping' } }))
+    // Not a kind the backend knows: dropped here rather than forwarded as a guess.
+    ws.send(JSON.stringify({ type: 'app_presence', payload: { kind: 'closed' } }))
+    ws.send(JSON.stringify({ type: 'app_presence' }))
+    ws.send(JSON.stringify({ type: 'terminal_open', payload: { agentId: 'agent-opened' } }))
+    await vi.waitFor(() => expect(backend.frames).toHaveLength(1))
+
+    expect(kinds).toEqual(['open', 'ping'])
+    // The machine never sees any of it — the daemon forwards presence on its own adapter socket.
+    expect(backend.frames.map((frame) => frame.type)).toEqual(['terminal_open'])
+    ws.close()
+  })
+
   it('reports only explicit voice focus and clears by originating connection', async () => {
     const backend = new FakeBackend()
     const states: Array<{ machine: string; agent: string | null; conn: string }> = []

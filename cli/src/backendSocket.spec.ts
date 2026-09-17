@@ -990,6 +990,35 @@ describe('BackendSocket outbound queue', () => {
     await socket.stop()
   })
 
+  it('forwards the window\'s presence: open at once, ping once a minute, nothing while offline', async () => {
+    vi.useFakeTimers()
+    const socket = new BackendSocket('token')
+    const presence = (ws: InstanceType<typeof wsMock.MockWebSocket>) => parseSent(ws)
+      .filter((m) => (m.frame as { type?: string } | undefined)?.type === 'app_presence')
+
+    // Signed out / not yet dialed: dropped, never queued behind real frames.
+    expect(socket.sendAppPresence('open')).toBe(false)
+    socket.connect()
+    const ws = wsMock.instances[0]
+    expect(socket.sendAppPresence('ping')).toBe(false)
+    ws.open()
+    expect(ws.sent.filter((s) => s.includes('app_presence'))).toHaveLength(0)
+
+    expect(socket.sendAppPresence('open')).toBe(true)
+    // 30s later the window pings again — inside the floor, held back.
+    vi.advanceTimersByTime(30_000)
+    expect(socket.sendAppPresence('ping')).toBe(false)
+    vi.advanceTimersByTime(30_000)
+    expect(socket.sendAppPresence('ping')).toBe(true)
+    // A second window opening is a session in its own right, floor or not.
+    expect(socket.sendAppPresence('open')).toBe(true)
+    expect(presence(ws).map((m) => (m.frame as { payload: { kind: string } }).payload.kind)).toEqual(['open', 'ping', 'open'])
+    // Bookkeeping about the person, for the backend alone: never fanned out to a client.
+    expect(presence(ws)[0]).toMatchObject({ t: 'up', webEligible: false, commanderEligible: false })
+
+    await socket.stop()
+  })
+
   it('reports commander presence only when it crosses zero', async () => {
     const socket = new BackendSocket('token')
     const changes: boolean[] = []
