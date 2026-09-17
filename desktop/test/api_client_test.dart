@@ -57,6 +57,49 @@ void main() {
     }
   });
 
+  test('review writes carry the local header the CLI requires; reads do not need it', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final seen = <(String, String, String?)>[];
+    final subscription = server.listen((request) async {
+      seen.add((
+        request.method,
+        request.uri.path,
+        request.headers.value('x-adapter-local'),
+      ));
+      await utf8.decoder.bind(request).join();
+      request.response
+        ..statusCode = HttpStatus.ok
+        ..headers.contentType = ContentType.json
+        ..write(
+          jsonEncode({
+            'success': true,
+            'data': {'ok': true},
+          }),
+        );
+      await request.response.close();
+    });
+    try {
+      final api = ApiClient(
+        config: AppConfig(
+          apiBaseUrl: 'http://unused.invalid',
+          localCliBaseUrl: 'http://127.0.0.1:${server.port}',
+        ),
+        session: AuthSession(),
+      );
+      await api.storeRatings();
+      await api.putStoreReview('autonomous/typst', rating: 5, title: ' Great ');
+      await api.deleteStoreReview('autonomous/typst');
+      expect(seen, [
+        ('GET', '/api/store/ratings', null),
+        ('PUT', '/api/store/harnesses/autonomous/typst/review', '1'),
+        ('DELETE', '/api/store/harnesses/autonomous/typst/review', '1'),
+      ]);
+    } finally {
+      await subscription.cancel();
+      await server.close(force: true);
+    }
+  });
+
   group('describeApiError', () {
     final options = RequestOptions(
       path: '/api/machines',
