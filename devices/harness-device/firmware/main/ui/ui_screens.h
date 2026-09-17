@@ -331,7 +331,7 @@ void ui_project_set_agents(const char *project_id, const struct cJSON *agents);
 // Show the question screen: tap an option row to answer (single/multi-select). Tap-only — there is no
 // voice answer. `questions` is the cJSON array from the `commander_question` frame; copied out
 // synchronously, so the caller may free the JSON right after this returns.
-void ui_question_show(const char *project_id, const char *agent_name, const char *request_id, const struct cJSON *questions);
+void ui_question_show(const char *project_id, const char *agent_name, const char *machine, const char *request_id, const struct cJSON *questions);
 // That question was answered somewhere else (the app, or the pane by hand) — leave the screen instead of
 // waiting for an answer that can no longer be delivered. No-op unless THIS request is the one on screen.
 void ui_question_close(const char *project_id, const char *request_id);

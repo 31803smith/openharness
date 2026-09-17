@@ -4931,6 +4931,9 @@ async function runForeground(session: AuthSession): Promise<void> {
     // whichever machine is selected. Filtering it with the guard below would freeze the dots the moment
     // the dial came back to this computer, which is where it sits most of the time.
     if (event.kind === 'state') { void cable.syncMachines(); return }
+    // Which machine this agent is on, before its list is necessarily read — what lets a question from it
+    // be named and, tapped, opened. See DaemonCableHost.noteAgent.
+    cableHost.noteAgent(event.machineId, event.agentId)
     // No selection guard. Every machine's agents are on the carousel at once, so a card from a machine
     // the wheel is not pointed at still belongs to a tile the user can see — and dropping it is what a
     // tile that never leaves "Working…" looks like from the outside.

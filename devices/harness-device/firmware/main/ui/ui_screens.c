@@ -6837,6 +6837,7 @@ static EXT_RAM_BSS_ATTR struct {
     bool active;
     char request_id[80];
     char who[64];                // the asker's name, from the frame — it may be on a tab the dial does not hold
+    char machine[NAME_MAX];      // and its machine's name, shown when it is not the cabled computer
     char project[48];
     qitem_t q[Q_MAX];
     char answer[Q_MAX][256];     // chosen label(s) or transcript, per question
@@ -6845,6 +6846,7 @@ static EXT_RAM_BSS_ATTR struct {
 } s_q;
 
 static void q_render(void);
+static void machine_toast(const char *msg);   // defined with the machine picker, below
 static void q_advance(void);
 static void q_cancel(void);
 static void q_opt_tap(lv_event_t *e);
@@ -6948,35 +6950,65 @@ static lv_obj_t *q_add_btn(const char *txt, lv_color_t txtcol, lv_color_t bg, lv
 // Rebuild the question screen for the current question (caller holds the lock). Figma layout:
 // bold prompt title (32px) · dark option pills (selected → green ✓) · blue "Done". Tap-only: a question
 // is answered by picking an option, never by voice.
+// The eyebrow or the question was tapped: ask the window to open this agent, and say so.
+static void q_open_tap(lv_event_t *e)
+{
+    (void)e;
+    if (!s_q.project[0]) return;
+    cable_client_send_open(s_q.project);
+    machine_toast("Opening in the app");
+}
+
 static void q_render(void)
 {
     lv_obj_clean(scr_question);
     qitem_t *q = &s_q.q[s_q.idx];
     // WHO is asking, above the question (owner, 2026-09-15: "noti cần thêm tên của agent ở phía trên …
-    // để user có thêm context ra quyết định"). The same question — "switch to the cheaper model?" —
-    // means different things from a scratch agent and from the one mid-deploy. Muted, small, one line:
-    // an eyebrow, not a second title.
+    // để user có thêm context ra quyết định"; again 2026-09-17: a limit dialog with three options and no
+    // name is a decision nobody can make). The same question — "switch to the cheaper model?" — means
+    // different things from a scratch agent and from the one mid-deploy. Muted, small, one line: an
+    // eyebrow, not a second title. ALWAYS drawn: with no name at all it still says "Agent", and the
+    // machine follows when it is not the cabled computer.
     //
-    // From the FRAME, not from the tile: the dial holds one tab, and the question may come from an agent
-    // on another. The tile's name is the fallback for a daemon that sent none.
+    // From the FRAME first: the dial holds one tab, and the question may come from an agent on another.
+    // The tile's name is the fallback for a daemon that sent none.
+    //
+    // TAPPABLE: the eyebrow and the question both ask the window to open the agent — the same `open`
+    // sent when the screen appeared, sent again on purpose (owner, 2026-09-17: "bấm vào để focus trên
+    // app cũng không được"). The first one went out while the person was still reading; this one is a
+    // request, and it says so.
     {
         int ai = s_q.who[0] ? -1 : find_proj(s_q.project);
-        if (s_q.who[0] || (ai >= 0 && s_proj[ai].name[0])) {
-            static char who[64];
-            utf8_filter(s_q.who[0] ? s_q.who : s_proj[ai].name, who, sizeof(who));
-            lv_obj_t *l = lv_label_create(scr_question);
-            lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
-            lv_obj_set_width(l, lv_pct(100));
-            lv_obj_set_style_text_font(l, &geist_sem_24, 0);
-            lv_obj_set_style_text_color(l, COL_MUTED, 0);
-            lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
-            lv_obj_set_style_pad_bottom(l, 2, 0);
-            lv_label_set_text(l, who);
+        const char *nm = s_q.who[0] ? s_q.who : (ai >= 0 && s_proj[ai].name[0]) ? s_proj[ai].name : "Agent";
+        const char *here = cable_client_machine_name();
+        static char who[64 + NAME_MAX + 4];
+        char nmf[64]; utf8_filter(nm, nmf, sizeof(nmf));
+        if (s_q.machine[0] && strcmp(s_q.machine, here ? here : "") != 0) {
+            char mf[NAME_MAX]; utf8_filter(s_q.machine, mf, sizeof(mf));
+            snprintf(who, sizeof who, "%s \xC2\xB7 %s", nmf, mf);
+        } else {
+            snprintf(who, sizeof who, "%s", nmf);
         }
+        lv_obj_t *l = lv_label_create(scr_question);
+        lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
+        lv_obj_set_size(l, lv_pct(100), lv_font_get_line_height(&geist_sem_24) + 2);
+        lv_obj_set_style_text_font(l, &geist_sem_24, 0);
+        lv_obj_set_style_text_color(l, COL_MUTED, 0);
+        lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_pad_bottom(l, 2, 0);
+        lv_label_set_text(l, who);
+        lv_obj_add_flag(l, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_ext_click_area(l, 10);
+        lv_obj_add_event_cb(l, q_open_tap, LV_EVENT_CLICKED, NULL);
     }
     static char tmp[256];
     utf8_filter(q->text, tmp, sizeof(tmp));
     q_add_text(tmp[0] ? tmp : "?", COL_FG, &geist_med_32);                       // prompt = title
+    {   // the title opens the agent in the window too — see the eyebrow
+        lv_obj_t *t = lv_obj_get_child(scr_question, -1);
+        lv_obj_add_flag(t, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(t, q_open_tap, LV_EVENT_CLICKED, NULL);
+    }
     for (int i = 0; i < q->n_options; i++) {
         char ftxt[100]; utf8_filter(q->options[i], ftxt, sizeof(ftxt));
         char shown[100]; q_clip_words(ftxt, shown, sizeof(shown), Q_OPT_MAX_WORDS);   // display only
@@ -7110,7 +7142,7 @@ static void q_done_tap(lv_event_t *e)
     display_unlock();
 }
 
-void ui_question_show(const char *project_id, const char *agent_name, const char *request_id, const struct cJSON *questions)
+void ui_question_show(const char *project_id, const char *agent_name, const char *machine, const char *request_id, const struct cJSON *questions)
 {
     if (!request_id || !questions) return;
     display_lock();
@@ -7120,6 +7152,7 @@ void ui_question_show(const char *project_id, const char *agent_name, const char
     snprintf(s_q.request_id, sizeof(s_q.request_id), "%s", request_id);
     snprintf(s_q.project, sizeof(s_q.project), "%s", project_id ? project_id : "");
     snprintf(s_q.who, sizeof(s_q.who), "%s", agent_name ? agent_name : "");
+    snprintf(s_q.machine, sizeof(s_q.machine), "%s", machine ? machine : "");
 
     int qi = 0;
     const cJSON *qn;

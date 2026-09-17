@@ -339,6 +339,22 @@ describe('DaemonCableHost.listAgentsFlat across machines, and the tab the dial g
     expect(host.activeSwarm()).toBe('')
   })
 
+  it('names the machine, and routes an open, for an agent heard from before it was listed', async () => {
+    // A remote machine's question can arrive before its agent list has ever been read. The card still has
+    // to say where it came from, and a tap on it has to open — "ignored open for unknown agent" was a
+    // question screen nobody could act on.
+    AGENTS.length = 0
+    const opened = vi.fn()
+    const host = new DaemonCableHost(wiring({ opened }), crossFleet({ other: [] }))
+    await settled(host)
+
+    expect(host.describe('r9')).toBeUndefined()
+    host.noteAgent('other', 'r9')
+    expect(host.describe('r9')).toEqual({ name: '', engine: '', machine: 'office-imac' })
+    host.openAgent('r9')
+    expect(opened).toHaveBeenCalledWith('other', 'r9')
+  })
+
   it('describes an agent it has listed, for a card about one the dial does not hold', async () => {
     AGENTS.length = 0
     AGENTS.push({ agentId: 'a1', registeredAt: 1, active: true, terminalAvailable: true, engine: 'codex' })

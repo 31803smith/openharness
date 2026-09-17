@@ -714,7 +714,7 @@ static void handle_message(const cJSON *root)
     if (strcmp(t, "question") == 0) {
         const cJSON *questions = cJSON_GetObjectItemCaseSensitive(p, "questions");
         // The name rides on the frame for the same reason as on `summary`: the asker may be off this tab.
-        if (agent_id && questions) ui_question_show(agent_id, str_of(p, "name"), str_of(p, "id"), questions);
+        if (agent_id && questions) ui_question_show(agent_id, str_of(p, "name"), str_of(p, "machine"), str_of(p, "id"), questions);
         return;
     }
     // Somebody else answered it. A question is a dialog in a tmux pane, not a shared object, so this is

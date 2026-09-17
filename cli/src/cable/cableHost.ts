@@ -424,9 +424,29 @@ export class DaemonCableHost implements CableHost {
    * with that copy gone, the frame has to say who it is about.
    */
   describe(agentId: string): { name: string; engine: string; machine: string } | undefined {
-    const a = this.knownAgents.get(agentId)
-    return a ? { name: a.name, engine: a.engine ?? '', machine: a.machine ?? '' } : undefined
+    const a = this.knownAgents.get(agentId) ?? this.localAgents().find((x) => x.id === agentId)
+    if (a) return { name: a.name, engine: a.engine ?? '', machine: a.machine ?? '' }
+    // A remote agent whose machine has spoken (a question, a card) before its list was ever read: no
+    // name to give, but the machine's is better than nothing on a screen asking for a decision.
+    const machineId = this.seenOn.get(agentId)
+    const machine = machineId ? this.machineNames.get(machineId) ?? '' : ''
+    return machineId ? { name: '', engine: '', machine } : undefined
   }
+
+  /**
+   * A card arrived from a machine for an agent. Remembered so a `question` or `summary` about an agent
+   * this daemon has never LISTED — a remote machine's, before its list was read, or one on a tab the
+   * window has not opened — can still be described and, when tapped, opened: `machineOf` falls back to
+   * this, and without it the open was "ignored for unknown agent" and the tap did nothing.
+   */
+  noteAgent(machineId: string, agentId: string): void {
+    if (machineId && agentId) this.seenOn.set(agentId, machineId)
+  }
+
+  /** agentId → machineId for agents heard from but not (yet) listed — see noteAgent. */
+  private readonly seenOn = new Map<string, string>()
+  /** machineId → name, from the last wheel read, for describe(). */
+  private machineNames = new Map<string, string>()
 
   /**
    * EVERY agent in LIST order — this computer first, then each machine in wheel order — the fleet the
@@ -441,6 +461,7 @@ export class DaemonCableHost implements CableHost {
   async listAgentsFlat(): Promise<CableAgent[]> {
     const out = this.localAgents()
     const { machines } = await this.listMachines()
+    this.machineNames = new Map(machines.map((m) => [m.id, m.name]))
     for (const m of machines) {
       if (m.local) continue
       const entry = this.remoteAgents.get(m.id)
@@ -490,7 +511,7 @@ export class DaemonCableHost implements CableHost {
    * turn to a different computer, which is the worst outcome this whole feature can produce.
    */
   private machineOf(agentId: string): string {
-    return this.agentMachine.get(agentId) ?? ''
+    return this.agentMachine.get(agentId) ?? this.seenOn.get(agentId) ?? ''
   }
 
   openAgent(agentId: string): void {
