@@ -29,7 +29,10 @@ def newest_step(root: Path) -> Path | None:
         for name in filenames:
             if name.lower().endswith((".step", ".stp")):
                 path = Path(dirpath) / name
-                mtime = path.stat().st_mtime
+                try:
+                    mtime = path.stat().st_mtime
+                except OSError:  # a dangling link, or a file removed mid-walk
+                    continue
                 if best is None or mtime > best[0]:
                     best = (mtime, path)
     return best[1] if best else None
@@ -52,19 +55,31 @@ def cadgen(*args: str) -> dict:
         return {"ok": False, "errors": [(out.stderr or out.stdout).strip()[:300]]}
 
 
+def message(entry: object) -> str:
+    """cadgen reports errors as objects ({"message": …, "ref": …}); the pane wants the words."""
+    if isinstance(entry, dict) and entry.get("message"):
+        return str(entry["message"])
+    return str(entry)
+
+
 def judge(facts: dict, valid: dict, *, has_models: bool, step: str | None) -> dict:
     """Pure: the verdict for what the inspections said. Tested without cadgen."""
     findings: list[dict] = []
     for error in valid.get("errors") or []:
-        findings.append({"severity": "error", "kind": "validate", "message": str(error)})
+        findings.append({"severity": "error", "kind": "validate", "message": message(error)})
+    # `validate` lists only the failing shapes in `parts`: {ref, name, reasons, occurrences, …}.
     for part in valid.get("parts") or []:
-        if isinstance(part, dict) and part.get("ok") is False:
-            findings.append({"severity": "error", "kind": "validate", "message": f"{part.get('name') or part.get('ref') or 'a solid'}: {part.get('reason') or 'invalid geometry'}", "ref": part.get("ref")})
+        if isinstance(part, dict):
+            reasons = ", ".join(str(reason) for reason in part.get("reasons") or []) or "invalid geometry"
+            finding = {"severity": "error", "kind": "validate", "message": f"{part.get('name') or part.get('ref') or 'a solid'}: {reasons}"}
+            if part.get("ref"):
+                finding["ref"] = str(part["ref"])
+            findings.append(finding)
     token = (facts.get("tokens") or [{}])[0]
     for warning in token.get("warnings") or []:
-        findings.append({"severity": "warning", "kind": "facts", "message": str(warning)})
+        findings.append({"severity": "warning", "kind": "facts", "message": message(warning)})
     for error in facts.get("errors") or []:
-        findings.append({"severity": "error", "kind": "facts", "message": str(error)})
+        findings.append({"severity": "error", "kind": "facts", "message": message(error)})
     summary_bits: list[str] = []
     summary = token.get("summary") or {}
     entry = token.get("entryFacts") or {}
@@ -84,15 +99,17 @@ def judge(facts: dict, valid: dict, *, has_models: bool, step: str | None) -> di
         {"id": "build", "name": "Build", "state": "done" if step else ("active" if has_models else "pending")},
         {"id": "validate", "name": "Validate", "state": ("done" if validated else "failed") if step else "pending"},
     ]
-    return {
+    verdict = {
         "spec": 1,
         "ready": validated,
         "summary": " · ".join(summary_bits) if summary_bits else ("no STEP yet" if has_models else "no model yet"),
         "findings": findings,
-        "artifact": step,
         "phases": phases,
         "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
+    if step:  # the schema's artifact is a string: absent until there is one, never null
+        verdict["artifact"] = step
+    return verdict
 
 
 def main(argv: list[str]) -> int:
