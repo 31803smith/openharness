@@ -376,6 +376,7 @@ void _productPageTests() {
       'category': ' ${'c' * 30} ',
       'author': 'a' * 100,
       'license': '  ${'L' * 60}  ',
+      'tagline': '  ${'T' * 100}  ',
       'repo': ' https://github.com/autonomous-ai/autonomous-marp ',
       'homepage': 'http://marp.app',
       'upstream': 'file:///etc/passwd',
@@ -396,6 +397,7 @@ void _productPageTests() {
     expect(entry.category, 'c' * 24);
     expect(entry.author, 'a' * 80);
     expect(entry.license, 'L' * 40);
+    expect(entry.tagline, 'T' * 80);
     expect(entry.repo, 'https://github.com/autonomous-ai/autonomous-marp');
     expect(entry.homepage, 'http://marp.app');
     expect(entry.upstream, isNull, reason: 'never a file: link');
@@ -410,10 +412,12 @@ void _productPageTests() {
       'id': 'autonomous/marp',
       'engine': 'claude',
       'license': '   ',
+      'tagline': 7,
       'screenshots': 'https://example.com/1.png',
       'repo': 7,
     })!;
     expect(bare.license, isNull);
+    expect(bare.tagline, isNull);
     expect(bare.screenshots, isEmpty);
     expect(bare.repo, isNull);
     expect(bare.linked, isFalse);
