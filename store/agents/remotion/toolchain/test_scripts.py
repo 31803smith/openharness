@@ -1,7 +1,8 @@
 """setup.sh, doctor.sh, init-workspace.sh and the two wrappers ($REMOTION, viewer.sh), run for real
 against a scratch install whose PATH holds only stub commands (node, npm, python3, git) and the few
 coreutils the scripts use, so every ok / warn / miss line is reached without a network, npm or
-Remotion on the machine:
+Remotion on the machine. runtimes.sh's fallback to Harness's own Node reads a runtime dir of the
+sandbox's (ADAPTER_RUNTIME_DIR), never the real ~/.harness:
 
     python3 -m unittest toolchain/test_scripts.py
 """
@@ -16,7 +17,7 @@ COREUTILS = ("dirname", "cat", "mkdir", "rm", "ls", "tr", "ln")
 VERSIONS = dict(line.split("=", 1) for line in (PACKAGE / "VERSIONS").read_text().split())
 COMMIT = VERSIONS["SKILLS_COMMIT"]
 
-# node as the scripts use it: -e is the version check (NODE_OK), -p reads a package version, -v.
+# node as the scripts use it: -e is runtimes.sh's version check (NODE_OK), -p reads a package version, -v.
 NODE = """case "$1" in
   -e) exit "${NODE_OK:-0}" ;;
   -p) case "$2" in *remotion/package.json*) echo 4.0.525 ;; *react/package.json*) echo 19.3.0 ;; esac ;;
@@ -43,12 +44,13 @@ class Sandbox:
         self.install = self.root / "install"
         (self.install / "toolchain").mkdir(parents=True)
         # Linked, not copied, so a line tracer maps back to the source. Never chmod or write these.
-        for name in ("setup.sh", "doctor.sh", "init-workspace.sh", "remotion"):
+        for name in ("setup.sh", "doctor.sh", "init-workspace.sh", "remotion", "runtimes.sh"):
             (self.install / "toolchain" / name).symlink_to(PACKAGE / "toolchain" / name)
         (self.install / "viewer.sh").symlink_to(PACKAGE / "viewer.sh")
         shutil.copy(PACKAGE / "VERSIONS", self.install / "VERSIONS")
         self.bin = self.root / "bin"
         self.bin.mkdir()
+        self.runtime = self.root / "runtime"
         self.calls = self.root / "calls.log"
         self.calls.touch()
         for name in COREUTILS:
@@ -69,6 +71,15 @@ class Sandbox:
             self.stub(name, bodies[name])
         return self
 
+    def harness_node(self) -> None:
+        """No node on PATH, but Harness's own recorded in the runtime dir, as the CLI lays it down."""
+        node = self.stub("node", NODE, where=self.root / "harness-node")
+        self.runtime.mkdir()
+        (self.runtime / "current-node").write_text(f"{node}\n")
+
+    def no_node(self) -> str:
+        return f"miss node >= 18, and Harness's own Node is not in {self.runtime} — run `harness start` once to lay it down"
+
     def skills(self, commit: str | None = COMMIT) -> None:
         skill = self.install / "upstream" / "skills" / "remotion-best-practices" / "SKILL.md"
         skill.parent.mkdir(parents=True, exist_ok=True)
@@ -78,11 +89,16 @@ class Sandbox:
 
     def run(self, script: str, *args: str, cwd: Path | None = None, **env: str) -> subprocess.CompletedProcess:
         return subprocess.run([BASH, str(self.install / script), *args], cwd=cwd or self.install,
-                              env={"PATH": str(self.bin), "CALLS": str(self.calls), **TRACER, **env},
+                              env={"PATH": str(self.bin), "CALLS": str(self.calls), "ADAPTER_RUNTIME_DIR": str(self.runtime),
+                                   **TRACER, **env},
                               capture_output=True, text=True, timeout=60)
 
     def logged(self) -> list[str]:
         return self.calls.read_text().splitlines()
+
+    def ran(self) -> list[str]:
+        """The calls, minus runtimes.sh's `node -e` version probe (whose script spans several lines)."""
+        return [c for c in self.logged() if c.startswith(("node /", "python3 ", "npm ", "git ", "remotion "))]
 
 
 class Setup(unittest.TestCase):
@@ -141,15 +157,23 @@ class Setup(unittest.TestCase):
                 self.assertFalse(r.stdout.splitlines()[-1].startswith("ok   skills"))
 
     def test_missing_tools_are_misses(self):
-        cases = (((), {}, "miss node >= 18 on PATH"),
-                 (("node",), {"NODE_OK": "1"}, "miss node >= 18 on PATH"),
+        cases = (((), {}, None),
+                 (("node",), {"NODE_OK": "1"}, None),
                  (("node",), {}, "miss npm on PATH"),
                  (("node", "npm"), {}, "miss python3 (the verdict)"))
         for tools, env, line in cases:
             with self.subTest(line=line, tools=tools):
                 box = Sandbox(self).tools(*tools)
                 r = box.run("toolchain/setup.sh", **env)
-                self.assertEqual((r.returncode, r.stdout.strip()), (1, line))
+                self.assertEqual((r.returncode, r.stdout.strip()), (1, line or box.no_node()))
+
+    def test_without_node_on_path_harnesss_own_serves(self):
+        box = Sandbox(self).tools("npm", "python3", "git")
+        box.stub("remotion", where=box.install / "node_modules" / ".bin")
+        box.harness_node()
+        r = box.run("toolchain/setup.sh")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(r.stdout.splitlines()[1], "ok   remotion 4.0.525 · react 19.3.0")
 
 
 class Doctor(unittest.TestCase):
@@ -173,9 +197,18 @@ class Doctor(unittest.TestCase):
         self.assertEqual(r.stdout.splitlines(), [
             "miss node_modules — run toolchain/setup.sh",
             "miss upstream skills — run toolchain/setup.sh",
-            "miss node >= 18 or an executable toolchain/remotion",
+            box.no_node(),
             "miss python3",
         ])
+
+    def test_harnesss_own_node_is_found_without_node_on_path(self):
+        box = Sandbox(self).tools("python3")
+        box.harness_node()
+        box.stub("remotion", where=box.install / "node_modules" / ".bin")
+        box.skills()
+        r = box.run("toolchain/doctor.sh")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(r.stdout.splitlines()[::2], ["ok   remotion 4.0.525", "ok   $REMOTION (render progress for the pane) · node v22.1.0"])
 
     def test_no_executable_wrapper_and_no_commit_file(self):
         box = Sandbox(self).tools("node", "python3")
@@ -184,7 +217,7 @@ class Doctor(unittest.TestCase):
         (box.install / "toolchain" / "remotion").unlink()
         r = box.run("toolchain/doctor.sh")
         self.assertEqual(r.returncode, 1)
-        self.assertEqual(r.stdout.splitlines()[1:3], ["ok   skills @ ", "miss node >= 18 or an executable toolchain/remotion"])
+        self.assertEqual(r.stdout.splitlines()[1:3], ["ok   skills @ ", "miss an executable toolchain/remotion"])
 
 
 class InitWorkspace(unittest.TestCase):
@@ -197,6 +230,16 @@ class InitWorkspace(unittest.TestCase):
         self.assertTrue(all((ws / d).is_dir() for d in (".harness", "out", "public")))
         self.assertEqual(os.readlink(ws / "node_modules"), f"{box.install}/node_modules")
         self.assertEqual(box.logged(), [f"python3 {box.install}/toolchain/verdict.py"])
+
+    def test_the_verdict_runs_with_harnesss_own_node_on_path(self):
+        box = Sandbox(self).tools("python3")
+        box.harness_node()
+        box.stub("python3", 'echo "PATH=$PATH" >> "$CALLS"')
+        ws = box.root / "ws"
+        ws.mkdir()
+        r = box.run("toolchain/init-workspace.sh", cwd=ws, HARNESS_DSH_DIR=str(box.install))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(box.logged()[-1], f"PATH={box.root / 'harness-node'}:{box.bin}")
 
     def test_a_node_modules_already_there_is_kept(self):
         box = Sandbox(self).tools("python3")
@@ -218,13 +261,27 @@ class Wrappers(unittest.TestCase):
         box = Sandbox(self).tools("node")
         r = box.run("toolchain/remotion", "render", "Main", "out/main.mp4", NODE_CODE="7")
         self.assertEqual(r.returncode, 7)
-        self.assertEqual(box.logged(), [f"node {box.install}/toolchain/remotion.mjs render Main out/main.mp4"])
+        self.assertEqual(box.ran(), [f"node {box.install}/toolchain/remotion.mjs render Main out/main.mp4"])
 
     def test_viewer_sh_runs_the_pane_server(self):
         box = Sandbox(self).tools("node")
         r = box.run("viewer.sh", HARNESS_VIEWER_PORT="4321", HARNESS_WORKSPACE=str(box.root))
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(box.logged(), [f"node {box.install}/viewer.mjs"])
+        self.assertEqual(box.ran(), [f"node {box.install}/viewer.mjs"])
+
+    def test_without_node_on_path_the_wrappers_run_on_harnesss_own(self):
+        box = Sandbox(self)
+        box.harness_node()
+        self.assertEqual(box.run("toolchain/remotion", "still", "Main").returncode, 0)
+        self.assertEqual(box.run("viewer.sh", HARNESS_VIEWER_PORT="4321", HARNESS_WORKSPACE=str(box.root)).returncode, 0)
+        self.assertEqual(box.ran(), [f"node {box.install}/toolchain/remotion.mjs still Main", f"node {box.install}/viewer.mjs"])
+
+    def test_no_node_at_all_is_a_miss_from_either_wrapper(self):
+        box = Sandbox(self)
+        for argv, env in ((("toolchain/remotion", "render"), {}), (("viewer.sh",), {"HARNESS_VIEWER_PORT": "1", "HARNESS_WORKSPACE": "/tmp"})):
+            with self.subTest(argv[0]):
+                r = box.run(*argv, **env)
+                self.assertEqual((r.returncode, r.stdout.strip()), (1, box.no_node()))
 
     def test_viewer_sh_needs_its_port_and_workspace(self):
         box = Sandbox(self).tools("node")

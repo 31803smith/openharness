@@ -368,6 +368,15 @@ test('chipdb: found beside icepack and read from its head, or the built-in UP5K 
     ])
     assert.equal(found.pinsCached, true)
 
+    // The OSS CAD Suite setup.sh fetches keeps the chipdb in share/icebox, beside the same bin/.
+    mkdirSync(join(root, 'suite', 'bin'), { recursive: true })
+    writeFileSync(join(root, 'suite', 'bin', 'icepack'), '')
+    mkdirSync(join(root, 'suite', 'share', 'icebox'), { recursive: true })
+    writeFileSync(join(root, 'suite', 'share', 'icebox', 'chipdb-5k.txt'), '.device 5k\n.pins sg48\n35 12 31 1\n')
+    const suite = probe({ PROBE_ICEPACK: join(root, 'suite', 'bin', 'icepack') }, [['up5k', 'sg48']])
+    assert.equal(realpathSync(suite.dir), realpathSync(join(root, 'suite', 'share', 'icebox')))
+    assert.deepEqual(suite.pins, [[{ pin: '35', x: 12, y: 31, z: 1 }]])
+
     const none = probe({ PROBE_ICEPACK: '', PROBE_NO_PATH: '1' }, [['up5k', 'sg48'], ['hx8k', 'ct256']])
     assert.equal(none.dir, null)
     assert.equal(none.lookupPath, ':/opt/homebrew/bin:/usr/local/bin:/usr/bin')

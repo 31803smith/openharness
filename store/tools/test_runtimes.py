@@ -179,6 +179,12 @@ class Node(unittest.TestCase):
         r = box.run('harness_node 18 && command -v node && command -v npm', NODE_VERSION="20.1.0")
         self.assertEqual(lines(r), [str(node), str(node.parent / "npm")], r.stderr)
 
+    def test_asking_twice_adds_harness_node_to_path_once(self):
+        box = Box(self)
+        self.runtime_node(box, "22.23.2")  # no npm beside it, as in a sandbox
+        r = box.run('harness_node 18 && harness_node 18 && harness_node 20 && echo "$PATH"')
+        self.assertEqual(lines(r), [f"{box.root}/harness-node/bin:{box.bin}"], r.stderr)
+
     def test_a_node_without_npm_is_kept_when_harness_node_is_older(self):
         box = Box(self)
         box.stub("node", NODE)

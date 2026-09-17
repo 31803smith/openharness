@@ -1,26 +1,33 @@
-"""The shell half of the toolchain — flow.sh, setup.sh, doctor.sh, init-workspace.sh, viewer.sh — on
-stub tools: `python3 -m unittest toolchain/test_scripts.py`.
+"""The shell half of the toolchain — flow.sh, setup.sh, doctor.sh, init-workspace.sh, viewer.sh, path.sh
+and run — on stub tools: `python3 -m unittest toolchain/test_scripts.py`.
 
 Each test builds a throwaway install (the real scripts symlinked in, file by file), a workspace, a
 directory of stub tools that log how they were called, and a PATH made of those stubs plus links to
 the few system tools the scripts use, so a tool is missing exactly when a test leaves it out. The
 scripts fall back to Homebrew's bin when yosys is not on PATH; a test that needs a tool to stay
-missing after that hides it with a `command -v` wrapper exported into bash. One test at the end runs
-the real flow on the starter design, when yosys, nextpnr, icestorm and icarus are installed.
+missing after that hides it with a `command -v` wrapper exported into bash. setup.sh's OSS CAD Suite
+download is a stub curl handing over a small tarball of stub tools laid out like the suite, and
+runtimes.sh's fallback to Harness's own Node reads a runtime dir of the sandbox's, never ~/.harness.
+One test at the end runs the real flow on the starter design, when yosys, nextpnr, icestorm and icarus
+are installed.
 """
 import atexit
 import hashlib
+import io
 import json
 import os
+import re
 import shutil
 import subprocess
+import tarfile
 import tempfile
 import time
 import unittest
 from pathlib import Path
 
 PKG = Path(__file__).resolve().parent.parent
-SYSTEM = ["bash", "basename", "cat", "chmod", "date", "dirname", "head", "ln", "mkdir", "perl", "rm", "sed", "tail"]
+SYSTEM = ["bash", "basename", "cat", "chmod", "cut", "date", "dirname", "du", "grep", "gzip", "head", "ln", "mkdir",
+          "mktemp", "mv", "perl", "rm", "sed", "tail", "tar", "tr"]
 # `command -v <tool>` fails for every tool named in $STUB_HIDE, wherever it is installed.
 HIDE = '() { if [ "$1" = -v ]; then case " $STUB_HIDE " in *" $2 "*) return 1;; esac; fi; builtin command "$@"; }'
 SCRUB = ("HARNESS_WORKSPACE", "HARNESS_DSH_DIR", "HARNESS_VIEWER_PORT", "YOSYS_TOP", "YOSYS_DEVICE",
@@ -50,6 +57,30 @@ STUBS = {
     "node": 'case "$1" in -v) echo v22.0.0;; -p) echo 1.0.2;; esac\n',
     "npm": 'mkdir -p node_modules/.bin && printf "#!/bin/sh\\n" > node_modules/.bin/netlistsvg && chmod +x node_modules/.bin/netlistsvg\n',
 }
+
+# The same tools as setup.sh's smoke run calls them: every output lands where its argument says.
+SMOKE = {
+    "iverilog": 'case "$1" in -V) echo "Icarus Verilog version 13.0 (stable)"; exit 0;; esac\n'
+                'while [ $# -gt 0 ]; do [ "$1" = -o ] && : > "$2"; shift; done\n',
+    "vvp": 'echo "led 1"\n',
+    "yosys": 'case "$1" in -V) echo "Yosys 0.99 (stub)"; exit 0;; esac\n'
+             'all="$*"; echo "{}" > "${all##*-json }"\n',
+    "nextpnr-ice40": 'case "$1" in --version) echo "nextpnr-ice40 (stub)"; exit 0;; esac\n'
+                     'while [ $# -gt 0 ]; do [ "$1" = --asc ] && : > "$2"; shift; done\n',
+    "icepack": 'printf bits > "$2"\n',
+    "node": 'case "$1" in -v) echo v22.0.0;; -p) echo 1.0.2;; esac\n',
+    "npm": STUBS["npm"],
+}
+ALL_TOOLS_OF_THE_SUITE = ("yosys", "nextpnr-ice40", "icepack", "iceprog", "iverilog", "vvp")
+SETUP_TEXT = (PKG / "toolchain" / "setup.sh").read_text()
+RELEASE = re.search(r"^SUITE_RELEASE=(\S+)$", SETUP_TEXT, re.M).group(1)
+PINS = {m.group(1): (int(m.group(2)), m.group(3)) for m in
+        re.finditer(r"platform=(\S+) mb=(\d+) sum=([0-9a-f]{64})", SETUP_TEXT)}
+SUITE_URL = "https://github.com/YosysHQ/oss-cad-suite-build/releases/download/{release}/oss-cad-suite-{platform}-{date}.tgz"
+
+
+def suite_url(platform):
+    return SUITE_URL.format(release=RELEASE, platform=platform, date=RELEASE.replace("-", ""))
 
 
 _STUB_DIR = None
@@ -84,9 +115,11 @@ class Sandbox:
         self.bin = self.root / "stubs"
         self.sys = self.root / "system"
         self.calls = self.root / "calls.log"
+        self.runtime = self.root / "runtime"
         for d in (self.pkg / "toolchain", self.ws, self.bin, self.sys):
             d.mkdir(parents=True)
-        for name in ("flow.sh", "setup.sh", "doctor.sh", "init-workspace.sh", "verdict.py", "vcd2json.py"):
+        for name in ("flow.sh", "setup.sh", "doctor.sh", "init-workspace.sh", "verdict.py", "vcd2json.py",
+                     "path.sh", "runtimes.sh", "run"):
             (self.pkg / "toolchain" / name).symlink_to(PKG / "toolchain" / name)
         (self.pkg / "viewer.sh").symlink_to(PKG / "viewer.sh")
         for name in system:
@@ -107,7 +140,8 @@ class Sandbox:
 
     def run(self, argv, cwd=None, hide=(), **env):
         full = {k: v for k, v in os.environ.items() if k not in SCRUB}
-        full.update(PATH=f"{self.bin}:{self.sys}", STUB_CALLS=str(self.calls), STUB_BIN=str(self.bin), LC_ALL="C")
+        full.update(PATH=f"{self.bin}:{self.sys}", STUB_CALLS=str(self.calls), STUB_BIN=str(self.bin), LC_ALL="C",
+                    ADAPTER_RUNTIME_DIR=str(self.runtime))
         if hide:
             full["BASH_FUNC_command%%"] = HIDE
             full["STUB_HIDE"] = " ".join(hide)
@@ -117,6 +151,31 @@ class Sandbox:
 
     def called(self):
         return self.calls.read_text().splitlines() if self.calls.exists() else []
+
+    def tools(self):
+        """The calls, minus runtimes.sh's `node -e` version probe (whose script spans several lines)."""
+        return [c for c in self.called() if re.match(r"(iverilog|vvp|yosys|nextpnr-ice40|icepack|iceprog|netlistsvg|npm|curl|suite-\S+) |node /", c)]
+
+    def harness_node(self, body=None):
+        """No node on PATH, but Harness's own recorded where the CLI lays it down."""
+        node = self.stub("node", body, where=self.root / "harness-node")
+        self.runtime.mkdir(exist_ok=True)
+        (self.runtime / "current-node").write_text(f"{node}\n")
+        return node
+
+    def no_node(self):
+        return f"miss node >= 18, and Harness's own Node is not in {self.runtime} — run `harness start` once to lay it down"
+
+    def suite(self, release=None, tools=ALL_TOOLS_OF_THE_SUITE, chipdb=False):
+        """oss-cad-suite/ in the install, as setup.sh leaves it: stub tools that log as suite-<tool>."""
+        for name in tools:
+            self.stub(name, body=f'echo "suite-{name} $*" >> "$STUB_CALLS"\n' + SMOKE.get(name, STUBS.get(name, "")),
+                      where=self.pkg / "oss-cad-suite" / "bin")
+        if release:
+            (self.pkg / "oss-cad-suite" / ".release").write_text(release + "\n")
+        if chipdb:
+            (self.pkg / "oss-cad-suite" / "share" / "icebox").mkdir(parents=True)
+            (self.pkg / "oss-cad-suite" / "share" / "icebox" / "chipdb-5k.txt").write_text(".device 5k\n")
 
     def design(self, rtl=True, tb=True, pcf=True, top="blink"):
         for sub, name, ok in (("rtl", f"{top}.v", rtl), ("tb", f"{top}_tb.v", tb), ("constraints", f"{top}.pcf", pcf)):
@@ -307,76 +366,230 @@ class Flow(unittest.TestCase):
 
 
 class Setup(unittest.TestCase):
-    TOOLS = ("yosys", "nextpnr-ice40", "icepack", "iverilog", "node", "npm")
+    TOOLS = ("yosys", "nextpnr-ice40", "icepack", "iverilog")
+    HIDDEN = TOOLS + ("brew",)  # wherever they are installed, so a machine with Homebrew's answers the same
+
+    def sandbox(self, machine_tools=True, **kw):
+        sb = Sandbox(self, **kw)
+        for name in ("node", "npm", "vvp") + (self.TOOLS if machine_tools else ()):
+            sb.stub(name, body=SMOKE[name])
+        sb.stub("uname", body='case "$1" in -s) echo Darwin;; -m) echo arm64;; esac\n')
+        return sb
 
     def setup_sh(self, sb, **kw):
-        return sb.run([sb.pkg / "toolchain" / "setup.sh"], **kw)
+        return sb.run([sb.pkg / "toolchain" / "setup.sh"], cwd=sb.root, **kw)
 
-    def test_everything_already_there(self):
-        sb = Sandbox(self, stubs=self.TOOLS)
-        r = self.setup_sh(sb)
-        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertEqual(r.stdout.splitlines(), [
-            "ok   yosys, nextpnr-ice40, icestorm, icarus-verilog already on PATH",
-            "     npm ci (netlistsvg 1.0.2, for the schematic)",
+    def serve(self, sb, archive=None, sha=None):
+        """curl hands over `archive` (a tarball of the suite's layout by default) whatever the URL; shasum
+        answers the pinned checksum of the platform uname names, unless `sha` says otherwise."""
+        tgz = sb.root / "suite.tgz"
+        tgz.write_bytes(archive if archive is not None else suite_tarball())
+        sb.stub("curl", body='for a in "$@"; do case "$prev" in -o) out="$a";; esac; prev="$a"; done\n'
+                             f'[ -n "$CURL_FAIL" ] && exit 22\n/bin/cp "{tgz}" "$out"\n')
+        sb.stub("shasum", body=f'echo "{sha or PINS["darwin-arm64"][1]}  $3"\n')
+
+    def assert_smoke_and_versions(self, lines, node="v22.0.0"):
+        self.assertEqual(lines[-4:], [
+            "     smoke run: a counter simulated, synthesised, placed, routed and packed (slow only the first time)",
             "ok   Yosys 0.99 (stub)",
             "ok   nextpnr-ice40 · icepack · Icarus Verilog version 13.0 (stable)",
-            "ok   netlistsvg 1.0.2 · node v22.0.0",
+            f"ok   netlistsvg 1.0.2 · node {node}",
         ])
-        self.assertIn("npm ci --silent --no-audit --no-fund", sb.called())
-        self.assertTrue((sb.pkg / "node_modules" / ".bin" / "netlistsvg").exists())  # in the install, not the cwd
 
-    def test_brew_installs_what_is_missing(self):
-        sb = Sandbox(self, stubs=("yosys", "iverilog", "node", "npm"))
-        sb.stub("brew", body=f'echo "HOMEBREW_NO_AUTO_UPDATE=$HOMEBREW_NO_AUTO_UPDATE" >> "$STUB_CALLS"\n'
-                             f'ln "{stub_file("nextpnr-ice40", "")}" "{stub_file("icepack", "")}" "$STUB_BIN"\n')
+    def test_the_machines_own_tools_are_kept_and_smoke_tested(self):
+        sb = self.sandbox()
         r = self.setup_sh(sb)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertIn("     brew install nextpnr-ice40 icestorm  (the open-source FPGA flow; a few minutes the first time)", r.stdout)
-        self.assertIn("brew install nextpnr-ice40 icestorm", sb.called())
-        self.assertIn("HOMEBREW_NO_AUTO_UPDATE=1", sb.called())
-
-    def test_a_formula_that_installs_without_its_binary(self):
-        sb = Sandbox(self, stubs=("yosys", "nextpnr-ice40", "iverilog", "brew", "node", "npm"))
-        r = self.setup_sh(sb)
-        self.assertEqual(r.returncode, 1)
-        self.assertEqual(r.stdout.splitlines()[-1], "miss icepack even after installing icestorm")
-
-    def test_no_brew_says_where_to_get_the_tools(self):
-        sb = Sandbox(self, stubs=("yosys",))
-        r = self.setup_sh(sb)
-        self.assertEqual(r.returncode, 1)
         lines = r.stdout.splitlines()
-        self.assertEqual(lines[0], "miss nextpnr-ice40 icestorm icarus-verilog and no brew to install them with.")
-        self.assertTrue(lines[1].startswith("     macOS:  /bin/bash -c "))
-        self.assertEqual(lines[2], "     Linux:  apt install yosys nextpnr-ice40 fpga-icestorm iverilog")
-        self.assertIn("oss-cad-suite", lines[3])
+        self.assertEqual(lines[:2], ["ok   yosys, nextpnr-ice40, icepack, iverilog already on this machine",
+                                     "     npm ci (netlistsvg 1.0.2, for the schematic)"])
+        self.assert_smoke_and_versions(lines)
+        self.assertEqual(len(lines), 6)
+        tools = [c.split()[0] for c in sb.tools()]
+        self.assertEqual(tools[:6], ["npm", "iverilog", "vvp", "yosys", "nextpnr-ice40", "icepack"])
+        self.assertIn("npm ci --silent --no-audit --no-fund", sb.called())
+        self.assertNotIn("curl", tools)
+        self.assertTrue((sb.pkg / "node_modules" / ".bin" / "netlistsvg").exists())  # in the install, not the cwd
+        self.assertFalse((sb.pkg / "oss-cad-suite").exists())
+        self.assertEqual(list(Path(sb.root).glob("tmp/yosys-smoke.*")), [])
 
-    def test_without_yosys_on_path_it_looks_in_homebrew_first(self):
-        # Hidden everywhere, so the answer is the same on a machine that has them in /opt/homebrew.
-        sb = Sandbox(self)
-        r = self.setup_sh(sb, hide=("yosys", "nextpnr-ice40", "icepack", "iverilog", "brew"))
+    def test_a_machine_without_the_tools_gets_the_oss_cad_suite(self):
+        sb = self.sandbox(machine_tools=False)
+        self.serve(sb)
+        (sb.pkg / ".oss-cad-suite.interrupted").mkdir()  # a run killed mid-download left this
+        tmp = sb.root / "tmp"
+        tmp.mkdir()
+        r = self.setup_sh(sb, hide=self.HIDDEN, TMPDIR=tmp)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        lines = r.stdout.splitlines()
+        self.assertEqual(lines[:2], ["     this machine has no yosys nextpnr-ice40 icepack iverilog",
+                                     f"     fetching the OSS CAD Suite {RELEASE} for darwin-arm64 ({PINS['darwin-arm64'][0]} MB, a few minutes the first time)"])
+        self.assertRegex(lines[2], rf"^ok   OSS CAD Suite {RELEASE} in oss-cad-suite/ \(\d+(\.\d+)?[BKMG]\)$")
+        self.assert_smoke_and_versions(lines)
+        self.assertIn(f"curl -fsSL --retry 3 --connect-timeout 20 --max-time 3600 -o {sb.pkg}/.oss-cad-suite.", "\n".join(sb.called()))
+        self.assertIn(suite_url("darwin-arm64"), "\n".join(sb.called()))
+        # the smoke run and the version lines ran the suite's tools, not anything else on PATH
+        self.assertEqual([c.split()[0] for c in sb.called() if c.startswith("suite-")],
+                         ["suite-iverilog", "suite-vvp", "suite-yosys", "suite-nextpnr-ice40", "suite-icepack",
+                          "suite-yosys", "suite-iverilog"])
+        suite = sb.pkg / "oss-cad-suite"
+        kept = sorted(str(f.relative_to(suite)) for f in suite.rglob("*") if f.is_file())
+        self.assertEqual(kept, sorted([
+            ".release", "VERSION", "license/COPYING", "etc/cacert.pem", "Frameworks/QtCore.framework/QtCore",
+            "bin/yosys", "bin/yosys-abc", "bin/nextpnr-ice40", "bin/icepack", "bin/iceprog", "bin/iverilog", "bin/vvp",
+            "libexec/yosys", "libexec/nextpnr-ice40", "libexec/ivl",
+            "lib/libz.1.dylib", "lib/ivl/system.vpi", "lib/python3.11/os.py", "lib/python3.11/lib-dynload/_json.so",
+            "share/yosys/ice40/cells_sim.v", "share/icebox/chipdb-5k.txt",
+        ]))
+        self.assertEqual((suite / ".release").read_text(), f"{RELEASE}\n")
+        self.assertEqual(sorted(p.name for p in sb.pkg.iterdir() if p.name.startswith(".oss-cad-suite")), [])
+        self.assertEqual(list(tmp.iterdir()), [], "the smoke run's scratch dir is removed")
+
+    def test_a_suite_at_the_pinned_release_is_used_as_it_is(self):
+        sb = self.sandbox(machine_tools=False)
+        sb.suite(release=RELEASE)
+        r = self.setup_sh(sb, hide=self.HIDDEN)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(r.stdout.splitlines()[0], f"ok   OSS CAD Suite {RELEASE} already in oss-cad-suite/")
+        self.assertFalse(any(c.startswith("curl") for c in sb.called()))
+        self.assertIn("suite-nextpnr-ice40", "\n".join(sb.called()))
+
+    def test_a_suite_from_another_release_is_replaced_even_on_a_machine_with_the_tools(self):
+        # flow.sh would prefer the stale suite over the machine's tools, so it cannot be left there.
+        sb = self.sandbox()
+        sb.suite(release="2020-01-01")
+        (sb.pkg / "oss-cad-suite" / "bin" / "stale").write_text("")
+        self.serve(sb)
+        r = self.setup_sh(sb)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertTrue(r.stdout.splitlines()[0].startswith(f"     fetching the OSS CAD Suite {RELEASE} for darwin-arm64"))
+        self.assertFalse((sb.pkg / "oss-cad-suite" / "bin" / "stale").exists())
+        self.assertEqual((sb.pkg / "oss-cad-suite" / ".release").read_text(), f"{RELEASE}\n")
+
+    def test_each_platform_fetches_its_own_build(self):
+        for system, machine, platform in (("Darwin", "x86_64", "darwin-x64"), ("Linux", "x86_64", "linux-x64"),
+                                          ("Linux", "aarch64", "linux-arm64"), ("Linux", "arm64", "linux-arm64")):
+            with self.subTest(platform=platform, machine=machine):
+                sb = self.sandbox(machine_tools=False)
+                sb.stub("uname", body=f'case "$1" in -s) echo {system};; -m) echo {machine};; esac\n')
+                self.serve(sb, sha=PINS[platform][1])
+                r = self.setup_sh(sb, hide=self.HIDDEN)
+                self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+                self.assertIn(f"     fetching the OSS CAD Suite {RELEASE} for {platform} ({PINS[platform][0]} MB, a few minutes the first time)",
+                              r.stdout.splitlines())
+                self.assertIn(suite_url(platform), "\n".join(sb.called()))
+
+    def test_a_platform_the_suite_is_not_built_for(self):
+        sb = self.sandbox(machine_tools=False)
+        sb.stub("uname", body='case "$1" in -s) echo FreeBSD;; -m) echo amd64;; esac\n')
+        r = self.setup_sh(sb, hide=self.HIDDEN)
         self.assertEqual(r.returncode, 1)
-        self.assertEqual(r.stdout.splitlines()[0],
-                         "miss yosys nextpnr-ice40 icestorm icarus-verilog and no brew to install them with.")
+        self.assertEqual(r.stdout.splitlines()[-1],
+                         "miss yosys nextpnr-ice40 icepack iverilog — and the OSS CAD Suite has no build for FreeBSD amd64")
+        self.assertFalse(any(c.startswith(("curl", "npm")) for c in sb.called()))
 
-    def test_node_npm_and_python_are_required(self):
-        for missing, message in (("node", "miss node >= 18 on PATH (the viewer and netlistsvg)"),
-                                 ("npm", "miss npm on PATH"),
-                                 ("python3", "miss python3 (the VCD reader and the verdict)")):
-            with self.subTest(missing):
-                sb = Sandbox(self, stubs=[t for t in self.TOOLS if t != missing], python=missing != "python3")
-                r = self.setup_sh(sb)
+    def test_a_download_that_fails_or_does_not_match_changes_nothing(self):
+        for case in ("offline", "checksum", "sha256sum", "not a tarball"):
+            with self.subTest(case):
+                sb = self.sandbox(machine_tools=False)
+                sb.suite(release="2020-01-01")
+                if case == "sha256sum":  # no shasum on this machine (a Linux without perl's): coreutils' answers
+                    self.serve(sb)
+                    (sb.bin / "shasum").unlink()
+                    sb.stub("sha256sum", body='echo "0000  $1"\n')
+                else:
+                    self.serve(sb, archive=b"<html>rate limited</html>" if case == "not a tarball" else None,
+                               sha="f" * 64 if case == "checksum" else None)
+                r = self.setup_sh(sb, hide=self.HIDDEN, CURL_FAIL="1" if case == "offline" else "")
                 self.assertEqual(r.returncode, 1)
-                self.assertEqual(r.stdout.splitlines()[-1], message)
-                self.assertNotIn("npm ci --silent --no-audit --no-fund", sb.called())
+                last = r.stdout.splitlines()[-1]
+                if case == "offline":
+                    self.assertEqual(last, f"miss could not download {suite_url('darwin-arm64')} — check this machine's internet connection")
+                elif case == "not a tarball":
+                    self.assertEqual(last, "miss the OSS CAD Suite archive would not unpack (is the disk full?)")
+                else:
+                    self.assertEqual(last, f"miss {suite_url('darwin-arm64')} did not match its pinned checksum; nothing was installed")
+                self.assertEqual((sb.pkg / "oss-cad-suite" / ".release").read_text(), "2020-01-01\n")
+                self.assertEqual(sorted(p.name for p in sb.pkg.iterdir() if p.name.startswith(".oss-cad-suite")), [])
+
+    def test_node_npm_and_python_come_before_any_download(self):
+        for missing in ("node", "npm", "python3"):
+            with self.subTest(missing):
+                sb = self.sandbox(machine_tools=False, python=missing != "python3")
+                if missing != "python3":
+                    (sb.bin / missing).unlink()
+                self.serve(sb)
+                r = self.setup_sh(sb, hide=self.HIDDEN)
+                self.assertEqual(r.returncode, 1)
+                self.assertEqual(r.stdout.splitlines(), [{"node": sb.no_node(), "npm": "miss npm on PATH",
+                                                          "python3": "miss python3 (the VCD reader and the verdict)"}[missing]])
+                self.assertFalse(any(c.startswith("curl") for c in sb.called()))
+
+    def test_without_node_on_path_harnesss_own_runs_npm_and_netlistsvg(self):
+        sb = self.sandbox()
+        (sb.bin / "node").unlink()
+        (sb.bin / "npm").unlink()
+        sb.harness_node(SMOKE["node"])
+        sb.stub("npm", body=SMOKE["npm"], where=sb.root / "harness-node")
+        r = self.setup_sh(sb)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assert_smoke_and_versions(r.stdout.splitlines())
 
     def test_npm_ci_that_leaves_no_netlistsvg(self):
-        sb = Sandbox(self, stubs=self.TOOLS)
+        sb = self.sandbox()
         sb.stub("npm", body="")
         r = self.setup_sh(sb)
         self.assertEqual(r.returncode, 1)
         self.assertEqual(r.stdout.splitlines()[-1], "miss node_modules/.bin/netlistsvg after npm ci")
+        self.assertFalse(any(c.startswith("iverilog") for c in sb.called()))
+
+    def test_a_tool_that_does_not_run_is_named(self):
+        for tool in ("iverilog", "vvp", "yosys", "nextpnr-ice40", "icepack"):
+            with self.subTest(tool):
+                sb = self.sandbox()
+                r = self.setup_sh(sb, STUB_FAIL=tool)
+                self.assertEqual(r.returncode, 1)
+                self.assertEqual(r.stdout.splitlines()[-1], f"miss {tool} does not run on this machine: {tool}: stub failure")
+        sb = self.sandbox()
+        sb.stub("icepack", body="")  # exits 0 and packs nothing
+        r = self.setup_sh(sb)
+        self.assertEqual((r.returncode, r.stdout.splitlines()[-1]), (1, "miss icepack does not run on this machine: led 1"))
+
+    def test_without_yosys_on_path_it_looks_in_homebrew_too(self):
+        # after the rest of PATH, so Homebrew's node never replaces the one runtimes.sh chose
+        sb = self.sandbox(machine_tools=False)
+        sb.stub("curl", body='echo "PATH=$PATH" >> "$STUB_CALLS"; exit 22\n')
+        r = self.setup_sh(sb, hide=self.HIDDEN)
+        self.assertEqual(r.returncode, 1)
+        [path] = [c for c in sb.called() if c.startswith("PATH=")]
+        self.assertTrue(path.endswith(":/opt/homebrew/bin:/usr/local/bin"), path)
+
+
+def suite_tarball():
+    """The OSS CAD Suite's layout in miniature: the tools setup.sh keeps (as smoke-run stubs), and some of
+    what it leaves behind — other tools, Python's tests and packages, GHDL, LLVM."""
+    files = {
+        "VERSION": "20260916\n", "README": "", "license/COPYING": "", "etc/cacert.pem": "",
+        "Frameworks/QtCore.framework/QtCore": "", "examples/ice40/blink.v": "",
+        "libexec/yosys": "", "libexec/nextpnr-ice40": "", "libexec/ivl": "", "libexec/ghdl": "", "libexec/nextpnr-ecp5": "",
+        "lib/libz.1.dylib": "", "lib/ivl/system.vpi": "", "lib/python3.11/os.py": "", "lib/python3.11/lib-dynload/_json.so": "",
+        "lib/python3.11/test/test_os.py": "", "lib/python3.11/site-packages/pip/__init__.py": "", "lib/python2.7/os.py": "",
+        "lib/ghdl/std.cf": "", "lib/libghdl-5.dylib": "", "lib/libLLVM.so.21": "", "lib/libgallium-26.so": "", "lib/dri/swrast.so": "",
+        "share/yosys/ice40/cells_sim.v": "", "share/icebox/chipdb-5k.txt": "", "share/trellis/database.json": "",
+        "bin/ghdl": "",
+    }
+    for name in ("yosys", "yosys-abc", "nextpnr-ice40", "icepack", "iceprog", "iverilog", "vvp"):
+        files[f"bin/{name}"] = ("#!/bin/sh\n" f'echo "suite-{name} $*" >> "$STUB_CALLS"\n'
+                                f'case " $STUB_FAIL " in *" {name} "*) echo "{name}: stub failure"; exit 1;; esac\n'
+                                + SMOKE.get(name, ""))
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        for rel, text in files.items():
+            data = text.encode()
+            info = tarfile.TarInfo(f"oss-cad-suite/{rel}")
+            info.size, info.mode = len(data), 0o755
+            tar.addfile(info, io.BytesIO(data))
+    return buf.getvalue()
 
 
 class Doctor(unittest.TestCase):
@@ -405,6 +618,31 @@ class Doctor(unittest.TestCase):
         ])
         self.assertTrue(r.stdout.splitlines()[8].startswith("ok   Python 3."))
 
+    def test_the_oss_cad_suite_setup_fetched_comes_first(self):
+        sb = Sandbox(self, stubs=("yosys", "nextpnr-ice40", "icepack", "iverilog", "node"))  # the machine's too
+        sb.suite(release=RELEASE, chipdb=True)
+        sb.stub("netlistsvg", where=sb.pkg / "node_modules" / ".bin")
+        r = self.doctor(sb)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(r.stdout.splitlines()[:8], [
+            "ok   yosys, the synthesiser — Yosys 0.99 (stub)",
+            "ok   nextpnr-ice40, place and route — nextpnr-ice40 (stub)",
+            "ok   icepack, the bitstream packer (icestorm)",
+            "ok   iverilog, the simulator — Icarus Verilog version 13.0 (stable)",
+            "ok   iceprog, to flash a board over USB",
+            "ok   netlistsvg 1.0.2, the schematic",
+            "ok   node v22.0.0 for the viewer",
+            "ok   IceStorm chipdb, for the pane's pin maps",
+        ])
+        self.assertEqual([c.split()[0] for c in sb.called() if c.startswith("suite-")],
+                         ["suite-yosys", "suite-nextpnr-ice40", "suite-iverilog"])
+
+    def test_harnesss_own_node_serves_the_viewer(self):
+        sb = Sandbox(self, stubs=("yosys", "nextpnr-ice40", "icepack", "iverilog"))
+        sb.harness_node(SMOKE["node"])
+        r = self.doctor(sb, hide=("iceprog",))
+        self.assertIn("ok   node v22.0.0 for the viewer", r.stdout.splitlines())
+
     def test_a_bare_machine(self):
         sb = Sandbox(self)
         r = self.doctor(sb, hide=("yosys", "nextpnr-ice40", "icepack", "iverilog", "iceprog", "node", "python3"))
@@ -416,7 +654,7 @@ class Doctor(unittest.TestCase):
             "miss iverilog — run toolchain/setup.sh",
             "info iceprog not found — synthesis works, flashing a real board does not",
             "miss node_modules — run toolchain/setup.sh",
-            "miss node for the viewer",
+            sb.no_node(),
             "info IceStorm chipdb not found — the pane falls back to its built-in iCE40UP5K-SG48 pin table",
             "miss python3",
         ])
@@ -431,7 +669,7 @@ class Doctor(unittest.TestCase):
         lines = r.stdout.splitlines()
         self.assertIn("miss yosys, the synthesiser", lines)
         self.assertIn("miss iverilog, the simulator", lines)
-        self.assertIn("miss node for the viewer", lines)
+        self.assertIn(sb.no_node(), lines)
         self.assertIn("info IceStorm chipdb not found — the pane falls back to its built-in iCE40UP5K-SG48 pin table", lines)
 
 
@@ -475,13 +713,72 @@ class ViewerSh(unittest.TestCase):
         self.assertEqual(sb.called(), [])
 
     def test_runs_the_server_beside_it_from_anywhere(self):
-        sb = Sandbox(self, stubs=("node",))
+        sb = Sandbox(self, stubs=("node", "yosys"))  # yosys visible: path.sh leaves Homebrew's bin out
         r = sb.run(["../install/viewer.sh"], HARNESS_VIEWER_PORT=4100, HARNESS_WORKSPACE=sb.ws)
         self.assertEqual(r.returncode, 0, r.stderr)
-        [call] = sb.called()
+        [call] = sb.tools()
         node, server = call.split(" ", 1)
         self.assertEqual((node, os.path.realpath(server)), ("node", os.path.realpath(sb.pkg / "viewer.mjs")))
         self.assertTrue(os.path.isabs(server))
+
+    def test_the_server_runs_with_the_suite_and_harnesss_own_node_on_path(self):
+        sb = Sandbox(self)
+        sb.harness_node('echo "PATH=$PATH" >> "$STUB_CALLS"\n')
+        sb.suite(release=RELEASE, tools=("yosys", "icepack"))
+        r = sb.run([sb.pkg / "viewer.sh"], HARNESS_VIEWER_PORT=4100, HARNESS_WORKSPACE=sb.ws)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        path = sb.called()[-1].removeprefix("PATH=").split(":")
+        # (runtimes.sh may put Harness's node dir in front more than once: once is what matters)
+        self.assertEqual(list(dict.fromkeys(path)), [str(sb.root / "harness-node"), str(sb.pkg / "oss-cad-suite" / "bin"), str(sb.bin), str(sb.sys)])
+
+    def test_no_node_anywhere_is_a_miss(self):
+        sb = Sandbox(self)
+        r = sb.run([sb.pkg / "viewer.sh"], HARNESS_VIEWER_PORT=4100, HARNESS_WORKSPACE=sb.ws, hide=("node",))
+        self.assertEqual((r.returncode, r.stdout), (1, sb.no_node() + "\n"))
+
+
+class Run(unittest.TestCase):
+    """toolchain/run and path.sh, which flow.sh and doctor.sh share: the order the tools are found in."""
+
+    def run_(self, sb, *argv, **kw):
+        return sb.run([sb.pkg / "toolchain" / "run", *argv], **kw)
+
+    def test_a_tool_with_its_arguments_and_exit_code(self):
+        sb = Sandbox(self, stubs=("yosys",))
+        sb.stub("iverilog", body='exit 3\n')
+        r = self.run_(sb, "yosys", "-p", "read_verilog rtl/*.v; stat")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(self.run_(sb, "iverilog", "-o", "out/sim.vvp").returncode, 3)
+        self.assertEqual(sb.tools(), ["yosys -p read_verilog rtl/*.v; stat", "iverilog -o out/sim.vvp"])
+
+    def test_the_suite_first_then_the_machines_then_homebrews(self):
+        sb = Sandbox(self, stubs=("yosys",))
+        sb.suite(release=RELEASE, tools=("yosys",))
+        self.run_(sb, "yosys", "-V")
+        self.assertEqual(sb.called()[:2], ["yosys -V", "suite-yosys -V"])
+        shutil.rmtree(sb.pkg / "oss-cad-suite")
+        sb.stub("show-path", body='echo "PATH=$PATH" >> "$STUB_CALLS"\n')
+        self.run_(sb, "show-path")
+        self.assertEqual(sb.called()[-1], f"PATH={sb.bin}:{sb.sys}", "yosys is visible: PATH is left alone")
+        self.run_(sb, "show-path", hide=("yosys",))
+        self.assertEqual(sb.called()[-1], f"PATH={sb.bin}:{sb.sys}:/opt/homebrew/bin:/usr/local/bin", "after, so it shadows no node")
+
+    def test_a_tool_that_is_not_there_or_no_tool_at_all(self):
+        sb = Sandbox(self)
+        r = self.run_(sb, "iceprog", "out/blink.bin", hide=("iceprog",))
+        self.assertEqual((r.returncode, r.stdout), (127, "miss iceprog — run toolchain/setup.sh\n"))
+        r = self.run_(sb)
+        self.assertEqual(r.returncode, 2)
+        self.assertIn('usage: "$YOSYS_TOOLCHAIN/run" <tool> [arguments…]', r.stderr)
+
+    def test_the_flow_draws_with_harnesss_own_node_when_path_has_none(self):
+        sb = Sandbox(self, stubs=ALL_FLOW)
+        sb.design()
+        sb.harness_node()
+        sb.stub("netlistsvg", body='echo "node=$(command -v node)" >> "$STUB_CALLS"\necho "<svg/>" > "$3"\n',
+                where=sb.pkg / "node_modules" / ".bin")
+        sb.run([sb.pkg / "toolchain" / "flow.sh", "blink"])
+        self.assertIn(f"node={sb.root / 'harness-node' / 'node'}", sb.called())
 
 
 REAL = ("iverilog", "vvp", "yosys", "nextpnr-ice40", "icepack")

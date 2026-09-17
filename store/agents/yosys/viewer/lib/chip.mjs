@@ -48,7 +48,10 @@ const CHIPDB_FOR = {
 }
 
 let chipdbDirCache
-/** IceStorm's chipdb directory, found next to icepack; null when IceStorm is not installed. */
+/**
+ * IceStorm's chipdb directory, found next to icepack — share/icestorm/chipdb in Homebrew's IceStorm,
+ * share/icebox in the OSS CAD Suite setup.sh fetches — or null when IceStorm is not installed.
+ */
 export function chipdbDir() {
   if (chipdbDirCache !== undefined) return chipdbDirCache
   chipdbDirCache = null
@@ -57,7 +60,10 @@ export function chipdbDir() {
     const bin = execFileSync('/bin/sh', ['-c', 'command -v icepack'], {
       encoding: 'utf8', env: { ...process.env, PATH: `${process.env.PATH ?? ''}:/opt/homebrew/bin:/usr/local/bin:/usr/bin` },
     }).trim()
-    if (bin) candidates.push(join(dirname(realpathSync(bin)), '..', 'share', 'icestorm', 'chipdb'))
+    if (bin) {
+      const prefix = join(dirname(realpathSync(bin)), '..')
+      candidates.push(join(prefix, 'share', 'icestorm', 'chipdb'), join(prefix, 'share', 'icebox'))
+    }
   } catch { /* not on PATH */ }
   candidates.push('/opt/homebrew/share/icestorm/chipdb', '/usr/local/share/icestorm/chipdb', '/usr/share/icestorm/chipdb')
   chipdbDirCache = candidates.find((d) => existsSync(join(d, 'chipdb-5k.txt'))) ?? null

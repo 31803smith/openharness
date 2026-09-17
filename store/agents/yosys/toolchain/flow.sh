@@ -28,6 +28,9 @@
 #   YOSYS_PACKAGE    nextpnr package, default sg48
 #   YOSYS_TOOLCHAIN  this directory; set by the harness
 #   HARNESS_DSH_DIR  the install dir (netlistsvg lives in its node_modules)
+#
+# The tools come from path.sh: the package's own OSS CAD Suite when setup.sh fetched it, else the
+# machine's (Homebrew's bin included), and node for netlistsvg even when PATH has none.
 
 set -uo pipefail
 
@@ -36,9 +39,8 @@ DSH_DIR="${HARNESS_DSH_DIR:-$(cd "$HERE/.." && pwd)}"
 WS="${HARNESS_WORKSPACE:-$PWD}"
 cd "$WS" || { echo "no workspace at $WS" >&2; exit 2; }
 
-# Homebrew's bin is not always on the PATH of a process the daemon spawned; put it there when the
-# tools are not visible, rather than making every caller remember to.
-command -v yosys >/dev/null 2>&1 || export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+# shellcheck source=path.sh
+. "$HERE/path.sh"
 
 TOP="${1:-${YOSYS_TOP:-}}"
 if [ -z "$TOP" ]; then

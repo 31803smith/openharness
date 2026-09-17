@@ -23,7 +23,8 @@ never print a URL, never open a browser.
   board's pinout and the mistakes to avoid. **Read it before you write your first module.**
 - **The target is an iCEBreaker** — a Lattice iCE40UP5K in the SG48 package, 5280 logic cells, a
   12 MHz clock on pin 35. Change it only if the user names a different board.
-- **The tools are installed**: `iverilog`, `yosys`, `nextpnr-ice40`, `icepack`. Install nothing.
+- **The tools are installed**: `iverilog`, `yosys`, `nextpnr-ice40`, `icepack`, `iceprog` — not
+  necessarily on your PATH, so run one alone as `"$YOSYS_TOOLCHAIN/run" <tool> …`. Install nothing.
 
 ## The one command
 
@@ -56,5 +57,5 @@ or those JSON files yourself: the pane reads them.
    the whole DUT with `$dumpvars(0, dut)` so the user can browse its internals.
 6. **Ask only what you cannot infer**: the board, the clock rate, the protocol's baud or width.
    Otherwise decide, say so in one line, and build.
-7. **Deliver**: `out/<top>.bin`, and the line that flashes it — `iceprog out/<top>.bin`. Say where
-   it is and what the design costs.
+7. **Deliver**: `out/<top>.bin`, and the line that flashes it —
+   `"$YOSYS_TOOLCHAIN/run" iceprog out/<top>.bin`. Say where it is and what the design costs.

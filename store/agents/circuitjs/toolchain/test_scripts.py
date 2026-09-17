@@ -4,7 +4,8 @@ Each test builds a package root in a temp dir with this checkout's scripts (and 
 file by file, and runs them with PATH set to a bin dir holding only the tools the test grants: real
 ones (bash, node, python3, tar, …) linked in, or stubs. `curl` is always a stub that serves a local
 stand-in for the pinned source tarball and the project's CI build, so setup.sh runs end to end with
-no network, and a "miss node" branch is simply a PATH without node.
+no network, and a "miss node" branch is simply a PATH without node. Harness's own Node (runtimes.sh's
+fallback) is looked for in a runtime dir of the sandbox's, never the real ~/.harness.
 """
 from __future__ import annotations
 
@@ -27,7 +28,7 @@ COMMIT = PINS["CIRCUITJS1_COMMIT"]
 TARBALL_URL = PINS["CIRCUITJS1_TARBALL"].replace("${CIRCUITJS1_COMMIT}", COMMIT)
 BUILD_URL = PINS["CIRCUITJS1_BUILD"]
 PERMS = ["0123456789ABCDEF0123456789ABCDEF", "FEDCBA9876543210FEDCBA9876543210"]
-BASE_TOOLS = ("bash", "dirname", "mkdir", "rm", "mktemp", "find", "head", "cp", "ls", "wc", "tr",
+BASE_TOOLS = ("bash", "cat", "dirname", "mkdir", "rm", "mktemp", "find", "head", "cp", "ls", "wc", "tr",
               "xargs", "shasum", "sort", "date", "du", "cut", "sed", "mv")
 
 CURL = """#!/bin/bash
@@ -56,7 +57,9 @@ class Sandbox:
         self.root = self.dir / "circuitjs"
         self.bin = self.dir / "bin"
         self.bin.mkdir()
+        self.runtime = self.dir / "runtime"
         (self.root / "toolchain").mkdir(parents=True)
+        (self.root / "toolchain" / "runtimes.sh").symlink_to(PKG / "toolchain" / "runtimes.sh")
         for tool in BASE_TOOLS + tools:
             self.grant(tool)
 
@@ -70,13 +73,28 @@ class Sandbox:
 
     def stub(self, name: str, body: str) -> None:
         path = self.bin / name
+        path.unlink(missing_ok=True)  # never write through a link to a real command
         path.write_text(body)
         path.chmod(0o755)
+
+    def harness_node(self) -> None:
+        """Harness's own Node, recorded where runtimes.sh looks when node is not on PATH."""
+        found = shutil.which("node")
+        assert found, "node is needed on this machine to run the test"
+        (self.dir / "harness-node").mkdir()
+        (self.dir / "harness-node" / "node").symlink_to(found)
+        self.runtime.mkdir()
+        (self.runtime / "current-node").write_text(f"{self.dir}/harness-node/node\n")
 
     def run(self, rel: str, cwd: Path | None = None, **env: str) -> subprocess.CompletedProcess:
         clean = {k: v for k, v in os.environ.items() if not k.startswith("HARNESS_")}
         return subprocess.run([str(self.root / rel)], cwd=cwd or self.dir, capture_output=True, text=True,
-                              env={**clean, "PATH": str(self.bin), **env}, timeout=120)
+                              env={**clean, "PATH": str(self.bin), "ADAPTER_RUNTIME_DIR": str(self.runtime), **env},
+                              timeout=120)
+
+
+def no_node(box: Sandbox) -> str:
+    return f"miss node >= 18, and Harness's own Node is not in {box.runtime} — run `harness start` once to lay it down"
 
 
 def lines(done: subprocess.CompletedProcess) -> list[str]:
@@ -142,10 +160,10 @@ class Setup(unittest.TestCase):
 
     def test_each_tool_it_needs_is_named_when_missing(self) -> None:
         for curl, have, missing in ((False, ("node", "python3", "tar"), "miss curl on PATH"),
-                                    (True, ("python3", "tar"), "miss node >= 18 on PATH (the pane is a node server)"),
+                                    (True, ("python3", "tar"), None),
                                     (True, ("node", "tar"), "miss python3 (the verdict)"),
                                     (True, ("node", "python3"), "miss tar on PATH")):
-            with self.subTest(missing=missing):
+            with self.subTest(missing=missing or "node"):
                 box = Sandbox(self, have)
                 box.link("toolchain/setup.sh")
                 box.link("VERSIONS")
@@ -153,7 +171,16 @@ class Setup(unittest.TestCase):
                     box.stub("curl", CURL)
                 done = box.run("toolchain/setup.sh")
                 self.assertEqual(done.returncode, 1)
-                self.assertEqual(lines(done), [missing])
+                self.assertEqual(lines(done), [missing or no_node(box)])
+
+    def test_without_node_on_path_it_runs_on_harnesss_own(self) -> None:
+        box = self.sandbox("python3", "tar")
+        box.harness_node()
+        self.upstream()
+        done = self.setup(box)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual(lines(done)[1], "     2 compiled permutation(s), 2 theme images, 2 example circuits")
+        self.assertRegex(lines(done)[-1], r"^ok   node v\d+\S* · Python 3\.\d+\.\d+$")
 
     def test_it_installs_the_static_half_and_the_compiled_module(self) -> None:
         box = self.sandbox("node", "python3", "tar")
@@ -275,14 +302,23 @@ class Doctor(unittest.TestCase):
         self.assertEqual(len(out), 4)
 
     def test_an_empty_machine(self) -> None:
-        done = self.sandbox().run("toolchain/doctor.sh")
+        box = self.sandbox()
+        done = box.run("toolchain/doctor.sh")
         self.assertEqual(done.returncode, 1)
         self.assertEqual(lines(done), [
             "miss upstream/ — run toolchain/setup.sh (it downloads CircuitJS1)",
             "miss upstream/war/circuitjs1/circuits — run toolchain/setup.sh",
-            "miss node >= 18 (the pane is a node server)",
+            no_node(box),
             "miss python3 (the verdict)",
         ])
+
+    def test_harnesss_own_node_serves_the_pane(self) -> None:
+        box = self.sandbox("python3")
+        box.harness_node()
+        self.install(box)
+        done = box.run("toolchain/doctor.sh")
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertRegex(lines(done)[2], r"^ok   node v\d+\S* \(the pane\)$")
 
     def test_a_static_half_without_the_compiled_module(self) -> None:
         box = self.sandbox("node", "python3")
@@ -349,6 +385,12 @@ class ViewerLauncher(unittest.TestCase):
         done = box.run("viewer.sh", HARNESS_VIEWER_PORT="4100", HARNESS_WORKSPACE="/Users/example/circuit")
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertEqual(done.stdout, f"node {box.root}/viewer.mjs in {box.dir} port=4100 ws=/Users/example/circuit\n")
+
+    def test_no_node_anywhere_is_a_miss_not_a_crash(self) -> None:
+        box = Sandbox(self, ("pwd",))
+        box.link("viewer.sh")
+        done = box.run("viewer.sh", HARNESS_VIEWER_PORT="4100", HARNESS_WORKSPACE="/Users/example/circuit")
+        self.assertEqual((done.returncode, done.stdout), (1, no_node(box) + "\n"))
 
 
 if __name__ == "__main__":

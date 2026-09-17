@@ -18,7 +18,8 @@ EPL-1.0, [kieler/elkjs](https://github.com/kieler/elkjs). netlistsvg's own depen
 
 **Project IceStorm chip database** — Claire Xenia Wolf and contributors, ISC (`LICENSE-icestorm`),
 [YosysHQ/icestorm](https://github.com/YosysHQ/icestorm). The Board and Chip tabs read the
-package-pin table (`.pins <package>`) from the installed `share/icestorm/chipdb/chipdb-*.txt`.
+package-pin table (`.pins <package>`) from the installed `chipdb-*.txt` beside icepack
+(`share/icestorm/chipdb/` in Homebrew's IceStorm, `share/icebox/` in the OSS CAD Suite).
 `viewer/lib/chip.mjs` carries the 39-row iCE40UP5K-SG48 table from `chipdb-5k.txt` as a fallback for
 a machine where the chipdb cannot be found.
 

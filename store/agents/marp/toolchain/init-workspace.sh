@@ -4,4 +4,5 @@
 set -euo pipefail
 : "${HARNESS_DSH_DIR:?HARNESS_DSH_DIR is required}"
 mkdir -p .harness assets
-node "$HARNESS_DSH_DIR/toolchain/check.mjs" deck.md >/dev/null 2>&1 || true
+# Through the wrapper, which finds a node when the daemon's PATH has none.
+"$HARNESS_DSH_DIR/toolchain/check" deck.md >/dev/null 2>&1 || true

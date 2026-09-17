@@ -7,9 +7,14 @@ cd "$(dirname "$0")/.."
 root=$PWD
 # shellcheck disable=SC1091
 . ./VERSIONS
+# shellcheck source=runtimes.sh
+. toolchain/runtimes.sh
 
 command -v curl >/dev/null 2>&1 || { echo "miss curl on PATH"; exit 1; }
-command -v node >/dev/null 2>&1 || { echo "miss node >= 18 on PATH (the pane is a node server)"; exit 1; }
+# node reads the permutations out of the build here, and the pane is a node server: this machine's
+# own when it has one, else the Node Harness itself runs on.
+harness_node 18 || exit 1
+# The verdict is written for any python3 from 3.9 on, Apple's own included.
 command -v python3 >/dev/null 2>&1 || { echo "miss python3 (the verdict)"; exit 1; }
 command -v tar >/dev/null 2>&1 || { echo "miss tar on PATH"; exit 1; }
 

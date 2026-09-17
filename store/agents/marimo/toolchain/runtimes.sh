@@ -77,6 +77,8 @@ harness_node() {
   # A node without npm beside it (a distro's nodejs package) cannot run a setup's `npm ci`.
   if [ "$own" = 1 ] && command -v npm >/dev/null 2>&1; then return 0; fi
   recorded="$(cat "$HARNESS_RUNTIME/current-node" 2>/dev/null || true)"
+  # Already Harness's own (a second call, or a wrapper calling a script that asks again): nothing to add.
+  if [ "$own" = 1 ] && [ -n "$recorded" ] && [ "$(command -v node)" = "${recorded%/*}/node" ]; then return 0; fi
   if [ -n "$recorded" ] && [ -x "${recorded%/*}/node" ]; then
     PATH="${recorded%/*}:$PATH"; export PATH; hash -r 2>/dev/null || true
     _harness_node_at_least "$min" && return 0
