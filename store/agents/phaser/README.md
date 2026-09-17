@@ -59,5 +59,6 @@ the wrapper belong here, and a newer Phaser is a bump of `package.json`, `templa
 ```sh
 harness dsh check .                                   # conformance
 harness dsh install "$PWD" --link                     # this checkout as the installed agent
-python3 -m unittest discover -s toolchain              # the verdict's judge, without vite
+python3 -m unittest discover -s toolchain              # the verdict's judge and the scripts, without vite
+node --test 'test/*.test.mjs'                          # the pane's server on a real Vite (after setup)
 ```
