@@ -16,7 +16,7 @@ import 'package:harness/ws/ws_conn.dart';
 
 import 'swarm_state_test.dart' show createApp;
 
-/// Answers what the Talk to Local model manager dialog reads on opening and records the
+/// Answers what the Talk to Model manager dialog reads on opening and records the
 /// create it sends on Start. Anything else asked (the terminal the new pane
 /// opens, say) is left pending, which is what a machine that has not answered
 /// yet looks like — the same shape as the dialog's own test.
@@ -62,7 +62,7 @@ class _LocalModelConn extends WsConn {
           'state': 'created',
           'agent': {
             'id': 'lm1',
-            'name': 'Local model manager',
+            'name': 'Model manager',
             'engine': 'opencode',
           },
         });

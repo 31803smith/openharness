@@ -781,7 +781,7 @@ private extension SwarmTitlebar {
     let models = main.item(withTitle: "Models")!.submenu!
     try checkTitlebar(models.items.filter { !$0.isSeparatorItem }.map(\.title) == [
       "Subscription", "Anthropic, aabbcc, 12% remaining", "OpenAI, Not signed in",
-      "Local", "Talk to Local model manager"
+      "Local", "Talk to Model manager"
     ], "Models carries the two sections with something behind them, ending on the row that starts a model")
     try checkTitlebar(models.items.filter(\.isSeparatorItem).count == 1,
       "One native separator, between the sections — the run row is a Local row, not a section")
@@ -793,20 +793,20 @@ private extension SwarmTitlebar {
     // last row of Local, in the same list as the models, enabled with nothing served, and dispatched
     // through the same guarded handler as Link Machine… so a modal still swallows it.
     let runLocal = models.items.last!
-    try checkTitlebar(runLocal.title == "Talk to Local model manager",
+    try checkTitlebar(runLocal.title == "Talk to Model manager",
       "the last item in Models is the row that runs a local model")
     try checkTitlebar(!models.items[models.items.count - 2].isSeparatorItem,
       "the run row sits directly under the Local rows, with no separator of its own")
     try checkTitlebar(runLocal.isEnabled && runLocal.submenu == nil,
-      "Talk to Local model manager is enabled even when nothing is served, and opens no submenu")
+      "Talk to Model manager is enabled even when nothing is served, and opens no submenu")
     try checkTitlebar(runLocal.target === self && runLocal.action == #selector(menuAction(_:))
       && runLocal.representedObject as? String == "runLocalModel",
-      "Talk to Local model manager dispatches runLocalModel through the guarded channel handler")
+      "Talk to Model manager dispatches runLocalModel through the guarded channel handler")
     try checkTitlebar(runLocal.identifier?.rawValue == HarnessKeymapMenu.actionPrefix + "runLocalModel",
-      "Talk to Local model manager is identified for the keymap like every other Harness command")
-    try checkTitlebar(validateMenuItem(runLocal), "Talk to Local model manager validates with the workspace live")
+      "Talk to Model manager is identified for the keymap like every other Harness command")
+    try checkTitlebar(validateMenuItem(runLocal), "Talk to Model manager validates with the workspace live")
     actionsEnabled = false
-    try checkTitlebar(!validateMenuItem(runLocal), "Talk to Local model manager cannot run behind a modal")
+    try checkTitlebar(!validateMenuItem(runLocal), "Talk to Model manager cannot run behind a modal")
     actionsEnabled = true
     try checkTitlebar(!runLocal.title.lowercased().contains("grid") && !runLocal.title.contains("Mac"),
       "the command names neither the plumbing nor one vendor's computer")
@@ -818,7 +818,7 @@ private extension SwarmTitlebar {
     let picked = main.item(withTitle: "Models")!.submenu!.items.last!
     // AppKit gives a submenu's parent its own `submenuAction:`; what matters is that it is no longer
     // the guarded channel handler — nothing is dispatched until a machine is chosen.
-    try checkTitlebar(picked.title == "Talk to Local model manager" && picked.submenu != nil
+    try checkTitlebar(picked.title == "Talk to Model manager" && picked.submenu != nil
       && picked.action != #selector(menuAction(_:)) && picked.representedObject == nil,
       "with two machines the manager row opens a submenu instead of dispatching itself")
     try checkTitlebar(picked.identifier?.rawValue == HarnessKeymapMenu.actionPrefix + "runLocalModel",
@@ -856,7 +856,7 @@ private extension SwarmTitlebar {
       "a served model names the machine answering it")
     try checkTitlebar(served.item(withTitle: "DeepSeek-V4-Flash") != nil,
       "a model with no node named is listed on its own")
-    try checkTitlebar(served.items.last?.title == "Talk to Local model manager"
+    try checkTitlebar(served.items.last?.title == "Talk to Model manager"
       && !served.items[served.items.count - 2].isSeparatorItem
       && served.items.filter(\.isSeparatorItem).count == 1,
       "the run row stays last in Local, directly under the served models, once models are served")
