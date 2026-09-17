@@ -122,9 +122,9 @@ function sendFile(req, res, full, cache) {
 const clients = new Set()
 
 const server = createServer((req, res) => {
-  const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`)
+  // An absolute-form target (`GET http://a:99999/`) makes URL throw, a bad escape decodeURIComponent.
   let path
-  try { path = decodeURIComponent(url.pathname) } catch { res.writeHead(400); res.end(); return }
+  try { path = decodeURIComponent(new URL(req.url, `http://127.0.0.1:${port}`).pathname) } catch { res.writeHead(400); res.end(); return }
   if (path === '/' || path === '/index.html') return sendFile(req, res, join(WEB, 'index.html'), 'no-store')
   if (path.startsWith('/app/')) {
     const full = safe(WEB, path.slice(5))
@@ -164,10 +164,10 @@ server.listen(port, '127.0.0.1', () => console.log(`[model-viewer] listening on 
 // Live: watch, wait for writes to settle, broadcast
 
 let last = ''
-function broadcast(force = false) {
+function broadcast() {
   const snapshot = state()
   const key = JSON.stringify({ ...snapshot, now: 0 })
-  if (!force && key === last) return
+  if (key === last) return
   last = key
   const message = `event: state\ndata: ${JSON.stringify(snapshot)}\n\n`
   for (const client of clients) client.write(message)
@@ -191,8 +191,9 @@ let framesTimer = null
 let framesExpiry = null
 try {
   watch(workspace, { recursive: true }, (_event, name) => {
+    // No name (fs.watch does not promise one): something changed, so look again.
     const n = String(name ?? '').split(sep).join('/')
-    if (!n || n.includes('node_modules/') || n.startsWith('.git/') || n.includes('__pycache__')) return
+    if (n.includes('node_modules/') || n.startsWith('.git/') || n.includes('__pycache__')) return
     if (/-frames\//.test(n)) {
       frames = { at: Date.now(), dir: n.slice(0, n.indexOf('-frames/') + 7) }
       if (!framesTimer) { broadcast(); framesTimer = setTimeout(() => { framesTimer = null; broadcast() }, 1000) }
@@ -214,3 +215,4 @@ setInterval(() => {
   if (build?.state === 'building') broadcast()
 }, 1500).unref()
 setInterval(() => { for (const client of clients) client.write(': ping\n\n') }, 20_000).unref()
+for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => { for (const client of clients) client.end(); server.close(); process.exit(0) })
