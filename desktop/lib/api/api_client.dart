@@ -76,12 +76,19 @@ class ApiClient {
         if (title != null && title.trim().isNotEmpty) 'title': title.trim(),
         if (body != null && body.trim().isNotEmpty) 'body': body.trim(),
       },
+      // The CLI accepts a write only from this app on this computer, as it does
+      // for renaming a machine. Without the header every review was refused
+      // with 403, which the store worded as "Sign in".
+      options: Options(headers: {'x-adapter-local': '1'}),
     );
     return unwrapApiResponse(res) as Map<String, dynamic>?;
   }
 
   Future<void> deleteStoreReview(String harnessId) async {
-    final res = await _dio.delete('/api/store/harnesses/$harnessId/review');
+    final res = await _dio.delete(
+      '/api/store/harnesses/$harnessId/review',
+      options: Options(headers: {'x-adapter-local': '1'}),
+    );
     unwrapApiResponse(res);
   }
 

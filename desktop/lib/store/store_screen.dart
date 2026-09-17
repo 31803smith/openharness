@@ -89,13 +89,44 @@ class _Category extends _Shelf {
   final String name;
 }
 
+/// Where a person was in the store, kept per window (the app has one store
+/// tab). Only the visible tab is built, so switching away disposed the store's
+/// state: coming back reset it to Discover, with the search and the open
+/// product page gone. A tab should keep its place, as a browser tab does.
+class _StorePlace {
+  _Shelf shelf = const _Discover();
+  String? selected;
+  String query = '';
+}
+
+final _storePlaces = Expando<_StorePlace>('store place');
+
 class _StoreTabState extends State<StoreTab> {
   late final StoreController _store = StoreController(
     widget.api ?? ApiStoreApi(widget.notifier.api),
   );
-  _Shelf _shelf = const _Discover();
-  late String? _selected = widget.initialHarness;
-  final _search = TextEditingController();
+  late final _StorePlace _place = _storePlaces[widget.notifier] ??=
+      _StorePlace();
+  late _Shelf _shelf = widget.initialHarness == null
+      ? _place.shelf
+      : const _Discover();
+  late String? _selected = widget.initialHarness ?? _place.selected;
+  late final _search = TextEditingController(
+    text: widget.initialHarness == null ? _place.query : '',
+  );
+
+  void _remember() {
+    _place
+      ..shelf = _shelf
+      ..selected = _selected
+      ..query = _search.text;
+  }
+
+  @override
+  void setState(VoidCallback fn) {
+    super.setState(fn);
+    _remember();
+  }
 
   @override
   void initState() {
