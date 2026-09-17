@@ -2947,11 +2947,15 @@ class AppNotifier extends ChangeNotifier {
     await refreshLinkedMachines();
     final machine = machineStates[machineId];
     if (machine == null) return null;
-    // Closed first: the state below says this machine wants a password, and a live socket still
-    // answering underneath would make that a lie for as long as it lasted.
-    await _pool?.closeMachine(machineId);
+    // ⚠️ Marked unlinked BEFORE the socket is closed, not after. Closing reports `disconnected`, and
+    // the status handler reads a disconnect from a LINKED machine as the machine going away — it
+    // sets `nodeOnline = false`. Closed first, a computer that is still switched on came out of
+    // Unlink labelled "Offline" and unopenable, and stayed that way until the next machine refresh.
+    // Flagged first, the handler skips that (see the `!machine.needsLink` guard in `_ensurePool`) and
+    // presence stays whatever `/api/machines` last said: on → "Needs its password", off → "Offline".
     machine.needsLink = true;
     machine.agentLoadStatus = AgentLoadStatus.needsLink;
+    await _pool?.closeMachine(machineId);
     _markSessionsUnreachable(
       machine,
       'This phone is no longer linked. Enter the password again to reconnect.',

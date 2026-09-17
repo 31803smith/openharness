@@ -14,6 +14,7 @@ import 'phone_card.dart';
 import 'phone_header.dart';
 import 'phone_navigation.dart';
 import 'phone_search_button.dart';
+import 'phone_status.dart';
 import 'phone_sheet.dart';
 import 'unlink_machine.dart';
 
@@ -111,7 +112,14 @@ class _Body extends StatelessWidget {
 
   Widget _tile(BuildContext context, MachineState state) => Padding(
     padding: const EdgeInsets.only(bottom: kPhoneCardGap),
-    child: MachineTile(machine: state, onTap: () => _open(context, state)),
+    // An offline machine has nothing to connect to and nothing to unlink from here that would
+    // change anything, so its row does not open — see [PhoneCard], which dims a row with no tap.
+    child: MachineTile(
+      machine: state,
+      onTap: phoneMachineStatusOf(state) == PhoneMachineStatus.offline
+          ? null
+          : () => _open(context, state),
+    ),
   );
 
   /// This screen connects and disconnects, and does nothing else.

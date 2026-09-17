@@ -26,8 +26,13 @@ enum PhoneMachineStatus {
 }
 
 PhoneMachineStatus phoneMachineStatusOf(MachineState machine) {
-  if (machine.needsLink) return PhoneMachineStatus.needsPassword;
+  // ⚠️ Offline FIRST. A machine that is switched off is almost always also unlinked from here — the
+  // relay refuses the dial before the other computer is ever reached — so asking about the link
+  // first called a powered-down machine "Needs its password" and offered a form that could only
+  // fail. The password is worth asking for once there is something to give it to, which is what the
+  // desktop's "Offline · Link required" already says.
   if (machine.nodeOnline == false) return PhoneMachineStatus.offline;
+  if (machine.needsLink) return PhoneMachineStatus.needsPassword;
   final answering =
       machine.connectionStatus == ConnectionStatus.connected &&
       machine.agentLoadStatus != AgentLoadStatus.loading;
@@ -114,9 +119,7 @@ PhoneSummary? phoneReclaimAction(TerminalSession? session) =>
         label: 'Take control',
         tone: PhoneTone.attention,
       ),
-      TerminalSessionStatus.error || TerminalSessionStatus.closed => (
-        label: 'Reconnect',
-        tone: PhoneTone.bad,
-      ),
+      TerminalSessionStatus.error ||
+      TerminalSessionStatus.closed => (label: 'Reconnect', tone: PhoneTone.bad),
       _ => null,
     };

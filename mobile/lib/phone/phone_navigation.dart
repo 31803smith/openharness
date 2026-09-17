@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/cupertino.dart';
 
 import 'package:harness_mobile/state/app_state.dart';
+
 import 'agent_index.dart';
 import 'agent_swipe.dart';
 import 'agents_page.dart';
@@ -52,7 +53,8 @@ void openMachine(
   MachineSwipeList? swipeNeighbours,
 }) {
   final machine = notifier.stateOf(machineId);
-  if (machine == null) return;
+  // Offline: no password form to show and no agents to list — every caller also draws the row inert.
+  if (machine == null || machine.nodeOnline == false) return;
   // A pager decides page by page which of the two screens a machine needs, because that answer
   // changes under the finger — linking one mid-swipe turns its page into the agents list. Opened on
   // its own, the old pair of routes is kept: [LinkPage] then walks forward to [AgentsPage] itself,
@@ -137,7 +139,14 @@ void openAgent(
   } else {
     navigator.push(route);
   }
-  unawaited(_openPane(notifier, machineId, agentId, keepOthers: swipeNeighbours != null));
+  unawaited(
+    _openPane(
+      notifier,
+      machineId,
+      agentId,
+      keepOthers: swipeNeighbours != null,
+    ),
+  );
 }
 
 /// Opens one agent as a PAGER over [entries]: the page it lands on is the agent tapped, and a

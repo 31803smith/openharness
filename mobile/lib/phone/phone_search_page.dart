@@ -8,6 +8,7 @@ import 'package:harness_mobile/widgets/engine_identity.dart';
 
 import 'phone_navigation.dart';
 import 'phone_search_index.dart';
+import 'phone_status.dart';
 import 'search_result_text.dart';
 import 'status_pill.dart';
 
@@ -425,11 +426,15 @@ class _ResultRowState extends State<_ResultRow> {
   bool _pressed = false;
 
   /// An agent whose terminal has gone cannot be opened, the same rule
-  /// [AgentRow] applies. A machine can always be opened — a locked one opens on
-  /// its password form, which is the thing to do about it.
+  /// [AgentRow] applies. A machine opens unless it is offline — a locked one
+  /// opens on its password form, which is the thing to do about it, but a
+  /// switched-off one has nothing to take a password.
   bool get _openable => switch (widget.row.kind) {
     PhoneSearchKind.agent => widget.row.entry?.agent.terminalAvailable ?? false,
-    PhoneSearchKind.machine => true,
+    PhoneSearchKind.machine =>
+      widget.row.machine == null ||
+          phoneMachineStatusOf(widget.row.machine!) !=
+              PhoneMachineStatus.offline,
   };
 
   void _press(bool pressed) {
@@ -581,12 +586,21 @@ class _Action extends StatelessWidget {
 
   /// Null where the row says nothing — an agent that opens, which is every
   /// agent row bar the ones with no terminal left.
+  ///
+  /// A machine always says something, and an offline one says so rather than
+  /// "No terminal": it is dimmed for a different reason, and the word is the
+  /// only place that reason is given.
   String? get _label {
-    if (!openable) return 'No terminal';
+    final machine = row.machine;
     return switch (row.kind) {
-      PhoneSearchKind.agent => null,
-      PhoneSearchKind.machine =>
-        row.machine?.needsLink ?? false ? 'Unlock' : 'View',
+      PhoneSearchKind.agent => openable ? null : 'No terminal',
+      PhoneSearchKind.machine => switch (machine == null
+          ? null
+          : phoneMachineStatusOf(machine)) {
+        PhoneMachineStatus.offline => 'Offline',
+        PhoneMachineStatus.needsPassword => 'Unlock',
+        _ => 'View',
+      },
     };
   }
 
