@@ -1,0 +1,203 @@
+// node --test store/agents/harness-builder/test/ — the Builder's own logic, without a network, a
+// browser or an engine: the build record and its verdict, scaffolding, the quality bar, and laying out
+// a workspace the way Harness does.
+import assert from 'node:assert/strict'
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { after, describe, it } from 'node:test'
+import { fileURLToPath } from 'node:url'
+import { checkPackage, privateDataIn } from '../toolchain/lib/check.mjs'
+import { launchEnv, materialize } from '../toolchain/lib/materialize.mjs'
+import { agentEnv, fingerprint } from '../toolchain/lib/proof.mjs'
+import { scaffold, slug } from '../toolchain/lib/scaffold.mjs'
+import { STAGES, ensureWorkspace, readBuild, saveBuild, setStage, verdictFor } from '../toolchain/lib/state.mjs'
+import { currentArtifact, viewerUrl } from '../toolchain/lib/viewer.mjs'
+
+const REPO_STORE = fileURLToPath(new URL('../../../', import.meta.url))
+const roots = []
+function tmp() {
+  const dir = mkdtempSync(join(tmpdir(), 'builder-test-'))
+  roots.push(dir)
+  return dir
+}
+after(() => { for (const dir of roots) rmSync(dir, { recursive: true, force: true }) })
+
+describe('the build record', () => {
+  it('starts with every stage pending and a verdict that asks for a tool', () => {
+    const ws = tmp()
+    const build = ensureWorkspace(ws)
+    assert.deepEqual(build.stages.map((s) => s.id), STAGES.map((s) => s.id))
+    assert.ok(build.stages.every((s) => s.state === 'pending'))
+    const verdict = JSON.parse(readFileSync(join(ws, '.harness', 'verdict.json'), 'utf8'))
+    assert.equal(verdict.ready, false)
+    assert.match(verdict.summary, /name a tool/)
+    assert.equal(verdict.phases.length, STAGES.length)
+    assert.ok(existsSync(join(ws, '.builder', 'decisions.md')))
+  })
+
+  it('keeps one stage active at a time and says where the work is', () => {
+    const ws = tmp()
+    const build = ensureWorkspace(ws)
+    build.target = { id: 'example/vega-lite', name: 'Vega-Lite', engine: 'claude' }
+    setStage(build, 'research', 'active', 'reading the docs')
+    setStage(build, 'toolchain', 'active', 'pinning')
+    saveBuild(ws, build)
+    const again = readBuild(ws)
+    assert.equal(again.stages.find((s) => s.id === 'research').state, 'pending')
+    assert.equal(again.stages.find((s) => s.id === 'toolchain').state, 'active')
+    const verdict = verdictFor(ws, again)
+    assert.match(verdict.summary, /^Vega-Lite · Toolchain · pinning/)
+    assert.equal(verdict.artifact, 'package/harness.json')
+  })
+
+  it('refuses a stage or state that does not exist', () => {
+    const build = ensureWorkspace(tmp())
+    assert.throws(() => setStage(build, 'polish', 'active'), /unknown stage/)
+    assert.throws(() => setStage(build, 'research', 'started'), /unknown state/)
+  })
+
+  it('is ready only when every stage is done, the check is clean, the install passed and three proofs passed', () => {
+    const ws = tmp()
+    const build = ensureWorkspace(ws)
+    for (const s of build.stages) setStage(build, s.id, 'done')
+    saveBuild(ws, build)
+    assert.equal(verdictFor(ws, build).ready, false)
+    writeFileSync(join(ws, '.builder', 'check.json'), JSON.stringify({ findings: [], counts: { errors: 0, warnings: 0 } }))
+    writeFileSync(join(ws, '.builder', 'fresh.json'), JSON.stringify({ passed: true }))
+    build.proofs = { easy: { state: 'passed' }, medium: { state: 'passed' } }
+    assert.equal(verdictFor(ws, build).ready, false)
+    build.proofs.hard = { state: 'passed' }
+    const verdict = verdictFor(ws, build)
+    assert.equal(verdict.ready, true)
+    assert.match(verdict.summary, /ready for the Store/)
+    assert.ok(verdict.evaluation.every((e) => e.passed === true))
+  })
+})
+
+describe('scaffold', () => {
+  it('lays out a package that names the tool, with executable scripts and the canonical runtimes helper', () => {
+    const pkg = join(tmp(), 'package')
+    const made = scaffold(pkg, { id: 'example/vega-lite', tool: 'Vega-Lite', reference: join(REPO_STORE, '..') })
+    const manifest = JSON.parse(readFileSync(join(pkg, 'harness.json'), 'utf8'))
+    assert.equal(manifest.id, 'example/vega-lite')
+    assert.equal(manifest.name, 'Vega-Lite')
+    assert.equal(manifest.agent.env.VEGA_LITE_TOOLCHAIN, '${dsh}/toolchain')
+    assert.ok(existsSync(join(pkg, 'skills', 'vega-lite', 'SKILL.md')))
+    assert.ok(lstatSync(join(pkg, 'toolchain', 'setup.sh')).mode & 0o111)
+    assert.equal(readFileSync(join(pkg, 'toolchain', 'runtimes.sh'), 'utf8'), readFileSync(join(REPO_STORE, 'tools', 'runtimes.sh'), 'utf8'))
+    assert.ok(made.created.length >= 12)
+  })
+
+  it('never overwrites a file the build already wrote', () => {
+    const pkg = join(tmp(), 'package')
+    mkdirSync(pkg, { recursive: true })
+    writeFileSync(join(pkg, 'AGENTS.md'), '# mine\n')
+    scaffold(pkg, { id: 'example/tool', tool: 'Tool' })
+    assert.equal(readFileSync(join(pkg, 'AGENTS.md'), 'utf8'), '# mine\n')
+  })
+
+  it('refuses an id that is not owner/name', () => {
+    assert.throws(() => scaffold(join(tmp(), 'p'), { id: 'Vega-Lite' }), /owner\/name/)
+    assert.equal(slug('Vega-Lite 5!'), 'vega-lite-5')
+  })
+})
+
+describe('the quality bar', () => {
+  it('passes the Store\'s own Marp harness on everything a package itself controls', () => {
+    const { findings } = checkPackage(join(REPO_STORE, 'agents', 'marp'), { reference: join(REPO_STORE, '..'), fresh: { passed: true } })
+    const errors = findings.filter((f) => f.severity === 'error')
+    assert.deepEqual(errors, [])
+  })
+
+  it('finds what a scaffold has not done yet', () => {
+    const pkg = join(tmp(), 'package')
+    scaffold(pkg, { id: 'example/tool', tool: 'Tool', reference: join(REPO_STORE, '..') })
+    const { findings } = checkPackage(pkg, { reference: join(REPO_STORE, '..'), build: { proofs: {} } })
+    const kinds = new Set(findings.map((f) => f.kind))
+    for (const kind of ['manifest_description', 'agent_instructions_thin', 'skill_thin', 'store_examples', 'proofs', 'fresh_not_run']) {
+      assert.ok(kinds.has(kind), `expected ${kind}`)
+    }
+    assert.ok(!kinds.has('global_install'), 'the runtimes helper\'s comments are not an install')
+  })
+
+  it('refuses global installs and private data', () => {
+    const pkg = join(tmp(), 'package')
+    scaffold(pkg, { id: 'example/tool', tool: 'Tool', reference: join(REPO_STORE, '..') })
+    writeFileSync(join(pkg, 'toolchain', 'setup.sh'), '#!/usr/bin/env bash\n# brew install is how people do it, but not here\nbrew install lilypond\n')
+    chmodSync(join(pkg, 'toolchain', 'setup.sh'), 0o755)
+    writeFileSync(join(pkg, 'skills', 'tool', 'notes.md'), 'Built on /Users/alice/code/tool by alice@corp.io\n')
+    const kinds = checkPackage(pkg, {}).findings.filter((f) => f.severity === 'error').map((f) => f.kind)
+    assert.ok(kinds.includes('global_install'))
+    assert.equal(kinds.filter((k) => k === 'private_data').length, 1)
+  })
+
+  it('tells private data from placeholders', () => {
+    assert.deepEqual(privateDataIn('/Users/example/work and you@example.com and /home/runner/x'), [])
+    assert.equal(privateDataIn('see /home/bob/.config').length, 1)
+    assert.equal(privateDataIn('token sk-ant-abcdefghijklmnopqrstuvwxyz0123').length, 1)
+  })
+})
+
+describe('a workspace laid out as Harness lays it out', () => {
+  function pkgWithTemplate() {
+    const pkg = join(tmp(), 'package')
+    scaffold(pkg, { id: 'example/tool', tool: 'Tool', reference: join(REPO_STORE, '..') })
+    writeFileSync(join(pkg, 'AGENTS.md'), '# Tool\n\nUse the pane.\n')
+    writeFileSync(join(pkg, 'toolchain', 'init-workspace.sh'), '#!/usr/bin/env bash\necho "$HARNESS_DSH $TOOL_TOOLCHAIN" > init.txt\n')
+    chmodSync(join(pkg, 'toolchain', 'init-workspace.sh'), 0o755)
+    return pkg
+  }
+
+  it('copies the template, runs init with the launch env, writes AGENTS.md and CLAUDE.md, links skills', () => {
+    const pkg = pkgWithTemplate()
+    const ws = join(tmp(), 'ws')
+    const result = materialize(pkg, ws)
+    assert.deepEqual(result.warnings, [])
+    assert.ok(existsSync(join(ws, 'brief.json')))
+    assert.equal(readFileSync(join(ws, 'init.txt'), 'utf8').trim(), `example/tool ${pkg}/toolchain`)
+    assert.match(readFileSync(join(ws, 'AGENTS.md'), 'utf8'), /^<!-- harness:dsh example\/tool -->\n# Tool/)
+    assert.equal(readFileSync(join(ws, 'CLAUDE.md'), 'utf8'), '@AGENTS.md\n')
+    assert.equal(readlinkSync(join(ws, '.claude', 'skills', 'tool')), join(pkg, 'skills', 'tool'))
+    assert.ok(existsSync(join(ws, '.harness')))
+  })
+
+  it('links skills where Codex reads them, and is idempotent', () => {
+    const pkg = pkgWithTemplate()
+    const ws = join(tmp(), 'ws')
+    materialize(pkg, ws, { engine: 'codex' })
+    assert.ok(existsSync(join(ws, '.agents', 'skills', 'tool')))
+    assert.ok(!existsSync(join(ws, 'CLAUDE.md')))
+    writeFileSync(join(ws, 'init.txt'), 'kept')
+    const again = materialize(pkg, ws, { engine: 'codex' })
+    assert.equal(readFileSync(join(ws, 'init.txt'), 'utf8'), 'kept', 'the marker exists, so init does not run again')
+    assert.ok(again.kept.includes('AGENTS.md'))
+  })
+
+  it('gives a proof agent the harness\'s environment and none of the Builder\'s', () => {
+    const manifest = { id: 'example/tool', agent: { env: { TOOL_HOME: '${dsh}/x', TOOL_WS: '${workspace}/y' } } }
+    const env = agentEnv({ PATH: '/bin', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli', BUILDER: '/b', HARNESS_DSH: 'autonomous/harness-builder' }, manifest, '/pkg', '/ws')
+    assert.equal(env.PATH, '/bin')
+    assert.equal(env.CLAUDECODE, undefined)
+    assert.equal(env.CLAUDE_CODE_ENTRYPOINT, undefined)
+    assert.equal(env.BUILDER, undefined)
+    assert.equal(env.HARNESS_DSH, 'example/tool')
+    assert.equal(env.TOOL_HOME, '/pkg/x')
+    assert.equal(env.TOOL_WS, '/ws/y')
+    assert.deepEqual(launchEnv(manifest, '/pkg', '/ws').HARNESS_WORKSPACE, '/ws')
+  })
+
+  it('notices a save, and finds the artifact a pane would open', () => {
+    const ws = tmp()
+    const before = fingerprint(ws)
+    mkdirSync(join(ws, 'out'), { recursive: true })
+    writeFileSync(join(ws, 'out', 'chart.svg'), '<svg/>')
+    assert.notEqual(fingerprint(ws), before)
+    assert.equal(currentArtifact(ws, ['.svg']), 'out/chart.svg')
+    mkdirSync(join(ws, '.harness'), { recursive: true })
+    writeFileSync(join(ws, 'score.pdf'), '%PDF')
+    writeFileSync(join(ws, '.harness', 'verdict.json'), JSON.stringify({ artifact: 'score.pdf' }))
+    assert.equal(currentArtifact(ws, ['.svg']), 'score.pdf')
+    assert.equal(viewerUrl('http://127.0.0.1:${port}/?file=${artifact}', 4100, 'a b.pdf'), 'http://127.0.0.1:4100/?file=a%20b.pdf')
+  })
+})

@@ -4,7 +4,7 @@
   "type": "module",
   "description": "The Harness Builder's toolchain: the builder CLI, Builder Studio, proof pictures.",
   "scripts": {
-    "test": "node --test ../test/"
+    "test": "node --test ../test/*.test.mjs"
   },
   "dependencies": {
     "marked": "18.0.13",

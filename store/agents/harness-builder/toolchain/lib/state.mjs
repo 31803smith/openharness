@@ -117,7 +117,8 @@ export function verdictFor(workspace, build) {
   const evaluation = [
     { method: 'tool', by: 'builder check', passed: check ? errors === 0 : null, gate: true },
     { method: 'tool', by: 'fresh-machine install', passed: fresh ? fresh.passed === true : null, gate: true },
-    { method: 'review', by: 'three proofs, reviewed frame by frame', passed: proofs.length ? passedProofs === PROOF_IDS.length : null, gate: true },
+    // Passed when all three passed review, failed when one failed; until then, not yet known.
+    { method: 'review', by: 'three proofs, reviewed frame by frame', passed: passedProofs === PROOF_IDS.length ? true : proofs.some((proof) => proof.state === 'failed') ? false : null, gate: true },
   ]
   const allDone = build.stages.every((s) => s.state === 'done')
   const ready = allDone && evaluation.every((e) => e.passed === true) && errors === 0

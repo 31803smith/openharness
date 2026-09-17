@@ -187,11 +187,20 @@ export function checkPackage(pkg, { reference, build, fresh } = {}) {
     }
   }
 
-  // Private data, in every text file of the package.
+  // Private data, in every text file of the package. Home paths and tokens are never right. An email
+  // address can be a project's public contact, and a licence's copyright line names its maintainers, so
+  // an address outside a licence file asks to be confirmed rather than failing the check.
   for (const file of walkText(pkg)) {
     let text = ''
     try { text = readFileSync(file, 'utf8') } catch { continue }
-    for (const hit of privateDataIn(text)) findings.push(finding('error', 'private_data', `${hit} — no private data in the package`, relative(pkg, file)))
+    const licence = /^(LICEN[SC]E|COPYING|NOTICE|THIRD_PARTY_NOTICES)/i.test(file.split('/').pop())
+    for (const hit of privateDataIn(text)) {
+      if (hit.startsWith('email')) {
+        if (!licence) findings.push(finding('warning', 'email_address', `${hit} — confirm it is a public project contact, not a person's address`, relative(pkg, file)))
+      } else {
+        findings.push(finding('error', 'private_data', `${hit} — no private data in the package`, relative(pkg, file)))
+      }
+    }
   }
 
   // The build around the package: evaluation declared, fresh install, proofs.
