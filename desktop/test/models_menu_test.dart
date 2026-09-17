@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:harness/core/models.dart';
 import 'package:harness/screens/swarm_screen.dart';
 import 'package:harness/state/app_state.dart';
 import 'package:harness/state/swarm_catalog.dart';
@@ -20,11 +21,11 @@ import 'swarm_state_test.dart' show createApp;
 /// opens, say) is left pending, which is what a machine that has not answered
 /// yet looks like — the same shape as the dialog's own test.
 class _LocalModelConn extends WsConn {
-  _LocalModelConn()
+  _LocalModelConn([String machineId = 'm'])
     : super(
         wsBaseUrl: 'ws://fixture.invalid',
         autonomousEnv: 'test',
-        machineId: 'm',
+        machineId: machineId,
         accessTokenProvider: (_, _) async => '',
         onAuthFailure: (_) {},
         onEvent: (_) {},
@@ -376,4 +377,66 @@ void main() {
       projects.dispose();
     },
   );
+
+  testWidgets('native runLocalModel with a machineId opens on THAT machine', (
+    tester,
+  ) async {
+    // With two machines linked the native menu lists them and names the chosen
+    // one. The create — and the dialog's own reads — must go to that machine's
+    // connection, not to this computer's: the manager manages the models of
+    // the computer it runs on.
+    tester.view.physicalSize = const Size(1200, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    const channel = MethodChannel('harness/swarm_tabs');
+    final messenger = tester.binding.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(channel, (call) async => true);
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+    final conns = {
+      'm': _LocalModelConn('m'),
+      'other': _LocalModelConn('other'),
+    };
+    final app = createApp(connectionForTest: (id) => conns[id]!);
+    const other = Machine(
+      machineId: 'other',
+      authMode: MachineAuthMode.remote,
+      name: 'Studio',
+    );
+    app.machines = [...app.machines, other];
+    app.machineStates['other'] = MachineState(other)
+      ..nodeOnline = true
+      ..agentLoadStatus = AgentLoadStatus.loaded;
+    app.machineStates['m']!.nodeOnline = true;
+    final projects = SwarmProjectStore();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SwarmScreen(
+          notifier: app,
+          nativeTabs: true,
+          projectStore: projects,
+        ),
+      ),
+    );
+    final reply = Completer<void>();
+    messenger.handlePlatformMessage(
+      channel.name,
+      const StandardMethodCodec().encodeMethodCall(
+        const MethodCall('runLocalModel', {'machineId': 'other'}),
+      ),
+      (_) => reply.complete(),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('run-local-model-start')));
+    await tester.pumpAndSettle();
+    await reply.future;
+
+    expect(conns['m']!.creates, isEmpty);
+    final create = conns['other']!.creates.single;
+    expect(create['agent'], AppNotifier.localModelAgent);
+    expect(app.panes.single.machineId, 'other');
+
+    await tester.pumpWidget(const SizedBox());
+    app.dispose();
+    projects.dispose();
+  });
 }

@@ -3418,18 +3418,31 @@ class AppNotifier extends ChangeNotifier {
   ///
   /// Takes the caller's [context] because the dialog needs one and this
   /// notifier holds none — the same shape as every other dialog a door opens.
-  Future<void> runLocalModel(BuildContext context) async {
-    final machine = _localModelMachine();
+  ///
+  /// [machineId] is the computer the manager opens on — the pane's own machine
+  /// from a pane's picker, the one chosen from the Models menu's list. Absent
+  /// (a menu with one machine, or none named), it is this computer's own when
+  /// the app has one, else whatever the person is looking at. Never guessed
+  /// past a named machine: a picker on a remote pane that opened the manager
+  /// on this computer was the bug this argument exists to end.
+  Future<void> runLocalModel(BuildContext context, {String? machineId}) async {
+    final machine = machineId != null
+        ? machineStates[machineId]
+        : _localModelMachine();
     if (machine == null) {
-      _lastError = 'Connect a machine before starting a local model.';
+      _lastError = machineId != null
+          ? 'That machine is no longer linked.'
+          : 'Connect a machine before starting a local model.';
       _lastErrorRetryable = false;
       notifyListeners();
       return;
     }
-    final machineId = machine.machine.machineId;
+    machineId = machine.machine.machineId;
     if (_store?.runLocalModelSkipDialog != true) {
       final decision = await showRunLocalModelDialog(context, this, machineId);
       if (decision == null) return;
+      // The dialog lists the machines and the person may have moved the choice.
+      machineId = decision.machineId;
       if (decision.skipNextTime) {
         try {
           await _store?.saveRunLocalModelSkipDialog(true);
@@ -3471,13 +3484,27 @@ class AppNotifier extends ChangeNotifier {
     if (home == null) {
       return 'Could not find the home folder on ${machine.machine.displayName}.';
     }
-    return createAgent(
+    final error = await createAgent(
       machineId,
       engine: 'opencode',
       folder: home,
       agent: localModelAgent,
       name: localModelAgentName,
     );
+    if (error != null) return error;
+    // A daemon that predates `agent`/`name` does not refuse them — it ignores
+    // them, opens a plain opencode pane and names it itself. The pane exists,
+    // so the person is told what it is rather than left to notice that the
+    // manager never introduces itself: the name coming back is the tell.
+    final created = machine.agents
+        .where((a) => a.name == localModelAgentName)
+        .isNotEmpty;
+    if (!created) {
+      return 'Harness on ${machine.machine.displayName} is too old to open '
+          'Local model manager: it opened a plain opencode pane instead. '
+          'Update Harness there and try again.';
+    }
+    return null;
   }
 
   /// The user's home on [machine]. This computer's is in the environment; a

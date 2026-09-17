@@ -1638,12 +1638,20 @@ class _TerminalHeader extends StatelessWidget {
                       ),
                     ),
                     onUseOwnLogin: () => unawaited(
-                      notifier.clearAgentGrid(session.machineId, session.agentId),
+                      notifier.clearAgentGrid(
+                        session.machineId,
+                        session.agentId,
+                      ),
                     ),
                     // The pane's own context, because the flow opens a dialog before it opens a
-                    // pane. Which machine it runs on is the notifier's call, not this pane's: a
-                    // local model is about the computer the app is on, whatever this agent is on.
-                    onRunLocalModel: () => unawaited(notifier.runLocalModel(context)),
+                    // pane — and the pane's own MACHINE, because a picker on a remote agent's pane
+                    // is asking about the models that computer can serve, not this one's.
+                    onRunLocalModel: () => unawaited(
+                      notifier.runLocalModel(
+                        context,
+                        machineId: session.machineId,
+                      ),
+                    ),
                   ),
                 ],
                 const SizedBox(width: 8),

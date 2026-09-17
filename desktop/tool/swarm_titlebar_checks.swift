@@ -811,6 +811,40 @@ private extension SwarmTitlebar {
     try checkTitlebar(!runLocal.title.lowercased().contains("grid") && !runLocal.title.contains("Mac"),
       "the command names neither the plumbing nor one vendor's computer")
 
+    // With more than one machine linked, the row has to say WHICH computer the manager opens on:
+    // it becomes a submenu of the machines, each child dispatching the same command with that
+    // machine's id, this computer marked. With one machine (or none) it is the plain row above.
+    _ = try messenger.receive("machinesState", arguments: ["machines": machineRows])
+    let picked = main.item(withTitle: "Models")!.submenu!.items.last!
+    // AppKit gives a submenu's parent its own `submenuAction:`; what matters is that it is no longer
+    // the guarded channel handler — nothing is dispatched until a machine is chosen.
+    try checkTitlebar(picked.title == "Talk to Local model manager" && picked.submenu != nil
+      && picked.action != #selector(menuAction(_:)) && picked.representedObject == nil,
+      "with two machines the manager row opens a submenu instead of dispatching itself")
+    try checkTitlebar(picked.identifier?.rawValue == HarnessKeymapMenu.actionPrefix + "runLocalModel",
+      "the submenu's parent keeps the keymap identifier")
+    let choices = picked.submenu!.items
+    try checkTitlebar(choices.map(\.title) == ["iMac – Office (this computer)", "iMac – Home"],
+      "one child per linked machine, in the Machines menu's order, this computer marked")
+    try checkTitlebar(choices.allSatisfy { $0.target === self && $0.action == #selector(runLocalModelAction(_:)) }
+      && choices.map { $0.representedObject as? String } == ["office", "home"],
+      "each child dispatches runLocalModel for its own machine")
+    let modelCalls = messenger.calls.count
+    runLocalModelAction(choices[1])
+    try checkTitlebar(messenger.calls.last?.method == "runLocalModel"
+      && (messenger.calls.last?.arguments as? [String: String]) == ["machineId": "home"]
+      && messenger.calls.count == modelCalls + 1,
+      "choosing a machine sends runLocalModel with that machine's id")
+    actionsEnabled = false
+    try checkTitlebar(!validateMenuItem(choices[0]), "a machine choice cannot run behind a modal")
+    actionsEnabled = true
+    try checkTitlebar(validateMenuItem(choices[0]), "and returns when the modal closes")
+    _ = try messenger.receive("machinesState", arguments: ["machines": [machineRows[0]]])
+    let single = main.item(withTitle: "Models")!.submenu!.items.last!
+    try checkTitlebar(single.submenu == nil && single.representedObject as? String == "runLocalModel",
+      "one machine linked: back to the plain row, and the app picks the machine")
+    _ = try messenger.receive("machinesState", arguments: ["machines": []])
+
     // The Local section is DATA, not two hardcoded names. A menu naming a model nobody serves is
     // worse than one admitting it has none, which is what the empty case above asserts.
     updateModels(modelRows, local: [

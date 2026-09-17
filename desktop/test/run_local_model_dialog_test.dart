@@ -11,6 +11,7 @@ import 'package:harness/core/local_key_value_store.dart';
 import 'package:harness/core/models.dart';
 import 'package:harness/settings/config_store.dart';
 import 'package:harness/state/app_state.dart';
+import 'package:harness/widgets/pane_menu.dart';
 import 'package:harness/ws/ws_conn.dart';
 
 class _MemoryStore implements LocalKeyValueStore {
@@ -47,6 +48,10 @@ class _Conn extends WsConn {
   final List<Map<String, Object?>> engines;
   final String? gridName;
 
+  /// What the daemon names the created agent. A daemon that knows `name` echoes it; one that
+  /// predates the field names the pane itself — the shape of an old Harness on that machine.
+  String replyName = 'Local model manager';
+
   /// Every `agent_create` payload, verbatim — the wire is what the plan specifies.
   final creates = <Map<String, dynamic>>[];
 
@@ -72,11 +77,7 @@ class _Conn extends WsConn {
         return Future.value({
           'creationId': payload['creationId'],
           'state': 'created',
-          'agent': {
-            'id': 'lm1',
-            'name': 'Local model manager',
-            'engine': 'opencode',
-          },
+          'agent': {'id': 'lm1', 'name': replyName, 'engine': 'opencode'},
         });
       default:
         return Completer<Map<String, dynamic>>().future;
@@ -113,6 +114,8 @@ void main() {
     notifier.machines = [machine];
     notifier.machineStates['local'] = MachineState(machine)
       ..localOnly = local
+      // A remote fixture is answering: the dialog now refuses an offline machine before Start.
+      ..nodeOnline = true
       ..agentLoadStatus = AgentLoadStatus.loaded;
     if (!local) notifier.selectedMachineId = 'local';
   }
@@ -176,8 +179,21 @@ void main() {
     // No dashes of any kind in the copy: the owner's rule for this dialog.
     expect(find.textContaining('—'), findsNothing);
     expect(find.textContaining('–'), findsNothing);
-    // Nothing about the machine when nothing is missing: the body is the whole message.
+    // Nothing about prerequisites when nothing is missing — but WHICH machine is always said,
+    // this computer marked as such, so nobody has to guess where the manager will open.
     expect(status, findsNothing);
+    // One slim row, not a control: with one machine there is nothing to choose.
+    expect(find.byKey(const Key('run-local-model-machine')), findsOneWidget);
+    expect(find.text('studio-7'), findsOneWidget);
+    expect(find.text('This machine'), findsOneWidget);
+    // No chips, no "…", no prompt to pick: one machine is a statement, not a choice.
+    expect(find.text('Pick the machine it should work on.'), findsNothing);
+    expect(
+      find.byKey(const ValueKey('run-local-model-machine-local')),
+      findsNothing,
+    );
+    expect(find.byKey(const Key('run-local-model-machine-more')), findsNothing);
+    expect(find.textContaining('(this computer)'), findsNothing);
   });
 
   testWidgets('missing opencode is said, and disables Start', (tester) async {
@@ -189,7 +205,8 @@ void main() {
     await open(tester);
 
     expect(statusText(tester), 'Needs opencode on this machine first.');
-    expect(find.textContaining('studio-7'), findsNothing);
+    // The machine is still named: the sentence is about it.
+    expect(find.text('studio-7'), findsOneWidget);
     expect(startEnabled(tester), isFalse);
     await tester.tap(start, warnIfMissed: false);
     await tester.pumpAndSettle();
@@ -197,17 +214,121 @@ void main() {
     expect(conn.creates, isEmpty);
   });
 
-  testWidgets('no private grid yet sends the person back to sign in', (
-    tester,
-  ) async {
-    // `gridName: null` is the daemon saying the backend has not minted one, which a new sign-in
-    // fixes; the sentence says that and, like the picker, never says "grid".
+  testWidgets('no private grid is NOT the dialog\'s business', (tester) async {
+    // `gridName: null` used to disable Start with a sentence about the account. The dialog now
+    // only picks a machine and goes; whether local models are set up there is the manager's own
+    // first finding, said in conversation. A connected person is never stopped here.
     build(gridName: null);
     await open(tester);
 
-    expect(statusText(tester), 'Sign in to Harness again to set this up.');
+    expect(status, findsNothing);
+    expect(startEnabled(tester), isTrue);
     expect(find.textContaining('grid'), findsNothing);
+    expect(find.textContaining('set up'), findsNothing);
+  });
+
+  testWidgets('an offline machine is said before Start, not after', (
+    tester,
+  ) async {
+    // A remote machine whose daemon is not answering. Start used to go ahead and fail on the
+    // home-folder read — the same fact, discovered after the click. Now the dialog says it and
+    // Start waits, and picking a machine that IS online clears it.
+    final conns = {
+      'local': _Conn(engines: _installed, gridName: 'someone-7f3a91c4'),
+      'studio': _Conn(engines: _installed, gridName: 'someone-7f3a91c4'),
+    };
+    notifier.dispose();
+    notifier = AppNotifier(
+      config: AppConfig.dev,
+      authSession: AuthSession(),
+      configStore: null,
+      connectionForTest: (id) => conns[id]!,
+    )..hasNavigationRail = false;
+    const local = Machine(
+      machineId: 'local',
+      authMode: MachineAuthMode.remote,
+      name: 'this one',
+    );
+    const studio = Machine(
+      machineId: 'studio',
+      authMode: MachineAuthMode.remote,
+      name: 'studio-7',
+    );
+    notifier.machines = [local, studio];
+    notifier.machineStates['local'] = MachineState(local)
+      ..localOnly = true
+      ..agentLoadStatus = AgentLoadStatus.loaded;
+    notifier.machineStates['studio'] = MachineState(studio)
+      ..nodeOnline = false
+      ..agentLoadStatus = AgentLoadStatus.loaded;
+
+    tester.view.physicalSize = const Size(1200, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => TextButton(
+              key: const Key('door'),
+              onPressed: () =>
+                  notifier.runLocalModel(context, machineId: 'studio'),
+              child: const Text('door'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(const Key('door')));
+    await tester.pumpAndSettle();
+
+    expect(
+      statusText(tester),
+      'studio-7 is offline right now. Wake it up, or pick another machine.',
+    );
     expect(startEnabled(tester), isFalse);
+
+    // A machine that is up but not LINKED to this computer is a different sentence: the relay
+    // refuses it (4404), and telling the person to wake it would send them to a computer that is
+    // already awake.
+    notifier.machineStates['studio']!
+      ..nodeOnline = true
+      ..needsLink = true;
+    notifier.notifyListeners();
+    await tester.pumpAndSettle();
+    expect(
+      statusText(tester),
+      'studio-7 isn’t linked to this computer yet. Link it from the Machines menu, then come back.',
+    );
+    expect(startEnabled(tester), isFalse);
+    notifier.machineStates['studio']!.needsLink = false;
+
+    await tester.tap(
+      find.byKey(const ValueKey('run-local-model-machine-local')),
+    );
+    await tester.pumpAndSettle();
+    expect(status, findsNothing);
+    expect(startEnabled(tester), isTrue);
+  });
+
+  testWidgets('an old daemon that ignores the agent is named as the cause', (
+    tester,
+  ) async {
+    // A Harness that predates `agent`/`name` opens a plain opencode pane and names it itself.
+    // The pane exists, so the person is told what happened instead of watching a manager that
+    // never introduces itself.
+    build();
+    conn.replyName = 'harness-2';
+    await open(tester);
+    await tester.tap(start);
+    await tester.pumpAndSettle();
+
+    expect(conn.creates, hasLength(1));
+    expect(
+      notifier.lastError,
+      'Harness on studio-7 is too old to open Local model manager: it opened a plain opencode '
+      'pane instead. Update Harness there and try again.',
+    );
   });
 
   testWidgets('Not now creates nothing', (tester) async {
@@ -295,6 +416,241 @@ void main() {
     await tester.tap(find.byKey(const Key('door')));
     await tester.pumpAndSettle();
     expect(find.text('Models that live on your machine'), findsOneWidget);
+  });
+
+  testWidgets('a named machine wins over this computer\'s own', (tester) async {
+    // The pane picker names its pane's machine. This computer has a local machine of its own
+    // here, and it must NOT be preferred: a picker on a remote agent's pane is asking about the
+    // models THAT computer can serve.
+    final conns = {
+      'local': _Conn(engines: _installed, gridName: 'someone-7f3a91c4'),
+      'studio': _Conn(engines: _installed, gridName: 'someone-7f3a91c4'),
+    };
+    notifier.dispose();
+    notifier = AppNotifier(
+      config: AppConfig.dev,
+      authSession: AuthSession(),
+      configStore: null,
+      connectionForTest: (id) => conns[id]!,
+    )..hasNavigationRail = false;
+    const local = Machine(
+      machineId: 'local',
+      authMode: MachineAuthMode.remote,
+      name: 'this one',
+    );
+    const studio = Machine(
+      machineId: 'studio',
+      authMode: MachineAuthMode.remote,
+      name: 'studio-7',
+    );
+    notifier.machines = [local, studio];
+    notifier.machineStates['local'] = MachineState(local)
+      ..localOnly = true
+      ..agentLoadStatus = AgentLoadStatus.loaded;
+    notifier.machineStates['studio'] = MachineState(studio)
+      ..nodeOnline = true
+      ..agentLoadStatus = AgentLoadStatus.loaded;
+
+    tester.view.physicalSize = const Size(1200, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => TextButton(
+              key: const Key('door'),
+              onPressed: () =>
+                  notifier.runLocalModel(context, machineId: 'studio'),
+              child: const Text('door'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(const Key('door')));
+    await tester.pumpAndSettle();
+    await tester.tap(start);
+    await tester.pumpAndSettle();
+
+    expect(conns['local']!.creates, isEmpty);
+    // That machine's own home, as it reports it — never this computer's `$HOME`.
+    expect(conns['studio']!.creates.single['cwd'], '/home/remote');
+    expect(notifier.panes.single.machineId, 'studio');
+  });
+
+  testWidgets('with two machines the dialog lists them, and the pick wins', (
+    tester,
+  ) async {
+    // The door's machine is where the dialog STARTS; the person can move it. Two machines, the
+    // door names the remote one, the person picks this computer: the create lands here.
+    final conns = {
+      'local': _Conn(engines: _installed, gridName: 'someone-7f3a91c4'),
+      'studio': _Conn(engines: _installed, gridName: 'someone-7f3a91c4'),
+    };
+    notifier.dispose();
+    notifier = AppNotifier(
+      config: AppConfig.dev,
+      authSession: AuthSession(),
+      configStore: null,
+      connectionForTest: (id) => conns[id]!,
+    )..hasNavigationRail = false;
+    const local = Machine(
+      machineId: 'local',
+      authMode: MachineAuthMode.remote,
+      name: 'this one',
+    );
+    const studio = Machine(
+      machineId: 'studio',
+      authMode: MachineAuthMode.remote,
+      name: 'studio-7',
+    );
+    notifier.machines = [local, studio];
+    notifier.machineStates['local'] = MachineState(local)
+      ..localOnly = true
+      ..agentLoadStatus = AgentLoadStatus.loaded;
+    notifier.machineStates['studio'] = MachineState(studio)
+      ..nodeOnline = true
+      ..agentLoadStatus = AgentLoadStatus.loaded;
+
+    tester.view.physicalSize = const Size(1200, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => TextButton(
+              key: const Key('door'),
+              onPressed: () =>
+                  notifier.runLocalModel(context, machineId: 'studio'),
+              child: const Text('door'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(const Key('door')));
+    await tester.pumpAndSettle();
+    // Both machines as chips on one row, this computer first, the door's machine chosen — and
+    // one sentence saying what the chips are for.
+    expect(find.text('Pick the machine it should work on.'), findsOneWidget);
+    final localChip = find.byKey(
+      const ValueKey('run-local-model-machine-local'),
+    );
+    final remoteChip = find.byKey(
+      const ValueKey('run-local-model-machine-studio'),
+    );
+    expect(localChip, findsOneWidget);
+    expect(remoteChip, findsOneWidget);
+    expect(
+      tester.getTopLeft(localChip).dx < tester.getTopLeft(remoteChip).dx,
+      isTrue,
+    );
+    expect(tester.getTopLeft(localChip).dy, tester.getTopLeft(remoteChip).dy);
+    // Two machines fit; nothing is folded behind "…".
+    expect(find.byKey(const Key('run-local-model-machine-more')), findsNothing);
+
+    await tester.tap(localChip);
+    await tester.pumpAndSettle();
+    await tester.tap(start);
+    await tester.pumpAndSettle();
+
+    expect(conns['studio']!.creates, isEmpty);
+    expect(conns['local']!.creates, hasLength(1));
+    expect(notifier.panes.single.machineId, 'local');
+  });
+
+  testWidgets('five machines stay on one row: three chips and a "…" list', (
+    tester,
+  ) async {
+    // The row never grows with the account. Past three, the rest fold behind the more button,
+    // which opens the full list — and a machine chosen from there takes a visible slot.
+    final ids = ['local', 'b', 'c', 'd', 'e'];
+    final conns = {
+      for (final id in ids)
+        id: _Conn(engines: _installed, gridName: 'someone-7f3a91c4'),
+    };
+    notifier.dispose();
+    notifier = AppNotifier(
+      config: AppConfig.dev,
+      authSession: AuthSession(),
+      configStore: null,
+      connectionForTest: (id) => conns[id]!,
+    )..hasNavigationRail = false;
+    notifier.machines = [
+      for (final id in ids)
+        Machine(
+          machineId: id,
+          authMode: MachineAuthMode.remote,
+          name: 'box-$id',
+        ),
+    ];
+    for (final m in notifier.machines) {
+      notifier.machineStates[m.machineId] = MachineState(m)
+        ..localOnly = m.machineId == 'local'
+        ..nodeOnline = true
+        ..agentLoadStatus = AgentLoadStatus.loaded;
+    }
+    tester.view.physicalSize = const Size(1200, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => TextButton(
+              key: const Key('door'),
+              onPressed: () =>
+                  notifier.runLocalModel(context, machineId: 'local'),
+              child: const Text('door'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(const Key('door')));
+    await tester.pumpAndSettle();
+
+    final chips = [
+      for (final id in ids) find.byKey(ValueKey('run-local-model-machine-$id')),
+    ];
+    expect(chips[0], findsOneWidget);
+    expect(chips[1], findsOneWidget);
+    expect(chips[2], findsOneWidget);
+    expect(chips[3], findsNothing);
+    expect(chips[4], findsNothing);
+    final more = find.byKey(const Key('run-local-model-machine-more'));
+    expect(more, findsOneWidget);
+    // All on one line.
+    final tops = {for (final c in chips.take(3)) tester.getTopLeft(c).dy};
+    expect(tops.length, 1);
+    // The more button is a shade shorter than a chip; same row means its
+    // center sits within the chips' height, not that its top matches.
+    final chipRect = tester.getRect(chips[0]);
+    final moreCenter = tester.getCenter(more).dy;
+    expect(moreCenter > chipRect.top && moreCenter < chipRect.bottom, isTrue);
+
+    await tester.tap(more);
+    await tester.pumpAndSettle();
+    // The pane menu, not a select: a header, rows, the current one filled — no tick anywhere.
+    expect(find.text('Machines'), findsOneWidget);
+    expect(find.byType(PaneMenuRow), findsNWidgets(5));
+    for (final tick in [Icons.check, Icons.check_rounded]) {
+      expect(
+        find.descendant(
+          of: find.byType(PaneMenuRow),
+          matching: find.byIcon(tick),
+        ),
+        findsNothing,
+      );
+    }
+    await tester.tap(find.text('box-e').last);
+    await tester.pumpAndSettle();
+    await tester.tap(start);
+    await tester.pumpAndSettle();
+    expect(conns['e']!.creates, hasLength(1));
+    expect(notifier.panes.single.machineId, 'e');
   });
 
   testWidgets(

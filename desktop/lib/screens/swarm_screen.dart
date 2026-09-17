@@ -470,7 +470,8 @@ class _SwarmScreenState extends State<SwarmScreen> {
     // plenty for a list that changes when someone starts or stops serving a model.
     final now = DateTime.now();
     final last = _localModelsAt;
-    if (last != null && now.difference(last) < const Duration(seconds: 10)) return;
+    if (last != null && now.difference(last) < const Duration(seconds: 10))
+      return;
     _localModelsAt = now;
     final preferred = machines.firstWhere(
       (m) => app.stateOf(m.machineId)?.isLocalMachine == true,
@@ -478,9 +479,12 @@ class _SwarmScreenState extends State<SwarmScreen> {
     );
     final answer = await app.gridModels(preferred.machineId);
     if (!mounted) return;
-    final same = answer.models.length == _localModels.length &&
-        [for (var i = 0; i < answer.models.length; i++)
-          answer.models[i].id == _localModels[i].id].every((x) => x);
+    final same =
+        answer.models.length == _localModels.length &&
+        [
+          for (var i = 0; i < answer.models.length; i++)
+            answer.models[i].id == _localModels[i].id,
+        ].every((x) => x);
     if (same) return;
     _localModels = answer.models;
     _syncModels();
@@ -616,8 +620,17 @@ class _SwarmScreenState extends State<SwarmScreen> {
       case 'runLocalModel':
         // The native Models menu's one command. Wrapped like Link Machine…
         // because the notifier may open its dialog here, and the pane it then
-        // creates takes focus the same way a New Agent does.
-        await _dialog(() => app.runLocalModel(context));
+        // creates takes focus the same way a New Agent does. With more than one
+        // machine linked the menu lists them and names the chosen one here;
+        // with one, or none, the notifier picks.
+        await _dialog(
+          () => app.runLocalModel(
+            context,
+            machineId: args['machineId'] is String
+                ? args['machineId'] as String
+                : null,
+          ),
+        );
       case 'splitRight':
         unawaited(_splitAgent(PaneResizeAxis.x));
       case 'splitDown':
