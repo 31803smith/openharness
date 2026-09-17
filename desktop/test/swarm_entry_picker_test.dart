@@ -155,7 +155,7 @@ void main() {
       expect(
         find.descendant(
           of: find.byType(AlertDialog),
-          matching: find.widgetWithText(FilledButton, 'Create'),
+          matching: find.byKey(const ValueKey('create-agent-submit')),
         ),
         findsOneWidget,
       );

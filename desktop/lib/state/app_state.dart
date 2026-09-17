@@ -2493,18 +2493,18 @@ class AppNotifier extends ChangeNotifier {
       final updater = desktopUpdater ?? DesktopUpdater();
       final staged = await updater.downloadAndStage(info);
       if (staged == null) {
-        updateError = 'Could not download and verify Harness ${info.version}.';
+        updateError = 'Could not download and verify OpenHarness ${info.version}.';
         return false;
       }
       final applied = await updater.applyStaged(staged, selfPid: pid);
       if (!applied) {
         updateError =
-            'This copy of Harness cannot install updates automatically.';
+            'This copy of OpenHarness cannot install updates automatically.';
         return false;
       }
       exit(0);
     } catch (error) {
-      updateError = 'Could not install Harness ${info.version}: $error';
+      updateError = 'Could not install OpenHarness ${info.version}: $error';
       return false;
     } finally {
       isInstallingUpdate = false;
@@ -3510,9 +3510,9 @@ class AppNotifier extends ChangeNotifier {
 
   /// What the pane is called before, and if never, the engine names its
   /// session.
-  static const localModelAgentName = 'Local model manager';
+  static const localModelAgentName = 'Model manager';
 
-  /// The one action behind every "Talk to Local model manager" entry: explain once,
+  /// The one action behind every "Talk to Model manager" entry: explain once,
   /// then open opencode as the agent that starts one.
   ///
   /// The dialog decides, and Start is what creates. Nothing here reports
@@ -3608,7 +3608,7 @@ class AppNotifier extends ChangeNotifier {
         .isNotEmpty;
     if (!created) {
       return 'Harness on ${machine.machine.displayName} is too old to open '
-          'Local model manager: it opened a plain opencode pane instead. '
+          'Model manager: it opened a plain opencode pane instead. '
           'Update Harness there and try again.';
     }
     return null;

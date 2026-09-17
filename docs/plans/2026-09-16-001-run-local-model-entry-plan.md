@@ -1,4 +1,4 @@
-# Talk to Local model manager: one button, one dialog, one agent that starts it
+# Talk to Model manager: one button, one dialog, one agent that starts it
 
 Status: proposed · 2026-09-16
 Builds on: `2026-09-14-004-harness-grid-plan.md` (the private grid), `docs/skills/harness-compute.md`
@@ -160,11 +160,11 @@ says which.
 ### Change 4 — Desktop: the two doors
 
 - **Pane picker** (`lib/widgets/grid_model_picker.dart`): a last row under Local, always present,
-  after the models or after the empty-state sentence: **Talk to Local model manager** — drawn as a row, not a
+  after the models or after the empty-state sentence: **Talk to Model manager** — drawn as a row, not a
   header, and not tickable. Calls `onRunLocalModel`, a new callback `terminal_panel.dart` wires to
   `notifier.runLocalModel()`.
 - **Native Models menu** (`desktop/macos/Runner/SwarmTitlebar.swift`, `lib/screens/swarm_screen.dart`):
-  after the Local section, a separator and an enabled item **Talk to Local model manager** dispatching
+  after the Local section, a separator and an enabled item **Talk to Model manager** dispatching
   `menuAction` `runLocalModel`; Dart maps it to `notifier.runLocalModel()` beside `newAgent`. The
   macOS check script (`desktop/tool/swarm_titlebar_checks.swift`) asserts the item exists, is enabled,
   and carries that action.

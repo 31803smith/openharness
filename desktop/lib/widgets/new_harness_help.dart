@@ -250,7 +250,7 @@ class _HarnessHelpDialogState extends State<_HarnessHelpDialog> {
       _HelpOption(
         leading: Icon(LucideIcons.folderPlus, size: 28),
         title: 'New project',
-        description: 'Start fresh. Harness creates a new folder on your selected machine for your work.',
+        description: 'Start fresh. OpenHarness creates a new folder on your selected machine for your work.',
       ),
       _HelpOption(
         leading: Icon(LucideIcons.folderOpen, size: 28),
@@ -263,7 +263,7 @@ class _HarnessHelpDialogState extends State<_HarnessHelpDialog> {
         leading: Icon(LucideIcons.gitBranch, size: 28),
         title: 'Git',
         description:
-            'Bring a project from GitHub. Paste a repository link and Harness '
+            'Bring a project from GitHub. Paste a repository link and OpenHarness '
             'clones it onto your selected machine before starting.',
       ),
       _HelpOption(

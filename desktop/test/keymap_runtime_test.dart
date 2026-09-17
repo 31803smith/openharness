@@ -13,6 +13,7 @@ import 'package:harness/state/app_state.dart';
 import 'package:harness/state/pane_preset.dart';
 import 'package:harness/state/swarm_catalog.dart';
 import 'package:harness/terminal/terminal_binary.dart';
+import 'package:harness/widgets/agent_picker.dart';
 import 'package:harness/widgets/swarm_switcher.dart';
 import 'package:xterm/xterm.dart';
 
@@ -614,8 +615,13 @@ void main() {
         await tester.pumpAndSettle();
         expect(find.byType(AlertDialog), findsOneWidget);
         expect(find.byType(SwarmSearchResults), findsNothing);
+        // The form opens with focus on its agent bar, and Escape there still
+        // closes the form.
         expect(
-          Focus.of(tester.element(find.text('New project'))).hasPrimaryFocus,
+          tester
+              .widget<AgentPicker>(find.byType(AgentPicker))
+              .focusNode!
+              .hasPrimaryFocus,
           isTrue,
         );
         await tester.sendKeyEvent(LogicalKeyboardKey.escape);

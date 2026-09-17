@@ -85,7 +85,7 @@ class _AboutSectionState extends State<AboutSection> {
               ),
               const SizedBox(height: 12),
               Text(
-                'Harness checks for a newer build when it starts, and every '
+                'OpenHarness checks for a newer build when it starts, and every '
                 'six hours after that.',
                 style: TextStyle(
                   color: grid.AppPalette.textFaint,

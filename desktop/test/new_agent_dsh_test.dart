@@ -15,9 +15,10 @@ import 'package:harness/core/models.dart';
 import 'package:harness/core/project_folder.dart';
 import 'package:harness/state/app_state.dart';
 import 'package:harness/state/pane_arrangement.dart';
-import 'package:harness/shared/widgets/app_menu.dart';
-import 'package:harness/shared/widgets/app_select_field.dart';
+import 'package:harness/widgets/agent_picker.dart';
 import 'package:harness/widgets/new_agent_dialog.dart';
+
+import 'support/agent_picker.dart';
 
 const _folder = '/work/air-monitor';
 
@@ -187,15 +188,17 @@ void main() {
     return notifier;
   }
 
-  /// The harnesses live in More, first after the three engines the tiles
-  /// show; a chosen one is what the More tile then shows.
+  /// A harness is found by typing its name into the agent search, and taken
+  /// by clicking its row.
   Future<void> pick(WidgetTester tester, String label) async {
-    await tester.ensureVisible(find.byKey(const Key('new-agent-engine-field')));
-    await tester.tap(find.byKey(const Key('new-agent-engine-field')));
+    await openAgentSearch(tester);
+    await tester.enterText(agentSearch, label);
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text(label).last);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text(label).last);
+    await tester.tap(
+      find
+          .ancestor(of: find.text(label), matching: find.byType(ListTile))
+          .first,
+    );
     await tester.pumpAndSettle();
   }
 
@@ -207,11 +210,8 @@ void main() {
     await tester.pump();
   }
 
-  String engineField(WidgetTester tester) => tester
-      .widget<AppSelectField<String>>(
-        find.byKey(const Key('new-agent-engine-field')),
-      )
-      .value;
+  String engineField(WidgetTester tester) =>
+      tester.widget<AgentPicker>(find.byType(AgentPicker)).value;
 
   testWidgets(
     'Circuit is one click, says what it runs on, and creates on its base engine',
@@ -224,19 +224,20 @@ void main() {
       expect(
         app.harnessProbes,
         1,
-        reason: 'asked once on open, so More is never stale',
+        reason: 'asked once on open, so the agent search is never stale',
       );
       await pick(tester, 'Autonomous Circuit');
       expect(app.harnessProbes, 2);
       expect(engineField(tester), 'autonomous/autonomous-circuit');
-      // Chosen, it is what the More tile shows.
+      // Chosen, the bar shows it and the search is closed.
       expect(
         find.descendant(
-          of: find.byKey(const Key('new-agent-engine-field')),
+          of: agentBar,
           matching: find.text('Autonomous Circuit'),
         ),
         findsOneWidget,
       );
+      expect(agentSearch, findsNothing);
       await tester.ensureVisible(find.byKey(const Key('new-agent-advanced')));
       await tester.tap(find.byKey(const Key('new-agent-advanced')));
       await tester.pumpAndSettle();
@@ -306,7 +307,7 @@ void main() {
     expect(app.launches, isEmpty);
     expect(find.text('kicad-cli is not on harness-remote-box'), findsOneWidget);
     // Retryable: the button is back.
-    expect(find.widgetWithText(FilledButton, 'Create'), findsOneWidget);
+    expect(find.byKey(const ValueKey('create-agent-submit')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -353,17 +354,83 @@ void main() {
       isNotNull,
       reason: 'An unsupported CLI must release the form for retry or another harness.',
     );
-    await tester.ensureVisible(
-      find.byKey(const ValueKey('new-agent-quick-claude')),
-    );
-    await tester.tap(find.byKey(const ValueKey('new-agent-quick-claude')));
+    await chooseAgent(tester, 'claude');
     await tester.pumpAndSettle();
     await create(tester);
     expect(app.launches.single['engine'], 'claude');
     expect(app.launches.single['dsh'], isNull);
   });
 
-  testWidgets('More lists the machine\'s harnesses before the engines', (
+  testWidgets(
+    'the agent search opens on what you have, and finds the rest by name',
+    (tester) async {
+      await open(
+        tester,
+        seed: (state) => state.dsh.replace([
+          _circuit.copyWith(installed: true),
+          const DshEntry(
+            id: 'someone/robot-arm',
+            name: 'Robot Arm',
+            engine: 'codex',
+          ),
+        ]),
+      );
+      await openAgentSearch(tester);
+      // Nothing typed: the choice, then what the machine has — Circuit, the
+      // harness it installed, ahead of Codex, an engine it has — then the
+      // familiar engines, and the Store last. Robot Arm, which it lacks, is
+      // not listed.
+      expect(agentRows(tester), [
+        'claude',
+        'autonomous/autonomous-circuit',
+        'codex',
+        'opencode',
+      ]);
+      await tester.enterText(agentSearch, 'robot');
+      await tester.pumpAndSettle();
+      expect(agentRows(tester), ['someone/robot-arm']);
+      expect(find.text('on Codex'), findsNothing, reason: 'backend detail');
+      await tester.tap(
+        find.byKey(const ValueKey('new-agent-agent-row-someone/robot-arm')),
+      );
+      await tester.pumpAndSettle();
+      expect(engineField(tester), 'someone/robot-arm');
+      expect(agentSearch, findsNothing, reason: 'a choice closes the search');
+      // Chosen, it leads the list; what the machine has still follows.
+      await openAgentSearch(tester);
+      expect(agentRows(tester).take(3), [
+        'someone/robot-arm',
+        'autonomous/autonomous-circuit',
+        'claude',
+      ]);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byKey(const Key('new-agent-advanced')));
+      await tester.tap(find.byKey(const Key('new-agent-advanced')));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('an agent you created with lately comes before the rest', (
+    tester,
+  ) async {
+    final app = await open(
+      tester,
+      seed: (state) => state.dsh.replace([_circuit.copyWith(installed: true)]),
+    );
+    // Hermes is not installed, so only having used it lists it this early.
+    await app.agentPreference.remember('hermes');
+    await openAgentSearch(tester);
+    expect(agentRows(tester).take(3), [
+      'claude',
+      'hermes',
+      'autonomous/autonomous-circuit',
+    ]);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the search takes a name, a category, and Return', (
     tester,
   ) async {
     await open(
@@ -377,52 +444,33 @@ void main() {
         ),
       ]),
     );
-    await tester.ensureVisible(find.byKey(const Key('new-agent-engine-field')));
-    await tester.tap(find.byKey(const Key('new-agent-engine-field')));
+    await openAgentSearch(tester);
+    await tester.enterText(agentSearch, 'robot');
     await tester.pumpAndSettle();
-    // The three tiles already offered three coding engines; the eleven behind
-    // them are more of the same, and the harnesses are what More is FOR.
-    final rows = tester
-        .widgetList<AppMenuItem>(find.byType(AppMenuItem))
-        .map((row) => row.label)
-        .toList();
-    expect(rows.take(2), ['Autonomous Circuit', 'Robot Arm']);
-    expect(rows.skip(2), contains('Cursor'));
-    expect(find.text('Robot Arm'), findsWidgets);
-    expect(find.text('on Codex'), findsNothing, reason: 'backend detail');
-    await tester.tap(find.text('Robot Arm').last);
-    await tester.pumpAndSettle();
-    expect(engineField(tester), 'someone/robot-arm');
-    await tester.ensureVisible(find.byKey(const Key('new-agent-advanced')));
-    await tester.tap(find.byKey(const Key('new-agent-advanced')));
-    await tester.pumpAndSettle();
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('More is searched by name, not scrolled through', (tester) async {
-    await open(
-      tester,
-      seed: (state) => state.dsh.replace([
-        _circuit,
-        const DshEntry(
-          id: 'someone/robot-arm',
-          name: 'Robot Arm',
-          engine: 'codex',
-        ),
-      ]),
-    );
-    await tester.ensureVisible(find.byKey(const Key('new-agent-engine-field')));
-    await tester.tap(find.byKey(const Key('new-agent-engine-field')));
-    await tester.pumpAndSettle();
-    // Thirteen rows behind the three tiles — past the point where reading the
-    // list beats typing at it.
-    final filter = find.byKey(const Key('app-select-filter'));
-    expect(filter, findsOneWidget);
-    await tester.enterText(filter, 'robot');
-    await tester.pumpAndSettle();
-    expect(find.byType(AppMenuItem), findsOneWidget);
+    expect(agentRows(tester), ['someone/robot-arm']);
+    // Return takes the highlighted row, the first match.
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pumpAndSettle();
+    expect(engineField(tester), 'someone/robot-arm');
+    expect(agentSearch, findsNothing);
+    // The words under a name count: "PCB" is what Circuit makes.
+    await openAgentSearch(tester);
+    await tester.enterText(agentSearch, 'pcb');
+    await tester.pumpAndSettle();
+    expect(agentRows(tester), ['autonomous/autonomous-circuit']);
+    // Nothing matching says so.
+    await tester.enterText(agentSearch, 'welding');
+    await tester.pumpAndSettle();
+    expect(agentRows(tester), isEmpty);
+    expect(
+      find.byKey(const Key('new-agent-agent-search-empty')),
+      findsOneWidget,
+    );
+    // Escape closes the search and keeps the choice; the dialog stays.
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(agentSearch, findsNothing);
+    expect(find.byType(AlertDialog), findsOneWidget);
     expect(engineField(tester), 'someone/robot-arm');
     expect(tester.takeException(), isNull);
   });

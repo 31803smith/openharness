@@ -159,7 +159,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     configured = true
     NSWindow.allowsAutomaticWindowTabbing = false
     window.tabbingMode = .disallowed
-    window.title = "Harness"
+    window.title = "OpenHarness"
     window.titleVisibility = .hidden
     window.titlebarAppearsTransparent = true
     window.styleMask.remove(.fullSizeContentView)
@@ -457,7 +457,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     // section returns when there is a real source for it, not before.
     modelsMenu.addItem(.separator())
     section("Local")
-    // Nothing served is not said: the "Talk to Local model manager" row that ends this section is the
+    // Nothing served is not said: the "Talk to Model manager" row that ends this section is the
     // answer, and an empty-list sentence above an empty list is noise.
     do {
       for (id, node) in localModels {
@@ -486,7 +486,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     // linked, this row is the only place the menu can say which. So it becomes a submenu of the
     // machines, one row each, this computer marked as such; every child dispatches the same command
     // with the machine's id. With one machine, or none, it stays a plain row and the app picks.
-    let run = NSMenuItem(title: "Talk to Local model manager", action: nil, keyEquivalent: "")
+    let run = NSMenuItem(title: "Talk to Model manager", action: nil, keyEquivalent: "")
     run.identifier = NSUserInterfaceItemIdentifier(HarnessKeymapMenu.actionPrefix + "runLocalModel")
     if machines.count > 1 {
       let pick = NSMenu(title: run.title)

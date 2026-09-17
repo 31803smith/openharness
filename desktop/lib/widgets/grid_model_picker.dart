@@ -54,7 +54,7 @@ class GridModelPicker extends StatefulWidget {
   /// have to know a command for.
   final VoidCallback? onUseOwnLogin;
 
-  /// Called when the last row under Local — "Talk to Local model manager" — is chosen. An action, not a
+  /// Called when the last row under Local — "Talk to Model manager" — is chosen. An action, not a
   /// destination: it opens the flow that puts a model on the user's own computer, which is the
   /// answer to the empty section this menu otherwise stops at. Always offered, whether or not
   /// anything is being served yet: a person with no Local models is exactly who needs the door.
@@ -243,7 +243,7 @@ class _GridModelPickerState extends State<GridModelPicker> {
         // Two different facts, two sentences. "We could not ask" and "this account has no grid"
         // send a person to two different places, and the one that used to cover both told a
         // signed-in user to sign in again. "The grid is serving nothing" is NOT a sentence here:
-        // the "Talk to Local model manager" row that ends this section is the answer, and a line saying the
+        // the "Talk to Model manager" row that ends this section is the answer, and a line saying the
         // list is empty above an empty list is noise.
         else if (_shown!.models.isEmpty && _emptySentence(_shown!) != null)
           paneMenuEmpty(_emptySentence(_shown!)!),
@@ -294,7 +294,7 @@ class _GridModelPickerState extends State<GridModelPicker> {
   /// account. Folding them together is what put "sign in again to set them up" in front of a
   /// signed-in user whose daemon happened to be offline — advice that was wrong, and that would
   /// not have helped even if the diagnosis had been right. A reachable grid serving nothing says
-  /// nothing (null): the "Talk to Local model manager" row under it is what a person does about that.
+  /// nothing (null): the "Talk to Model manager" row under it is what a person does about that.
   String? _emptySentence(GridModels answer) {
     if (!answer.reachable) return 'Could not reach this machine.';
     // The machine's gap before the account's: with no `grid` on this computer there is nothing a
@@ -488,7 +488,7 @@ class _ManagerInvitationState extends State<_ManagerInvitation> {
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Text(
-                  'Talk to model manager',
+                  'Talk to Model manager',
                   style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w500,

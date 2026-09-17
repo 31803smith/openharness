@@ -9,7 +9,7 @@ import 'package:harness/core/config.dart';
 import 'package:harness/core/engine_availability.dart';
 import 'package:harness/core/models.dart';
 import 'package:harness/shared/widgets/app_choice_picker.dart';
-import 'package:harness/shared/widgets/app_select_field.dart';
+import 'package:harness/widgets/agent_picker.dart';
 import 'package:harness/state/app_state.dart';
 import 'package:harness/core/project_folder.dart';
 import 'package:harness/state/pane_arrangement.dart';
@@ -17,6 +17,8 @@ import 'package:harness/state/swarm_catalog.dart';
 import 'package:harness/terminal/terminal_binary.dart';
 import 'package:harness/terminal/terminal_session.dart';
 import 'package:xterm/xterm.dart';
+
+import 'support/agent_picker.dart';
 
 import 'swarm_screen_test.dart' show mount, terminal;
 import 'swarm_interactions_test.dart' show chord;
@@ -156,16 +158,6 @@ void main() {
       await mount(tester, app);
       await chord(tester, LogicalKeyboardKey.keyN);
       await tester.pumpAndSettle();
-      FocusNode fieldFocus(String key) => tester
-          .widget<InkWell>(
-            find
-                .descendant(
-                  of: find.byKey(Key(key)),
-                  matching: find.byType(InkWell),
-                )
-                .first,
-          )
-          .focusNode!;
       Future<void> tabTo(FocusNode node, {bool back = false}) async {
         if (back) await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
         // Include the optional help buttons in the dialog's tab order.
@@ -207,18 +199,27 @@ void main() {
         (machine: 'workshop', path: '/work/selected-project'),
       ]);
 
-      await tabTo(fieldFocus('new-agent-engine-field'), back: true);
-      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-      for (final code in 'hermes'.codeUnits) {
-        await tester.sendKeyEvent(
-          LogicalKeyboardKey(code),
-          character: String.fromCharCode(code),
-        );
-      }
+      // The agent bar is in the tab order. The first letter typed there opens
+      // its search with that letter in it, and Return takes the first match
+      // without leaving the keyboard.
+      final bar = tester
+          .widget<AgentPicker>(find.byType(AgentPicker))
+          .focusNode!;
+      await tabTo(bar, back: true);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyH, character: 'h');
+      await tester.pump();
+      await tester.pump();
+      expect(tester.widget<TextField>(agentSearch).controller!.text, 'h');
+      tester.testTextInput.enterText('hermes');
       await tester.pumpAndSettle();
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pumpAndSettle();
-      expect(find.text('Hermes'), findsOneWidget);
+      expect(agentSearch, findsNothing, reason: 'a choice closes the search');
+      expect(
+        tester.widget<AgentPicker>(find.byType(AgentPicker)).value,
+        'hermes',
+      );
+      expect(bar.hasPrimaryFocus, isTrue);
       expect(app.launches, isEmpty);
       final submit = tester.widget<FilledButton>(
         find.byKey(const ValueKey('create-agent-submit')),
@@ -421,11 +422,7 @@ void main() {
       );
       expect(find.text('my-project'), findsOneWidget);
       expect(
-        tester
-            .widget<AppSelectField<String>>(
-              find.byKey(const Key('new-agent-engine-field')),
-            )
-            .value,
+        tester.widget<AgentPicker>(find.byType(AgentPicker)).value,
         'claude',
       );
       await _browseLocal(tester);
@@ -539,11 +536,7 @@ void main() {
           'Remote computer',
         ]);
         expect(
-          tester
-              .widget<AppSelectField<String>>(
-                find.byKey(const Key('new-agent-engine-field')),
-              )
-              .value,
+          tester.widget<AgentPicker>(find.byType(AgentPicker)).value,
           'codex',
         );
         expect(app.panes, [pane]);
@@ -585,12 +578,18 @@ void main() {
       await chord(tester, LogicalKeyboardKey.keyN);
       await tester.pump();
 
+      // The dialog opens with focus on the agent bar, ready to type.
       expect(
-        Focus.of(tester.element(find.text('New project'))).hasPrimaryFocus,
+        tester
+            .widget<AgentPicker>(find.byType(AgentPicker))
+            .focusNode!
+            .hasPrimaryFocus,
         isTrue,
       );
-      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
-      await tester.pump();
+      for (var i = 0; i < 16 && !_localFocus(tester).hasPrimaryFocus; i++) {
+        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+        await tester.pump();
+      }
       expect(_localFocus(tester).hasPrimaryFocus, isTrue);
       expect(picker.opened, 0);
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
@@ -699,13 +698,11 @@ void main() {
     expect(tester.widget<TextField>(_startInput).focusNode!.hasFocus, isTrue);
     await tester.tap(_newHarness);
     await tester.pump();
-    final engine = tester.widget<AppSelectField<String>>(
-      find.byKey(const Key('new-agent-engine-field')),
-    );
+    final engine = tester.widget<AgentPicker>(find.byType(AgentPicker));
     expect(engine.value, 'codex');
     expect(find.byKey(const Key('new-agent-machine-field')), findsOneWidget);
     expect(
-      tester.getTopLeft(find.text('Agent. Choose who you’ll work with.')).dy,
+      tester.getTopLeft(agentBar).dy,
       lessThan(
         tester
             .getTopLeft(
@@ -826,11 +823,7 @@ void main() {
       await tester.pump();
       expect(find.text('chosen'), findsOneWidget);
       expect(
-        tester
-            .widget<AppSelectField<String>>(
-              find.byKey(const Key('new-agent-engine-field')),
-            )
-            .value,
+        tester.widget<AgentPicker>(find.byType(AgentPicker)).value,
         'codex',
       );
       expect(app.probes, 1);
@@ -878,10 +871,7 @@ void main() {
         await chord(tester, LogicalKeyboardKey.keyN);
         await tester.pump();
         if (chooseExplicitly) {
-          await tester.tap(
-            find.byKey(const ValueKey('new-agent-quick-claude')),
-          );
-          await tester.pump();
+          await chooseAgent(tester, 'claude');
         }
         app.machineStates['m']!.engines.replace(const [
           EngineAvailability(engine: 'claude', installed: false),
@@ -891,9 +881,7 @@ void main() {
         await tester.pump();
         await tester.pump();
         expect(app.probes, 1);
-        final engine = tester.widget<AppSelectField<String>>(
-          find.byKey(const Key('new-agent-engine-field')),
-        );
+        final engine = tester.widget<AgentPicker>(find.byType(AgentPicker));
         expect(engine.value, chooseExplicitly ? 'claude' : 'codex');
         expect(app.launches, isEmpty);
         await tester.pumpWidget(const SizedBox());

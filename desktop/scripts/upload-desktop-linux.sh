@@ -210,7 +210,7 @@ cp "$BUNDLE_DIR/harness.png" "$APPDIR/harness.png"
 cat > "$APPDIR/harness.desktop" <<EOF
 [Desktop Entry]
 Type=Application
-Name=Harness
+Name=OpenHarness
 Comment=Attach terminals to the agents running on your Harness machines
 Exec=harness
 Icon=harness

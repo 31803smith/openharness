@@ -98,7 +98,7 @@ void main() {
         final open = find.byKey(const ValueKey('harness-start-open'));
         final device = find.byKey(const ValueKey('harness-device-link'));
         final store = find.byKey(const ValueKey('harness-store-link'));
-        expect(find.text('Harness'), findsNothing);
+        expect(find.text('OpenHarness'), findsNothing);
         expect(
           tester.widget<TextField>(field).decoration!.hintText,
           'Find a harness',

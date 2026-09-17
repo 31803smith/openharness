@@ -178,7 +178,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, 'Select this folder'));
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+      await tester.tap(find.byKey(const ValueKey('create-agent-submit')));
       await tester.pumpAndSettle();
     }
 

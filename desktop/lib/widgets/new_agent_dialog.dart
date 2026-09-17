@@ -20,6 +20,7 @@ import '../shared/widgets/app_choice_picker.dart';
 import '../shared/widgets/app_dialog.dart';
 import '../shared/widgets/app_select_field.dart';
 import '../state/app_state.dart';
+import '../store/store_editorial.dart';
 import 'engine_identity.dart';
 import 'codex_profile_field.dart';
 import 'agent_picker.dart';
@@ -123,6 +124,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
       ? null
       : widget.initialPrompt?.trim();
   final _folderFocus = FocusNode(debugLabel: 'Working folder');
+  final _agentSearchFocus = FocusNode(debugLabel: 'Agent search');
   final _actionFocus = FocusNode(debugLabel: 'Create or check agent');
   GitHubRepository? _repository;
   final _choicesScroll = ScrollController();
@@ -170,6 +172,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   @override
   void dispose() {
     _folderFocus.dispose();
+    _agentSearchFocus.dispose();
     _actionFocus.dispose();
     _choicesScroll.dispose();
     super.dispose();
@@ -208,11 +211,14 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         // The modal's fallback focus can win autofocus. Claim the first
-        // actionable control once the route and its focus tree are mounted.
-        _folderFocus.requestFocus();
+        // actionable control once the route and its focus tree are mounted:
+        // the agent search, so the dialog opens ready to type — or the
+        // project, when the agent was chosen before it opened (the Store).
+        (widget.initialEngine == null ? _agentSearchFocus : _folderFocus)
+            .requestFocus();
         unawaited(_probeEngines(initialProbe: widget.initialEngineProbe));
-        // And the harnesses, whatever is selected: a package installed from
-        // a terminal since the last answer is otherwise missing from More.
+        // And the harnesses, whatever is selected: what the machine has
+        // installed is what the agent row shows first.
         unawaited(_probeHarnesses());
         unawaited(_loadAgentPreference());
       }
@@ -553,6 +559,8 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
       bypassPermission: bypassPermission,
       permissionMode: permissionMode,
     );
+    // What New Harness lists first next time, before anything is typed.
+    unawaited(widget.notifier.agentPreference.remember(choice));
     Navigator.of(context).pop(NewAgentDialogResult.created);
   }
 
@@ -584,6 +592,14 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     );
   }
 
+  /// The dialog's title: what it makes, and where a split puts it. The
+  /// primary button says "New Harness" alone.
+  String get _title => switch (widget.split?.axis) {
+    PaneResizeAxis.x => 'New Harness to the right',
+    PaneResizeAxis.y => 'New Harness below',
+    null => 'New Harness',
+  };
+
   Widget _buildDialog(BuildContext context) {
     final edgePadding = MediaQuery.sizeOf(context).width < 700 ? 24.0 : 36.0;
     final compactHeight = MediaQuery.sizeOf(context).height < 800;
@@ -612,11 +628,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
         backgroundColor: grid.AppPalette.swarmField,
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
-        title: Text(switch (widget.split?.axis) {
-          PaneResizeAxis.x => 'New Harness to the right',
-          PaneResizeAxis.y => 'New Harness below',
-          null => 'New Harness',
-        }),
+        title: Text(_title),
         titleTextStyle: Theme.of(context).textTheme.headlineSmall?.copyWith(
           fontSize: 28,
           height: 1.2,
@@ -809,7 +821,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                                   ? 'Check status'
                                   : _installRun?.failed == true
                                   ? 'Retry'
-                                  : 'Create',
+                                  : 'New Harness',
                             ),
                     ),
                   ],
@@ -843,10 +855,12 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     );
   }
 
+  /// "Machine. Where would you like your agent to run?" and its help link;
+  /// a section with no [helpTopic] has the line alone.
   Widget _sectionHeader(
     String label,
     String prompt,
-    HarnessHelpTopic helpTopic, {
+    HarnessHelpTopic? helpTopic, {
     required bool compactHeight,
   }) => Padding(
     padding: EdgeInsets.only(bottom: compactHeight ? 12 : 16),
@@ -879,7 +893,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
             ),
           ),
         ),
-        HarnessHelpLink(topic: helpTopic),
+        if (helpTopic != null) HarnessHelpLink(topic: helpTopic),
       ],
     ),
   );
@@ -922,39 +936,57 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // The section's line, like Machine's and Project's but with no help
+          // link (owner, 2026-09-17), and the search box under it naming the
+          // chosen agent.
           _sectionHeader(
             'Agent',
             'Choose who you’ll work with.',
-            HarnessHelpTopic.agent,
+            null,
             compactHeight: compactHeight,
           ),
           AgentPicker(
-            compact: true,
-            tileSize: tileSize,
+            key: const Key('new-agent-agent-picker'),
+            focusNode: _agentSearchFocus,
+            // A tile's height, so the bar is in proportion with the rows of
+            // tiles under it.
+            height: tileSize.height,
+            width: constraints.maxWidth,
             value: _engine,
-            options: [
+            recent: () => _recentAgents,
+            installed: _installedIds,
+            statusOf: _agentStatus,
+            choices: [
               for (final identity in allEngines)
-                SelectOption(
-                  value: identity.id,
-                  label: identity.label,
+                AgentChoice(
+                  id: identity.id,
+                  label: _labelOf(identity.id),
                   detail: identity.detail,
-                  leading: () => EngineMark(engine: identity.id, size: 14),
+                  description: identity.blurb,
+                  mark: (size) => EngineMark(engine: identity.id, size: size),
                 ),
               // The domain harnesses, after the engines they run on. What the
-              // machine named when it has answered, else this build's own two.
+              // machine named when it has answered, else this build's own.
               for (final harness in _harnessOptions)
-                SelectOption(
-                  value: harness.id,
+                AgentChoice(
+                  id: harness.id,
                   label: harness.name,
                   // No "on Codex" here: the engine underneath is a backend
                   // detail (owner, 2026-09-15) — the settings row says it.
                   // What it makes, in a word or two; the machine's word first,
                   // this build's when the machine has not answered.
                   detail: _harnessDetail(harness),
-                  leading: () => EngineMark(
+                  // The Store's broad shelf, for the search alone: "media"
+                  // finds Typst beside its own "Documents".
+                  keywords: storeCategoryFor(harness),
+                  description:
+                      harness.description ??
+                      engineIdentity(harness.id).blurb ??
+                      storeStories[harness.id]?.benefit,
+                  mark: (size) => EngineMark(
                     engine: harness.id,
                     displayName: harness.name,
-                    size: 14,
+                    size: size,
                   ),
                 ),
             ],
@@ -1283,9 +1315,56 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
         _error = null;
       });
       unawaited(_probeEngines());
-      if (_engineIsHarness) unawaited(_probeHarnesses());
+      // And its harnesses, whatever is chosen: what this machine has
+      // installed is what the agent row shows first.
+      unawaited(_probeHarnesses());
     },
   );
+
+  /// The agents you used lately, most recent first: the ones harnesses were
+  /// created with here, then the ones running on this machine and the rest.
+  List<String> get _recentAgents => [
+    ...widget.notifier.agentPreference.recent,
+    for (final machine in [
+      ?widget.notifier.stateOf(_machineId),
+      ...widget.notifier.machineStates.values,
+    ])
+      for (final agent in machine.agents.reversed) ?(agent.dsh ?? agent.engine),
+  ];
+
+  /// A line for the agent search's preview: is [id] on the chosen machine, or
+  /// will Harness install it first. Null while the machine has not said.
+  String? _agentStatus(String id) {
+    final machine = widget.notifier.stateOf(_machineId);
+    if (machine == null) return null;
+    final name = machine.machine.displayName;
+    if (isHarnessId(id)) {
+      final entry = _harness(id);
+      if (entry == null) return null;
+      return entry.installed
+          ? 'Installed on $name'
+          : 'Installs on $name before it starts';
+    }
+    final engine = machine.engines.loaded ? machine.engines[id] : null;
+    if (engine == null) return null;
+    if (engine.installed) return 'Installed on $name';
+    return engine.installable
+        ? 'Installs on $name before it starts'
+        : 'Not installed on $name';
+  }
+
+  /// What the machine has, by id: engines from its probe, harnesses from its
+  /// catalog. The agent search lists them after the agents you used.
+  Set<String> get _installedIds {
+    final machine = widget.notifier.stateOf(_machineId);
+    if (machine == null) return const {};
+    return {
+      for (final entry in machine.dsh.entries)
+        if (entry.installed && !entry.isViewerPackage) entry.id,
+      for (final engine in machine.engines.byEngine.values)
+        if (engine.installed) engine.engine,
+    };
+  }
 }
 
 /// The project picker shares Open Agent’s generous reading space.

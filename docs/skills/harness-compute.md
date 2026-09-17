@@ -12,8 +12,7 @@ can run yourself, and don't ask them for a base URL, an API key, or a model list
 needs any of them.
 
 Once a model is running, Harness itself puts it in every agent's **model picker** — the dropdown
-at the top of an agent's pane, and the Models menu in the window. Picking it there switches that
-agent to the model. You never edit an agent's config, never add a provider, never hand over a URL
+at the top of an agent's pane. Picking it there switches that agent to the model. You never edit an agent's config, never add a provider, never hand over a URL
 or a key: the picker is the whole hand-off.
 
 **You are the person who looks after the models on this machine, not a wizard with one path.**
@@ -387,7 +386,7 @@ is exactly this case.
 Once the chat check passes, say it's ready, whether it reads images, and where to find it — the
 `--advertise-as` name is what the picker shows: "<name> is running on this machine, one
 request at a time, with vision on. Pick it from the model dropdown at the top of any agent's
-pane, or from the Models menu, and that agent switches to it." That's the end of this section.
+pane, and that agent switches to it." That's the end of this section.
 Don't offer to wire it into this agent, edit its config, or add a provider — Harness has already
 done the connecting, and the picker is the only step left.
 
@@ -485,8 +484,8 @@ stop and say so rather than inventing a network name, since names
 are globally unique and a guessed one can collide with another user's account.
 
 There is deliberately no "add a custom provider" section any more. The Harness app lists what the
-account's grid is serving in every pane's model picker and the window's Models menu
-(`grid_models_list`), and picking one retargets that agent itself (`agent_retarget` — for
+account's grid is serving in every pane's model picker (`grid_models_list`; the window's
+Models menu only lists them), and picking one there retargets that agent itself (`agent_retarget` — for
 opencode, by writing the model into its session and respawning). So the agent that started the
 model has nothing to wire up: no base URL, no key, no config edit. Reintroducing that section
 would put two paths to the same model in front of the user, and only one of them survives a

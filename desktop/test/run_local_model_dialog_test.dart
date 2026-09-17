@@ -1,10 +1,12 @@
-// The Talk to Local model manager dialog and the one action behind it: the copy, the machine line, the
+// The Talk to Model manager dialog and the one action behind it: the copy, the machine line, the
 // prerequisites that replace it, and what Start actually sends.
 import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:harness/auth/auth_session.dart';
 import 'package:harness/core/config.dart';
 import 'package:harness/core/models.dart';
@@ -38,7 +40,7 @@ class _Conn extends WsConn {
 
   /// What the daemon names the created agent. A daemon that knows `name` echoes it; one that
   /// predates the field names the pane itself — the shape of an old Harness on that machine.
-  String replyName = 'Local model manager';
+  String replyName = 'Model manager';
 
   /// Every `agent_create` payload, verbatim — the wire is what the plan specifies.
   final creates = <Map<String, dynamic>>[];
@@ -129,7 +131,7 @@ void main() {
               child: TextButton(
                 key: const Key('door'),
                 onPressed: () => notifier.runLocalModel(context),
-                child: const Text('Talk to Local model manager'),
+                child: const Text('Talk to Model manager'),
               ),
             ),
           ),
@@ -152,7 +154,7 @@ void main() {
     expect(find.text('Models that live on your machine'), findsOneWidget);
     expect(
       find.text(
-        "Local model manager is an agent that looks after the models on one of your computers. "
+        "Model manager is an agent that looks after the models on one of your computers. "
         "Say what you need and it helps you pick a model that fits that computer and the work, "
         "then sets it up there. Once a model is up, every agent on every machine can switch to "
         "it from its model picker.",
@@ -169,7 +171,7 @@ void main() {
     expect(find.textContaining('grid'), findsNothing);
     expect(find.textContaining('this Mac'), findsNothing);
     // The body introduces the agent by name and never says the product's: the person is meeting
-    // Local model manager, not being told to go talk to Harness.
+    // Model manager, not being told to go talk to Harness.
     expect(find.textContaining('Harness'), findsNothing);
     expect(find.textContaining('!'), findsNothing);
     // No dashes of any kind in the copy: the owner's rule for this dialog.
@@ -190,6 +192,59 @@ void main() {
     expect(find.byKey(const Key('run-local-model-machine-more')), findsNothing);
     expect(find.textContaining('(this computer)'), findsNothing);
   });
+
+  testWidgets(
+    'two starter prompts, each copied to the clipboard on its button',
+    (tester) async {
+      // An empty composer is where people stall; two things to say, copied rather than typed. The
+      // clipboard is faked so the copy is observable and never touches the real one.
+      final copied = <String>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'Clipboard.setData') {
+            copied.add((call.arguments as Map)['text'] as String);
+          }
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+      await open(tester);
+
+      expect(find.text('Try saying'), findsOneWidget);
+      expect(
+        find.text(
+          'Set up a model for my coding work, just for me on this machine',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.text(
+          'I want a model for chat and writing. What fits this machine?',
+        ),
+        findsOneWidget,
+      );
+
+      await tester.tap(
+        find.byKey(const ValueKey('run-local-model-prompt-copy-1')),
+      );
+      await tester.pump();
+      expect(copied, [
+        'I want a model for chat and writing. What fits this machine?',
+      ]);
+      // The button says so for a moment, then goes back to being a copy button.
+      expect(find.byIcon(LucideIcons.check), findsOneWidget);
+      await tester.pump(const Duration(seconds: 3));
+      expect(find.byIcon(LucideIcons.check), findsNothing);
+      // Copying starts nothing.
+      expect(conn.creates, isEmpty);
+    },
+  );
 
   testWidgets('missing opencode is said, and disables Start', (tester) async {
     build(
@@ -321,7 +376,7 @@ void main() {
     expect(conn.creates, hasLength(1));
     expect(
       notifier.lastError,
-      'Harness on studio-7 is too old to open Local model manager: it opened a plain opencode '
+      'Harness on studio-7 is too old to open Model manager: it opened a plain opencode '
       'pane instead. Update Harness there and try again.',
     );
   });
@@ -368,7 +423,7 @@ void main() {
       // The pane IS the agent (`opencode --agent harness-compute`), and is titled before opencode
       // reports a session title.
       expect(payload['agent'], 'harness-compute');
-      expect(payload['name'], 'Local model manager');
+      expect(payload['name'], 'Model manager');
       // No first message: the person opens the conversation, and the dialog says so.
       expect(payload.containsKey('prompt'), isFalse);
       // Home, not a project: a local model is not about any one repo.
