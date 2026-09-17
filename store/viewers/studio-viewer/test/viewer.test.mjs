@@ -134,6 +134,24 @@ test('bounds output size and handles JSON HEAD downloads',async t=>{
   const head=await fetch(f.studio.url+'/artifacts/out/record.json',{method:'HEAD'});assert.equal(head.status,200);assert.equal(await head.text(),'');
 });
 
+test('WebKit audio ranges, suffixes, and artifact downloads preserve exact bytes',async t=>{
+  const f=await fixture(t);await mkdir(join(f.workspace,'out'));
+  await writeFile(join(f.workspace,'out/record.wav'),'0123456789');
+  for(const [range,wanted,contentRange] of [['bytes=0-1','01','bytes 0-1/10'],['bytes=7-','789','bytes 7-9/10'],['bytes=-3','789','bytes 7-9/10'],['bytes=8-99','89','bytes 8-9/10']]){
+    const response=await fetch(f.studio.url+'/artifacts/out/record.wav',{headers:{Range:range}});
+    assert.equal(response.status,206);assert.equal(await response.text(),wanted);
+    assert.equal(response.headers.get('content-range'),contentRange);assert.equal(Number(response.headers.get('content-length')),wanted.length);
+  }
+  for(const range of ['bytes=10-','bytes=5-2','bytes=-0','bytes=-','bytes=0-1,3-4','nonsense','bytes=999999999999999999999-']){
+    const response=await fetch(f.studio.url+'/artifacts/out/record.wav',{headers:{Range:range}});
+    assert.equal(response.status,416,range);assert.equal(response.headers.get('content-range'),'bytes */10');
+  }
+  const content='{\n  "answer": 42\n}\n';await writeFile(join(f.workspace,'out/record.json'),content);
+  assert.equal(await(await fetch(f.studio.url+'/artifacts/out/record.json?download')).text(),content);
+  const head=await fetch(f.studio.url+'/artifacts/out/record.wav',{method:'HEAD',headers:{Range:'bytes=0-1'}});
+  assert.equal(head.status,200);assert.equal(head.headers.get('content-length'),'10');assert.equal(await head.text(),'');
+});
+
 test('manifest server entry point starts, serves a workspace, and stops cleanly',async t=>{
   const f=await fixture(t);
   const child=spawn(process.execPath,[fileURLToPath(new URL('../server.mjs',import.meta.url))],{env:{...process.env,HARNESS_WORKSPACE:f.workspace,HARNESS_DSH_DIR:f.packageDir,HARNESS_VIEWER_PORT:'0'},stdio:['ignore','pipe','pipe']});

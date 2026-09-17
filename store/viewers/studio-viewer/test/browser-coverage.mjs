@@ -10,7 +10,7 @@ const store=fileURLToPath(new URL('../../../',import.meta.url));
 const map=createCoverageMap({});
 for(const filename of await readdir(join(viewer,'test-results'))){
   if(!filename.endsWith('-browser-coverage.json'))continue;
-  const name=filename.replace('-browser-coverage.json','');
+  const name=filename.replace('-browser-coverage.json','').split('--')[0];
   const entries=JSON.parse(await readFile(join(viewer,'test-results',filename),'utf8'));
   for(const entry of entries){
     if(!entry.url?.startsWith('http://127.0.0.1:'))continue;
@@ -21,6 +21,7 @@ for(const filename of await readdir(join(viewer,'test-results'))){
       file=join(store,'agents',name,'view.mjs');
     }else if(['/studio.mjs','/graphics.mjs','/music.mjs'].includes(path))file=join(viewer,'web',path.slice(1));
     else continue;
+    if(entry.source!==await readFile(file,'utf8'))throw Error(`Stale browser coverage for ${file}; rerun ${filename}.`);
     const converter=v8ToIstanbul(file,0,{source:entry.source});
     await converter.load();converter.applyCoverage(entry.functions);map.merge(converter.toIstanbul());
   }
