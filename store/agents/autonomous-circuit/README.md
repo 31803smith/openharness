@@ -28,4 +28,5 @@ to own the store entry, the wrapper moves into their repository and the registry
 ```sh
 harness dsh check "$PWD"                           # conformance (warns: the project arrives with setup)
 harness dsh install "$PWD" --link                  # this checkout as the installed agent
+python3 -m unittest discover -s toolchain          # the scripts, against a local stand-in repository
 ```
