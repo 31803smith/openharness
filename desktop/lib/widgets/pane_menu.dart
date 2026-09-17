@@ -109,13 +109,24 @@ Future<T?> showPaneMenu<T>({
 /// InkWell around the whole item painted edge to edge and square, over a selected fill that was
 /// neither, and the two reading as different shapes made the current row look like the odd one
 /// out.
+/// ⚠️ The cursor is STATED, in both places that can answer for it. A pane menu is drawn in an
+/// overlay above a terminal, and what a person sees while hovering a row was whatever the surface
+/// underneath asked for — an arrow over rows that are the whole point of the menu. `InkWell` carries
+/// a clickable cursor of its own in principle, and in this app it was not what reached the screen;
+/// the control that OPENS this menu needed both annotations before a hand appeared, and these rows
+/// need the same. The cursor a person sees is the innermost annotation under the pointer, so the
+/// MouseRegion covers the row and the InkWell answers for its own ink.
 Widget paneMenuItem({required VoidCallback onTap, required Widget child}) =>
     Padding(
       padding: const EdgeInsets.symmetric(horizontal: kPaneMenuInset),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(kPaneMenuRowRadius),
-        child: child,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: InkWell(
+          onTap: onTap,
+          mouseCursor: SystemMouseCursors.click,
+          borderRadius: BorderRadius.circular(kPaneMenuRowRadius),
+          child: child,
+        ),
       ),
     );
 

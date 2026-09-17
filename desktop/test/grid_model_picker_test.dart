@@ -474,6 +474,44 @@ void main() {
     },
   );
 
+  testWidgets('every row a person can pick says so under the pointer', (
+    tester,
+  ) async {
+    // A pane menu is drawn over a terminal, and the cursor a person saw while hovering a row was
+    // whatever the surface underneath asked for — an arrow over the rows that are the whole point of
+    // the menu. The subscription row and each Local model are choices; they should look like it
+    // before they are clicked.
+    build(models: [
+      {'id': 'Qwen-Test', 'node': 'macbook-m1max'},
+    ]);
+    await open(tester);
+
+    for (final row in ['Anthropic', 'Qwen-Test']) {
+      final inkWell = tester.widget<InkWell>(
+        find.ancestor(of: find.text(row), matching: find.byType(InkWell)).first,
+      );
+      expect(inkWell.mouseCursor, SystemMouseCursors.click, reason: row);
+      // BOTH annotations, because the innermost one under the pointer is what decides: InkWell
+      // installs a MouseRegion of its own, so an ancestor asking for a hand does not settle it.
+      //
+      // ⚠️ Counted, not read off `.first`. The nearest MouseRegion ancestor of a row IS the one
+      // InkWell made, so asserting on it twice looked like two checks and was one — the wrapper
+      // could be set to `basic` and this test still passed. Two carrying it is what proves both.
+      final asking = tester
+          .widgetList<MouseRegion>(
+            find.ancestor(of: find.text(row), matching: find.byType(MouseRegion)),
+          )
+          .where((region) => region.cursor == SystemMouseCursors.click)
+          .length;
+      expect(asking, greaterThanOrEqualTo(2), reason: row);
+    }
+
+    // ⚠️ This asserts the widgets' contract, NOT the cursor the OS draws. Reading that back through
+    // `MouseTracker.debugDeviceActiveCursor` does not work in this harness — a bare
+    // `MouseRegion(cursor: click)` over a plain box answers `basic` there — so a test written that
+    // way would be measuring the harness rather than the app.
+  });
+
   group('which engines are offered a picker at all', () {
     test('the three whose switching has been driven end to end', () {
       // Not the daemon's `localModelEngines`, which is the wider "could a Local model be handed to
