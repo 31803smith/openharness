@@ -106,6 +106,10 @@ export type RecentProvider = (sessionId: string, n: number) => Array<{ kind: str
 
 
 const APP_PING_MS = 15_000
+// Floor between two `app_presence` up-frames. The window pings this daemon every 30s; the backend
+// only needs to hear about it about once a minute (it floors its own Mongo write at five). `open`
+// is never held back — it is the one that counts as a session in `user_daily_presence`.
+const APP_PRESENCE_UP_MS = 60_000
 // How long the opening handshake may take before the attempt is abandoned and retried. `ws` waits
 // forever by default, and the heartbeat below only starts on 'open' — so a TCP connection that came
 // up while the network was flapping but never got its upgrade answered sat in CONNECTING for hours,
@@ -309,6 +313,7 @@ export class BackendSocket {
   private droppedSinceLog = 0
   private heartbeat: LivenessWatch | null = null
   private appPing: NodeJS.Timeout | null = null
+  private lastAppPresenceUpAt = 0
   private readonly downChains = new Map<string, Promise<void>>()
   private readonly localClients = new Map<string, LocalClientSink>()
   private terminalStreams: TerminalStreamManager | null = null
@@ -625,6 +630,8 @@ export class BackendSocket {
 
       // App-level ping refreshes the backend's presence key (TTL 30s).
       this.appPing = setInterval(() => this.sendBestEffort({ t: 'ping' }), APP_PING_MS)
+      // A fresh socket knows nothing about the window; let its next ping through at once.
+      this.lastAppPresenceUpAt = 0
     })
 
     ws.on('message', (raw, isBinary) => {
@@ -837,6 +844,26 @@ export class BackendSocket {
     this.onOutboundCommander?.(frame)
     if (env.LOG_FRAMES) logFrame('→', 'device', frame)
     this.enqueue({ t: 'up', webEligible: false, commanderEligible: true, frame: this.e2ee.wrapCommander(frame) })
+  }
+
+  /**
+   * The desktop window is open on this computer (localWsServer `app_presence`): tell the backend, which
+   * turns it into the person's `user_daily_presence` row. `open` goes up at once, `ping` at most once
+   * per APP_PRESENCE_UP_MS. Best-effort and plaintext on purpose: it is bookkeeping about the person,
+   * not data, and a daemon that is signed out (no backend dial) or between reconnects simply drops it
+   * rather than queueing a stale "was open" behind real frames. Returns whether a frame went up.
+   */
+  sendAppPresence(kind: 'open' | 'ping'): boolean {
+    const now = Date.now()
+    if (kind === 'ping' && now - this.lastAppPresenceUpAt < APP_PRESENCE_UP_MS) return false
+    const sent = this.sendBestEffort({
+      t: 'up',
+      webEligible: false,
+      commanderEligible: false,
+      frame: { type: 'app_presence', payload: { kind } },
+    })
+    if (sent) this.lastAppPresenceUpAt = now
+    return sent
   }
 
   /** Attach one authenticated loopback desktop client to the same RPC and event plane as cloud web. */
@@ -1785,7 +1812,7 @@ export class BackendSocket {
               void this.agentCreations.run(creationId, creationFingerprint(projectFolder ? { ...input, projectFolder } : input), async () => {
                 let preparedFolder: string | undefined
                 if (projectFolder) {
-                  try { preparedFolder = await prepareProjectFolder(projectFolder) }
+                  try { preparedFolder = await prepareProjectFolder(projectFolder, { namesInUse: registry.agentNamesInUse() }) }
                   catch (error) {
                     return { state: 'failed', error: error instanceof ProjectFolderError ? error.code : 'PROJECT_PREPARATION_FAILED',
                       detail: error instanceof ProjectFolderError ? error.message : 'Could not prepare the project folder.' }

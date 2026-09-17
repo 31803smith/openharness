@@ -3289,6 +3289,9 @@ async function runForeground(session: AuthSession): Promise<void> {
     // The window's swarms. Relayed to the dial as its own list — the dial names the one on screen above
     // the agent and offers the rest — and, through setSwarms, what makes the desk strict: a present
     // window with an empty swarm is an empty carousel, not the whole machine.
+    // The window's "I am open" — the only desk fact that goes UP. Throttled and dropped-when-offline
+    // inside sendAppPresence, so a guest daemon costs nothing here.
+    onAppPresence: (kind) => { backend.sendAppPresence(kind) },
     onAppSwarms: (swarms) => {
       cableHostRef?.setSwarms(swarms)
       void cableRef?.syncSwarms()

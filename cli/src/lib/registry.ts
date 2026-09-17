@@ -1100,12 +1100,17 @@ class Registry {
     return entry
   }
 
-  private nextAgentName(cwd?: string | null): string {
-    let next = 1n
-    const names = [
+  /** Every name an agent on this machine answers to: default names, project names, renames. */
+  agentNamesInUse(): string[] {
+    return [
       ...this.list().flatMap(agent => [agent.defaultName, projectDisplayName(agent)]),
       ...NAME_OVERRIDES.values(),
-    ]
+    ].filter((name): name is string => typeof name === 'string' && name.length > 0)
+  }
+
+  private nextAgentName(cwd?: string | null): string {
+    let next = 1n
+    const names = this.agentNamesInUse()
     // A new project is the folder `~/harnesses/harness-N`, numbered by its own counter. An agent
     // started in it answers to the same N rather than to this counter, which drifts from that one
     // (the tab said harness-42 over a terminal in ~/harnesses/harness-41). Taken already — a second
