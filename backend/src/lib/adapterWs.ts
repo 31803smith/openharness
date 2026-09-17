@@ -82,10 +82,10 @@ const CLIENT_VERSION_RE = /^[A-Za-z0-9._+-]{1,64}$/
 // day costs ~300 upserts, not ~6000. Connect and close always write regardless.
 const MACHINE_PRESENCE_WRITE_MS = 5 * 60_000
 
-// Daily presence of the PERSON (`user_daily_presence`): the desktop app pings its local daemon every
-// 30s while its loopback socket is up, the daemon forwards at most one `app_presence` up-frame a
-// minute, and this is the floor between two Mongo writes for the `ping` kind. `open` (the app just
-// connected its local socket) always writes — it is what `connections` counts. The web-ws upgrade
+// Daily presence of the PERSON (`user_daily_presence`): the daemon reports its own loopback clients —
+// `open` the moment a desktop window attaches, `ping` on its 15s app-ping tick while one stays, at
+// most once a minute (cli backendSocket sendAppPresence) — and this is the floor between two Mongo
+// writes for the `ping` kind. `open` always writes — it is what `connections` counts. The web-ws upgrade
 // used to be the source, but the desktop app never dials web-ws directly (only the daemon does, and
 // only to relay a foreign machine), so a single-machine user was invisible there.
 const USER_PRESENCE_WRITE_MS = 5 * 60_000
@@ -414,9 +414,9 @@ async function attachAdapter(ws: WebSocket, machineId: string, userId: string, c
         })
         return
       }
-      // The desktop app's own presence ping, relayed by the daemon (cli localWsServer → backendSocket
-      // sendAppPresence). Bookkeeping only — absorbed here, never published: no client has any use for
-      // it and an unknown frame type must not reach the firmware.
+      // The daemon saying a desktop window is attached to it (cli backendSocket sendAppPresence).
+      // Bookkeeping only — absorbed here, never published: no client has any use for it and an
+      // unknown frame type must not reach the firmware.
       if (app.type === 'app_presence') {
         const kind = (app.payload as { kind?: unknown } | undefined)?.kind
         if (typeof kind !== 'string' || !APP_PRESENCE_KINDS.has(kind)) return

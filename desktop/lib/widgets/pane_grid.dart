@@ -2133,7 +2133,7 @@ class _EmptyGrid extends StatelessWidget {
                 FilledButton.icon(
                   key: const ValueKey('empty-grid-new-agent'),
                   icon: const Icon(Icons.add, size: 16),
-                  label: const Text('Create Agent'),
+                  label: const Text('New Harness'),
                   onPressed: () => showNewAgentDialog(
                     context,
                     notifier,

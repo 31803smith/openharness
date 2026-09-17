@@ -454,7 +454,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     });
     // A harness the machine does not have yet is installed FIRST, as its own
     // step with its own words: minutes of clone and toolchain under a button
-    // that said "Creating agent…" would read as a create that hung. The
+    // that said "Creating harness…" would read as a create that hung. The
     // machine's catalog decides "has it" — asked AGAIN at this moment, not
     // read from the answer the dialog opened with: a harness removed or
     // installed in the meantime (`harness dsh remove` in a terminal, another
@@ -473,7 +473,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
           _submitting = false;
           _error =
               'Update Harness CLI on $_machineName to create a '
-              '${_labelOf(harness)} agent.';
+              '${_labelOf(harness)} harness.';
         });
         return;
       }
@@ -701,7 +701,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                     // later. `awaitingConfirmation` is set the moment the
                     // request goes out, so on its own it also covered every
                     // ordinary create in flight, and a disabled Close sat
-                    // beside "Creating agent…" meaning nothing (owner,
+                    // beside "Creating harness…" meaning nothing (owner,
                     // 2026-09-16). Same gate as Find an agent below.
                     if (_confirmationPending &&
                         (!_submitting || _checkingCreation))
@@ -773,7 +773,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                                         ? 'Cloning and starting…'
                                         : _installing
                                         ? 'Installing ${_labelOf(_engine)}…'
-                                        : 'Creating agent…',
+                                        : 'Creating harness…',
                                   ),
                                 ],
                               ),
@@ -960,7 +960,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                 Expanded(
                   child: Text(
                     'Couldn’t check whether ${_labelOf(_baseEngine(_engine))} is installed. '
-                    'You can still try creating an agent.',
+                    'You can still try creating the harness.',
                     style: Theme.of(context).textTheme.bodySmall
                         ?.copyWith(color: grid.AppPalette.textSecondary),
                   ),

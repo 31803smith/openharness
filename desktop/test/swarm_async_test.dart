@@ -93,12 +93,12 @@ void main() {
     (
       'TMUX_UNAVAILABLE',
       null,
-      'Harness needs tmux to start agents on Test host. Install tmux there, then try again.',
+      'Harness needs tmux to start harnesses on Test host. Install tmux there, then try again.',
     ),
     (
       'UNSUPPORTED',
       null,
-      'Update the harness CLI on this machine to create an agent',
+      'Update the harness CLI on this machine to create a harness',
     ),
     (
       'SPAWN_FAILED',

@@ -407,7 +407,7 @@ void main() {
       await tester.tapAt(const Offset(8, 100));
       await tester.pump();
       expect(find.byType(AlertDialog), findsOneWidget);
-      expect(find.text('Creating agent…'), findsOneWidget);
+      expect(find.text('Creating harness…'), findsOneWidget);
       expect(app.launches, hasLength(1));
       expect(app.panes, isEmpty);
       expect(tester.widget<AppChoiceTile>(_localProject).onPressed, isNull);

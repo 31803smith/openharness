@@ -339,7 +339,7 @@ void main() {
     expect(app.launches, isEmpty, reason: 'never a plain agent in silence');
     expect(
       find.text(
-        'Update Harness CLI on harness-remote-box to create a Autonomous Circuit agent.',
+        'Update Harness CLI on harness-remote-box to create a Autonomous Circuit harness.',
       ),
       findsOneWidget,
     );

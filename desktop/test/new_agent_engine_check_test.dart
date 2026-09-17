@@ -94,7 +94,7 @@ void main() {
     // be attempted and troubleshooting stays in the optional details.
     expect(find.textContaining('Couldn’t check whether'), findsOneWidget);
     expect(
-      find.textContaining('You can still try creating an agent.'),
+      find.textContaining('You can still try creating the harness.'),
       findsOneWidget,
     );
     expect(find.textContaining('uses an older Harness CLI'), findsNothing);

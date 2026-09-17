@@ -1,6 +1,6 @@
 // The message layer: what the daemon and the dial SAY to each other, on top of the bytes serial.ts moves.
 //
-// Written twice — here and in device/harness/main/cable_client.c — with no shared code, because one half
+// Written twice — here and in devices/harness-device/firmware/main/cable_client.c — with no shared code, because one half
 // is TypeScript on a laptop and the other is C on an MCU. The framing underneath agrees by shared vectors;
 // this layer agrees by docs/cable-protocol.md and by being small enough to read in one sitting.
 //

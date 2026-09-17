@@ -850,8 +850,12 @@ void main() {
       expect(find.byKey(const ValueKey('harness-start-open')), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('harness-start-new')));
       await tester.pumpAndSettle();
-      expect(find.text('harness login\nharness start'), findsOneWidget);
-      await tester.tap(find.text('Done'));
+      // With no machine to open an agent on, the start page's New goes to
+      // linking one — the fork between a computer and a server, first.
+      expect(find.text('Link another machine'), findsOneWidget);
+      expect(find.text('A computer with a screen'), findsOneWidget);
+      expect(find.text('A server over SSH'), findsOneWidget);
+      await tester.tap(find.text('Close'));
       await tester.pumpAndSettle();
       expect(app.panes, isEmpty);
       await tester.pumpWidget(const SizedBox());

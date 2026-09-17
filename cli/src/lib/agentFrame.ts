@@ -22,7 +22,7 @@ import { stat } from 'node:fs/promises'
 import { agentProject, type AgentProject } from './agentProject.js'
 import type { GridAssignment } from './gridAssignment.js'
 import type { GridWebSearchStatus } from './gridLaunch.js'
-import { projectDisplayName, type RegisteredSession, titleDisplayName } from './registry.js'
+import { projectDisplayName, sessionDisplayTitle, type RegisteredSession } from './registry.js'
 import type { DshVerdict } from '../dsh/verdict.js'
 
 /**
@@ -99,7 +99,7 @@ export interface AgentFrameContext {
  * transcript falls back to the registry, never to "now".
  */
 function frameTitle(s: RegisteredSession): string | null {
-  const title = titleDisplayName(s.title)
+  const title = sessionDisplayTitle(s)
   return title && title !== projectDisplayName(s) ? title : null
 }
 

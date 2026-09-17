@@ -3,8 +3,8 @@
 // and survives a restart as the store (layouts from before the kind was saved
 // included). And the two requests its buttons send a machine, `dsh_install`
 // and `dsh_remove`, with every way a machine can say no turned into a sentence.
-// Last, the store page against real per-machine answers: a current CLI, one
-// that predates harnesses (UNSUPPORTED), and a relay that cannot install.
+// Last, the Store page uses the local daemon only, even with older and
+// relayed machines connected beside it.
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -323,137 +323,113 @@ void main() {
     );
   });
 
-  testWidgets(
-    'Get, Open and Remove per machine: a current CLI does each, an older one is told to update, a relay says it cannot',
-    (tester) async {
-      tester.view.devicePixelRatio = 1;
-      tester.view.physicalSize = const Size(1280, 1600);
-      addTearDown(tester.view.reset);
+  testWidgets('Store Get, Open and Remove use only the local daemon', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(1280, 1600);
+    addTearDown(tester.view.reset);
 
-      final installed = <String>{};
-      final local = _Daemon('local')
-        ..answer = (type, payload) async => switch (type) {
-          'engines_probe' => {'engines': <Object>[]},
-          'dsh_install' => (() {
-            installed.add(payload['id'] as String);
-            return {'ok': true};
-          })(),
-          'dsh_remove' => {'ok': installed.remove(payload['id'])},
-          _ => {
-            'dsh': [
-              {..._typst, 'installed': installed.contains(_typst['id'])},
-            ],
-          },
-        };
-      final older = _Daemon('older')..answer = (_, _) => _refuse('UNSUPPORTED');
-      final relay = _Daemon('relay')
-        ..answer = (type, _) => switch (type) {
-          'dsh_install' => _refuse('UNSUPPORTED_ON_REMOTE'),
-          'engines_probe' => Future.value({'engines': <Object>[]}),
-          _ => Future.value({
-            'dsh': [_typst],
-          }),
-        };
-      final daemons = {'local': local, 'older': older, 'relay': relay};
-      final app = AppNotifier(
-        config: AppConfig.dev,
-        authSession: AuthSession(),
-        configStore: null,
-        connectionForTest: (id) => daemons[id]!,
+    final installed = <String>{};
+    final local = _Daemon('local')
+      ..answer = (type, payload) async => switch (type) {
+        'engines_probe' => {'engines': <Object>[]},
+        'dsh_install' => (() {
+          installed.add(payload['id'] as String);
+          return {'ok': true};
+        })(),
+        'dsh_remove' => {'ok': installed.remove(payload['id'])},
+        _ => {
+          'dsh': [
+            {..._typst, 'installed': installed.contains(_typst['id'])},
+          ],
+        },
+      };
+    final older = _Daemon('older')..answer = (_, _) => _refuse('UNSUPPORTED');
+    final relay = _Daemon('relay')
+      ..answer = (type, _) => switch (type) {
+        'dsh_install' => _refuse('UNSUPPORTED_ON_REMOTE'),
+        'engines_probe' => Future.value({'engines': <Object>[]}),
+        _ => Future.value({
+          'dsh': [_typst],
+        }),
+      };
+    final daemons = {'local': local, 'older': older, 'relay': relay};
+    final app = AppNotifier(
+      config: AppConfig.dev,
+      authSession: AuthSession(),
+      configStore: null,
+      connectionForTest: (id) => daemons[id]!,
+    );
+    addTearDown(app.dispose);
+    for (final (id, name) in [
+      ('local', 'studio-mac'),
+      ('older', 'old-box'),
+      ('relay', 'relay-box'),
+    ]) {
+      final machine = Machine(
+        machineId: id,
+        authMode: MachineAuthMode.remote,
+        name: name,
       );
-      addTearDown(app.dispose);
-      for (final (id, name) in [
-        ('local', 'studio-mac'),
-        ('older', 'old-box'),
-        ('relay', 'relay-box'),
-      ]) {
-        final machine = Machine(
-          machineId: id,
-          authMode: MachineAuthMode.remote,
-          name: name,
-        );
-        app.machineStates[id] = MachineState(machine)
-          ..localOnly = id == 'local'
-          ..nodeOnline = true;
-      }
-      app.openStore();
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: StoreTab(
-              notifier: app,
-              api: _NoRatings(),
-              initialHarness: 'autonomous/typst',
-            ),
+      app.machineStates[id] = MachineState(machine)
+        ..localOnly = id == 'local'
+        ..nodeOnline = true;
+    }
+    app.openStore();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: StoreTab(
+            notifier: app,
+            api: _NoRatings(),
+            initialHarness: 'autonomous/typst',
           ),
         ),
-      );
-      await tester.pumpAndSettle();
-      Finder row(String id) => find.byKey(ValueKey('store-machine:$id'));
-      Finder says(String id, String text) =>
-          find.descendant(of: row(id), matching: find.text(text));
+      ),
+    );
+    await tester.pumpAndSettle();
+    Finder row(String id) => find.byKey(ValueKey('store-machine:$id'));
+    Finder says(String id, String text) =>
+        find.descendant(of: row(id), matching: find.text(text));
 
-      expect(says('local', 'Not installed'), findsOneWidget);
-      expect(
-        says(
-          'older',
-          'Update the harness CLI on this machine to install harnesses',
-        ),
-        findsOneWidget,
-      );
-      expect(
-        tester
-            .widget<FilledButton>(find.byKey(const ValueKey('store-get:older')))
-            .onPressed,
-        isNull,
-      );
-      expect(says('relay', 'Not installed'), findsOneWidget);
+    expect(says('local', 'Not installed'), findsOneWidget);
+    expect(row('older'), findsNothing);
+    expect(row('relay'), findsNothing);
+    expect(older.requests, isEmpty);
+    expect(relay.requests, isEmpty);
 
-      await tester.tap(find.byKey(const ValueKey('store-get:local')));
-      await tester.pumpAndSettle();
-      expect(installed, {'autonomous/typst'});
-      expect(says('local', 'Installed'), findsOneWidget);
-      expect(find.byKey(const ValueKey('store-open:local')), findsOneWidget);
-      expect(
-        find.descendant(
-          of: find.byKey(const ValueKey('store-primary-action')),
-          matching: find.text('Open'),
-        ),
-        findsOneWidget,
-      );
+    await tester.tap(find.byKey(const ValueKey('store-get:local')));
+    await tester.pumpAndSettle();
+    expect(installed, {'autonomous/typst'});
+    expect(says('local', 'Installed'), findsOneWidget);
+    expect(find.byKey(const ValueKey('store-open:local')), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('store-primary-action')),
+        matching: find.text('Open'),
+      ),
+      findsOneWidget,
+    );
 
-      await tester.tap(find.byKey(const ValueKey('store-remove:local')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('store-confirm')));
-      await tester.pumpAndSettle();
-      expect(installed, isEmpty);
-      expect(says('local', 'Not installed'), findsOneWidget);
-      expect(
-        local.requests.map((r) => r.$1).where((t) => t != 'engines_probe'),
-        ['dsh_list', 'dsh_install', 'dsh_list', 'dsh_remove', 'dsh_list'],
-      );
+    await tester.tap(find.byKey(const ValueKey('store-remove:local')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('store-confirm')));
+    await tester.pumpAndSettle();
+    expect(installed, isEmpty);
+    expect(says('local', 'Not installed'), findsOneWidget);
+    expect(local.requests.map((r) => r.$1).where((t) => t != 'engines_probe'), [
+      'dsh_list',
+      'dsh_install',
+      'dsh_list',
+      'dsh_remove',
+      'dsh_list',
+    ]);
 
-      await tester.tap(find.byKey(const ValueKey('store-get:relay')));
-      await tester.pumpAndSettle();
-      expect(
-        find.text('Update the harness CLI on relay-box to install harnesses'),
-        findsOneWidget,
-      );
-      expect(says('relay', 'Install failed'), findsOneWidget);
-      expect(
-        find.descendant(
-          of: find.byKey(const ValueKey('store-get:relay')),
-          matching: find.text('Try again'),
-        ),
-        findsOneWidget,
-      );
-      expect(older.requests.map((r) => r.$1).toSet(), {
-        'dsh_list',
-        'engines_probe',
-      });
-      expect(tester.takeException(), isNull);
-    },
-  );
+    expect(older.requests, isEmpty);
+    expect(relay.requests, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
 }
 
 class _NoRatings implements StoreApi {
