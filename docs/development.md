@@ -67,8 +67,9 @@ DSH_UPDATE_CLI_ROOT="$PWD/../cli" flutter test test/store_update_e2e_test.dart
 ```
 
 The coverage gate requires 100% statements, branches, functions and lines in the updater, version
-comparison, package locks and daemon mutation handler. The integration test uses temporary local Git
-packages and a real WebSocket connection: click Update, reject a broken release, retry successfully,
+comparison, package locks and daemon mutation handler, and runs in the on-demand CI workflow.
+The integration test uses temporary local Git packages and a real WebSocket connection: click Update,
+reject a broken release, retry successfully,
 update a shared viewer, then reopen the preserved workspace and fetch its rendered preview. It needs
 Node and the CLI dependencies, with no account or model calls. Its fixture is
 `cli/scripts/smoke-dsh-updates.ts`; `DSH_UPDATE_CLI_ROOT` makes this integration run explicit.
