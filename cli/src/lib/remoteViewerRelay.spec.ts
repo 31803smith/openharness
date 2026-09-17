@@ -15,7 +15,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { InstalledDsh } from '../dsh/installed.js'
-import { spawn } from 'node:child_process'
+import { spawn, execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 
 const cleanup: Array<() => unknown | Promise<unknown>> = []
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close() })
@@ -176,6 +177,11 @@ server.listen(Number(process.env.HARNESS_VIEWER_PORT), '127.0.0.1');`)
       await exited
     }
   }
+  if (process.env.HARNESS_VIEWER_WEBKIT) {
+    const result = await promisify(execFile)(process.env.HARNESS_VIEWER_WEBKIT, [url,
+      "document.body?.getAttribute('data-viewer-test') === 'passed'", join(dir, 'webkit.png')], { timeout: 100_000 })
+    expect(result.stdout).toContain('PASS WKWebView')
+  }
   const live = await fetch(localOrigin + '/events', { headers: { cookie } })
   const reader = live.body!.getReader()
   expect(new TextDecoder().decode((await reader.read()).value)).toContain('encrypted-live-output')
@@ -199,4 +205,4 @@ server.listen(Number(process.env.HARNESS_VIEWER_PORT), '127.0.0.1');`)
   expect(code).toBe(4404)
   await expect(fetch(restarted)).rejects.toThrow()
   expect(peers.get(machineId)).toBeNull()
-}, 40_000)
+}, process.env.HARNESS_VIEWER_WEBKIT ? 120_000 : 40_000)
