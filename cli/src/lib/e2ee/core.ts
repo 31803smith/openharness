@@ -381,8 +381,6 @@ export const ENCRYPTED_DOWN_TYPES = new Set<string>([
   // The desktop's pane colours for this machine's tmux sessions (lib/hostTheme.ts). Same trap as
   // above if missing: the envelope would never be opened and the app would wait out its timeout.
   'theme_set',
-  // Viewer HTTP/WebSocket bytes and control travel only inside the paired machine session.
-  'viewer_request', 'viewer_data', 'viewer_ack', 'viewer_end', 'viewer_close',
   'device_e2ee_pair', 'e2ee_pairings_list', 'e2ee_pairing_unpair',
   'e2ee_pairings_unpair_all', 'e2ee_browser_link_create',
   // Remote terminal control is always pairwise E2EE. The relay may route by outer type/connId but must

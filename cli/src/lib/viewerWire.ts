@@ -33,6 +33,7 @@ export class ViewerWire extends Duplex {
   private receiveCredit = VIEWER_WINDOW_BYTES
   private heldAck = 0
   private incomingEnded = false
+  private responseReady = false
   private peerClosed = false
   private pending: { bytes: Buffer; offset: number; done: (error?: Error | null) => void } | null = null
   private deadline: NodeJS.Timeout
@@ -46,7 +47,10 @@ export class ViewerWire extends Duplex {
   }
 
   /** The HTTP headers arrived. An idle SSE/WebSocket is valid; stalled writes still have a deadline. */
-  ready(): void { clearTimeout(this.deadline) }
+  ready(): void {
+    this.responseReady = true
+    if (this.credit === VIEWER_WINDOW_BYTES) clearTimeout(this.deadline)
+  }
 
   private armDeadline(): void {
     clearTimeout(this.deadline)
@@ -112,7 +116,7 @@ export class ViewerWire extends Duplex {
         return
       }
       this.credit += Number(bytes)
-      if (this.credit === VIEWER_WINDOW_BYTES) clearTimeout(this.deadline)
+      if (this.credit === VIEWER_WINDOW_BYTES && this.responseReady) clearTimeout(this.deadline)
       else this.armDeadline()
       this.flushPending()
     } else if (type === 'viewer_data') {

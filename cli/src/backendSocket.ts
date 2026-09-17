@@ -1179,7 +1179,7 @@ export class BackendSocket {
     }
     // Client→adapter encrypted frames: chat messages plus trusted web control actions. Plaintext
     // passes through for legacy/device transition paths; undecryptable ciphertext is dropped.
-    if (!local && isEncryptedDownType(type)) {
+    if (!local && (isEncryptedDownType(type) || VIEWER_DOWN_TYPES.has(type))) {
       if (type !== 'message' && type !== 'question_response' && !isWrapped(frame.payload)) {
         const requestId = (frame.payload as { requestId?: unknown } | undefined)?.requestId
         if (requestId !== undefined) this.emitReply(connId, type, requestId, { error: 'E2EE_REQUIRED' })

@@ -1,6 +1,6 @@
 import { afterEach, expect, it } from 'vitest'
 import { once } from 'node:events'
-import { createServer, request } from 'node:http'
+import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { WebSocket, WebSocketServer } from 'ws'
 import { BackendSocket, type Frame } from '../backendSocket.js'
@@ -11,10 +11,11 @@ import { E2eeStore } from './e2ee/store.js'
 import { b64e, fingerprint, newIdentity } from './e2ee/core.js'
 import { MachinePeerStore } from './e2ee/machinePeers.js'
 import { RemoteRelayPool } from './remoteRelay.js'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { InstalledDsh } from '../dsh/installed.js'
+import { spawn } from 'node:child_process'
 
 const cleanup: Array<() => unknown | Promise<unknown>> = []
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close() })
@@ -70,10 +71,25 @@ it('desktop local-ws → relay → E2EE → daemon → spawned viewer, including
   const dir = mkdtempSync(join(tmpdir(), 'harness-viewer-e2e-'))
   cleanup.push(() => rmSync(dir, { recursive: true, force: true }))
   writeFileSync(join(dir, 'viewer.mjs'), `import http from 'node:http';
+import { WebSocketServer } from ${JSON.stringify(import.meta.resolve('ws'))};
 const server = http.createServer((req, res) => {
   if (req.url === '/events') { res.writeHead(200, {'Content-Type': 'text/event-stream'}); res.write('data: encrypted-live-output\\n\\n'); }
-  else res.end('<html>encrypted-viewer-output<img src="/asset.svg"></html>');
+  else if (req.url === '/asset.svg') { res.writeHead(200, {'Content-Type': 'image/svg+xml'}); res.end('<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><circle cx="40" cy="40" r="30" fill="green"/></svg>'); }
+  else if (req.url === '/api' && req.method === 'POST') {
+    if (req.headers.origin !== 'http://127.0.0.1:' + process.env.HARNESS_VIEWER_PORT) { res.writeHead(403).end(); return; }
+    req.pipe(res);
+  }
+  else res.end(${JSON.stringify(`<html><body>encrypted-viewer-output<img src="/asset.svg"><script>
+Promise.all([
+  fetch('/asset.svg').then(r => { if (!r.ok) throw Error('asset'); return r.text(); }),
+  fetch('/api', {method:'POST', body:'browser-post'}).then(r => r.text()).then(t => { if(t !== 'browser-post') throw Error('POST'); }),
+  new Promise((resolve, reject) => { const e = new EventSource('/events'); e.onmessage = event => { e.close(); event.data === 'encrypted-live-output' ? resolve() : reject(Error('SSE')); }; e.onerror = reject; }),
+  new Promise((resolve, reject) => { const w = new WebSocket(location.origin.replace('http:', 'ws:') + '/ws'); w.onopen = () => w.send('browser-websocket'); w.onmessage = e => { w.close(); e.data === 'browser-websocket' ? resolve() : reject(Error('WebSocket')); }; w.onerror = reject; }),
+]).then(() => document.body.setAttribute('data-viewer-test', 'passed')).catch(e => document.body.setAttribute('data-viewer-test', 'failed:' + e));
+</script></body></html>`)});
 });
+const wss = new WebSocketServer({server});
+wss.on('connection', ws => ws.on('message', (data, binary) => ws.send(data, {binary})));
 server.listen(Number(process.env.HARNESS_VIEWER_PORT), '127.0.0.1');`)
   const manager = new DshViewerManager({
     onUrl: (agentId, viewerUrl) => {
@@ -85,7 +101,7 @@ server.listen(Number(process.env.HARNESS_VIEWER_PORT), '127.0.0.1');`)
   cleanup.push(() => manager.stopAll())
   const dsh: InstalledDsh = {
     id: 'test/viewer', realDir: dir, dir, source: '', ref: null, commit: null, linked: false, installedAt: 0,
-    manifest: { spec: 1, id: 'test/viewer', name: 'Viewer test', engine: 'claude', viewer: { command: `${JSON.stringify(process.execPath)} viewer.mjs`, url: 'http://127.0.0.1:${port}/?file=${artifact}' } },
+    manifest: { spec: 1, id: 'test/viewer', name: 'Viewer test', engine: 'claude', viewer: { command: `'${process.execPath.replaceAll("'", "'\\''")}' viewer.mjs`, url: 'http://127.0.0.1:${port}/?file=${artifact}' } },
   }
 
   const pool = new RemoteRelayPool({ accessToken: async () => 'fixture-token' } as never, base, localIdentity, peers)
@@ -99,10 +115,10 @@ server.listen(Number(process.env.HARNESS_VIEWER_PORT), '127.0.0.1');`)
   cleanup.push(() => desktop.terminate())
   const frames: Frame[] = []
   desktop.on('message', (raw) => frames.push(JSON.parse(raw.toString())))
-  async function until(predicate: () => boolean): Promise<void> {
-    const deadline = Date.now() + 5000
-    while (!predicate()) {
-      if (Date.now() > deadline) throw new Error('E2E condition did not arrive')
+  async function until(predicate: () => boolean | Promise<boolean>, detail = 'E2E condition'): Promise<void> {
+    const deadline = Date.now() + 10_000
+    while (!await predicate()) {
+      if (Date.now() > deadline) throw new Error(`${detail} did not arrive`)
       await new Promise((resolve) => setTimeout(resolve, 10))
     }
   }
@@ -119,6 +135,47 @@ server.listen(Number(process.env.HARNESS_VIEWER_PORT), '127.0.0.1');`)
   const localOrigin = new URL(url).origin
   const page = await fetch(localOrigin + bootstrap.headers.get('location'), { headers: { cookie } })
   expect(await page.text()).toContain('encrypted-viewer-output')
+  if (process.env.HARNESS_VIEWER_BROWSER) {
+    const profile = join(dir, 'browser-profile')
+    const browser = spawn(process.env.HARNESS_VIEWER_BROWSER, [
+      '--headless', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
+      '--disable-background-networking', '--disable-component-update',
+      `--user-data-dir=${profile}`, '--remote-debugging-port=0', '--remote-debugging-address=127.0.0.1', 'about:blank',
+    ], { stdio: 'ignore' })
+    const exited = once(browser, 'exit')
+    let devtools: WebSocket | undefined
+    try {
+      await until(() => existsSync(join(profile, 'DevToolsActivePort')), 'Browser debugger')
+      const [port, path] = readFileSync(join(profile, 'DevToolsActivePort'), 'utf8').trim().split('\n')
+      devtools = new WebSocket(`ws://127.0.0.1:${port}${path}`)
+      await once(devtools, 'open')
+      let nextId = 0
+      const pending = new Map<number, (response: any) => void>()
+      devtools.on('message', (raw) => {
+        const response = JSON.parse(raw.toString())
+        const done = pending.get(response.id)
+        pending.delete(response.id)
+        done?.(response)
+      })
+      const command = (method: string, params: Record<string, unknown> = {}, sessionId?: string): Promise<any> => new Promise((resolve, reject) => {
+        const id = ++nextId
+        pending.set(id, (r) => r.error ? reject(new Error(JSON.stringify(r.error))) : resolve(r.result))
+        devtools!.send(JSON.stringify({ id, method, params, sessionId }))
+      })
+      const { targetId } = await command('Target.createTarget', { url: 'about:blank' })
+      const { sessionId } = await command('Target.attachToTarget', { targetId, flatten: true })
+      await command('Page.navigate', { url }, sessionId)
+      await until(async () => {
+        const { result } = await command('Runtime.evaluate', { expression: "document.body?.getAttribute('data-viewer-test')", returnByValue: true }, sessionId)
+        if (result.value?.startsWith('failed')) throw new Error(result.value)
+        return result.value === 'passed'
+      }, 'Browser assets, POST, SSE and WebSocket checks')
+    } finally {
+      devtools?.terminate()
+      browser.kill('SIGTERM')
+      await exited
+    }
+  }
   const live = await fetch(localOrigin + '/events', { headers: { cookie } })
   const reader = live.body!.getReader()
   expect(new TextDecoder().decode((await reader.read()).value)).toContain('encrypted-live-output')
@@ -142,4 +199,4 @@ server.listen(Number(process.env.HARNESS_VIEWER_PORT), '127.0.0.1');`)
   expect(code).toBe(4404)
   await expect(fetch(restarted)).rejects.toThrow()
   expect(peers.get(machineId)).toBeNull()
-}, 20_000)
+}, 40_000)
