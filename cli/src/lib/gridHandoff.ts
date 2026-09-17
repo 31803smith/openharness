@@ -13,6 +13,7 @@
  */
 import { spawn } from 'node:child_process'
 import { binaryOnPath } from './binaryOnPath.js'
+import { gridBinaryPath } from './gridExec.js'
 
 /** The command, and the flag on it that means "read the token off stdin" (autonomous-grid's
  *  `cli/parser.py`). Located on PATH with no environment override: tests control PATH directly, so an
@@ -84,12 +85,16 @@ export async function handOffToGrid(
   // one, not a spawn error the caller has to recognise. This process's own environment, inherited —
   // there is nothing to override, and a parameter for one would be the knob with no user the ticket
   // refuses.
-  if (!binaryOnPath(GRID_BINARY)) {
+  // Resolved the way every other grid call is (`gridExec.gridBinaryPath`): a managed runtime, PATH,
+  // or the directory grid's installer uses — so a `grid` that `lib/gridInstall.ts` just put in
+  // `~/.local/bin` is found by the sign-in that follows, whatever the daemon's PATH says.
+  const binary = gridBinaryPath()
+  if (!binaryOnPath(binary)) {
     return { code: 'GRID_CLI_MISSING', exitCode: 1, message: MISSING_MESSAGE, stdout: '', stderr: '' }
   }
   const args = ['login', GRID_HANDOFF_FLAG, ...(opts.json ? ['--json'] : [])]
   return await new Promise<GridHandoffResult>((resolve) => {
-    const child = spawn(GRID_BINARY, args, {
+    const child = spawn(binary, args, {
       stdio: ['pipe', opts.json ? 'pipe' : 'inherit', opts.json ? 'pipe' : 'inherit'],
     })
     let stdout = ''

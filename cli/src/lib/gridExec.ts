@@ -18,6 +18,7 @@
  */
 import { spawn } from 'node:child_process'
 import { accessSync, constants, readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { join, sep } from 'node:path'
 import { env } from '../config/env.js'
 import { binaryOnPath } from './binaryOnPath.js'
@@ -90,6 +91,12 @@ export function gridBinaryPath(processEnv: NodeJS.ProcessEnv = process.env): str
   } catch {
     // absent, unreadable, or not executable → fall through to PATH
   }
+  if (binaryOnPath(GRID_BINARY, processEnv)) return GRID_BINARY
+  // Where grid's own installer puts it (`lib/gridInstall.ts`), which a daemon started from a launcher
+  // with launchd's bare PATH does not have. Named absolutely rather than by extending PATH, so the
+  // fallback reaches exactly one known file and never whatever else that directory holds.
+  const installed = join(homedir(), '.local', 'bin', GRID_BINARY)
+  try { accessSync(installed, constants.X_OK); return installed } catch { /* not there either */ }
   return GRID_BINARY
 }
 
