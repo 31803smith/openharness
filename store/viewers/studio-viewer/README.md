@@ -17,3 +17,12 @@ coverage matrix and the difference between local workflows and external integrat
 
 OpenHarness contributors maintain this MIT-licensed viewer. Domain packages credit their
 respective upstream authors. Bugs in this host belong in OpenHarness.
+
+## Studios
+
+Instrument maker, Wind tunnel, Research notebook, Loop room, Mission control, City lab,
+House of ideas, and Variation garden each provide their own controls and artifact inspection.
+The host supports live agent edits, safe draft conflict handling, immutable run history,
+cancellation, keyboard controls, reduced motion, narrow panes, and byte-range audio playback
+for the Mac webview. [Verification and coverage](TESTING.md) include real screenshots and
+reproducible commands.

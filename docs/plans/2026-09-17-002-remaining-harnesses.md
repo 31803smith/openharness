@@ -36,9 +36,18 @@ results. No claim of 100% end-to-end coverage is justified while an advertised p
 ## Progress
 
 - [x] Inventory current packages and create isolated branch/worktree.
-- [ ] Refresh upstream source pins and installation contracts.
-- [ ] Build and test the common viewer host.
-- [ ] Build and test all eight domain packages.
-- [ ] Exercise packages through the Harness lifecycle.
-- [ ] Capture real viewer screenshots and update research status.
-- [ ] Record coverage and outstanding external checks; push final checkpoint.
+- [x] Refresh upstream source pins and installation contracts.
+- [x] Build and test the common viewer host.
+- [x] Build and test all eight domain packages.
+- [x] Exercise packages through the Harness lifecycle.
+- [x] Capture real viewer screenshots and update research status.
+- [x] Record coverage and outstanding external checks; push final checkpoint.
+
+## Delivered
+
+All eight remaining packages have pinned upstream sources, local artifact workflows, native
+adapters where applicable, skills, and interactive Studio Viewer panes. The user-selected Mac
+simulation scope is complete. See [the verification report](../../store/viewers/studio-viewer/TESTING.md)
+for the exact 100% coverage denominators, Chrome/WebKit matrix, real Harness lifecycle checks,
+and external applications that were represented by contract fixtures. The main Store catalog
+was not published. Work is committed and pushed on the branch above.

@@ -2,5 +2,8 @@
   "homepage": "https://github.com/Comfy-Org/comfy-mcp",
   "upstream": "https://github.com/Comfy-Org/comfy-mcp",
   "license": "MIT; AGPL-3.0+ / commercial upstream",
-  "screenshots": []
+  "screenshots": [
+    "https://raw.githubusercontent.com/autonomous-ai/openharness/c33ddd9582ea178fee1a70526961b88b16e66036/store/agents/comfy-mcp/screenshots/studio.png",
+    "https://raw.githubusercontent.com/autonomous-ai/openharness/c33ddd9582ea178fee1a70526961b88b16e66036/store/agents/comfy-mcp/screenshots/narrow.png"
+  ]
 }
