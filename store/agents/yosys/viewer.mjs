@@ -14,13 +14,13 @@
 // Nothing here runs a tool or writes a file: the agent's flow.sh does the work, and the pane reads.
 // No network, no CDN: the page is plain modules served from this folder.
 import { createServer } from 'node:http'
-import { existsSync, readFileSync, statSync, watch } from 'node:fs'
+import { readFileSync, statSync, watch } from 'node:fs'
 import { dirname, extname, join, normalize, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { Worker } from 'node:worker_threads'
 import { parseVcd, vcdMeta, vcdSignal } from './viewer/lib/vcd.mjs'
 import { buildChip, packagePins } from './viewer/lib/chip.mjs'
-import { hierarchy, moduleForRender, moduleIndex, skinTypes } from './viewer/lib/netlist.mjs'
+import { hierarchy, moduleIndex } from './viewer/lib/netlist.mjs'
+import { createRenderer } from './viewer/lib/render.mjs'
 import { fileInfo, findTop, flowState, parsePcf, readJson, readText, sources, topPorts } from './viewer/lib/workspace.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -43,8 +43,10 @@ function inside(root, rel) {
 }
 
 function send(res, status, body, type = 'application/json') {
+  // The body first: nothing that can throw happens once the headers are out.
+  const payload = typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body)
   res.writeHead(status, { 'content-type': type, 'cache-control': 'no-store' })
-  res.end(typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body))
+  res.end(payload)
 }
 
 function serveFile(req, res, full) {
@@ -102,42 +104,10 @@ function netlist(top) {
 }
 
 // netlistsvg runs in a worker so a slow layout never stalls the event stream.
-const skinPath = join(here, 'node_modules', 'netlistsvg', 'lib', 'default.svg')
-let skin = null, known = new Set()
-let worker = null, jobs = new Map(), jobSeq = 0
-function renderSvg(net) {
-  if (!skin) {
-    if (!existsSync(skinPath)) return Promise.reject(new Error('netlistsvg is not installed here — run toolchain/setup.sh'))
-    skin = readFileSync(skinPath, 'utf8')
-    known = skinTypes(skin)
-  }
-  if (!worker) {
-    worker = new Worker(join(here, 'viewer', 'lib', 'schematic-worker.mjs'))
-    worker.on('message', ({ id, svg, error }) => {
-      const job = jobs.get(id)
-      if (!job) return
-      jobs.delete(id)
-      clearTimeout(job.timer)
-      if (error || !svg) job.reject(new Error(error || 'netlistsvg drew nothing'))
-      else job.resolve(svg)
-    })
-    worker.on('error', (e) => { for (const j of jobs.values()) j.reject(e); jobs.clear(); worker = null })
-    worker.unref()
-  }
-  return new Promise((resolveJob, rejectJob) => {
-    const id = ++jobSeq
-    const timer = setTimeout(() => {
-      jobs.delete(id)
-      // A layout that takes this long will not finish usefully; start a fresh worker for the next.
-      worker?.terminate(); worker = null
-      for (const j of jobs.values()) j.reject(new Error('interrupted'))
-      jobs.clear()
-      rejectJob(new Error('this module is too large to lay out in the pane (over 90 s)'))
-    }, 90_000)
-    jobs.set(id, { resolve: resolveJob, reject: rejectJob, timer })
-    worker.postMessage({ id, skin, netlist: moduleForRender(net, net.__module, known) })
-  })
-}
+const renderSvg = createRenderer({
+  skinPath: join(here, 'node_modules', 'netlistsvg', 'lib', 'default.svg'),
+  workerPath: join(here, 'viewer', 'lib', 'schematic-worker.mjs'),
+})
 
 // --------------------------------------------------------------------------------------- API
 
@@ -224,7 +194,7 @@ async function api(req, res, url) {
     try {
       return send(res, 200, await job, 'image/svg+xml')
     } catch (e) {
-      return send(res, 500, String(e.message ?? e), 'text/plain')
+      return send(res, 500, e.message, 'text/plain')
     }
   }
 
@@ -259,9 +229,9 @@ async function api(req, res, url) {
 }
 
 createServer(async (req, res) => {
-  const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`)
-  const path = decodeURIComponent(url.pathname)
+  const url = new URL(req.url, `http://127.0.0.1:${port}`)
   try {
+    const path = decodeURIComponent(url.pathname) // throws on a malformed escape: a 500, not a crash
     if (path === '/' || path === '/index.html') return serveFile(req, res, join(publicDir, 'index.html'))
     if (path.startsWith('/app/')) return serveFile(req, res, inside(publicDir, path.slice(5)))
     if (path.startsWith('/api/')) return await api(req, res, url)
@@ -277,8 +247,7 @@ createServer(async (req, res) => {
     return serveFile(req, res, inside(workspace, path.replace(/^\/+/, '')))
   } catch (error) {
     console.error('[yosys]', error)
-    if (!res.headersSent) send(res, 500, { error: String(error.message ?? error) })
-    else res.end()
+    send(res, 500, { error: error.message })
   }
 }).listen(port, '127.0.0.1', () => console.log(`[yosys] listening on http://127.0.0.1:${port}/ (workspace: ${workspace})`))
 
@@ -295,6 +264,7 @@ function flush() {
 }
 try {
   watch(workspace, { recursive: true }, (_event, name) => {
+    /* c8 ignore next */ // fs.watch documents a null filename where the OS gives none; macOS and Linux always give one
     const n = String(name ?? '').split(sep).join('/')
     if (!n || n.includes('node_modules') || n.startsWith('.git/') || n.endsWith('.vvp') || n.startsWith('.claude')) return
     pending.add(n)
