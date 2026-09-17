@@ -42,4 +42,5 @@ wrapper belong here, and a newer release is a bump of `CADGEN_VERSION`.
 ```sh
 harness dsh check .           # conformance
 harness dsh install "$PWD" --link # this checkout as the installed viewer
+python3 -m unittest discover -s test  # pane_client.py and the three scripts, against a stand-in cadgen
 ```
