@@ -15,7 +15,7 @@ export function mount(stage,api){
     if(compatible){if(replay)index=Math.min(result.data.positions.length-1,Math.floor(((t-start)*30)%result.data.positions.length));const frame=result.data.positions[index];position=[frame[1],frame[2]];scrub.value=index;}
     const robot=map(...position);circle(ctx,...robot,17,'#bae38912');circle(ctx,...robot,9,'#e5edcc');circle(ctx,robot[0]+3,robot[1]-3,2,'#364d35');
     if(w>550){words(ctx,'ROVER 01',24,70,'#a7c292',10);words(ctx,compatible?`${result.data.positions[index][0].toFixed(1)} s`:'READY',24,98,'#dceac7',20);words(ctx,compatible?'Recorded trajectory':'Choose a destination',24,121,'#8da684',9);}
-    
+
   },api.signal);screen.element.setAttribute('aria-label','Office rover mission map; click to select a goal');screen.element.tabIndex=0;
   screen.element.addEventListener('click',e=>{const b=screen.element.getBoundingClientRect();const x=Math.max(1,Math.min(9,Math.round((e.clientX-b.left-bounds.left)/bounds.s*2)/2)),y=Math.max(1,Math.min(9,Math.round((10-(e.clientY-b.top-bounds.top)/bounds.s)*2)/2));api.setParameter('goal_x',x);api.setParameter('goal_y',y);api.announce(`Destination ${x} east, ${y} north`);});
   screen.element.addEventListener('keydown',e=>{const axes={ArrowLeft:['goal_x',-.5],ArrowRight:['goal_x',.5],ArrowUp:['goal_y',.5],ArrowDown:['goal_y',-.5]};if(axes[e.key]){const [key,delta]=axes[e.key];api.setParameter(key,Math.max(1,Math.min(9,p[key]+delta)));e.preventDefault();}});

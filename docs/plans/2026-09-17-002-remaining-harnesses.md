@@ -1,6 +1,6 @@
 # Complete the researched Harness shortlist
 
-Branch: `codex/remaining-harnesses`  
+Branch: `codex/remaining-harnesses`
 Worktree: `/private/tmp/harness-remaining-studios`
 
 The September 16 shortlist has eight remaining packages. Preserve upstream names and credit:
