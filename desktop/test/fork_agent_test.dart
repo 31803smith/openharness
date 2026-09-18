@@ -1,7 +1,5 @@
 // Fork a harness: the request the app sends, where the fork lands, and what
 // the model keeps about it.
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/core/models.dart';

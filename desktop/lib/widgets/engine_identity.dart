@@ -230,6 +230,18 @@ const _harnesses = <String, EngineIdentity>{
     color: Color(0xffd98a4a),
     asset: 'assets/engine-icons/autonomous-circuit.png',
   ),
+  // Solder is Autonomous Circuit's second wrapper (its KiCad-native pipeline,
+  // #91) and wears the same mark: one project, one face — Autonomous's own,
+  // so nothing is borrowed. Told apart by name and by the warmer copper below.
+  'autonomous/solder': EngineIdentity(
+    id: 'autonomous/solder',
+    label: 'Solder',
+    category: 'PCB',
+    tagline: 'A real KiCad board: wired schematic, DRC-checked copper, a prototype packet',
+    creator: 'Autonomous',
+    color: Color(0xffb8733a),
+    asset: 'assets/engine-icons/autonomous-circuit.png',
+  ),
   'autonomous/autonomous-workshop': EngineIdentity(
     id: 'autonomous/autonomous-workshop',
     label: 'Autonomous Workshop',
@@ -419,6 +431,7 @@ const _harnesses = <String, EngineIdentity>{
 /// has answered `dsh_list`. The daemon's catalog is authoritative when present.
 const knownHarnessBase = <String, String>{
   'autonomous/autonomous-circuit': 'claude',
+  'autonomous/solder': 'claude',
   'autonomous/autonomous-workshop': 'codex',
   'autonomous/marp': 'claude',
   'autonomous/text-to-cad': 'claude',
