@@ -1,6 +1,7 @@
 // What an engine or a harness is drawn as: the harnesses this build ships a
 // face for, the engine each first-party harness runs on, the fallback for an
 // id nobody here has heard of, and the mark when its picture will not load.
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -92,6 +93,37 @@ void main() {
         isTrue,
         reason: '$id: $asset is missing',
       );
+    }
+  });
+
+  test("this build's words for a harness are the store's own", () {
+    // Before a machine answers, or when its CLI predates taglines, the agent
+    // search reads these: "MuJoCo by Google DeepMind", "Advanced physics
+    // simulation". They must say what the Store says once it does answer.
+    var checked = 0;
+    for (final dir in Directory(
+      '../store/agents',
+    ).listSync().whereType<Directory>()) {
+      final manifest = File('${dir.path}/harness.json');
+      if (!manifest.existsSync()) continue;
+      final id = jsonDecode(manifest.readAsStringSync())['id'] as String;
+      if (!knownHarnesses.any((harness) => harness.id == id)) continue;
+      final facts = File('${dir.path}/store.json');
+      final Map<String, dynamic> store = facts.existsSync()
+          ? jsonDecode(facts.readAsStringSync()) as Map<String, dynamic>
+          : const {};
+      final Map<String, dynamic> package =
+          jsonDecode(manifest.readAsStringSync()) as Map<String, dynamic>;
+      final identity = engineIdentity(id);
+      expect(identity.tagline, store['tagline'], reason: '$id tagline');
+      expect(identity.creator, package['author'], reason: '$id author');
+      expect(identity.category, package['category'], reason: '$id category');
+      checked++;
+    }
+    expect(checked, knownHarnesses.length);
+    for (final engine in allEngines) {
+      expect(engine.tagline, isNotEmpty, reason: engine.id);
+      expect(engine.tagline!.length, lessThanOrEqualTo(80), reason: engine.id);
     }
   });
 

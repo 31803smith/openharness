@@ -234,6 +234,7 @@ void _productPageTests() {
       'category': ' ${'c' * 30} ',
       'author': 'a' * 100,
       'license': '  ${'L' * 60}  ',
+      'tagline': '  ${'T' * 100}  ',
       'repo': ' https://github.com/autonomous-ai/autonomous-marp ',
       'homepage': 'http://marp.app',
       'upstream': 'file:///etc/passwd',
@@ -254,6 +255,7 @@ void _productPageTests() {
     expect(entry.category, 'c' * 24);
     expect(entry.author, 'a' * 80);
     expect(entry.license, 'L' * 40);
+    expect(entry.tagline, 'T' * 80);
     expect(entry.repo, 'https://github.com/autonomous-ai/autonomous-marp');
     expect(entry.homepage, 'http://marp.app');
     expect(entry.upstream, isNull, reason: 'never a file: link');
@@ -268,10 +270,12 @@ void _productPageTests() {
       'id': 'autonomous/marp',
       'engine': 'claude',
       'license': '   ',
+      'tagline': 7,
       'screenshots': 'https://example.com/1.png',
       'repo': 7,
     })!;
     expect(bare.license, isNull);
+    expect(bare.tagline, isNull);
     expect(bare.screenshots, isEmpty);
     expect(bare.repo, isNull);
     expect(bare.linked, isFalse);
@@ -299,34 +303,28 @@ void _installRunTests() {
     expect(done.inProgress, isFalse);
   });
 
-  test(
-    'a push is read defensively: ids, phases, and lines without control characters',
-    () {
-      expect(DshInstallProgress.fromJson(null), isNull);
-      expect(DshInstallProgress.fromJson({'id': '', 'phase': 'setup'}), isNull);
-      expect(DshInstallProgress.fromJson({'id': 'a/b', 'phase': ''}), isNull);
-      expect(DshInstallProgress.fromJson({'id': 1, 'phase': 'setup'}), isNull);
-      final escape = String.fromCharCode(27);
-      final bell = String.fromCharCode(7);
-      final push = DshInstallProgress.fromJson({
-        'id': 'a/b',
-        'phase': 'setup',
-        'detail': '   ',
-        'line': '$escape[32madded$bell ${'n' * 300}',
-      })!;
-      expect(push.detail, isNull);
-      expect(push.line, hasLength(200));
-      expect(push.line, startsWith('[32madded  n'));
-      expect(
-        DshInstallProgress.fromJson({
-          'id': 'a/b',
-          'phase': 'setup',
-          'line': 3,
-        })!.line,
-        isNull,
-      );
-    },
-  );
+  test('a push is read defensively: ids, phases, and lines without control characters', () {
+    expect(DshInstallProgress.fromJson(null), isNull);
+    expect(DshInstallProgress.fromJson({'id': '', 'phase': 'setup'}), isNull);
+    expect(DshInstallProgress.fromJson({'id': 'a/b', 'phase': ''}), isNull);
+    expect(DshInstallProgress.fromJson({'id': 1, 'phase': 'setup'}), isNull);
+    final escape = String.fromCharCode(27);
+    final bell = String.fromCharCode(7);
+    final push = DshInstallProgress.fromJson({
+      'id': 'a/b',
+      'phase': 'setup',
+      'detail': '   ',
+      'line': '$escape[32madded$bell ${'n' * 300}',
+    })!;
+    expect(push.detail, isNull);
+    expect(push.line, hasLength(200));
+    expect(push.line, startsWith('[32madded  n'));
+    expect(
+      DshInstallProgress.fromJson({'id': 'a/b', 'phase': 'setup', 'line': 3})!
+          .line,
+      isNull,
+    );
+  });
 
   test(
     'a run keeps its phases in order, a bounded log, and how long each took',
@@ -337,7 +335,11 @@ void _installRunTests() {
       expect(run.inProgress, isTrue);
       expect(run.took('clone'), isNull);
       run.apply(
-        const DshInstallProgress(id: 'a/b', phase: 'clone', detail: 'Resolving'),
+        const DshInstallProgress(
+          id: 'a/b',
+          phase: 'clone',
+          detail: 'Resolving',
+        ),
         now: t0,
       );
       run.apply(

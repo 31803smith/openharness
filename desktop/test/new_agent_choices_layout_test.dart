@@ -246,6 +246,33 @@ void main() {
       }
 
       expectUniformTiles();
+      // The agent box, the tiles and the first-task box are one height.
+      final tileHeight = tester
+          .getSize(find.byType(AppChoiceTile).first)
+          .height;
+      expect(tester.getSize(agentBar).height, tileHeight);
+      final taskBox = find.byKey(const Key('new-agent-task'));
+      await tester.ensureVisible(taskBox);
+      await tester.pumpAndSettle();
+      // The painted box, not only the space it takes: the decorator's fill.
+      expect(
+        tester
+            .getSize(
+              find.descendant(
+                of: taskBox,
+                matching: find.byType(InputDecorator),
+              ),
+            )
+            .height,
+        closeTo(tileHeight, 1),
+      );
+      expect(tester.getSize(taskBox).height, closeTo(tileHeight, 1));
+      expect(
+        find.text('First task. What should your agent work on? (Optional)'),
+        findsOneWidget,
+      );
+      await tester.ensureVisible(agentBar);
+      await tester.pumpAndSettle();
 
       if (size.width >= 900 && size.height >= 720 && scale == 1) {
         // The common desktop sizes should show every choice before scrolling.
