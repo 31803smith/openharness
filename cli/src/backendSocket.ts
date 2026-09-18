@@ -144,6 +144,16 @@ export function isLocalClientId(connId: string): boolean {
   return connId.startsWith('local:')
 }
 
+/**
+ * Where a down-frame came from, carried with it to `dispatchDown`.
+ *
+ * `relay` is the backend link and ONLY the backend link; `local` is a process on this machine
+ * talking to the daemon's local socket; `p2p` is a paired device over its own channel. The
+ * distinction is a trust boundary, not bookkeeping: a handful of frames are the backend's alone to
+ * send, and before `local` existed they were accepted from anything that could open the local port.
+ */
+export type DownTransport = 'relay' | 'local' | 'p2p'
+
 interface QueueItem {
   id: number
   data: string
@@ -940,10 +950,15 @@ export class BackendSocket {
     await this.terminalStreams?.closeConnection(connId, 'local client disconnected', false)
   }
 
-  /** Route an authenticated local JSON frame through the existing per-client FIFO. */
+  /** Route an authenticated local JSON frame through the existing per-client FIFO.
+   *
+   *  ⚠️ Tagged `'local'`, not left to default to `'relay'`. These frames come from a process on THIS
+   *  machine over the local socket, and until they were tagged they arrived at `dispatchDown`
+   *  indistinguishable from the backend's own — which let any local process send a frame only the
+   *  backend is entitled to send. See the `machine_meta` branch there. */
   handleLocalFrame(connId: string, frame: Frame): void {
     if (!this.localClients.has(connId)) return
-    this.enqueueDown(frame, connId)
+    this.enqueueDown(frame, connId, 'local')
   }
 
   /** Route an authenticated local terminal frame without applying cloud E2EE. */
@@ -994,7 +1009,7 @@ export class BackendSocket {
     connId: string,
     type: string,
     payload: Record<string, unknown>,
-    transport: 'relay' | 'p2p',
+    transport: DownTransport,
   ): void {
     if (type === 'terminal_open' && typeof payload.requestId === 'string') {
       let pending = this.p2pPendingOpens.get(connId)
@@ -1016,7 +1031,7 @@ export class BackendSocket {
       streams.add(streamId)
       return
     }
-    if (transport === 'relay' && streamId) this.p2pStreams.get(connId)?.delete(streamId)
+    if (transport !== 'p2p' && streamId) this.p2pStreams.get(connId)?.delete(streamId)
   }
 
   private routeTerminalOutputToP2p(connId: string, type: string, payload: Record<string, unknown>): boolean {
@@ -1048,7 +1063,7 @@ export class BackendSocket {
     console.warn(`[terminal-p2p] conn=${sid(connId)} fallback=relay reason=${reason}`)
   }
 
-  private enqueueDown(frame: Frame, connId: string, transport: 'relay' | 'p2p' = 'relay'): void {
+  private enqueueDown(frame: Frame, connId: string, transport: DownTransport = 'relay'): void {
     const key = connId || '__backend__'
     const previous = this.downChains.get(key) ?? Promise.resolve()
     const next = previous
@@ -1169,7 +1184,7 @@ export class BackendSocket {
     this.send({ type: resultType, payload: { requestId, ...payload } })
   }
 
-  private async dispatchDown(frame: Frame, connId: string, transport: 'relay' | 'p2p' = 'relay'): Promise<void> {
+  private async dispatchDown(frame: Frame, connId: string, transport: DownTransport = 'relay'): Promise<void> {
     const type = frame.type as string | undefined
     if (!type) return
     const local = this.localClients.has(connId)
@@ -1259,6 +1274,16 @@ export class BackendSocket {
 
     // Machine display name (seed on connect + web renames) — mirrored locally for `harness status`.
     if (type === 'machine_meta') {
+      // ⚠️ The BACKEND's frame and nobody else's. It carries this machine's display name and, more
+      // to the point, the account's private grid — the grid every agent on this computer is then
+      // pointed at. Accepted from any transport, it let a process that could open the daemon's local
+      // port redirect the account's inference somewhere of its choosing, and a leftover test script
+      // doing exactly that by accident cost hours to find. No client sends this frame; there is
+      // nothing to be compatible with.
+      if (transport !== 'relay') {
+        console.warn(`[backend] ignoring machine_meta from ${transport} (${connId}) — only the backend may send it`)
+        return
+      }
       // A malformed/hostile frame's payload need not be an object; `'gridName' in meta` would throw
       // on a primitive (and drop the whole frame via enqueueDown's catch). Guard the type first, the
       // way the plain property reads elsewhere in this dispatcher tolerate one.

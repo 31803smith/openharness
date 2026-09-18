@@ -1701,6 +1701,32 @@ describe('machine_meta carries the grid name without clobbering it on rename', (
 
     await socket.stop()
   })
+
+  it('refuses a machine_meta that arrived over the LOCAL socket — only the backend may name the grid', async () => {
+    const socket = new BackendSocket('token')
+    const namesSeen: Array<string | null> = []
+    socket.onMachineMeta = (n) => { namesSeen.push(n) }
+    socket.connect()
+    const ws = wsMock.instances[0]
+    ws.open()
+
+    // The backend's own frame sets it, as always.
+    ws.message({ t: 'down', connId: 'web-1', frame: { type: 'machine_meta', payload: { name: 'mac', gridName: 'someone-7f3a91c4' } } })
+    await vi.waitFor(() => expect(socket.gridName()).toBe('someone-7f3a91c4'))
+
+    // Now the same frame from a process on this machine, through the local socket — the shape of the
+    // leftover script that once redirected this account's agents onto a grid of its choosing.
+    const local = 'local:1'
+    socket.registerLocalClient(local, { sendFrame: () => true, sendBinary: () => true })
+    socket.handleLocalFrame(local, { type: 'machine_meta', payload: { name: 'hijacked', gridName: 'attacker-deadbeef' } })
+
+    // Give the queue a turn: the frame must be dropped whole, so neither half of it lands.
+    await new Promise((r) => setTimeout(r, 50))
+    expect(socket.gridName()).toBe('someone-7f3a91c4')
+    expect(namesSeen).not.toContain('hijacked')
+
+    await socket.stop()
+  })
 })
 
 /** The read-only hardware line for the run-a-harness-compute dialog, answered next to `grid_models_list`. */
