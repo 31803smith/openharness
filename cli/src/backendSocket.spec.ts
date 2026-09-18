@@ -1727,6 +1727,29 @@ describe('machine_meta carries the grid name without clobbering it on rename', (
 
     await socket.stop()
   })
+
+  it('refuses a machine_revoked over the LOCAL socket — one frame would otherwise sign this computer out', async () => {
+    const socket = new BackendSocket('token')
+    let revoked = 0
+    socket.onRevoked = () => { revoked += 1 }
+    socket.connect()
+    const ws = wsMock.instances[0]
+    ws.open()
+
+    // `onRevoked` clears the stored SSO session and exits the daemon, so accepting this from a local
+    // process is a one-frame forced sign-out and denial of service.
+    const local = 'local:1'
+    socket.registerLocalClient(local, { sendFrame: () => true, sendBinary: () => true })
+    socket.handleLocalFrame(local, { type: 'machine_revoked', payload: {} })
+    await new Promise((r) => setTimeout(r, 50))
+    expect(revoked).toBe(0)
+
+    // The backend's own frame still works — the gate is about the sender, not the frame.
+    ws.message({ t: 'down', connId: '', frame: { type: 'machine_revoked', payload: {} } })
+    await vi.waitFor(() => expect(revoked).toBe(1))
+
+    await socket.stop()
+  })
 })
 
 /** The read-only hardware line for the run-a-harness-compute dialog, answered next to `grid_models_list`. */

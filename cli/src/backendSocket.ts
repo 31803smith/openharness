@@ -154,6 +154,23 @@ export function isLocalClientId(connId: string): boolean {
  */
 export type DownTransport = 'relay' | 'local' | 'p2p'
 
+/**
+ * Down-frames only the BACKEND may send, refused from every other transport.
+ *
+ * Each one hands the daemon an instruction no client is entitled to give:
+ *   - `machine_meta` names the account's private grid — the inference endpoint every agent on this
+ *     computer is then pointed at. Forged, it redirects the account's work to a grid of the
+ *     sender's choosing. A leftover test script did exactly this by accident once.
+ *   - `machine_revoked` clears the stored SSO session and exits the daemon. Forged, it is a
+ *     one-frame forced sign-out and denial of service.
+ *
+ * Neither is sent by any client in this repository — only by `backend/src/lib/adapterWs.ts` and
+ * `backend/src/services/MachineService.ts` — so there is nothing to stay compatible with. The
+ * backend blocks its OWN `__`-prefixed control frames from web clients for the same reason; these
+ * two escaped that rule because they are not `__`-prefixed.
+ */
+const BACKEND_ONLY_DOWN_TYPES = new Set(['machine_meta', 'machine_revoked'])
+
 interface QueueItem {
   id: number
   data: string
@@ -1194,6 +1211,13 @@ export class BackendSocket {
     // frames were then read as the BACKEND's. The transport half closes that, because it is stamped
     // at enqueue by the caller that had just verified membership. Either one being true is local.
     const local = transport === 'local' || this.localClients.has(connId)
+    // ⚠️ The backend's own instructions, refused from anywhere else. See BACKEND_ONLY_DOWN_TYPES.
+    // `transport === 'relay'` rather than `!local`, so this keeps holding if the p2p allowlist
+    // (`TERMINAL_P2P_DOWN_TYPES`) ever widens; "not local" would quietly start admitting p2p.
+    if (transport !== 'relay' && BACKEND_ONLY_DOWN_TYPES.has(type)) {
+      console.warn(`[backend] ignoring ${type} from ${transport} (${connId}) — only the backend may send it`)
+      return
+    }
     // E2EE control frames (pairing/handshake) are handled by the manager, never as node RPCs.
     if (type.startsWith('e2e_')) {
       if (local) {
@@ -1286,14 +1310,8 @@ export class BackendSocket {
       // port redirect the account's inference somewhere of its choosing, and a leftover test script
       // doing exactly that by accident cost hours to find. No client sends this frame; there is
       // nothing to be compatible with.
+      // The source check is above, with the other frames only the backend may send.
       //
-      // Stricter than the `!local` its neighbours use, on purpose: this says "the backend link", so
-      // it keeps holding if the p2p allowlist (`TERMINAL_P2P_DOWN_TYPES`) ever widens. "Not local"
-      // would quietly start admitting p2p on the day that set grew.
-      if (transport !== 'relay') {
-        console.warn(`[backend] ignoring machine_meta from ${transport} (${connId}) — only the backend may send it`)
-        return
-      }
       // A malformed/hostile frame's payload need not be an object; `'gridName' in meta` would throw
       // on a primitive (and drop the whole frame via enqueueDown's catch). Guard the type first, the
       // way the plain property reads elsewhere in this dispatcher tolerate one.
