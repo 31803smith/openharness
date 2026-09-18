@@ -28,6 +28,7 @@ export function dshListRows(
       homepage: known?.homepage ?? null,
       upstream: known?.upstream ?? null,
       license: known?.license ?? null,
+      tagline: known?.tagline ?? null,
       screenshots: known?.screenshots ?? [],
       examples: known?.examples ?? [],
     }

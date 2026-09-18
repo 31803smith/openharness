@@ -3193,6 +3193,7 @@ class AppNotifier extends ChangeNotifier {
           prev.dsh != agent.dsh ||
           prev.dshName != agent.dshName ||
           prev.viewerUrl != agent.viewerUrl ||
+          prev.viewerError != agent.viewerError ||
           prev.viewerName != agent.viewerName ||
           prev.verdict != agent.verdict) {
         return false;
@@ -4343,9 +4344,10 @@ class AppNotifier extends ChangeNotifier {
   void _syncViewerPane(MachineState machine, Agent agent) {
     final machineId = machine.machine.machineId;
     final url = agent.viewerUrl;
+    final viewerState = url ?? agent.viewerError;
     final dismissed =
-        url != null &&
-        _dismissedViewers[_viewerKey(machineId, agent.id)] == url;
+        viewerState != null &&
+        _dismissedViewers[_viewerKey(machineId, agent.id)] == viewerState;
     var changed = false;
     // Tab by tab: wherever this agent's terminal is, its viewer is beside it,
     // and nowhere else. A terminal opened in a second tab gets a second
@@ -4364,7 +4366,7 @@ class AppNotifier extends ChangeNotifier {
               pane.ownerAgentId == agent.id)
             pane,
       ];
-      if (url == null || at < 0) {
+      if (viewerState == null || at < 0) {
         for (final pane in viewers) {
           swarm.remove(pane);
           changed = true;
@@ -4376,6 +4378,7 @@ class AppNotifier extends ChangeNotifier {
         // place rather than reopening a tile.
         for (final pane in viewers) {
           pane.url = url;
+          pane.viewerError = agent.viewerError;
         }
         continue;
       }
@@ -4388,6 +4391,7 @@ class AppNotifier extends ChangeNotifier {
         machineId: machineId,
         kind: PaneKind.web,
         url: url,
+        viewerError: agent.viewerError,
         ownerAgentId: agent.id,
       );
       swarm.panes.insert(insertion, pane);
@@ -4437,7 +4441,11 @@ class AppNotifier extends ChangeNotifier {
     }
     final machine = machineStates[machineId];
     final agent = machine?.agents.where((a) => a.id == agentId).firstOrNull;
-    if (machine == null || agent == null || agent.viewerUrl == null) return;
+    if (machine == null ||
+        agent == null ||
+        (agent.viewerUrl == null && agent.viewerError == null)) {
+      return;
+    }
     _dismissedViewers.remove(_viewerKey(machineId, agentId));
     _syncViewerPane(machine, agent);
     notifyListeners();
@@ -4919,6 +4927,8 @@ class AppNotifier extends ChangeNotifier {
               '${detail ?? 'Install it there, then try again.'}',
         'PROMPT_UNSUPPORTED' =>
           'This engine cannot be opened with a first message on $machine.',
+        'PROMPT_TOO_LONG' =>
+          'This first task is too long for $machine. Shorten it and try again.',
         'AGENT_UNSUPPORTED' =>
           'This engine cannot be opened as a named agent on $machine.',
         _ => 'Create harness failed: ${detail ?? code}',
@@ -5036,6 +5046,8 @@ class AppNotifier extends ChangeNotifier {
         'INVALID_CODEX_HOME',
         'INVALID_DSH',
         'PROMPT_UNSUPPORTED',
+        'PROMPT_TOO_LONG',
+        'INVALID_PROMPT',
         'AGENT_UNSUPPORTED',
         'TMUX_UNAVAILABLE',
         'TMUX_TOO_OLD_FOR_GRID',
@@ -6067,8 +6079,9 @@ class AppNotifier extends ChangeNotifier {
       // frame carries the same URL and must not reopen it. A different URL —
       // a new artifact, a restarted viewer — is news, and opens again.
       final owner = pane.ownerAgentId;
-      if (owner != null && pane.url != null) {
-        _dismissedViewers[_viewerKey(pane.machineId, owner)] = pane.url!;
+      final viewerState = pane.url ?? pane.viewerError;
+      if (owner != null && viewerState != null) {
+        _dismissedViewers[_viewerKey(pane.machineId, owner)] = viewerState;
       }
     }
     if (pane.agentId != null) {

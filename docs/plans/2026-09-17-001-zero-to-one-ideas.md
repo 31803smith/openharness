@@ -143,10 +143,10 @@ agent's terminal can run code as Bob's user, on Bob's machine:
 
 ## Gaps found on the way (not zero-to-one, but they will hurt soon)
 
-- **Viewers do not work across machines.** A harness running on another machine cannot show its viewer
-  pane in the app; `store/agents/godogen/README.md` names forwarding a viewer from a linked remote
-  machine as a platform requirement still to build. Harness is multi-machine by design, so this is a
-  core gap — and step 1 of sharing needs the same forwarding, safely.
+- **Remote viewers — implemented.** The desktop's CLI forwards a linked machine's viewer through its
+  existing encrypted connection; both CLIs need the forwarding-capable version. See
+  [the implementation and validation plan](2026-09-17-004-remote-viewers.md). This preserves the
+  owner's interactive viewer access; read-only public sharing still needs its own restrictions.
 - **Installed harnesses never update.** `harness dsh` offers `list`, `install`, `check` and `remove`
   (`cli/src/dsh/command.ts`) — no update. A fix to a package (today's RDKit verdict fix, the text-to-cad
   Chromium setup) only reaches a machine that removes and reinstalls it. Needs: an installed package

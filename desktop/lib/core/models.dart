@@ -231,6 +231,9 @@ class Agent {
   /// when there is none (yet). A change means the viewer pane must navigate.
   final String? viewerUrl;
 
+  /// Why this remote viewer could not be forwarded, including old-daemon update guidance.
+  final String? viewerError;
+
   /// What the harness's viewer pane is called — the shared viewer's own name ("3D Viewer"), or
   /// the harness's name and "Viewer" for one it ships ("Marp Viewer") — as the daemon worked it
   /// out. Null from an older daemon or with no viewer; see [PaneGrid] for what stands in.
@@ -261,6 +264,7 @@ class Agent {
     this.dsh,
     this.dshName,
     this.viewerUrl,
+    this.viewerError,
     this.viewerName,
     this.verdict,
   });
@@ -323,6 +327,7 @@ class Agent {
       dsh: _safeDsh(j['dsh']),
       dshName: _safeLabel(j['dshName']),
       viewerUrl: _safeViewerUrl(j['viewerUrl']),
+      viewerError: _safeDetail(j['viewerError']),
       viewerName: _safeLabel(j['viewerName']),
       verdict: AgentVerdict.fromJson(j['verdict']),
     );
@@ -350,6 +355,7 @@ class Agent {
     dsh: dsh,
     dshName: dshName,
     viewerUrl: viewerUrl,
+    viewerError: viewerError,
     viewerName: viewerName,
     verdict: verdict,
   );

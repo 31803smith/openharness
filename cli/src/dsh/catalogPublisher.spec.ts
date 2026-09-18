@@ -26,6 +26,24 @@ describe('Store publication', () => {
     expect(parsed.entries).toHaveLength(catalog.entries.length)
     expect(parsed.entries.length).toBeGreaterThan(10)
     expect(parsed.entries.filter(entry => entry.verified).every(entry => entry.ref === ref)).toBe(true)
+    const taglines = catalog.entries.filter((entry: { tagline?: string }) => entry.tagline !== undefined)
+    expect(taglines.length).toBeGreaterThan(10)
+    expect(parsed.entries.filter(entry => entry.tagline !== undefined).map(entry => [entry.id, entry.tagline]))
+      .toEqual(taglines.map((entry: { id: string; tagline: string }) => [entry.id, entry.tagline]))
+  })
+
+  it('publishes a package\'s tagline as written, and refuses an empty, overlong, multi-line or non-text one', () => {
+    const root = fixture()
+    writeFileSync(join(root, 'agents', 'game', 'store.json'), JSON.stringify({ tagline: 'Open source HTML5 game framework' }))
+    expect(createStoreCatalog(root, ref).entries[0].tagline).toBe('Open source HTML5 game framework')
+    expect(parseStoreCatalog(createStoreCatalog(root, ref)).entries[0]!.tagline).toBe('Open source HTML5 game framework')
+    writeFileSync(join(root, 'agents', 'game', 'store.json'), JSON.stringify({ tagline: 't'.repeat(80) }))
+    expect(createStoreCatalog(root, ref).entries[0].tagline).toHaveLength(80)
+    // An empty one too: the CLI refuses the whole catalog over one bad entry, so it must never be published.
+    for (const bad of ['', '   ', 't'.repeat(81), 'Two\nlines', 'Tab\tseparated', 42]) {
+      writeFileSync(join(root, 'agents', 'game', 'store.json'), JSON.stringify({ tagline: bad }))
+      expect(() => createStoreCatalog(root, ref)).toThrow('autonomous/game: invalid tagline')
+    }
   })
 
   it('rejects corrupt manifests instead of silently publishing a partial catalog', () => {
