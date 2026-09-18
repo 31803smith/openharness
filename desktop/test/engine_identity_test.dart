@@ -88,6 +88,9 @@ void main() {
     // SUMO) belong to other companies.
     const noLogo = {
       'autonomous/godogen',
+      // Grid (#90) is ours, but this repository holds no Grid mark; it draws
+      // its initial until one is added to assets/engine-icons.
+      'autonomous/autonomous-grid',
       'autonomous/ableton-ai',
       'autonomous/autoresearch-mlx',
       'autonomous/foam-agent',
