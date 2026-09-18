@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+import { HarnessShareOwner } from './sharing/owner.js'
+import { HarnessGrantStore } from './sharing/grants.js'
+import { HarnessShareRelay, type SharedMachineReference } from './sharing/relay.js'
+import { SharedViewerPool } from './sharing/viewer.js'
 import { fingerprint as e2eeCoreFingerprint, b64d as e2eeCoreDecode } from './lib/e2ee/core.js'
 import { AutonomousDeviceDirect } from './lib/autonomous-device/direct.js'
 /**
@@ -2843,6 +2847,27 @@ async function runForeground(session: AuthSession): Promise<void> {
   // Built HERE rather than beside the cable stack that also uses it (further down), because the hook
   // server starts long before that point and agent restore can sit between the two. A cache bound late
   // is a cache that is still null exactly when a cold boot during an outage needs it most.
+  const sharingIdentity = new E2eeStore()
+  sharingIdentity.init()
+  const sharedViewers = new SharedViewerPool((agentId) => {
+    const agent = registry.resolve(agentId)
+    return agent ? backend.dshFrameProvider?.(agent)?.viewerUrl ?? null : null
+  })
+  backend.harnessSharing = new HarnessShareOwner({
+    machineId: () => backend.machineId,
+    identity: sharingIdentity.getIdentity(),
+    grants: new HarnessGrantStore(join(env.ADAPTER_DATA_DIR, 'harness-shares.json')),
+    terminals, resolveAgent: (id) => registry.resolve(id),
+    send: (id, type, payload) => backend.sendObserver(id, type, payload),
+    publish: (method, path, body) => proxyBackend(method, path, body),
+    watchViewer: (id, send) => sharedViewers.watch(id, send),
+  })
+  const shareRelay = new HarnessShareRelay(auth, env.BACKEND_WS_URL, env.AUTONOMOUS_ENV, async () => {
+    const result = await proxyBackend('GET', '/api/harness-shares')
+    if (result.status !== 200) throw new Error('Shared harnesses are temporarily unavailable.')
+    return ((result.body as { data?: { machines?: SharedMachineReference[] } }).data?.machines ?? [])
+  })
+
   const machineListCache = new MachineListCache(
     () => proxyBackend('GET', '/api/machines'),
     computerId,
@@ -3259,6 +3284,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     onMachineRename: (machineId, name) => proxyBackend('PATCH', `/api/machines/${encodeURIComponent(machineId)}`, { name }),
     onMachineDelete: (machineId) => proxyBackend('DELETE', `/api/machines/${encodeURIComponent(machineId)}`),
     onAuthMe: () => proxyBackend('GET', '/api/auth/me'),
+    onSharedHarnesses: () => proxyBackend('GET', '/api/harness-shares'),
     onStore: (method, path, body) => proxyBackend(method, path, body),
   })
   // Claim the pid file for OURSELVES, and only now that the control port is bound. It used to be
@@ -3297,6 +3323,7 @@ async function runForeground(session: AuthSession): Promise<void> {
   })
 
   const localWsServer = attachLocalWsServer(hookServer, {
+    shareRelay,
     // The window and the dial are one desk: opening an agent in the app brings the dial to it, switching
     // the dial's machine first when the app moved to another one.
     onAppFocusState: (machineId, agentId, connId, expectedRevision) => {
@@ -4575,6 +4602,8 @@ async function runForeground(session: AuthSession): Promise<void> {
     ;(hookServer as unknown as { closeAllConnections?: () => void }).closeAllConnections?.()
     // Release the fixed hook port before the child binds. Process-owned agents stay in the persisted
     // registry and are revalidated by the new daemon's first discovery passes.
+    shareRelay.close()
+    sharedViewers.stop()
     await localWsServer.close()
     hookServer.close()
     shutdownSummaryPool()
@@ -4717,6 +4746,8 @@ async function runForeground(session: AuthSession): Promise<void> {
     for (const r of devinReaders.values()) r.stop()
     await cursorDiscovery.stop()
     await watcher.stop()
+    shareRelay.close()
+    sharedViewers.stop()
     await localWsServer.close()
     hookServer.close()
     shutdownSummaryPool()
