@@ -5532,6 +5532,95 @@ class AppNotifier extends ChangeNotifier {
   /// second open is a takeover — the window would fight itself and the first
   /// tile would go dark with `TERMINAL_TAKEN_OVER`. [revealAgentView] is what
   /// Open Harness uses for the same reason.
+  /// `harness remote`'s hand-over: the tile showing [fromAgentId] on
+  /// [fromMachineId] becomes [agentId]'s on [machineId] — the SAME tile, in
+  /// place: its slot, its pin, its cell key and so its widget all stay, only
+  /// the machine and agent it points at change and the terminal inside it is
+  /// replaced. The shell the command was typed in is then stopped, so the old
+  /// terminal is gone rather than left behind. Nothing happens when no tile
+  /// here shows that agent: the push reaches every window, and the tile is
+  /// in one.
+  ///
+  /// Not [assignAgentToPane]: that removes the tile and inserts a new one,
+  /// which remounts the cell and can slide the grid — a move should read as
+  /// the tile changing what it shows, not as one tile leaving and another
+  /// arriving.
+  ///
+  /// The new agent may not be in [machineId]'s list yet: its `agent_created`
+  /// push travels on that machine's connection, the hand-over on this one, and
+  /// the two are unordered. So the list is asked for again, and the agent is
+  /// waited for a little, before the tile is pointed at it.
+  Future<void> handoffTerminalPane(
+    String fromMachineId,
+    String fromAgentId,
+    String machineId,
+    String agentId,
+  ) async {
+    Swarm? tab;
+    TerminalPane? tile;
+    for (final swarm in swarms) {
+      for (final pane in swarm.panes) {
+        if (pane.machineId == fromMachineId && pane.agentId == fromAgentId) {
+          tab = swarm;
+          tile = pane;
+          break;
+        }
+      }
+      if (tile != null) break;
+    }
+    if (tab == null || tile == null) return;
+    final target = machineStates[machineId];
+    if (target == null) {
+      _lastError = 'The machine the terminal opened on is not in this window.';
+      _lastErrorRetryable = false;
+      notifyListeners();
+      return;
+    }
+    if (!await _awaitAgent(target, agentId)) {
+      _lastError =
+          '${target.machine.displayName} opened a terminal, but it has not appeared yet.';
+      _lastErrorRetryable = false;
+      notifyListeners();
+      return;
+    }
+    if (_disposed || !allPanes.contains(tile)) return;
+    // The old stream goes first (the cell shows "Attaching…" for the moment
+    // between), then the tile is re-pointed and the new one attached.
+    await _detachSession(tile, sendClose: true);
+    if (_disposed) return;
+    tile
+      ..machineId = machineId
+      ..agentId = agentId
+      ..sharedHarness = null
+      ..sharedOwnerName = null;
+    target.activeAgentId = agentId;
+    _dismissedLinkPrompts.remove(machineId);
+    if (tab.id != activeSwarmId) selectSwarm(tab.id);
+    if (tab == activeSwarm) selectedMachineId = machineId;
+    focusPane(tile.id, reveal: true);
+    notifyListeners();
+    _persistLayout();
+    unawaited(_attachSession(tile));
+    // The old shell: `harness remote` has exited in it, and the tile is no
+    // longer its. Ending it is what makes the switch a move, not a copy.
+    await deleteAgent(fromMachineId, fromAgentId);
+  }
+
+  /// Whether [machine] lists [agentId], asking it again and watching for the
+  /// push for a few seconds when it does not yet. The reload is not awaited:
+  /// it waits on the connection being ready, and the agent's own
+  /// `agent_created` usually lands on it first.
+  Future<bool> _awaitAgent(MachineState machine, String agentId) async {
+    bool known() => machine.agents.any((agent) => agent.id == agentId);
+    if (known()) return true;
+    unawaited(_loadMachineData(machine, force: true).catchError((_) {}));
+    for (var attempt = 0; attempt < 32 && !_disposed; attempt++) {
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      if (known()) return true;
+    }
+    return known();
+  }
+
   Future<void> openAgentFromDial(String machineId, String agentId) async {
     if (revealAgentView(machineId, agentId)) {
       selectedMachineId = machineId;
@@ -6713,6 +6802,30 @@ class AppNotifier extends ChangeNotifier {
           if (targetMachineId != null) {
             unawaited(openAgentFromDial(targetMachineId, openId));
           }
+        }
+        break;
+      case 'remote_terminal_handoff':
+        // `harness remote`, typed in one of this window's terminal tiles, opened a
+        // terminal on another machine: that tile becomes the new agent's, in
+        // place, and the shell it was typed in is ended. Pushed to every
+        // loopback client; only the window holding the tile acts.
+        final fromAgentId = payload['fromAgentId'];
+        final toMachineId = payload['machineId'];
+        final toAgentId = payload['agentId'];
+        if (fromAgentId is String &&
+            fromAgentId.isNotEmpty &&
+            toMachineId is String &&
+            toMachineId.isNotEmpty &&
+            toAgentId is String &&
+            toAgentId.isNotEmpty) {
+          unawaited(
+            handoffTerminalPane(
+              machine.machine.machineId,
+              fromAgentId,
+              toMachineId,
+              toAgentId,
+            ),
+          );
         }
         break;
       case 'node_status':
