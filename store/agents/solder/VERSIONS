@@ -4,7 +4,7 @@
 # commit on that branch. The fetch is by commit, so an unmerged branch is fine.
 UPSTREAM_NAME="autonomous-circuit"
 UPSTREAM_REPO="https://github.com/autonomous-ai/autonomous-circuit.git"
-UPSTREAM_COMMIT="92dcd44935871fbe3fb2c926ac9cab21ff78db79"
+UPSTREAM_COMMIT="7f16398fc792f60f6c81d1bfe134fa14e33bf557"
 # Everything but its product library and examples (118 MB a board build never reads).
 UPSTREAM_SPARSE_MODE="no-cone"
 UPSTREAM_SPARSE="/* !/products/ !/examples/"
